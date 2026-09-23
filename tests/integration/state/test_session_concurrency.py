@@ -18,6 +18,7 @@ import pytest
 
 from meridian.lib.platform.locking import try_lock_file
 from meridian.lib.state import session_store
+from meridian.lib.state.spawn.repository import read_state
 from tests.conftest import posix_only
 from tests.support.process_race import run_spawn_race_or_skip
 
@@ -163,6 +164,24 @@ def test_start_session_rolls_back_lock_and_event_on_append_failure(
         _can_acquire_lock_nonblocking_worker,
         [(lock_path.as_posix(),)],
     ) == [True]
+
+
+def test_rejected_start_does_not_change_spawn_identity_mirror(tmp_path: Path) -> None:
+    from tests.integration.state.conftest import _create_spawn
+
+    runtime_root, spawn_id = _create_spawn(tmp_path, started_at=None)
+    before = read_state(runtime_root / "spawns", spawn_id)
+    (runtime_root / "sessions.jsonl").write_bytes(b'{"event":\n')
+    with pytest.raises(ValueError, match=r"Corrupt sessions\.jsonl"):
+        session_store.start_session(
+            runtime_root,
+            harness="codex",
+            harness_session_id="rejected",
+            model="gpt-5.4",
+            chat_id="c99",
+            spawn_id=spawn_id,
+        )
+    assert read_state(runtime_root / "spawns", spawn_id) == before
 
 
 @posix_only

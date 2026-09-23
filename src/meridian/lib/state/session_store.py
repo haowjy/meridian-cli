@@ -60,18 +60,22 @@ def _append_session_event(
 
 
 @contextmanager
-def _sessions_transaction(paths: RuntimePaths):
+def _sessions_transaction(paths: RuntimePaths, *, require_existing_root: bool = False):
     """Own the lock order, strict prewrite, and confirmation for sessions.jsonl."""
-    with (
-        lock_file(paths.project_lifetime_flock, mode="shared"),
-        lock_file(HistoryChanges(paths.root_dir).mutation_lock, mode="shared"),
-        lock_file(paths.sessions_flock),
-    ):
-        payloads = _strict_session_prewrite(paths.sessions_jsonl)
-        try:
-            yield payloads
-        finally:
-            _confirm_sessions_durability(paths.sessions_jsonl)
+    with lock_file(paths.project_lifetime_flock, mode="shared"):
+        # lock_file creates parent directories. Preserve model writers' no-resurrection
+        # contract by checking before any in-root gate can create the runtime root.
+        if require_existing_root and not paths.root_dir.is_dir():
+            raise FileNotFoundError(paths.root_dir)
+        with (
+            lock_file(HistoryChanges(paths.root_dir).mutation_lock, mode="shared"),
+            lock_file(paths.sessions_flock),
+        ):
+            payloads = _strict_session_prewrite(paths.sessions_jsonl)
+            try:
+                yield payloads
+            finally:
+                _confirm_sessions_durability(paths.sessions_jsonl)
 
 
 def _confirm_sessions_durability(path: Path) -> None:
@@ -714,10 +718,10 @@ def _append_authority_event(path: Path, lock_path: Path, event: SessionAttemptEv
 
 
 def get_native_session_key(runtime_root: Path, chat_id: str) -> NativeSessionKey | None:
-    """Strictly replay the immutable native key assigned to an operational chat."""
+    """Return a native key only after confirming journal and directory durability."""
     paths = RuntimePaths.from_root_dir(runtime_root)
-    with lock_file(paths.project_lifetime_flock, mode="shared"), lock_file(paths.sessions_flock):
-        payloads = _strict_session_events(paths.sessions_jsonl)
+    with _sessions_transaction(paths) as payloads:
+        payloads = list(payloads)
     bindings: dict[str, NativeSessionKey] = {}
     for payload in payloads:
         if payload.get("event") != "native_attempt":
@@ -736,8 +740,8 @@ def get_native_attempt_boundaries(
 ) -> AttemptBoundaries:
     """Replay one attempt's effective boundaries; invalidation never erases provenance."""
     paths = RuntimePaths.from_root_dir(runtime_root)
-    with lock_file(paths.project_lifetime_flock, mode="shared"), lock_file(paths.sessions_flock):
-        payloads = _strict_session_events(paths.sessions_jsonl)
+    with _sessions_transaction(paths) as payloads:
+        payloads = list(payloads)
     events = [
         SessionAttemptEvent.model_validate(payload)
         for payload in payloads
@@ -1299,32 +1303,41 @@ def start_session(
                 event = event.model_copy(
                     update={"forked_from_history_id": source.history_id if source else None}
                 )
+            spawn_snapshot = None
             if spawn_id is not None:
+                from meridian.lib.state.spawn.repository import read_state
+
+                # Read identity inputs without mutating the spawn. The journal is
+                # authoritative; a rejected append must leave its mirror untouched.
+                spawn_snapshot = read_state(paths.spawns_dir, spawn_id)
+                if spawn_snapshot is not None:
+                    event = event.model_copy(
+                        update={
+                            "history_id": spawn_snapshot.history_id,
+                            "forked_from_history_id": event.forked_from_history_id
+                            or spawn_snapshot.forked_from_history_id,
+                        }
+                    )
+            _append_session_event(paths.sessions_jsonl, paths.sessions_flock, event)
+            _write_session_lease(paths, resolved_chat_id, session_instance_id)
+            if spawn_id is not None and spawn_snapshot is not None:
                 from meridian.lib.state.spawn.model import SpawnRecord
-                from meridian.lib.state.spawn.repository import Applied, write_state_locked
+                from meridian.lib.state.spawn.repository import write_state_locked
 
                 def bind(current: SpawnRecord) -> SpawnRecord:
                     return current.model_copy(
                         update={
                             "chat_id": event.chat_id,
                             "session_instance_id": event.session_instance_id,
-                            "forked_from_history_id": event.forked_from_history_id
-                            or current.forked_from_history_id,
+                            "forked_from_history_id": event.forked_from_history_id,
                         }
                     )
 
-                binding = write_state_locked(
+                # Repairable from the committed session identity: this mirror is
+                # deliberately published only after the journal's durability barrier.
+                write_state_locked(
                     paths.spawns_dir, spawn_id, bind, allow_terminal_overwrite=True
                 )
-                if isinstance(binding, Applied):
-                    event = event.model_copy(
-                        update={
-                            "history_id": binding.after.history_id,
-                            "forked_from_history_id": binding.after.forked_from_history_id,
-                        }
-                    )
-            _append_session_event(paths.sessions_jsonl, paths.sessions_flock, event)
-            _write_session_lease(paths, resolved_chat_id, session_instance_id)
     except Exception:
         if handle is not None:
             release_file_lock(handle)
@@ -1675,9 +1688,7 @@ def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent
     """Durably append once per invocation/conversation; false means already recorded."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    with _sessions_transaction(paths) as payloads:
-        if not runtime_root.is_dir():
-            raise FileNotFoundError(runtime_root)
+    with _sessions_transaction(paths, require_existing_root=True) as payloads:
         events = [parsed for row in payloads if (parsed := _parse_event(row)) is not None]
         source_start = next(
             (
@@ -1753,9 +1764,7 @@ def record_model_observation(runtime_root: Path, event: SessionModelObservationE
     """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    with _sessions_transaction(paths) as payloads:
-        if not runtime_root.is_dir():
-            raise FileNotFoundError(runtime_root)
+    with _sessions_transaction(paths, require_existing_root=True) as payloads:
         previous = next(
             (
                 row.get("observed_model_token")

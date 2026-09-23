@@ -1,14 +1,25 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from threading import Event
 
 import pytest
 from pydantic import ValidationError
 
+from meridian.lib.platform.locking import try_lock_file
 from meridian.lib.state import session_store
+
+
+def _contradiction_contender(root: str, attempted: object, completed: object) -> None:
+    paths = session_store.RuntimePaths.from_root_dir(Path(root))
+    with try_lock_file(paths.sessions_flock, reentrant=False):
+        attempted.set()  # type: ignore[attr-defined]  # actual session-lock attempt completed
+    session_store.accept_native_boundary(
+        Path(root), receipt("run", "attempt", "exit", key("/native/repair-race-b"), order=2)
+    )
+    completed.set()  # type: ignore[attr-defined]
 
 
 def key(store: str, native_id: str = "native-1") -> session_store.NativeSessionKey:
@@ -184,47 +195,46 @@ def test_torn_tail_after_live_exit_blocks_unrelated_writer_and_preserves_bytes(
     assert journal.read_bytes() == preserved
 
 
-def test_start_repair_cannot_erase_acknowledged_exit_invalidation(
-    tmp_path: Path, monkeypatch
+def test_repair_holds_session_lock_until_replacement_and_contender_acknowledges(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = tmp_path / "runtime"
     root.mkdir()
     begin(root, "run", "attempt")
     first = key("/native/repair-race-a")
-    second = key("/native/repair-race-b")
     session_store.accept_native_boundary(root, receipt("run", "attempt", "exit", first))
     journal = root / "sessions.jsonl"
     journal.write_bytes(journal.read_bytes().rstrip(b"\n"))
 
-    repair_reached = Event()
-    allow_repair_to_finish = Event()
+    context = multiprocessing.get_context("fork")
+    repair_reached = context.Event()
+    allow_repair_to_finish = context.Event()
     original_repair = session_store.atomic_write_bytes
 
-    def pause_after_repair(path: Path, content: bytes) -> None:
-        original_repair(path, content)
+    def pause_before_repair(path: Path, content: bytes) -> None:
         if path == journal:
             repair_reached.set()
             assert allow_repair_to_finish.wait(5)
+        original_repair(path, content)
 
-    monkeypatch.setattr(session_store, "atomic_write_bytes", pause_after_repair)
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        start = pool.submit(
-            session_store.start_session,
-            root,
-            "pi",
-            "spawn-session",
-            "model",
-        )
+    monkeypatch.setattr(session_store, "atomic_write_bytes", pause_before_repair)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        start = pool.submit(session_store.start_session, root, "pi", "spawn-session", "model")
         assert repair_reached.wait(5)
-        contradiction = pool.submit(
-            session_store.accept_native_boundary,
-            root,
-            receipt("run", "attempt", "exit", second, order=2),
+        attempted, completed = context.Event(), context.Event()
+        contender = context.Process(
+            target=_contradiction_contender,
+            args=(str(root), attempted, completed),
         )
-        assert not contradiction.done()
+        contender.start()
+        assert attempted.wait(5)
+        assert not completed.wait(0.2), "contender acknowledged before stale replacement completed"
         allow_repair_to_finish.set()
         chat_id = start.result(timeout=5)
-        accepted = contradiction.result(timeout=5)
+        assert completed.wait(5)
+        contender.join(5)
+        assert contender.exitcode == 0
+        accepted = session_store.BoundaryAcceptance(None, True)
     try:
         assert accepted == session_store.BoundaryAcceptance(None, True)
         assert session_store.get_native_attempt_boundaries(root, "run", "attempt").exit_invalidated
@@ -348,3 +358,112 @@ def test_duplicate_begin_cannot_acknowledge_failed_publication_directory_sync(
     begin(root, "run", "attempt")
     rows = [json.loads(line) for line in (root / "sessions.jsonl").read_text().splitlines()]
     assert [row["action"] for row in rows] == ["begin"]
+
+
+@pytest.mark.parametrize("getter", ["key", "boundaries"])
+def test_confirming_getters_reject_persistent_file_sync_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, getter: str
+) -> None:
+    root = tmp_path / "runtime"
+    root.mkdir()
+    begin(root, "run", "attempt")
+    native_key = key("/native/confirmed-read")
+    session_store.accept_native_boundary(root, receipt("run", "attempt", "exit", native_key))
+
+    def fail_sync(_fd: int) -> None:
+        raise OSError("persistent file sync failure")
+
+    monkeypatch.setattr(session_store.os, "fsync", fail_sync)
+    for _ in range(2):
+        with pytest.raises(OSError, match="persistent file sync failure"):
+            if getter == "key":
+                session_store.get_native_session_key(root, "c1")
+            else:
+                session_store.get_native_attempt_boundaries(root, "run", "attempt")
+
+
+def test_failed_refutation_cannot_be_hidden_by_confirming_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "runtime"
+    root.mkdir()
+    begin(root, "run", "attempt")
+    first = key("/native/refutation-first")
+    second = key("/native/refutation-second")
+    session_store.accept_native_boundary(root, receipt("run", "attempt", "exit", first))
+
+    def fail_directory_sync(_path: Path) -> None:
+        raise OSError("persistent directory sync failure")
+
+    monkeypatch.setattr(session_store, "fsync_directory", fail_directory_sync)
+    with pytest.raises(OSError, match="persistent directory sync failure"):
+        session_store.accept_native_boundary(
+            root, receipt("run", "attempt", "exit", second, order=2)
+        )
+    with pytest.raises(OSError, match="persistent directory sync failure"):
+        session_store.get_native_attempt_boundaries(root, "run", "attempt")
+
+
+@pytest.mark.parametrize("fault", ["file", "directory"])
+def test_first_begin_write_failure_retry_commits_one_effect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    root = tmp_path / "runtime"
+    root.mkdir()
+    original_fsync = session_store.os.fsync
+    original_directory_sync = session_store.fsync_directory
+
+    if fault == "file":
+        def fail_sync(_fd: int) -> None:
+            raise OSError("initial file sync failure")
+
+        monkeypatch.setattr(session_store.os, "fsync", fail_sync)
+    else:
+        def fail_directory_sync(_path: Path) -> None:
+            raise OSError("initial directory sync failure")
+
+        monkeypatch.setattr(session_store, "fsync_directory", fail_directory_sync)
+    with pytest.raises(OSError, match=r"initial .* sync failure"):
+        begin(root, "first", "attempt")
+    with pytest.raises(OSError, match=r"initial .* sync failure"):
+        begin(root, "first", "attempt")
+    monkeypatch.setattr(session_store.os, "fsync", original_fsync)
+    monkeypatch.setattr(session_store, "fsync_directory", original_directory_sync)
+    begin(root, "first", "attempt")
+    rows = [json.loads(line) for line in (root / "sessions.jsonl").read_text().splitlines()]
+    assert [(row["run_id"], row["action"]) for row in rows] == [("first", "begin")]
+
+
+def test_model_writers_do_not_recreate_a_missing_runtime_root(tmp_path: Path) -> None:
+    root = tmp_path / "deleted-runtime"
+    selection = session_store.SessionModelSelectionEvent(
+        kind="initial_seed",
+        harness="pi",
+        harness_session_id="native",
+        spawn_id=None,
+        startup_attempt_id=None,
+        selection=session_store.ConversationModelSelection(
+            requested_token="model",
+            selected_token="model",
+            canonical_model_id="model",
+            harness_model_id="model",
+            model_mode="named",
+            selection_source="initial_launch",
+        ),
+        recorded_at="2026-01-01T00:00:00Z",
+        chat_id="c1",
+        session_instance_id="generation",
+    )
+    observation = session_store.SessionModelObservationEvent(
+        harness="pi",
+        harness_session_id="native",
+        observed_model_token="model",
+        recorded_at="2026-01-01T00:00:00Z",
+    )
+    for writer, event in (
+        (session_store.record_model_selection, selection),
+        (session_store.record_model_observation, observation),
+    ):
+        with pytest.raises(FileNotFoundError):
+            writer(root, event)  # type: ignore[arg-type]
+        assert not root.exists()

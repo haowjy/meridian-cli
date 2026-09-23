@@ -14,6 +14,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Routed lifecycle, model, historical, cleanup, and native session journal writes
   through one ordered lock/repair/append/durability transaction; removed start's
   unlocked journal preflight and made restore acquire project lifetime first.
+- Commit session starts before updating spawn identity mirrors; native authority
+  getters now confirm journal durability, and model writers refuse to recreate
+  deleted runtime roots.
 
 ## [0.6.6] - 2026-09-22
 
