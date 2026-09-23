@@ -1,10 +1,10 @@
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { MAX_BOUNDARY_BYTES, publisherFor, reduceBoundary, writeBoundaryAtomic, type BoundaryCapability, type BoundaryRecord } from "../../shared/session_boundary";
+import { MAX_BOUNDARY_BYTES, publisherFor, reduceBoundary, SessionBoundaryPublisher, writeBoundaryAtomic, type BoundaryCapability, type BoundaryRecord } from "../../shared/session_boundary";
 import { registerSessionBoundaryHooks } from "./index";
 
 const tempDirs: string[] = [];
@@ -31,18 +31,23 @@ describe("Pi session-boundary observer", () => {
     const candidate = reduceBoundary(record, { type: "session_shutdown", reason: "quit", identity: a });
     expect(candidate.phase).toBe("quit_candidate");
     expect(reduceBoundary(candidate, { type: "session_shutdown", reason: "quit", identity: a })).toBe(candidate);
-    const invalid = reduceBoundary(candidate, { type: "session_start" });
+    const invalid = reduceBoundary(candidate, { type: "session_start", reason: "resume" });
     expect(invalid.phase).toBe("invalid");
     expect(reduceBoundary(invalid, { type: "session_shutdown", reason: "quit", identity: a })).toBe(invalid);
   });
 
-  it("allows exactly the first native startup event but invalidates a later replacement", () => {
+  it("ignores supported pre-quit switches, starts, shutdowns, and duplicates", () => {
     const { capability } = fixture();
     const publisher = publisherFor(capability);
     publisher.initialize();
-    publisher.observe({ type: "session_start" });
+    publisher.observe({ type: "session_start", reason: "startup" });
     expect((JSON.parse(readFileSync(capability.path, "utf8")) as BoundaryRecord).phase).toBe("ready");
-    publisher.observe({ type: "session_start" });
+    publisher.observe({ type: "session_before_switch", reason: "resume" });
+    publisher.observe({ type: "session_shutdown", reason: "resume" });
+    publisher.observe({ type: "session_start", reason: "resume" });
+    publisher.observe({ type: "session_start", reason: "resume" });
+    expect((JSON.parse(readFileSync(capability.path, "utf8")) as BoundaryRecord).phase).toBe("ready");
+    publisher.observe({ type: "session_start", reason: "reload" });
     expect((JSON.parse(readFileSync(capability.path, "utf8")) as BoundaryRecord).phase).toBe("invalid");
   });
 
@@ -60,24 +65,24 @@ describe("Pi session-boundary observer", () => {
     const record = JSON.parse(readFileSync(capability.path, "utf8")) as BoundaryRecord;
     expect(record.phase).toBe("quit_candidate");
     expect(record.native).toEqual({ session_id: "native-a", session_file: "/tmp/a.jsonl" });
-    handlers.get("session_start")?.();
+    handlers.get("session_start")?.({ reason: "resume" });
     expect((JSON.parse(readFileSync(capability.path, "utf8")) as BoundaryRecord).phase).toBe("invalid");
   });
 
   it("rejects publication failure after candidate and stays poisoned", () => {
     const { capability } = fixture();
-    const publisher = publisherFor(capability);
+    let failWrites = false;
+    const publisher = new SessionBoundaryPublisher(capability, (file, record) => {
+      if (failWrites) throw new Error("injected invalidation fsync/rename failure");
+      writeBoundaryAtomic(file, record);
+    });
     publisher.initialize();
     publisher.observe({ type: "session_shutdown", reason: "quit", identity: { session_id: "a", session_file: "/tmp/a.jsonl" } });
-    // A nonempty directory at the destination forces atomic rename to fail after the
-    // previous durable candidate has been moved out of the way for inspection.
-    const priorPath = `${capability.path}.prior`;
-    renameSync(capability.path, priorPath);
-    mkdirSync(capability.path);
-    writeFileSync(path.join(capability.path, "blocker"), "x");
-    expect(() => publisher.observe({ type: "session_start" })).toThrow();
+    const prior = readFileSync(capability.path, "utf8");
+    failWrites = true;
+    expect(() => publisher.observe({ type: "session_start", reason: "resume" })).toThrow();
     expect(() => publisher.observe({ type: "session_shutdown", reason: "quit", identity: { session_id: "a", session_file: "/tmp/a.jsonl" } })).toThrow(/poisoned/);
-    expect(readFileSync(priorPath, "utf8")).toContain("quit_candidate");
+    expect(readFileSync(capability.path, "utf8")).toBe(prior);
   });
 
   it("bounds records and rejects oversized native identity", () => {

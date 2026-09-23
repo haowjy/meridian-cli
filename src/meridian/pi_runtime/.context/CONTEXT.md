@@ -101,8 +101,6 @@ Extensions import `ExtensionAPI` from the package root and subscribe with
 `pi.on(...)`; there is no local `types.ts` or `registerHook` shim.
 
 - `registerTool(definition)` — register a tool with name, description, input schema, and call handler
-- `registerHook(name, handler)` — register lifecycle hooks where Pi exposes them
-- `session.on(event, handler)` — subscribe to session events
 - `session.sendMessage(message, options)` — send an agent follow-up message; spawn-watch uses this for implicit-wait notifications
 
 The separate `session-boundary` extension samples the quit context's native
@@ -115,7 +113,9 @@ path without changing existing helper durability semantics. `PiDiskWatcher` does
 not watch this file; the Pi RPC connection owner is the only reader/qualification
 authority. That owner must drain stdout through EOF and treat any native
 `extension_error` as a qualification veto, since failed replacement can leave an
-older candidate on disk.
+older candidate on disk. Before quit, native switch notifications are nonterminal;
+the process-lifetime observer ignores supported transitions and samples the active
+native ID/path from the quit context. Reload invalidates qualification.
 
 ### Spawn Correlation
 
@@ -143,9 +143,12 @@ spawn-record writes are the stable bridge.
 ### Build Invariant
 
 Extensions must be built before Pi launch. Identity-qualified projection requires
-`npm run build:extensions:verify-source`, rejects missing/stale source bundles,
+`npm run build:extensions:verify-source`, rejects missing or digest-mismatched source bundles,
 and never accepts an installed bundle as a fallback. General extension projection
 raises `PiExtensionProjectionError` when required artifacts are unavailable.
+The bounded `artifact.json` binds a fixed input allowlist (source, manifest, lockfile,
+and build flags) plus emitted bundle SHA-256; the verified artifact ID is exposed to
+the session-boundary owner integration for launch correlation.
 
 ## Rationale
 

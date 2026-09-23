@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,6 +53,15 @@ class PiExtensionLaunchProfile:
         )
 
 
+@dataclass(frozen=True)
+class PiSessionBoundaryArtifact:
+    """Verified source-built boundary bundle and the identity an owner must bind."""
+
+    entrypoint: Path
+    artifact_id: str
+    output_sha256: str
+
+
 def resolve_pi_managed_bash_entrypoint() -> tuple[str, ...]:
     """Resolve the Meridian managed-bash Pi extension entrypoint."""
 
@@ -64,26 +75,61 @@ def resolve_pi_spawn_watch_entrypoint() -> tuple[str, ...]:
 
 
 def resolve_pi_session_boundary_entrypoint() -> tuple[str, ...]:
-    """Resolve the current source build; installed bundles cannot qualify identity."""
+    """Resolve the verified source build; installed bundles cannot qualify identity."""
+
+    return (str(resolve_pi_session_boundary_artifact().entrypoint),)
+
+
+def resolve_pi_session_boundary_artifact() -> PiSessionBoundaryArtifact:
+    """Verify source/build/output hashes and expose identity for owner correlation."""
 
     root = _resolve_extension_source_root()
-    source_files = (
-        root.parent.parent / "extensions/session-boundary/src/index.ts",
-        root.parent.parent / "extensions/shared/session_boundary.ts",
+    runtime_root = root.parent.parent
+    input_paths = (
+        "extensions/session-boundary/src/index.ts",
+        "extensions/shared/session_boundary.ts",
+        "package.json",
+        "pnpm-lock.yaml",
+        "scripts/write-session-boundary-manifest.mjs",
     )
     bundle = root / _SESSION_BOUNDARY_EXTENSION_RELATIVE_PATH[1]
-    if not all(source.is_file() for source in source_files) or not bundle.is_file():
+    manifest_path = bundle.parent / "artifact.json"
+    if (
+        not all((runtime_root / relative).is_file() for relative in input_paths)
+        or not bundle.is_file()
+        or not manifest_path.is_file()
+    ):
         raise PiExtensionProjectionError(
-            f"Pi session-boundary source build is missing ({bundle}); run "
+            f"Pi session-boundary source build or digest manifest is missing ({bundle}); run "
             "cd src/meridian/pi_runtime && npm run build:extensions:verify-source. "
             "An installed bundle is not accepted for identity qualification."
         )
-    if any(bundle.stat().st_mtime_ns < source.stat().st_mtime_ns for source in source_files):
+    try:
+        raw = manifest_path.read_bytes()
+        if len(raw) > 16 * 1024:
+            raise ValueError("manifest too large")
+        manifest = json.loads(raw)
+        flags = [
+            "tsup", "--format", "esm", "--target", "node20", "--splitting", "false",
+            "--external", "@earendil-works/pi-coding-agent", "--external",
+            "@earendil-works/pi-tui",
+        ]
+        inputs = {
+            relative: hashlib.sha256((runtime_root / relative).read_bytes()).hexdigest()
+            for relative in input_paths
+        }
+        output_hash = hashlib.sha256(bundle.read_bytes()).hexdigest()
+        identity = {"schema": 1, "flags": flags, "inputs": inputs, "output_sha256": output_hash}
+        canonical_identity = json.dumps(identity, separators=(",", ":")).encode()
+        artifact_id = hashlib.sha256(canonical_identity).hexdigest()
+        if manifest != {**identity, "artifact_id": artifact_id}:
+            raise ValueError("manifest does not match current source/build inputs/output")
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
         raise PiExtensionProjectionError(
-            f"Pi session-boundary bundle is stale ({bundle}); run "
+            f"Pi session-boundary artifact verification failed ({bundle}); rebuild with "
             "cd src/meridian/pi_runtime && npm run build:extensions:verify-source."
-        )
-    return (str(bundle.resolve()),)
+        ) from exc
+    return PiSessionBoundaryArtifact(bundle.resolve(), artifact_id, output_hash)
 
 
 def resolve_pi_lifecycle_extension_entrypoint() -> tuple[str, ...]:
@@ -193,6 +239,7 @@ def default_extra_extension_path() -> Path:
 __all__ = [
     "PiExtensionLaunchProfile",
     "PiExtensionProjectionError",
+    "PiSessionBoundaryArtifact",
     "default_extra_extension_path",
     "discover_pi_extension_entrypoints_under",
     "resolve_extra_pi_extension_entrypoints",
@@ -201,6 +248,7 @@ __all__ = [
     "resolve_pi_extension_entrypoints",
     "resolve_pi_lifecycle_extension_entrypoint",
     "resolve_pi_managed_bash_entrypoint",
+    "resolve_pi_session_boundary_artifact",
     "resolve_pi_session_boundary_entrypoint",
     "resolve_pi_spawn_watch_entrypoint",
 ]

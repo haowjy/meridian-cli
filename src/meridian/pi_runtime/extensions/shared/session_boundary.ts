@@ -28,10 +28,9 @@ export type BoundaryCapability = Pick<BoundaryRecord,
   "run_id" | "attempt_id" | "transport_scope_id" | "launch_nonce" | "pid"> & { path: string };
 
 export type BoundaryEvent =
-  | { type: "session_start" }
-  | { type: "session_shutdown"; reason: string; identity?: BoundaryIdentity }
-  | { type: "session_before_switch" }
-  | { type: "reload" };
+  | { type: "session_start"; reason: "startup" | "reload" | "new" | "resume" | "fork" }
+  | { type: "session_shutdown"; reason: "quit" | "reload" | "new" | "resume" | "fork"; identity?: BoundaryIdentity }
+  | { type: "session_before_switch"; reason: "new" | "resume" };
 
 const publisherRegistrySymbol = Symbol.for("meridian.pi.session-boundary.publishers.v1");
 const capabilitySymbol = Symbol.for("meridian.pi.session-boundary.capability.v1");
@@ -59,11 +58,11 @@ export function reduceBoundary(record: BoundaryRecord, event: BoundaryEvent): Bo
     }
     return invalidRecord(record, "lifecycle_contradiction");
   }
-  if (event.type === "session_start" || event.type === "session_before_switch" || event.type === "reload") {
-    return invalidRecord(record, "lifecycle_changed");
-  }
+  if (event.type === "session_start") return event.reason === "reload" ? invalidRecord(record, "reload") : record;
+  if (event.type === "session_before_switch") return record;
   if (event.type !== "session_shutdown") return record;
-  if (event.reason !== "quit") return invalidRecord(record, "non_quit_shutdown");
+  if (event.reason === "reload") return invalidRecord(record, "reload");
+  if (event.reason !== "quit") return record;
   if (!validIdentity(event.identity)) return invalidRecord(record, "invalid_native_identity");
   return { ...record, revision: incrementRevision(record.revision), phase: "quit_candidate", native: event.identity, invalid_reason: null };
 }
@@ -72,9 +71,11 @@ export class SessionBoundaryPublisher {
   private record: BoundaryRecord;
   private poisoned = false;
   private initialized = false;
-  private initialSessionStartSeen = false;
 
-  constructor(private readonly capability: BoundaryCapability) {
+  constructor(
+    private readonly capability: BoundaryCapability,
+    private readonly publish: typeof writeBoundaryAtomic = writeBoundaryAtomic,
+  ) {
     this.record = {
       v: 1, observer_version: 1,
       run_id: capability.run_id, attempt_id: capability.attempt_id,
@@ -97,10 +98,6 @@ export class SessionBoundaryPublisher {
 
   observe(event: BoundaryEvent): void {
     if (this.poisoned) throw new Error("Pi session-boundary publisher is poisoned");
-    if (event.type === "session_start" && this.record.phase === "ready" && !this.initialSessionStartSeen) {
-      this.initialSessionStartSeen = true;
-      return;
-    }
     const next = reduceBoundary(this.record, event);
     if (next === this.record) return;
     this.record = next;
@@ -122,7 +119,7 @@ export class SessionBoundaryPublisher {
 
   private write(record: BoundaryRecord): void {
     try {
-      writeBoundaryAtomic(this.capability.path, record);
+      this.publish(this.capability.path, record);
     } catch (error) {
       this.poisoned = true;
       this.record = invalidRecord(this.record, "publication_failed");
