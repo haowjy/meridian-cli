@@ -1,25 +1,21 @@
 """File-backed session tracking for a Meridian state root's `sessions.jsonl`."""
 
-import hashlib
 import json
 import os
 import re
-import unicodedata
 import uuid
 from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Any, Literal, NamedTuple, Self, cast
-from urllib.parse import urlsplit
+from typing import IO, Any, Literal, NamedTuple, cast
 
 import psutil
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ValidationError
 
 from meridian.lib.core.types import (
     ChatId,
     HarnessSessionId,
-    OptionalPersistedChatId,
-    OptionalPersistedHarnessSessionId,
-    PersistedChatId,
+    normalize_optional_identity,
 )
 from meridian.lib.platform.atomic import fsync_directory
 from meridian.lib.platform.locking import (
@@ -34,57 +30,128 @@ from meridian.lib.state.event_store import read_events, utc_now_iso
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.liveness import is_process_alive_with_birth
 from meridian.lib.state.paths import RuntimePaths, normalize_path_for_write
+from meridian.lib.state.session_authority import (
+    AttemptBoundaries as AttemptBoundaries,
+)
+from meridian.lib.state.session_authority import (
+    BindNative,
+    IdentityDelta,
+    JournalEvent,
+    JournalRead,
+    JournalSnapshot,
+    NeedChat,
+    NoOp,
+    _generation_matches,
+    canonical_chat_number,
+    native_key_tuple,
+    plan_identity,
+    read_journal,
+    receipt_digest,
+    selection_startup_key,
+    startup_key,
+)
+from meridian.lib.state.session_authority import (
+    BoundaryAcceptance as BoundaryAcceptance,
+)
+from meridian.lib.state.session_authority import (
+    BoundaryEvidence as BoundaryEvidence,
+)
+from meridian.lib.state.session_authority import (
+    ConversationModelSelection as ConversationModelSelection,
+)
+from meridian.lib.state.session_authority import (
+    NativeSessionKey as NativeSessionKey,
+)
+from meridian.lib.state.session_authority import (
+    OwnedBoundaryReceipt as OwnedBoundaryReceipt,
+)
+from meridian.lib.state.session_authority import (
+    SessionAttemptEvent as SessionAttemptEvent,
+)
+from meridian.lib.state.session_authority import (
+    SessionEvent as SessionEvent,
+)
+from meridian.lib.state.session_authority import (
+    SessionHistoricalEvent as SessionHistoricalEvent,
+)
+from meridian.lib.state.session_authority import (
+    SessionModelObservationEvent as SessionModelObservationEvent,
+)
+from meridian.lib.state.session_authority import (
+    SessionModelSelectionEvent as SessionModelSelectionEvent,
+)
+from meridian.lib.state.session_authority import (
+    SessionRecord as SessionRecord,
+)
+from meridian.lib.state.session_authority import (
+    SessionStartEvent as SessionStartEvent,
+)
+from meridian.lib.state.session_authority import (
+    SessionStopEvent as SessionStopEvent,
+)
+from meridian.lib.state.session_authority import (
+    SessionUpdateEvent as SessionUpdateEvent,
+)
+from meridian.lib.state.session_authority import (
+    project_session_event as project_session_event,
+)
 
 
 def _append_session_event(
     data_path: Path,
-    lock_path: Path,
-    event: BaseModel,
+    event: JournalEvent,
     *,
     exclude_none: bool = False,
 ) -> None:
     paths = RuntimePaths.from_root_dir(data_path.parent)
-    with _sessions_transaction(paths) as payloads:
-        session_events = [parsed for row in payloads if (parsed := _parse_event(row)) is not None]
-        if isinstance(event, SessionUpdateEvent):
-            _validate_startup_identity(session_events, event)
-        if isinstance(
-            event,
-            (SessionStartEvent, SessionUpdateEvent, SessionStopEvent, SessionModelSelectionEvent),
-        ):
-            records: dict[str, SessionRecord] = {}
-            historical_chat_ids: set[str] = set()
-            for parsed in session_events:
-                project_session_event(records, parsed)
-                if isinstance(parsed, SessionHistoricalEvent):
-                    historical_chat_ids.add(parsed.chat_id)
-            if isinstance(event, SessionStartEvent) and event.chat_id in historical_chat_ids:
-                raise ValueError("Historical sessions are inert and cannot be started")
-            for record in records.values():
-                if (record.chat_id, record.session_instance_id) == (
-                    event.chat_id,
-                    event.session_instance_id,
-                ) and record.record_mode == "historical":
-                    raise ValueError("Historical sessions are inert and cannot be mutated")
-        HistoryChanges(data_path.parent).mark(HistorySource(kind="sessions"))
-        _append_session_row(data_path, event, exclude_none=exclude_none)
+    with _sessions_transaction(paths) as transaction:
+        _append_proposed_row(data_path, transaction, event, exclude_none=exclude_none)
+
+
+@dataclass
+class _SessionTransaction:
+    path: Path
+    raw: bytes
+    journal: JournalRead
+    prepared: bool = False
+
+    @property
+    def snapshot(self) -> JournalSnapshot:
+        return self.journal.snapshot
+
+    def prepare(self) -> None:
+        """Defer repair until the command has accepted its proposed effect."""
+        if self.prepared:
+            return
+        if self.journal.tail != "empty":
+            repaired = (
+                self.raw + b"\n"
+                if self.journal.tail == "complete_without_delimiter"
+                else self.raw[: self.journal.valid_prefix_end]
+            )
+            HistoryChanges(self.path.parent).mark(HistorySource(kind="sessions"))
+            atomic_write_bytes(self.path, repaired)
+        self.prepared = True
 
 
 @contextmanager
 def _sessions_transaction(paths: RuntimePaths, *, require_existing_root: bool = False):
-    """Own the lock order, strict prewrite, and confirmation for sessions.jsonl."""
+    """Own lock order, one strict projection, repair, and durable confirmation."""
     with lock_file(paths.project_lifetime_flock, mode="shared"):
-        # lock_file creates parent directories. Preserve model writers' no-resurrection
-        # contract by checking before any in-root gate can create the runtime root.
         if require_existing_root and not paths.root_dir.is_dir():
             raise FileNotFoundError(paths.root_dir)
         with (
             lock_file(HistoryChanges(paths.root_dir).mutation_lock, mode="shared"),
             lock_file(paths.sessions_flock),
         ):
-            payloads = _strict_session_prewrite(paths.sessions_jsonl)
             try:
-                yield payloads
+                raw = paths.sessions_jsonl.read_bytes()
+            except FileNotFoundError:
+                raw = b""
+            transaction = _SessionTransaction(paths.sessions_jsonl, raw, read_journal(raw))
+            try:
+                yield transaction
+                transaction.prepare()
             finally:
                 _confirm_sessions_durability(paths.sessions_jsonl)
 
@@ -97,9 +164,7 @@ def _confirm_sessions_durability(path: Path) -> None:
     fsync_directory(path.parent)
 
 
-def _append_session_row(
-    path: Path, event: BaseModel, *, exclude_none: bool = False
-) -> None:
+def _append_session_row(path: Path, event: BaseModel, *, exclude_none: bool = False) -> None:
     payload = event.model_dump(mode="json", exclude_none=exclude_none)
     line = json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n"
     append_text_line(path, line)
@@ -112,386 +177,6 @@ class _SessionLockHandles(NamedTuple):
 
 
 _SESSION_LOCK_HANDLES: dict[tuple[Path, str], _SessionLockHandles] = {}
-
-
-class SessionRecord(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    chat_id: PersistedChatId
-    history_id: uuid.UUID | None = None
-    record_mode: Literal["live", "historical"] = "live"
-    kind: Literal["primary", "spawn"]
-    harness: str
-    harness_session_id: OptionalPersistedHarnessSessionId
-    control_root: str | None = None
-    task_cwd: str | None = None
-    execution_cwd: str | None = None
-    claude_config_dir: str | None = None
-    harness_session_ids: tuple[HarnessSessionId, ...]
-    model: str
-    agent: str
-    agent_path: str
-    skills: tuple[str, ...]
-    skill_paths: tuple[str, ...]
-    params: tuple[str, ...]
-    started_at: str
-    stopped_at: str | None
-    session_instance_id: str = ""
-    active_work_id: str | None = None
-    forked_from_chat_id: OptionalPersistedChatId = None
-    forked_from_history_id: uuid.UUID | None = None
-    spawn_id: str | None = None
-
-
-class SessionStartEvent(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    history_id: uuid.UUID | None = None
-    v: int = 1
-    event: Literal["start"] = "start"
-    chat_id: PersistedChatId
-    kind: Literal["primary", "spawn"] = "spawn"
-    harness: str
-    harness_session_id: OptionalPersistedHarnessSessionId
-    control_root: str | None = None
-    task_cwd: str | None = None
-    execution_cwd: str | None = None
-    claude_config_dir: str | None = None
-    model: str
-    agent: str = ""
-    agent_path: str = ""
-    skills: tuple[str, ...] = ()
-    skill_paths: tuple[str, ...] = ()
-    params: tuple[str, ...] = ()
-    session_instance_id: str = ""
-    started_at: str
-    forked_from_chat_id: OptionalPersistedChatId = None
-    forked_from_history_id: uuid.UUID | None = None
-    spawn_id: str | None = None
-    model_selection_protocol: Literal[1] | None = None
-
-
-class SessionStopEvent(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    v: int = 1
-    event: Literal["stop"] = "stop"
-    chat_id: PersistedChatId
-    session_instance_id: str = ""
-    stopped_at: str | None = None
-
-
-class SessionUpdateEvent(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    v: int = 1
-    event: Literal["update"] = "update"
-    chat_id: PersistedChatId
-    harness_session_id: OptionalPersistedHarnessSessionId = None
-    session_instance_id: str = ""
-    claude_config_dir: str | None = None
-    active_work_id: str | None = None
-    spawn_id: str | None = None
-    history_id: uuid.UUID | None = None
-    startup_attempt_id: str | None = None
-
-
-class SessionHistoricalEvent(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    event: Literal["historical_import"] = "historical_import"
-    record: SessionRecord
-
-    @property
-    def chat_id(self) -> str:
-        return self.record.chat_id
-
-    @property
-    def session_instance_id(self) -> str:
-        return self.record.session_instance_id
-
-
-class ConversationModelSelection(BaseModel):
-    """Meridian-selected intent, not an observation of an executed model."""
-
-    model_config = ConfigDict(frozen=True)
-
-    requested_token: str | None = None
-    selected_token: str | None = None
-    canonical_model_id: str | None = None
-    harness_model_id: str | None = None
-    model_mode: Literal["named", "harness_default"] | None = None
-    provider_constraint: str | None = None
-    selection_source: Literal[
-        "explicit_override",
-        "recorded_selection",
-        "observed_last_used",
-        "initial_launch",
-        "unknown",
-    ]
-    provenance: dict[str, str] = Field(default_factory=dict)
-
-    @property
-    def literal_model(self) -> bool:
-        return self.canonical_model_id is not None or self.model_mode == "harness_default"
-
-    @property
-    def routing_token(self) -> str | None:
-        if self.selection_source == "explicit_override":
-            return self.requested_token
-        if self.selection_source == "recorded_selection":
-            return self.canonical_model_id or self.selected_token
-        return self.canonical_model_id or self.requested_token
-
-    @property
-    def mars_model(self) -> str | None:
-        token = self.routing_token
-        if self.provider_constraint and self.literal_model and token:
-            return f"{self.provider_constraint}/{token}"
-        return token
-
-    @model_validator(mode="after")
-    def validate_model_mode(self) -> Self:
-        if self.model_mode == "named" and not (
-            self.requested_token
-            and self.selected_token
-            and self.canonical_model_id
-            and self.harness_model_id
-        ):
-            raise ValueError("named selection requires tokens and canonical/executable identities")
-        if self.model_mode == "harness_default" and (
-            self.canonical_model_id or self.harness_model_id or self.provider_constraint
-        ):
-            raise ValueError("harness-default selection cannot carry a named model")
-        return self
-
-
-class SessionModelSelectionEvent(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    v: int = 1
-    event: Literal["model_selection"] = "model_selection"
-    kind: Literal["initial_seed", "invocation_started"]
-    harness: str
-    harness_session_id: OptionalPersistedHarnessSessionId
-    chat_id: PersistedChatId
-    session_instance_id: str
-    spawn_id: str | None
-    startup_attempt_id: str | None
-    recorded_at: str
-    selection: ConversationModelSelection
-
-    @model_validator(mode="after")
-    def validate_invocation_identity(self) -> Self:
-        if self.kind == "invocation_started" and not (
-            self.spawn_id
-            and self.session_instance_id
-            and self.startup_attempt_id
-            and self.selection.model_mode is not None
-        ):
-            raise ValueError(
-                "started selection requires invocation identity and resolved model mode"
-            )
-        if self.kind == "initial_seed" and self.harness_session_id is None:
-            raise ValueError("initial seed requires a native conversation identity")
-        return self
-
-
-class SessionModelObservationEvent(BaseModel):
-    """Observed executed model for a native session, independent of intent.
-
-    Keyed by ``(harness, harness_session_id)`` — no chat/generation binding. This
-    records what the harness actually last executed, which may diverge from
-    Meridian's selected intent and can exist for native sessions Meridian never
-    started. Parallel JSONL fact, not a session-lifecycle event: only observation
-    readers parse it.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    v: int = 1
-    event: Literal["model_observation"] = "model_observation"
-    harness: str
-    harness_session_id: HarnessSessionId
-    observed_model_token: str
-    observed_source: Literal["native_history"] = "native_history"
-    recorded_at: str
-
-
-class NativeSessionKey(BaseModel):
-    """Resolved native identity. A planned ID, cwd, or filename is not a key."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    harness: str
-    store: str
-    native_session_id: str
-
-    @model_validator(mode="after")
-    def validate_key(self) -> Self:
-        if not self.harness.strip() or not self.store.strip() or not self.native_session_id.strip():
-            raise ValueError("native key requires harness, resolved store, and native ID")
-        if (
-            self.harness != self.harness.strip().lower()
-            or self.native_session_id != self.native_session_id.strip()
-        ):
-            raise ValueError("native harness and ID must use normalized values")
-        if self.store != self.store.strip():
-            raise ValueError("native store locator must be normalized by its resolver")
-        if self.store.startswith("namespace:v1://"):
-            parsed = urlsplit(self.store.removeprefix("namespace:v1:"))
-            if (
-                not parsed.netloc
-                or not parsed.path.startswith("/")
-                or parsed.query
-                or parsed.fragment
-                or any(part in {"", ".", ".."} for part in parsed.path[1:].split("/"))
-                or _contains_control(self.store)
-                or self.store != f"namespace:v1:{parsed.geturl()}"
-            ):
-                raise ValueError("native namespace must be a canonical namespace:v1 URI")
-        elif not _is_canonical_local_store(self.store):
-            raise ValueError("native store must be a canonical absolute path or namespace:v1 URI")
-        return self
-
-
-def _is_canonical_local_store(store: str) -> bool:
-    return (
-        store.startswith("/")
-        and not _contains_control(store)
-        and (store == "/" or not store.endswith("/"))
-        and "//" not in store
-        and all(part not in {".", ".."} for part in store.split("/")[1:])
-    )
-
-
-def _contains_control(value: str) -> bool:
-    return any(unicodedata.category(char) == "Cc" for char in value)
-
-
-class BoundaryEvidence(BaseModel):
-    """Adapter-qualified ownership and ordering facts; state does not infer proof."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    owner_attempt_id: str
-    transport_scope_id: str
-    order: int = Field(ge=0)
-    qualified: Literal[True]
-    operation: Literal["fresh", "resume", "fork"]
-    source_key: NativeSessionKey | None = None
-    before_delivery: bool = False
-    terminal: bool = False
-    fresh_creation_verified: bool = False
-    fork_ancestry_verified: bool = False
-
-    @model_validator(mode="after")
-    def validate_ordering_identity(self) -> Self:
-        if (
-            not self.owner_attempt_id.strip()
-            or not self.transport_scope_id.strip()
-            or self.owner_attempt_id != self.owner_attempt_id.strip()
-            or self.transport_scope_id != self.transport_scope_id.strip()
-        ):
-            raise ValueError("boundary evidence requires normalized attempt and transport scope")
-        return self
-
-
-class OwnedBoundaryReceipt(BaseModel):
-    """Typed native observation supplied by an owning, qualified transport."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    run_id: str
-    attempt_id: str
-    boundary: Literal["entry", "exit"]
-    key: NativeSessionKey
-    evidence: BoundaryEvidence
-
-    @model_validator(mode="after")
-    def validate_boundary_evidence(self) -> Self:
-        if not self.run_id.strip() or not self.attempt_id.strip():
-            raise ValueError("boundary receipt requires run and attempt ownership")
-        if self.evidence.owner_attempt_id != self.attempt_id:
-            raise ValueError("receipt is not owned by this attempt")
-        if self.boundary == "entry" and not self.evidence.before_delivery:
-            raise ValueError("entry evidence must precede delivery")
-        if self.boundary == "exit" and not self.evidence.terminal:
-            raise ValueError("exit evidence must establish terminality")
-        return self
-
-
-class SessionAttemptEvent(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    v: Literal[1] = 1
-    event: Literal["native_attempt"] = "native_attempt"
-    action: Literal["begin", "boundary", "invalidate_exit"]
-    run_id: str
-    attempt_id: str
-    attempt_number: int | None = Field(default=None, ge=1)
-    transport_scope_id: str | None = None
-    operation: Literal["fresh", "resume", "fork"] | None = None
-    requested_source: NativeSessionKey | None = None
-    receipt: OwnedBoundaryReceipt | None = None
-    chat_id: PersistedChatId | None = None
-    invalidated_event_id: str | None = None
-    contradiction_digest: str | None = None
-
-    @model_validator(mode="after")
-    def validate_attempt_event(self) -> Self:
-        if not self.run_id.strip() or not self.attempt_id.strip():
-            raise ValueError("attempt event requires run and attempt identity")
-        if self.action == "begin" and any(
-            value is not None
-            for value in (
-                self.receipt,
-                self.chat_id,
-                self.invalidated_event_id,
-                self.contradiction_digest,
-            )
-        ):
-            raise ValueError("begin event cannot carry boundary state")
-        if self.action == "begin":
-            if (
-                not self.transport_scope_id
-                or self.operation is None
-                or self.attempt_number is None
-                or ((self.operation == "resume") != (self.requested_source is not None))
-            ):
-                raise ValueError("attempt begin requires owner scope, operation, and source intent")
-        elif (
-            self.operation is not None
-            or self.requested_source is not None
-            or self.transport_scope_id is not None
-            or self.attempt_number is not None
-        ):
-            raise ValueError("operation and owner scope belong only on attempt begin")
-        if self.action == "boundary":
-            if self.receipt is None or self.chat_id is None:
-                raise ValueError("boundary event requires owned receipt and chat binding")
-            if (self.receipt.run_id, self.receipt.attempt_id) != (self.run_id, self.attempt_id):
-                raise ValueError("boundary event owner does not match receipt")
-        if self.action == "invalidate_exit" and not (
-            self.invalidated_event_id
-            and self.contradiction_digest
-            and self.receipt is None
-            and self.chat_id is None
-        ):
-            raise ValueError(
-                "exit invalidation requires accepted and contradictory receipt digests"
-            )
-        return self
-
-
-class BoundaryAcceptance(NamedTuple):
-    chat_id: str | None
-    invalidated: bool = False
-
-
-class AttemptBoundaries(NamedTuple):
-    entry_chat_id: str | None
-    exit_chat_id: str | None
-    exit_invalidated: bool
 
 
 def begin_native_attempt(
@@ -507,56 +192,28 @@ def begin_native_attempt(
     if not run_id.strip() or not attempt_id.strip():
         raise ValueError("run and attempt identity are required")
     paths = RuntimePaths.from_root_dir(runtime_root)
-    with _sessions_transaction(paths) as events:
+    with _sessions_transaction(paths) as transaction:
+        snapshot = transaction.snapshot
         if operation in {"resume", "fork"}:
             if requested_source is None:
                 raise ValueError("resume/fork intent requires its pinned source key")
-            known_keys = {
-                (
-                    event.receipt.key.harness,
-                    event.receipt.key.store,
-                    event.receipt.key.native_session_id,
-                )
-                for payload in events
-                if payload.get("event") == "native_attempt"
-                for event in (SessionAttemptEvent.model_validate(payload),)
-                if event.action == "boundary" and event.receipt is not None
-            }
-            if (
-                requested_source.harness,
-                requested_source.store,
-                requested_source.native_session_id,
-            ) not in known_keys:
+            if native_key_tuple(requested_source) not in snapshot.identity.key_to_chat:
                 raise ValueError("requested source is not an accepted native chat binding")
-        existing = [
-            p
-            for p in events
-            if p.get("event") == "native_attempt"
-            and p.get("run_id") == run_id
-            and p.get("attempt_id") == attempt_id
-        ]
-        if existing:
-            prior = SessionAttemptEvent.model_validate(existing[0])
-            if prior.action != "begin" or (
+        state = snapshot.attempts.states.get((run_id, attempt_id))
+        if state is not None:
+            prior = state.begin
+            if (
                 prior.operation != operation
                 or prior.requested_source != requested_source
                 or prior.transport_scope_id != transport_scope_id
             ):
                 raise ValueError("attempt authority has no valid begin")
             return
-        attempt_number = 1 + max(
-            (
-                int(payload["attempt_number"])
-                for payload in events
-                if payload.get("event") == "native_attempt"
-                and payload.get("run_id") == run_id
-                and payload.get("action") == "begin"
-            ),
-            default=0,
-        )
+        latest = snapshot.attempts.latest.get(run_id)
+        attempt_number = 1 + ((latest.attempt_number or 0) if latest else 0)
         _append_authority_event(
             paths.sessions_jsonl,
-            paths.sessions_flock,
+            transaction,
             SessionAttemptEvent(
                 action="begin",
                 run_id=run_id,
@@ -572,32 +229,14 @@ def begin_native_attempt(
 def accept_native_boundary(runtime_root: Path, receipt: OwnedBoundaryReceipt) -> BoundaryAcceptance:
     """Atomically bind a verified attempt boundary to an immutable canonical chat."""
     paths = RuntimePaths.from_root_dir(runtime_root)
-    with _sessions_transaction(paths) as payloads:
-        attempt_events = [
-            SessionAttemptEvent.model_validate(payload)
-            for payload in payloads
-            if payload.get("event") == "native_attempt"
-        ]
-        begins = [
-            event
-            for event in attempt_events
-            if event.run_id == receipt.run_id
-            and event.attempt_id == receipt.attempt_id
-            and event.action == "begin"
-        ]
-        if not begins:
+    with _sessions_transaction(paths) as transaction:
+        snapshot = transaction.snapshot
+        state = snapshot.attempts.states.get((receipt.run_id, receipt.attempt_id))
+        if state is None:
             raise ValueError("receipt belongs to an unknown or unstarted attempt")
-        current_attempt = max(
-            (
-                event
-                for event in attempt_events
-                if event.run_id == receipt.run_id and event.action == "begin"
-            ),
-            key=lambda event: event.attempt_number or 0,
-        )
-        if current_attempt.attempt_id != receipt.attempt_id:
+        if snapshot.attempts.latest[receipt.run_id].attempt_id != receipt.attempt_id:
             raise ValueError("receipt belongs to a superseded attempt")
-        begin = begins[0]
+        begin = state.begin
         if receipt.evidence.transport_scope_id != begin.transport_scope_id:
             raise ValueError("receipt is not owned by this transport attempt")
         if (
@@ -631,48 +270,20 @@ def accept_native_boundary(runtime_root: Path, receipt: OwnedBoundaryReceipt) ->
             )
         ):
             raise ValueError("fresh entry lacks fresh-target evidence")
-        matching = [
-            event
-            for event in attempt_events
-            if event.run_id == receipt.run_id and event.attempt_id == receipt.attempt_id
-        ]
-        prior_entry = next(
-            (
-                event.receipt
-                for event in matching
-                if event.action == "boundary"
-                and event.receipt is not None
-                and event.receipt.boundary == "entry"
-            ),
-            None,
-        )
+        prior_entry = state.entry.receipt if state.entry else None
         if (
             receipt.boundary == "exit"
             and prior_entry is not None
             and receipt.evidence.order <= prior_entry.evidence.order
         ):
             raise ValueError("terminal boundary must follow accepted entry ordering evidence")
-        boundary_events = [
-            event
-            for event in matching
-            if event.action == "boundary"
-            and event.receipt is not None
-            and event.receipt.boundary == receipt.boundary
-        ]
-        invalidations = {
-            event.invalidated_event_id for event in matching if event.action == "invalidate_exit"
-        }
-        if receipt.boundary == "exit" and any(
-            e.receipt is not None
-            and hashlib.sha256(e.receipt.model_dump_json().encode()).hexdigest() in invalidations
-            for e in boundary_events
-        ):
+        if receipt.boundary == "exit" and state.invalidation is not None:
             return BoundaryAcceptance(None, True)
-        receipt_digest = hashlib.sha256(receipt.model_dump_json().encode()).hexdigest()
-        prior = boundary_events[-1] if boundary_events else None
+        digest = receipt_digest(receipt)
+        prior = state.entry if receipt.boundary == "entry" else state.exit
         if prior is not None:
-            prior_digest = hashlib.sha256(prior.receipt.model_dump_json().encode()).hexdigest()  # type: ignore[union-attr]
-            if prior_digest == receipt_digest:
+            prior_digest = receipt_digest(prior.receipt)  # type: ignore[union-attr]
+            if prior_digest == digest:
                 return BoundaryAcceptance(prior.chat_id)
             if prior.receipt is not None and receipt.evidence.order <= prior.receipt.evidence.order:
                 raise ValueError("contradictory receipt is not later in qualified ordering")
@@ -690,28 +301,18 @@ def accept_native_boundary(runtime_root: Path, receipt: OwnedBoundaryReceipt) ->
                     run_id=receipt.run_id,
                     attempt_id=receipt.attempt_id,
                     invalidated_event_id=prior_digest,
-                    contradiction_digest=receipt_digest,
+                    contradiction_digest=digest,
                 )
-                _append_authority_event(paths.sessions_jsonl, paths.sessions_flock, invalidation)
+                _append_authority_event(paths.sessions_jsonl, transaction, invalidation)
                 return BoundaryAcceptance(None, True)
-        bindings: dict[str, NativeSessionKey] = {}
-        for event in attempt_events:
-            if event.action != "boundary" or event.chat_id is None or event.receipt is None:
-                continue
-            key = event.receipt.key
-            previous = bindings.get(event.chat_id)
-            if previous is not None and previous != key:
-                raise ValueError(f"Contaminated native chat binding: {event.chat_id}")
-            bindings[event.chat_id] = key
-        owners = [chat_id for chat_id, key in bindings.items() if key == receipt.key]
-        if len(owners) > 1:
-            raise ValueError("Duplicate native key claims require reconciliation")
-        known_chat_ids = _occupied_chat_refs(payloads)
-        chat_id = (
-            owners[0]
-            if owners
-            else _allocate_binding_chat_id(paths, known_chat_ids | set(bindings))
-        )
+        decision = plan_identity(snapshot.identity, BindNative(receipt.key))
+        if isinstance(decision, NeedChat):
+            chat_id = _allocate_binding_chat_id(paths, transaction)
+            decision = plan_identity(
+                snapshot.identity, BindNative(receipt.key), assigned_chat=chat_id
+            )
+        assert isinstance(decision, IdentityDelta) and decision.chat_id is not None
+        chat_id = decision.chat_id
         event = SessionAttemptEvent(
             action="boundary",
             run_id=receipt.run_id,
@@ -719,54 +320,47 @@ def accept_native_boundary(runtime_root: Path, receipt: OwnedBoundaryReceipt) ->
             receipt=receipt,
             chat_id=ChatId(chat_id),
         )
-        _append_authority_event(paths.sessions_jsonl, paths.sessions_flock, event)
+        _append_authority_event(paths.sessions_jsonl, transaction, event)
         return BoundaryAcceptance(chat_id)
 
 
-def _allocate_binding_chat_id(paths: RuntimePaths, used_chat_ids: set[str]) -> str:
+def _allocate_binding_chat_id(paths: RuntimePaths, transaction: _SessionTransaction) -> ChatId:
     """Allocate above every occupied or previously reserved canonical reference."""
     with lock_file(paths.session_id_counter_flock):
         current = _read_session_counter(paths)
-        high_water = max((current, *_chat_ref_numbers(used_chat_ids)))
-        result = f"c{high_water + 1}"
+        high_water = max(current, transaction.snapshot.identity.max_canonical_number)
+        transaction.prepare()
+        result = ChatId(f"c{high_water + 1}")
         atomic_write_text(paths.session_id_counter, f"{high_water + 1}\n")
         return result
 
 
-def _chat_ref_numbers(refs: set[str]) -> set[int]:
-    return {
-        int(match.group(1))
-        for ref in refs
-        if (match := re.fullmatch(r"c([1-9][0-9]*)", ref, flags=re.ASCII)) is not None
-    }
+def _append_proposed_row(
+    path: Path, transaction: _SessionTransaction, event: JournalEvent, *, exclude_none: bool = False
+) -> None:
+    snapshot = transaction.snapshot
+    decision = plan_identity(snapshot.identity, event)
+    if isinstance(decision, NoOp):
+        return
+    assert isinstance(decision, IdentityDelta)
+    if isinstance(event, (SessionUpdateEvent, SessionModelSelectionEvent)):
+        snapshot.metadata.validate_startup(event)
+    transaction.prepare()
+    HistoryChanges(path.parent).mark(HistorySource(kind="sessions"))
+    _append_session_row(path, event, exclude_none=exclude_none)
 
 
-def _occupied_chat_refs(payloads: list[dict[str, Any]]) -> set[str]:
-    """Collect normalized identities from decoded, recognized journal events."""
-    refs: set[str] = set()
-    for payload in payloads:
-        event = _parse_event(payload)
-        if event is None:
-            continue
-        chat_id = getattr(event, "chat_id", None)
-        if chat_id is not None:
-            refs.add(str(chat_id))
-        if isinstance(event, SessionStartEvent) and event.forked_from_chat_id is not None:
-            refs.add(str(event.forked_from_chat_id))
-        if isinstance(event, SessionHistoricalEvent) and event.record.forked_from_chat_id:
-            refs.add(str(event.record.forked_from_chat_id))
-    return refs
-
-
-def _append_authority_event(path: Path, lock_path: Path, event: SessionAttemptEvent) -> None:
-    """Append through the active session transaction and resolve ambiguous writes."""
+def _append_authority_event(
+    path: Path, transaction: _SessionTransaction, event: SessionAttemptEvent
+) -> None:
+    """Append through the active transaction and resolve ambiguous writes."""
     try:
-        _append_session_row(path, event)
+        _append_proposed_row(path, transaction, event)
     except OSError:
-        # Visibility in page cache is not a commit; require a fresh full barrier.
-        payloads = _strict_session_events(path)
-        expected = event.model_dump(mode="json", exclude_none=False)
-        if expected not in payloads:
+        # Exceptional reread only: visibility is not a commit without a fresh barrier.
+        recovered = read_journal(path.read_bytes()).snapshot
+        state = recovered.attempts.states.get((event.run_id, event.attempt_id))
+        if state is None or event not in (state.begin, state.entry, state.exit, state.invalidation):
             raise
         _confirm_sessions_durability(path)
 
@@ -774,75 +368,29 @@ def _append_authority_event(path: Path, lock_path: Path, event: SessionAttemptEv
 def get_native_session_key(runtime_root: Path, chat_id: str) -> NativeSessionKey | None:
     """Return a native key only after confirming journal and directory durability."""
     paths = RuntimePaths.from_root_dir(runtime_root)
-    with _sessions_transaction(paths) as payloads:
-        payloads = list(payloads)
-    bindings: dict[str, NativeSessionKey] = {}
-    for payload in payloads:
-        if payload.get("event") != "native_attempt":
-            continue
-        event = SessionAttemptEvent.model_validate(payload)
-        if event.action != "boundary" or event.chat_id is None or event.receipt is None:
-            continue
-        prior = bindings.setdefault(event.chat_id, event.receipt.key)
-        if prior != event.receipt.key:
-            raise ValueError(f"Contaminated native chat binding: {event.chat_id}")
-    return bindings.get(chat_id)
+    with _sessions_transaction(paths) as transaction:
+        snapshot = transaction.snapshot
+        return snapshot.identity.chat_to_key.get(ChatId(normalize_optional_identity(chat_id) or ""))
 
 
 def get_native_attempt_boundaries(
     runtime_root: Path, run_id: str, attempt_id: str
 ) -> AttemptBoundaries:
-    """Replay one attempt's effective boundaries; invalidation never erases provenance."""
+    """Invalidation never erases identity or boundary provenance."""
     paths = RuntimePaths.from_root_dir(runtime_root)
-    with _sessions_transaction(paths) as payloads:
-        payloads = list(payloads)
-    events = [
-        SessionAttemptEvent.model_validate(payload)
-        for payload in payloads
-        if payload.get("event") == "native_attempt"
-        and payload.get("run_id") == run_id
-        and payload.get("attempt_id") == attempt_id
-    ]
-    entry = next(
-        (
-            event.chat_id
-            for event in events
-            if event.action == "boundary" and event.receipt and event.receipt.boundary == "entry"
-        ),
-        None,
-    )
-    exit_event = next(
-        (
-            event
-            for event in events
-            if event.action == "boundary" and event.receipt and event.receipt.boundary == "exit"
-        ),
-        None,
-    )
-    invalidated = bool(
-        exit_event is not None
-        and any(
-            event.action == "invalidate_exit"
-            and exit_event.receipt is not None
-            and event.invalidated_event_id
-            == hashlib.sha256(exit_event.receipt.model_dump_json().encode()).hexdigest()
-            for event in events
+    with _sessions_transaction(paths) as transaction:
+        snapshot = transaction.snapshot
+        state = snapshot.attempts.states.get((run_id, attempt_id))
+        if state is None:
+            return AttemptBoundaries(None, None, False)
+        invalidated = state.invalidation is not None
+        return AttemptBoundaries(
+            state.entry.chat_id if state.entry else None,
+            state.exit.chat_id if state.exit and not invalidated else None,
+            invalidated,
         )
-    )
-    return AttemptBoundaries(
-        entry,
-        None if invalidated or exit_event is None else exit_event.chat_id,
-        invalidated,
-    )
 
 
-type SessionEvent = (
-    SessionStartEvent
-    | SessionStopEvent
-    | SessionUpdateEvent
-    | SessionHistoricalEvent
-    | SessionModelSelectionEvent
-)
 type MaterializedCleanupScope = str
 
 
@@ -869,223 +417,14 @@ def _parse_event(payload: dict[str, Any]) -> SessionEvent | None:
     return None
 
 
-_STRICT_SESSION_EVENTS = {
-    "historical_import",
-    "start",
-    "stop",
-    "update",
-    "model_selection",
-    "model_observation",
-    "native_attempt",
-}
-
-
-def _strict_session_events(path: Path, raw: bytes | None = None) -> list[dict[str, Any]]:
-    """Read sessions authority without the permissive event-store skip behavior."""
-    if raw is None:
-        try:
-            raw = path.read_bytes()
-        except FileNotFoundError:
-            return []
-    lines = raw.split(b"\n")
-    complete = lines[:-1]
-    tail = b"" if raw.endswith(b"\n") else lines[-1]
-    payloads: list[dict[str, Any]] = []
-    for index, line in enumerate(complete):
-        if not line.strip():
-            continue
-        try:
-            payload = json.loads(line.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise ValueError(f"Corrupt sessions.jsonl row {index + 1}") from exc
-        if not isinstance(payload, dict):
-            raise ValueError(f"Non-object sessions.jsonl row {index + 1}")
-        kind = payload.get("event")
-        if kind not in _STRICT_SESSION_EVENTS:
-            raise ValueError(f"Unsupported sessions.jsonl event type at row {index + 1}")
-        if kind in _STRICT_SESSION_EVENTS:
-            if kind == "model_observation":
-                SessionModelObservationEvent.model_validate(payload)
-            elif kind == "native_attempt":
-                try:
-                    SessionAttemptEvent.model_validate(payload)
-                except ValidationError as exc:
-                    raise ValueError("Invalid native_attempt sessions.jsonl row") from exc
-            else:
-                parsed = _parse_event(payload)
-                if parsed is None:
-                    raise ValueError(f"Invalid {kind!r} sessions.jsonl row {index + 1}")
-        payloads.append(payload)
-    if tail:
-        try:
-            final_payload = json.loads(tail.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            if _has_uninvalidated_exit(payloads):
-                raise ValueError("Torn sessions tail may conceal an exit invalidation") from None
-            _validate_native_attempt_replay(payloads)
-            return payloads
-        if not isinstance(final_payload, dict):
-            raise ValueError("Complete final sessions row must be a JSON object")
-        kind = final_payload.get("event")
-        if kind not in _STRICT_SESSION_EVENTS:
-            raise ValueError("Unsupported final sessions.jsonl event type")
-        if kind in _STRICT_SESSION_EVENTS:
-            if kind == "model_observation":
-                SessionModelObservationEvent.model_validate(final_payload)
-            elif kind == "native_attempt":
-                try:
-                    SessionAttemptEvent.model_validate(final_payload)
-                except ValidationError as exc:
-                    raise ValueError("Invalid final native_attempt row") from exc
-            elif _parse_event(final_payload) is None:
-                raise ValueError(f"Invalid {kind!r} final sessions row")
-        payloads.append(final_payload)
-    _validate_native_attempt_replay(payloads)
-    return payloads
-
-
-def _validate_native_attempt_replay(payloads: list[dict[str, Any]]) -> None:
-    attempts: dict[tuple[str, str], dict[str, Any]] = {}
-    chat_keys: dict[str, NativeSessionKey] = {}
-    key_chats: dict[tuple[str, str, str], str] = {}
-    latest_attempt_numbers: dict[str, int] = {}
-    for payload in payloads:
-        if payload.get("event") != "native_attempt":
-            continue
-        event = SessionAttemptEvent.model_validate(payload)
-        owner = (event.run_id, event.attempt_id)
-        state = attempts.setdefault(
-            owner, {"begun": False, "entry": None, "exit": None, "invalid": False}
-        )
-        if event.action == "begin":
-            if state["begun"] or state["entry"] is not None:
-                raise ValueError("Duplicate or late native attempt begin")
-            assert event.attempt_number is not None
-            if event.attempt_number <= latest_attempt_numbers.get(event.run_id, 0):
-                raise ValueError("Native attempt sequence moved backwards")
-            latest_attempt_numbers[event.run_id] = event.attempt_number
-            state["begun"] = True
-            continue
-        if not state["begun"]:
-            raise ValueError("Native boundary precedes attempt begin")
-        if event.action == "invalidate_exit":
-            accepted = state["exit"]
-            if accepted is None or state["invalid"]:
-                raise ValueError("Invalid or duplicate native exit invalidation")
-            assert event.receipt is None
-            accepted_digest = hashlib.sha256(accepted.model_dump_json().encode()).hexdigest()
-            if event.invalidated_event_id != accepted_digest:
-                raise ValueError("Exit invalidation does not name the accepted receipt")
-            state["invalid"] = True
-            continue
-        assert event.receipt is not None and event.chat_id is not None
-        if state["invalid"] and event.receipt.boundary == "exit":
-            raise ValueError("Invalidated attempt exit cannot be resurrected")
-        key = event.receipt.key
-        prior_key = chat_keys.setdefault(event.chat_id, key)
-        if prior_key != key:
-            raise ValueError("Native chat binding changed key")
-        identity = (key.harness, key.store, key.native_session_id)
-        prior_chat = key_chats.setdefault(identity, event.chat_id)
-        if prior_chat != event.chat_id:
-            raise ValueError("Duplicate native key claims require reconciliation")
-        if state[event.receipt.boundary] is not None:
-            raise ValueError("Duplicate attempt boundary row")
-        state[event.receipt.boundary] = event.receipt
-
-
-def _has_uninvalidated_exit(payloads: list[dict[str, Any]]) -> bool:
-    exits: dict[tuple[str, str], str] = {}
-    invalidated: set[tuple[str, str]] = set()
-    for payload in payloads:
-        if payload.get("event") != "native_attempt":
-            continue
-        event = SessionAttemptEvent.model_validate(payload)
-        owner = (event.run_id, event.attempt_id)
-        if (
-            event.action == "boundary"
-            and event.receipt is not None
-            and event.receipt.boundary == "exit"
-        ):
-            exits[owner] = hashlib.sha256(event.receipt.model_dump_json().encode()).hexdigest()
-        elif event.action == "invalidate_exit":
-            invalidated.add(owner)
-    return any(owner not in invalidated for owner in exits)
-
-
-def _strict_session_prewrite(path: Path) -> list[dict[str, Any]]:
-    """Strictly validate, then perform only the repair authorized by that read."""
-    try:
-        raw = path.read_bytes()
-    except FileNotFoundError:
-        return []
-    payloads = _strict_session_events(path, raw)
-    if raw and not raw.endswith(b"\n"):
-        tail = raw.rsplit(b"\n", 1)[-1]
-        try:
-            final = json.loads(tail.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            # Strict validation authorized dropping only this torn final fragment.
-            repaired = raw[: raw.rfind(b"\n") + 1] if b"\n" in raw else b""
-        else:
-            if not isinstance(final, dict):
-                raise ValueError("Complete final sessions row must be a JSON object")
-            repaired = raw + b"\n"
-        if repaired != raw:
-            atomic_write_bytes(path, repaired)
-    return payloads
-
-
 def _parse_model_observation(payload: dict[str, Any]) -> SessionModelObservationEvent | None:
     if payload.get("event") != "model_observation":
         return None
     return SessionModelObservationEvent.model_validate(payload)
 
 
-def _record_from_start_event(event: SessionStartEvent) -> SessionRecord:
-    return SessionRecord(
-        chat_id=event.chat_id,
-        history_id=event.history_id,
-        kind=event.kind,
-        harness=event.harness,
-        harness_session_id=event.harness_session_id,
-        control_root=event.control_root,
-        task_cwd=event.task_cwd,
-        execution_cwd=event.execution_cwd,
-        claude_config_dir=event.claude_config_dir,
-        harness_session_ids=(
-            (event.harness_session_id,) if event.harness_session_id is not None else ()
-        ),
-        model=event.model,
-        agent=event.agent,
-        agent_path=event.agent_path,
-        skills=event.skills,
-        skill_paths=event.skill_paths,
-        params=event.params,
-        started_at=event.started_at,
-        stopped_at=None,
-        session_instance_id=event.session_instance_id,
-        active_work_id=None,
-        forked_from_chat_id=event.forked_from_chat_id,
-        forked_from_history_id=event.forked_from_history_id,
-        spawn_id=event.spawn_id,
-    )
-
-
 def _session_lease_path(paths: RuntimePaths, chat_id: str) -> Path:
     return paths.sessions_dir / f"{chat_id}.lease.json"
-
-
-def _normalized_generation(generation: str) -> str:
-    return generation.strip()
-
-
-def _generation_matches(expected: str, actual: str) -> bool:
-    normalized_expected = _normalized_generation(expected)
-    normalized_actual = _normalized_generation(actual)
-    if not normalized_expected and not normalized_actual:
-        return True
-    return normalized_expected == normalized_actual
 
 
 def _read_session_lease_data(
@@ -1170,82 +509,8 @@ def _read_session_counter(paths: RuntimePaths) -> int:
 
 def reserve_chat_id(runtime_root: Path) -> str:
     paths = RuntimePaths.from_root_dir(runtime_root)
-    with _sessions_transaction(paths) as payloads:
-        return _allocate_binding_chat_id(paths, _occupied_chat_refs(payloads))
-
-
-def project_session_event(records: dict[str, SessionRecord], event: SessionEvent) -> None:
-    """Apply one authoritative event; shared by replay and incremental discovery."""
-    if isinstance(event, SessionHistoricalEvent):
-        if event.record.record_mode != "historical" or event.record.stopped_at is None:
-            raise ValueError("Historical imports must be inactive")
-        records[event.chat_id] = event.record
-        return
-    if isinstance(event, SessionModelSelectionEvent):
-        return
-    if isinstance(event, SessionStartEvent):
-        record = _record_from_start_event(event)
-        records[record.chat_id] = record
-        return
-    existing = records.get(event.chat_id)
-    if (
-        existing is not None
-        and existing.record_mode == "historical"
-        and _generation_matches(existing.session_instance_id, event.session_instance_id)
-    ):
-        raise ValueError("Historical session authority contains a mutation")
-    if isinstance(event, SessionStopEvent):
-        existing = records.get(event.chat_id)
-        if existing is None:
-            return
-        if not _generation_matches(existing.session_instance_id, event.session_instance_id):
-            return
-        records[event.chat_id] = existing.model_copy(
-            update={
-                "stopped_at": event.stopped_at
-                if event.stopped_at is not None
-                else existing.stopped_at,
-                "session_instance_id": event.session_instance_id or existing.session_instance_id,
-            }
-        )
-        return
-    existing = records.get(event.chat_id)
-    if existing is None:
-        return
-    if not _generation_matches(existing.session_instance_id, event.session_instance_id):
-        return
-    session_ids = existing.harness_session_ids
-    harness_session_id = existing.harness_session_id
-    updated_work_id = existing.active_work_id
-    claude_config_dir = existing.claude_config_dir
-    spawn_id = existing.spawn_id
-    session_instance_id = existing.session_instance_id
-    if event.harness_session_id is not None:
-        if event.harness_session_id not in session_ids:
-            session_ids = (*session_ids, event.harness_session_id)
-        harness_session_id = event.harness_session_id
-    if event.session_instance_id.strip():
-        session_instance_id = event.session_instance_id
-    if event.active_work_id is not None:
-        normalized_work_id = event.active_work_id.strip()
-        updated_work_id = normalized_work_id or None
-    if event.claude_config_dir is not None:
-        normalized_config_dir = event.claude_config_dir.strip()
-        claude_config_dir = normalized_config_dir or None
-    if event.spawn_id is not None:
-        normalized_spawn_id = event.spawn_id.strip()
-        spawn_id = normalized_spawn_id or None
-    records[event.chat_id] = existing.model_copy(
-        update={
-            "harness_session_id": harness_session_id,
-            "harness_session_ids": session_ids,
-            "session_instance_id": session_instance_id,
-            "active_work_id": updated_work_id,
-            "claude_config_dir": claude_config_dir,
-            "spawn_id": spawn_id,
-            "history_id": event.history_id or existing.history_id,
-        }
-    )
+    with _sessions_transaction(paths) as transaction:
+        return _allocate_binding_chat_id(paths, transaction)
 
 
 def _records_by_session(runtime_root: Path) -> dict[str, SessionRecord]:
@@ -1257,8 +522,8 @@ def _records_by_session(runtime_root: Path) -> dict[str, SessionRecord]:
 
 
 def _session_sort_key(chat_id: str) -> tuple[int, str]:
-    if chat_id.startswith("c") and chat_id[1:].isdigit():
-        return (int(chat_id[1:]), chat_id)
+    if number := canonical_chat_number(chat_id):
+        return (number, chat_id)
     return (10**9, chat_id)
 
 
@@ -1372,7 +637,7 @@ def start_session(
                             or spawn_snapshot.forked_from_history_id,
                         }
                     )
-            _append_session_event(paths.sessions_jsonl, paths.sessions_flock, event)
+            _append_session_event(paths.sessions_jsonl, event)
             _write_session_lease(paths, resolved_chat_id, session_instance_id)
             if spawn_id is not None and spawn_snapshot is not None:
                 from meridian.lib.state.spawn.model import SpawnRecord
@@ -1389,9 +654,7 @@ def start_session(
 
                 # Repairable from the committed session identity: this mirror is
                 # deliberately published only after the journal's durability barrier.
-                write_state_locked(
-                    paths.spawns_dir, spawn_id, bind, allow_terminal_overwrite=True
-                )
+                write_state_locked(paths.spawns_dir, spawn_id, bind, allow_terminal_overwrite=True)
     except Exception:
         if handle is not None:
             release_file_lock(handle)
@@ -1418,7 +681,6 @@ def stop_session(runtime_root: Path, chat_id: str) -> None:
     )
     _append_session_event(
         paths.sessions_jsonl,
-        paths.sessions_flock,
         event,
         exclude_none=True,
     )
@@ -1451,7 +713,6 @@ def update_session_harness_id(
     )
     _append_session_event(
         paths.sessions_jsonl,
-        paths.sessions_flock,
         event,
         exclude_none=True,
     )
@@ -1470,7 +731,6 @@ def update_session_work_id(runtime_root: Path, chat_id: str, work_id: str | None
     )
     _append_session_event(
         paths.sessions_jsonl,
-        paths.sessions_flock,
         event,
         exclude_none=True,
     )
@@ -1492,7 +752,6 @@ def update_session_spawn_id(runtime_root: Path, chat_id: str, spawn_id: str) -> 
     )
     _append_session_event(
         paths.sessions_jsonl,
-        paths.sessions_flock,
         event,
         exclude_none=True,
     )
@@ -1514,7 +773,6 @@ def update_session_claude_config_dir(
     )
     _append_session_event(
         paths.sessions_jsonl,
-        paths.sessions_flock,
         event,
         exclude_none=True,
     )
@@ -1609,23 +867,6 @@ def _bound_model_selections(
                 native_id = next(iter(observed))
         bound.append((event, native_id))
     return bound
-
-
-def _validate_startup_identity(
-    events: list[SessionEvent],
-    event: SessionUpdateEvent | SessionModelSelectionEvent,
-) -> None:
-    if event.startup_attempt_id is None or event.harness_session_id is None:
-        return
-    for prior in events:
-        if isinstance(prior, (SessionUpdateEvent, SessionModelSelectionEvent)) and (
-            prior.chat_id == event.chat_id
-            and prior.session_instance_id == event.session_instance_id
-            and prior.startup_attempt_id == event.startup_attempt_id
-            and prior.harness_session_id is not None
-            and prior.harness_session_id != event.harness_session_id
-        ):
-            raise ValueError("startup attempt changed its native conversation identity")
 
 
 def get_initial_model_selection(
@@ -1742,69 +983,48 @@ def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent
     """Durably append once per invocation/conversation; false means already recorded."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    with _sessions_transaction(paths, require_existing_root=True) as payloads:
-        events = [parsed for row in payloads if (parsed := _parse_event(row)) is not None]
-        source_start = next(
-            (
-                start
-                for start in events
-                if isinstance(start, SessionStartEvent)
-                and start.chat_id == event.chat_id
-                and start.session_instance_id == event.session_instance_id
-                and start.harness == event.harness
-            ),
-            None,
+    with _sessions_transaction(paths, require_existing_root=True) as transaction:
+        snapshot = transaction.snapshot
+        metadata = snapshot.metadata
+        source_start = metadata.starts.get(
+            (event.chat_id, event.session_instance_id, event.harness)
         )
         if source_start is None:
             raise ValueError("selection has no matching captured session generation")
         if event.kind == "initial_seed" and source_start.model_selection_protocol is not None:
             raise ValueError("cannot seed a new-protocol session from prelaunch intent")
-        _validate_startup_identity(events, event)
-        bound = _bound_model_selections([*events, event])
-        _, native_id = bound[-1]
-        for prior, prior_id in bound[:-1]:
-            if prior.harness != event.harness:
-                continue
-            if (
-                native_id is not None
-                and prior_id == native_id
-                and (
-                    event.kind == "initial_seed"
-                    or (prior.kind == "invocation_started" and prior.spawn_id == event.spawn_id)
+        # Even a metadata no-op must not hide an attempted historical mutation.
+        plan_identity(snapshot.identity, event)
+        metadata.validate_startup(event)
+        native_id = metadata.selection_native_id(event)
+        if native_id is not None and (
+            (event.kind == "initial_seed" and (event.harness, native_id) in metadata.selections)
+            or (
+                event.kind == "invocation_started"
+                and (event.harness, native_id, event.spawn_id) in metadata.invocations
+            )
+        ):
+            if event.kind == "invocation_started" and native_id not in metadata.startup_ids.get(
+                startup_key(event), frozenset()
+            ):
+                _append_proposed_row(
+                    paths.sessions_jsonl,
+                    transaction,
+                    SessionUpdateEvent(
+                        chat_id=event.chat_id,
+                        session_instance_id=event.session_instance_id,
+                        startup_attempt_id=event.startup_attempt_id,
+                        harness_session_id=HarnessSessionId(native_id),
+                    ),
+                    exclude_none=True,
                 )
-            ):
-                if event.kind == "invocation_started" and not any(
-                    isinstance(identity, (SessionUpdateEvent, SessionModelSelectionEvent))
-                    and identity.chat_id == event.chat_id
-                    and identity.session_instance_id == event.session_instance_id
-                    and identity.startup_attempt_id == event.startup_attempt_id
-                    and identity.harness_session_id == native_id
-                    for identity in events
-                ):
-                    HistoryChanges(runtime_root).mark(HistorySource(kind="sessions"))
-                    _append_session_row(
-                        paths.sessions_jsonl,
-                        SessionUpdateEvent(
-                            chat_id=event.chat_id,
-                            session_instance_id=event.session_instance_id,
-                            startup_attempt_id=event.startup_attempt_id,
-                            harness_session_id=HarnessSessionId(native_id),
-                        ),
-                        exclude_none=True,
-                    )
-                return False
-            if event.kind == "invocation_started" and (
-                prior.kind == event.kind
-                and prior.spawn_id == event.spawn_id
-                and prior.chat_id == event.chat_id
-                and prior.session_instance_id == event.session_instance_id
-                and prior.startup_attempt_id == event.startup_attempt_id
-            ):
-                if prior_id is not None and native_id is not None and prior_id != native_id:
-                    raise ValueError("startup attempt changed its native conversation identity")
-                return False
-        HistoryChanges(runtime_root).mark(HistorySource(kind="sessions"))
-        _append_session_row(paths.sessions_jsonl, event)
+            return False
+        if (
+            event.kind == "invocation_started"
+            and selection_startup_key(event) in metadata.startup_selections
+        ):
+            return False
+        _append_proposed_row(paths.sessions_jsonl, transaction, event)
         return True
 
 
@@ -1818,21 +1038,12 @@ def record_model_observation(runtime_root: Path, event: SessionModelObservationE
     """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    with _sessions_transaction(paths, require_existing_root=True) as payloads:
-        previous = next(
-            (
-                row.get("observed_model_token")
-                for row in reversed(payloads)
-                if row.get("event") == "model_observation"
-                and row.get("harness") == event.harness
-                and row.get("harness_session_id") == event.harness_session_id
-            ),
-            None,
-        )
+    with _sessions_transaction(paths, require_existing_root=True) as transaction:
+        snapshot = transaction.snapshot
+        previous = snapshot.metadata.observations.get((event.harness, event.harness_session_id))
         if previous == event.observed_model_token:
             return False
-        HistoryChanges(runtime_root).mark(HistorySource(kind="sessions"))
-        _append_session_row(paths.sessions_jsonl, event)
+        _append_proposed_row(paths.sessions_jsonl, transaction, event)
         return True
 
 
@@ -2003,12 +1214,9 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
             chat_id: lease[2] is not None and is_process_alive_with_birth(lease[2], lease[3])
             for chat_id, lease in lease_data.items()
         }
-        with _sessions_transaction(paths) as payloads:
-            records: dict[str, SessionRecord] = {}
-            for payload in payloads:
-                parsed = _parse_event(payload)
-                if parsed is not None:
-                    project_session_event(records, parsed)
+        with _sessions_transaction(paths) as transaction:
+            snapshot = transaction.snapshot
+            records = dict(snapshot.lifecycle)
             stopped_at = utc_now_iso()
             for chat_id, _lock_path, _ in stale:
                 existing = records.get(chat_id)
@@ -2040,9 +1248,9 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
                         )
                     )
                 ):
-                    HistoryChanges(runtime_root).mark(HistorySource(kind="sessions"))
-                    _append_session_row(
+                    _append_proposed_row(
                         paths.sessions_jsonl,
+                        transaction,
                         SessionStopEvent(
                             chat_id=ChatId(chat_id),
                             session_instance_id=stop_session_instance_id,
@@ -2099,9 +1307,7 @@ def append_historical_session(
     plan_path = runtime_root / "history-archives" / "restores" / f"{history_id}.json"
     # The history gate serializes plan lifetime and aggregate publication. It is
     # reentrant for restore_archive, and also protects direct API callers.
-    with lock_file(paths.project_lifetime_flock, mode="shared"), lock_file(
-        changes.mutation_lock
-    ):
+    with lock_file(paths.project_lifetime_flock, mode="shared"), lock_file(changes.mutation_lock):
         plan = _validate_restore_plan(plan_path, history_id, record)
         # Source/aggregate verification must precede sessions_flock. A plan by
         # itself is not authority to consume a counter reservation.
@@ -2120,35 +1326,25 @@ def append_historical_session(
         with verified_source(destination):
             _verify_existing(destination, archived, pending_session=record)
 
-        with _sessions_transaction(paths) as payloads:
+        with _sessions_transaction(paths) as transaction:
+            snapshot = transaction.snapshot
             # Re-read the durable file after sessions_flock: its identity must
             # still match the plan whose aggregate was checked above.
             if _validate_restore_plan(plan_path, history_id, record) != plan:
                 raise ValueError("restore plan changed before historical session commit")
+            event = SessionHistoricalEvent(record=record)
+            decision = plan_identity(snapshot.identity, event)
+            if isinstance(decision, NoOp):
+                return
             with lock_file(paths.session_id_counter_flock):
                 counter = _read_session_counter(paths)
-            match = re.fullmatch(r"c([1-9][0-9]*)", record.chat_id, flags=re.ASCII)
-            if match is None or int(match.group(1)) > counter:
+            number = canonical_chat_number(record.chat_id)
+            if not number or number > counter:
                 raise ValueError("restore plan alias was not previously reserved")
-            records: dict[str, SessionRecord] = {}
-            for payload in payloads:
-                parsed = _parse_event(payload)
-                if parsed is not None:
-                    project_session_event(records, parsed)
-            existing = records.get(record.chat_id)
-            if existing is not None:
-                if existing == record:
-                    return
-                raise ValueError("Historical session alias conflict")
-            if record.chat_id in _occupied_chat_refs(payloads):
-                raise ValueError("Restore plan alias is already occupied")
-            HistoryChanges(runtime_root).mark(HistorySource(kind="sessions"))
-            _append_session_row(paths.sessions_jsonl, SessionHistoricalEvent(record=record))
+            _append_proposed_row(paths.sessions_jsonl, transaction, event)
 
 
-def _validate_restore_plan(
-    plan_path: Path, history_id: uuid.UUID, record: SessionRecord
-) -> Any:
+def _validate_restore_plan(plan_path: Path, history_id: uuid.UUID, record: SessionRecord) -> Any:
     """Load the typed plan only from its runtime-derived canonical location."""
     from meridian.lib.state.retention_restore import RestorePlan
 

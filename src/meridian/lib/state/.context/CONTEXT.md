@@ -56,9 +56,20 @@ the v2 migration; published rows now use schema v3.
 ### Session State
 
 Sessions remain event-sourced JSONL (`sessions.jsonl`). The session store's
-native-binding API uses the same lock and journal, with strict framing/schema
-replay and pre-repair validation on every append path; legacy harness-ID fields
-are not native binding authority. Ordinary session-record reads replay the
+native-binding API uses the same lock and journal. `session_authority` decodes all
+recognized schemas and folds one transaction snapshot: normalized refs, independent
+historical claims, bidirectional native pins, ASCII cN high water, lifecycle records,
+metadata lookup indexes and current attempt state. The identity planner is shared by
+proposal and replay; a repeated historical effect is a live no-op but an invalid
+persisted duplicate. Provenance refs block allocation without qualifying a native
+source. Missing/lower counters recover journal high water, not lost counter-only
+reservations. No cache or second ledger participates.
+
+Metadata pending selections are indexed by captured startup identity; a later update
+binds them without another journal pass. Native display-ID lists materialize once at
+the end of the fold. Tail classification and effective-exit accounting come from this
+same pass. Current v1 attempt checks remain a staging policy, not owner-qualified
+production authority. Legacy harness-ID fields are not native binding authority. Ordinary session-record reads replay the
 truncation-tolerant journal into current records; session browse orders and limits
 those lightweight records before enriching the visible page. New primary launches
 also append their canonical `spawn_id` relationship. Current recovery and transcript

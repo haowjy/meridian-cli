@@ -642,3 +642,21 @@ def test_model_writers_do_not_recreate_a_missing_runtime_root(tmp_path: Path) ->
         with pytest.raises(FileNotFoundError):
             writer(root, event)  # type: ignore[arg-type]
         assert not root.exists()
+
+
+@pytest.mark.parametrize("counter", [None, "0\n"])
+def test_native_only_reservation_recovers_journal_high_water(
+    tmp_path: Path, counter: str | None
+) -> None:
+    root = tmp_path / "runtime"
+    root.mkdir()
+    begin(root, "run", "attempt")
+    assert session_store.accept_native_boundary(
+        root, receipt("run", "attempt", "entry", key("/native/high-water"))
+    ).chat_id == "c1"
+    paths = session_store.RuntimePaths.from_root_dir(root)
+    if counter is None:
+        paths.session_id_counter.unlink()
+    else:
+        paths.session_id_counter.write_text(counter)
+    assert session_store.reserve_chat_id(root) == "c2"

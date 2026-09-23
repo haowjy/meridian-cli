@@ -158,7 +158,8 @@ Both paths share liveness rules in `reaper.py` and completion/cancel precedence 
 - `spawn_aggregate.py` — published-row deletion and spawn-owned artifact lifetime guard.
 - `work_state.py` / `work_store.py` / `work_repository.py` — work-item models and
   codec, pure reads, and the single locked mutation repository, respectively.
-- `session_store.py` — Session event log and read projection.
+- `session_store.py` — Session journal transactions, lifecycle ownership and display reads.
+- `session_authority.py` — Pure typed journal decoding, identity claims and ordered projection.
 - `atomic.py` — atomic write primitives. All state writes use these.
 - `reaper.py` — read-only `reconcile_spawns()` projection and root-only
   `reconcile_active_spawn()` repair.
@@ -167,12 +168,17 @@ Both paths share liveness rules in `reaper.py` and completion/cancel precedence 
 Native chat binding authority shares `sessions.jsonl` and `sessions_flock`; do not
 add a parallel ledger. `begin_native_attempt()`, `accept_native_boundary()`,
 `get_native_session_key()`, and `get_native_attempt_boundaries()` replay the
-strict typed authority events. Receipts need the persisted attempt/transport scope,
-qualified ordering and operation evidence. Session journal writers share one
-transaction in project-lifetime → history-mutation → exclusive-session-lock order;
-it strictly validates before any permitted tail repair, appends without generic
-second repair, and confirms file plus parent-directory durability. Legacy native-ID
-fields remain display/provenance data and are not verified bindings.
+same normalized `JournalSnapshot`. Allocation, native lookup and historical import
+must use its identity view; never scan raw payloads or union a private occupancy map.
+The pure identity planner checks both proposed and replayed claims against their
+prefix. Historical records and native pins cannot overwrite each other.
+
+Session journal writers share one transaction in project-lifetime → history-mutation
+→ exclusive-session-lock order. It reads/decodes/folds once, rejects conflicts before
+repair or allocation, and confirms file plus parent-directory durability. Repair uses
+the reader's tail classification, never a second parse. Legacy native-ID fields remain
+display/provenance data. Experimental v1 attempt policy is not production transport
+qualification; extending that policy must extend the same fold, not add a scanner.
 
 ## Spawn Subpackage
 

@@ -11,6 +11,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Reserve, native binding and restore now share one typed journal identity projection.
+  Native-only refs survive missing counters; mixed ownership conflicts fail before
+  writes. Removed repeated authority scans and final-tail reparsing.
+
 - Restore imports derive their plan path from history identity and verify the
   published inert aggregate before consuming a reservation; allocation uses
   normalized schema identities and ASCII canonical references, and historical
