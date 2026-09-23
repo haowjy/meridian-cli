@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -12,14 +13,18 @@ from meridian.lib.platform.locking import try_lock_file
 from meridian.lib.state import session_store
 
 
-def _contradiction_contender(root: str, attempted: object, completed: object) -> None:
+def _contradiction_contender(
+    root: str, attempted: object, acquired: object, acknowledged: object, result: object
+) -> None:
     paths = session_store.RuntimePaths.from_root_dir(Path(root))
-    with try_lock_file(paths.sessions_flock, reentrant=False):
-        attempted.set()  # type: ignore[attr-defined]  # actual session-lock attempt completed
+    with try_lock_file(paths.sessions_flock, reentrant=False) as handle:
+        attempted.set()  # type: ignore[attr-defined]  # reached the independent lock attempt
+        acquired.set()  # type: ignore[attr-defined]  # lock outcome is now observable
+        result.put(handle is not None)  # type: ignore[attr-defined]
     session_store.accept_native_boundary(
         Path(root), receipt("run", "attempt", "exit", key("/native/repair-race-b"), order=2)
     )
-    completed.set()  # type: ignore[attr-defined]
+    acknowledged.set()  # type: ignore[attr-defined]  # outcome/action is now observable
 
 
 def key(store: str, native_id: str = "native-1") -> session_store.NativeSessionKey:
@@ -209,35 +214,50 @@ def test_repair_holds_session_lock_until_replacement_and_contender_acknowledges(
     context = multiprocessing.get_context("fork")
     repair_reached = context.Event()
     allow_repair_to_finish = context.Event()
-    original_repair = session_store.atomic_write_bytes
+    repair_hook = (
+        "atomic_write_bytes"
+        if hasattr(session_store, "atomic_write_bytes")
+        else "atomic_write_text"
+    )
+    original_repair = getattr(session_store, repair_hook)
 
-    def pause_before_repair(path: Path, content: bytes) -> None:
-        if path == journal:
+    parent_pid = os.getpid()
+
+    def pause_before_repair(
+        path: Path, content: bytes | str, *args: object, **kwargs: object
+    ) -> None:
+        # fork inherits monkeypatches; only the stale parent replacement is paused.
+        if path == journal and os.getpid() == parent_pid:
             repair_reached.set()
             assert allow_repair_to_finish.wait(5)
-        original_repair(path, content)
+        original_repair(path, content, *args, **kwargs)
 
-    monkeypatch.setattr(session_store, "atomic_write_bytes", pause_before_repair)
+    monkeypatch.setattr(session_store, repair_hook, pause_before_repair)
     with ThreadPoolExecutor(max_workers=1) as pool:
         start = pool.submit(session_store.start_session, root, "pi", "spawn-session", "model")
         assert repair_reached.wait(5)
-        attempted, completed = context.Event(), context.Event()
+        attempted, acquired, acknowledged = context.Event(), context.Event(), context.Event()
+        lock_result = context.Queue()
         contender = context.Process(
             target=_contradiction_contender,
-            args=(str(root), attempted, completed),
+            args=(str(root), attempted, acquired, acknowledged, lock_result),
         )
         contender.start()
         assert attempted.wait(5)
-        assert not completed.wait(0.2), "contender acknowledged before stale replacement completed"
+        assert acquired.wait(5)
+        lock_was_available = lock_result.get(timeout=5)
+        if lock_was_available:
+            # An unlocked preflight permits destructive replacement: make the
+            # contender's invalidation durable before releasing the stale bytes.
+            assert acknowledged.wait(5)
         allow_repair_to_finish.set()
         chat_id = start.result(timeout=5)
-        assert completed.wait(5)
+        assert acknowledged.wait(5)
         contender.join(5)
         assert contender.exitcode == 0
-        accepted = session_store.BoundaryAcceptance(None, True)
     try:
-        assert accepted == session_store.BoundaryAcceptance(None, True)
         assert session_store.get_native_attempt_boundaries(root, "run", "attempt").exit_invalidated
+        assert not lock_was_available, "contender acquired sessions lock during stale replacement"
     finally:
         session_store.stop_session(root, chat_id)
 
