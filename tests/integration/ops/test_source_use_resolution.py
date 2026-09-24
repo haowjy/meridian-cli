@@ -71,7 +71,7 @@ def test_p_spawn_without_terminal_attempt_correlation_refuses(tmp_path: Path) ->
     _pinned_journal(tmp_path)
     spawn_store.start_spawn(
         tmp_path,
-        chat_id="c9",
+        chat_id="c1",
         model="test",
         agent="test",
         harness="pi",
