@@ -796,7 +796,10 @@ class TranscriptNormalizer:
         ):
             return None
         if not native_entry and not isinstance(event_type, str):
-            return None
+            if not self.pi_session:
+                return None
+            self.rendering_reason = "Unsupported Pi journal entry; rendering is incomplete."
+            return NormalizedTranscriptEvent([])
         self.pi_session = True
         annotations: list[TranscriptMessage] = []
         if event_type == "message" and "message" not in event:

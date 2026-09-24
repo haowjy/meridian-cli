@@ -19,7 +19,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Pi journal normalization validates event-type strings before set membership
   and uses the canonical supported-type set after compaction/branch-summary
-  handling, avoiding malformed-value crashes and recognition-list drift.
+  handling, avoiding malformed-value crashes and recognition-list drift. After
+  a Pi session header, malformed non-string types remain incomplete even when
+  entry identity fields are missing.
 
 - Pi RPC now owns one launch-time stdout dispatcher with bounded event buffering and
   correlated state queries. Added explicit deferred prompt delivery and serialized
