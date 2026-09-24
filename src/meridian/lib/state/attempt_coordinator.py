@@ -127,11 +127,16 @@ class AttemptCoordinator:
         await self._owner.initialize_without_input()
 
     async def commit_entry(self) -> AttemptResult:
+        # A previously accepted entry authorizes delivery only until the next
+        # qualification attempt begins. Never let the prior selection survive
+        # a failed/replaced requalification.
+        self._entry = None
         had_pending_entry = self._pending_entry is not None
-        retried = self._retry_pending()
         if had_pending_entry:
-            assert retried is not None
-            return retried
+            result = self._retry_pending_entry()
+            assert result is not None
+            return result
+        self._retry_pending()
         witness = await self._owner.observe_entry()
         fact = self._fact(witness)
         self._pending_entry = fact
@@ -147,13 +152,20 @@ class AttemptCoordinator:
 
     async def commit_exit(self) -> AttemptResult:
         self._closed = True
-        retried = self._retry_pending()
-        if retried is not None:
-            return retried
+        # Start closing immediately. Even if a prior entry/refutation append
+        # cannot yet be acknowledged, the transport must not remain open; keep
+        # this single-flight observation for the next retry.
+        if self._pending_terminal is None and self._exit_observation is None:
+            self._exit_observation = asyncio.create_task(self._owner.close_and_observe_exit())
+        # Pending entry/refutation evidence must be resolved before exit work,
+        # but its result is not an exit result. A pending terminal is different:
+        # it was consumed by an earlier close operation and can be returned.
+        self._retry_pending_entry_and_refutation()
+        if self._pending_terminal is not None:
+            return self._retry_pending_terminal()
         # Terminal observation is single-flight, but refutation draining remains
         # independent and can make progress while close/observe is suspended.
-        if self._exit_observation is None:
-            self._exit_observation = asyncio.create_task(self._owner.close_and_observe_exit())
+        assert self._exit_observation is not None
         observation = self._exit_observation
         try:
             witness = await observation
@@ -168,7 +180,8 @@ class AttemptCoordinator:
                     self._pending_terminal = fact
                 elif self._pending_terminal != fact:
                     raise RuntimeError("multiple terminal observations for one owner")
-                result = self._retry_pending()
+                self._retry_pending_entry_and_refutation()
+                result = self._retry_pending_terminal()
             finally:
                 if self._exit_observation is observation:
                     self._exit_observation = None
@@ -202,22 +215,25 @@ class AttemptCoordinator:
             self._root, self._context.run_id, self._context.attempt_id
         )
 
-    def _retry_pending(self) -> AttemptResult | None:
-        if (
-            self._pending_entry is None
-            and self._pending_refutation is None
-            and self._pending_terminal is None
-        ):
-            return None
+    def _retry_pending(self) -> None:
+        self._retry_pending_refutation()
+        self._retry_pending_entry()
+        if self._pending_terminal is not None:
+            self._retry_pending_terminal()
+
+    def _retry_pending_entry_and_refutation(self) -> None:
         # Refutation is admitted first, so a pending contradiction can never be
         # obscured by a terminal confirmation for the same exit.
-        result: AttemptResult | None = None
+        self._retry_pending_refutation()
+        self._retry_pending_entry()
+
+    def _retry_pending_refutation(self) -> None:
         if self._pending_refutation is not None:
             refutation = self._pending_refutation
-            refutation_result = session_store._commit_attempt(self._root, self._context, refutation)
+            session_store._commit_attempt(self._root, self._context, refutation)
             self._pending_refutation = None
-            if result is None:
-                result = refutation_result
+
+    def _retry_pending_entry(self) -> AttemptResult | None:
         if self._pending_entry is not None:
             entry = self._pending_entry
             try:
@@ -227,15 +243,15 @@ class AttemptCoordinator:
                 raise
             self._pending_entry = None
             self._entry = entry if isinstance(entry_result, AcceptedBoundary) else None
-            if result is None:
-                result = entry_result
-        if self._pending_terminal is not None:
-            terminal = self._pending_terminal
-            terminal_result = session_store._commit_attempt(self._root, self._context, terminal)
-            self._pending_terminal = None
-            if result is None:
-                result = terminal_result
-        return result
+            return entry_result
+        return None
+
+    def _retry_pending_terminal(self) -> AttemptResult:
+        assert self._pending_terminal is not None
+        terminal = self._pending_terminal
+        terminal_result = session_store._commit_attempt(self._root, self._context, terminal)
+        self._pending_terminal = None
+        return terminal_result
 
     def _fact(self, witness: EntryWitness | ExitWitness) -> BoundaryFact:
         return BoundaryFact(

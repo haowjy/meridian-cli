@@ -24,6 +24,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ambiguous locator-conflict appends only from exact target-binding equality.
   Share pure current-entry/source admission and retain uncertain owned entry
   evidence for retry; this does not enable a qualified live v4 writer.
+- Close the owner input gate before entry requalification and keep exit retries
+  from treating recovered entry evidence as terminal completion.
 - Cut v3 and dormant v4 facts over to one common attempt reducer, including
   refutation, source-check eligibility, retry results, and exit counts. Keep the
   v3 codec/digest frozen and v4 live writing disabled.

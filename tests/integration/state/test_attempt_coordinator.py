@@ -101,6 +101,96 @@ async def test_owner_delivers_only_after_durable_ack_and_observes_outside_lock(t
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("requalification", ["changed", "unqualified"])
+async def test_failed_entry_requalification_closes_previous_delivery_gate(
+    tmp_path, requalification
+):
+    owner, coordinator = attempt(tmp_path)
+    await coordinator.begin()
+    owner.script.append(owner.observation(entry()))
+    accepted = await coordinator.commit_entry()
+    assert accepted.chat_id == "c1"
+
+    changed = entry(key("native", "replacement"))
+    owner.script.append(
+        owner.observation(changed if requalification == "changed" else terminal())
+    )
+    with pytest.raises(ValueError):
+        await coordinator.commit_entry()
+    with pytest.raises(ValueError, match="unresolved"):
+        await owner.deliver("must remain gated")
+    assert owner.delivered == []
+    assert coordinator._entry is None
+
+
+@pytest.mark.asyncio
+async def test_delivery_is_gated_while_entry_requalification_is_suspended(tmp_path):
+    owner, coordinator = attempt(tmp_path)
+    await coordinator.begin()
+    owner.script.append(owner.observation(entry()))
+    await coordinator.commit_entry()
+
+    observing = asyncio.Event()
+    release = asyncio.Event()
+    original_observe = owner.observe_entry
+
+    async def suspended_observe():
+        observing.set()
+        await release.wait()
+        return await original_observe()
+
+    owner.observe_entry = suspended_observe
+    owner.script.append(owner.observation(entry()))
+    requalification = asyncio.create_task(coordinator.commit_entry())
+    await observing.wait()
+    with pytest.raises(ValueError, match="unresolved"):
+        await owner.deliver("must stay gated during qualification")
+    release.set()
+    assert (await requalification).chat_id == "c1"
+    await owner.deliver("durably requalified")
+    assert owner.delivered == ["durably requalified"]
+
+
+@pytest.mark.asyncio
+async def test_commit_exit_drains_uncertain_entry_but_returns_terminal_result(
+    tmp_path, monkeypatch
+):
+    owner, coordinator = attempt(tmp_path)
+    await coordinator.begin()
+    owner.script.append(owner.observation(entry()))
+    confirm = store._confirm_sessions_durability
+
+    def fail_ack(path):
+        raise OSError("entry append visible but acknowledgment lost")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "_confirm_sessions_durability", fail_ack)
+        for _ in range(2):
+            with pytest.raises(OSError):
+                await coordinator.commit_entry()
+    pending_entry = coordinator._pending_entry
+    assert pending_entry is not None
+
+    owner.script.append(owner.observation(terminal()))
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "_confirm_sessions_durability", fail_ack)
+        with pytest.raises(OSError):
+            await coordinator.commit_exit()
+    # The close is single-flight even when pending entry durability still fails.
+    await asyncio.sleep(0)
+    assert owner.events == ["initialize", "observe_entry", "close_and_observe_exit"]
+    result = await coordinator.commit_exit()
+    state = read_journal((tmp_path / "sessions.jsonl").read_bytes()).snapshot
+    assert result.chat_id == "c1"
+    assert owner.events == ["initialize", "observe_entry", "close_and_observe_exit"]
+    assert state.attempts.states["run", "attempt"].entry is not None
+    assert state.attempts.states["run", "attempt"].exit is not None
+    assert coordinator._pending_entry is None
+    assert coordinator._pending_terminal is None
+    assert store._confirm_sessions_durability is confirm
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("wrong", ["owner", "connection", "child", "store", "harness"])
 async def test_copied_scope_wrong_owner_and_namespace_do_not_deliver(tmp_path, wrong):
     owner, coordinator = attempt(tmp_path)
