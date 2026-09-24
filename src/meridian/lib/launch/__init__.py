@@ -32,6 +32,7 @@ if TYPE_CHECKING:
         resolve_policies,
     )
     from meridian.lib.launch.process import ProcessOutcome, run_harness_process
+    from meridian.lib.launch.request import SessionRequest
     from meridian.lib.launch.resolve import (
         ResolvedSkills,
         load_agent_profile_with_fallback,
@@ -268,17 +269,6 @@ def launch_primary(
         prepared_policy=prepared_policy,
     )
     final_session = prepared.request.session
-    final_operation = (
-        "fork"
-        if final_session.continue_fork
-        or (final_session.primary_session_mode or "").strip().lower() == "fork"
-        else (
-            "resume"
-            if (final_session.primary_session_mode or "").strip().lower() == "resume"
-            or final_session.requested_harness_session_id
-            else source_selection.operation
-        )
-    )
     reconcile_primary_source_selection(
         PrimarySourceSelection(
             source_ref=original_session.continue_source_ref,
@@ -295,13 +285,15 @@ def launch_primary(
         ),
         authorized_source=authorized_untracked_source,
         resolved_id=final_session.requested_harness_session_id,
+        resolved_id_supplied=original_session.continue_source_ref is not None,
         resolved_harness=prepared.request.session.continue_harness,
         resolved_tracked=(
             final_session.continue_source_tracked
             or final_session.recorded_native_source is not None
         ),
         resolved_source_ref=final_session.continue_source_ref,
-        resolved_operation=final_operation,
+        resolved_source_ref_supplied=original_session.continue_source_ref is not None,
+        resolved_operation_facts=_session_operation_facts(final_session),
     )
     preview_context = _bind_launch_context_impl(
         prepared=prepared,
@@ -378,8 +370,19 @@ def _primary_source_operation_facts(request: LaunchRequest) -> tuple[str, ...]:
         facts.append(primary_mode)
     if request.session.continue_fork:
         facts.append("fork")
-    if request.session_mode.value != "fresh":
+    if request.session_mode.value != "fresh" or "session_mode" in request.model_fields_set:
         facts.append(request.session_mode.value)
+    return tuple(facts)
+
+
+def _session_operation_facts(session: SessionRequest) -> tuple[str, ...]:
+    """Keep replay/prepared operation assertions independent until comparison."""
+    facts: list[str] = []
+    primary_mode = (session.primary_session_mode or "").strip().lower()
+    if primary_mode:
+        facts.append(primary_mode)
+    if session.continue_fork:
+        facts.append("fork")
     return tuple(facts)
 
 
@@ -503,7 +506,12 @@ def _resolve_primary_source_request(
             resolved_id_supplied=True,
             resolved_harness=contract.session.continue_harness,
             resolved_source_ref=contract.session.continue_source_ref,
-            resolved_operation=("fork" if contract.session.continue_fork else "resume"),
+            resolved_source_ref_supplied=True,
+            resolved_tracked=(
+                contract.session.continue_source_tracked
+                or contract.session.recorded_native_source is not None
+            ),
+            resolved_operation_facts=_session_operation_facts(contract.session),
         )
         task_dir = contract.task_dir
         source_warning = resolved.warning

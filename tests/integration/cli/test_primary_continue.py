@@ -123,6 +123,51 @@ def _seed_primary_spawn(
     )
 
 
+def test_explicit_fresh_conflict_refuses_before_lookup_or_non_dry_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit fresh is an assertion, not the default-mode sentinel."""
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _state_root(project_root)
+    lookups: list[str] = []
+    work_effects: list[str] = []
+
+    import meridian.lib.launch as launch_module
+    import meridian.lib.ops.reference as reference_ops
+
+    monkeypatch.setattr(
+        reference_ops,
+        "resolve_source_use",
+        lambda *args, **kwargs: lookups.append("lookup"),
+    )
+    monkeypatch.setattr(
+        launch_module,
+        "_resolve_work_id_for_launch",
+        lambda *args, **kwargs: work_effects.append("work") or None,
+    )
+
+    with pytest.raises(ValueError, match="conflicting operation facts"):
+        launch_primary(
+            project_root=project_root,
+            harness_registry=get_default_harness_registry(),
+            request=LaunchRequest(
+                harness="opencode",
+                session_mode=SessionMode.FRESH,
+                dry_run=False,
+                session=SessionRequest(
+                    continue_source_ref="native-A",
+                    requested_harness_session_id="native-A",
+                    primary_session_mode="resume",
+                ),
+            ),
+        )
+
+    assert lookups == []
+    assert work_effects == []
+
+
 def _run_primary_continue(
     project_root: Path,
     continue_ref: str,
@@ -768,7 +813,7 @@ def test_primary_continue_maps_source_contract_to_launch_request(
         _run_primary_continue(project_root, "p41")
 
 
-def test_primary_continue_spawn_session_ref_uses_linked_spawn_snapshot(
+def test_primary_continue_rejects_tracked_replay_before_work_materialization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -806,15 +851,22 @@ def test_primary_continue_spawn_session_ref_uses_linked_spawn_snapshot(
         kind="spawn",
         spawn_id="p51",
     )
-    requests = _record_primary_launch(monkeypatch)
+    work_effects: list[str] = []
+    import meridian.lib.launch as launch_module
+
+    monkeypatch.setattr(
+        launch_module,
+        "_resolve_work_id_for_launch",
+        lambda *args, **kwargs: work_effects.append("work") or None,
+    )
 
     try:
-        _run_primary_continue(project_root, spawn_chat_id)
+        with pytest.raises(ValueError, match="Primary source selection conflict"):
+            _run_primary_continue(project_root, spawn_chat_id)
     finally:
         session_store.stop_session(runtime_root, spawn_chat_id)
 
-    assert requests[0].launch_policy_snapshot == snapshot
-    assert requests[0].passthrough_args == snapshot.extra_args
+    assert work_effects == []
 
 
 def test_primary_continue_does_not_inherit_ambient_work(

@@ -39,7 +39,9 @@ def reconcile_primary_source_selection(
     resolved_snapshot_harness: str | None = None,
     resolved_tracked: bool = False,
     resolved_source_ref: str | None = None,
+    resolved_source_ref_supplied: bool = False,
     resolved_operation: Literal["fresh", "resume", "fork"] | None = None,
+    resolved_operation_facts: tuple[str, ...] = (),
 ) -> str | None:
     """Purely reconcile source facts without choosing a winning selector.
 
@@ -84,9 +86,14 @@ def reconcile_primary_source_selection(
         normalize_effective_native_selection(selection.source_ref, native_fact)
     if resolved_tracked:
         raise _conflict("legacy resolver classified source as tracked")
-    if resolved_source_ref is not None and resolved_source != source:
+    if resolved_source_ref_supplied and resolved_source != source:
         raise _conflict("original source reference changed")
-    if resolved_operation is not None and resolved_operation != selection.operation:
+    operation_facts = resolved_operation_facts
+    if resolved_operation is not None:
+        operation_facts = (*operation_facts, resolved_operation)
+    if operation_facts and any(fact != operation_facts[0] for fact in operation_facts[1:]):
+        raise _conflict("conflicting resolved operation facts")
+    if operation_facts and operation_facts[0] != selection.operation:
         raise _conflict("source operation changed")
 
     harness_facts = [

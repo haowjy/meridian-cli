@@ -111,3 +111,29 @@ def test_resolver_snapshot_harness_and_tracked_claim_are_independent_facts(
             resolved_id_supplied=True,
             resolved_snapshot_harness="h2",
         )
+
+
+def test_supplied_replay_and_prepared_views_retain_source_and_operation_facts(
+    tmp_path: Path,
+) -> None:
+    original = PrimarySourceSelection("c12", "native-A", "resume", "h1", tmp_path)
+    with pytest.raises(ValueError, match="resolver dropped"):
+        reconcile_primary_source_selection(
+            original, resolved_id=None, resolved_id_supplied=True
+        )
+    with pytest.raises(ValueError, match="original source reference changed"):
+        reconcile_primary_source_selection(
+            original, resolved_source_ref=None, resolved_source_ref_supplied=True
+        )
+    with pytest.raises(ValueError, match="conflicting resolved operation facts"):
+        reconcile_primary_source_selection(
+            original,
+            resolved_operation_facts=("resume", "fork"),
+        )
+    with pytest.raises(ValueError, match="source operation changed"):
+        reconcile_primary_source_selection(
+            original,
+            resolved_operation_facts=("fork",),
+        )
+    with pytest.raises(ValueError, match="source selection conflict"):
+        reconcile_primary_source_selection(original, resolved_tracked=True)
