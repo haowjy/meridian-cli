@@ -81,6 +81,9 @@ class ResolvedLaunchSpec(BaseModel):
     continue_session_id: str | None = None
     continue_fork: bool = False
     recorded_native_source: RecordedNativeSource | None = None
+    # Original Meridian source description retained for native transport guards.
+    continue_source_ref: str | None = None
+    continue_source_tracked: bool = False
 
     # Permissions
     permission_resolver: PermissionResolver

@@ -20,6 +20,8 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "effort",
         "continue_session_id",
         "continue_fork",
+        "continue_source_ref",
+        "continue_source_tracked",
         "permission_resolver",
         "extra_args",
         "interactive",
@@ -165,6 +167,19 @@ def project_pi_native_tui_spec_to_cli_args(
     base_command: tuple[str, ...],
 ) -> list[str]:
     """Project one ``ResolvedLaunchSpec`` into an ordered native Pi TUI command list."""
+
+    from meridian.lib.harness.pi_native_source import reject_pi_native_source_options
+
+    reject_pi_native_source_options(spec.extra_args)
+    if spec.continue_source_tracked:
+        raise ValueError(
+            "Pi native TUI cannot project tracked source use: transport_unqualified."
+        )
+    if spec.recorded_native_source is not None:
+        raise ValueError(
+            "Pi native TUI cannot project a tracked recorded source: "
+            "transport_unqualified."
+        )
 
     command: list[str] = list(base_command)
     passthrough_tail = spec.extra_args

@@ -6,6 +6,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Reuse one primary source-use check across early preview and binding, and move
+  raw Pi session-option refusal semantics into the Pi adapter for spawn reuse.
+- Correct OpenCode primary continuation coverage: genuinely untracked native IDs
+  retain explicit models; mismatched or tracked aliases are refused.
 - Resolve each cN/bare source-use decision from one strict, non-repairing
   authority snapshot; refuse unresolved pN and authority I/O failures.
 
@@ -18,6 +22,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Revalidate spawn source references against the executable selection at prepare
   and worker boundaries; refuse tracked or ambiguous direct dispatch before
   connection creation.
+- Reject mismatched original/native session selectors and Pi raw session-selection
+  flags at shared primary launch and native-TUI projection boundaries.
+- Normalize primary cN/pN/bare source-use references before legacy session
+  resolution; refuse unresolved or tracked primary requests before preview,
+  and reject tracked replay tails before system-prompt normalization.
 
 ### Added
 
@@ -31,10 +40,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Add a strict, provenance-preserving bare native-ID candidate lookup over one
   locked `sessions.jsonl` replay; ambiguity and corrupt authority fail closed.
 
-- Carry purpose-authorized pinned Pi native sources from top-level cN continuation
-  through launch composition; Pi resumes use the exact preflighted file and store,
-  while tracked passthrough arguments fail closed. Actual tracked execution stays
-  blocked until B3c's connected-state entry gate is wired.
+- Keep exact Pi source preflight available to the RPC projector; primary tracked
+  resume/fork stays on the native TUI and refuses until an owned transport is
+  available.
 
 - Added a confirming `get_native_binding()` state read and purpose-aware cN
   reference resolver. Only an unblocked v4 qualified pin yields provenance;

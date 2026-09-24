@@ -26,6 +26,8 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
 _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
         "recorded_native_source",
+        "continue_source_ref",
+        "continue_source_tracked",
         "harness",
         "continue_fork",
         "interactive",

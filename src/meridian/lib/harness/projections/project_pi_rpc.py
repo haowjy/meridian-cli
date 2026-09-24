@@ -24,6 +24,8 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "continue_session_id",
         "continue_fork",
         "recorded_native_source",
+        "continue_source_ref",
+        "continue_source_tracked",
         "permission_resolver",
         "extra_args",
         "interactive",

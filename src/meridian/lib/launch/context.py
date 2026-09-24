@@ -134,6 +134,11 @@ from .resolve import (
     resolve_profile_path,
     resolve_skill_paths,
 )
+from .source_selection import (
+    PrimarySourceCheck,
+    check_primary_source_use,
+    is_primary_source_check,
+)
 from .spawn_guidance import build_guidance_blocks, build_spawn_usage_contract
 from .text_utils import sanitize_prior_output, strip_stale_report_paths
 from .workspace import resolve_workspace_snapshot_for_launch
@@ -281,6 +286,7 @@ class PreparedLaunchSurface:
     # Original launch request preserved for LaunchContext.request compatibility.
     # `request` carries the resolved request used by bind.
     launch_request: SpawnRequest | None = None
+    primary_source_check: PrimarySourceCheck | None = None
 
     @property
     def prompt_payload(self) -> PreparedPromptPayload:
@@ -539,6 +545,8 @@ def materialize_launch_artifacts(
     projected_roots: tuple[Path, ...] = (),
     interactive: bool = False,
     continue_harness_session_id: str | None = None,
+    continue_source_ref: str | None = None,
+    continue_source_tracked: bool = False,
     recorded_native_source: RecordedNativeSource | None = None,
     continue_fork: bool = False,
     model_override_explicit: bool = False,
@@ -610,6 +618,13 @@ def materialize_launch_artifacts(
         unsafe_no_permissions=unsafe_no_permissions,
     )
     spec = resolve_launch_spec_stage(adapter=harness, run_inputs=run_params, perms=perms)
+    if harness.id == HarnessId.PI:
+        spec = spec.model_copy(
+            update={
+                "continue_source_ref": continue_source_ref,
+                "continue_source_tracked": continue_source_tracked,
+            }
+        )
     if harness.id == HarnessId.CLAUDE:
         spec = spec.model_copy(
             update={"claude_native_agents_enabled": claude_native_agents_enabled}
@@ -1255,6 +1270,21 @@ def _resolve_primary_projection(
         policy=policy,
     )
 
+    session = request.session
+    tracked_source_intent = bool(
+        session.recorded_native_source is not None
+        or session.continue_source_tracked
+        or session.continue_source_ref
+    )
+    if (
+        tracked_source_intent
+        and request.launch_policy_snapshot is not None
+        and request.launch_policy_snapshot.extra_args
+    ):
+        raise ValueError(
+            "Tracked source replay contains raw launch arguments; refusing before "
+            "system-prompt normalization (transport_unqualified)."
+        )
     seed = harness.seed_session(
         is_resume=session_mode == "resume",
         harness_session_id=resolved_continue_harness_session_id or "",
@@ -1461,6 +1491,7 @@ def prepare_launch_surface(
     runtime: LaunchRuntime,
     prepared_policy: PreparedPolicySurface,
     launch_mode: LaunchMode | None = None,
+    primary_source_check: PrimarySourceCheck | None = None,
 ) -> PreparedLaunchSurface:
     """Resolve the expensive, spawn-stable launch surface."""
     project_paths = prepared_policy.project_paths
@@ -1692,6 +1723,7 @@ def prepare_launch_surface(
         model_selection=model_selection,
         alias_catalog=policies.alias_catalog,
         launch_request=request,
+        primary_source_check=primary_source_check,
     )
 
 
@@ -1786,6 +1818,40 @@ def bind_launch_context(
         project_paths.project_root, context_config
     )
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
+    session = prepared.request.session
+    tracked_claim = session.continue_source_tracked or session.recorded_native_source is not None
+    operation = (
+        "fork"
+        if session.continue_fork
+        or (session.primary_session_mode or "").strip().lower() == "fork"
+        else "resume"
+    )
+    expected_key = (
+        session.continue_source_ref,
+        session.requested_harness_session_id,
+        tracked_claim,
+        session.recorded_native_source,
+        prepared.request.harness,
+        operation,
+        prepared.request.extra_args,
+    )
+    check = prepared.primary_source_check
+    if (
+        check is None
+        or not is_primary_source_check(check)
+        or check.request_key != expected_key
+        or check.runtime_root != runtime_root
+    ):
+        check = check_primary_source_use(
+            runtime_root=runtime_root,
+            source_ref=session.continue_source_ref,
+            native_selector=session.requested_harness_session_id,
+            tracked_claim=tracked_claim,
+            recorded_source=session.recorded_native_source,
+            harness=prepared.request.harness,
+            operation=operation,
+            extra_args=prepared.request.extra_args,
+        )
     system_temp_root = Path(tempfile.gettempdir()).resolve()
     resolved_request = prepared.request
     harness = prepared.harness
@@ -2056,6 +2122,8 @@ def bind_launch_context(
         projected_roots=projected_roots,
         interactive=is_primary_launch,
         continue_harness_session_id=effective_session_id,
+        continue_source_ref=resolved_request.session.continue_source_ref,
+        continue_source_tracked=resolved_request.session.continue_source_tracked,
         recorded_native_source=resolved_request.session.recorded_native_source,
         continue_fork=(
             bindings.continue_fork_override

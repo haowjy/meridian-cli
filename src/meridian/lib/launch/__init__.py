@@ -97,6 +97,7 @@ def launch_primary(
     from meridian.lib.config.project_root import resolve_project_root_resolution
     from meridian.lib.core.context import resolve_runtime_context
     from meridian.lib.ops.runtime import resolve_runtime_root_for_read
+    from meridian.lib.state.paths import resolve_project_runtime_root_or_none
 
     from .context import (
         RuntimeBindings,
@@ -109,6 +110,35 @@ def launch_primary(
     from .types import LaunchResult
 
     resolved_project_root = resolve_project_root_resolution(project_root).project_root
+    # Library callers can bypass the CLI's source-use normalization. Re-resolve
+    # the original reference here; serialized booleans and source DTOs are not
+    # evidence that an input was genuinely untracked.
+    from meridian.lib.launch.source_selection import check_primary_source_use
+
+    tracked_claim = (
+        request.session.continue_source_tracked
+        or request.session.recorded_native_source is not None
+    )
+    operation = (
+        "fork"
+        if request.session.continue_fork
+        or (request.session.primary_session_mode or "").strip().lower() == "fork"
+        or request.session_mode.value == "fork"
+        else "resume"
+    )
+    source_check = check_primary_source_use(
+        runtime_root=(
+            resolve_project_runtime_root_or_none(resolved_project_root)
+            or resolve_project_paths(resolved_project_root).root_dir
+        ),
+        source_ref=request.session.continue_source_ref,
+        native_selector=request.session.requested_harness_session_id,
+        tracked_claim=tracked_claim,
+        recorded_source=request.session.recorded_native_source,
+        harness=request.harness,
+        operation=operation,
+        extra_args=request.passthrough_args,
+    )
     explicit_work_id = _explicit_work_id_for_launch(request)
     runtime_root_for_context = resolve_runtime_root_for_read(resolved_project_root)
     runtime_context = resolve_runtime_context(
@@ -204,6 +234,7 @@ def launch_primary(
         request=spawn_request,
         runtime=runtime,
         prepared_policy=prepared_policy,
+        primary_source_check=source_check,
     )
     preview_context = bind_launch_context(
         prepared=prepared,
