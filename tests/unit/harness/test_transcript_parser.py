@@ -294,6 +294,26 @@ def test_pi_unknown_material_is_not_certified_empty() -> None:
     assert "No messages" not in "\n".join(accumulator.preview.lines())
 
 
+@pytest.mark.parametrize("event_type", [[], {}])
+def test_pi_unhashable_type_is_incomplete_not_a_parser_crash(event_type: object) -> None:
+    # Headerless native-shaped rows are not enough to claim Pi semantics, but
+    # must remain safe for the generic shared parser.
+    parsed = parse_transcript_events_with_prologues(
+        [{"type": event_type, "id": "entry", "parentId": None}]
+    )
+    assert parsed.rendering_reason is None
+
+    # Within a recognized Pi journal, malformed types retain fail-closed
+    # rendering semantics rather than becoming a successful empty view.
+    parsed = parse_transcript_events_with_prologues(
+        [
+            {"type": "session", "id": "session", "version": 3, "cwd": "/repo"},
+            {"type": event_type, "id": "entry", "parentId": None},
+        ]
+    )
+    assert parsed.rendering_reason == "Unsupported Pi journal entry; rendering is incomplete."
+
+
 def test_pi_bash_execution_and_metadata_journal() -> None:
     events = [
         {"type": "session", "version": 3, "id": "s", "cwd": "/repo"},

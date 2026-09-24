@@ -17,6 +17,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Pi journal normalization validates event-type strings before set membership
+  and uses the canonical supported-type set after compaction/branch-summary
+  handling, avoiding malformed-value crashes and recognition-list drift.
+
 - Pi RPC now owns one launch-time stdout dispatcher with bounded event buffering and
   correlated state queries. Added explicit deferred prompt delivery and serialized
   switch/query operations; ordinary startup still sends its prompt immediately.

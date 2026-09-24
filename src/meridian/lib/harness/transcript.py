@@ -790,6 +790,7 @@ class TranscriptNormalizer:
         native_entry = isinstance(entry_id, str) and "parentId" in event
         if not self.pi_session and not (
             native_entry
+            and isinstance(event_type, str)
             and event_type in PI_JOURNAL_ENTRY_TYPES
             and (event_type != "message" or isinstance(event.get("message"), dict))
         ):
@@ -836,15 +837,7 @@ class TranscriptNormalizer:
             )
             if not isinstance(event.get("summary"), str):
                 self.rendering_reason = "Unsupported Pi branch summary; rendering is incomplete."
-        elif event_type not in (
-            "message",
-            "custom_message",
-            "model_change",
-            "thinking_level_change",
-            "custom",
-            "label",
-            "session_info",
-        ):
+        elif not isinstance(event_type, str) or event_type not in PI_JOURNAL_ENTRY_TYPES:
             self.rendering_reason = "Unsupported Pi journal entry; rendering is incomplete."
         return NormalizedTranscriptEvent([*annotations, *messages])
 
