@@ -74,7 +74,20 @@ def qualify_pi_source(
             with _open_directory(root) as root_fd:
                 if _stat_stamp(root_fd) != _stamp(root_stat):
                     return PiSourceUnavailable("store_changed")
-                if not _walk_parent(root_fd, root, canonical.parent, canonical.name):
+                directories, missing_from = _open_parent_directories(root_fd, root, canonical)
+                try:
+                    if not _leaf_missing(directories[-1], canonical.name):
+                        return PiSourceUnavailable("file_changed")
+                    failure = _reobserve_namespace(
+                        root, canonical, root_fd, directories, None, missing_from
+                    )
+                    if failure:
+                        return PiSourceUnavailable(failure)
+                finally:
+                    _close_fds(directories)
+                if effective_store.expanduser().resolve(strict=True) != root:
+                    return PiSourceUnavailable("store_changed")
+                if selected.resolve(strict=False) != canonical:
                     return PiSourceUnavailable("file_changed")
             return PiSourcePending(
                 PendingLocalFile(
@@ -88,7 +101,7 @@ def qualify_pi_source(
         with _open_directory(root) as root_fd:
             if _stat_stamp(root_fd) != _stamp(root_stat):
                 return PiSourceUnavailable("store_changed")
-            file_fd = _open_file(root_fd, root, canonical)
+            directories, file_fd = _open_file_with_directories(root_fd, root, canonical)
             try:
                 file_stat = os.fstat(file_fd)
                 if not stat.S_ISREG(file_stat.st_mode):
@@ -102,12 +115,18 @@ def qualify_pi_source(
                     return PiSourceUnavailable("store_changed")
                 if _stat_stamp(file_fd) != _stamp(file_stat):
                     return PiSourceUnavailable("file_changed")
+                failure = _reobserve_namespace(
+                    root, canonical, root_fd, directories, file_fd, None
+                )
+                if failure:
+                    return PiSourceUnavailable(failure)
+                if selected.resolve(strict=True) != canonical:
+                    return PiSourceUnavailable("file_changed")
+                if effective_store.expanduser().resolve(strict=True) != root:
+                    return PiSourceUnavailable("store_changed")
             finally:
                 os.close(file_fd)
-        if selected.resolve(strict=True) != canonical:
-            return PiSourceUnavailable("file_changed")
-        if effective_store.expanduser().resolve(strict=True) != root:
-            return PiSourceUnavailable("store_changed")
+                _close_fds(directories)
         return PiSourceQualified(
             QualifiedLocalFile(
                 kind="local_file",
@@ -137,12 +156,12 @@ def preflight_pi_source(
         with _open_directory(root) as root_fd:
             if _stat_stamp(root_fd) != source.store_object:
                 return PiSourcePreflight("unavailable", "store_changed")
-            file_fd = _open_file(root_fd, root, path)
+            directories, file_fd = _open_file_with_directories(root_fd, root, path)
             try:
-                if _stat_stamp(file_fd) != source.file_object:
-                    return PiSourcePreflight("unavailable", "file_changed")
                 if not stat.S_ISREG(os.fstat(file_fd).st_mode):
                     return PiSourcePreflight("unavailable", "invalid_native_source")
+                if _stat_stamp(file_fd) != source.file_object:
+                    return PiSourcePreflight("unavailable", "file_changed")
                 header = _read_header(file_fd)
                 if header is None:
                     return PiSourcePreflight("unavailable", "invalid_native_source")
@@ -152,8 +171,14 @@ def preflight_pi_source(
                     return PiSourcePreflight("unavailable", "store_changed")
                 if _stat_stamp(file_fd) != source.file_object:
                     return PiSourcePreflight("unavailable", "file_changed")
+                failure = _reobserve_namespace(
+                    root, path, root_fd, directories, file_fd, None
+                )
+                if failure:
+                    return PiSourcePreflight("unavailable", failure)
             finally:
                 os.close(file_fd)
+                _close_fds(directories)
     except OSError as exc:
         return PiSourcePreflight("unavailable", _os_failure(exc))
     return PiSourcePreflight("eligible")
@@ -213,28 +238,33 @@ def _relative_parts(root: Path, path: Path) -> tuple[str, ...]:
     return parts
 
 
-def _walk_parent(root_fd: int, root: Path, parent: Path, leaf: str) -> bool:
-    parts = _relative_parts(root, parent / "placeholder")[:-1]
-    current = os.dup(root_fd)
+def _open_parent_directories(
+    root_fd: int, root: Path, path: Path
+) -> tuple[list[int], int]:
+    parts = _relative_parts(root, path)[:-1]
+    directories = [os.dup(root_fd)]
     try:
-        for part in parts:
+        for index, part in enumerate(parts):
             try:
-                nxt = os.open(
+                directories.append(os.open(
                     part,
                     os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                    dir_fd=current,
-                )
+                    dir_fd=directories[-1],
+                ))
             except FileNotFoundError:
-                return True
-            os.close(current)
-            current = nxt
-        try:
-            os.stat(leaf, dir_fd=current, follow_symlinks=False)
-        except FileNotFoundError:
-            return True
-        return False
-    finally:
-        os.close(current)
+                return directories, index + 1
+        return directories, len(parts) + 1
+    except BaseException:
+        _close_fds(directories)
+        raise
+
+
+def _leaf_missing(parent_fd: int, leaf: str) -> bool:
+    try:
+        os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return True
+    return False
 
 
 def _canonical_pending_path(path: Path) -> Path:
@@ -254,21 +284,96 @@ def _canonical_pending_path(path: Path) -> Path:
     return resolved
 
 
-def _open_file(root_fd: int, root: Path, path: Path) -> int:
+def _open_file_with_directories(
+    root_fd: int, root: Path, path: Path
+) -> tuple[list[int], int]:
     parts = _relative_parts(root, path)
-    current = os.dup(root_fd)
+    directories = [os.dup(root_fd)]
     try:
         for part in parts[:-1]:
-            nxt = os.open(
-                part,
-                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                dir_fd=current,
+            directories.append(
+                os.open(
+                    part,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=directories[-1],
+                )
             )
-            os.close(current)
-            current = nxt
-        return os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=current)
+        fd = os.open(
+            parts[-1],
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+            dir_fd=directories[-1],
+        )
+    except BaseException:
+        _close_fds(directories)
+        raise
+    return directories, fd
+
+
+def _reobserve_namespace(
+    root: Path,
+    path: Path,
+    original_root_fd: int,
+    original_directories: list[int],
+    original_leaf_fd: int | None,
+    missing_from: int | None,
+) -> SourceFailure | None:
+    """Reopen the exact canonical namespace no-follow while witnesses remain held.
+
+    This is a bounded point-in-time check, not a lease against later filesystem
+    changes by Pi or another process.
+    """
+    fresh_root = _open_directory(root)
+    try:
+        if _stat_stamp(fresh_root.fd) != _stat_stamp(original_root_fd):
+            return "store_changed"
+        relative = _relative_parts(root, path)
+        fresh_directories = [os.dup(fresh_root.fd)]
+        fresh_leaf: int | None = None
+        try:
+            for index, component in enumerate(relative[:-1], start=1):
+                try:
+                    next_fd = os.open(
+                        component,
+                        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                        dir_fd=fresh_directories[-1],
+                    )
+                except FileNotFoundError:
+                    if original_leaf_fd is None and missing_from == index:
+                        return None
+                    raise
+                fresh_directories.append(next_fd)
+                if index >= len(original_directories):
+                    return "file_changed"
+                if _stat_stamp(next_fd) != _stat_stamp(original_directories[index]):
+                    return "file_changed"
+            if original_leaf_fd is None:
+                if missing_from is not None and missing_from < len(relative):
+                    return "file_changed"
+                if not _leaf_missing(fresh_directories[-1], relative[-1]):
+                    return "file_changed"
+                return None
+            fresh_leaf = os.open(
+                relative[-1],
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                dir_fd=fresh_directories[-1],
+            )
+            fresh_stat = os.fstat(fresh_leaf)
+            if not stat.S_ISREG(fresh_stat.st_mode):
+                return "invalid_native_source"
+            if _stat_stamp(fresh_leaf) != _stat_stamp(original_leaf_fd):
+                return "file_changed"
+            return None
+        finally:
+            if fresh_leaf is not None:
+                os.close(fresh_leaf)
+            _close_fds(fresh_directories)
     finally:
-        os.close(current)
+        fresh_root.__exit__(None, None, None)
+
+
+def _close_fds(fds: list[int]) -> None:
+    for fd in reversed(fds):
+        os.close(fd)
 
 
 def _read_header(fd: int) -> dict[str, object] | None:

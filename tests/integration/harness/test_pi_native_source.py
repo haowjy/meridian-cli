@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    import pytest
+import pytest
 
 from meridian.lib.harness import pi_native_source as source
 from meridian.lib.state.session_authority import QualifiedLocalFile
@@ -175,8 +173,159 @@ def test_permission_is_not_reported_as_missing(
     def denied(*args: object, **kwargs: object) -> int:
         raise PermissionError(13, "denied")
 
-    monkeypatch.setattr(source, "_open_file", denied)
+    monkeypatch.setattr(source, "_open_file_with_directories", denied)
     status = source.qualify_pi_source(
         effective_store=store, session_id="A", session_file=str(file)
     )
     assert status == source.PiSourceUnavailable("inaccessible")
+
+
+@pytest.mark.parametrize("operation", ["acquire", "preflight"])
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("file", "file_changed"),
+        ("root", "store_changed"),
+        ("parent", "file_changed"),
+        ("root_missing", "missing"),
+    ],
+)
+def test_namespace_replacement_during_header_read_is_refused(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    mutation: str,
+    expected: str,
+) -> None:
+    store = tmp_path / "sessions"
+    file = store / "nested" / "chat.jsonl"
+    _journal(file)
+    pinned = _qualified(store, file)
+    real_read_header = source._read_header
+
+    def replace_after_read(fd: int) -> dict[str, object] | None:
+        header = real_read_header(fd)
+        if mutation == "file":
+            file.rename(file.with_name("saved.jsonl"))
+            _journal(file, session_id="B")
+        elif mutation.startswith("root"):
+            store.rename(tmp_path / "saved-store")
+            if mutation == "root":
+                _journal(file, session_id="B")
+        else:
+            (store / "nested").rename(store / "saved-nested")
+            _journal(file, session_id="B")
+        return header
+
+    monkeypatch.setattr(source, "_read_header", replace_after_read)
+    if operation == "acquire":
+        result = source.qualify_pi_source(
+            effective_store=store, session_id="A", session_file=str(file)
+        )
+        assert isinstance(result, source.PiSourceUnavailable)
+        assert result.reason == expected
+    else:
+        result = source.preflight_pi_source(
+            pinned, effective_store=store, session_id="A"
+        )
+        assert result.status == "unavailable"
+        assert result.reason == expected
+
+
+def test_missing_pending_path_is_reobserved_after_parent_walk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = tmp_path / "sessions"
+    store.mkdir()
+    selected = store / "nested" / "future.jsonl"
+    real_reobserve = source._reobserve_namespace
+
+    def replace_before_reobserve(
+        root: Path,
+        path: Path,
+        root_fd: int,
+        directories: list[int],
+        leaf_fd: int | None,
+        missing_from: int | None,
+    ) -> str | None:
+        (store / "nested").mkdir()
+        return real_reobserve(root, path, root_fd, directories, leaf_fd, missing_from)
+
+    monkeypatch.setattr(source, "_reobserve_namespace", replace_before_reobserve)
+    result = source.qualify_pi_source(
+        effective_store=store, session_id="A", session_file=str(selected)
+    )
+    assert isinstance(result, source.PiSourceUnavailable)
+    assert result.reason == "file_changed"
+
+
+def test_pending_root_replacement_is_reobserved_at_completion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = tmp_path / "sessions"
+    store.mkdir()
+    selected = store / "future.jsonl"
+    real_reobserve = source._reobserve_namespace
+
+    def replace_root_before_reobserve(
+        root: Path,
+        path: Path,
+        root_fd: int,
+        directories: list[int],
+        leaf_fd: int | None,
+        missing_from: int | None,
+    ) -> str | None:
+        store.rename(tmp_path / "saved-store")
+        store.mkdir()
+        return real_reobserve(root, path, root_fd, directories, leaf_fd, missing_from)
+
+    monkeypatch.setattr(source, "_reobserve_namespace", replace_root_before_reobserve)
+    result = source.qualify_pi_source(
+        effective_store=store, session_id="A", session_file=str(selected)
+    )
+    assert isinstance(result, source.PiSourceUnavailable)
+    assert result.reason == "store_changed"
+
+
+def test_fifo_sources_return_without_blocking(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    store = tmp_path / "sessions"
+    store.mkdir()
+    fifo = store / "chat.jsonl"
+    import os
+
+    os.mkfifo(fifo)
+    script = """
+from pathlib import Path
+from meridian.lib.harness.pi_native_source import (
+    PiSourceUnavailable,
+    preflight_pi_source,
+    qualify_pi_source,
+)
+from meridian.lib.state.session_authority import QualifiedLocalFile, LocalObjectStamp
+import sys
+store, fifo = Path(sys.argv[1]), Path(sys.argv[2])
+acquired = qualify_pi_source(effective_store=store, session_id='A', session_file=str(fifo))
+assert acquired == PiSourceUnavailable('invalid_native_source'), acquired
+pinned = QualifiedLocalFile(
+    kind='local_file',
+    path=str(fifo),
+    store_object=LocalObjectStamp(
+        device=store.stat().st_dev, inode=store.stat().st_ino
+    ),
+    file_object=LocalObjectStamp(device=0, inode=0),
+    rule='pi_rpc_exact_v1',
+)
+checked = preflight_pi_source(pinned, effective_store=store, session_id='A')
+assert checked.status == 'unavailable' and checked.reason == 'invalid_native_source', checked
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(store), str(fifo)],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr

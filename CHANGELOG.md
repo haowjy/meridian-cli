@@ -23,6 +23,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Reobserve Pi exact-source root, directory, and file identities through bounded
+  no-follow descriptor traversal before accepting; open leaves nonblocking and
+  reject nonregular sources before reading.
 - Extend the existing session transaction through v4 attempt rows and recover
   ambiguous locator-conflict appends only from exact target-binding equality.
   Share pure current-entry/source admission and retain uncertain owned entry
