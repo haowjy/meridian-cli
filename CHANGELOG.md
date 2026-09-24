@@ -6,6 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Route Claude and OpenCode primary raw-session arguments through their registered
+  adapters' reviewed normalizers, retaining fail-closed behavior on unsupported surfaces.
 - Preserve explicit fork mode and fork intent in the typed primary session request;
   keep OpenCode model-override fixtures pinned to V2 while retaining V1 refusal.
 - Pi primary argument validation errors no longer disclose rejected positional,

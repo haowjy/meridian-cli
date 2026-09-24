@@ -315,6 +315,12 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_CLAUDE_SUBPROCESS
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_CLAUDE
+
+    def normalize_primary_session_args(
+        self, args: tuple[str, ...], surface: NativeSessionSurface
+    ) -> NormalizedNativeSessionArgs:
+        return normalize_primary_session_args(args, surface)
+
     _CONSUMED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             "prompt",

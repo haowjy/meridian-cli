@@ -18,6 +18,13 @@ def test_registered_adapters_refuse_unhandled_primary_native_session_args(
 ) -> None:
     adapter = HarnessRegistry.with_defaults().get(harness_id)
 
+    if harness_id == HarnessId("claude") and surface == "managed":
+        with pytest.raises(ValueError):
+            adapter.normalize_primary_session_args((), surface)
+        with pytest.raises(ValueError):
+            adapter.normalize_primary_session_args(("--resume", "session-id"), surface)
+        return
+
     absent = adapter.normalize_primary_session_args((), surface)
     assert absent.selector is None
     assert absent.remaining_args == ()
@@ -39,3 +46,50 @@ def test_pi_adapter_retains_only_bounded_primary_overrides(surface: NativeSessio
         adapter.normalize_primary_session_args(("--profile", private_value), surface)
     assert "--profile" not in str(error.value)
     assert private_value not in str(error.value)
+
+
+def test_registered_claude_adapter_normalizes_native_resume() -> None:
+    adapter = HarnessRegistry.with_defaults().get(HarnessId("claude"))
+    native_id = "123e4567-e89b-12d3-a456-426614174000"
+
+    normalized = adapter.normalize_primary_session_args(
+        ("--resume", native_id, "--model", "claude-sonnet"), "subprocess"
+    )
+
+    assert (normalized.selector.operation, normalized.selector.native_id) == (
+        "resume",
+        native_id,
+    )
+    assert normalized.remaining_args == ("--model", "claude-sonnet")
+    with pytest.raises(ValueError):
+        adapter.normalize_primary_session_args(("--resume", "not-a-uuid"), "subprocess")
+    with pytest.raises(ValueError):
+        adapter.normalize_primary_session_args(("--resume", native_id), "managed")
+
+
+def test_registered_opencode_adapter_normalizes_native_resume_and_logging() -> None:
+    adapter = HarnessRegistry.with_defaults().get(HarnessId("opencode"))
+
+    normalized = adapter.normalize_primary_session_args(
+        ("--session", "ses_native_123", "--log-level", "INFO"), "managed"
+    )
+
+    assert (normalized.selector.operation, normalized.selector.native_id) == (
+        "resume",
+        "ses_native_123",
+    )
+    assert normalized.remaining_args == ("--log-level", "INFO")
+    with pytest.raises(ValueError):
+        adapter.normalize_primary_session_args(("--session", "session-id"), "subprocess")
+    with pytest.raises(ValueError):
+        adapter.normalize_primary_session_args(
+            ("--session", "ses_native_123", "--model", "x"), "managed"
+        )
+    with pytest.raises(ValueError):
+        adapter.normalize_primary_session_args((), "unknown")  # type: ignore[arg-type]
+
+
+def test_registered_default_adapter_stays_fail_closed() -> None:
+    adapter = HarnessRegistry.with_defaults().get(HarnessId("cursor"))
+    with pytest.raises(ValueError):
+        adapter.normalize_primary_session_args(("--resume", "session-id"), "subprocess")

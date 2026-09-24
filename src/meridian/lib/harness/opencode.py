@@ -50,6 +50,10 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.connections.opencode_connection import OpenCodeConnection
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview, SessionSeed
+from meridian.lib.harness.native_session_args import (
+    NativeSessionSurface,
+    NormalizedNativeSessionArgs,
+)
 from meridian.lib.harness.opencode_backend import resolve_opencode_version
 from meridian.lib.harness.opencode_report import (
     extract_opencode_report,
@@ -403,6 +407,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_OPENCODE_SUBPROCESS
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_OPENCODE
+
     SESSION_ID_KEYS: ClassVar[tuple[str, ...]] = (
         "session_id",
         "sessionId",
@@ -444,6 +449,11 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "recorded_native_source",
         }
     )
+
+    def normalize_primary_session_args(
+        self, args: tuple[str, ...], surface: NativeSessionSurface
+    ) -> NormalizedNativeSessionArgs:
+        return normalize_primary_session_args(args, surface)
 
     @property
     def id(self) -> HarnessId:
