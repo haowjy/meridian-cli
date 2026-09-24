@@ -352,14 +352,9 @@ def launch_primary(
 
 def _primary_source_operation(request: LaunchRequest) -> Literal["fresh", "resume", "fork"]:
     """Choose an operation only after the shared source comparator checks facts."""
-    primary_mode = (request.session.primary_session_mode or "").strip().lower() or None
-    if primary_mode not in (None, "resume", "fork"):
-        raise ValueError(f"Unsupported primary session mode: {primary_mode!r}")
-    if primary_mode is not None:
-        return primary_mode
-    if request.session.continue_fork:
-        return "fork"
-    return request.session_mode.value
+    from meridian.lib.launch.source_selection import declared_session_operation
+
+    return declared_session_operation(request.session, fallback=request.session_mode.value)
 
 
 def _primary_source_operation_facts(request: LaunchRequest) -> tuple[str, ...]:

@@ -1797,6 +1797,8 @@ def bind_launch_context(
     """Validate an independently supplied prepared selection, then bind it."""
     from .source_selection import (
         PrimarySourceSelection,
+        declared_session_operation,
+        reconcile_materialized_session_operation,
         reconcile_primary_source_selection,
         session_operation_facts,
     )
@@ -1807,16 +1809,12 @@ def bind_launch_context(
     resolved_session = request.session
 
     def operation_for(session: SessionRequest) -> Literal["fresh", "resume", "fork"]:
-        mode = (session.primary_session_mode or "").strip().lower()
-        if session.continue_fork or mode == "fork":
-            return "fork"
-        if mode == "resume" or session.continue_source_ref or session.requested_harness_session_id:
-            return "resume"
-        return "fresh"
+        return declared_session_operation(session)
 
     original_facts = session_operation_facts(original_session)
     resolved_facts = session_operation_facts(resolved_session)
     operation = operation_for(original_session)
+    reconcile_materialized_session_operation(resolved_session, operation)
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
     prepared_root = prepared.source_runtime_root
     if prepared_root is None or prepared_root.expanduser().resolve() != runtime_root:

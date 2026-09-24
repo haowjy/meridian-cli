@@ -34,6 +34,37 @@ def session_operation_facts(session: SessionRequest) -> tuple[str, ...]:
     return tuple(facts)
 
 
+def declared_session_operation(
+    session: SessionRequest,
+    *,
+    fallback: Literal["fresh", "resume", "fork"] = "fresh",
+) -> Literal["fresh", "resume", "fork"]:
+    """Extract the operation declared by session mode and native continuation intent."""
+    mode = (session.primary_session_mode or "").strip().lower()
+    if mode:
+        if mode == "fresh":
+            return "fresh"
+        if mode == "resume":
+            return "resume"
+        if mode == "fork":
+            return "fork"
+        raise ValueError(f"Unsupported primary session mode: {mode!r}")
+    if session.continue_fork:
+        return "fork"
+    if session.continue_source_ref or session.requested_harness_session_id:
+        return "resume"
+    return fallback
+
+
+def reconcile_materialized_session_operation(
+    session: SessionRequest,
+    operation: Literal["fresh", "resume", "fork"],
+) -> None:
+    """Refuse when the prepared operation disagrees with materialized fork state."""
+    if session.continue_fork != (operation == "fork"):
+        raise _conflict("materialized fork state differs from declared operation")
+
+
 @dataclass(frozen=True)
 class PrimarySourceSelection:
     """Independent source, operation, namespace and harness facts at one owner."""

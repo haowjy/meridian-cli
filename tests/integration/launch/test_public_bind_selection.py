@@ -153,6 +153,48 @@ def test_public_bind_accepts_native_fork_source_without_claiming_a_target(
     assert materializations == [True]
 
 
+def test_public_bind_refuses_omitted_false_for_native_fork_before_lookup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepared, runtime, registry = _prepared(
+        tmp_path,
+        SessionRequest(
+            requested_harness_session_id="native-A",
+            continue_source_ref="native-A",
+            primary_session_mode="fork",
+        ),
+    )
+    assert "continue_fork" not in prepared.launch_request.session.model_fields_set
+    lookups, materializations = _stub_effects(monkeypatch)
+
+    with pytest.raises(ValueError, match="source selection conflict"):
+        _bind(prepared, runtime, registry)
+
+    assert lookups == []
+    assert materializations == []
+
+
+def test_public_bind_refuses_explicit_false_for_native_fork_before_lookup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepared, runtime, registry = _prepared(
+        tmp_path,
+        SessionRequest(
+            requested_harness_session_id="native-A",
+            continue_source_ref="native-A",
+            continue_fork=False,
+            primary_session_mode="fork",
+        ),
+    )
+    lookups, materializations = _stub_effects(monkeypatch)
+
+    with pytest.raises(ValueError, match="source selection conflict"):
+        _bind(prepared, runtime, registry)
+
+    assert lookups == []
+    assert materializations == []
+
+
 def test_public_bind_performs_one_lookup_for_consistent_untracked_native_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -327,14 +369,17 @@ def test_public_bind_fresh_uuid_does_not_query_and_builds_fresh_spec(
     assert context.binding.argv
 
 
+@pytest.mark.parametrize(("mode", "fork"), [("resume", False), ("fork", True)])
 def test_build_launch_context_materializes_checked_source_argv(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, fork: bool
 ) -> None:
     prepared, runtime, registry = _prepared(
         tmp_path,
         SessionRequest(
             requested_harness_session_id="native-A",
             continue_source_ref="native-A",
+            continue_fork=fork,
+            primary_session_mode=mode,
         ),
     )
     calls: list[str] = []
@@ -359,6 +404,7 @@ def test_build_launch_context_materializes_checked_source_argv(
 
     assert calls == ["native-A"]
     assert context.binding.spec.continue_session_id == "native-A"
+    assert context.binding.spec.continue_fork is fork
     assert context.binding.argv
 
 
