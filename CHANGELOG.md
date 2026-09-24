@@ -6,6 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Classify Codex managed `--config` aliases in the existing grammar traversal;
+  refuse unproved scalar cells and mandatory sandbox/approval conflicts before preparation.
 - Preserve recognized, consistent intentional native-default selections in retained
   model controls; normalize fallback model identity in the shared projection.
 - Admit fresh primary raw arguments with the selected adapter's concrete initial

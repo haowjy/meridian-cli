@@ -66,6 +66,11 @@ from meridian.lib.harness.native_session_args import (
     PrimaryArgControls,
 )
 from meridian.lib.harness.permission_broker import PermissionBroker
+from meridian.lib.harness.projections.project_codex_common import (
+    HarnessCapabilityMismatch,
+    map_codex_approval_policy,
+    map_codex_sandbox_mode,
+)
 from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
     project_codex_spec_to_thread_request,
@@ -261,7 +266,7 @@ _CODEX_CONFIG_ENUMS: dict[str, frozenset[str]] = {
 }
 
 
-def _validate_codex_config(raw: str) -> None:
+def _validate_codex_config(raw: str) -> tuple[str, str]:
     key, separator, value = raw.partition("=")
     if (
         not separator
@@ -289,9 +294,7 @@ def _validate_codex_config(raw: str) -> None:
             decoded = json.loads(value)
         except json.JSONDecodeError:
             decoded = value
-            if any(char.isspace() for char in value) or any(
-                char in value for char in '\"[]{}'
-            ):
+            if any(char.isspace() for char in value) or any(char in value for char in '"[]{}'):
                 raise ValueError("Codex model config must be one scalar string") from None
         if (
             not isinstance(decoded, str)
@@ -311,8 +314,7 @@ def _validate_codex_config(raw: str) -> None:
             value = decoded
         if value not in _CODEX_CONFIG_ENUMS[key]:
             raise ValueError(f"unsupported Codex --config value for '{key}'")
-    # Managed matching against effective thread fields belongs to the later
-    # bootstrap consumer, not this syntax normalizer.
+    return key, value
 
 
 def _normalize_codex_primary_session_args(
@@ -321,7 +323,6 @@ def _normalize_codex_primary_session_args(
     *,
     controls: PrimaryArgControls | None = None,
 ) -> NormalizedNativeSessionArgs:
-    _ = controls
     selector: NativeSessionSelector | None = None
     index = 0
     if args and args[0] == "resume":
@@ -332,7 +333,9 @@ def _normalize_codex_primary_session_args(
 
     remaining: list[str] = []
     seen_config_keys: set[str] = set()
+    config_roles: list[tuple[str, str]] = []
     model_seen = False
+    raw_model_count = 0
     bypass_seen = False
     refused_options = {
         "--sandbox": (
@@ -379,20 +382,20 @@ def _normalize_codex_primary_session_args(
                     raise ValueError("Codex --config requires a value")
                 value = args[index + 1]
                 consumed = 2
-            _validate_codex_config(value)
-            key = value.partition("=")[0]
+            key, decoded = _validate_codex_config(value)
             if key in seen_config_keys:
                 raise ValueError(f"duplicate Codex --config key '{key}'")
             seen_config_keys.add(key)
+            config_roles.append((key, decoded))
             remaining.extend(args[index : index + consumed])
             index += consumed
             continue
         if token in {"--model", "-m"}:
-            if surface != "subprocess":
+            if surface != "subprocess" and controls is None:
                 raise ValueError(
                     "Codex raw model is unsupported on managed app-server; use Meridian --model."
                 )
-            if model_seen:
+            if model_seen and surface == "subprocess":
                 raise ValueError("duplicate Codex model option")
             if (
                 index + 1 >= len(args)
@@ -402,20 +405,22 @@ def _normalize_codex_primary_session_args(
                 raise ValueError("Codex model option requires a value")
             value = args[index + 1]
             model_seen = True
+            raw_model_count += 1
             remaining.extend((token, value))
             index += 2
             continue
         if token.startswith("--model="):
-            if surface != "subprocess":
+            if surface != "subprocess" and controls is None:
                 raise ValueError(
                     "Codex raw model is unsupported on managed app-server; use Meridian --model."
                 )
-            if model_seen:
+            if model_seen and surface == "subprocess":
                 raise ValueError("duplicate Codex model option")
             value = token.partition("=")[2]
             if not value.strip():
                 raise ValueError("Codex model option requires a value")
             model_seen = True
+            raw_model_count += 1
             remaining.append(token)
             index += 1
             continue
@@ -435,6 +440,54 @@ def _normalize_codex_primary_session_args(
         if option_name is None:
             raise ValueError("unsupported Codex raw argument")
         raise ValueError(f"unsupported Codex raw option '{option_name}'")
+    if controls is not None and surface == "managed":
+        roles = [key for key, _ in config_roles]
+        # Mandatory policy conflicts take precedence over ordinary model/effort
+        # refusals. The managed backend and thread payload are separate consumers;
+        # neither is proven to own these raw config cells.
+        for key, value in config_roles:
+            if key == "sandbox_mode" and controls.execution_policy.sandbox is not None:
+                try:
+                    expected = map_codex_sandbox_mode(controls.execution_policy.sandbox)
+                except HarnessCapabilityMismatch:
+                    expected = None
+                if expected is not None and value != expected:
+                    raise ValueError(
+                        "Codex raw sandbox config conflicts with Meridian --sandbox; "
+                        "remove the raw assignment."
+                    )
+            if key == "approval_policy" and controls.execution_policy.approval is not None:
+                try:
+                    expected = map_codex_approval_policy(controls.execution_policy.approval)
+                except HarnessCapabilityMismatch:
+                    expected = None
+                if expected is not None and value != expected:
+                    raise ValueError(
+                        "Codex raw approval config conflicts with Meridian --approval; "
+                        "remove the raw assignment."
+                    )
+
+        model_count = raw_model_count + roles.count("model")
+        if model_count > 1:
+            raise ValueError("ambiguous repeated Codex model scalar; use Meridian --model.")
+
+        if raw_model_count:
+            raise ValueError(
+                "Codex raw model is unsupported on managed app-server; use Meridian --model."
+            )
+        alternatives = {
+            "model": "Meridian --model",
+            "model_reasoning_effort": "Meridian --effort",
+            "sandbox_mode": "Meridian --sandbox",
+            "approval_policy": "Meridian --approval",
+            "tools.web_search": "the profile/bundle web_search tool setting",
+        }
+        if roles:
+            key = roles[0]
+            raise ValueError(
+                f"Codex raw {key.replace('_', ' ')} config is unsupported on managed app-server; "
+                f"use {alternatives[key]}."
+            )
     return NormalizedNativeSessionArgs(selector, tuple(remaining))
 
 
