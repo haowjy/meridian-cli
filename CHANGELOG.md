@@ -9,6 +9,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Refuse native source loss, conflicting operation claims, resolver snapshot harness drift, and replay selector changes before launch preparation.
 
 - Reconcile primary source identity and operation before lookup, and reject contradictory legacy resolver results before continue replay/model history.
+- Preserve explicitly supplied false fork state at the prepared boundary and refuse transformed resume/fork contradictions before private bind.
+- Exercise Pi tracked-preview transport refusal only with valid pinned authority; retain a separate missing-authority refusal case.
 
 ### Changed
 

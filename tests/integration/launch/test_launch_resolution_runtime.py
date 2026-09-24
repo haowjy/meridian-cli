@@ -25,7 +25,10 @@ from meridian.lib.launch.request import LaunchCompositionSurface, SessionRequest
 from meridian.lib.launch.types import LaunchRequest, build_primary_prompt
 from meridian.lib.ops.spawn import context_ref
 from meridian.lib.state import work_repository, work_store
-from meridian.lib.state.paths import resolve_project_paths
+from meridian.lib.state.paths import (
+    resolve_project_paths,
+    resolve_project_runtime_root_for_write,
+)
 from tests.support.fixtures import write_agent
 from tests.support.launch import stub_bundle_request_and_resolve
 
@@ -758,6 +761,11 @@ def test_tracked_pi_primary_preview_refuses_unqualified_native_transport(
         model="gpt-5.5",
         harness=HarnessId.PI,
     )
+    from tests.integration.ops.test_native_reference_authority import _pinned_journal
+
+    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    _pinned_journal(runtime_root)
 
     with pytest.raises(ValueError, match="transport_unqualified"):
         build_launch_context(
@@ -768,12 +776,48 @@ def test_tracked_pi_primary_preview_refuses_unqualified_native_transport(
                 model="gpt-5.5",
                 harness=HarnessId.PI.value,
                 session=SessionRequest(
-                    requested_harness_session_id="synthetic-native-id",
+                    requested_harness_session_id="conversation",
                     primary_session_mode="fork" if fork else "resume",
                     continue_harness="pi",
-                    continue_source_ref="c123",
+                    continue_source_ref="c1",
                     continue_source_tracked=True,
                     continue_fork=fork,
+                ),
+            ),
+            runtime=build_primary_launch_runtime(project_root=tmp_path),
+            harness_registry=get_default_harness_registry(),
+            dry_run=True,
+        )
+
+
+def test_tracked_pi_primary_preview_without_authority_refuses_claim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "mars.toml").write_text(
+        '[settings]\ntargets = [".pi"]\n',
+        encoding="utf-8",
+    )
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.5",
+        harness=HarnessId.PI,
+    )
+
+    with pytest.raises(ValueError, match="native_claim_blocked"):
+        build_launch_context(
+            spawn_id="dry-run-pi-missing-authority",
+            request=SpawnRequest(
+                prompt="continue prompt",
+                prompt_is_composed=False,
+                model="gpt-5.5",
+                harness=HarnessId.PI.value,
+                session=SessionRequest(
+                    requested_harness_session_id="conversation",
+                    primary_session_mode="resume",
+                    continue_harness="pi",
+                    continue_source_ref="c1",
+                    continue_source_tracked=True,
                 ),
             ),
             runtime=build_primary_launch_runtime(project_root=tmp_path),

@@ -1389,3 +1389,69 @@ def test_bare_fork_inference_authorizes_resolved_spawn_id(
             dry_run=True,
             **{flag: SELF_FORK_REF_SENTINEL},
         )
+
+
+@pytest.mark.parametrize(
+    ("mode", "initial_fork", "prepared_fork"),
+    [("fork", True, False), ("resume", False, True)],
+    ids=["prepared-fork-cleared", "prepared-resume-promoted"],
+)
+def test_primary_owner_reconciles_prepared_fork_bit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    initial_fork: bool,
+    prepared_fork: bool,
+) -> None:
+    """A transformed explicit fork bit must not contradict original operation."""
+    from dataclasses import replace
+
+    from meridian.lib.launch.types import SessionMode
+
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _state_root(project_root)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.3-codex",
+        harness=HarnessId.CODEX,
+        harness_model="openai/gpt-5.3-codex",
+    )
+    real_prepare = launch_context.prepare_launch_surface
+    binds: list[None] = []
+
+    def change_prepared_operation(*args: Any, **kwargs: Any) -> Any:
+        prepared = real_prepare(*args, **kwargs)
+        changed_session = prepared.request.session.model_copy(
+            update={"continue_fork": prepared_fork}
+        )
+        return replace(
+            prepared,
+            request=prepared.request.model_copy(update={"session": changed_session}),
+        )
+
+    def observe_bind(*args: Any, **kwargs: Any) -> Any:
+        binds.append(None)
+        raise AssertionError("prepared operation conflict must stop before private bind")
+
+    monkeypatch.setattr(launch_context, "prepare_launch_surface", change_prepared_operation)
+    monkeypatch.setattr(launch_context, "_bind_launch_context_impl", observe_bind)
+    with pytest.raises(ValueError, match="conflict"):
+        launch_primary(
+            project_root=project_root,
+            request=LaunchRequest(
+                model="gpt-5.3-codex",
+                harness="codex",
+                session_mode=SessionMode(mode),
+                dry_run=True,
+                session=SessionRequest(
+                    requested_harness_session_id="native-A",
+                    primary_session_mode=mode,
+                    continue_harness="codex",
+                    continue_source_ref="native-A",
+                    continue_fork=initial_fork,
+                ),
+            ),
+            harness_registry=get_default_harness_registry(),
+        )
+    assert binds == []

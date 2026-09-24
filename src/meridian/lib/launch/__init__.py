@@ -383,6 +383,14 @@ def _session_operation_facts(session: SessionRequest) -> tuple[str, ...]:
         facts.append(primary_mode)
     if session.continue_fork:
         facts.append("fork")
+    elif "continue_fork" in session.model_fields_set and (
+        primary_mode in ("resume", "fork")
+        or session.continue_source_ref is not None
+        or session.requested_harness_session_id is not None
+    ):
+        # An effective false at a transformed boundary asserts resume. Do not
+        # infer this from the default at entry, where the field may be absent.
+        facts.append("resume")
     return tuple(facts)
 
 
