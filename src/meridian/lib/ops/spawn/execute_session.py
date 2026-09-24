@@ -11,6 +11,12 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.request import SessionRequest, SpawnRequest
 from meridian.lib.launch.session_scope import SessionAttempt, session_scope
 from meridian.lib.launch.types import PrimarySessionMetadata
+from meridian.lib.ops.reference import (
+    AuthorizedSourceUse,
+    SourceUseRefused,
+    UntrackedSourceUse,
+    resolve_source_use,
+)
 from meridian.lib.state.session_store import get_session_active_work_id, update_session_work_id
 
 from .execute_init import LaunchUserInputError
@@ -30,6 +36,7 @@ def _resolve_session_continuation(
     request: SpawnRequest,
     harness_id: HarnessId,
     harness_adapter: object,
+    runtime_root: Path,
 ) -> SessionRequest:
     from typing import Any
 
@@ -39,10 +46,26 @@ def _resolve_session_continuation(
     ).strip() or None
     requested_continue_fork = request.session.continue_fork
     requested_harness = (request.session.continue_harness or "").strip()
-    if request.session.continue_source_tracked and requested_harness_session_id is None:
-        raise LaunchUserInputError(
-            "Source reference has no recorded harness session — cannot continue/fork."
+    source_ref = (request.session.continue_source_ref or "").strip()
+    if requested_harness_session_id or source_ref or request.session.recorded_native_source:
+        authority_ref = source_ref or requested_harness_session_id or ""
+        source_use = resolve_source_use(
+            runtime_root,
+            "fork" if requested_continue_fork else "resume",
+            authority_ref,
+            explicit_harness=requested_harness or str(harness_id),
         )
+        if isinstance(source_use, SourceUseRefused):
+            raise LaunchUserInputError(
+                f"Spawn source '{authority_ref}' is unavailable "
+                f"({source_use.reason}); no process was started."
+            )
+        if isinstance(source_use, AuthorizedSourceUse) or request.session.recorded_native_source:
+            raise LaunchUserInputError(
+                "Tracked exact resume is blocked pending owned admission "
+                "(owner_required); no process was started."
+            )
+        assert isinstance(source_use, UntrackedSourceUse)
 
     resolved_continue_harness_session_id: str | None = None
     resolved_continue_fork = False
@@ -67,9 +90,6 @@ def _resolve_session_continuation(
     return request.session.model_copy(update={
         "requested_harness_session_id": resolved_continue_harness_session_id,
         "continue_fork": resolved_continue_fork,
-        # pN continuation resolves its own attempt/session semantics and must
-        # never inherit a primary cN native-source credential.
-        "recorded_native_source": None,
     })
 
 
