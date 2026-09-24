@@ -350,7 +350,7 @@ class NativeIdNoMatch:
 
 @dataclass(frozen=True)
 class NativeIdUnavailable:
-    reason: Literal["authority_invalid"]
+    reason: Literal["authority_invalid", "authority_io"]
 
 
 @dataclass(frozen=True)
@@ -359,6 +359,57 @@ class NativeIdAmbiguous:
 
 
 type NativeIdLookup = NativeIdMatches | NativeIdNoMatch | NativeIdUnavailable | NativeIdAmbiguous
+
+
+@dataclass(frozen=True)
+class NativeSourceUseSnapshot:
+    """One strict, non-repairing authority projection for one source decision."""
+
+    journal: JournalSnapshot
+
+    def binding(self, chat_id: str) -> NativeBindingStatus:
+        return _native_binding_from_snapshot(self.journal, chat_id)
+
+    def candidates(self, native_session_id: str, *, harness: str | None = None) -> NativeIdLookup:
+        return _native_id_candidates_from_snapshot(
+            self.journal, native_session_id, harness=harness
+        )
+
+    def selected_chat_candidates(
+        self, chat_id: str, native_session_id: str, *, harness: str | None = None
+    ) -> NativeIdLookup:
+        lookup = self.candidates(native_session_id, harness=harness)
+        if isinstance(lookup, NativeIdUnavailable | NativeIdNoMatch):
+            return lookup
+        matches = tuple(item for item in lookup.candidates if item.chat_id == chat_id)
+        if not matches:
+            return NativeIdNoMatch()
+        if len(matches) != 1:
+            return NativeIdAmbiguous(matches)
+        return NativeIdMatches(matches)
+
+
+def read_native_source_use_snapshot(
+    runtime_root: Path,
+) -> NativeSourceUseSnapshot | NativeIdUnavailable:
+    """Read/fold authority once under the normal locks without repairing bytes.
+
+    The final fsync barrier is retained even though this path is read-only: an
+    accepted negative or positive policy decision must not bypass the journal's
+    durability contract. A complete final row without LF is valid and remains
+    byte-identical; malformed or torn authority and expected I/O failures refuse.
+    """
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    try:
+        with _sessions_transaction(paths, repair_tail=False) as transaction:
+            if transaction.journal.tail == "torn":
+                raise InvalidSessionJournal("Torn sessions.jsonl tail")
+            snapshot = transaction.snapshot
+    except InvalidSessionJournal:
+        return NativeIdUnavailable("authority_invalid")
+    except OSError:
+        return NativeIdUnavailable("authority_io")
+    return NativeSourceUseSnapshot(snapshot)
 
 
 def lookup_native_id_candidates(
@@ -381,6 +432,16 @@ def lookup_native_id_candidates(
             snapshot = transaction.snapshot
     except InvalidSessionJournal:
         return NativeIdUnavailable("authority_invalid")
+    except OSError:
+        return NativeIdUnavailable("authority_io")
+
+    return _native_id_candidates_from_snapshot(snapshot, normalized_id, harness=harness_filter)
+
+
+def _native_id_candidates_from_snapshot(
+    snapshot: JournalSnapshot, normalized_id: str, *, harness: str | None = None
+) -> NativeIdLookup:
+    harness_filter = harness.strip().lower() if harness is not None else None
 
     candidates: list[NativeIdCandidate] = []
     for binding in snapshot.identity.native_bindings.values():
@@ -478,47 +539,50 @@ def _get_native_binding(runtime_root: Path, chat_id: str) -> NativeBindingStatus
     """
     paths = RuntimePaths.from_root_dir(runtime_root)
     with _sessions_transaction(paths) as transaction:
-        snapshot = transaction.snapshot
-        normalized = ChatId(normalize_optional_identity(chat_id) or "")
-        ref = snapshot.identity.refs.get(normalized)
-        if ref is None:
-            return UnavailableBinding(normalized, "unknown_ref")
-        if isinstance(ref, Historical):
-            return UnavailableBinding(normalized, "historical")
-        if isinstance(ref, ReferenceOnly):
-            return UnavailableBinding(normalized, "reserved_or_reference_only")
-        key = snapshot.identity.chat_to_key.get(normalized)
-        if key is None:
-            return UnavailableBinding(normalized, "legacy_unverified")
-        binding = snapshot.identity.native_bindings.get(native_key_tuple(key))
-        if binding is None or binding.chat_id != normalized:
-            # Lifecycle rows and pre-authority data can occupy a cN, but never
-            # acquire native authority from their harness-session ID.
-            return UnavailableBinding(normalized, "legacy_unverified", key)
-        if binding.conflict is not None:
-            return UnavailableBinding(normalized, "source_conflict", key)
-        if binding.protocol != "v4" or isinstance(binding.source, LocatorUnrecorded):
-            return UnavailableBinding(normalized, "locator_unrecorded", key)
+        return _native_binding_from_snapshot(transaction.snapshot, chat_id)
 
-        guard = binding.store_guard
-        store_guard = (
-            AcquiredStoreGuard(guard.object, guard.store_event_id) if guard is not None else None
-        )
-        source = binding.source
-        if isinstance(source, Unobserved):
-            exposed_source = UnobservedSource("unobserved", source.observation)
-        elif isinstance(source, Pending):
-            exposed_source = PendingSource("pending", source.observation)
-        else:
-            assert isinstance(source, Pinned)
-            exposed_source = PinnedSource("pinned", source.observation, source.event_id)
-        return OperationalBinding(
-            normalized,
-            key,
-            binding.binding_event_id,
-            store_guard,
-            exposed_source,
-        )
+
+def _native_binding_from_snapshot(snapshot: JournalSnapshot, chat_id: str) -> NativeBindingStatus:
+    normalized = ChatId(normalize_optional_identity(chat_id) or "")
+    ref = snapshot.identity.refs.get(normalized)
+    if ref is None:
+        return UnavailableBinding(normalized, "unknown_ref")
+    if isinstance(ref, Historical):
+        return UnavailableBinding(normalized, "historical")
+    if isinstance(ref, ReferenceOnly):
+        return UnavailableBinding(normalized, "reserved_or_reference_only")
+    key = snapshot.identity.chat_to_key.get(normalized)
+    if key is None:
+        return UnavailableBinding(normalized, "legacy_unverified")
+    binding = snapshot.identity.native_bindings.get(native_key_tuple(key))
+    if binding is None or binding.chat_id != normalized:
+        # Lifecycle rows and pre-authority data can occupy a cN, but never
+        # acquire native authority from their harness-session ID.
+        return UnavailableBinding(normalized, "legacy_unverified", key)
+    if binding.conflict is not None:
+        return UnavailableBinding(normalized, "source_conflict", key)
+    if binding.protocol != "v4" or isinstance(binding.source, LocatorUnrecorded):
+        return UnavailableBinding(normalized, "locator_unrecorded", key)
+
+    guard = binding.store_guard
+    store_guard = (
+        AcquiredStoreGuard(guard.object, guard.store_event_id) if guard is not None else None
+    )
+    source = binding.source
+    if isinstance(source, Unobserved):
+        exposed_source = UnobservedSource("unobserved", source.observation)
+    elif isinstance(source, Pending):
+        exposed_source = PendingSource("pending", source.observation)
+    else:
+        assert isinstance(source, Pinned)
+        exposed_source = PinnedSource("pinned", source.observation, source.event_id)
+    return OperationalBinding(
+        normalized,
+        key,
+        binding.binding_event_id,
+        store_guard,
+        exposed_source,
+    )
 
 
 def get_native_attempt_boundaries(

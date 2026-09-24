@@ -24,6 +24,7 @@ from meridian.lib.state.session_authority import (
     NativeBindingStatus,
     NativeSessionKey,
     NativeSourceRef,
+    OperationalBinding,
     PinnedSource,
     RecordedNativeSource,
     UnavailableBinding,
@@ -127,19 +128,27 @@ async def resolve_native_reference(
     if isinstance(binding, UnavailableBinding):
         return NativeUnavailable(chat_id, purpose, binding.reason, binding.key)
 
-    source = binding.source
-    if not isinstance(source, PinnedSource):
-        if isinstance(source, UnobservedSource):
+    source = _recorded_source_from_binding(binding)
+    if source is None:
+        if isinstance(binding.source, UnobservedSource):
             reason = (
                 "unsupported_locator"
-                if source.first_observation.reason == "unsupported_locator"
+                if binding.source.first_observation.reason == "unsupported_locator"
                 else "locator_unobserved"
             )
         else:
             reason = "native_pending"
         return NativeUnavailable(chat_id, purpose, reason, binding.key)
 
-    recorded = RecordedNativeSource(
+    return AuthorizedNativeTarget(runtime_root, purpose, source)
+
+
+def _recorded_source_from_binding(binding: NativeBindingStatus) -> RecordedNativeSource | None:
+    """Construct one immutable native source from an operational pin."""
+    if not isinstance(binding, OperationalBinding) or not isinstance(binding.source, PinnedSource):
+        return None
+    source = binding.source
+    return RecordedNativeSource(
         ref=NativeSourceRef(
             chat_id=binding.chat_id,
             binding_event_id=binding.binding_event_id,
@@ -148,7 +157,6 @@ async def resolve_native_reference(
         key=binding.key,
         locator=source.locator,
     )
-    return AuthorizedNativeTarget(runtime_root, purpose, recorded)
 
 
 def resolve_source_use(
@@ -170,12 +178,15 @@ def resolve_source_use(
         return SourceUseRefused(operation, original_ref, "unknown_ref")
 
     if _CHAT_REF_RE.fullmatch(ref):
-        resolved = _native_source_for_use(runtime_root, operation, original_ref, ref)
+        authority = session_store.read_native_source_use_snapshot(runtime_root)
+        if isinstance(authority, session_store.NativeIdUnavailable):
+            return SourceUseRefused(operation, original_ref, "native_claim_unavailable")
+        resolved = _native_source_for_use(authority, operation, original_ref, ref)
         if isinstance(resolved, AuthorizedSourceUse):
             if harness is not None and resolved.source.key.harness != harness:
                 return SourceUseRefused(operation, original_ref, "harness_mismatch", ref)
             checked = _check_selected_native_claim(
-                runtime_root, operation, original_ref, resolved
+                authority, operation, original_ref, resolved
             )
             if isinstance(checked, SourceUseRefused):
                 return checked
@@ -189,35 +200,15 @@ def resolve_source_use(
         row_harness = row_harness.lower() if row_harness is not None else None
         if harness is not None and row_harness is not None and harness != row_harness:
             return SourceUseRefused(operation, original_ref, "harness_mismatch")
-        # Spawn state has no durable run/terminal-attempt -> pN correlation.
-        # In particular, chat_id and mutable harness_session_id are not exits.
-        # The latter may only be checked as a candidate spelling; it cannot
-        # authorize a tracked pN without the missing terminal-attempt link.
-        native_id = _normalize_optional(row.harness_session_id)
-        if native_id is None:
-            return SourceUseRefused(operation, original_ref, "tracked_run_unresolved")
-        lookup = session_store.lookup_native_id_candidates(
-            runtime_root, native_id, harness=harness or row_harness
-        )
-        if isinstance(lookup, session_store.NativeIdNoMatch):
-            return UntrackedSourceUse(
-                operation,
-                original_ref,
-                native_id,
-                harness or row_harness,
-                runtime_root,
-            )
-        return SourceUseRefused(
-            operation,
-            original_ref,
-            "native_claim_unavailable"
-            if isinstance(lookup, session_store.NativeIdUnavailable)
-            else "native_claim_ambiguous"
-            if isinstance(lookup, session_store.NativeIdAmbiguous)
-            else "tracked_run_unresolved",
-        )
+        # pN is tracked run identity, not a native-session alias. Until an
+        # authoritative terminal-attempt correlation exists, refuse it without
+        # borrowing mutable row.chat_id or harness_session_id.
+        return SourceUseRefused(operation, original_ref, "tracked_run_unresolved")
 
-    lookup = session_store.lookup_native_id_candidates(runtime_root, ref)
+    authority = session_store.read_native_source_use_snapshot(runtime_root)
+    if isinstance(authority, session_store.NativeIdUnavailable):
+        return SourceUseRefused(operation, original_ref, "native_claim_unavailable")
+    lookup = authority.candidates(ref)
     if isinstance(lookup, session_store.NativeIdNoMatch):
         return UntrackedSourceUse(operation, original_ref, ref, harness, runtime_root)
     if isinstance(lookup, session_store.NativeIdUnavailable):
@@ -232,10 +223,10 @@ def resolve_source_use(
     if len(candidates) != 1:
         return SourceUseRefused(operation, original_ref, "native_claim_ambiguous")
     candidate = candidates[0]
-    resolved = _native_source_for_use(runtime_root, operation, original_ref, candidate.chat_id)
+    resolved = _native_source_for_use(authority, operation, original_ref, candidate.chat_id)
     if not isinstance(resolved, AuthorizedSourceUse):
         return resolved
-    checked = _check_selected_native_claim(runtime_root, operation, original_ref, resolved)
+    checked = _check_selected_native_claim(authority, operation, original_ref, resolved)
     if isinstance(checked, SourceUseRefused):
         return checked
     key = resolved.source.key
@@ -247,37 +238,31 @@ def resolve_source_use(
 
 
 def _native_source_for_use(
-    runtime_root: Path,
+    authority: session_store.NativeSourceUseSnapshot,
     operation: SourceUseOperation,
     original_ref: str,
     chat_id: str,
 ) -> AuthorizedSourceUse | SourceUseRefused:
-    binding = session_store.get_native_binding(runtime_root, chat_id)
+    binding = authority.binding(chat_id)
     if isinstance(binding, UnavailableBinding):
         return SourceUseRefused(operation, original_ref, "native_claim_blocked", chat_id)
     if not isinstance(binding.source, PinnedSource):
         return SourceUseRefused(operation, original_ref, "native_claim_blocked", chat_id)
-    source = RecordedNativeSource(
-        ref=NativeSourceRef(
-            chat_id=binding.chat_id,
-            binding_event_id=binding.binding_event_id,
-            locator_event_id=binding.source.locator_event_id,
-        ),
-        key=binding.key,
-        locator=binding.source.locator,
-    )
+    source = _recorded_source_from_binding(binding)
+    if source is None:
+        return SourceUseRefused(operation, original_ref, "native_claim_blocked", chat_id)
     return AuthorizedSourceUse(operation, original_ref, source)
 
 
 def _check_selected_native_claim(
-    runtime_root: Path,
+    authority: session_store.NativeSourceUseSnapshot,
     operation: SourceUseOperation,
     original_ref: str,
     resolved: AuthorizedSourceUse,
 ) -> SourceUseResult:
     key = resolved.source.key
-    claims = session_store.lookup_native_id_candidates(
-        runtime_root, key.native_session_id, harness=key.harness
+    claims = authority.selected_chat_candidates(
+        resolved.source.ref.chat_id, key.native_session_id, harness=key.harness
     )
     if isinstance(claims, session_store.NativeIdUnavailable):
         return SourceUseRefused(

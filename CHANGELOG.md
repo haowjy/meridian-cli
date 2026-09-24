@@ -6,6 +6,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Resolve each cN/bare source-use decision from one strict, non-repairing
+  authority snapshot; refuse unresolved pN and authority I/O failures.
+
 - Refuse tracked Pi primary resume/fork on the native TUI, including dry-run,
   and block tracked Pi spawn follow-ups until connected admission is owned.
 
