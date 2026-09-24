@@ -11,6 +11,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Add shared purpose-aware source-use normalization for cN, pN, and bare native
+  references. Only strict, contradiction-free v4 pins authorize tracked use;
+  untracked results require a complete negative journal lookup. Launch wiring remains off.
+
 - Retain compact lifecycle native-ID claims in the strict journal fold and
   refuse candidate singletons contradicted by lifecycle evidence on that chat.
 
