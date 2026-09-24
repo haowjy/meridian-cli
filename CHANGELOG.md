@@ -6,6 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Return decoded Codex model config scalars while preserving their original raw
+  argument bytes, and redact unknown raw option tokens from diagnostics.
 - Classify Codex managed `--config` aliases in the existing grammar traversal;
   refuse unproved scalar cells and mandatory sandbox/approval conflicts before preparation.
 - Preserve recognized, consistent intentional native-default selections in retained

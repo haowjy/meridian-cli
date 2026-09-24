@@ -303,6 +303,7 @@ def _validate_codex_config(raw: str) -> tuple[str, str]:
             or "\r" in decoded
         ):
             raise ValueError("Codex model config must be a nonblank scalar string")
+        return key, decoded
     else:
         if value.startswith('"'):
             try:
@@ -439,7 +440,7 @@ def _normalize_codex_primary_session_args(
         option_name = safe_option_name(token)
         if option_name is None:
             raise ValueError("unsupported Codex raw argument")
-        raise ValueError(f"unsupported Codex raw option '{option_name}'")
+        raise ValueError("unsupported Codex raw option")
     if controls is not None and surface == "managed":
         roles = [key for key, _ in config_roles]
         # Mandatory policy conflicts take precedence over ordinary model/effort

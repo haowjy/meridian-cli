@@ -1,9 +1,12 @@
 """Codex primary raw arguments have a bounded, transport-aware grammar."""
 
+# The decoder's return contract is the regression under test.
+# pyright: reportPrivateUsage=false
+
 import pytest
 
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
-from meridian.lib.harness.codex import CodexAdapter
+from meridian.lib.harness.codex import CodexAdapter, _validate_codex_config
 from meridian.lib.harness.native_session_args import (
     NativeSessionSelector,
     NativeSessionSurface,
@@ -150,11 +153,35 @@ def test_refuses_unsupported_or_ambiguous_input(
 
 
 def test_raw_option_diagnostics_never_echo_equal_values() -> None:
-    with pytest.raises(ValueError) as error:
-        CodexAdapter().normalize_primary_session_args(("--private=DO_NOT_ECHO",), "subprocess")
+    for args in (
+        ("--private=DO_NOT_ECHO",),
+        ("--private", "DO_NOT_ECHO"),
+        ("--api-key=sk-sensitive-value",),
+    ):
+        with pytest.raises(ValueError) as error:
+            CodexAdapter().normalize_primary_session_args(args, "subprocess")
 
-    assert str(error.value) == "unsupported Codex raw option '--private'"
-    assert "DO_NOT_ECHO" not in str(error.value)
+        assert str(error.value) == "unsupported Codex raw option"
+        assert "DO_NOT_ECHO" not in str(error.value)
+        assert "sk-sensitive-value" not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("encoded", "decoded"),
+    [
+        ('model="gpt-\\u0035"', "gpt-5"),
+        ('model="gpt-\\\"quoted\\\""', 'gpt-"quoted"'),
+    ],
+)
+def test_quoted_model_config_returns_decoded_scalar_and_preserves_original_argument(
+    encoded: str, decoded: str
+) -> None:
+    args = ("--config", encoded)
+
+    assert CodexAdapter().normalize_primary_session_args(args, "subprocess") == (
+        NormalizedNativeSessionArgs(None, args)
+    )
+    assert _validate_codex_config(encoded) == ("model", decoded)
 
 
 def _controls(
