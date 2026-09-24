@@ -12,19 +12,21 @@ from meridian.lib.state import session_authority as authority
 from meridian.lib.state import session_store
 
 
-def _key() -> authority.NativeSessionKey:
+def _key(store: str = "/synthetic/native") -> authority.NativeSessionKey:
     return authority.NativeSessionKey(
-        harness="pi", store="/synthetic/native", native_session_id="conversation"
+        harness="pi", store=store, native_session_id="conversation"
     )
 
 
-def _pinned_journal(root: Path) -> authority.QualifiedLocalFile:
+def _pinned_journal(
+    root: Path, store: str = "/synthetic/native"
+) -> authority.QualifiedLocalFile:
     begin = authority.BeginEventV4(
         run_id="run",
         attempt_id="attempt",
         transport_scope_id="transport",
         harness="pi",
-        store="/synthetic/native",
+        store=store,
         operation="fresh",
         attempt_number=1,
     )
@@ -32,7 +34,7 @@ def _pinned_journal(root: Path) -> authority.QualifiedLocalFile:
         run_id="run",
         attempt_id="attempt",
         boundary="entry",
-        key=_key(),
+        key=_key(store),
         evidence=authority.BoundaryEvidence(
             transport_scope_id="transport",
             order=1,
@@ -41,7 +43,7 @@ def _pinned_journal(root: Path) -> authority.QualifiedLocalFile:
         ),
         file=authority.QualifiedLocalFile(
             kind="local_file",
-            path="/synthetic/native/conversation.jsonl",
+            path=f"{store.rstrip('/')}/conversation.jsonl",
             store_object={"device": 1, "inode": 10},
             file_object={"device": 1, "inode": 11},
             rule="pi-session-file:v1",
@@ -57,6 +59,7 @@ def _pinned_journal(root: Path) -> authority.QualifiedLocalFile:
     assert isinstance(transition, authority.AttemptTransition)
     row = transition.row
     journal = root / "sessions.jsonl"
+    journal.parent.mkdir(parents=True, exist_ok=True)
     journal.write_text(
         f"{begin.model_dump_json()}\n{row.model_dump_json()}\n", encoding="utf-8"
     )

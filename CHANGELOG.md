@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Retain immutable source-correlated model intent in the strict session fold;
+  add exact v2 selection replay without enabling tracked transport.
+
 ### Fixed
 
 - Reject conflicting linked-spawn work/path metadata, detach checked policy
