@@ -111,6 +111,7 @@ class AttemptCoordinator:
         self._owner = owner
         self._context = owner.context
         self._entry: BoundaryFact | None = None
+        self._pending_entry: BoundaryFact | None = None
         self._closed = False
         # Observations happen outside the admission lock. Keep one bounded slot
         # per producer so a failed write from one cannot overwrite the other.
@@ -126,12 +127,22 @@ class AttemptCoordinator:
         await self._owner.initialize_without_input()
 
     async def commit_entry(self) -> AttemptResult:
-        self._entry = None
-        self._retry_pending()
+        had_pending_entry = self._pending_entry is not None
+        retried = self._retry_pending()
+        if had_pending_entry:
+            assert retried is not None
+            return retried
         witness = await self._owner.observe_entry()
         fact = self._fact(witness)
-        result = session_store._commit_attempt(self._root, self._context, fact)
-        self._entry = fact
+        self._pending_entry = fact
+        try:
+            result = session_store._commit_attempt(self._root, self._context, fact)
+        except ValueError:
+            # A deterministic owner/phase rejection is not an ambiguous append.
+            self._pending_entry = None
+            raise
+        self._pending_entry = None
+        self._entry = fact if isinstance(result, AcceptedBoundary) else None
         return result
 
     async def commit_exit(self) -> AttemptResult:
@@ -192,15 +203,32 @@ class AttemptCoordinator:
         )
 
     def _retry_pending(self) -> AttemptResult | None:
-        if self._pending_refutation is None and self._pending_terminal is None:
+        if (
+            self._pending_entry is None
+            and self._pending_refutation is None
+            and self._pending_terminal is None
+        ):
             return None
         # Refutation is admitted first, so a pending contradiction can never be
         # obscured by a terminal confirmation for the same exit.
         result: AttemptResult | None = None
         if self._pending_refutation is not None:
             refutation = self._pending_refutation
-            result = session_store._commit_attempt(self._root, self._context, refutation)
+            refutation_result = session_store._commit_attempt(self._root, self._context, refutation)
             self._pending_refutation = None
+            if result is None:
+                result = refutation_result
+        if self._pending_entry is not None:
+            entry = self._pending_entry
+            try:
+                entry_result = session_store._commit_attempt(self._root, self._context, entry)
+            except ValueError:
+                self._pending_entry = None
+                raise
+            self._pending_entry = None
+            self._entry = entry if isinstance(entry_result, AcceptedBoundary) else None
+            if result is None:
+                result = entry_result
         if self._pending_terminal is not None:
             terminal = self._pending_terminal
             terminal_result = session_store._commit_attempt(self._root, self._context, terminal)

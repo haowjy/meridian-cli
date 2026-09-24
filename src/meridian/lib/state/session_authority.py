@@ -1119,6 +1119,47 @@ def _binding_result(binding: NativeBinding, *, invalidated: bool = False) -> Att
     return AcceptedBoundary(binding.chat_id, binding.binding_event_id, locator)
 
 
+def requested_source_eligible(
+    identity: IdentityProjection, source: RecordedNativeSource
+) -> bool:
+    """Whether a recorded v4 source still names its current operational pin."""
+    binding = identity.native_bindings.get(native_key_tuple(source.key))
+    return bool(
+        binding is not None
+        and binding.protocol == "v4"
+        and binding.conflict is None
+        and binding.chat_id == source.ref.chat_id
+        and binding.binding_event_id == source.ref.binding_event_id
+        and isinstance(binding.source, Pinned)
+        and binding.source.event_id == source.ref.locator_event_id
+        and binding.source.observation == source.locator
+    )
+
+
+def eligible_input_entry(
+    attempts: AttemptProjection,
+    identity: IdentityProjection,
+    context: BeginIntent | BeginIntentV4,
+    entry: BoundaryFact | BoundaryFactV4,
+) -> bool:
+    """Pure current/latest/open-entry admission; callers must still confirm durability."""
+    state = attempts.states.get((context.run_id, context.attempt_id))
+    if (
+        state is None
+        or state.begin.intent() != context
+        or attempts.latest.get(context.run_id) != state.begin
+        or state.entry is None
+        or state.entry.fact != entry
+        or state.exit is not None
+        or state.invalidation is not None
+        or isinstance(result_for_boundary(identity, state, state.entry), AcceptedBoundary) is False
+    ):
+        return False
+    if isinstance(context, BeginIntentV4) and context.requested_source is not None:
+        return requested_source_eligible(identity, context.requested_source)
+    return True
+
+
 def result_for_boundary(
     identity: IdentityProjection,
     state: AttemptState,
@@ -1195,14 +1236,7 @@ def plan_attempt(
             if isinstance(fact, BeginIntentV4):
                 source = fact.requested_source
                 assert source is not None
-                if (
-                    source_binding.conflict is not None
-                    or source_binding.chat_id != source.ref.chat_id
-                    or source_binding.binding_event_id != source.ref.binding_event_id
-                    or not isinstance(source_binding.source, Pinned)
-                    or source_binding.source.event_id != source.ref.locator_event_id
-                    or source_binding.source.observation != source.locator
-                ):
+                if not requested_source_eligible(identity, source):
                     raise ValueError("resume/fork requires the current unblocked recorded source")
         if state is not None:
             if state.begin.intent() != fact or isinstance(state.begin, BeginEventV4) != v4:

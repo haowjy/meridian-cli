@@ -35,15 +35,20 @@ from meridian.lib.state.session_authority import (
     AttemptFact,
     AttemptResult,
     BeginIntent,
+    BeginIntentV4,
     BoundaryFact,
+    BoundaryFactV4,
     IdentityDelta,
     JournalRead,
     JournalSnapshot,
+    LocatorConflictEvent,
     NeedChat,
     NoOp,
     Refutation,
+    RefutationV4,
     _generation_matches,
     canonical_chat_number,
+    eligible_input_entry,
     native_key_tuple,
     plan_attempt,
     plan_identity,
@@ -183,8 +188,8 @@ _SESSION_LOCK_HANDLES: dict[tuple[Path, str], _SessionLockHandles] = {}
 
 def _commit_attempt(
     runtime_root: Path,
-    context: BeginIntent,
-    observation: BoundaryFact | Refutation | None = None,
+    context: BeginIntent | BeginIntentV4,
+    observation: BoundaryFact | BoundaryFactV4 | Refutation | RefutationV4 | None = None,
     *,
     for_input: bool = False,
 ) -> AttemptResult:
@@ -197,12 +202,13 @@ def _commit_attempt(
             state = snapshot.attempts.states.get((context.run_id, context.attempt_id))
             if state is None or state.begin.intent() != context:
                 raise ValueError("observation has no matching recorded owner context")
-            if for_input and (
-                snapshot.attempts.latest[context.run_id].attempt_id != context.attempt_id
-                or state.exit is not None
-                or state.invalidation is not None
-            ):
-                raise ValueError("input unresolved: attempt closed or superseded")
+            if for_input:
+                if not isinstance(observation, (BoundaryFact, BoundaryFactV4)):
+                    raise ValueError("input unresolved: an accepted entry is required")
+                if not eligible_input_entry(
+                    snapshot.attempts, snapshot.identity, context, observation
+                ):
+                    raise ValueError("input unresolved: attempt closed or superseded")
         decision = plan_attempt(snapshot.attempts, snapshot.identity, fact)
         if isinstance(decision, NeedChat):
             chat = _allocate_binding_chat_id(paths, transaction)
@@ -257,7 +263,16 @@ def _append_authority_event(
         # Exceptional reread only: visibility is not a commit without a fresh barrier.
         recovered = read_journal(path.read_bytes()).snapshot
         state = recovered.attempts.states.get((event.run_id, event.attempt_id))
-        if state is None or event not in (state.begin, state.entry, state.exit, state.invalidation):
+        committed = state is not None and event in (
+            state.begin,
+            state.entry,
+            state.exit,
+            state.invalidation,
+        )
+        if isinstance(event, LocatorConflictEvent):
+            binding = recovered.identity.native_bindings.get(native_key_tuple(event.fact.key))
+            committed = binding is not None and binding.conflict == event
+        if not committed:
             raise
         _confirm_sessions_durability(path)
 

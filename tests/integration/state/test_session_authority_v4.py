@@ -110,6 +110,81 @@ def test_v4_first_qualified_pin_survives_same_file_boundary() -> None:
     assert builder.identity().key_to_chat[authority.native_key_tuple(entry_fact.key)] == "c1"
 
 
+def test_conflict_append_completed_before_ack_is_replayed_and_exactly_recognized(
+    tmp_path, monkeypatch
+) -> None:
+    root = tmp_path / "runtime"
+    root.mkdir()
+    event = _begin()
+    context = event.intent()
+    session_store._commit_attempt(root, context)
+    entry = _fact("entry", _file("/native/store/session.jsonl", inode=10))
+    accepted = session_store._commit_attempt(root, context, entry)
+    assert isinstance(accepted, authority.AcceptedBoundary)
+
+    changed_exit = _fact(
+        "exit", _file("/native/store/other.jsonl", inode=10, file_inode=12), order=2
+    )
+    original = session_store._append_session_row
+    failed_after_append = False
+
+    def append_then_lose_ack(path, row, **kwargs):
+        nonlocal failed_after_append
+        original(path, row, **kwargs)
+        if isinstance(row, authority.LocatorConflictEvent) and not failed_after_append:
+            failed_after_append = True
+            raise OSError("lost conflict append acknowledgement")
+
+    monkeypatch.setattr(session_store, "_append_session_row", append_then_lose_ack)
+    result = session_store._commit_attempt(root, context, changed_exit)
+    assert result == authority.UnresolvedBoundary("source_conflict")
+    assert failed_after_append
+
+    journal = root / "sessions.jsonl"
+    counter = session_store.RuntimePaths.from_root_dir(root).session_id_counter
+    counter_before_retry = counter.read_bytes()
+    rows = [json.loads(line) for line in journal.read_text().splitlines()]
+    assert [row["action"] for row in rows] == ["begin", "boundary", "locator_conflict"]
+    snapshot = authority.read_journal(journal.read_bytes()).snapshot
+    binding = snapshot.identity.native_bindings[authority.native_key_tuple(entry.key)]
+    assert binding.conflict is not None
+    assert isinstance(binding.source, authority.Pinned)
+    assert binding.source.observation == entry.file
+
+    # A subsequent explicit retry is a no-row blocked result, but still traverses
+    # the same transaction's durability barrier and does not allocate or append.
+    assert session_store._commit_attempt(root, context, changed_exit) == result
+    assert journal.read_bytes().count(b'"action":"locator_conflict"') == 1
+    assert counter.read_bytes() == counter_before_retry
+
+
+def test_exact_conflict_retry_survives_successor_begin_without_new_row() -> None:
+    entry = _fact("entry", _file("/native/store/session.jsonl", inode=10))
+    builder = _fold(_begin())
+    authority.fold_row(builder, _accept(builder, entry))
+    trigger = _fact(
+        "exit", _file("/native/store/other.jsonl", inode=10, file_inode=12), order=2
+    )
+    conflict = _accept(builder, trigger)
+    assert isinstance(conflict, authority.LocatorConflictEvent)
+    authority.fold_row(builder, conflict)
+    successor = authority.BeginEventV4(
+        run_id="run",
+        attempt_id="successor",
+        transport_scope_id="successor-transport",
+        harness="pi",
+        store="/native/store",
+        operation="fresh",
+        attempt_number=2,
+    )
+    authority.fold_row(builder, successor)
+
+    retry = authority.plan_attempt(builder.attempt_view(), builder.identity(), trigger)
+    assert isinstance(retry, authority.AttemptTransition)
+    assert retry.row is None
+    assert retry.result == authority.UnresolvedBoundary("source_conflict")
+
+
 def test_v4_same_native_id_in_different_stores_gets_distinct_bindings() -> None:
     observation = _file("/native/store/session.jsonl", inode=10)
     first_fact = _fact("entry", observation)
@@ -535,6 +610,52 @@ def test_v4_invalidated_exit_checks_only_exact_or_later_same_key_source() -> Non
     assert isinstance(retry, authority.AttemptTransition)
     assert retry.row is None
     assert retry.result == authority.UnresolvedBoundary("exit_invalidated")
+
+
+@pytest.mark.parametrize("case", ["exact", "later", "stale", "equal_changed", "different_key"])
+def test_invalidated_unblocked_exit_only_checks_exact_or_later_same_key(case: str) -> None:
+    accepted = _fact("exit", _file("/native/store/one.jsonl", inode=10), order=3)
+    builder = _fold(_begin())
+    authority.fold_row(builder, _accept(builder, accepted))
+    refutation = authority.RefutationV4(
+        run_id="run",
+        attempt_id="attempt",
+        transport_scope_id="transport",
+        target_event_id=authority.boundary_digest_v4(accepted),
+        order=4,
+        reason="finality_refuted",
+        conflicting_key=accepted.key,
+        causal_reference="terminal-reopened",
+    )
+    authority.fold_row(builder, refutation)
+
+    changed_file = _file("/native/store/two.jsonl", inode=10, file_inode=22)
+    if case == "exact":
+        proposed = accepted
+    elif case == "later":
+        proposed = _fact("exit", changed_file, order=5)
+    elif case == "stale":
+        proposed = _fact("exit", changed_file, order=2)
+    elif case == "equal_changed":
+        proposed = accepted.model_copy(update={"file": changed_file})
+    else:
+        proposed = _fact("exit", changed_file, order=5, session_id="other")
+
+    before = builder.identity().native_bindings[authority.native_key_tuple(accepted.key)]
+    transition = authority.plan_attempt(builder.attempt_view(), builder.identity(), proposed)
+    assert isinstance(transition, authority.AttemptTransition)
+    if case == "later":
+        assert isinstance(transition.row, authority.LocatorConflictEvent)
+    else:
+        assert transition.row is None
+    assert transition.result == authority.UnresolvedBoundary("exit_invalidated")
+    if case == "later":
+        assert transition.binding is not None and transition.binding.conflict is not None
+        assert transition.binding.source == before.source
+    else:
+        assert transition.binding is None
+        binding = builder.identity().native_bindings[authority.native_key_tuple(accepted.key)]
+        assert binding == before
 
 
 def test_v3_and_v4_cannot_adopt_each_others_binding_but_unrelated_runs_coexist() -> None:
