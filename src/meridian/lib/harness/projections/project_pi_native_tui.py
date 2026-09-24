@@ -168,14 +168,9 @@ def project_pi_native_tui_spec_to_cli_args(
 ) -> list[str]:
     """Project one ``ResolvedLaunchSpec`` into an ordered native Pi TUI command list."""
 
-    from meridian.lib.launch.source_selection import normalize_effective_native_selection
+    from meridian.lib.harness.pi_native_source import reject_pi_native_source_options
 
-    normalize_effective_native_selection(
-        spec.continue_source_ref,
-        spec.continue_session_id,
-        tracked_claim=spec.continue_source_tracked,
-        extra_args=spec.extra_args,
-    )
+    reject_pi_native_source_options(spec.extra_args)
     if spec.continue_source_tracked:
         raise ValueError(
             "Pi native TUI cannot project tracked source use: transport_unqualified."

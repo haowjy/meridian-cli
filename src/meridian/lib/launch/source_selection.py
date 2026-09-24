@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
 
 _CHAT_REF = re.compile(r"c[1-9][0-9]*\Z")
 _SPAWN_REF = re.compile(r"p[1-9][0-9]*\Z")
@@ -15,7 +17,6 @@ def normalize_effective_native_selection(
     *,
     authorized_native_id: str | None = None,
     tracked_claim: bool = False,
-    extra_args: Sequence[str] = (),
 ) -> str | None:
     """Normalize source intent and executable selector without losing either.
 
@@ -38,24 +39,6 @@ def normalize_effective_native_selection(
             "Cannot use tracked source without its original reference: "
             "source-use authorization refused."
         )
-    source_flags = {
-        "--continue",
-        "-c",
-        "--resume",
-        "-r",
-        "--session-id",
-        "--session",
-        "--fork",
-    }
-    if any(
-        token in source_flags
-        or any(token.startswith(f"{flag}=") for flag in source_flags if flag.startswith("--"))
-        for token in extra_args
-    ):
-        raise ValueError(
-            "Pi native-session selectors in passthrough arguments are unsupported; "
-            "use Meridian source selection so native lineage can be authorized."
-        )
     if source is not None and selector is not None:
         if _CHAT_REF.fullmatch(source) or _SPAWN_REF.fullmatch(source):
             if authorized is not None and selector != authorized:
@@ -74,3 +57,93 @@ def normalize_effective_native_selection(
             "source-use authorization refused."
         )
     return source or selector
+
+
+@dataclass(frozen=True)
+class PrimarySourceCheck:
+    """In-process proof that one exact primary source request passed policy."""
+
+    request_key: tuple[object, ...]
+    runtime_root: Path
+    _seal: object
+
+
+_PRIMARY_SOURCE_CHECK_SEAL = object()
+
+
+def is_primary_source_check(check: PrimarySourceCheck) -> bool:
+    return check._seal is _PRIMARY_SOURCE_CHECK_SEAL
+
+
+def check_primary_source_use(
+    *,
+    runtime_root: Path,
+    source_ref: str | None,
+    native_selector: str | None,
+    tracked_claim: bool,
+    recorded_source: object | None,
+    harness: str | None,
+    operation: Literal["resume", "fork"],
+    extra_args: tuple[str, ...] = (),
+) -> PrimarySourceCheck:
+    """Validate effective selection and authorize/refuse primary source use."""
+    from meridian.lib.ops.reference import (
+        AuthorizedSourceUse,
+        SourceUseRefused,
+        resolve_source_use,
+    )
+
+    normalized = normalize_effective_native_selection(
+        source_ref, native_selector, tracked_claim=tracked_claim
+    )
+    if (harness or "").strip().lower() == "pi":
+        from meridian.lib.harness.pi_native_source import reject_pi_native_source_options
+
+        reject_pi_native_source_options(extra_args)
+        if tracked_claim:
+            raise ValueError(
+                "Tracked Pi resume/fork on the primary native TUI is unqualified "
+                "(transport_unqualified)."
+            )
+    if tracked_claim and not normalized:
+        raise ValueError(
+            "Cannot launch tracked source without its original reference: "
+            "source-use authorization refused."
+        )
+    if normalized:
+        result = resolve_source_use(runtime_root, operation, normalized, harness)
+        if isinstance(result, AuthorizedSourceUse):
+            normalize_effective_native_selection(
+                source_ref,
+                native_selector,
+                authorized_native_id=result.source.key.native_session_id,
+                tracked_claim=tracked_claim,
+            )
+            raise ValueError(
+                f"Cannot {operation} tracked source on the primary launch transport: "
+                "transport_unqualified. Tracked primary resume/fork is unsupported "
+                "until an owned transport is available."
+            )
+        if isinstance(result, SourceUseRefused):
+            raise ValueError(
+                f"Cannot use source '{normalized}': source-use authorization "
+                f"refused ({result.reason})."
+            )
+    if recorded_source is not None:
+        raise ValueError(
+            "Cannot launch a caller-supplied tracked source without revalidated "
+            "source-use provenance (transport_unqualified)."
+        )
+    return PrimarySourceCheck(
+        request_key=(
+            source_ref,
+            native_selector,
+            tracked_claim,
+            recorded_source,
+            harness,
+            operation,
+            extra_args,
+        ),
+        runtime_root=runtime_root.resolve(),
+        _seal=_PRIMARY_SOURCE_CHECK_SEAL,
+    )

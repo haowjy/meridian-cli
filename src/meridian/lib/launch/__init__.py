@@ -97,7 +97,7 @@ def launch_primary(
     from meridian.lib.config.project_root import resolve_project_root_resolution
     from meridian.lib.core.context import resolve_runtime_context
     from meridian.lib.ops.runtime import resolve_runtime_root_for_read
-    from meridian.lib.state.paths import resolve_project_runtime_root
+    from meridian.lib.state.paths import resolve_project_runtime_root_or_none
 
     from .context import (
         RuntimeBindings,
@@ -113,73 +113,32 @@ def launch_primary(
     # Library callers can bypass the CLI's source-use normalization. Re-resolve
     # the original reference here; serialized booleans and source DTOs are not
     # evidence that an input was genuinely untracked.
-    from meridian.lib.launch.source_selection import normalize_effective_native_selection
-    from meridian.lib.ops.reference import (
-        AuthorizedSourceUse,
-        SourceUseRefused,
-        resolve_source_use,
-    )
+    from meridian.lib.launch.source_selection import check_primary_source_use
 
     tracked_claim = (
         request.session.continue_source_tracked
         or request.session.recorded_native_source is not None
     )
-    source_ref = normalize_effective_native_selection(
-        request.session.continue_source_ref,
-        request.session.requested_harness_session_id,
-        tracked_claim=tracked_claim,
-        extra_args=(
-            request.passthrough_args
-            if (request.harness or "").strip().lower() == "pi"
-            else ()
-        ),
+    operation = (
+        "fork"
+        if request.session.continue_fork
+        or (request.session.primary_session_mode or "").strip().lower() == "fork"
+        or request.session_mode.value == "fork"
+        else "resume"
     )
-    if (request.harness or "").strip().lower() == "pi" and tracked_claim:
-        raise ValueError(
-            "Tracked Pi resume/fork on the primary native TUI is unqualified "
-            "(transport_unqualified)."
-        )
-    if tracked_claim and not source_ref:
-        raise ValueError(
-            "Cannot launch tracked source without its original reference: "
-            "source-use authorization refused."
-        )
-    if source_ref:
-        operation = (
-            "fork"
-            if request.session.continue_fork
-            or (request.session.primary_session_mode or "").strip().lower() == "fork"
-            or request.session_mode.value == "fork"
-            else "resume"
-        )
-        source_use = resolve_source_use(
-            resolve_project_runtime_root(resolved_project_root),
-            operation,
-            source_ref,
-            request.harness,
-        )
-        if isinstance(source_use, AuthorizedSourceUse):
-            normalize_effective_native_selection(
-                request.session.continue_source_ref,
-                request.session.requested_harness_session_id,
-                authorized_native_id=source_use.source.key.native_session_id,
-                tracked_claim=tracked_claim,
-            )
-            raise ValueError(
-                f"Cannot {operation} tracked source on the primary launch transport: "
-                "transport_unqualified. Tracked primary resume/fork is unsupported "
-                "until an owned transport is available."
-            )
-        if isinstance(source_use, SourceUseRefused):
-            raise ValueError(
-                f"Cannot use source '{source_ref}': source-use authorization "
-                f"refused ({source_use.reason})."
-            )
-    if request.session.recorded_native_source is not None:
-        raise ValueError(
-            "Cannot launch a caller-supplied tracked source without revalidated "
-            "source-use provenance (transport_unqualified)."
-        )
+    source_check = check_primary_source_use(
+        runtime_root=(
+            resolve_project_runtime_root_or_none(resolved_project_root)
+            or resolve_project_paths(resolved_project_root).root_dir
+        ),
+        source_ref=request.session.continue_source_ref,
+        native_selector=request.session.requested_harness_session_id,
+        tracked_claim=tracked_claim,
+        recorded_source=request.session.recorded_native_source,
+        harness=request.harness,
+        operation=operation,
+        extra_args=request.passthrough_args,
+    )
     explicit_work_id = _explicit_work_id_for_launch(request)
     runtime_root_for_context = resolve_runtime_root_for_read(resolved_project_root)
     runtime_context = resolve_runtime_context(
@@ -275,6 +234,7 @@ def launch_primary(
         request=spawn_request,
         runtime=runtime,
         prepared_policy=prepared_policy,
+        primary_source_check=source_check,
     )
     preview_context = bind_launch_context(
         prepared=prepared,

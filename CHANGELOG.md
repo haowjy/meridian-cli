@@ -6,6 +6,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Reuse one primary source-use check across early preview and binding, and move
+  raw Pi session-option refusal semantics into the Pi adapter for spawn reuse.
+- Correct OpenCode primary continuation coverage: genuinely untracked native IDs
+  retain explicit models; mismatched or tracked aliases are refused.
 - Resolve each cN/bare source-use decision from one strict, non-repairing
   authority snapshot; refuse unresolved pN and authority I/O failures.
 

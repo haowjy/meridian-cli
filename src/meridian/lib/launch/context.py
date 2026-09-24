@@ -134,6 +134,11 @@ from .resolve import (
     resolve_profile_path,
     resolve_skill_paths,
 )
+from .source_selection import (
+    PrimarySourceCheck,
+    check_primary_source_use,
+    is_primary_source_check,
+)
 from .spawn_guidance import build_guidance_blocks, build_spawn_usage_contract
 from .text_utils import sanitize_prior_output, strip_stale_report_paths
 from .workspace import resolve_workspace_snapshot_for_launch
@@ -281,6 +286,7 @@ class PreparedLaunchSurface:
     # Original launch request preserved for LaunchContext.request compatibility.
     # `request` carries the resolved request used by bind.
     launch_request: SpawnRequest | None = None
+    primary_source_check: PrimarySourceCheck | None = None
 
     @property
     def prompt_payload(self) -> PreparedPromptPayload:
@@ -1485,6 +1491,7 @@ def prepare_launch_surface(
     runtime: LaunchRuntime,
     prepared_policy: PreparedPolicySurface,
     launch_mode: LaunchMode | None = None,
+    primary_source_check: PrimarySourceCheck | None = None,
 ) -> PreparedLaunchSurface:
     """Resolve the expensive, spawn-stable launch surface."""
     project_paths = prepared_policy.project_paths
@@ -1716,6 +1723,7 @@ def prepare_launch_surface(
         model_selection=model_selection,
         alias_catalog=policies.alias_catalog,
         launch_request=request,
+        primary_source_check=primary_source_check,
     )
 
 
@@ -1812,60 +1820,38 @@ def bind_launch_context(
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
     session = prepared.request.session
     tracked_claim = session.continue_source_tracked or session.recorded_native_source is not None
-    from meridian.lib.launch.source_selection import normalize_effective_native_selection
-
-    source_ref = normalize_effective_native_selection(
+    operation = (
+        "fork"
+        if session.continue_fork
+        or (session.primary_session_mode or "").strip().lower() == "fork"
+        else "resume"
+    )
+    expected_key = (
         session.continue_source_ref,
         session.requested_harness_session_id,
-        tracked_claim=tracked_claim,
-        extra_args=(
-            prepared.request.extra_args
-            if (prepared.request.harness or "").strip().lower() == "pi"
-            else ()
-        ),
+        tracked_claim,
+        session.recorded_native_source,
+        prepared.request.harness,
+        operation,
+        prepared.request.extra_args,
     )
-    if (prepared.request.harness or "").strip().lower() == "pi" and tracked_claim:
-        raise ValueError(
-            "Tracked Pi resume/fork on the primary native TUI is unqualified "
-            "(transport_unqualified)."
+    check = prepared.primary_source_check
+    if (
+        check is None
+        or not is_primary_source_check(check)
+        or check.request_key != expected_key
+        or check.runtime_root != runtime_root
+    ):
+        check = check_primary_source_use(
+            runtime_root=runtime_root,
+            source_ref=session.continue_source_ref,
+            native_selector=session.requested_harness_session_id,
+            tracked_claim=tracked_claim,
+            recorded_source=session.recorded_native_source,
+            harness=prepared.request.harness,
+            operation=operation,
+            extra_args=prepared.request.extra_args,
         )
-    if source_ref:
-        from meridian.lib.ops.reference import (
-            AuthorizedSourceUse,
-            SourceUseRefused,
-            resolve_source_use,
-        )
-
-        operation = (
-            "fork"
-            if session.continue_fork
-            or (session.primary_session_mode or "").strip().lower() == "fork"
-            else "resume"
-        )
-        source_use = resolve_source_use(
-            runtime_root, operation, source_ref, prepared.request.harness
-        )
-        if isinstance(source_use, AuthorizedSourceUse):
-            normalize_effective_native_selection(
-                session.continue_source_ref,
-                session.requested_harness_session_id,
-                authorized_native_id=source_use.source.key.native_session_id,
-                tracked_claim=tracked_claim,
-            )
-            raise ValueError(
-                f"Tracked {operation} on the primary launch transport is "
-                "transport_unqualified."
-            )
-        if isinstance(source_use, SourceUseRefused):
-            raise ValueError(
-                f"Cannot bind source '{source_ref}': source-use authorization "
-                f"refused ({source_use.reason})."
-            )
-        if session.recorded_native_source is not None:
-            raise ValueError(
-                "Caller-supplied recorded source does not match an authorized "
-                "source-use result."
-            )
     system_temp_root = Path(tempfile.gettempdir()).resolve()
     resolved_request = prepared.request
     harness = prepared.harness

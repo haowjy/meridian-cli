@@ -6,6 +6,7 @@ import errno
 import json
 import os
 import stat
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
@@ -38,6 +39,32 @@ class PiSourceUnavailable:
 
 
 type PiSourceObservation = PiSourceQualified | PiSourcePending | PiSourceUnavailable
+
+
+_NATIVE_SELECTOR_OPTIONS = frozenset(
+    {"--continue", "-c", "--resume", "-r", "--session-id", "--session", "--fork"}
+)
+
+
+def reject_pi_native_source_options(args: Sequence[str]) -> None:
+    """Reject raw Pi session selectors so Meridian remains the lineage owner.
+
+    Exported for primary and spawn dispatch; Pi-specific option syntax lives
+    here rather than in harness-agnostic launch selection policy.
+    """
+    if any(
+        token in _NATIVE_SELECTOR_OPTIONS
+        or any(
+            token.startswith(f"{option}=")
+            for option in _NATIVE_SELECTOR_OPTIONS
+            if option.startswith("--")
+        )
+        for token in args
+    ):
+        raise ValueError(
+            "Pi native-session selectors in passthrough arguments are unsupported; "
+            "use Meridian source selection so native lineage can be authorized."
+        )
 
 
 @dataclass(frozen=True)

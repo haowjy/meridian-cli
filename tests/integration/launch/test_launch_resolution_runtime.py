@@ -661,14 +661,15 @@ def test_spawn_prepare_cursor_uses_bundle_harness_model_verbatim(
     assert preview.model_selection.harness_model_id == "claude-opus-4-7-thinking-high"
 
 
-def test_opencode_named_primary_continue_preserves_explicit_model(
+def test_opencode_genuinely_untracked_primary_continue_preserves_explicit_model(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """R7: OpenCode allows an explicit model on exact primary continue.
 
-    V2 applies it via ``POST /api/session/{id}/model``; V1 fails loudly in its
-    connection. The launch guard must not reject the request.
+    An exact native ID with no Meridian authority is genuinely untracked and
+    must preserve the explicit model and argv. Tracked/unknown aliases are
+    covered by the refusal cases below.
     """
 
     (tmp_path / "mars.toml").write_text(
@@ -692,8 +693,8 @@ def test_opencode_named_primary_continue_preserves_explicit_model(
                 requested_harness_session_id="ses_abc",
                 primary_session_mode="resume",
                 continue_harness="opencode",
-                continue_source_ref="p123",
-                continue_source_tracked=True,
+                    continue_source_ref="ses_abc",
+                    continue_source_tracked=False,
             ),
         ),
         runtime=build_primary_launch_runtime(project_root=tmp_path),
@@ -704,6 +705,41 @@ def test_opencode_named_primary_continue_preserves_explicit_model(
     assert preview.harness.id is HarnessId.OPENCODE
     assert preview.binding.spec.continue_session_id == "ses_abc"
     assert preview.binding.spec.model == "openai/gpt-5.5"
+
+
+@pytest.mark.parametrize("source_ref", ["unknown-native", "p123"])
+def test_opencode_primary_continue_refuses_unknown_or_recorded_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source_ref: str,
+) -> None:
+    (tmp_path / "mars.toml").write_text(
+        '[settings]\ntargets = [".opencode"]\n', encoding="utf-8"
+    )
+    stub_bundle_request_and_resolve(
+        monkeypatch, model="openai/gpt-5.5", harness=HarnessId.OPENCODE
+    )
+
+    with pytest.raises(ValueError, match="source-use authorization refused"):
+        build_launch_context(
+            spawn_id="dry-run-opencode-invalid-source",
+            request=SpawnRequest(
+                prompt="continue prompt",
+                prompt_is_composed=False,
+                model="openai/gpt-5.5",
+                harness=HarnessId.OPENCODE.value,
+                session=SessionRequest(
+                    requested_harness_session_id="ses_abc",
+                    primary_session_mode="resume",
+                    continue_harness="opencode",
+                    continue_source_ref=source_ref,
+                    continue_source_tracked=source_ref.startswith("p"),
+                ),
+            ),
+            runtime=build_primary_launch_runtime(project_root=tmp_path),
+            harness_registry=get_default_harness_registry(),
+            dry_run=True,
+        )
 
 
 @pytest.mark.parametrize("fork", [False, True])
