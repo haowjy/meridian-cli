@@ -10,7 +10,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reference resolver. Only an unblocked v4 qualified pin yields provenance;
   inspection remains explicitly non-authorizing and physical source checks
   remain adapter-owned.
-
+- Added an adapter-owned Pi exact-source qualifier and typed exact-path preflight;
+  descriptor-based POSIX checks validate the reported header and object stamps
+  without discovering or mutating native journals.
 - Added a standalone Pi native-journal reopen-default lineage projector with
   qualified 0.87.1 legacy-v3 selection, shared entry-type recognition, and
   explicit source completeness; exact native-source routing remains pending.
@@ -25,6 +27,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Qualify missing Pi paths by reobserving their exact namespace rather than
+  probing a same-named leaf in the deepest existing ancestor.
+
+- Reobserve Pi exact-source root, directory, and file identities through bounded
+  no-follow descriptor traversal before accepting; open leaves nonblocking and
+  reject nonregular sources before reading.
 - Extend the existing session transaction through v4 attempt rows and recover
   ambiguous locator-conflict appends only from exact target-binding equality.
   Share pure current-entry/source admission and retain uncertain owned entry
