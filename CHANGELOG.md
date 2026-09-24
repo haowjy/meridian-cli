@@ -6,6 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Admit fresh primary raw arguments with the selected adapter's concrete initial
+  transport before preparation; refuse native selectors and unowned scalar overrides.
 - Retain the single normalized project-path snapshot across launch policy resolution and prepared-surface assembly; align the inherited-task-dir test runtime with its authoritative namespace.
 - Route Claude and OpenCode primary raw-session arguments through their registered
   adapters' reviewed normalizers, retaining fail-closed behavior on unsupported surfaces.

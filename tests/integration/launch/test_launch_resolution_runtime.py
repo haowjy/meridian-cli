@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import meridian.lib.harness.cursor as cursor_harness
+import meridian.lib.launch.context as launch_context
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.bundle import project_managed_primary_preview
 from meridian.lib.harness.registry import (
@@ -410,6 +411,126 @@ def test_primary_launch_invalid_reference_does_not_create_explicit_work(
 
     assert not (project_root / ".meridian" / "work").exists()
     assert not (project_root / ".meridian" / "id").exists()
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_fresh_raw_native_selector_is_refused_after_one_policy_before_prepare(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dry_run: bool,
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    _write_minimal_mars_config(project_root)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4-mini",
+        harness=HarnessId.CODEX,
+    )
+    events: list[str] = []
+    original_compile = launch_context.compile_prepared_policy_surface
+
+    def compile_once(**kwargs: object) -> object:
+        events.append("route")
+        return original_compile(**kwargs)  # type: ignore[arg-type]
+
+    def prepare_must_not_run(**_kwargs: object) -> None:
+        events.append("prepare")
+        raise AssertionError("selector reached launch preparation")
+
+    monkeypatch.setattr(launch_context, "compile_prepared_policy_surface", compile_once)
+    monkeypatch.setattr(launch_context, "prepare_launch_surface", prepare_must_not_run)
+
+    with pytest.raises(ValueError, match="Raw native-session selectors"):
+        launch_primary(
+            project_root=project_root,
+            request=PrimaryLaunchRequest(
+                model="gpt-5.4-mini",
+                harness=HarnessId.CODEX.value,
+                passthrough_args=("resume", "550e8400-e29b-41d4-a716-446655440000"),
+                dry_run=dry_run,
+            ),
+            harness_registry=get_default_harness_registry(),
+        )
+
+    assert events == ["route"]
+
+
+def test_fresh_codex_managed_config_option_is_admitted_without_route_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    _write_minimal_mars_config(project_root)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4-mini",
+        harness=HarnessId.CODEX,
+    )
+    events: list[str] = []
+    original_compile = launch_context.compile_prepared_policy_surface
+
+    def compile_once(**kwargs: object) -> object:
+        events.append("route")
+        return original_compile(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(launch_context, "compile_prepared_policy_surface", compile_once)
+    result = launch_primary(
+        project_root=project_root,
+        request=PrimaryLaunchRequest(
+            model="gpt-5.4-mini",
+            harness=HarnessId.CODEX.value,
+            passthrough_args=("-c", "tools.web_search=true"),
+            dry_run=True,
+        ),
+        harness_registry=get_default_harness_registry(),
+    )
+
+    assert events == ["route"]
+    assert "-c" in result.command
+    assert "tools.web_search=true" in result.command
+
+
+def test_fresh_codex_managed_model_option_is_refused_before_prepare(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    _write_minimal_mars_config(project_root)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4-mini",
+        harness=HarnessId.CODEX,
+    )
+    events: list[str] = []
+    original_compile = launch_context.compile_prepared_policy_surface
+
+    def compile_once(**kwargs: object) -> object:
+        events.append("route")
+        return original_compile(**kwargs)  # type: ignore[arg-type]
+
+    def prepare_must_not_run(**_kwargs: object) -> None:
+        events.append("prepare")
+        raise AssertionError("managed-only unsupported scalar reached preparation")
+
+    monkeypatch.setattr(launch_context, "compile_prepared_policy_surface", compile_once)
+    monkeypatch.setattr(launch_context, "prepare_launch_surface", prepare_must_not_run)
+
+    with pytest.raises(ValueError, match="Fresh raw arguments are unsupported") as error:
+        launch_primary(
+            project_root=project_root,
+            request=PrimaryLaunchRequest(
+                model="gpt-5.4-mini",
+                harness=HarnessId.CODEX.value,
+                passthrough_args=("--model", "never-display-this-value"),
+            ),
+            harness_registry=get_default_harness_registry(),
+        )
+
+    assert events == ["route"]
+    assert "never-display-this-value" not in str(error.value)
 
 
 def test_primary_launch_materializes_context_from_work(
