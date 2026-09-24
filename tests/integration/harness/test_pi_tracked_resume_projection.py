@@ -7,6 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.harness.projections.project_pi_native_tui import (
+    project_pi_native_tui_spec_to_cli_args,
+)
 from meridian.lib.harness.projections.project_pi_rpc import project_pi_spec_to_cli_args
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import PermissionConfig, TieredPermissionResolver
@@ -61,6 +64,17 @@ def test_tracked_resume_projects_exact_file_and_pinned_store(tmp_path: Path) -> 
 
     assert argv[argv.index("--session") + 1] == str(file)
     assert argv[argv.index("--session-dir") + 1] == str(store)
+
+
+def test_native_tui_projector_refuses_recorded_source(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    store.mkdir()
+    file = store / "session.jsonl"
+    file.write_text(json.dumps({"type": "session", "version": 3, "id": "A"}) + "\n")
+    source = _source(store, file)
+
+    with pytest.raises(ValueError, match="transport_unqualified"):
+        project_pi_native_tui_spec_to_cli_args(_spec(source), base_command=("pi",))
 
 
 @pytest.mark.parametrize("argument", [

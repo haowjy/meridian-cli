@@ -97,6 +97,7 @@ def launch_primary(
     from meridian.lib.config.project_root import resolve_project_root_resolution
     from meridian.lib.core.context import resolve_runtime_context
     from meridian.lib.ops.runtime import resolve_runtime_root_for_read
+    from meridian.lib.state.paths import resolve_project_runtime_root
 
     from .context import (
         RuntimeBindings,
@@ -109,6 +110,59 @@ def launch_primary(
     from .types import LaunchResult
 
     resolved_project_root = resolve_project_root_resolution(project_root).project_root
+    # Library callers can bypass the CLI's source-use normalization. Re-resolve
+    # the original reference here; serialized booleans and source DTOs are not
+    # evidence that an input was genuinely untracked.
+    from meridian.lib.ops.reference import (
+        AuthorizedSourceUse,
+        SourceUseRefused,
+        resolve_source_use,
+    )
+
+    source_ref = (
+        request.session.continue_source_ref
+        or request.session.requested_harness_session_id
+        or ""
+    ).strip()
+    tracked_claim = (
+        request.session.continue_source_tracked
+        or request.session.recorded_native_source is not None
+    )
+    if tracked_claim and not source_ref:
+        raise ValueError(
+            "Cannot launch tracked source without its original reference: "
+            "source-use authorization refused."
+        )
+    if source_ref:
+        operation = (
+            "fork"
+            if request.session.continue_fork
+            or (request.session.primary_session_mode or "").strip().lower() == "fork"
+            or request.session_mode.value == "fork"
+            else "resume"
+        )
+        source_use = resolve_source_use(
+            resolve_project_runtime_root(resolved_project_root),
+            operation,
+            source_ref,
+            request.harness,
+        )
+        if isinstance(source_use, AuthorizedSourceUse):
+            raise ValueError(
+                f"Cannot {operation} tracked source on the primary launch transport: "
+                "transport_unqualified. Tracked primary resume/fork is unsupported "
+                "until an owned transport is available."
+            )
+        if isinstance(source_use, SourceUseRefused):
+            raise ValueError(
+                f"Cannot use source '{source_ref}': source-use authorization "
+                f"refused ({source_use.reason})."
+            )
+    if request.session.recorded_native_source is not None:
+        raise ValueError(
+            "Cannot launch a caller-supplied tracked source without revalidated "
+            "source-use provenance (transport_unqualified)."
+        )
     explicit_work_id = _explicit_work_id_for_launch(request)
     runtime_root_for_context = resolve_runtime_root_for_read(resolved_project_root)
     runtime_context = resolve_runtime_context(

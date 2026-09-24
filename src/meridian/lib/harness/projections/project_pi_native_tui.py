@@ -166,6 +166,12 @@ def project_pi_native_tui_spec_to_cli_args(
 ) -> list[str]:
     """Project one ``ResolvedLaunchSpec`` into an ordered native Pi TUI command list."""
 
+    if spec.recorded_native_source is not None:
+        raise ValueError(
+            "Pi native TUI cannot project a tracked recorded source: "
+            "transport_unqualified."
+        )
+
     command: list[str] = list(base_command)
     passthrough_tail = spec.extra_args
 

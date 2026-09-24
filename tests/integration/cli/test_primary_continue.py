@@ -8,6 +8,7 @@ handoff to the launch layer.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -20,8 +21,9 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import LaunchRequest, LaunchResult, launch_primary
 from meridian.lib.launch.process import ProcessOutcome
-from meridian.lib.launch.request import SessionRequest
+from meridian.lib.launch.request import SessionRequest, SpawnRequest
 from meridian.lib.launch.types import SessionMode
+from meridian.lib.state import session_authority as native_authority
 from meridian.lib.state import session_store, spawn_store, work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths, resolve_project_runtime_root_for_write
 from tests.support.launch import stub_bundle_request_and_resolve
@@ -35,6 +37,41 @@ def _state_root(project_root: Path) -> Path:
     runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
     return runtime_root
+
+
+def _write_v4_pin(runtime_root: Path) -> None:
+    key = native_authority.NativeSessionKey(
+        harness="pi", store="/synthetic/pi", native_session_id="native-conversation"
+    )
+    begin = native_authority.BeginEventV4(
+        run_id="run", attempt_id="attempt", transport_scope_id="transport",
+        harness="pi", store=key.store, operation="fresh", attempt_number=1,
+    )
+    fact = native_authority.BoundaryFactV4(
+        run_id="run", attempt_id="attempt", boundary="entry", key=key,
+        evidence=native_authority.BoundaryEvidence(
+            transport_scope_id="transport", order=1, correlation="entry",
+            selection=native_authority.CreatedSelection(creation_request="fresh"),
+        ),
+        file=native_authority.QualifiedLocalFile(
+            kind="local_file", path="/synthetic/pi/native-conversation.jsonl",
+            store_object={"device": 1, "inode": 10},
+            file_object={"device": 1, "inode": 11}, rule="pi-session-file:v1",
+        ),
+    )
+    builder = native_authority._JournalBuilder()
+    native_authority.fold_row(builder, begin)
+    transition = native_authority.plan_attempt(builder.attempt_view(), builder.identity(), fact)
+    if isinstance(transition, native_authority.NeedChat):
+        transition = native_authority.plan_attempt(
+            builder.attempt_view(), builder.identity(), fact, assigned_chat="c1"
+        )
+    assert isinstance(transition, native_authority.AttemptTransition)
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    (runtime_root / "sessions.jsonl").write_text(
+        f"{begin.model_dump_json()}\n{transition.row.model_dump_json()}\n",
+        encoding="utf-8",
+    )
 
 
 def _seed_primary_spawn(
@@ -100,6 +137,142 @@ def _run_primary_continue(
     return run_primary_launch(**cast("Any", arguments))
 
 
+@pytest.mark.parametrize(
+    ("ref", "operation"),
+    [("c1", "resume"), ("native-conversation", "resume"),
+     ("p1", "fork"), ("p1", "fork-fresh"),
+     ("c1", "fork"), ("c1", "fork-fresh")],
+)
+def test_primary_source_use_aliases_refuse_before_launch(
+    tmp_path: Path, ref: str, operation: str,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    if ref == "p1":
+        _seed_primary_spawn(
+            runtime_root,
+            spawn_id="p1",
+            harness_session_id="native-conversation",
+        )
+    else:
+        _write_v4_pin(runtime_root)
+    kwargs: dict[str, object] = {
+        "continue_ref": ref if operation == "resume" else None,
+        "fork_ref": ref if operation == "fork" else None,
+        "fork_fresh_ref": ref if operation == "fork-fresh" else None,
+        "model": None,
+        "harness": None,
+        "agent": None,
+        "work": "",
+        "task_dir": None,
+        "yolo": False,
+        "approval": None,
+        "autocompact": None,
+        "effort": None,
+        "sandbox": None,
+        "timeout": None,
+        "dry_run": True,
+        "passthrough": (),
+        "skills": (),
+        "project_root": project_root,
+    }
+    expected_reason = "tracked_run_unresolved" if ref == "p1" else "transport_unqualified"
+    with pytest.raises(ValueError, match=expected_reason):
+        run_primary_launch(**cast("Any", kwargs))
+
+
+def test_direct_launch_revalidates_original_source_reference(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _write_v4_pin(_state_root(project_root))
+
+    with pytest.raises(ValueError, match="transport_unqualified"):
+        launch_primary(
+            project_root=project_root,
+            request=LaunchRequest(
+                dry_run=True,
+                harness="pi",
+                session=SessionRequest(
+                    requested_harness_session_id="native-conversation",
+                    continue_source_tracked=False,
+                ),
+            ),
+            harness_registry=get_default_harness_registry(),
+        )
+
+
+def test_primary_from_remains_fresh_and_does_not_use_source_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    requests = _record_primary_launch(monkeypatch)
+    monkeypatch.setattr(
+        primary_launch_module,
+        "resolve_source_use",
+        lambda *args, **kwargs: pytest.fail("--from must not enter source-use"),
+    )
+
+    run_primary_launch(
+        project_root=project_root,
+        continue_ref=None,
+        fork_ref=None,
+        fork_fresh_ref=None,
+        from_ref="c1",
+        model=None,
+        harness="pi",
+        agent=None,
+        work="",
+        yolo=False,
+        approval=None,
+        autocompact=None,
+        effort=None,
+        sandbox=None,
+        timeout=None,
+        dry_run=True,
+        passthrough=(),
+        skills=(),
+    )
+
+    assert requests[0].session.primary_session_mode is None
+    assert requests[0].session.continue_source_ref is None
+
+
+@pytest.mark.parametrize(
+    "raw_args",
+    [
+        ("--system-prompt", "raw"),
+        ("--system-prompt=raw",),
+        ("--append-system-prompt", "first", "--append-system-prompt=second"),
+    ],
+)
+def test_tracked_replayed_raw_system_flags_refuse_before_normalization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raw_args: tuple[str, ...],
+) -> None:
+    monkeypatch.setattr(launch_context, "_build_shared_composition", lambda **kwargs: None)
+    request = SpawnRequest(
+        prompt="task",
+        harness="pi",
+        session=SessionRequest(continue_source_ref="c1"),
+        launch_policy_snapshot=LaunchPolicySnapshot(
+            model="test", harness="pi", extra_args=raw_args
+        ),
+    )
+    policy = SimpleNamespace(profile=None, adapter=object(), resolved_skills=())
+
+    with pytest.raises(ValueError, match="before system-prompt normalization"):
+        launch_context._resolve_primary_projection(
+            request=request,
+            project_paths=launch_context.ProjectConfigPaths(
+                project_root=tmp_path, execution_cwd=tmp_path
+            ),
+            active_work_dir=None,
+            policy=policy,
+            resolved_continue_harness_session_id="native-id",
+        )
+
+
 def _record_primary_launch(monkeypatch: pytest.MonkeyPatch) -> list[LaunchRequest]:
     requests: list[LaunchRequest] = []
 
@@ -146,20 +319,9 @@ def test_primary_continue_maps_source_contract_to_launch_request(
         task_cwd=source_task_dir.as_posix(),
         launch_policy_snapshot=snapshot,
     )
-    requests = _record_primary_launch(monkeypatch)
-
-    _run_primary_continue(project_root, "p41")
-
-    request = requests[0]
-    assert request.launch_policy_snapshot == snapshot
-    assert request.work_id == "source-work"
-    assert request.task_dir == source_task_dir.as_posix()
-    assert request.session.source_execution_cwd == source_task_dir.as_posix()
-    assert request.session.requested_harness_session_id == "session-41"
-    assert request.model == snapshot.model
-    assert request.agent == snapshot.agent
-    assert request.skills == snapshot.skills
-    assert request.passthrough_args == snapshot.extra_args
+    _record_primary_launch(monkeypatch)
+    with pytest.raises(ValueError, match="tracked_run_unresolved"):
+        _run_primary_continue(project_root, "p41")
 
 
 def test_primary_continue_spawn_session_ref_uses_linked_spawn_snapshot(
@@ -264,14 +426,10 @@ def test_primary_continue_does_not_inherit_ambient_work(
         "meridian.lib.ops.session_archive.session_stop_maintenance", maintain_history
     )
 
-    _run_primary_continue(project_root, "p45")
-
-    assert maintained == ["p45-continue"]
-    context = contexts[0]
-    assert context.work_id is None
-    assert context.binding.work_id is None
-    assert "MERIDIAN_ACTIVE_WORK_ID" not in context.binding.environment.child_context_env
-    assert context.task_cwd == source_task_dir
+    with pytest.raises(ValueError, match="tracked_run_unresolved"):
+        _run_primary_continue(project_root, "p45")
+    assert maintained == []
+    assert contexts == []
 
 
 @pytest.mark.parametrize("replacement", ["missing", "file"])
@@ -315,20 +473,10 @@ def test_primary_continue_with_stale_work_task_dir_falls_back_without_mutating_w
 
     monkeypatch.setattr(launch_context, "bind_launch_context", bind_launch_context)
 
-    output = _run_primary_continue(project_root, "p46", dry_run=True)
-
-    assert output.warning is not None
-    assert source_task_dir.as_posix() in output.warning
-    assert "falling back to the normal launch directory" in output.warning
-    context = contexts[0]
-    assert context.execution_cwd == project_root.resolve()
-    assert context.task_cwd is None
-    assert context.work_id == "source-work"
-    assert context.binding.work_id == "source-work"
-    work_after = work_store.get_active_work_item(project_state_dir, "source-work")
-    assert work_after == work_before
-    assert work_after is not None
-    assert work_after.task_dir == source_task_dir.as_posix()
+    with pytest.raises(ValueError, match="tracked_run_unresolved"):
+        _run_primary_continue(project_root, "p46", dry_run=True)
+    assert contexts == []
+    assert work_store.get_active_work_item(project_state_dir, "source-work") == work_before
 
 
 @pytest.mark.parametrize(
@@ -381,15 +529,9 @@ def test_primary_continue_legacy_source_uses_persisted_context(
     )
     requests = _record_primary_launch(monkeypatch)
 
-    _run_primary_continue(project_root, "p42")
-
-    request = requests[0]
-    assert request.launch_policy_snapshot is None
-    assert request.work_id == "legacy-work"
-    assert request.task_dir == source_task_dir.as_posix()
-    assert request.session.source_execution_cwd == source_task_dir.as_posix()
-    assert request.model == "gpt-5.3-codex"
-    assert request.harness == "codex"
+    with pytest.raises(ValueError, match="tracked_run_unresolved"):
+        _run_primary_continue(project_root, "p42")
+    assert requests == []
 
 
 def test_primary_exact_continue_without_source_task_ignores_ambient_task_dir(
@@ -484,22 +626,12 @@ def test_fork_old_harness_generation_preserves_selected_history(
     session_store.update_session_spawn_id(root, source, second)
     session_store.stop_session(root, source)
     requests = _record_primary_launch(monkeypatch)
-    _run_primary_continue(project_root, continue_ref=None, fork_ref="older-native", dry_run=True)
+    with pytest.raises(ValueError, match="native_claim_blocked"):
+        _run_primary_continue(
+            project_root, continue_ref=None, fork_ref="older-native", dry_run=True
+        )
     assert original is not None
-    assert requests[0].session.forked_from_history_id == original.history_id
-    from meridian.lib.launch.session_scope import session_scope
-    from meridian.lib.launch.types import PrimarySessionMetadata
-
-    with session_scope(
-        runtime_root=root,
-        metadata=PrimarySessionMetadata(
-            harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=()
-        ),
-        request=requests[0].session,
-        harness_session_id="fork-native",
-    ) as fork:
-        record = session_store.get_session_record(root, fork.chat_id)
-        assert record is not None and record.forked_from_history_id == original.history_id
+    assert requests == []
 
 
 def _opencode_continue_spec_model(
@@ -585,4 +717,3 @@ def test_opencode_exact_continue_explicit_override_keeps_model_in_spec(
         )
         == "deepseek/deepseek-flash"
     )
-

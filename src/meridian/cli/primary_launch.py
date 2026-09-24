@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-import re
 import shlex
 import sys
 from pathlib import Path
@@ -29,11 +27,11 @@ from meridian.lib.launch.continue_replay import (
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.resolve import resolve_agent_launch_input
 from meridian.lib.ops.reference import (
-    AuthorizedNativeTarget,
-    NativeUnavailable,
+    AuthorizedSourceUse,
     ResolvedSessionReference,
-    resolve_native_reference,
+    SourceUseRefused,
     resolve_session_reference,
+    resolve_source_use,
 )
 from meridian.lib.ops.spawn.models import normalize_goal
 from meridian.lib.state.paths import resolve_project_runtime_root
@@ -240,7 +238,6 @@ def run_primary_launch(
     source_pi_session_dir: str | None = None
     continue_source_tracked = False
     continue_source_ref: str | None = None
-    recorded_native_source = None
     continue_launch_policy_snapshot: LaunchPolicySnapshot | None = None
     continue_passthrough_args: tuple[str, ...] = ()
     output_forked_from: str | None = None
@@ -259,39 +256,24 @@ def run_primary_launch(
             raise ValueError("Cannot combine --continue with --skills.")
         if passthrough:
             raise ValueError("Cannot combine --continue with passthrough args (--).")
+        source_use = resolve_source_use(
+            resolve_project_runtime_root(project_root), "resume", resume_target,
+            explicit_harness,
+        )
+        if isinstance(source_use, AuthorizedSourceUse):
+            raise ValueError(
+                "Tracked primary continuation is unsupported: transport_unqualified. "
+                "The native TUI remains the primary surface; no RPC substitution is made."
+            )
+        if isinstance(source_use, SourceUseRefused):
+            raise ValueError(
+                f"Cannot continue source '{resume_target}': source-use authorization "
+                f"refused ({source_use.reason})."
+            )
         resolved_continue = resolve_session_target(
             project_root=project_root, continue_ref=resume_target, harness_hint=harness,
         )
-        native_target = None
-        if re.fullmatch(r"c\d+", resume_target):
-            native_target = asyncio.run(
-                resolve_native_reference(
-                    resolve_project_runtime_root(project_root),
-                    resume_target,
-                    purpose="resume",
-                )
-            )
-            if not isinstance(native_target, AuthorizedNativeTarget):
-                reason = (
-                    native_target.reason
-                    if isinstance(native_target, NativeUnavailable)
-                    else "authority unavailable"
-                )
-                raise ValueError(
-                    f"Cannot continue tracked session '{resume_target}': "
-                    f"exact native source is unavailable ({reason})."
-                )
-            recorded_native_source = native_target.source
-            if recorded_native_source.key.harness != "pi":
-                raise ValueError(
-                    f"Cannot continue tracked session '{resume_target}': "
-                    "exact-source tracked continue is currently available only for Pi."
-                )
-            if explicit_harness is not None and explicit_harness != "pi":
-                raise ValueError(
-                    "Cannot continue a tracked Pi session with a different harness."
-                )
-        if resolved_continue.missing_harness_session_id and native_target is None:
+        if resolved_continue.missing_harness_session_id:
             raise ValueError(
                 missing_fork_session_error_with_discovery(
                     source_ref=resume_target,
@@ -305,13 +287,11 @@ def run_primary_launch(
                 source_ref=resume_target,
                 resolved_reference=resolved_continue,
                 harness_session_id=(
-                    recorded_native_source.key.native_session_id
-                    if recorded_native_source is not None
-                    else resolved_continue.authoritative_harness_session_id
+                    resolved_continue.authoritative_harness_session_id
                 ),
             ),
             explicit_harness=(
-                "pi" if recorded_native_source is not None else explicit_harness
+                explicit_harness
             ),
             requested_agent=agent_launch.agent,
             agent_opt_out=agent_launch.agent_opt_out,
@@ -322,18 +302,6 @@ def run_primary_launch(
         continue_harness_session_id = continue_contract.session.requested_harness_session_id
         continue_chat_id = continue_contract.session.continue_chat_id
         continue_harness = continue_contract.harness
-        if recorded_native_source is not None:
-            continue_harness_session_id = recorded_native_source.key.native_session_id
-            continue_chat_id = recorded_native_source.ref.chat_id
-            continue_harness = "pi"
-            continue_session = continue_session.model_copy(update={
-                "requested_harness_session_id": continue_harness_session_id,
-                "continue_chat_id": continue_chat_id,
-                "continue_harness": "pi",
-                "continue_source_tracked": True,
-                "continue_source_ref": resume_target,
-                "recorded_native_source": recorded_native_source,
-            })
         continue_warning = resolved_continue.warning
         source_control_root = continue_contract.session.source_control_root
         source_execution_cwd = continue_contract.session.source_execution_cwd
@@ -352,9 +320,6 @@ def run_primary_launch(
             launch_task_dir = project_root.as_posix()
         continue_source_tracked = continue_contract.session.continue_source_tracked
         continue_source_ref = continue_contract.session.continue_source_ref
-        if recorded_native_source is not None:
-            continue_source_tracked = True
-            continue_source_ref = resume_target
         continue_launch_policy_snapshot = continue_contract.launch_policy_snapshot
         continue_passthrough_args = continue_contract.passthrough_args
         requested_model = continue_contract.model
@@ -368,38 +333,24 @@ def run_primary_launch(
                 "transport_unqualified."
             )
     elif selected_fork_target is not None:
+        original_fork_ref = raw_fork_target or raw_fork_fresh_target
+        source_use = resolve_source_use(
+            resolve_project_runtime_root(project_root), "fork", original_fork_ref,
+            explicit_harness,
+        )
+        if isinstance(source_use, AuthorizedSourceUse):
+            raise ValueError(
+                "Tracked primary fork is unsupported: transport_unqualified. "
+                "The native TUI remains the primary surface; no RPC substitution is made."
+            )
+        if isinstance(source_use, SourceUseRefused):
+            raise ValueError(
+                f"Cannot fork source '{selected_fork_target}': source-use authorization "
+                f"refused ({source_use.reason})."
+            )
         resolved_fork = resolve_session_target(
             project_root=project_root, continue_ref=selected_fork_target
         )
-        if re.fullmatch(r"c\d+", selected_fork_target):
-            native_fork = asyncio.run(
-                resolve_native_reference(
-                    resolve_project_runtime_root(project_root),
-                    selected_fork_target,
-                    purpose="fork",
-                )
-            )
-            if not isinstance(native_fork, AuthorizedNativeTarget):
-                reason = (
-                    native_fork.reason
-                    if isinstance(native_fork, NativeUnavailable)
-                    else "authority unavailable"
-                )
-                raise ValueError(
-                    f"Cannot fork tracked session '{selected_fork_target}': "
-                    f"exact native source is unavailable ({reason})."
-                )
-            if native_fork.source.key.harness != "pi":
-                raise ValueError(
-                    f"Cannot fork tracked session '{selected_fork_target}': "
-                    "exact-source tracked fork is currently unavailable."
-                )
-            if explicit_harness not in (None, "pi"):
-                raise ValueError("Cannot fork a tracked Pi session with a different harness.")
-            raise ValueError(
-                "Cannot fork tracked Pi source on the primary native TUI: "
-                "transport_unqualified."
-            )
         if resolved_fork.missing_harness_session_id:
             raise ValueError(
                 missing_fork_session_error_with_discovery(

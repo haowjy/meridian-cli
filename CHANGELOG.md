@@ -11,6 +11,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Refuse tracked Pi primary resume/fork on the native TUI, including dry-run,
   and block tracked Pi spawn follow-ups until connected admission is owned.
+- Normalize primary cN/pN/bare source-use references before legacy session
+  resolution; refuse unresolved or tracked primary requests before preview,
+  and reject tracked replay tails before system-prompt normalization.
 
 ### Added
 
@@ -24,10 +27,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Add a strict, provenance-preserving bare native-ID candidate lookup over one
   locked `sessions.jsonl` replay; ambiguity and corrupt authority fail closed.
 
-- Carry purpose-authorized pinned Pi native sources from top-level cN continuation
-  through launch composition; Pi resumes use the exact preflighted file and store,
-  while tracked passthrough arguments fail closed. Actual tracked execution stays
-  blocked until B3c's connected-state entry gate is wired.
+- Keep exact Pi source preflight available to the RPC projector; primary tracked
+  resume/fork stays on the native TUI and refuses until an owned transport is
+  available.
 
 - Added a confirming `get_native_binding()` state read and purpose-aware cN
   reference resolver. Only an unblocked v4 qualified pin yields provenance;

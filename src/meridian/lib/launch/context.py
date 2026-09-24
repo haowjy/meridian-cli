@@ -1255,6 +1255,21 @@ def _resolve_primary_projection(
         policy=policy,
     )
 
+    session = request.session
+    tracked_source_intent = bool(
+        session.recorded_native_source is not None
+        or session.continue_source_tracked
+        or session.continue_source_ref
+    )
+    if (
+        tracked_source_intent
+        and request.launch_policy_snapshot is not None
+        and request.launch_policy_snapshot.extra_args
+    ):
+        raise ValueError(
+            "Tracked source replay contains raw launch arguments; refusing before "
+            "system-prompt normalization (transport_unqualified)."
+        )
     seed = harness.seed_session(
         is_resume=session_mode == "resume",
         harness_session_id=resolved_continue_harness_session_id or "",
@@ -1786,6 +1801,49 @@ def bind_launch_context(
         project_paths.project_root, context_config
     )
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
+    source_ref = (
+        prepared.request.session.continue_source_ref
+        or prepared.request.session.requested_harness_session_id
+        or ""
+    ).strip()
+    session = prepared.request.session
+    tracked_claim = session.continue_source_tracked or session.recorded_native_source is not None
+    if tracked_claim and not source_ref:
+        raise ValueError(
+            "Cannot bind tracked source without its original reference: "
+            "source-use authorization refused."
+        )
+    if source_ref:
+        from meridian.lib.ops.reference import (
+            AuthorizedSourceUse,
+            SourceUseRefused,
+            resolve_source_use,
+        )
+
+        operation = (
+            "fork"
+            if session.continue_fork
+            or (session.primary_session_mode or "").strip().lower() == "fork"
+            else "resume"
+        )
+        source_use = resolve_source_use(
+            runtime_root, operation, source_ref, prepared.request.harness
+        )
+        if isinstance(source_use, AuthorizedSourceUse):
+            raise ValueError(
+                f"Tracked {operation} on the primary launch transport is "
+                "transport_unqualified."
+            )
+        if isinstance(source_use, SourceUseRefused):
+            raise ValueError(
+                f"Cannot bind source '{source_ref}': source-use authorization "
+                f"refused ({source_use.reason})."
+            )
+        if session.recorded_native_source is not None:
+            raise ValueError(
+                "Caller-supplied recorded source does not match an authorized "
+                "source-use result."
+            )
     system_temp_root = Path(tempfile.gettempdir()).resolve()
     resolved_request = prepared.request
     harness = prepared.harness
