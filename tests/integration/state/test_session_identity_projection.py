@@ -186,6 +186,14 @@ def test_proposed_identity_and_replay_use_identical_conflict_rules(tmp_path, pre
     path = tmp_path / "sessions.jsonl"
     path.write_bytes(raw + b'{"torn":')
     before = path.read_bytes()
+    if snapshot.identity.native_bindings:
+        with (
+            pytest.raises(ValueError, match="native authority invalidation"),
+            store._sessions_transaction(store.RuntimePaths.from_root_dir(tmp_path)),
+        ):
+            pass
+        assert path.read_bytes() == before
+        return
     with (
         pytest.raises(ValueError, match=str(live.value)),
         store._sessions_transaction(store.RuntimePaths.from_root_dir(tmp_path)) as transaction,

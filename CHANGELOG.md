@@ -10,6 +10,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and digest-verified source-built bundle projection for identity-qualified RPC launches.
 - Added typed, strict native-session binding and attempt-boundary authority to
   the existing session journal, with crash-safe replay and fail-closed writers.
+- Added dormant v4 native-file observation replay with frozen v3 decoding,
+  first-qualified-pin provenance, bounded source conflicts and torn-tail refusal.
+  No live v4 writer or native authorization path is enabled.
 
 ### Changed
 

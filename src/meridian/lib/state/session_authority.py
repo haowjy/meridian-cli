@@ -338,6 +338,216 @@ class BoundaryFact(BaseModel):
         return self
 
 
+# V4 is deliberately a separate frozen wire schema.  Do not add defaults to
+# the v3 facts above: their JSON serialization is also their persisted digest.
+class LocalObjectStamp(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    device: int = Field(ge=0, strict=True)
+    inode: int = Field(ge=0, strict=True)
+
+
+class PendingLocalFile(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    kind: Literal["local_file_pending"]
+    path: str
+    store_object: LocalObjectStamp
+
+    @model_validator(mode="after")
+    def valid_path(self) -> Self:
+        _validate_local_observation_path(self.path)
+        return self
+
+
+class QualifiedLocalFile(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    kind: Literal["local_file"]
+    path: str
+    store_object: LocalObjectStamp
+    file_object: LocalObjectStamp
+    rule: BoundedCorrelation
+
+    @model_validator(mode="after")
+    def valid_path(self) -> Self:
+        _validate_local_observation_path(self.path)
+        return self
+
+
+class NoFileObservation(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    kind: Literal["no_file_observation"]
+    reason: Literal["not_reported", "unsupported_locator"]
+
+
+type NativeFileObservation = Annotated[
+    PendingLocalFile | QualifiedLocalFile | NoFileObservation,
+    Field(discriminator="kind"),
+]
+
+
+def _validate_local_observation_path(path: str) -> None:
+    if (
+        not path.startswith("/")
+        or len(path.encode("utf-8")) > 4096
+        or _contains_control(path)
+        or any(part in {".", ".."} for part in path.split("/"))
+        or "//" in path
+        or path.endswith("/")
+    ):
+        raise ValueError("local file observation requires a bounded absolute path")
+
+
+class BoundaryFactV4(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    run_id: BoundedCorrelation
+    attempt_id: BoundedCorrelation
+    boundary: Literal["entry", "exit"]
+    key: NativeSessionKey
+    evidence: BoundaryEvidence
+    file: NativeFileObservation
+
+    @model_validator(mode="after")
+    def validate_fact(self) -> Self:
+        if self.boundary == "entry":
+            if self.evidence.selection is None or self.evidence.terminal_rule is not None:
+                raise ValueError("entry requires operation evidence, not terminal evidence")
+        elif self.evidence.terminal_rule is None or self.evidence.selection is not None:
+            raise ValueError("exit requires terminal qualification, not entry evidence")
+        if isinstance(self.file, (PendingLocalFile, QualifiedLocalFile)):
+            if self.key.store.startswith("namespace:v1://") or not self.key.store.startswith("/"):
+                raise ValueError("local file observation requires a local store")
+            root = self.key.store.rstrip("/")
+            if not self.file.path.startswith(root + "/"):
+                raise ValueError("local file observation must be below its store")
+        return self
+
+
+class BeginIntentV4(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    run_id: BoundedCorrelation
+    attempt_id: BoundedCorrelation
+    transport_scope_id: BoundedCorrelation
+    harness: str
+    store: str
+    operation: Literal["fresh", "resume", "fork"]
+    requested_source: "RecordedNativeSource | None" = None
+
+    @model_validator(mode="after")
+    def context(self) -> Self:
+        NativeSessionKey(harness=self.harness, store=self.store, native_session_id="context")
+        if self.requested_source is not None and (
+            self.requested_source.key.harness != self.harness
+            or self.requested_source.key.store != self.store
+        ):
+            raise ValueError("requested source differs from acquired harness/store")
+        for value in (self.run_id, self.attempt_id, self.transport_scope_id):
+            if value != value.strip() or _contains_control(value):
+                raise ValueError("attempt context requires normalized owner identity")
+        return self
+
+
+class BeginEventV4(BeginIntentV4):
+    v: Literal[4] = 4
+    event: Literal["native_attempt"] = "native_attempt"
+    action: Literal["begin"] = "begin"
+    attempt_number: int = Field(ge=1)
+
+    def intent(self) -> BeginIntentV4:
+        return BeginIntentV4(**self.model_dump(exclude={"v", "event", "action", "attempt_number"}))
+
+
+class BoundaryEventV4(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    v: Literal[4] = 4
+    event: Literal["native_attempt"] = "native_attempt"
+    action: Literal["boundary"] = "boundary"
+    run_id: BoundedCorrelation
+    attempt_id: BoundedCorrelation
+    fact: BoundaryFactV4
+    chat_id: PersistedChatId
+
+    @model_validator(mode="after")
+    def envelope(self) -> Self:
+        if (self.fact.run_id, self.fact.attempt_id) != (self.run_id, self.attempt_id):
+            raise ValueError("boundary event owner does not match boundary fact")
+        return self
+
+
+class LocatorConflictEvent(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    v: Literal[4] = 4
+    event: Literal["native_attempt"] = "native_attempt"
+    action: Literal["locator_conflict"] = "locator_conflict"
+    run_id: BoundedCorrelation
+    attempt_id: BoundedCorrelation
+    fact: BoundaryFactV4
+    chat_id: PersistedChatId
+    binding_event_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    store_event_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    locator_event_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    reason: Literal["different_file", "store_replaced"]
+
+    @model_validator(mode="after")
+    def target_shape(self) -> Self:
+        if (self.fact.run_id, self.fact.attempt_id) != (self.run_id, self.attempt_id):
+            raise ValueError("conflict envelope does not match triggering fact")
+        if self.reason == "different_file" and self.locator_event_id is None:
+            raise ValueError("conflict locator reference does not match reason")
+        return self
+
+
+class NativeSourceRef(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    chat_id: PersistedChatId
+    binding_event_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    locator_event_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class RecordedNativeSource(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    ref: NativeSourceRef
+    key: NativeSessionKey
+    locator: QualifiedLocalFile
+
+
+class AcquiredStoreGuard(NamedTuple):
+    object: LocalObjectStamp
+    store_event_id: str
+
+
+class NativeBinding(NamedTuple):
+    chat_id: ChatId
+    key: NativeSessionKey
+    binding_event_id: str
+    protocol: Literal["v3", "v4"]
+    store_guard: AcquiredStoreGuard | None = None
+    source_state: Literal["locator_unrecorded", "unobserved", "pending", "pinned"] = "unobserved"
+    locator: QualifiedLocalFile | None = None
+    locator_event_id: str | None = None
+    conflict: LocatorConflictEvent | None = None
+
+
+class V4AttemptState(NamedTuple):
+    begin: BeginEventV4
+    entry: BoundaryEventV4 | None = None
+    exit: BoundaryEventV4 | None = None
+    invalidation: "Refutation | None" = None
+
+
+class V4Transition(NamedTuple):
+    state: V4AttemptState
+    row: BeginEventV4 | BoundaryEventV4 | LocatorConflictEvent | None
+    chat_id: ChatId | None = None
+    binding: NativeBinding | None = None
+    conflict: bool = False
+
+
+type V4AttemptEvent = BeginEventV4 | BoundaryEventV4 | LocatorConflictEvent
+_V4_ATTEMPT_SCHEMA = TypeAdapter[V4AttemptEvent](
+    Annotated[V4AttemptEvent, Field(discriminator="action")]
+)
+
+
 class BeginIntent(BaseModel):
     """Immutable owner context; intent does not certify ownership."""
 
@@ -576,7 +786,9 @@ def project_session_event(
     )
 
 
-type JournalEvent = SessionEvent | SessionModelObservationEvent | SessionAttemptEvent
+type JournalEvent = (
+    SessionEvent | SessionModelObservationEvent | SessionAttemptEvent | V4AttemptEvent
+)
 type NativeKeyTuple = tuple[str, str, str]
 type StartupKey = tuple[str, str, str | None]
 
@@ -614,6 +826,7 @@ class IdentityProjection:
     chat_to_key: Mapping[ChatId, NativeSessionKey]
     key_to_chat: Mapping[NativeKeyTuple, ChatId]
     max_canonical_number: int
+    native_bindings: Mapping[NativeKeyTuple, NativeBinding] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -708,8 +921,8 @@ class AttemptState:
 
 @dataclass(frozen=True)
 class AttemptProjection:
-    states: Mapping[tuple[str, str], AttemptState]
-    latest: Mapping[str, BeginEvent]
+    states: Mapping[tuple[str, str], AttemptState | V4AttemptState]
+    latest: Mapping[str, BeginEvent | BeginEventV4]
     effective_exits: int
 
 
@@ -746,14 +959,18 @@ def plan_attempt(
         ):
             raise ValueError("resume/fork intent requires its pinned source key")
         if state is not None:
+            if not isinstance(state, AttemptState):
+                raise ValueError("native attempt cannot mix v3 and v4 rows")
             if state.begin.intent() != fact:
                 raise ValueError("attempt begin context is immutable")
             return AttemptTransition(state, None)
+        if latest is not None and not isinstance(latest, BeginEvent):
+            raise ValueError("native attempt cannot mix v3 and v4 rows")
         event = BeginEvent(
             **fact.model_dump(), attempt_number=1 + (latest.attempt_number if latest else 0)
         )
         return AttemptTransition(AttemptState(event), event)
-    if state is None:
+    if state is None or not isinstance(state, AttemptState):
         raise ValueError("boundary fact belongs to an unknown or unstarted attempt")
     begin = state.begin
     scope = (
@@ -868,6 +1085,250 @@ def plan_attempt(
         binding,
         int(fact.boundary == "exit"),
     )
+
+
+def boundary_digest_v4(fact: BoundaryFactV4) -> str:
+    """Version-domain-separated digest; v3 digests remain byte-for-byte frozen."""
+    return hashlib.sha256(b"native-attempt-v4\0" + fact.model_dump_json().encode()).hexdigest()
+
+
+def _same_pin(left: QualifiedLocalFile, right: QualifiedLocalFile) -> bool:
+    return (left.path, left.store_object, left.file_object) == (
+        right.path,
+        right.store_object,
+        right.file_object,
+    )
+
+
+def plan_attempt_v4(
+    states: Mapping[tuple[str, str], AttemptState | V4AttemptState],
+    latest: Mapping[str, BeginEvent | BeginEventV4],
+    identity: IdentityProjection,
+    fact: BeginIntentV4 | BoundaryFactV4 | LocatorConflictEvent,
+    *,
+    assigned_chat: ChatId | None = None,
+) -> V4Transition | NeedChat:
+    """Pure v4 journal transition. File facts are lexical values; this does no I/O."""
+    state = states.get((fact.run_id, fact.attempt_id))
+    current_latest = latest.get(fact.run_id)
+    if isinstance(fact, BeginIntentV4):
+        if state is not None and not isinstance(state, V4AttemptState):
+            raise ValueError("native attempt cannot mix v3 and v4 rows")
+        if current_latest is not None and not isinstance(current_latest, BeginEventV4):
+            raise ValueError("native attempt cannot mix v3 and v4 rows")
+        if fact.operation == "fresh" and fact.requested_source is not None:
+            raise ValueError("fresh intent forbids a requested source")
+        if fact.operation != "fresh":
+            source = fact.requested_source
+            if source is None:
+                raise ValueError("resume/fork requires a recorded source")
+            binding = identity.native_bindings.get(native_key_tuple(source.key))
+            if (
+                binding is None
+                or binding.protocol != "v4"
+                or binding.conflict is not None
+                or binding.chat_id != source.ref.chat_id
+                or binding.binding_event_id != source.ref.binding_event_id
+                or binding.locator_event_id != source.ref.locator_event_id
+                or binding.locator != source.locator
+                or binding.locator is None
+            ):
+                raise ValueError("resume/fork requires the current unblocked recorded source")
+        if state is not None:
+            if state.begin.intent() != fact:
+                raise ValueError("attempt begin context is immutable")
+            return V4Transition(state, None)
+        number = current_latest.attempt_number if current_latest is not None else 0
+        event = BeginEventV4(**fact.model_dump(), attempt_number=number + 1)
+        return V4Transition(V4AttemptState(event), event)
+
+    if state is None or not isinstance(state, V4AttemptState):
+        raise ValueError("v4 boundary belongs to unknown or non-v4 attempt")
+    begin = state.begin
+    if isinstance(fact, LocatorConflictEvent):
+        trigger = fact.fact
+        if (
+            trigger.evidence.transport_scope_id != begin.transport_scope_id
+            or trigger.key.harness != begin.harness
+            or trigger.key.store != begin.store
+            or current_latest is None
+            or current_latest.attempt_id != fact.attempt_id
+        ):
+            raise ValueError("locator conflict is not owned by the current attempt")
+        if trigger.boundary == "entry":
+            selection = trigger.evidence.selection
+            if (
+                selection is None
+                or selection.operation != begin.operation
+                or begin.operation != "fresh"
+                or not isinstance(selection, CreatedSelection)
+                or state.entry is not None
+                or state.exit is not None
+            ):
+                raise ValueError("locator conflict entry is not an assignable boundary")
+        elif state.entry is not None and (
+            trigger.evidence.order <= state.entry.fact.evidence.order
+        ):
+            raise ValueError("locator conflict exit does not follow the accepted entry")
+        if state.exit is not None and (
+            trigger.key != state.exit.fact.key
+            or trigger.evidence.order < state.exit.fact.evidence.order
+        ):
+            raise ValueError("locator conflict does not target the accepted exit identity")
+        binding = identity.native_bindings.get(native_key_tuple(trigger.key))
+        if binding is None or binding.conflict is not None:
+            raise ValueError("locator conflict has no unblocked native binding")
+        if binding.store_guard is None:
+            raise ValueError("locator conflict has no acquired store guard")
+        if (
+            fact.chat_id != binding.chat_id
+            or fact.binding_event_id != binding.binding_event_id
+            or fact.store_event_id != binding.store_guard.store_event_id
+            or fact.locator_event_id != binding.locator_event_id
+        ):
+            raise ValueError("locator conflict target does not match binding provenance")
+        observation = trigger.file
+        if fact.reason == "different_file":
+            if (
+                binding.locator is None
+                or not isinstance(observation, QualifiedLocalFile)
+                or observation.store_object != binding.store_guard.object
+                or _same_pin(binding.locator, observation)
+            ):
+                raise ValueError("different-file conflict does not prove a competing pin")
+        elif (
+            not isinstance(observation, (PendingLocalFile, QualifiedLocalFile))
+            or observation.store_object == binding.store_guard.object
+        ):
+            raise ValueError("store-replaced conflict does not prove a competing store")
+        return V4Transition(state, fact, fact.chat_id, binding._replace(conflict=fact), True)
+
+    evidence = fact.evidence
+    if (fact.run_id, fact.attempt_id) != (begin.run_id, begin.attempt_id):
+        raise ValueError("boundary belongs to a different attempt")
+    if evidence.transport_scope_id != begin.transport_scope_id:
+        raise ValueError("observation is not owned by this transport attempt")
+    if fact.key.harness != begin.harness or fact.key.store != begin.store:
+        raise ValueError("observation differs from acquired harness/store")
+    if fact.boundary == "entry":
+        selection = evidence.selection
+        if (
+            selection is None
+            or selection.operation != begin.operation
+            or (
+                isinstance(selection, (ResumeSelection, ForkSelection))
+                and (
+                    begin.requested_source is None or selection.source != begin.requested_source.key
+                )
+            )
+        ):
+            raise ValueError("entry operation differs from immutable attempt intent")
+        requested = begin.requested_source
+        if begin.operation != "fresh" and requested is None:
+            raise ValueError("resume/fork entry lacks its recorded source")
+        if begin.operation == "resume" and requested is not None and fact.key != requested.key:
+            raise ValueError("resume entry does not match its recorded native source")
+        if (
+            begin.operation == "fork"
+            and requested is not None
+            and (fact.key == requested.key or not isinstance(selection, ForkSelection))
+        ):
+            raise ValueError("fork entry lacks a distinct target and recorded source")
+        if begin.operation == "fresh" and not isinstance(selection, CreatedSelection):
+            raise ValueError("fresh entry lacks fresh-target evidence")
+        if state.entry is not None:
+            if state.entry.fact == fact:
+                return V4Transition(state, None, state.entry.chat_id)
+            raise ValueError("attempt entry identity is immutable")
+        if state.exit is not None:
+            raise ValueError("entry cannot be assigned retroactively after exit")
+    elif state.entry is not None and evidence.order <= state.entry.fact.evidence.order:
+        raise ValueError("terminal boundary must follow accepted entry ordering evidence")
+    if current_latest is None or current_latest.attempt_id != fact.attempt_id:
+        raise ValueError("boundary fact belongs to a superseded attempt")
+
+    key_id = native_key_tuple(fact.key)
+    existing = identity.native_bindings.get(key_id)
+    if existing is not None and existing.conflict is not None:
+        raise ValueError("native binding is blocked by a source conflict")
+    if existing is not None and existing.protocol != "v4":
+        raise ValueError("v3 native bindings require explicit reconciliation")
+    chat = identity.key_to_chat.get(key_id)
+    if existing is None and chat is not None:
+        raise ValueError("legacy or v3 native binding requires explicit reconciliation")
+    if existing is None and assigned_chat is None:
+        return NeedChat()
+    if existing is None and assigned_chat in identity.refs:
+        raise ValueError("native claim on occupied chat alias")
+    if existing is not None and assigned_chat is not None and assigned_chat != existing.chat_id:
+        raise ValueError("native key is already bound to a different chat")
+    target_chat = existing.chat_id if existing is not None else assigned_chat
+    assert target_chat is not None
+    digest = boundary_digest_v4(fact)
+    binding = existing or NativeBinding(target_chat, fact.key, digest, "v4")
+    observation = fact.file
+    if isinstance(observation, (PendingLocalFile, QualifiedLocalFile)):
+        if binding.store_guard is None:
+            binding = binding._replace(
+                store_guard=AcquiredStoreGuard(observation.store_object, digest),
+                source_state="pending"
+                if isinstance(observation, PendingLocalFile)
+                else "unobserved",
+            )
+        elif observation.store_object != binding.store_guard.object:
+            conflict = LocatorConflictEvent(
+                run_id=fact.run_id,
+                attempt_id=fact.attempt_id,
+                fact=fact,
+                chat_id=binding.chat_id,
+                binding_event_id=binding.binding_event_id,
+                store_event_id=binding.store_guard.store_event_id,
+                locator_event_id=binding.locator_event_id,
+                reason="store_replaced",
+            )
+            return V4Transition(
+                state, conflict, binding.chat_id, binding._replace(conflict=conflict), True
+            )
+        if isinstance(observation, QualifiedLocalFile):
+            if binding.locator is None:
+                binding = binding._replace(
+                    locator=observation, locator_event_id=digest, source_state="pinned"
+                )
+            elif not _same_pin(binding.locator, observation):
+                assert binding.store_guard is not None
+                conflict = LocatorConflictEvent(
+                    run_id=fact.run_id,
+                    attempt_id=fact.attempt_id,
+                    fact=fact,
+                    chat_id=binding.chat_id,
+                    binding_event_id=binding.binding_event_id,
+                    store_event_id=binding.store_guard.store_event_id,
+                    locator_event_id=binding.locator_event_id,
+                    reason="different_file",
+                )
+                return V4Transition(
+                    state, conflict, binding.chat_id, binding._replace(conflict=conflict), True
+                )
+        elif binding.locator is None:
+            binding = binding._replace(source_state="pending")
+    if fact.boundary == "exit" and state.exit is not None:
+        previous = state.exit.fact
+        if fact == previous or (
+            fact.key == previous.key and evidence.order > previous.evidence.order
+        ):
+            return V4Transition(state, None, state.exit.chat_id)
+        if fact.key != previous.key:
+            raise ValueError("v4 exit identity contradiction requires explicit refutation")
+        raise ValueError("changed same-key boundary fact at equal order is not a confirmation")
+    row = BoundaryEventV4(
+        run_id=fact.run_id, attempt_id=fact.attempt_id, fact=fact, chat_id=target_chat
+    )
+    next_state = V4AttemptState(
+        begin,
+        row if fact.boundary == "entry" else state.entry,
+        row if fact.boundary == "exit" else state.exit,
+    )
+    return V4Transition(next_state, row, target_chat, binding)
 
 
 @dataclass(frozen=True)
@@ -996,12 +1457,13 @@ class _JournalBuilder:
     refs: dict[ChatId, RefState] = field(default_factory=dict)
     chat_to_key: dict[ChatId, NativeSessionKey] = field(default_factory=dict)
     key_to_chat: dict[NativeKeyTuple, ChatId] = field(default_factory=dict)
+    native_bindings: dict[NativeKeyTuple, NativeBinding] = field(default_factory=dict)
     max_canonical_number: int = 0
     lifecycle: dict[str, SessionRecord] = field(default_factory=dict)
     lifecycle_ids: dict[str, dict[HarnessSessionId, None]] = field(default_factory=dict)
     metadata: _MetadataBuilder = field(default_factory=_MetadataBuilder)
-    attempts: dict[tuple[str, str], AttemptState] = field(default_factory=dict)
-    latest: dict[str, BeginEvent] = field(default_factory=dict)
+    attempts: dict[tuple[str, str], AttemptState | V4AttemptState] = field(default_factory=dict)
+    latest: dict[str, BeginEvent | BeginEventV4] = field(default_factory=dict)
     effective_exits: int = 0
 
     def identity(self) -> IdentityProjection:
@@ -1010,6 +1472,7 @@ class _JournalBuilder:
             MappingProxyType(self.chat_to_key),
             MappingProxyType(self.key_to_chat),
             self.max_canonical_number,
+            MappingProxyType(self.native_bindings),
         )
 
     def note_ref(self, ref: ChatId, state: RefState) -> None:
@@ -1074,6 +1537,28 @@ def boundary_digest(fact: BoundaryFact) -> str:
 
 
 def fold_row(builder: _JournalBuilder, event: JournalEvent) -> None:
+    if isinstance(event, (BeginEventV4, BoundaryEventV4, LocatorConflictEvent)):
+        fact = event.intent() if isinstance(event, BeginEventV4) else event.fact
+        transition = plan_attempt_v4(
+            builder.attempts,
+            builder.latest,
+            builder.identity(),
+            fact,
+            assigned_chat=event.chat_id if isinstance(event, BoundaryEventV4) else None,
+        )
+        if isinstance(transition, NeedChat) or transition.row != event:
+            raise ValueError("Noncanonical or duplicate v4 native attempt row/assignment")
+        builder.attempts[(event.run_id, event.attempt_id)] = transition.state
+        if isinstance(event, BeginEventV4):
+            builder.latest[event.run_id] = event
+        if transition.binding is not None:
+            identity = transition.binding
+            key_id = native_key_tuple(identity.key)
+            builder.native_bindings[key_id] = identity
+            if isinstance(event, BoundaryEventV4):
+                delta = IdentityDelta(identity.chat_id, Operational(), identity.key)
+                builder.apply_identity(delta)
+        return
     if isinstance(event, (BeginEvent, BoundaryEvent, Refutation)):
         fact = (
             event.intent()
@@ -1094,6 +1579,16 @@ def fold_row(builder: _JournalBuilder, event: JournalEvent) -> None:
             builder.latest[event.run_id] = event
         builder.effective_exits += transition.exit_delta
         delta = transition.identity
+        if isinstance(event, BoundaryEvent):
+            key_id = native_key_tuple(event.fact.key)
+            if key_id not in builder.native_bindings:
+                builder.native_bindings[key_id] = NativeBinding(
+                    event.chat_id,
+                    event.fact.key,
+                    boundary_digest(event.fact),
+                    "v3",
+                    source_state="locator_unrecorded",
+                )
     else:
         delta = plan_identity(builder.identity(), event)
         if isinstance(delta, NoOp):
@@ -1124,11 +1619,12 @@ def decode_row(payload: object) -> JournalEvent:
     payload = cast("dict[str, object]", payload)
     kind = payload.get("event")
     if kind == "native_attempt":
-        if type(payload.get("v")) is not int or payload.get("v") != 3:
+        version = payload.get("v")
+        if type(version) is not int or version not in (3, 4):
             raise ValueError(
                 "Unsupported/frozen native_attempt version requires explicit reconciliation"
             )
-        return _ATTEMPT_SCHEMA.validate_python(payload)
+        return (_ATTEMPT_SCHEMA if version == 3 else _V4_ATTEMPT_SCHEMA).validate_python(payload)
     if not isinstance(kind, str) or kind not in _EVENT_SCHEMAS:
         raise ValueError("Unsupported sessions.jsonl event type")
     if kind != "historical_import" and (
@@ -1155,8 +1651,10 @@ def read_journal(raw: bytes) -> JournalRead:
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             if terminated:
                 raise ValueError(f"Corrupt sessions.jsonl row {index + 1}") from exc
-            if builder.effective_exits:
-                raise ValueError("Torn sessions tail may conceal an exit invalidation") from None
+            if builder.effective_exits or builder.native_bindings:
+                raise ValueError(
+                    "Torn sessions tail may conceal native authority invalidation"
+                ) from None
             tail = "torn"
             break
         try:

@@ -45,6 +45,7 @@ from meridian.lib.state.session_authority import (
     Refutation,
     _generation_matches,
     canonical_chat_number,
+    native_key_tuple,
     plan_attempt,
     plan_identity,
     read_journal,
@@ -258,7 +259,18 @@ def get_native_session_key(runtime_root: Path, chat_id: str) -> NativeSessionKey
     paths = RuntimePaths.from_root_dir(runtime_root)
     with _sessions_transaction(paths) as transaction:
         snapshot = transaction.snapshot
-        return snapshot.identity.chat_to_key.get(ChatId(normalize_optional_identity(chat_id) or ""))
+        normalized = ChatId(normalize_optional_identity(chat_id) or "")
+        key = snapshot.identity.chat_to_key.get(normalized)
+        binding = (
+            snapshot.identity.native_bindings.get(native_key_tuple(key))
+            if key is not None
+            else None
+        )
+        # V4 carries exact-source provenance, but until its purpose-aware resolver
+        # is enabled the legacy key-only getter must not turn it into authority.
+        if binding is not None and binding.protocol == "v4":
+            return None
+        return key
 
 
 def get_native_attempt_boundaries(
@@ -272,9 +284,20 @@ def get_native_attempt_boundaries(
         if state is None:
             return AttemptBoundaries(None, None, False)
         invalidated = state.invalidation is not None
+        key = (
+            state.exit.fact.key
+            if state.exit is not None
+            else (state.entry.fact.key if state.entry is not None else None)
+        )
+        binding = (
+            snapshot.identity.native_bindings.get(native_key_tuple(key))
+            if key is not None
+            else None
+        )
+        source_blocked = binding is not None and binding.conflict is not None
         return AttemptBoundaries(
-            state.entry.chat_id if state.entry else None,
-            state.exit.chat_id if state.exit and not invalidated else None,
+            state.entry.chat_id if state.entry and not source_blocked else None,
+            state.exit.chat_id if state.exit and not invalidated and not source_blocked else None,
             invalidated,
         )
 

@@ -181,9 +181,11 @@ Session journal writers share one transaction in project-lifetime → history-mu
 → exclusive-session-lock order. It reads/decodes/folds once, rejects conflicts before
 repair or allocation, and confirms file plus parent-directory durability. Repair uses
 the reader's tail classification, never a second parse. Legacy native-ID fields remain
-display/provenance data. V3 attempt facts record owner context and bounded
-operation/terminal correlations, not proof of transport truth. Frozen v1/v2 native
-attempt rows require reconciliation; never promote their assertions automatically.
+display/provenance data. V3 attempt facts remain frozen. Pure v4 journal replay also
+records typed local-file observations, first-pin provenance and bounded source
+conflicts; it is not proof of transport truth and has no live writer or authorization
+resolver. Frozen v1/v2 native attempt rows require reconciliation; never promote
+their assertions automatically.
 
 The owner delivery gate confirms journal durability before actual task/context
 dispatch. Keep each coordinator and its refutation consumer alive through owner
