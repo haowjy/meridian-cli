@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Make OpenCode continuation previews match V1 refusal and V2 model-switch behavior.
+
 ### Changed
 
 - Consolidate primary source authorization in synchronous launch preparation; remove transferable source proofs and duplicate CLI lookup. Public bind and runner execution revalidate independently.
