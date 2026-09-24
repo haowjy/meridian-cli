@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Reconcile runner request, prepared surface, binding/spec/argv selectors, adapter, and runtime namespace before session scope; compose legacy missing preparation before effects and bind it privately after row creation.
 - Refuse prepared fork operations unless the materialized continuation flag also requests a fork.
 - Refuse source-mode, runtime-namespace, and continuation-harness drift at public bind before source lookup.
 

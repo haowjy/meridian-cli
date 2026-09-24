@@ -11,11 +11,12 @@ from collections.abc import Callable
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
+from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.spawn_lifecycle import (
@@ -76,11 +77,19 @@ from ..context import (
     PreparedLaunchSurface,
     RuntimeBindings,
     _bind_launch_context_impl,
-    build_launch_context,
+    compile_prepared_policy_surface,
+    prepare_launch_surface,
 )
 from ..fork import materialize_fork
 from ..request import LaunchCompositionSurface
 from ..session_scope import bind_harness_session_id, session_scope
+from ..source_selection import (
+    PrimarySourceSelection,
+    declared_session_operation,
+    reconcile_primary_source_selection,
+    session_operation_facts,
+    validate_primary_source_use,
+)
 from ..types import SessionMode
 from .ports import (
     PRIMARY_STDERR_LOG_PATH_ENV,
@@ -100,6 +109,156 @@ from .session import (
 )
 from .subprocess_launcher import SubprocessProcessLauncher
 from .windows_launcher import WindowsConsoleLauncher, can_use_windows_console_launcher
+
+
+def _runner_selection_conflict(detail: str) -> ValueError:
+    return ValueError(
+        f"Primary source selection conflict ({detail}); "
+        "source-use authorization refused."
+    )
+
+
+def _validate_runner_entry(
+    context: LaunchContext,
+    prepared: PreparedLaunchSurface | None,
+    harness_registry: HarnessRegistry,
+    cache: MarsResultCache | None,
+) -> PreparedLaunchSurface:
+    """Reconcile runner inputs, revalidate source once, and prepare before effects."""
+    requests = [context.request, context.resolved_request]
+    if prepared is not None:
+        requests.extend((prepared.request,))
+        if prepared.launch_request is not None:
+            requests.append(prepared.launch_request)
+
+    runtime_root = context.runtime_root.expanduser().resolve()
+    roots = [runtime_root, Path(context.runtime.runtime_root).expanduser().resolve()]
+    if prepared is not None and prepared.source_runtime_root is not None:
+        roots.append(prepared.source_runtime_root.expanduser().resolve())
+    if any(root != runtime_root for root in roots[1:]):
+        raise _runner_selection_conflict("runtime namespace changed")
+
+    sessions = [request.session for request in requests]
+    operations = [declared_session_operation(session) for session in sessions]
+    if any(operation != operations[0] for operation in operations[1:]):
+        raise _runner_selection_conflict("request operation changed")
+    operation = cast("Literal['fresh', 'resume', 'fork']", operations[0])
+    harnesses = [request.harness for request in requests]
+    harnesses.extend(
+        (context.harness.id, prepared.harness.id if prepared is not None else None)
+    )
+    selector = (context.binding.effective_harness_session_id or "").strip() or None
+    seed_ids = [
+        (session.requested_harness_session_id or "").strip() or None
+        for session in sessions
+    ]
+
+    # The shared comparator validates each independently supplied request view;
+    # equality of returned native selections prevents a later view from winning.
+    selections: list[str | None] = []
+    original_ref = sessions[0].continue_source_ref
+    for index, session in enumerate(sessions):
+        if session.continue_source_ref != original_ref:
+            raise _runner_selection_conflict("original source reference changed")
+        tracked = session.continue_source_tracked or session.recorded_native_source is not None
+        for extra_seed in (
+            seed_ids[index],
+            prepared.seed_harness_session_id if prepared is not None else None,
+            selector if operation != "fresh" else None,
+        ):
+            selection = PrimarySourceSelection(
+                source_ref=session.continue_source_ref,
+                native_id=session.requested_harness_session_id,
+                operation=operation,
+                harness=harnesses[index],
+                runtime_root=runtime_root,
+                seed_id=extra_seed,
+                other_harnesses=tuple(harnesses),
+                tracked_claim=tracked,
+                operation_facts=session_operation_facts(session),
+                continue_fork_facts=(session.continue_fork,),
+            )
+            selections.append(reconcile_primary_source_selection(selection))
+    first = selections[0]
+    if any(value != first for value in selections[1:]):
+        raise _runner_selection_conflict("request source changed")
+
+    source_ref = original_ref
+    if operation != "fresh":
+        source_use = validate_primary_source_use(
+            runtime_root=runtime_root,
+            source_ref=source_ref,
+            native_selector=selector or first,
+            tracked_claim=any(
+                session.continue_source_tracked or session.recorded_native_source is not None
+                for session in sessions
+            ),
+            recorded_source=next(
+                (
+                    session.recorded_native_source
+                    for session in sessions
+                    if session.recorded_native_source is not None
+                ),
+                None,
+            ),
+            harness=context.harness.id,
+            operation=operation,
+            extra_args=context.request.extra_args,
+        )
+        spec_selector = (context.binding.spec.continue_session_id or "").strip() or None
+        expected_selector = (
+            source_use.native_id if source_use is not None else selector or first
+        )
+        if spec_selector != expected_selector:
+            raise _runner_selection_conflict("launch spec selector changed")
+        if expected_selector and not any(
+            expected_selector in argument for argument in context.binding.argv
+        ):
+            raise _runner_selection_conflict("launch argv selector changed")
+        spec_forks = bool(context.binding.spec.continue_fork)
+        # An adapter may materialize a fork only inside the runner; its preview
+        # must not turn the source operation into an ordinary resume.
+        if (
+            spec_forks != (operation == "fork")
+            and not (
+                operation == "fork"
+                and context.harness.contract.bootstrap.fork_materialization
+                == ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK
+            )
+        ):
+            raise _runner_selection_conflict("launch spec operation changed")
+
+    if prepared is not None:
+        return prepared
+
+    # The runner's legacy direct caller has no preparation surface. Compose it
+    # now, before session scope/row creation; bind privately after the row exists.
+    runtime = context.runtime.model_copy(
+        update={"composition_surface": LaunchCompositionSurface.PRIMARY}
+    )
+    project_root = context.project_root.expanduser().resolve()
+    request = context.request.model_copy(
+        update={
+            "extra_args": (
+                *context.request.extra_args,
+                *context.binding.seed_harness_session_args,
+            )
+        }
+    )
+    catalog = CatalogSession(project_root, cache=cache)
+    policy = compile_prepared_policy_surface(
+        request=request,
+        runtime=runtime,
+        project_root=project_root,
+        harness_registry=harness_registry,
+        catalog=catalog,
+    )
+    composed = prepare_launch_surface(
+        request=request,
+        runtime=runtime,
+        prepared_policy=policy,
+    )
+    return composed
 
 logger = logging.getLogger(__name__)
 
@@ -768,34 +927,8 @@ def run_harness_process(
     runtime_root = launch_context.runtime_root
     preview_context = launch_context
     command = preview_context.binding.argv
-    spawn_request = preview_context.request
     preview_request = preview_context.resolved_request
-    from meridian.lib.launch.source_selection import validate_primary_source_use
-
-    execution_selector = preview_context.binding.effective_harness_session_id
-    validate_primary_source_use(
-        runtime_root=runtime_root,
-        source_ref=preview_request.session.continue_source_ref,
-        native_selector=execution_selector,
-        tracked_claim=(
-            preview_request.session.continue_source_tracked
-            or preview_request.session.recorded_native_source is not None
-        ),
-        recorded_source=preview_request.session.recorded_native_source,
-        harness=preview_context.harness.id,
-        operation=(
-            "fork"
-            if preview_request.session.continue_fork
-            or (preview_request.session.primary_session_mode or "").strip().lower() == "fork"
-            else "resume"
-        ),
-        extra_args=preview_request.extra_args,
-    )
-    if preview_request.session.recorded_native_source is not None:
-        raise RuntimeError(
-            "Tracked Pi source selection is ready, but execution is blocked until the "
-            "B3c connected-state entry gate is wired. No task was delivered."
-        )
+    prepared = _validate_runner_entry(preview_context, prepared, harness_registry, cache)
     requested_harness_session_id = (
         preview_request.session.requested_harness_session_id or ""
     ).strip()
@@ -900,17 +1033,6 @@ def run_harness_process(
                         runtime_root=runtime_root,
                         spawn_id=primary_spawn_id,
                     )
-                    if prepared is None:
-                        spawn_request = spawn_request.model_copy(
-                            update={
-                                "session": spawn_request.session.model_copy(
-                                    update={
-                                        "requested_harness_session_id": forked_session_id,
-                                        "continue_fork": False,
-                                    }
-                                )
-                            }
-                        )
                     resolved_harness_session_id = forked_session_id
                 if forked_session_id:
                     expected_harness_session_id = forked_session_id
@@ -920,13 +1042,6 @@ def run_harness_process(
                 primary_started = time.monotonic()
                 primary_started_epoch = time.time()
                 primary_started_local_iso = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-                preview_seed_args = preview_context.binding.seed_harness_session_args
-                runtime_request = spawn_request.model_copy(
-                    update={
-                        "extra_args": (*spawn_request.extra_args, *preview_seed_args),
-                        "work_id_hint": attached_work_id,
-                    }
-                )
                 runtime = preview_context.runtime.model_copy(
                     update={
                         "composition_surface": LaunchCompositionSurface.PRIMARY,
@@ -947,35 +1062,24 @@ def run_harness_process(
                     for k, v in cast("dict[str, str]", config_env).items():
                         if k.strip():
                             plan_overrides[k] = v
-                if runtime_request.execution_policy.autocompact is not None:
+                if preview_request.execution_policy.autocompact is not None:
                     plan_overrides["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(
-                        runtime_request.execution_policy.autocompact
+                        preview_request.execution_policy.autocompact
                     )
-                if prepared is not None:
-                    runtime_context = _bind_launch_context_impl(
-                        prepared=prepared,
-                        bindings=RuntimeBindings(
-                            spawn_id=str(primary_spawn_id),
-                            runtime_work_id=attached_work_id,
-                            chat_id=chat_id,
-                            forked_harness_session_id=forked_session_id,
-                            continue_fork_override=False if should_fork else None,
-                            plan_overrides=plan_overrides,
-                        ),
-                        runtime=runtime,
-                        project_root=config_root,
-                        harness_registry=harness_registry,
-                    )
-                else:
-                    runtime_context = build_launch_context(
+                runtime_context = _bind_launch_context_impl(
+                    prepared=prepared,
+                    bindings=RuntimeBindings(
                         spawn_id=str(primary_spawn_id),
-                        request=runtime_request,
-                        runtime=runtime,
-                        harness_registry=harness_registry,
-                        plan_overrides=plan_overrides,
                         runtime_work_id=attached_work_id,
-                        cache=cache,
-                    )
+                        chat_id=chat_id,
+                        forked_harness_session_id=forked_session_id,
+                        continue_fork_override=False if should_fork else None,
+                        plan_overrides=plan_overrides,
+                    ),
+                    runtime=runtime,
+                    project_root=config_root,
+                    harness_registry=harness_registry,
+                )
                 write_projection_artifacts(
                     log_dir=log_dir,
                     launch_context=runtime_context,

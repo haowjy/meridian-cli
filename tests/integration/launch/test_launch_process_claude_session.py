@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+import meridian.lib.launch.context as launch_context_module
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
@@ -29,6 +30,7 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from meridian.lib.launch.types import SessionMode
+from meridian.lib.ops.reference import UntrackedSourceUse
 from meridian.lib.state import session_store
 from meridian.lib.state.spawn_store import list_spawns
 from tests.support.launch import stub_bundle_request_and_resolve
@@ -109,6 +111,11 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
         harness_id=HarnessId.CLAUDE,
         model="claude-sonnet-4-5",
     )
+    source_lookups: list[object] = []
+    monkeypatch.setattr(
+        "meridian.lib.ops.reference.resolve_source_use",
+        lambda *args: source_lookups.append(args),
+    )
     claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
     captured: dict[str, object] = {}
 
@@ -140,6 +147,7 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
 
     # No pre-seeded session from the launch context; Claude generates one in the command.
     assert launch_context.seed_harness_session_id in (None, "")
+    assert source_lookups == []
     assert "command_session_id" in captured
     seeded_id = captured["command_session_id"]
     # Command seeds remain hints until the harness actually observes the conversation.
@@ -151,6 +159,102 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
     assert session is not None
     assert session.spawn_id == spawns.records[0].id
     assert not session.harness_session_id
+
+
+def test_runner_rejects_independent_prepared_tracked_claim_before_session_start(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A clean preview cannot hide a conflicting independently supplied preparation."""
+    project_root = tmp_path / "prepared-conflict"
+    project_root.mkdir()
+    context, registry = _build_primary_launch_context(
+        project_root=project_root,
+        harness_id=HarnessId.CLAUDE,
+        model="claude-sonnet-4-5",
+    )
+    prepared = launch_context_module._build_direct_surface(
+        request=context.resolved_request,
+        project_root=project_root,
+        reference_anchor=project_root,
+        runtime_root=context.runtime_root,
+        harness_registry=registry,
+    )
+    prepared = prepared.__class__(
+        **{
+            **prepared.__dict__,
+            "request": prepared.request.model_copy(
+                update={
+                    "session": prepared.request.session.model_copy(
+                        update={"continue_source_tracked": True}
+                    )
+                }
+            ),
+        }
+    )
+    session_starts: list[bool] = []
+
+    with pytest.raises(ValueError, match="source selection conflict"):
+        run_harness_process(
+            context,
+            registry,
+            prepared=prepared,
+            start_session_fn=lambda **kwargs: session_starts.append(True) or "unexpected",
+        )
+
+    assert session_starts == []
+
+
+def test_runner_revalidates_untracked_source_once_before_composing_missing_preparation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """No-prepared runner path checks the source once, then privately binds it."""
+    project_root = tmp_path / "runner-source-use"
+    project_root.mkdir()
+    calls: list[str] = []
+
+    def resolve_source_use(runtime_root, operation, native_id, harness):
+        calls.append(native_id)
+        return UntrackedSourceUse(
+            operation=operation,
+            original_ref=native_id,
+            native_id=native_id,
+            harness=harness,
+            lookup_scope=runtime_root,
+        )
+
+    monkeypatch.setattr("meridian.lib.ops.reference.resolve_source_use", resolve_source_use)
+    context, registry = _build_primary_launch_context(
+        project_root=project_root,
+        harness_id=HarnessId.CLAUDE,
+        model="claude-sonnet-4-5",
+        session=SessionRequest(
+            requested_harness_session_id="native-A",
+            continue_source_ref="native-A",
+            primary_session_mode=SessionMode.RESUME.value,
+        ),
+    )
+    assert calls == ["native-A"]  # independent preview boundary
+    calls.clear()
+    adapter = registry.get_subprocess_harness(HarnessId.CLAUDE)
+    monkeypatch.setattr(adapter, "observe_session_id", _no_observed_session)
+
+    def fake_process(command, cwd, env, output_log_path, on_child_started=None):
+        assert any("native-A" in argument for argument in command)
+        assert callable(on_child_started)
+        on_child_started(123)
+        return 0, 123
+
+    run_harness_process(
+        context,
+        registry,
+        run_primary_process_with_capture_fn=fake_process,
+        stop_session_fn=lambda *args, **kwargs: None,
+        update_session_harness_id_fn=lambda *args, **kwargs: None,
+    )
+
+    assert calls == ["native-A"]  # one runner query; private bind does not re-query
 
 
 @pytest.mark.slow

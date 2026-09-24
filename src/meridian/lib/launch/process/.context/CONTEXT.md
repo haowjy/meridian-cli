@@ -108,18 +108,22 @@ identity persistence fails.
 
 ## run_harness_process() Caller Contract
 
-Callers must provide a fully resolved `LaunchContext` with a valid `binding.argv`. The function:
+Callers provide a preview `LaunchContext` with a valid `binding.argv`; optional prepared
+content is not an authorization token. Before `session_scope`, the runner reconciles the
+context's request copies, adapter, runtime namespace and executable selector with every
+supplied prepared copy, then revalidates source use. Legacy callers without prepared
+content are composed at this point. The function then:
 1. Opens `session_scope` (creates session store entry)
 2. Calls `lifecycle_service.start()` (creates spawn row, sets status to `queued`)
 3. Materializes fork if `session_mode == FORK` and harness supports it
-4. Rebuilds `LaunchContext` with real spawn ID and paths (or binds from `PreparedLaunchSurface`)
+4. Privately binds `PreparedLaunchSurface` with real spawn ID and paths (also for legacy callers)
 5. Calls `harness_adapter.prepare_prelaunch()` — env overrides applied to `child_env`
 6. Executes process
 7. Finalizes lifecycle in `finally`
 
-The `prepared` argument carries a `PreparedLaunchSurface` from the prepare/bind split. When
-present, `bind_launch_context()` is used instead of `build_launch_context()` — this is the
-primary CLI's prepare-once/bind-twice optimization path.
+The `prepared` argument carries a `PreparedLaunchSurface` from the prepare/bind split. Binding
+is private after the row exists, so this runner boundary does not repeat the public source query
+or reinterpret an already checked selector as a new source.
 
 ## Lateral Links
 
