@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Preserve Pi's bounded API-key, model, thinking, and system-prompt overrides while refusing native selectors and unrecognized raw options on both primary surfaces.
 - Add a typed primary-only adapter hook for fail-closed raw native-session argument normalization.
 - Include the selected subprocess or managed surface in native-session argument normalization.
 - Define a fail-closed adapter-local raw native-session normalization seam; remove dormant selection-inspection ports.

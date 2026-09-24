@@ -11,6 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
 
+from meridian.lib.harness.native_session_args import (
+    NativeSessionSurface,
+    NormalizedNativeSessionArgs,
+)
 from meridian.lib.state.session_authority import (
     LocalObjectStamp,
     PendingLocalFile,
@@ -44,6 +48,47 @@ type PiSourceObservation = PiSourceQualified | PiSourcePending | PiSourceUnavail
 _NATIVE_SELECTOR_OPTIONS = frozenset(
     {"--continue", "-c", "--resume", "-r", "--session-id", "--session", "--fork"}
 )
+
+_PRIMARY_VALUE_OPTIONS = frozenset(
+    {"--api-key", "--model", "--thinking", "--append-system-prompt"}
+)
+_PRIMARY_SHORT_VALUE_OPTIONS = frozenset({"-m"})
+
+
+def normalize_pi_primary_session_args(
+    args: tuple[str, ...], surface: NativeSessionSurface
+) -> NormalizedNativeSessionArgs:
+    """Retain only Pi's bounded, non-selecting primary override grammar.
+
+    This is syntax validation only: it does not authorize a source, establish
+    that an option is safe for a tracked source, or change the tracked RPC
+    raw-tail/resource gate at its existing consumer.
+    """
+    if surface not in ("subprocess", "managed"):
+        raise ValueError("Pi primary native-session surface is unsupported")
+
+    index = 0
+    while index < len(args):
+        token = args[index]
+        option, separator, value = token.partition("=")
+        if option in _PRIMARY_VALUE_OPTIONS and separator:
+            if not value or value.startswith("-"):
+                raise _pi_primary_arg_error(option, surface, "requires an unambiguous value")
+            index += 1
+            continue
+        if option in _PRIMARY_VALUE_OPTIONS or token in _PRIMARY_SHORT_VALUE_OPTIONS:
+            if index + 1 >= len(args) or not args[index + 1] or args[index + 1].startswith("-"):
+                raise _pi_primary_arg_error(option, surface, "requires an unambiguous value")
+            index += 2
+            continue
+        raise _pi_primary_arg_error(option, surface, "is not in the bounded primary option set")
+
+    return NormalizedNativeSessionArgs(None, args)
+
+
+def _pi_primary_arg_error(option: str, surface: NativeSessionSurface, reason: str) -> ValueError:
+    # Deliberately identify only the option: values may contain credentials.
+    return ValueError(f"Pi {surface} primary argument {option!r} {reason}")
 
 
 def reject_pi_native_source_options(args: Sequence[str]) -> None:

@@ -1,6 +1,10 @@
 import pytest
 
-from meridian.lib.harness.pi_native_source import reject_pi_native_source_options
+from meridian.lib.harness.native_session_args import NativeSessionSurface
+from meridian.lib.harness.pi_native_source import (
+    normalize_pi_primary_session_args,
+    reject_pi_native_source_options,
+)
 
 
 @pytest.mark.parametrize(
@@ -24,3 +28,34 @@ def test_pi_raw_native_selector_options_are_rejected(args: tuple[str, ...]) -> N
 
 def test_pi_non_session_passthrough_is_allowed() -> None:
     reject_pi_native_source_options(("--verbose", "--model=gpt-5.5"))
+
+
+@pytest.mark.parametrize("surface", ["subprocess", "managed"])
+def test_pi_primary_normalizer_preserves_bounded_inert_options(
+    surface: NativeSessionSurface,
+) -> None:
+    args = (
+        "--api-key", "secret-value", "--model=gpt-5.5", "-m", "gpt-5.4",
+        "--thinking", "high", "--append-system-prompt", "extra instructions",
+    )
+    normalized = normalize_pi_primary_session_args(args, surface)
+    assert normalized.selector is None
+    assert normalized.remaining_args == args
+
+
+@pytest.mark.parametrize("surface", ["subprocess", "managed"])
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("--resume", "ses_secret"), ("--continue",), ("--session-id=ses_abc",),
+        ("--fork",), ("--profile", "unsafe"), ("--session-dir", "/tmp/store"),
+        ("--settings", "unsafe.json"), ("--unknown",), ("--model",),
+        ("--thinking", "--resume"), ("--", "--model", "x"),
+    ],
+)
+def test_pi_primary_normalizer_refuses_unbounded_or_selection_args(
+    args: tuple[str, ...], surface: NativeSessionSurface,
+) -> None:
+    with pytest.raises(ValueError, match="Pi") as error:
+        normalize_pi_primary_session_args(args, surface)
+    assert "ses_secret" not in str(error.value)
