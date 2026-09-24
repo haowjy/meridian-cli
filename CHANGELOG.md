@@ -15,6 +15,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Refuse tracked Pi primary resume/fork on the native TUI, including dry-run,
   and block tracked Pi spawn follow-ups until connected admission is owned.
+- Revalidate spawn source references against the executable selection at prepare
+  and worker boundaries; refuse tracked or ambiguous direct dispatch before
+  connection creation.
 
 ### Added
 

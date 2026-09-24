@@ -237,7 +237,68 @@ def test_spawn_worker_does_not_accept_fabricated_source_for_untracked_id(
 
     from meridian.lib.ops.spawn.execute_init import LaunchUserInputError
 
-    with pytest.raises(LaunchUserInputError, match="owner_required"):
+    with pytest.raises(LaunchUserInputError, match=r"owner_required|Recorded spawn source"):
+        _resolve_session_continuation(
+            request=request,
+            harness_id=HarnessId.PI,
+            harness_adapter=adapter,
+            runtime_root=runtime_root,
+        )
+
+
+def test_spawn_worker_rejects_mismatched_reference_and_executable_selection(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    _seed_spawn(runtime_root, spawn_id="p-mismatch", harness_session_id="KNOWN")
+    request = SpawnRequest(
+        prompt="must not start",
+        harness="codex",
+        session=SessionRequest(
+            requested_harness_session_id="KNOWN",
+            continue_source_ref="never-recorded",
+            continue_source_tracked=False,
+        ),
+    )
+    adapter = type("Adapter", (), {
+        "capabilities": type("Capabilities", (), {
+            "supports_session_resume": True,
+            "supports_session_fork": True,
+        })(),
+    })()
+
+    from meridian.lib.ops.spawn.execute_init import LaunchUserInputError
+
+    with pytest.raises(LaunchUserInputError, match=r"disagree|native_claim_blocked"):
+        _resolve_session_continuation(
+            request=request,
+            harness_id=HarnessId.CODEX,
+            harness_adapter=adapter,
+            runtime_root=runtime_root,
+        )
+
+
+def test_spawn_worker_rejects_tracked_flag_without_any_selection(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    request = SpawnRequest(
+        prompt="must not start",
+        harness="pi",
+        session=SessionRequest(continue_source_tracked=True),
+    )
+    adapter = type("Adapter", (), {
+        "capabilities": type("Capabilities", (), {
+            "supports_session_resume": True,
+            "supports_session_fork": True,
+        })(),
+    })()
+
+    from meridian.lib.ops.spawn.execute_init import LaunchUserInputError
+
+    with pytest.raises(LaunchUserInputError, match="no native selection"):
         _resolve_session_continuation(
             request=request,
             harness_id=HarnessId.PI,

@@ -11,15 +11,10 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.request import SessionRequest, SpawnRequest
 from meridian.lib.launch.session_scope import SessionAttempt, session_scope
 from meridian.lib.launch.types import PrimarySessionMetadata
-from meridian.lib.ops.reference import (
-    AuthorizedSourceUse,
-    SourceUseRefused,
-    UntrackedSourceUse,
-    resolve_source_use,
-)
 from meridian.lib.state.session_store import get_session_active_work_id, update_session_work_id
 
 from .execute_init import LaunchUserInputError
+from .source_selection import normalize_untracked_spawn_selection
 
 
 class _SessionExecutionContext(BaseModel):
@@ -41,31 +36,19 @@ def _resolve_session_continuation(
     from typing import Any
 
     adapter: Any = harness_adapter
+    try:
+        normalized_session = normalize_untracked_spawn_selection(
+            request.session,
+            runtime_root=runtime_root,
+            harness=str(harness_id),
+        )
+    except ValueError as exc:
+        raise LaunchUserInputError(str(exc)) from exc
     requested_harness_session_id = (
-        request.session.requested_harness_session_id or ""
+        normalized_session.requested_harness_session_id or ""
     ).strip() or None
     requested_continue_fork = request.session.continue_fork
     requested_harness = (request.session.continue_harness or "").strip()
-    source_ref = (request.session.continue_source_ref or "").strip()
-    if requested_harness_session_id or source_ref or request.session.recorded_native_source:
-        authority_ref = source_ref or requested_harness_session_id or ""
-        source_use = resolve_source_use(
-            runtime_root,
-            "fork" if requested_continue_fork else "resume",
-            authority_ref,
-            explicit_harness=requested_harness or str(harness_id),
-        )
-        if isinstance(source_use, SourceUseRefused):
-            raise LaunchUserInputError(
-                f"Spawn source '{authority_ref}' is unavailable "
-                f"({source_use.reason}); no process was started."
-            )
-        if isinstance(source_use, AuthorizedSourceUse) or request.session.recorded_native_source:
-            raise LaunchUserInputError(
-                "Tracked exact resume is blocked pending owned admission "
-                "(owner_required); no process was started."
-            )
-        assert isinstance(source_use, UntrackedSourceUse)
 
     resolved_continue_harness_session_id: str | None = None
     resolved_continue_fork = False

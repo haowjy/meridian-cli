@@ -13,7 +13,7 @@ from meridian.lib.ops.runtime import build_runtime_from_root_and_config
 from meridian.lib.ops.spawn import context_ref
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.ops.spawn.prepare import SpawnCreateArtifacts, build_create_payload
-from meridian.lib.state import work_repository
+from meridian.lib.state import session_store, work_repository
 from meridian.lib.state.paths import resolve_kb_dir, resolve_project_paths
 from tests.support.launch import FakeBundleResult
 
@@ -136,6 +136,32 @@ def test_build_create_payload_inherits_work_from_context_from(
     assert artifacts.request.task_cwd_source == "ambient-work-authority-root"
 
 
+def test_prepare_rejects_disagreeing_source_before_composition(tmp_path: Path) -> None:
+    _, runtime = _prepare_codex_runtime(tmp_path)
+    assert runtime.authority.runtime_root is not None
+    session_store.start_session(
+        runtime.authority.runtime_root,
+        chat_id="c-known",
+        spawn_id="p-known",
+        harness="codex",
+        harness_session_id="KNOWN",
+        model="test-model",
+    )
+    session_store.stop_session(runtime.authority.runtime_root, "c-known")
+
+    with pytest.raises(ValueError, match=r"native_claim_blocked|disagree"):
+        build_create_payload(
+            SpawnCreateInput(
+                prompt="must not prepare",
+                project_root=tmp_path.as_posix(),
+                session=SessionRequest(
+                    requested_harness_session_id="KNOWN",
+                    continue_source_ref="never-recorded",
+                    continue_source_tracked=False,
+                ),
+            ),
+            runtime=runtime,
+        )
 def test_build_create_payload_work_precedence_over_context_from(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

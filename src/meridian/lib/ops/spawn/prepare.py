@@ -36,6 +36,7 @@ from ..runtime import (
     resolve_runtime_authority_for_read,
 )
 from .models import SpawnCreateInput
+from .source_selection import normalize_untracked_spawn_selection
 from .task_dir import derive_inheritable_task_dir
 
 logger = structlog.get_logger(__name__)
@@ -115,6 +116,27 @@ def build_create_payload(
             runtime_root = runtime_bundle.authority.runtime_root
             config = runtime_bundle.config
             harness_registry = runtime_bundle.harness_registry
+
+        if runtime_root is None:
+            if (
+                payload.session.requested_harness_session_id
+                or payload.session.continue_source_ref
+                or payload.session.recorded_native_source
+                or payload.session.continue_source_tracked
+            ):
+                raise ValueError(
+                    "Cannot classify spawn native selection without runtime authority; "
+                    "no spawn was prepared."
+                )
+            normalized_session = payload.session
+        else:
+            normalized_session = normalize_untracked_spawn_selection(
+                payload.session,
+                runtime_root=runtime_root,
+                harness=payload.harness,
+            )
+        if normalized_session is not payload.session:
+            payload = payload.model_copy(update={"session": normalized_session})
 
         resolved_context = (
             ctx
