@@ -16,6 +16,7 @@ from meridian.lib.harness.native_session_args import (
     NormalizedNativeSessionArgs,
     PrimaryArgControls,
 )
+from meridian.lib.harness.projections.project_pi_common import project_pi_thinking_level
 from meridian.lib.state.session_authority import (
     LocalObjectStamp,
     PendingLocalFile,
@@ -63,6 +64,10 @@ _PRIMARY_VALUE_OPTIONS = frozenset(
     {"--api-key", "--model", "--thinking", "--append-system-prompt"}
 )
 _PRIMARY_SHORT_VALUE_OPTIONS = frozenset({"-m"})
+_SCALAR_SUPPRESSION_WARNING = {
+    "model": "Ignored raw model option; Meridian's resolved model takes precedence.",
+    "effort": "Ignored raw thinking option; Meridian's resolved effort takes precedence.",
+}
 
 
 def normalize_pi_primary_session_args(
@@ -71,37 +76,94 @@ def normalize_pi_primary_session_args(
     *,
     controls: PrimaryArgControls | None = None,
 ) -> NormalizedNativeSessionArgs:
-    """Retain only Pi's bounded, non-selecting primary override grammar.
+    """Validate Pi primary argument syntax and reconcile owned TUI scalars.
 
     This is syntax validation only: it does not authorize a source, establish
     that an option is safe for a tracked source, or change the tracked RPC
     raw-tail/resource gate at its existing consumer.
     """
-    _ = controls
     if surface not in ("subprocess", "managed"):
         raise ValueError("Pi primary native-session surface is unsupported")
 
     index = 0
+    spans: list[tuple[int, int, str | None]] = []
+    scalar_roles: set[str] = set()
+    suppressed_roles: set[str] = set()
+    model_value: str | None = None
+    thinking_value: str | None = None
     while index < len(args):
         token = args[index]
         option, separator, value = token.partition("=")
+        role: str | None = None
+        span_end = index + 1
         if option in _PRIMARY_VALUE_OPTIONS and separator:
             if not value or value.startswith("-"):
                 raise _pi_primary_arg_error(option, surface, "requires an unambiguous value")
-            index += 1
-            continue
-        if option in _PRIMARY_VALUE_OPTIONS or token in _PRIMARY_SHORT_VALUE_OPTIONS:
+            role = "model" if option == "--model" else "effort" if option == "--thinking" else None
+        elif option in _PRIMARY_VALUE_OPTIONS or token in _PRIMARY_SHORT_VALUE_OPTIONS:
             if index + 1 >= len(args) or not args[index + 1] or args[index + 1].startswith("-"):
                 raise _pi_primary_arg_error(option, surface, "requires an unambiguous value")
-            index += 2
-            continue
-        if option in _PRIMARY_VALUE_OPTIONS or option in _PRIMARY_SHORT_VALUE_OPTIONS:
+            value = args[index + 1]
+            span_end = index + 2
+            if option in ("--model", "-m"):
+                role = "model"
+            elif option == "--thinking":
+                role = "effort"
+            else:
+                role = None
+        elif option in _PRIMARY_VALUE_OPTIONS or option in _PRIMARY_SHORT_VALUE_OPTIONS:
             raise _pi_primary_arg_error(option, surface, "requires a separate unambiguous value")
-        raise ValueError(
-            f"Pi {surface} primary arguments are not in the bounded primary option set"
-        )
+        else:
+            raise ValueError(
+                f"Pi {surface} primary arguments are not in the bounded primary option set"
+            )
 
-    return NormalizedNativeSessionArgs(None, args)
+        if role is not None:
+            if controls is not None:
+                if surface != "subprocess":
+                    raise _pi_primary_arg_error(option, surface, "is unsupported on this consumer")
+                if role in scalar_roles:
+                    raise _pi_primary_arg_error(option, surface, "is repeated ambiguously")
+                scalar_roles.add(role)
+                if role == "model":
+                    model_value = value
+                else:
+                    thinking_value = value
+            else:
+                spans.append((index, span_end, None))
+        else:
+            spans.append((index, span_end, role))
+        index = span_end
+
+    if controls is not None:
+        if model_value is not None:
+            if not controls.model_controlled or not (controls.model or "").strip():
+                raise _pi_primary_arg_error("--model", surface, "has no owned resolved model")
+            suppressed_roles.add("model")
+        if thinking_value is not None:
+            native_effort = project_pi_thinking_level(controls.execution_policy.effort)
+            if native_effort is None:
+                raise _pi_primary_arg_error(
+                    "--thinking", surface, "has no supported resolved effort"
+                )
+            suppressed_roles.add("effort")
+
+    # Reconcile recorded spans only after all controls have been checked. The
+    # grammar itself is parsed once; values and aliases are never rescanned.
+    remaining = tuple(
+        token
+        for start, end, role in spans
+        if role not in suppressed_roles
+        for token in args[start:end]
+    )
+
+    warnings = tuple(
+        _SCALAR_SUPPRESSION_WARNING[role]
+        for role in ("model", "effort")
+        if role in suppressed_roles
+    )
+
+    return NormalizedNativeSessionArgs(None, remaining, warnings)
 
 
 def _pi_primary_arg_error(option: str, surface: NativeSessionSurface, reason: str) -> ValueError:

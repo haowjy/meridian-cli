@@ -6,6 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Reconcile Pi native-TUI raw model and thinking options against retained
+  controls; share effort mapping with the projector and redact suppression warnings.
 - Preserve recognized, consistent intentional native-default selections in retained
   model controls; normalize fallback model identity in the shared projection.
 - Admit fresh primary raw arguments with the selected adapter's concrete initial
