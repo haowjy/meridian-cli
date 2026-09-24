@@ -81,3 +81,33 @@ def test_alias_native_id_is_compared_only_after_resolution(tmp_path: Path) -> No
     assert reconcile_primary_source_selection(selection, resolved_id="native-A") == "native-A"
     with pytest.raises(ValueError, match="source selection conflict"):
         reconcile_primary_source_selection(selection, resolved_id="native-B")
+
+
+@pytest.mark.parametrize("dropped_id", [None, "", " "])
+def test_supplied_resolver_must_retain_nonempty_selected_id(
+    tmp_path: Path, dropped_id: str | None
+) -> None:
+    selection = PrimarySourceSelection("native-A", None, "resume", "h1", tmp_path)
+    with pytest.raises(ValueError, match="resolver dropped"):
+        reconcile_primary_source_selection(
+            selection, resolved_id=dropped_id, resolved_id_supplied=True
+        )
+
+
+def test_resolver_snapshot_harness_and_tracked_claim_are_independent_facts(
+    tmp_path: Path,
+) -> None:
+    selection = PrimarySourceSelection(
+        "native-A", "native-A", "resume", "h1", tmp_path, tracked_claim=True
+    )
+    with pytest.raises(ValueError, match="tracked source"):
+        reconcile_primary_source_selection(selection)
+
+    selection = PrimarySourceSelection("native-A", "native-A", "fork", "h1", tmp_path)
+    with pytest.raises(ValueError, match="harness changed"):
+        reconcile_primary_source_selection(
+            selection,
+            resolved_id="native-A",
+            resolved_id_supplied=True,
+            resolved_snapshot_harness="h2",
+        )

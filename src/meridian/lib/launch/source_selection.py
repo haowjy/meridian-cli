@@ -25,6 +25,8 @@ class PrimarySourceSelection:
     runtime_root: Path
     seed_id: str | None = None
     other_harnesses: tuple[str | None, ...] = ()
+    tracked_claim: bool = False
+    operation_facts: tuple[str, ...] = ()
 
 
 def reconcile_primary_source_selection(
@@ -32,7 +34,9 @@ def reconcile_primary_source_selection(
     *,
     authorized_source: UntrackedSourceUse | None = None,
     resolved_id: str | None = None,
+    resolved_id_supplied: bool = False,
     resolved_harness: str | None = None,
+    resolved_snapshot_harness: str | None = None,
     resolved_tracked: bool = False,
     resolved_source_ref: str | None = None,
     resolved_operation: Literal["fresh", "resume", "fork"] | None = None,
@@ -52,7 +56,19 @@ def reconcile_primary_source_selection(
     authorized_harness = _optional(authorized_source.harness) if authorized_source else None
     resolved_native = _optional(resolved_id)
     resolved_harness_id = _optional(resolved_harness)
+    resolved_snapshot_harness_id = _optional(resolved_snapshot_harness)
     resolved_source = _optional(resolved_source_ref)
+
+    if resolved_id_supplied and resolved_native is None:
+        raise _conflict("resolver dropped the selected native source")
+    if selection.tracked_claim:
+        raise _conflict("caller claimed tracked source without a native admission")
+    if selection.operation_facts and any(
+        fact != selection.operation_facts[0] for fact in selection.operation_facts[1:]
+    ):
+        raise _conflict("conflicting operation facts")
+    if selection.operation_facts and selection.operation_facts[0] != selection.operation:
+        raise _conflict("operation differs from supplied operation facts")
 
     if source_supplied and source is None and any((native_id, seed_id)):
         raise _conflict("blank original source reference")
@@ -64,9 +80,8 @@ def reconcile_primary_source_selection(
     native_facts = [item for item in (native_id, seed_id, authorized_id, resolved_native) if item]
     if native_facts and any(value != native_facts[0] for value in native_facts[1:]):
         raise _conflict("native source selection changed")
-
-    if source and not _is_alias(source) and native_facts and source != native_facts[0]:
-        raise _conflict("original reference differs from native source")
+    for native_fact in native_facts:
+        normalize_effective_native_selection(selection.source_ref, native_fact)
     if resolved_tracked:
         raise _conflict("legacy resolver classified source as tracked")
     if resolved_source_ref is not None and resolved_source != source:
@@ -76,7 +91,13 @@ def reconcile_primary_source_selection(
 
     harness_facts = [
         item
-        for item in (harness, *selection.other_harnesses, authorized_harness, resolved_harness_id)
+        for item in (
+            harness,
+            *selection.other_harnesses,
+            authorized_harness,
+            resolved_harness_id,
+            resolved_snapshot_harness_id,
+        )
         if item
     ]
     if harness_facts and any(

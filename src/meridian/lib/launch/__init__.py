@@ -122,19 +122,24 @@ def launch_primary(
         resolve_runtime_root_for_read(resolved_project_root)
         or resolve_project_paths(resolved_project_root).root_dir
     )
+    operation_facts = _primary_source_operation_facts(request)
     source_selection = PrimarySourceSelection(
         source_ref=original_session.continue_source_ref,
         native_id=original_session.requested_harness_session_id,
-        operation=(
-            "fresh"
-            if request.session_mode.value == "fresh"
-            else operation
-        ),
+        operation=operation,
         harness=request.harness,
         runtime_root=source_runtime_root,
         other_harnesses=(original_session.continue_harness,),
+        tracked_claim=(
+            original_session.continue_source_tracked
+            or original_session.recorded_native_source is not None
+        ),
+        operation_facts=operation_facts,
     )
     reconcile_primary_source_selection(source_selection)
+    authorization_operation: Literal["resume", "fork"] = (
+        "fork" if operation == "fork" else "resume"
+    )
     authorized_untracked_source = validate_primary_source_use(
         runtime_root=source_runtime_root,
         source_ref=original_session.continue_source_ref,
@@ -145,7 +150,7 @@ def launch_primary(
         ),
         recorded_source=original_session.recorded_native_source,
         harness=request.harness,
-        operation=operation,
+        operation=authorization_operation,
         extra_args=request.passthrough_args,
     )
     reconcile_primary_source_selection(
@@ -353,15 +358,29 @@ def launch_primary(
     )
 
 
-def _primary_source_operation(request: LaunchRequest) -> Literal["resume", "fork"]:
-    """Return the operation used consistently by authorization and replay."""
-    return (
-        "fork"
-        if request.session.continue_fork
-        or (request.session.primary_session_mode or "").strip().lower() == "fork"
-        or request.session_mode.value == "fork"
-        else "resume"
-    )
+def _primary_source_operation(request: LaunchRequest) -> Literal["fresh", "resume", "fork"]:
+    """Choose an operation only after the shared source comparator checks facts."""
+    primary_mode = (request.session.primary_session_mode or "").strip().lower() or None
+    if primary_mode not in (None, "resume", "fork"):
+        raise ValueError(f"Unsupported primary session mode: {primary_mode!r}")
+    if primary_mode is not None:
+        return primary_mode
+    if request.session.continue_fork:
+        return "fork"
+    return request.session_mode.value
+
+
+def _primary_source_operation_facts(request: LaunchRequest) -> tuple[str, ...]:
+    """Return each non-default operation assertion without collapsing them."""
+    facts: list[str] = []
+    primary_mode = (request.session.primary_session_mode or "").strip().lower()
+    if primary_mode:
+        facts.append(primary_mode)
+    if request.session.continue_fork:
+        facts.append("fork")
+    if request.session_mode.value != "fresh":
+        facts.append(request.session_mode.value)
+    return tuple(facts)
 
 
 def _resolve_primary_source_request(
@@ -386,6 +405,8 @@ def _resolve_primary_source_request(
     source_ref = request.session.continue_source_ref
     assert source_ref is not None
     operation = _primary_source_operation(request)
+    if operation == "fresh":
+        raise ValueError("Primary source selection conflict (fresh operation has a source).")
     resolved = resolve_session_reference(
         project_root,
         source_ref,
@@ -405,7 +426,8 @@ def _resolve_primary_source_request(
         if authorized_source is not None
         else resolve_project_runtime_root(project_root)
     )
-    reconcile_primary_source_selection(
+    resolved_snapshot = getattr(resolved, "source_launch_policy_snapshot", None)
+    checked_native_id = reconcile_primary_source_selection(
         PrimarySourceSelection(
             source_ref=request.session.continue_source_ref,
             native_id=request.session.requested_harness_session_id,
@@ -413,10 +435,21 @@ def _resolve_primary_source_request(
             harness=request.harness,
             runtime_root=runtime_root,
             other_harnesses=(request.session.continue_harness,),
+            operation_facts=_primary_source_operation_facts(request),
+            tracked_claim=(
+                request.session.continue_source_tracked
+                or request.session.recorded_native_source is not None
+            ),
         ),
         authorized_source=authorized_source,
         resolved_id=resolved.authoritative_harness_session_id,
+        resolved_id_supplied=True,
         resolved_harness=resolved.harness,
+        resolved_snapshot_harness=(
+            resolved_snapshot.harness
+            if resolved_snapshot is not None
+            else None
+        ),
         resolved_tracked=resolved.tracked and authorized_source is not None,
     )
     if resolved.missing_harness_session_id:
@@ -434,13 +467,43 @@ def _resolve_primary_source_request(
             source=continue_replay_source_from_reference(
                 source_ref=source_ref,
                 resolved_reference=resolved,
-                harness_session_id=resolved.authoritative_harness_session_id,
+                harness_session_id=checked_native_id,
             ),
             explicit_harness=request.harness,
             requested_agent=request.agent,
             agent_opt_out=request.agent_opt_out,
             requested_model_override=(request.model or "").strip() or None,
             runtime_root=runtime_root,
+        )
+        reconcile_primary_source_selection(
+            PrimarySourceSelection(
+                source_ref=request.session.continue_source_ref,
+                native_id=request.session.requested_harness_session_id,
+                operation=operation,
+                harness=request.harness,
+                runtime_root=runtime_root,
+                other_harnesses=(
+                    request.session.continue_harness,
+                    contract.session.continue_harness,
+                    contract.harness,
+                    (
+                        contract.launch_policy_snapshot.harness
+                        if contract.launch_policy_snapshot is not None
+                        else None
+                    ),
+                ),
+                operation_facts=_primary_source_operation_facts(request),
+                tracked_claim=(
+                    request.session.continue_source_tracked
+                    or request.session.recorded_native_source is not None
+                ),
+            ),
+            authorized_source=authorized_source,
+            resolved_id=contract.session.requested_harness_session_id,
+            resolved_id_supplied=True,
+            resolved_harness=contract.session.continue_harness,
+            resolved_source_ref=contract.session.continue_source_ref,
+            resolved_operation=("fork" if contract.session.continue_fork else "resume"),
         )
         task_dir = contract.task_dir
         source_warning = resolved.warning
@@ -496,7 +559,7 @@ def _resolve_primary_source_request(
             "primary_source_chat_id": resolved.source_chat_id,
             "session": session.model_copy(
                 update={
-                    "requested_harness_session_id": resolved.authoritative_harness_session_id,
+                    "requested_harness_session_id": checked_native_id,
                     "continue_harness": harness,
                     "continue_fork": True,
                     "forked_from_chat_id": resolved.source_chat_id,

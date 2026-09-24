@@ -300,12 +300,19 @@ def test_direct_launch_rejects_mismatched_source_description(
 
 @pytest.mark.parametrize(
     ("resolved_id", "resolved_harness", "tracked"),
-    [("native-B", "h1", False), ("native-A", "h2", False), ("native-A", "h1", True)],
+    [
+        ("native-B", "h1", False),
+        (None, "h1", False),
+        ("", "h1", False),
+        (" ", "h1", False),
+        ("native-A", "h2", False),
+        ("native-A", "h1", True),
+    ],
 )
 def test_primary_resolver_conflict_stops_before_replay_and_work(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    resolved_id: str,
+    resolved_id: str | None,
     resolved_harness: str,
     tracked: bool,
 ) -> None:
@@ -412,6 +419,179 @@ def test_primary_original_source_conflict_stops_before_strict_lookup(
                     requested_harness_session_id=native_id,
                     continue_source_ref=source_ref,
                     primary_session_mode="resume",
+                ),
+            ),
+            harness_registry=get_default_harness_registry(),
+        )
+
+
+@pytest.mark.parametrize(
+    "session",
+    [
+        SessionRequest(
+            continue_source_ref="native-A",
+            primary_session_mode="fork",
+        ),
+        SessionRequest(
+            continue_source_ref="native-A",
+            continue_fork=True,
+            primary_session_mode="resume",
+        ),
+    ],
+)
+def test_conflicting_primary_mode_facts_refuse_before_strict_lookup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    session: SessionRequest,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    import meridian.lib.launch.source_selection as source_selection
+
+    monkeypatch.setattr(
+        source_selection,
+        "validate_primary_source_use",
+        lambda **kwargs: pytest.fail("conflicting modes must not query authority"),
+    )
+    with pytest.raises(ValueError, match="conflicting operation facts"):
+        launch_primary(
+            project_root=project_root,
+            request=LaunchRequest(
+                dry_run=True,
+                harness="h1",
+                session_mode=SessionMode.RESUME,
+                session=session,
+            ),
+            harness_registry=get_default_harness_registry(),
+        )
+
+
+def test_replay_selector_change_refuses_before_work_or_preparation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    import meridian.lib.launch.continue_replay as continue_replay
+    import meridian.lib.launch.source_selection as source_selection
+    import meridian.lib.ops.reference as reference
+
+    monkeypatch.setattr(
+        source_selection,
+        "validate_primary_source_use",
+        lambda **kwargs: UntrackedSourceUse(
+            operation="resume",
+            original_ref="native-A",
+            native_id="native-A",
+            harness="h1",
+            lookup_scope=runtime_root,
+        ),
+    )
+    monkeypatch.setattr(
+        reference,
+        "resolve_session_reference",
+        lambda *args, **kwargs: SimpleNamespace(
+            authoritative_harness_session_id="native-A",
+            harness="h1",
+            tracked=False,
+            source_launch_policy_snapshot=None,
+            missing_harness_session_id=False,
+            source_chat_id="c1",
+            source_history_id=None,
+            source_model=None,
+            source_agent=None,
+            source_skills=(),
+            source_work_id=None,
+            source_execution_cwd=None,
+            source_control_root=None,
+            source_claude_config_dir=None,
+            source_pi_session_dir=None,
+        ),
+    )
+    monkeypatch.setattr(
+        continue_replay,
+        "build_continue_replay_contract",
+        lambda **kwargs: SimpleNamespace(
+            session=SessionRequest(
+                requested_harness_session_id="native-B",
+                continue_source_ref="native-A",
+                continue_harness="h1",
+                primary_session_mode="resume",
+            ),
+            task_dir=None,
+            harness="h1",
+            launch_policy_snapshot=None,
+        ),
+    )
+    later_calls: list[str] = []
+    monkeypatch.setattr(
+        "meridian.lib.launch._resolve_work_id_for_launch",
+        lambda *args, **kwargs: later_calls.append("work"),
+    )
+    with pytest.raises(ValueError, match="source selection changed"):
+        launch_primary(
+            project_root=project_root,
+            request=LaunchRequest(
+                dry_run=True,
+                harness="h1",
+                session_mode=SessionMode.RESUME,
+                session=SessionRequest(
+                    requested_harness_session_id="native-A",
+                    continue_source_ref="native-A",
+                    primary_session_mode="resume",
+                ),
+            ),
+            harness_registry=get_default_harness_registry(),
+        )
+    assert later_calls == []
+
+
+def test_fork_resolver_snapshot_harness_conflict_refuses_before_preparation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    import meridian.lib.launch.source_selection as source_selection
+    import meridian.lib.ops.reference as reference
+
+    monkeypatch.setattr(
+        source_selection,
+        "validate_primary_source_use",
+        lambda **kwargs: UntrackedSourceUse(
+            operation="fork",
+            original_ref="native-A",
+            native_id="native-A",
+            harness="h1",
+            lookup_scope=runtime_root,
+        ),
+    )
+    monkeypatch.setattr(
+        reference,
+        "resolve_session_reference",
+        lambda *args, **kwargs: SimpleNamespace(
+            authoritative_harness_session_id="native-A",
+            harness="h1",
+            tracked=False,
+            source_launch_policy_snapshot=LaunchPolicySnapshot(
+                model="model", harness="h2"
+            ),
+            missing_harness_session_id=False,
+        ),
+    )
+    with pytest.raises(ValueError, match="source harness changed"):
+        launch_primary(
+            project_root=project_root,
+            request=LaunchRequest(
+                dry_run=True,
+                harness="h1",
+                session_mode=SessionMode.FORK,
+                session=SessionRequest(
+                    requested_harness_session_id="native-A",
+                    continue_source_ref="native-A",
+                    primary_session_mode="fork",
                 ),
             ),
             harness_registry=get_default_harness_registry(),

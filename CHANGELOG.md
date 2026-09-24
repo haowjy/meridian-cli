@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Refuse native source loss, conflicting operation claims, resolver snapshot harness drift, and replay selector changes before launch preparation.
+
 - Reconcile primary source identity and operation before lookup, and reject contradictory legacy resolver results before continue replay/model history.
 
 ### Changed
