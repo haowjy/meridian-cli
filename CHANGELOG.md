@@ -6,8 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- Normalize retained model defaults before projecting native-argument controls;
-  whitespace-only canonical/default identities cannot authorize raw-argument suppression.
+- Preserve recognized, consistent intentional native-default selections in retained
+  model controls; normalize fallback model identity in the shared projection.
 - Admit fresh primary raw arguments with the selected adapter's concrete initial
   transport before preparation; refuse native selectors and unowned scalar overrides.
 - Retain the single normalized project-path snapshot across launch policy resolution and prepared-surface assembly; align the inherited-task-dir test runtime with its authoritative namespace.

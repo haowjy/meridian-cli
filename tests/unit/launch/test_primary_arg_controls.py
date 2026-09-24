@@ -63,7 +63,7 @@ def test_primary_controls_preserve_retained_policy_and_native_alias_token() -> N
     assert controls.execution_policy is execution_policy
 
 
-def test_primary_controls_normalize_whitespace_only_default_as_unselected() -> None:
+def test_primary_controls_preserve_consistent_known_native_default() -> None:
     policy = _policy(
         model="   ",
         selection=ModelSelectionContext("", "", "  ", "harness-default", None),
@@ -72,7 +72,7 @@ def test_primary_controls_normalize_whitespace_only_default_as_unselected() -> N
     controls = primary_arg_controls(policy)
 
     assert controls.model == ""
-    assert controls.model_controlled is False
+    assert controls.model_controlled is True
 
 
 def test_primary_controls_do_not_authorize_whitespace_canonical_with_native_token() -> None:

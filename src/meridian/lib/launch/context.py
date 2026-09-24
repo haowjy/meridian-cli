@@ -2139,7 +2139,7 @@ def _bind_launch_context_impl(
         ids={"spawn_id": bindings.spawn_id},
         data={"model_family": model_family, "harness": harness.id.value},
     )
-    effective_model = effective_native_model(model, model_selection)
+    effective_model = effective_native_model(resolved_request.model, model_selection)
 
     claude_native_agents_enabled = (
         harness.id == HarnessId.CLAUDE

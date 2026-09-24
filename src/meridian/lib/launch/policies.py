@@ -179,10 +179,10 @@ ResolvedPolicies = ResolvedLaunchPolicy
 def effective_native_model(
     model: str | None, model_selection: ModelSelectionContext | None
 ) -> str | None:
-    """Return the token binding emits, preferring a resolved harness token."""
+    """Return the normalized token binding emits, preferring a harness token."""
     if model_selection is not None and model_selection.harness_model_id is not None:
         return model_selection.harness_model_id
-    return model
+    return (model or "").strip()
 
 
 def primary_arg_controls(policy: ResolvedLaunchPolicy) -> PrimaryArgControls:
@@ -191,11 +191,8 @@ def primary_arg_controls(policy: ResolvedLaunchPolicy) -> PrimaryArgControls:
     This deliberately does not infer control from model text alone. Contradictory
     model-selection records are treated as unknown rather than repaired.
     """
-    # Binding strips the resolved default before choosing the native token.
-    # Keep this projection identical so whitespace-only defaults do not become
-    # truthy model identities at the native-argument boundary.
     normalized_default = (policy.model or "").strip()
-    model = effective_native_model(normalized_default, policy.model_selection)
+    model = effective_native_model(policy.model, policy.model_selection)
     source = policy.field_provenance.model_source
     controlled = type(source) is ProvenanceLevel and source is not ProvenanceLevel.UNSET
     selection = policy.model_selection
@@ -204,11 +201,10 @@ def primary_arg_controls(policy: ResolvedLaunchPolicy) -> PrimaryArgControls:
         normalized_model = normalized_default
         native = (selection.harness_model_id or "").strip()
         # Selection metadata must agree with the retained policy and native
-        # token. Empty canonical identity is a harness default, not a named
-        # model; it must not authorize suppressing user-provided model args.
+        # token. A consistently blank canonical identity is a known native
+        # default; blankness alone does not erase recognized provenance.
         if (
-            not canonical
-            or canonical != normalized_model
+            canonical != normalized_model
             or bool(canonical) != bool(native)
         ):
             controlled = False
