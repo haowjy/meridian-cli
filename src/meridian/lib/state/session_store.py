@@ -32,20 +32,33 @@ from meridian.lib.state.liveness import is_process_alive_with_birth
 from meridian.lib.state.paths import RuntimePaths, normalize_path_for_write
 from meridian.lib.state.session_authority import (
     AcceptedBoundary,
+    AcquiredStoreGuard,
     AttemptFact,
     AttemptResult,
     BeginIntent,
     BeginIntentV4,
     BoundaryFact,
     BoundaryFactV4,
+    Historical,
     IdentityDelta,
     JournalRead,
     JournalSnapshot,
     LocatorConflictEvent,
+    LocatorUnrecorded,
+    NativeBindingStatus,
     NeedChat,
     NoOp,
+    OperationalBinding,
+    Pending,
+    PendingSource,
+    Pinned,
+    PinnedSource,
+    ReferenceOnly,
     Refutation,
     RefutationV4,
+    UnavailableBinding,
+    Unobserved,
+    UnobservedSource,
     _generation_matches,
     canonical_chat_number,
     eligible_input_entry,
@@ -278,7 +291,7 @@ def _append_authority_event(
 
 
 def get_native_session_key(runtime_root: Path, chat_id: str) -> NativeSessionKey | None:
-    """Return a native key only after confirming journal and directory durability."""
+    """Return diagnostic identity only; never use this key as a continuation credential."""
     paths = RuntimePaths.from_root_dir(runtime_root)
     with _sessions_transaction(paths) as transaction:
         snapshot = transaction.snapshot
@@ -294,6 +307,57 @@ def get_native_session_key(runtime_root: Path, chat_id: str) -> NativeSessionKey
         if binding is not None and binding.protocol == "v4":
             return None
         return key
+
+
+def get_native_binding(runtime_root: Path, chat_id: str) -> NativeBindingStatus:
+    """Read confirmed native binding provenance without checking native storage.
+
+    A returned operational value is journal authority only. In particular, a
+    pin is not evidence that its file remains present or unchanged.
+    """
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    with _sessions_transaction(paths) as transaction:
+        snapshot = transaction.snapshot
+        normalized = ChatId(normalize_optional_identity(chat_id) or "")
+        ref = snapshot.identity.refs.get(normalized)
+        if ref is None:
+            return UnavailableBinding(normalized, "unknown_ref")
+        if isinstance(ref, Historical):
+            return UnavailableBinding(normalized, "historical")
+        if isinstance(ref, ReferenceOnly):
+            return UnavailableBinding(normalized, "reserved_or_reference_only")
+        key = snapshot.identity.chat_to_key.get(normalized)
+        if key is None:
+            return UnavailableBinding(normalized, "legacy_unverified")
+        binding = snapshot.identity.native_bindings.get(native_key_tuple(key))
+        if binding is None or binding.chat_id != normalized:
+            # Lifecycle rows and pre-authority data can occupy a cN, but never
+            # acquire native authority from their harness-session ID.
+            return UnavailableBinding(normalized, "legacy_unverified", key)
+        if binding.conflict is not None:
+            return UnavailableBinding(normalized, "source_conflict", key)
+        if binding.protocol != "v4" or isinstance(binding.source, LocatorUnrecorded):
+            return UnavailableBinding(normalized, "locator_unrecorded", key)
+
+        guard = binding.store_guard
+        store_guard = (
+            AcquiredStoreGuard(guard.object, guard.store_event_id) if guard is not None else None
+        )
+        source = binding.source
+        if isinstance(source, Unobserved):
+            exposed_source = UnobservedSource("unobserved", source.observation)
+        elif isinstance(source, Pending):
+            exposed_source = PendingSource("pending", source.observation)
+        else:
+            assert isinstance(source, Pinned)
+            exposed_source = PinnedSource("pinned", source.observation, source.event_id)
+        return OperationalBinding(
+            normalized,
+            key,
+            binding.binding_event_id,
+            store_guard,
+            exposed_source,
+        )
 
 
 def get_native_attempt_boundaries(

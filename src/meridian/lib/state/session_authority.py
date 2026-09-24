@@ -551,6 +551,62 @@ class NativeBinding(NamedTuple):
     conflict: LocatorConflictEvent | None = None
 
 
+# Read-side authority results. These deliberately describe journal provenance,
+# not current filesystem availability; adapters validate a pinned source outside
+# the journal transaction before using it.
+@dataclass(frozen=True)
+class UnobservedSource:
+    kind: Literal["unobserved"]
+    first_observation: NoFileObservation
+
+
+@dataclass(frozen=True)
+class PendingSource:
+    kind: Literal["pending"]
+    first_observation: PendingLocalFile
+
+
+@dataclass(frozen=True)
+class PinnedSource:
+    kind: Literal["pinned"]
+    locator: QualifiedLocalFile
+    locator_event_id: str
+
+
+type OperationalSource = UnobservedSource | PendingSource | PinnedSource
+
+
+@dataclass(frozen=True)
+class OperationalBinding:
+    chat_id: ChatId
+    key: NativeSessionKey
+    binding_event_id: str
+    store_guard: AcquiredStoreGuard | None
+    source: OperationalSource
+
+
+BindingUnavailableReason = Literal[
+    "unknown_ref",
+    "reserved_or_reference_only",
+    "legacy_unverified",
+    "historical",
+    "locator_unrecorded",
+    "source_conflict",
+    "authority_invalid",
+    "durability_unresolved",
+]
+
+
+@dataclass(frozen=True)
+class UnavailableBinding:
+    chat_id: ChatId
+    reason: BindingUnavailableReason
+    key: NativeSessionKey | None = None
+
+
+type NativeBindingStatus = OperationalBinding | UnavailableBinding
+
+
 class BeginIntent(BaseModel):
     """Immutable owner context; intent does not certify ownership."""
 

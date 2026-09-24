@@ -6,6 +6,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Added a confirming `get_native_binding()` state read and purpose-aware cN
+  reference resolver. Only an unblocked v4 qualified pin yields provenance;
+  inspection remains explicitly non-authorizing and physical source checks
+  remain adapter-owned.
+
 - Added a standalone Pi native-journal reopen-default lineage projector with
   qualified 0.87.1 legacy-v3 selection, shared entry-type recognition, and
   explicit source completeness; exact native-source routing remains pending.

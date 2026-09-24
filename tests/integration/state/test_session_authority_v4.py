@@ -783,6 +783,106 @@ def test_v4_conflict_suppresses_legacy_key_and_effective_boundary_getters(tmp_pa
     )
 
 
+@pytest.mark.parametrize(
+    ("observation", "source_kind"),
+    [
+        (
+            authority.NoFileObservation(kind="no_file_observation", reason="not_reported"),
+            "unobserved",
+        ),
+        (
+            authority.PendingLocalFile(
+                kind="local_file_pending",
+                path="/native/store/session.jsonl",
+                store_object={"device": 1, "inode": 10},
+            ),
+            "pending",
+        ),
+        (_file("/native/store/session.jsonl", inode=10), "pinned"),
+    ],
+)
+def test_get_native_binding_returns_v4_source_provenance_without_file_reads(
+    tmp_path, observation, source_kind: str
+) -> None:
+    fact = _fact("entry", observation)
+    begin = _begin()
+    builder = _fold(begin)
+    boundary = _accept(builder, fact)
+    journal = tmp_path / "sessions.jsonl"
+    journal.write_text(
+        "".join(f"{row.model_dump_json()}\n" for row in (begin, boundary)),
+        encoding="utf-8",
+    )
+
+    status = session_store.get_native_binding(tmp_path, "c1")
+    assert isinstance(status, authority.OperationalBinding)
+    assert status.key == fact.key
+    assert status.binding_event_id == authority.boundary_digest_v4(fact)
+    assert status.source.kind == source_kind
+    if source_kind == "pinned":
+        assert isinstance(status.source, authority.PinnedSource)
+        assert status.source.locator == observation
+        assert status.source.locator_event_id == authority.boundary_digest_v4(fact)
+
+
+def test_get_native_binding_returns_typed_legacy_and_blocked_status(tmp_path) -> None:
+    from tests.support.attempt_owner import begin as begin_v3
+    from tests.support.attempt_owner import key, observe, receipt
+
+    begin_v3(tmp_path, "legacy", "attempt")
+    legacy = observe(tmp_path, receipt("legacy", "attempt", "entry", key("/native/old")))
+    assert session_store.get_native_binding(tmp_path, str(legacy.chat_id)) == (
+        authority.UnavailableBinding(str(legacy.chat_id), "locator_unrecorded", key("/native/old"))
+    )
+
+    original = _fact("entry", _file("/native/store/one.jsonl", inode=10))
+    changed = _fact("exit", _file("/native/store/two.jsonl", inode=10, file_inode=22), order=2)
+    builder = _fold(_begin())
+    entry = _accept(builder, original)
+    authority.fold_row(builder, entry)
+    conflict = _accept(builder, changed)
+    rows = (_begin(), entry, conflict)
+    journal = tmp_path / "sessions.jsonl"
+    journal.write_text("".join(f"{row.model_dump_json()}\n" for row in rows), encoding="utf-8")
+
+    assert session_store.get_native_binding(tmp_path, "c1") == authority.UnavailableBinding(
+        "c1", "source_conflict", original.key
+    )
+
+    lifecycle_root = tmp_path / "lifecycle"
+    lifecycle_root.mkdir()
+    session_store.start_session(
+        lifecycle_root,
+        harness="pi",
+        harness_session_id="legacy-thread",
+        model="test",
+        chat_id="c1",
+    )
+    assert session_store.get_native_binding(lifecycle_root, "c1") == authority.UnavailableBinding(
+        "c1", "legacy_unverified"
+    )
+
+
+@pytest.mark.parametrize(
+    "bad_tail", [b"{", b'{"event":"native_attempt","v":4,"action":"future"}\n']
+)
+def test_native_binding_read_replays_strictly_and_refuses_bad_tail(
+    tmp_path, bad_tail: bytes
+) -> None:
+    begin = _begin()
+    fact = _fact("entry", _file("/native/store/session.jsonl", inode=10))
+    builder = _fold(begin)
+    boundary = _accept(builder, fact)
+    journal = tmp_path / "sessions.jsonl"
+    journal.write_text(
+        f"{begin.model_dump_json()}\n{boundary.model_dump_json()}\n", encoding="utf-8"
+    )
+    journal.write_bytes(journal.read_bytes() + bad_tail)
+
+    with pytest.raises(ValueError):
+        session_store.get_native_binding(tmp_path, "c1")
+
+
 @pytest.mark.parametrize("blocked_boundary", ["entry", "exit"])
 def test_v4_boundary_getter_checks_entry_and_exit_bindings_independently(
     tmp_path, blocked_boundary: str

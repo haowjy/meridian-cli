@@ -84,7 +84,10 @@ split matters for `capture_library_diagnostics()` at the launch boundary.
 
 **Session references go through `ops/reference.py`.** `resolve_session_reference()`
 → `ResolvedSessionReference` handles spawn IDs (`p123`), chat IDs, and bare
-references. All `--from` / `-f` operations route through this.
+references. All `--from` / `-f` operations route through this. Native use must
+go through `resolve_native_reference()` with an explicit purpose; `inspect` is
+non-authorizing, and returned pin provenance still requires adapter-side physical
+source validation before native I/O or launch.
 
 Raw native references retain the supplied ID, not a matching chat's later ID.
 Their harness namespace must be unambiguous or explicit. Tracked chat/spawn

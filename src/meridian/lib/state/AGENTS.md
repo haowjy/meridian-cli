@@ -183,8 +183,10 @@ repair or allocation, and confirms file plus parent-directory durability. Repair
 the reader's tail classification, never a second parse. Legacy native-ID fields remain
 display/provenance data. V3 attempt facts remain frozen. Pure v4 journal replay also
 records typed local-file observations, first-pin provenance and bounded source
-conflicts; it is not proof of transport truth and has no live writer or authorization
-resolver. Frozen v1/v2 native attempt rows require reconciliation; never promote
+conflicts; it is not proof of transport truth, and live v4 writes remain disabled.
+`get_native_binding()` returns confirmed journal provenance only; ops reference
+resolution does not perform native I/O, so the owning adapter must still validate
+current availability and physical identity. Frozen v1/v2 native attempt rows require reconciliation; never promote
 their assertions automatically.
 
 The owner delivery gate confirms journal durability before actual task/context

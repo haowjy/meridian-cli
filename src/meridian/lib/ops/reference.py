@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Literal
 from uuid import UUID
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
@@ -19,7 +20,94 @@ from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import primary_meta, session_identity, session_store, spawn_store
 from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.session_authority import (
+    NativeBindingStatus,
+    NativeSessionKey,
+    NativeSourceRef,
+    PinnedSource,
+    RecordedNativeSource,
+    UnavailableBinding,
+    UnobservedSource,
+)
 from meridian.lib.state.spawn.model import SpawnRecord
+
+type NativePurpose = Literal["resume", "fork", "read", "context", "capture", "inspect"]
+type NativeUnavailableReason = Literal[
+    "unknown_ref",
+    "reserved_or_reference_only",
+    "legacy_unverified",
+    "historical",
+    "locator_unrecorded",
+    "source_conflict",
+    "authority_invalid",
+    "durability_unresolved",
+    "native_pending",
+    "locator_unobserved",
+    "unsupported_locator",
+]
+
+
+@dataclass(frozen=True)
+class AuthorizedNativeTarget:
+    """Purpose-scoped journal authority; adapter preflight still owns live checks."""
+
+    runtime_root: Path
+    purpose: NativePurpose
+    source: RecordedNativeSource
+
+
+@dataclass(frozen=True)
+class NativeInspection:
+    """Non-authorizing metadata inspection, including legacy/unavailable status."""
+
+    chat_id: str
+    binding: NativeBindingStatus
+
+
+@dataclass(frozen=True)
+class NativeUnavailable:
+    chat_id: str
+    purpose: NativePurpose
+    reason: NativeUnavailableReason
+    key: NativeSessionKey | None = None
+
+
+async def resolve_native_reference(
+    runtime_root: Path, chat_id: str, *, purpose: NativePurpose
+) -> AuthorizedNativeTarget | NativeInspection | NativeUnavailable:
+    """Resolve immutable cN authority for one use; never discover a native file.
+
+    Native file availability and physical identity are deliberately outside
+    this state/ops seam and must be checked by the owning harness adapter.
+    """
+    binding = session_store.get_native_binding(runtime_root, chat_id)
+    if purpose == "inspect":
+        return NativeInspection(chat_id, binding)
+    if isinstance(binding, UnavailableBinding):
+        return NativeUnavailable(chat_id, purpose, binding.reason, binding.key)
+
+    source = binding.source
+    if not isinstance(source, PinnedSource):
+        if isinstance(source, UnobservedSource):
+            reason = (
+                "unsupported_locator"
+                if source.first_observation.reason == "unsupported_locator"
+                else "locator_unobserved"
+            )
+        else:
+            reason = "native_pending"
+        return NativeUnavailable(chat_id, purpose, reason, binding.key)
+
+    recorded = RecordedNativeSource(
+        ref=NativeSourceRef(
+            chat_id=binding.chat_id,
+            binding_event_id=binding.binding_event_id,
+            locator_event_id=source.locator_event_id,
+        ),
+        key=binding.key,
+        locator=source.locator,
+    )
+    return AuthorizedNativeTarget(runtime_root, purpose, recorded)
 
 _SPAWN_REF_RE = re.compile(r"^p\d+$")
 _CHAT_REF_RE = re.compile(r"^c\d+$")
