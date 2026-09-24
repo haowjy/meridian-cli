@@ -41,10 +41,12 @@ def _project(
 
 def test_pi_tui_effort_mapping_is_shared_with_argument_admission() -> None:
     assert project_pi_thinking_level("low") == "minimal"
-    raw = ("--thinking", "high")
+    original_raw = ("--thinking", "high")
+    raw = original_raw
     normalized = normalize_pi_primary_session_args(
         raw, "subprocess", controls=_controls(effort="low")
     )
+    assert raw == original_raw
     assert normalized.remaining_args == ()
     assert normalized.warnings == (
         "Ignored raw thinking option; Meridian's resolved effort takes precedence.",

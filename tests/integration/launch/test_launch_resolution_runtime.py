@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import meridian.lib.harness.cursor as cursor_harness
+import meridian.lib.harness.opencode_backend as opencode_backend
 import meridian.lib.launch.context as launch_context
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
@@ -424,6 +425,7 @@ def test_fresh_raw_native_selector_is_refused_after_one_policy_before_prepare(
     project_root = tmp_path / "project"
     project_root.mkdir()
     _write_minimal_mars_config(project_root)
+    monkeypatch.setattr(CatalogSession, "load_aliases", lambda *_args, **_kwargs: ())
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="gpt-5.4-mini",
@@ -458,13 +460,14 @@ def test_fresh_raw_native_selector_is_refused_after_one_policy_before_prepare(
     assert events == ["route"]
 
 
-def test_fresh_codex_managed_config_option_is_admitted_without_route_replay(
+def test_fresh_codex_managed_config_option_is_refused_before_prepare(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir()
     _write_minimal_mars_config(project_root)
+    monkeypatch.setattr(CatalogSession, "load_aliases", lambda *_args, **_kwargs: ())
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="gpt-5.4-mini",
@@ -477,21 +480,27 @@ def test_fresh_codex_managed_config_option_is_admitted_without_route_replay(
         events.append("route")
         return original_compile(**kwargs)  # type: ignore[arg-type]
 
+    def prepare_must_not_run(**_kwargs: object) -> None:
+        events.append("prepare")
+        raise AssertionError("unproved managed config reached launch preparation")
+
     monkeypatch.setattr(launch_context, "compile_prepared_policy_surface", compile_once)
-    result = launch_primary(
-        project_root=project_root,
-        request=PrimaryLaunchRequest(
-            model="gpt-5.4-mini",
-            harness=HarnessId.CODEX.value,
-            passthrough_args=("-c", "tools.web_search=true"),
-            dry_run=True,
-        ),
-        harness_registry=get_default_harness_registry(),
-    )
+    monkeypatch.setattr(launch_context, "prepare_launch_surface", prepare_must_not_run)
+
+    with pytest.raises(ValueError, match="Fresh raw arguments are unsupported") as error:
+        launch_primary(
+            project_root=project_root,
+            request=PrimaryLaunchRequest(
+                model="gpt-5.4-mini",
+                harness=HarnessId.CODEX.value,
+                passthrough_args=("-c", "tools.web_search=true"),
+                dry_run=True,
+            ),
+            harness_registry=get_default_harness_registry(),
+        )
 
     assert events == ["route"]
-    assert "-c" in result.command
-    assert "tools.web_search=true" in result.command
+    assert "tools.web_search=true" not in str(error.value)
 
 
 def test_fresh_codex_managed_model_option_is_refused_before_prepare(
@@ -501,6 +510,7 @@ def test_fresh_codex_managed_model_option_is_refused_before_prepare(
     project_root = tmp_path / "project"
     project_root.mkdir()
     _write_minimal_mars_config(project_root)
+    monkeypatch.setattr(CatalogSession, "load_aliases", lambda *_args, **_kwargs: ())
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="gpt-5.4-mini",
@@ -597,7 +607,7 @@ def test_fresh_scalar_admission_preserves_raw_request_and_redacts_warning(
     ("harness", "raw_args"),
     [
         (HarnessId.CLAUDE, ("--system-prompt=synthetic",)),
-        (HarnessId.PI, ("--thinking", "high")),
+        (HarnessId.PI, ("--append-system-prompt", "synthetic addition")),
         (HarnessId.OPENCODE, ("--log-level", "INFO")),
     ],
 )
@@ -610,6 +620,11 @@ def test_inferred_fresh_adapter_admits_its_benign_primary_options(
     project_root = tmp_path / "project"
     project_root.mkdir()
     _write_minimal_mars_config(project_root)
+    monkeypatch.setattr(CatalogSession, "load_aliases", lambda *_args, **_kwargs: ())
+    if harness == HarnessId.OPENCODE:
+        monkeypatch.setattr(
+            opencode_backend, "detect_opencode_version", lambda *_args, **_kwargs: "v2"
+        )
     stub_bundle_request_and_resolve(
         monkeypatch,
         model=("openai/gpt-5.4-mini" if harness == HarnessId.OPENCODE else "gpt-5.4-mini"),
