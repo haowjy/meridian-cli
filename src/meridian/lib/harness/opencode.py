@@ -56,6 +56,9 @@ from meridian.lib.harness.opencode_report import (
     extract_opencode_session_id,
     extract_opencode_session_id_from_artifacts,
 )
+from meridian.lib.harness.opencode_session_args import (
+    normalize_primary_session_args as normalize_primary_session_args,
+)
 from meridian.lib.harness.opencode_storage import (
     resolve_opencode_home_dir,
     resolve_opencode_session_file,

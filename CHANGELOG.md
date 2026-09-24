@@ -8,23 +8,20 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Normalize bounded Codex primary raw `resume <UUID>` selectors and retain only
   validated transport-specific passthrough options.
-
-### Fixed
-
-- Claude raw resume now requires a canonical native UUID, equals-form prompt values may begin with `-`, and unsupported-option errors name only the safe option spelling.
 - Refuse Codex raw policy flags and ambiguous or unsafe scalar passthrough, and
   place generated workspace roots before resumed exec selection.
 - Refuse repeated Codex raw bypass flags while preserving one accepted flag.
-
-### Changed
-
 - Normalize bounded Claude primary raw session selectors while preserving supported safe arguments.
+- Restrict raw OpenCode session selectors to native `ses_` IDs and sanitize argument-refusal diagnostics.
+- Normalize bounded OpenCode primary session selectors and refuse unsafe raw launch options.
 - Add a typed primary-only adapter hook for fail-closed raw native-session argument normalization.
 - Include the selected subprocess or managed surface in native-session argument normalization.
 - Define a fail-closed adapter-local raw native-session normalization seam; remove dormant selection-inspection ports.
 - Require original request intent when reconciling raw native-session selectors; remove caller-controlled explicit-operation permission.
 
 ### Fixed
+
+- Claude raw resume now requires a canonical native UUID, equals-form prompt values may begin with `-`, and unsupported-option errors name only the safe option spelling.
 
 - Reconcile runner request, prepared surface, binding/spec/argv selectors, adapter, and runtime namespace before session scope; compose legacy missing preparation before effects and bind it privately after row creation.
 - Refuse prepared fork operations unless the materialized continuation flag also requests a fork.
