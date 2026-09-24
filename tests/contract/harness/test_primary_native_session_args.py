@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import pytest
 
+from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.native_session_args import NativeSessionSurface
+from meridian.lib.harness.native_session_args import NativeSessionSurface, PrimaryArgControls
 from meridian.lib.harness.registry import HarnessRegistry
 
 SURFACES: tuple[NativeSessionSurface, ...] = ("subprocess", "managed")
@@ -87,6 +88,37 @@ def test_registered_opencode_adapter_normalizes_native_resume_and_logging() -> N
         )
     with pytest.raises(ValueError):
         adapter.normalize_primary_session_args((), "unknown")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("model", ["openai/generated", "openai/raw"])
+@pytest.mark.parametrize(
+    "raw",
+    [
+        ("--model", "openai/raw"),
+        ("-m", "openai/raw"),
+        ("--agent", "generated-agent"),
+        ("--variant", "generated-variant"),
+    ],
+)
+def test_registered_opencode_managed_surface_keeps_run_only_flags_refused_with_controls(
+    model: str, raw: tuple[str, ...]
+) -> None:
+    adapter = HarnessRegistry.with_defaults().get(HarnessId("opencode"))
+    controls = PrimaryArgControls(
+        model=model,
+        model_controlled=True,
+        execution_policy=ResolvedExecutionPolicy(effort="high"),
+    )
+
+    with pytest.raises(ValueError, match="opencode serve"):
+        adapter.normalize_primary_session_args(raw, "managed", controls=controls)
+
+    logging = ("--print-logs", "--log-level=INFO")
+    assert (
+        adapter.normalize_primary_session_args(logging, "managed", controls=controls)
+        .remaining_args
+        == logging
+    )
 
 
 def test_registered_default_adapter_stays_fail_closed() -> None:
