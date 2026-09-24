@@ -157,10 +157,16 @@ def test_raw_option_diagnostics_never_echo_equal_values() -> None:
     assert "DO_NOT_ECHO" not in str(error.value)
 
 
-def _controls(*, sandbox: str | None = None, approval: str | None = None) -> PrimaryArgControls:
+def _controls(
+    *,
+    model: str | None = "owned-model",
+    model_controlled: bool = True,
+    sandbox: str | None = None,
+    approval: str | None = None,
+) -> PrimaryArgControls:
     return PrimaryArgControls(
-        model="owned-model",
-        model_controlled=True,
+        model=model,
+        model_controlled=model_controlled,
         execution_policy=ResolvedExecutionPolicy(sandbox=sandbox, approval=approval),
     )
 
@@ -233,6 +239,20 @@ def test_managed_matching_sandbox_is_still_refused_without_emission_proof() -> N
 
     assert "conflicts with Meridian" not in str(error.value)
     assert "use Meridian --sandbox" in str(error.value)
+
+
+@pytest.mark.parametrize("args", [("-c", "model=raw-model"), ("-c", "model_reasoning_effort=low")])
+def test_managed_model_and_effort_config_refuse_without_owned_values(
+    args: tuple[str, ...],
+) -> None:
+    controls = _controls(model=None, model_controlled=False)
+
+    with pytest.raises(ValueError) as error:
+        CodexAdapter().normalize_primary_session_args(args, "managed", controls=controls)
+
+    assert "managed app-server" in str(error.value)
+    assert "raw-model" not in str(error.value)
+    assert "model_reasoning_effort=low" not in str(error.value)
 
 
 def test_config_spelling_remains_syntax_only_without_controls() -> None:
