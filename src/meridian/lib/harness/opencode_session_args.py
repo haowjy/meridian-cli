@@ -13,7 +13,7 @@ from meridian.lib.harness.native_session_args import (
 )
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 
-_SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]*\Z")
+_SESSION_ID = re.compile(r"ses_[A-Za-z0-9_-]+\Z")
 _LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARN", "ERROR"})
 _SUBPROCESS_VALUE_OPTIONS = frozenset(
     {"--model", "-m", "--agent", "--variant", "--log-level"}
@@ -76,13 +76,15 @@ def normalize_primary_session_args(
     while index < len(args):
         token = args[index]
         if token == "--":
-            _refuse(token, "positional and option-terminator forms are unsupported")
+            _refuse("--", "positional and option-terminator forms are unsupported")
         if token.startswith("@"):
-            _refuse(token, "@file response-file indirection is unsupported")
+            _refuse("@file", "response-file indirection is unsupported")
 
         name, equals, inline = token.partition("=")
         inline_value = inline if equals else None
         if name in ("--session", "-s"):
+            if name == "-s" and equals:
+                _refuse("-s", "short option values must be separated")
             value, index = _value(args, index, name, inline_value)
             if not _SESSION_ID.fullmatch(value):
                 _refuse(name, "expected an exact native session ID")
@@ -96,8 +98,15 @@ def normalize_primary_session_args(
             _refuse(name, "raw fork is unsupported; use Meridian's typed --fork option")
         if name in _ENDPOINT_OPTIONS:
             _refuse(name, "runtime, endpoint, cwd, or store overrides are unsupported")
+        if name in ("--profile", "-p"):
+            _refuse(
+                name,
+                "raw profiles are unresolved configuration indirection; "
+                "use typed resolved settings",
+            )
         if name in ("run", "attach") or not token.startswith("-"):
-            _refuse(token, "positional arguments and subcommand injection are unsupported")
+            spelling = "subcommand" if name in ("run", "attach") else "positional argument"
+            _refuse(spelling, "positional arguments and subcommand injection are unsupported")
 
         if name == "--print-logs":
             if equals:
@@ -111,8 +120,10 @@ def normalize_primary_session_args(
             else _MANAGED_VALUE_OPTIONS
         )
         if name in allowed_value_options:
+            if name in ("-m",) and equals:
+                _refuse(name, "short option values must be separated")
             value, next_index = _value(args, index, name, inline_value)
-            if name == "--log-level" and value.upper() not in _LOG_LEVELS:
+            if name == "--log-level" and value not in _LOG_LEVELS:
                 _refuse(name, "expected DEBUG, INFO, WARN, or ERROR")
             remaining.extend(args[index:next_index])
             index = next_index
@@ -126,7 +137,7 @@ def normalize_primary_session_args(
                 "--variant": "Meridian's typed variant setting",
             }[name]
             _refuse(name, "run-only options cannot be forwarded to `opencode serve`", alternative)
-        _refuse(name, "unknown option or unsupported option arity")
+        _refuse("unknown option", "unsupported option or option arity")
 
     return NormalizedNativeSessionArgs(selector, tuple(remaining))
 

@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Restrict raw OpenCode session selectors to native `ses_` IDs and sanitize argument-refusal diagnostics.
 - Normalize bounded OpenCode primary session selectors and refuse unsafe raw launch options.
 - Add a typed primary-only adapter hook for fail-closed raw native-session argument normalization.
 - Include the selected subprocess or managed surface in native-session argument normalization.
