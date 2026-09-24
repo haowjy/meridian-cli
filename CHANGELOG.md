@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Keep exact Pi source descriptors open through validation and final reobservation; reject changed files and malformed full journals, with guarded adversarial coverage.
+
 ### Fixed
 
 - Reject conflicting linked-spawn work/path metadata, detach checked policy

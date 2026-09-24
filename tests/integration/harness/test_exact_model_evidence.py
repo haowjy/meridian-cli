@@ -3,18 +3,59 @@
 from __future__ import annotations
 
 import json
+import os
+import socket
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
-from meridian.lib.harness.model_observation import (
+# This file is intentionally safe before importing Meridian: isolate all home
+# roots and install denial hooks at module import, then prove both guards work.
+_GUARD_HOME = Path(tempfile.mkdtemp(prefix="meridian-exact-evidence-home-"))
+for _key in tuple(os.environ):
+    if _key.startswith(("MERIDIAN", "_MERIDIAN", "PI_", "CODEX", "CLAUDE", "XDG", "MARS")):
+        os.environ.pop(_key, None)
+for _key in ("HOME", "MERIDIAN_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"):
+    os.environ[_key] = str(_GUARD_HOME)
+_DENIED_ATTEMPTS: list[str] = []
+
+
+def _deny_external(event: str, _args: tuple[object, ...]) -> None:
+    if event.startswith(
+        ("subprocess.", "socket.", "os.exec", "os.spawn", "os.posix_spawn")
+    ) or event in {
+        "os.system", "os.fork", "os.forkpty"
+    }:
+        _DENIED_ATTEMPTS.append(event)
+        raise RuntimeError(f"guard denied {event}")
+
+
+sys.addaudithook(_deny_external)
+for _self_test in (
+    lambda: subprocess.Popen(["/nonexistent-meridian-denial-self-test"]),
+    lambda: socket.socket(),
+):
+    try:
+        _self_test()
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("process/network denial guard did not block its self-test")
+_DENIED_ATTEMPTS.clear()
+
+import meridian.lib.harness.model_observation as model_observation  # noqa: E402
+import meridian.lib.harness.pi_native_source as pi_source  # noqa: E402
+from meridian.lib.harness.model_observation import (  # noqa: E402
     ExactModelObservation,
     ModelEvidenceUnavailable,
     ModelSourceConflict,
     read_model_evidence_exact,
 )
-from meridian.lib.harness.pi_native_source import PiSourceQualified, qualify_pi_source
-from meridian.lib.state.session_authority import (
+from meridian.lib.harness.pi_native_source import PiSourceQualified, qualify_pi_source  # noqa: E402
+from meridian.lib.state.session_authority import (  # noqa: E402
     NativeSessionKey,
     NativeSourceRef,
     RecordedNativeSource,
@@ -98,7 +139,7 @@ def test_torn_or_unknown_lineage_never_returns_older_positive(tmp_path: Path, ta
                 effective_store=tmp_path / "store", session_id="same-id", session_file=str(path)
             ).observation
         }
-    )  # type: ignore[union-attr]
+)  # type: ignore[union-attr]
 
     assert read_model_evidence_exact(source) == ModelEvidenceUnavailable("incomplete")
 
@@ -116,6 +157,137 @@ def test_exact_reader_handles_complete_final_row_without_newline_and_no_model(
         tmp_path / "empty", [_header(), _entry("message", "a", None, message={"role": "user"})]
     )
     assert read_model_evidence_exact(no_model) == ModelEvidenceUnavailable("no_model")
+
+
+@pytest.mark.parametrize("mutation", ["append", "truncate", "swap", "delete"])
+def test_completion_reobserves_namespace_and_descriptor_after_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    source, path = _source(
+        tmp_path / "store",
+        [_header(), _entry("model_change", "a", None, provider="p", modelId="m")],
+    )
+    original = pi_source._reobserve_namespace
+
+    def mutate(*args: object) -> str | None:
+        if mutation == "append":
+            with path.open("ab") as handle:
+                handle.write(b"\n{}")
+        elif mutation == "truncate":
+            path.write_bytes(b"")
+        elif mutation == "swap":
+            replacement = path.with_suffix(".replacement")
+            replacement.write_bytes(path.read_bytes())
+            replacement.replace(path)
+        else:
+            path.unlink()
+        return original(*args)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(pi_source, "_reobserve_namespace", mutate)
+    assert isinstance(read_model_evidence_exact(source), ModelSourceConflict)
+
+
+@pytest.mark.parametrize("tail", [b"\n{torn", b"\n{\xff"])
+def test_known_header_identity_conflict_precedes_bad_tail(tmp_path: Path, tail: bytes) -> None:
+    source, path = _source(
+        tmp_path / "store",
+        [_header(), _entry("model_change", "a", None, provider="p", modelId="m")],
+    )
+    path.write_bytes(path.read_bytes().replace(b"same-id", b"wrong-id") + tail)
+    assert read_model_evidence_exact(source) == ModelSourceConflict("identity_mismatch")
+
+
+def test_known_header_identity_conflict_precedes_unsupported_dialect(tmp_path: Path) -> None:
+    source, path = _source(
+        tmp_path / "store",
+        [_header(), _entry("model_change", "a", None, provider="p", modelId="m")],
+    )
+    changed = path.read_bytes().replace(b"same-id", b"wrong-id").replace(
+        b'"version": 3', b'"version": 99'
+    )
+    path.write_bytes(changed)
+    assert read_model_evidence_exact(source) == ModelSourceConflict("identity_mismatch")
+
+
+@pytest.mark.parametrize(
+    "bad_row",
+    [
+        _entry("custom", "orphan", "missing"),
+        _entry("custom", "cycle-a", "cycle-b"),
+        _entry("custom", "duplicate", None),
+    ],
+)
+def test_malformed_off_branch_graph_never_claims_complete(
+    tmp_path: Path, bad_row: dict[str, object]
+) -> None:
+    rows = [
+        _header(),
+        _entry("model_change", "a", None, provider="p", modelId="m"),
+        bad_row,
+        *([_entry("custom", "cycle-b", "cycle-a")] if bad_row["id"] == "cycle-a" else []),
+        _entry("custom", "duplicate", "a")
+        if bad_row["id"] == "duplicate"
+        else _entry("custom", "leaf", "a"),
+    ]
+    source, path = _source(tmp_path / "store", rows)
+    if bad_row["id"] == "duplicate":
+        path.write_bytes(path.read_bytes() + b"\n" + json.dumps(bad_row).encode())
+        source = source.model_copy(
+            update={
+                "locator": qualify_pi_source(
+                    effective_store=tmp_path / "store", session_id="same-id", session_file=str(path)
+                ).observation
+            }
+        )  # type: ignore[union-attr]
+    assert read_model_evidence_exact(source) == ModelEvidenceUnavailable("incomplete")
+
+
+def test_guarded_suite_and_single_content_horizon(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source, path = _source(
+        tmp_path / "store",
+        [_header(), _entry("model_change", "a", None, provider="p", modelId="m")],
+    )
+    original_read = os.read
+    captured = 0
+
+    def counted_read(fd: int, amount: int) -> bytes:
+        nonlocal captured
+        value = original_read(fd, amount)
+        captured += len(value)
+        return value
+
+    monkeypatch.setattr(os, "read", counted_read)
+    assert isinstance(read_model_evidence_exact(source), ExactModelObservation)
+    assert captured == path.stat().st_size
+    assert not _DENIED_ATTEMPTS
+
+
+def test_exact_source_never_falls_back_to_discovery(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source, _ = _source(
+        tmp_path / "store",
+        [_header(), _entry("model_change", "a", None, provider="p", modelId="m")],
+    )
+    monkeypatch.setattr(
+        model_observation,
+        "resolve_pi_agent_dir",
+        lambda **kwargs: pytest.fail("discovery"),
+    )
+    monkeypatch.setattr(
+        model_observation,
+        "resolve_pi_spawn_session_root",
+        lambda **kwargs: pytest.fail("discovery"),
+    )
+    monkeypatch.setattr(
+        model_observation,
+        "_read_pi_last_model",
+        lambda *args: pytest.fail("legacy reader"),
+    )
+    assert isinstance(read_model_evidence_exact(source), ExactModelObservation)
+    assert not _DENIED_ATTEMPTS
 
 
 def test_later_assistant_overrides_model_change_and_missing_attribution_cannot_reuse_old(

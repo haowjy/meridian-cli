@@ -1,9 +1,8 @@
-"""Native-history read seam for the last executed conversation model.
+"""Native-history readers, including exact selected reopen-setting evidence.
 
-Harness-specific session stores are read here to recover the model a harness
-actually last executed — as opposed to the model Meridian selected at startup.
-Every reader returns a routable model token (verbatim, never remapped) or ``None``;
-unknown harnesses, missing stores, unparseable data, and I/O errors never raise.
+The exact Pi evidence reports a selected reopen default, not a model that
+actually executed or a live process cursor. Legacy discovery readers remain
+best-effort and return a routable model token or ``None``.
 """
 
 from __future__ import annotations
@@ -24,6 +23,7 @@ from meridian.lib.harness.pi_native_source import (
     PiExactContent,
     PiExactContentConflict,
     PiExactContentUnavailable,
+    PiExactValidatedContent,
     read_pi_exact_content,
 )
 from meridian.lib.harness.pi_paths import resolve_pi_agent_dir, resolve_pi_spawn_session_root
@@ -80,6 +80,65 @@ class ModelSourceConflict:
 type ExactModelEvidence = ExactModelObservation | ModelEvidenceUnavailable | ModelSourceConflict
 
 
+@dataclass(frozen=True)
+class _PiSelection:
+    leaf_id: str | None
+    provider: str
+    model: str
+    entry_id: str
+
+
+def _validate_pi_horizon(
+    content: PiExactContent, source: RecordedNativeSource
+) -> _PiSelection | ModelEvidenceUnavailable | ModelSourceConflict:
+    data = content.data
+    # Header identity is an independent fact: check it before tail decoding or
+    # whole-journal completeness can downgrade a known conflict.
+    first_line = next((line for line in data.splitlines() if line.strip()), b"")
+    try:
+        header_payload: object = json.loads(first_line.decode("utf-8", errors="strict"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        header_payload = None
+    if (
+        isinstance(header_payload, dict)
+        and cast("dict[str, object]", header_payload).get("type") == "session"
+        and cast("dict[str, object]", header_payload).get("id")
+        != source.key.native_session_id
+    ):
+        return ModelSourceConflict("identity_mismatch")
+    try:
+        text = data.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return ModelEvidenceUnavailable("incomplete")
+    projection = project_pi_reopen_default(text)
+    if projection.events and projection.events[0].get("id") != source.key.native_session_id:
+        return ModelSourceConflict("identity_mismatch")
+    if not projection.complete:
+        if "unsupported_dialect" in projection.reasons:
+            return ModelEvidenceUnavailable("unsupported_dialect")
+        return ModelEvidenceUnavailable("incomplete")
+    selected: tuple[str, str, str] | None = None
+    leaf_id: str | None = None
+    for row in projection.events[1:]:
+        entry_id = row.get("id")
+        if isinstance(entry_id, str):
+            leaf_id = entry_id
+        entry_type = row.get("type")
+        if entry_type == "model_change":
+            selected = (cast("str", row["provider"]), cast("str", row["modelId"]), str(entry_id))
+        elif entry_type == "message":
+            message = cast("dict[str, object]", row["message"])
+            if message.get("role") == "assistant":
+                selected = (
+                    cast("str", message["provider"]),
+                    cast("str", message["model"]),
+                    str(entry_id),
+                )
+    if selected is None:
+        return ModelEvidenceUnavailable("no_model")
+    return _PiSelection(leaf_id, *selected)
+
+
 def read_model_evidence_exact(
     source: RecordedNativeSource,
     *,
@@ -90,71 +149,31 @@ def read_model_evidence_exact(
         return ModelEvidenceUnavailable("unsupported_view")
     if source.key.harness != "pi":
         return ModelEvidenceUnavailable("unsupported_provider")
-    content = read_pi_exact_content(source)
+    content = read_pi_exact_content(
+        source, validate=lambda value: _validate_pi_horizon(value, source)
+    )
     if isinstance(content, PiExactContentConflict):
         return ModelSourceConflict(content.reason)
     if isinstance(content, PiExactContentUnavailable):
         return ModelEvidenceUnavailable(content.reason)
-    assert isinstance(content, PiExactContent)
-    try:
-        text = content.data.decode("utf-8", errors="strict")
-    except UnicodeDecodeError:
-        return ModelEvidenceUnavailable("incomplete")
-    projection = project_pi_reopen_default(text)
-    if not projection.complete:
-        if any("unsupported Pi native dialect" in reason for reason in projection.reasons):
-            return ModelEvidenceUnavailable("unsupported_dialect")
-        return ModelEvidenceUnavailable("incomplete")
-    header = projection.events[0]
-    if header.get("id") != source.key.native_session_id:
-        return ModelSourceConflict("identity_mismatch")
-    selected: tuple[str, str, str] | None = None
-    leaf_id: str | None = None
-    for row in projection.events[1:]:
-        entry_id = row.get("id")
-        if isinstance(entry_id, str):
-            leaf_id = entry_id
-        entry_type = row.get("type")
-        if entry_type == "model_change":
-            provider, model = row.get("provider"), row.get("modelId")
-            if (
-                not isinstance(provider, str)
-                or not provider.strip()
-                or not isinstance(model, str)
-                or not model.strip()
-            ):
-                return ModelEvidenceUnavailable("incomplete")
-            selected = (provider, model, str(entry_id))
-        elif entry_type == "message":
-            message = row.get("message")
-            if not isinstance(message, dict) or not isinstance(message.get("role"), str):
-                return ModelEvidenceUnavailable("incomplete")
-            if message.get("role") == "assistant":
-                provider, model = message.get("provider"), message.get("model")
-                if (
-                    not isinstance(provider, str)
-                    or not provider.strip()
-                    or not isinstance(model, str)
-                    or not model.strip()
-                ):
-                    return ModelEvidenceUnavailable("incomplete")
-                selected = (provider, model, str(entry_id))
-    if selected is None:
-        return ModelEvidenceUnavailable("no_model")
-    provider, model, entry_id = selected
+    assert isinstance(content, PiExactValidatedContent)
+    if isinstance(content.value, (ModelEvidenceUnavailable, ModelSourceConflict)):
+        return content.value
+    selection = content.value
+    evidence = content.content
     return ExactModelObservation(
         source=source,
         provider_contract="pi-0.87.1-legacy-v3-settings-v1",
         view_basis="reopen-default",
-        selected_leaf_id=leaf_id,
+        selected_leaf_id=selection.leaf_id,
         model_basis="selected_reopen_default",
-        model_token=model,
-        native_provider=provider,
-        evidence_entry_id=entry_id,
-        byte_length=content.byte_length,
-        content_sha256=content.content_sha256,
-        file_object=content.file_object,
-        store_object=content.store_object,
+        model_token=selection.model,
+        native_provider=selection.provider,
+        evidence_entry_id=selection.entry_id,
+        byte_length=evidence.byte_length,
+        content_sha256=evidence.content_sha256,
+        file_object=evidence.file_object,
+        store_object=evidence.store_object,
         observed_at=datetime.now(UTC).isoformat(),
     )
 
