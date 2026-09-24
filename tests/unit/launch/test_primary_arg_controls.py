@@ -63,6 +63,42 @@ def test_primary_controls_preserve_retained_policy_and_native_alias_token() -> N
     assert controls.execution_policy is execution_policy
 
 
+def test_primary_controls_normalize_whitespace_only_default_as_unselected() -> None:
+    policy = _policy(
+        model="   ",
+        selection=ModelSelectionContext("", "", "  ", "harness-default", None),
+    )
+
+    controls = primary_arg_controls(policy)
+
+    assert controls.model == ""
+    assert controls.model_controlled is False
+
+
+def test_primary_controls_do_not_authorize_whitespace_canonical_with_native_token() -> None:
+    policy = _policy(
+        model="   ",
+        selection=ModelSelectionContext("", "", "  ", "harness-default", "native-model"),
+    )
+
+    controls = primary_arg_controls(policy)
+
+    assert controls.model == "native-model"
+    assert controls.model_controlled is False
+
+
+def test_primary_controls_reject_whitespace_harness_native_token() -> None:
+    policy = _policy(
+        model="canonical",
+        selection=ModelSelectionContext("alias", "alias", "canonical", "bundle", "  "),
+    )
+
+    controls = primary_arg_controls(policy)
+
+    assert controls.model == "  "
+    assert controls.model_controlled is False
+
+
 @pytest.mark.parametrize(
     ("model", "source", "selection", "expected"),
     [
