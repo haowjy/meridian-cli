@@ -706,6 +706,46 @@ def test_opencode_named_primary_continue_preserves_explicit_model(
     assert preview.binding.spec.model == "openai/gpt-5.5"
 
 
+@pytest.mark.parametrize("fork", [False, True])
+def test_tracked_pi_primary_preview_refuses_unqualified_native_transport(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fork: bool,
+) -> None:
+    """A primary Pi dry-run must not print a bare native session selection."""
+    (tmp_path / "mars.toml").write_text(
+        '[settings]\ntargets = [".pi"]\n',
+        encoding="utf-8",
+    )
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.5",
+        harness=HarnessId.PI,
+    )
+
+    with pytest.raises(ValueError, match="transport_unqualified"):
+        build_launch_context(
+            spawn_id="dry-run-pi-tracked-source",
+            request=SpawnRequest(
+                prompt="continue prompt",
+                prompt_is_composed=False,
+                model="gpt-5.5",
+                harness=HarnessId.PI.value,
+                session=SessionRequest(
+                    requested_harness_session_id="synthetic-native-id",
+                    primary_session_mode="fork" if fork else "resume",
+                    continue_harness="pi",
+                    continue_source_ref="c123",
+                    continue_source_tracked=True,
+                    continue_fork=fork,
+                ),
+            ),
+            runtime=build_primary_launch_runtime(project_root=tmp_path),
+            harness_registry=get_default_harness_registry(),
+            dry_run=True,
+        )
+
+
 def test_opencode_from_creates_fresh_session_with_context_in_prompt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

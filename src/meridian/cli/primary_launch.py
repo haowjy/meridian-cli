@@ -362,10 +362,44 @@ def run_primary_launch(
         agent_opt_out = continue_contract.agent_opt_out
         requested_skills = continue_contract.skills
         session_mode = SessionMode.RESUME
+        if continue_source_tracked and continue_harness == "pi":
+            raise ValueError(
+                "Cannot continue tracked Pi source on the primary native TUI: "
+                "transport_unqualified."
+            )
     elif selected_fork_target is not None:
         resolved_fork = resolve_session_target(
             project_root=project_root, continue_ref=selected_fork_target
         )
+        if re.fullmatch(r"c\d+", selected_fork_target):
+            native_fork = asyncio.run(
+                resolve_native_reference(
+                    resolve_project_runtime_root(project_root),
+                    selected_fork_target,
+                    purpose="fork",
+                )
+            )
+            if not isinstance(native_fork, AuthorizedNativeTarget):
+                reason = (
+                    native_fork.reason
+                    if isinstance(native_fork, NativeUnavailable)
+                    else "authority unavailable"
+                )
+                raise ValueError(
+                    f"Cannot fork tracked session '{selected_fork_target}': "
+                    f"exact native source is unavailable ({reason})."
+                )
+            if native_fork.source.key.harness != "pi":
+                raise ValueError(
+                    f"Cannot fork tracked session '{selected_fork_target}': "
+                    "exact-source tracked fork is currently unavailable."
+                )
+            if explicit_harness not in (None, "pi"):
+                raise ValueError("Cannot fork a tracked Pi session with a different harness.")
+            raise ValueError(
+                "Cannot fork tracked Pi source on the primary native TUI: "
+                "transport_unqualified."
+            )
         if resolved_fork.missing_harness_session_id:
             raise ValueError(
                 missing_fork_session_error_with_discovery(
@@ -414,6 +448,12 @@ def run_primary_launch(
         continue_source_ref = selected_fork_target
         output_forked_from = resolved_fork.source_chat_id or selected_fork_target
         session_mode = SessionMode.FORK
+
+        if continue_source_tracked and continue_harness == "pi":
+            raise ValueError(
+                "Cannot fork tracked Pi source on the primary native TUI: "
+                "transport_unqualified."
+            )
 
         if not model.strip() and resolved_fork.source_model is not None:
             requested_model = resolved_fork.source_model

@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Refuse tracked Pi primary resume/fork on the native TUI, including dry-run,
+  and block tracked Pi spawn follow-ups until connected admission is owned.
+
 ### Added
 
 - Carry purpose-authorized pinned Pi native sources from top-level cN continuation

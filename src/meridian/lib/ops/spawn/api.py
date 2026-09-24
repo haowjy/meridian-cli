@@ -2195,6 +2195,11 @@ def spawn_fork_sync(
         normalized_source_ref,
         runtime_root=runtime_root,
     )
+    if resolved_reference.tracked and resolved_reference.harness == "pi":
+        raise ValueError(
+            "Tracked Pi fork is unqualified (operation_unqualified); "
+            "no spawn was started."
+        )
     if resolved_reference.missing_harness_session_id:
         raise ValueError(_missing_follow_up_session_error(normalized_source_ref))
 
@@ -2288,6 +2293,11 @@ def spawn_continue_sync(
         runtime_root=runtime_root,
         harness_hint=payload.harness,
     )
+    if resolved_reference.tracked and resolved_reference.harness == "pi":
+        raise ValueError(
+            "Tracked Pi continuation is blocked until the connected-state "
+            "admission owner is available; no spawn was started."
+        )
     if resolved_reference.missing_harness_session_id:
         raise ValueError(
             f"Spawn '{resolved_spawn_id}' has no recorded session — cannot continue/fork."

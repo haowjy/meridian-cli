@@ -1798,6 +1798,25 @@ def bind_launch_context(
                 "Tracked Pi continuation does not accept raw environment overrides; "
                 "refusing continue"
             )
+    if (
+        harness.id == HarnessId.PI
+        and (
+            resolved_request.session.continue_source_tracked
+            or recorded_source is not None
+        )
+        and (
+            resolved_request.session.requested_harness_session_id
+            or resolved_request.session.continue_fork
+        )
+    ):
+        # The primary Pi route is the native TUI, which accepts only a bare
+        # session ID and cannot bind to Meridian's exact immutable source.
+        # Refuse during bind (including preview/direct callers), not in the
+        # process runner after a success-shaped command has been displayed.
+        raise ValueError(
+            "Tracked Pi resume/fork on the primary native TUI is unqualified "
+            "(transport_unqualified)."
+        )
     effective_session_id = bindings.forked_harness_session_id or prepared.seed_harness_session_id
     composition_warnings = prepared.composition_warnings
     prompt_payload = prepared.prompt_payload
