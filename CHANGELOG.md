@@ -16,6 +16,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Gate tracked Pi managed-extension turn notifications until the first admitted agent
+  run; revoke pending delivery across selection changes and close while preserving
+  ordinary untracked notification behavior. Cancel pending bash pings on a
+  before-switch selection only for tracked admission attempts, so cancelled
+  selections preserve ordinary background-task reminders.
+- Bind managed-bash pings to their originating admission revision and drain them on
+  replacement; repeat spawn-watch scans for the generation admitted during prior I/O.
+
 - Pi RPC now owns one launch-time stdout dispatcher with bounded event buffering and
   correlated state queries. Added explicit deferred prompt delivery and serialized
   switch/query operations; ordinary startup still sends its prompt immediately.

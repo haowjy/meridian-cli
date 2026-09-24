@@ -47,6 +47,20 @@ child-spawn observation and notification behavior belong in spawn-watch.
 The session-boundary observer remains independent of both concerns and does not write
 their files or participate in `PiDiskWatcher`.
 
+Tracked exact-resume RPC launches must pass an explicit owner-supplied notification-gate
+capability (`_MERIDIAN_PI_NOTIFICATION_GATE_*`) with version, attempt, and random nonce.
+The extensions consume and erase it at registration; it identifies tracked mode only,
+never a chat or admitted entry. The process-scoped gate starts closed, releases on the
+first owner-initiated `agent_start`, and revokes queued/in-flight notification work on
+session replacement, reload, or close. B3c launch projection must require and pass this
+capability for every tracked RPC and reject a missing capability before child exec; do
+not infer tracked mode from cN or ambient environment inheritance. Generation-tagged
+notification work may finish persistence after replacement, but must not send across
+the replacement boundary. Unqualified native
+TUI/RPC continues with ordinary extension behavior. While tracked and closed, spawn-watch
+does not startup-scan; it resumes discovery after each admitted run. Every managed
+extension capable of `sendMessage({triggerTurn:true})` must share this same admission gate.
+
 ### Build Pipeline
 
 `npm run build:extensions` runs clean and builds all three bundles:

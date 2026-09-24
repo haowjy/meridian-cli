@@ -26,6 +26,7 @@ import {
   type SelectablePanelColumn,
 } from "../../shared/selectable_panel";
 import { formatDurationSecs, renderTable } from "../../shared/ui";
+import { notificationAdmission, type NotificationAdmission } from "../../shared/notification_admission";
 
 type PiWithMessages = ExtensionAPI & {
   sendMessage?: (
@@ -86,7 +87,10 @@ export class SpawnWatchRuntime {
   private scanRunning = false;
   private scanAgain = false;
 
-  constructor(private readonly pi: PiWithMessages) {}
+  constructor(
+    private readonly pi: PiWithMessages,
+    private readonly admission: NotificationAdmission = notificationAdmission(),
+  ) {}
 
   start(): void {
     this.running = true;
@@ -102,7 +106,7 @@ export class SpawnWatchRuntime {
     });
     this.addWatcher(bashWatcher);
     if (!bashWatcher) this.enableFallbackScan("bash-dir");
-    void this.scan();
+    if (!this.admission.tracked || this.admission.allows()) void this.scan();
   }
 
   stop(): void {
@@ -123,6 +127,18 @@ export class SpawnWatchRuntime {
     this.fallbackScanReasons.clear();
     for (const timer of this.bashGraceTimers.values()) clearTimeout(timer);
     this.bashGraceTimers.clear();
+  }
+
+  requestAdmittedScan(): void {
+    if (this.running) this.requestScan();
+  }
+
+  suspendNotifications(): void {
+    this.pending.clear();
+    if (this.debounce) clearTimeout(this.debounce);
+    if (this.maxWave) clearTimeout(this.maxWave);
+    this.debounce = null;
+    this.maxWave = null;
   }
 
   async rows(discover = false): Promise<SpawnStateFile[]> {
@@ -307,6 +323,7 @@ export class SpawnWatchRuntime {
   }
 
   private requestScan(): void {
+    if (this.admission.tracked && !this.admission.allows()) return;
     if (this.scanScheduled) clearTimeout(this.scanScheduled);
     this.scanScheduled = setTimeout(() => {
       this.scanScheduled = null;
@@ -316,6 +333,8 @@ export class SpawnWatchRuntime {
   }
 
   private async scan(): Promise<void> {
+    const revision = this.admission.revision;
+    if (!this.admission.allows(revision)) return;
     if (this.scanRunning) {
       this.scanAgain = true;
       return;
@@ -324,17 +343,22 @@ export class SpawnWatchRuntime {
     try {
       do {
         this.scanAgain = false;
-        await Promise.all([this.scanSpawns(), this.scanBashRecords()]);
+        // Each requested pass belongs to the generation current when that
+        // pass begins; a readmission during old I/O must not be consumed by it.
+        const revision = this.admission.revision;
+        if (!this.admission.allows(revision)) continue;
+        await Promise.all([this.scanSpawns(revision), this.scanBashRecords(revision)]);
       } while (this.scanAgain);
     } finally {
       this.scanRunning = false;
     }
   }
 
-  private async scanSpawns(): Promise<void> {
+  private async scanSpawns(revision = this.admission.revision): Promise<void> {
     this.discoverMissingSpawnStates();
     const suppressed = await this.readSuppressedSpawnIds();
     const states = await this.rows();
+    if (!this.admission.allows(revision)) return;
     if (states.some((state) => state.terminal === null)) {
       this.enableFallbackScan("active-origin-spawns");
     } else {
@@ -357,15 +381,17 @@ export class SpawnWatchRuntime {
         duration: formatDurationSecs(state.terminal?.duration_secs),
       });
     }
-    this.scheduleFlush();
+    this.scheduleFlush(revision);
   }
 
-  private async scanBashRecords(): Promise<void> {
+  private async scanBashRecords(revision = this.admission.revision): Promise<void> {
     const file = await readJsonFile<BashRecordsFile | null>(this.bashRecordsPath, null);
+    if (!this.admission.allows(revision)) return;
     await this.rememberOriginBashIds(Object.keys(file?.records ?? {}));
     const records = Object.values(file?.records ?? {});
     await this.rememberExpectedSpawnIds(records);
     const states = await this.readOriginSpawnStates(await this.readOriginBashIds());
+    if (!this.admission.allows(revision)) return;
     const bashIdsWithSpawns = new Set(
       states
         .map((state) => state.originating_bash_id)
@@ -395,7 +421,7 @@ export class SpawnWatchRuntime {
         duration: formatDurationSecs(((record.ended_at_ms ?? Date.now()) - record.started_at_ms) / 1000),
       });
     }
-    this.scheduleFlush();
+    this.scheduleFlush(revision);
   }
 
   private withinBashCorrelationGrace(record: { ended_at_ms?: number | null }): boolean {
@@ -423,8 +449,8 @@ export class SpawnWatchRuntime {
     this.bashGraceTimers.set(bashId, timer);
   }
 
-  private scheduleFlush(): void {
-    if (this.pending.size === 0) return;
+  private scheduleFlush(revision = this.admission.revision): void {
+    if (this.pending.size === 0 || !this.admission.allows(revision)) return;
     if (this.debounce) clearTimeout(this.debounce);
     this.debounce = setTimeout(() => void this.flush(), DEBOUNCE_MS);
     this.debounce.unref();
@@ -439,7 +465,10 @@ export class SpawnWatchRuntime {
     if (this.maxWave) clearTimeout(this.maxWave);
     this.debounce = null;
     this.maxWave = null;
+    const revision = this.admission.revision;
+    if (!this.admission.allows(revision)) return;
     const suppressed = await this.readSuppressedSpawnIds();
+    if (!this.admission.allows(revision)) return;
     const items = [...this.pending.values()].filter(
       (item) => item.kind !== "spawn" || !suppressed.has(item.id),
     );
@@ -450,6 +479,7 @@ export class SpawnWatchRuntime {
     if (items.length === 0) return;
 
     const content = await formatNotification(items);
+    if (!this.admission.allows(revision)) return;
     await this.pi.sendMessage?.(
       {
         customType: "meridian-spawn-watch",
@@ -459,6 +489,7 @@ export class SpawnWatchRuntime {
       },
       { triggerTurn: true, deliverAs: "followUp" },
     );
+    if (!this.admission.allows(revision)) return;
     for (const item of items) TERMINAL_NOTIFIED.add(item.id);
     await writeJsonAtomic(this.markerPath, {
       ts_epoch_secs: Date.now() / 1000,
@@ -680,9 +711,26 @@ const SPAWN_PANEL_COLUMNS: SelectablePanelColumn<SpawnStateFile>[] = [
 ];
 
 export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
-  const runtime = new SpawnWatchRuntime(pi as PiWithMessages);
+  const admission = notificationAdmission();
+  const runtime = new SpawnWatchRuntime(pi as PiWithMessages, admission);
   pi.on?.("session_start", () => runtime.start());
-  pi.on?.("session_shutdown", () => runtime.stop());
+  pi.on?.("agent_start", () => {
+    if (admission.tracked) {
+      const revision = admission.agentStart();
+      if (admission.allows(revision)) runtime.requestAdmittedScan();
+    }
+  });
+  pi.on?.("session_before_switch", () => {
+    admission.suspend();
+    runtime.suspendNotifications();
+  });
+  pi.on?.("session_shutdown", (event) => {
+    const reason = (event as { reason?: string } | undefined)?.reason;
+    if (reason === "quit" || reason === "reload") admission.close();
+    else admission.suspend();
+    runtime.suspendNotifications();
+    runtime.stop();
+  });
 
   pi.registerCommand("spawn", {
     description: "List Meridian spawns correlated to this Pi session.",

@@ -10,6 +10,7 @@ import {
   type SelectablePanelColumn,
 } from "../../shared/selectable_panel";
 import { formatDurationSecs, renderTable } from "../../shared/ui";
+import { notificationAdmission } from "../../shared/notification_admission";
 import type { BashRecord } from "../../shared/schemas";
 import { BashRuntime, type BashListRow, type BashManageParams, type BashParams } from "./bash_runtime";
 
@@ -75,7 +76,8 @@ function readInspectableLog(row: BashPanelRow, stream: BashLogStream = "combined
   return tailFile(filePath, 1024 * 1024).trimEnd() || "(no output yet)";
 }
 
-async function sendBackgroundPing(pi: ExtensionAPI, record: BashRecord): Promise<void> {
+async function sendBackgroundPing(pi: ExtensionAPI, record: BashRecord, revision: number, admission = notificationAdmission()): Promise<void> {
+  if (!admission.allows(revision)) return;
   await pi.sendMessage?.(
     {
       customType: "meridian-bash-ping",
@@ -202,20 +204,31 @@ function splitUserBashBackground(command: string): { background: boolean; execCo
 }
 
 export default function managedBashExtension(pi: ExtensionAPI): void {
+  const admission = notificationAdmission();
   const runtime = new BashRuntime({
     onForegroundStart: () => showForegroundHint(),
     onForegroundStop: () => clearForegroundHint(),
-    onBackgroundPing: (record) => sendBackgroundPing(pi, record),
+    backgroundPingRevision: () => admission.revision,
+    onBackgroundPing: (record, revision) => sendBackgroundPing(pi, record, revision, admission),
   });
 
   // Capture setWidget from the first event context that provides UI.
   pi.on?.("agent_start", (_event, ctx) => {
+    admission.agentStart();
     if (!capturedSetWidget && ctx?.ui?.setWidget) {
       capturedSetWidget = (key: string, content: string[] | undefined) => ctx.ui.setWidget(key, content);
     }
   });
 
-  pi.on?.("session_shutdown", async () => {
+  pi.on?.("session_before_switch", async () => {
+    admission.suspend();
+    if (admission.tracked) await runtime.cancelBackgroundPings();
+  });
+
+  pi.on?.("session_shutdown", async (event) => {
+    const reason = (event as { reason?: string } | undefined)?.reason;
+    if (reason === "quit" || reason === "reload") admission.close();
+    else admission.suspend();
     activeForegroundCount = 0;
     if (capturedSetWidget) capturedSetWidget("managed-bash", undefined);
     capturedSetWidget = null;

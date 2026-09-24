@@ -42,7 +42,8 @@ type RuntimeRecord = BashRecord & {
 export type BashRuntimeHooks = {
   onForegroundStart?: (bashId: string) => void;
   onForegroundStop?: (bashId: string) => void;
-  onBackgroundPing?: (record: BashRecord) => void | Promise<void>;
+  backgroundPingRevision?: () => number;
+  onBackgroundPing?: (record: BashRecord, revision: number) => void | Promise<void>;
 };
 
 export type BashListRow = BashRecord & {
@@ -102,6 +103,7 @@ export const USER_BASH_PANEL_BACKGROUND_MSG = "Sent to background — /ps";
 
 export class BashRuntime {
   private readonly spawnId = currentSpawnIdFromEnv();
+  private readonly activePings = new Set<Promise<void>>();
   private readonly logStore = new BashLogStore(resolveBashLogsDir(this.spawnId));
   private readonly records = new Map<string, RuntimeRecord>();
 
@@ -302,6 +304,7 @@ export class BashRuntime {
   }
 
   async shutdown(): Promise<void> {
+    await this.cancelBackgroundPings();
     for (const record of this.records.values()) {
       if (record.child && record.status === "running") {
         try {
@@ -312,6 +315,11 @@ export class BashRuntime {
       }
     }
     await this.persist();
+  }
+
+  async cancelBackgroundPings(): Promise<void> {
+    for (const record of this.records.values()) this.clearPing(record);
+    await Promise.allSettled([...this.activePings]);
   }
 
   private async startRecord(
@@ -461,7 +469,15 @@ export class BashRuntime {
     ) {
       return;
     }
-    const timer = setTimeout(() => void this.firePing(record), taskPingIntervalMs());
+    const revision = this.hooks.backgroundPingRevision?.() ?? 0;
+    const timer = setTimeout(() => {
+      const work = this.firePing(record, revision);
+      this.activePings.add(work);
+      void work.then(
+        () => this.activePings.delete(work),
+        () => this.activePings.delete(work),
+      );
+    }, taskPingIntervalMs());
     timer.unref();
     record.pingTimer = timer;
   }
@@ -471,7 +487,7 @@ export class BashRuntime {
     record.pingTimer = null;
   }
 
-  private async firePing(record: RuntimeRecord): Promise<void> {
+  private async firePing(record: RuntimeRecord, revision: number): Promise<void> {
     record.pingTimer = null;
     if (
       record.status !== "running" ||
@@ -481,9 +497,11 @@ export class BashRuntime {
     ) {
       return;
     }
+    // The timer carries its admitted-run revision through persistence. The
+    // callback validates this same revision immediately before sending.
     record.ping_sent_at_ms = Date.now();
     await this.persist();
-    await this.hooks.onBackgroundPing?.(toPlainRecord(record));
+    await this.hooks.onBackgroundPing?.(toPlainRecord(record), revision);
   }
 
   private onTerminal(record: RuntimeRecord, fn: () => void | Promise<void>): void {

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+import { NOTIFICATION_GATE_ENV, notificationAdmission } from "../../shared/notification_admission";
 
 import { SpawnWatchRuntime } from "./index";
 import { rememberSpawnOriginBashIds } from "../../shared/spawn_origins";
@@ -24,9 +25,11 @@ function restoreEnv(): void {
 }
 
 type SpawnWatchRuntimeInternals = SpawnWatchRuntime & {
+  scan(): Promise<void>;
   scanBashRecords(): Promise<void>;
   scanSpawns(): Promise<void>;
   fallbackScanReasons: Set<string>;
+  readSuppressedSpawnIds(): Promise<Set<string>>;
   pending: Map<string, { kind: "spawn" | "bash"; duration: string }>;
   running: boolean;
   enableDiscoveryPolling(): void;
@@ -35,6 +38,7 @@ type SpawnWatchRuntimeInternals = SpawnWatchRuntime & {
   fallbackScanInterval: NodeJS.Timeout | null;
   discoveryScanInterval: NodeJS.Timeout | null;
   missingStateFirstSeenMs: Map<string, number>;
+  flush(): Promise<void>;
 };
 
 function bashRecord(bashId: string, overrides: Partial<BashRecord> = {}): BashRecord {
@@ -129,6 +133,15 @@ async function makeRuntime(): Promise<{ runtimeRoot: string; runtime: SpawnWatch
   setEnv("MERIDIAN_SPAWN_ID", "p-parent");
   const runtime = new SpawnWatchRuntime({} as ConstructorParameters<typeof SpawnWatchRuntime>[0]);
   return { runtimeRoot, runtime, internals: runtime as SpawnWatchRuntimeInternals };
+}
+
+function trackedAdmission() {
+  const nonce = `watch-${Math.random()}`;
+  return notificationAdmission({
+    [NOTIFICATION_GATE_ENV.version]: "1",
+    [NOTIFICATION_GATE_ENV.attempt]: "attempt-b3a",
+    [NOTIFICATION_GATE_ENV.nonce]: nonce,
+  });
 }
 
 describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
@@ -484,6 +497,116 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
 
       await internals.scanBashRecords();
       expect(internals.pending.has("b-timeout")).toBe(false);
+    } finally {
+      runtime.stop();
+      await rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("holds real correlated completed background work until the admitted agent run", async () => {
+    const { runtimeRoot } = await makeRuntime();
+    const sent: unknown[] = [];
+    const admission = trackedAdmission();
+    const runtime = new SpawnWatchRuntime({ sendMessage: (message) => { sent.push(message); } }, admission);
+    const internals = runtime as SpawnWatchRuntimeInternals;
+    try {
+      // This is a real completed managed-bash row, not an empty-state fixture.
+      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-real-completed", {
+        command: "sleep 1 &",
+        ended_at_ms: Date.now() - 20_000,
+      })]);
+      runtime.start();
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(sent).toHaveLength(0);
+      expect(internals.pending.size).toBe(0);
+
+      const revision = admission.agentStart();
+      expect(admission.allows(revision)).toBe(true);
+      await internals.scanBashRecords();
+      await internals.flush();
+      expect(sent).toHaveLength(1);
+      expect((sent[0] as { content: string }).content).toContain("Background bash b-real-completed completed");
+    } finally {
+      runtime.stop();
+      await rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("reruns an admitted scan requested while an older generation is blocked in I/O", async () => {
+    const { runtimeRoot } = await makeRuntime();
+    const sent: unknown[] = [];
+    const admission = trackedAdmission();
+    const watch = new SpawnWatchRuntime({ sendMessage: (message) => { sent.push(message); } }, admission);
+    const active = watch as SpawnWatchRuntimeInternals;
+    let release!: () => void;
+    let reached!: () => void;
+    const barrier = new Promise<void>((resolve) => { release = resolve; });
+    const atBarrier = new Promise<void>((resolve) => { reached = resolve; });
+    try {
+      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-overlap", {
+        command: "sleep 1 &",
+        ended_at_ms: Date.now() - 20_000,
+      })]);
+      active.running = true;
+      admission.agentStart();
+      const originalRead = active.readSuppressedSpawnIds.bind(watch);
+      let first = true;
+      active.readSuppressedSpawnIds = async () => {
+        if (first) {
+          first = false;
+          reached();
+          await barrier;
+        }
+        return originalRead();
+      };
+
+      const oldScan = active.scan();
+      await atBarrier;
+      admission.suspend();
+      active.suspendNotifications();
+      admission.agentStart();
+      await active.scan(); // coalesces as a requested pass behind oldScan
+      release();
+      await oldScan;
+      await active.flush();
+
+      expect(sent).toHaveLength(1);
+      expect((sent[0] as { content: string }).content).toContain("b-overlap");
+    } finally {
+      release();
+      watch.stop();
+      await rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("drops an in-flight formatted notification when switch/close revokes its generation", async () => {
+    const { runtimeRoot } = await makeRuntime();
+    const sent: unknown[] = [];
+    const admission = trackedAdmission();
+    const runtime = new SpawnWatchRuntime({ sendMessage: (message) => { sent.push(message); } }, admission);
+    const internals = runtime as SpawnWatchRuntimeInternals;
+    try {
+      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-switch-race", {
+        command: "sleep 2 &",
+        ended_at_ms: Date.now() - 20_000,
+      })]);
+      runtime.start();
+      admission.agentStart();
+      await internals.scanBashRecords();
+      const flushing = internals.flush();
+      admission.suspend(); // session_before_switch/replacement
+      runtime.suspendNotifications();
+      await flushing;
+      expect(sent).toHaveLength(0);
+      expect(internals.pending.size).toBe(0);
+
+      admission.agentStart();
+      await internals.scanBashRecords();
+      const closing = internals.flush();
+      admission.close(); // reload/quit after async flush has started
+      runtime.suspendNotifications();
+      await closing;
+      expect(sent).toHaveLength(0);
     } finally {
       runtime.stop();
       await rm(runtimeRoot, { recursive: true, force: true });
