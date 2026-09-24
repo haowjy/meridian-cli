@@ -53,6 +53,7 @@ from meridian.lib.harness.launch_types import ManagedPrimaryPreview, SessionSeed
 from meridian.lib.harness.native_session_args import (
     NativeSessionSurface,
     NormalizedNativeSessionArgs,
+    PrimaryArgControls,
 )
 from meridian.lib.harness.opencode_backend import resolve_opencode_version
 from meridian.lib.harness.opencode_report import (
@@ -451,9 +452,13 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     )
 
     def normalize_primary_session_args(
-        self, args: tuple[str, ...], surface: NativeSessionSurface
+        self,
+        args: tuple[str, ...],
+        surface: NativeSessionSurface,
+        *,
+        controls: PrimaryArgControls | None = None,
     ) -> NormalizedNativeSessionArgs:
-        return normalize_primary_session_args(args, surface)
+        return normalize_primary_session_args(args, surface, controls=controls)
 
     @property
     def id(self) -> HarnessId:

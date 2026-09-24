@@ -100,6 +100,7 @@ from .policies import (
     ModelSelectionContext,
     ResolvedLaunchPolicy,
     SurfacePolicyInput,
+    effective_native_model,
     resolve_launch_policy,
 )
 from .policy_snapshot import build_launch_policy_snapshot, overlay_continue_model_selection
@@ -2138,9 +2139,7 @@ def _bind_launch_context_impl(
         ids={"spawn_id": bindings.spawn_id},
         data={"model_family": model_family, "harness": harness.id.value},
     )
-    effective_model = model
-    if model_selection is not None and model_selection.harness_model_id is not None:
-        effective_model = model_selection.harness_model_id
+    effective_model = effective_native_model(model, model_selection)
 
     claude_native_agents_enabled = (
         harness.id == HarnessId.CLAUDE

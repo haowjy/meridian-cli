@@ -20,6 +20,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Add immutable retained-policy controls and redacted warning output to the
+  native primary-argument normalization seam; preserve two-argument adapters
+  in syntax-only calls and share effective model selection with launch binding.
+
 - Separate launch policy resolution from prepared-surface packaging so later
   assembly can reuse one required resolved policy without rerouting.
 

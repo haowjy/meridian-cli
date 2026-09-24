@@ -23,6 +23,7 @@ from meridian.lib.harness.launch_types import SessionSeed
 from meridian.lib.harness.native_session_args import (
     NativeSessionSurface,
     NormalizedNativeSessionArgs,
+    PrimaryArgControls,
     normalize_native_session_args,
 )
 from meridian.lib.launch.composition import (
@@ -415,7 +416,11 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
     def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> AdapterSpecT: ...
 
     def normalize_primary_session_args(
-        self, args: tuple[str, ...], surface: NativeSessionSurface
+        self,
+        args: tuple[str, ...],
+        surface: NativeSessionSurface,
+        *,
+        controls: PrimaryArgControls | None = None,
     ) -> NormalizedNativeSessionArgs: ...
 
     def preflight(
@@ -651,10 +656,14 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         return PreflightResult.build(expanded_passthrough_args=passthrough_args)
 
     def normalize_primary_session_args(
-        self, args: tuple[str, ...], surface: NativeSessionSurface
+        self,
+        args: tuple[str, ...],
+        surface: NativeSessionSurface,
+        *,
+        controls: PrimaryArgControls | None = None,
     ) -> NormalizedNativeSessionArgs:
         """Normalize primary raw args; refuse unsupported native selectors."""
-        return normalize_native_session_args(args, surface, None)
+        return normalize_native_session_args(args, surface, None, controls=controls)
 
     def run_prompt_policy(self) -> RunPromptPolicy:
         return RunPromptPolicy()

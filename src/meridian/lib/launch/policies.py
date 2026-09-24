@@ -20,6 +20,7 @@ from meridian.lib.core.overrides import (
 )
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SubprocessHarness
+from meridian.lib.harness.native_session_args import PrimaryArgControls
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.tools import ToolsField
 
@@ -173,6 +174,40 @@ class ResolvedLaunchPolicy:
 
 
 ResolvedPolicies = ResolvedLaunchPolicy
+
+
+def effective_native_model(
+    model: str | None, model_selection: ModelSelectionContext | None
+) -> str | None:
+    """Return the token binding emits, preferring a resolved harness token."""
+    if model_selection is not None and model_selection.harness_model_id is not None:
+        return model_selection.harness_model_id
+    return model
+
+
+def primary_arg_controls(policy: ResolvedLaunchPolicy) -> PrimaryArgControls:
+    """Project retained policy facts into the low-layer native-args carrier.
+
+    This deliberately does not infer control from model text alone. Contradictory
+    model-selection records are treated as unknown rather than repaired.
+    """
+    model = effective_native_model(policy.model, policy.model_selection)
+    source = policy.field_provenance.model_source
+    controlled = type(source) is ProvenanceLevel and source is not ProvenanceLevel.UNSET
+    selection = policy.model_selection
+    if selection is not None:
+        canonical = (selection.canonical_model_id or "").strip()
+        normalized_model = (policy.model or "").strip()
+        native = (selection.harness_model_id or "").strip()
+        # Selection metadata must agree with the retained policy and native
+        # token. In particular, a named canonical model cannot imply omission.
+        if canonical != normalized_model or bool(canonical) != bool(native):
+            controlled = False
+    return PrimaryArgControls(
+        model=model,
+        model_controlled=controlled,
+        execution_policy=policy.execution_policy,
+    )
 
 
 def _resolve_terminal_surface_mode(*, harness_id: HarnessId) -> TerminalSurfaceMode:
@@ -739,7 +774,9 @@ __all__ = [
     "ResolvedLaunchPolicy",
     "ResolvedPolicies",
     "SurfacePolicyInput",
+    "effective_native_model",
     "match_model_policy",
+    "primary_arg_controls",
     "resolve_launch_policy",
     "resolve_policies",
     "resolve_policy_fields",

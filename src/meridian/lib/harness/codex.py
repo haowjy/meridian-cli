@@ -63,6 +63,7 @@ from meridian.lib.harness.native_session_args import (
     NativeSessionSelector,
     NativeSessionSurface,
     NormalizedNativeSessionArgs,
+    PrimaryArgControls,
 )
 from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.harness.projections.project_codex_streaming import (
@@ -315,8 +316,12 @@ def _validate_codex_config(raw: str) -> None:
 
 
 def _normalize_codex_primary_session_args(
-    args: tuple[str, ...], surface: NativeSessionSurface
+    args: tuple[str, ...],
+    surface: NativeSessionSurface,
+    *,
+    controls: PrimaryArgControls | None = None,
 ) -> NormalizedNativeSessionArgs:
+    _ = controls
     selector: NativeSessionSelector | None = None
     index = 0
     if args and args[0] == "resume":
@@ -437,9 +442,13 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """SubprocessHarness implementation for `codex`."""
 
     def normalize_primary_session_args(
-        self, args: tuple[str, ...], surface: NativeSessionSurface
+        self,
+        args: tuple[str, ...],
+        surface: NativeSessionSurface,
+        *,
+        controls: PrimaryArgControls | None = None,
     ) -> NormalizedNativeSessionArgs:
-        return _normalize_codex_primary_session_args(args, surface)
+        return _normalize_codex_primary_session_args(args, surface, controls=controls)
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_CODEX_SUBPROCESS
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_CODEX

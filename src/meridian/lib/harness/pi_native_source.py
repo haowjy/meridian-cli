@@ -14,6 +14,7 @@ from typing import Literal, cast
 from meridian.lib.harness.native_session_args import (
     NativeSessionSurface,
     NormalizedNativeSessionArgs,
+    PrimaryArgControls,
 )
 from meridian.lib.state.session_authority import (
     LocalObjectStamp,
@@ -65,7 +66,10 @@ _PRIMARY_SHORT_VALUE_OPTIONS = frozenset({"-m"})
 
 
 def normalize_pi_primary_session_args(
-    args: tuple[str, ...], surface: NativeSessionSurface
+    args: tuple[str, ...],
+    surface: NativeSessionSurface,
+    *,
+    controls: PrimaryArgControls | None = None,
 ) -> NormalizedNativeSessionArgs:
     """Retain only Pi's bounded, non-selecting primary override grammar.
 
@@ -73,6 +77,7 @@ def normalize_pi_primary_session_args(
     that an option is safe for a tracked source, or change the tracked RPC
     raw-tail/resource gate at its existing consumer.
     """
+    _ = controls
     if surface not in ("subprocess", "managed"):
         raise ValueError("Pi primary native-session surface is unsupported")
 

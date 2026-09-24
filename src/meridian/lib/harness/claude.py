@@ -66,6 +66,7 @@ from meridian.lib.harness.native_session_args import (
     NativeSessionSelector,
     NativeSessionSurface,
     NormalizedNativeSessionArgs,
+    PrimaryArgControls,
 )
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.harness.semantics import (
@@ -119,7 +120,10 @@ _SAFE_OPTION_NAME = re.compile(r"^(?:--[A-Za-z][A-Za-z0-9-]*|-[A-Za-z])$")
 
 
 def normalize_primary_session_args(
-    args: tuple[str, ...], surface: NativeSessionSurface = "subprocess"
+    args: tuple[str, ...],
+    surface: NativeSessionSurface = "subprocess",
+    *,
+    controls: PrimaryArgControls | None = None,
 ) -> NormalizedNativeSessionArgs:
     """Normalize Claude's bounded primary raw-selector grammar.
 
@@ -127,6 +131,7 @@ def normalize_primary_session_args(
     other tokens must have a known option role so selection cannot hide in an
     unknown arity or positional/subcommand escape.
     """
+    _ = controls
     if surface != "subprocess":
         raise ValueError("Claude primary raw arguments are unsupported on managed surface")
 
@@ -317,9 +322,13 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_CLAUDE
 
     def normalize_primary_session_args(
-        self, args: tuple[str, ...], surface: NativeSessionSurface
+        self,
+        args: tuple[str, ...],
+        surface: NativeSessionSurface,
+        *,
+        controls: PrimaryArgControls | None = None,
     ) -> NormalizedNativeSessionArgs:
-        return normalize_primary_session_args(args, surface)
+        return normalize_primary_session_args(args, surface, controls=controls)
 
     _CONSUMED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {

@@ -47,6 +47,7 @@ from meridian.lib.harness.extractors.pi import (
 from meridian.lib.harness.native_session_args import (
     NativeSessionSurface,
     NormalizedNativeSessionArgs,
+    PrimaryArgControls,
     normalize_native_session_args,
 )
 from meridian.lib.harness.pi_lifecycle_events import redact_pi_command_for_history
@@ -136,9 +137,15 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """Pi harness implementation for native installed ``pi`` launches."""
 
     def normalize_primary_session_args(
-        self, args: tuple[str, ...], surface: NativeSessionSurface
+        self,
+        args: tuple[str, ...],
+        surface: NativeSessionSurface,
+        *,
+        controls: PrimaryArgControls | None = None,
     ) -> NormalizedNativeSessionArgs:
-        return normalize_native_session_args(args, surface, normalize_pi_primary_session_args)
+        return normalize_native_session_args(
+            args, surface, normalize_pi_primary_session_args, controls=controls
+        )
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_PI_SUBPROCESS
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_PI

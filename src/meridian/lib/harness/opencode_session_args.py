@@ -10,6 +10,7 @@ from meridian.lib.harness.native_session_args import (
     NativeSessionSelector,
     NativeSessionSurface,
     NormalizedNativeSessionArgs,
+    PrimaryArgControls,
 )
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 
@@ -61,12 +62,15 @@ def _value(
 def normalize_primary_session_args(
     args: Sequence[str],
     surface: NativeSessionSurface = "subprocess",
+    *,
+    controls: PrimaryArgControls | None = None,
 ) -> NormalizedNativeSessionArgs:
     """Normalize explicit OpenCode session selectors and retain a safe raw tail.
 
     The managed surface starts ``opencode serve`` rather than ``opencode run``;
     it therefore admits only the global logging flags in its raw remainder.
     """
+    _ = controls
     if surface not in ("subprocess", "managed"):
         raise ValueError(f"Unknown OpenCode primary surface: {surface!r}")
 

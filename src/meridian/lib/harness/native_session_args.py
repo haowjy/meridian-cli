@@ -10,6 +10,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
+from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
+
 NativeSessionSurface = Literal["subprocess", "managed"]
 
 
@@ -24,29 +26,50 @@ class NativeSessionSelector:
 
 
 @dataclass(frozen=True)
+class PrimaryArgControls:
+    """Retained launch facts available to primary native-argument adapters."""
+
+    model: str | None
+    model_controlled: bool
+    execution_policy: ResolvedExecutionPolicy
+
+
+@dataclass(frozen=True)
 class NormalizedNativeSessionArgs:
     selector: NativeSessionSelector | None
     remaining_args: tuple[str, ...]
+    warnings: tuple[str, ...] = ()
 
 
 class NativeSessionArgsNormalizer(Protocol):
     """Normalize one raw argument vector for a harness-specific launch surface."""
 
     def __call__(
-        self, args: tuple[str, ...], surface: NativeSessionSurface, /
+        self,
+        args: tuple[str, ...],
+        surface: NativeSessionSurface,
+        /,
+        *,
+        controls: PrimaryArgControls | None = None,
     ) -> NormalizedNativeSessionArgs: ...
 
 
 def normalize_native_session_args(
     args: tuple[str, ...],
     surface: NativeSessionSurface,
-    normalizer: NativeSessionArgsNormalizer | Callable[
-        [tuple[str, ...], NativeSessionSurface], NormalizedNativeSessionArgs
-    ] | None,
+    normalizer: NativeSessionArgsNormalizer
+    | Callable[[tuple[str, ...], NativeSessionSurface], NormalizedNativeSessionArgs]
+    | None,
+    *,
+    controls: PrimaryArgControls | None = None,
 ) -> NormalizedNativeSessionArgs:
     """Normalize once, refusing nonempty raw input for an unimplemented adapter."""
     if normalizer is None:
         if args:
             raise ValueError("raw native session arguments are unsupported for this adapter")
         return NormalizedNativeSessionArgs(None, args)
-    return normalizer(args, surface)
+    if controls is None:
+        # Preserve existing two-argument callable adapters in syntax-only use.
+        return normalizer(args, surface)
+    # Never discard retained controls: legacy callables fail visibly here.
+    return normalizer(args, surface, controls=controls)  # type: ignore[call-arg]
