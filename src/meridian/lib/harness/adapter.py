@@ -20,6 +20,10 @@ from meridian.lib.harness.connections.base import (
     ServerRequestHandler,
 )
 from meridian.lib.harness.launch_types import SessionSeed
+from meridian.lib.harness.native_session_args import (
+    NormalizedNativeSessionArgs,
+    normalize_native_session_args,
+)
 from meridian.lib.launch.composition import (
     ComposedLaunchContent,
     ProjectedContent,
@@ -409,6 +413,10 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
 
     def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> AdapterSpecT: ...
 
+    def normalize_primary_session_args(
+        self, args: tuple[str, ...]
+    ) -> NormalizedNativeSessionArgs: ...
+
     def preflight(
         self,
         *,
@@ -640,6 +648,12 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     ) -> PreflightResult:
         _ = execution_cwd, child_cwd
         return PreflightResult.build(expanded_passthrough_args=passthrough_args)
+
+    def normalize_primary_session_args(
+        self, args: tuple[str, ...]
+    ) -> NormalizedNativeSessionArgs:
+        """Normalize primary raw args; refuse unsupported native selectors."""
+        return normalize_native_session_args(args, None)
 
     def run_prompt_policy(self) -> RunPromptPolicy:
         return RunPromptPolicy()
