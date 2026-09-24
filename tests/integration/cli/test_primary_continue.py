@@ -717,6 +717,129 @@ def test_primary_from_remains_fresh_and_does_not_use_source_authority(
     assert requests[0].session.continue_source_ref is None
 
 
+def test_cli_fork_carries_explicit_operation_into_session_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    requests: list[LaunchRequest] = []
+
+    def record_launch(*, request: LaunchRequest, **kwargs: Any) -> LaunchResult:
+        _ = kwargs
+        requests.append(request)
+        return LaunchResult(command=(), exit_code=0)
+
+    monkeypatch.setattr(primary_launch_module, "launch_primary", record_launch)
+
+    run_primary_launch(
+        project_root=project_root,
+        continue_ref=None,
+        fork_ref="native-untracked-session",
+        fork_fresh_ref=None,
+        model=None,
+        harness="codex",
+        agent=None,
+        work="",
+        task_dir=None,
+        yolo=False,
+        approval=None,
+        autocompact=None,
+        effort=None,
+        sandbox=None,
+        timeout=None,
+        dry_run=True,
+        passthrough=(),
+        skills=(),
+    )
+
+    request = requests[0]
+    assert request.session.continue_source_ref == "native-untracked-session"
+    assert request.session.primary_session_mode == "fork"
+    assert request.session.continue_fork is True
+    assert request.session_mode is SessionMode.FORK
+
+
+def test_untracked_fork_projects_fork_operation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An authorized native-only source reaches the projection as a fork."""
+    import meridian.lib.launch.source_selection as source_selection
+    import meridian.lib.ops.reference as reference
+
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    monkeypatch.setattr(
+        source_selection,
+        "validate_primary_source_use",
+        lambda **kwargs: UntrackedSourceUse(
+            operation="fork",
+            original_ref="untracked-native-session",
+            native_id="untracked-native-session",
+            harness="codex",
+            lookup_scope=runtime_root,
+        ),
+    )
+    monkeypatch.setattr(
+        reference,
+        "resolve_session_reference",
+        lambda *args, **kwargs: SimpleNamespace(
+            authoritative_harness_session_id="untracked-native-session",
+            harness="codex",
+            tracked=False,
+            source_launch_policy_snapshot=None,
+            missing_harness_session_id=False,
+            source_chat_id=None,
+            source_history_id=None,
+            source_model="gpt-5.3-codex",
+            source_agent=None,
+            source_skills=(),
+            source_work_id=None,
+            source_execution_cwd=None,
+            source_control_root=None,
+            source_claude_config_dir=None,
+            source_pi_session_dir=None,
+            warning=None,
+        ),
+    )
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.3-codex",
+        model_token="gpt-5.3-codex",
+        harness=HarnessId.CODEX,
+        harness_model="gpt-5.3-codex",
+    )
+    projected_forks: list[bool] = []
+    real_bind_launch_context = launch_context._bind_launch_context_impl
+
+    def bind_launch_context(*args: Any, **kwargs: Any) -> Any:
+        context = real_bind_launch_context(*args, **kwargs)
+        projected_forks.append(context.binding.spec.continue_fork)
+        return context
+
+    monkeypatch.setattr(launch_context, "_bind_launch_context_impl", bind_launch_context)
+
+    launch_primary(
+        project_root=project_root,
+        request=LaunchRequest(
+            model="gpt-5.3-codex",
+            harness="codex",
+            session_mode=SessionMode.FORK,
+            dry_run=True,
+            session=SessionRequest(
+                continue_source_ref="untracked-native-session",
+                primary_session_mode="fork",
+                continue_fork=True,
+            ),
+        ),
+        harness_registry=get_default_harness_registry(),
+    )
+
+    assert projected_forks == [True]
+
+
 @pytest.mark.parametrize(
     "raw_args",
     [
@@ -1137,6 +1260,7 @@ def _opencode_continue_spec_model(
     project_root = tmp_path / "repo"
     project_root.mkdir()
     _state_root(project_root)
+    monkeypatch.setenv("MERIDIAN_HARNESS_OPENCODE_VERSION", "v2")
     snapshot_reads = 0
     read_snapshot = session_store.read_native_source_use_snapshot
 
@@ -1207,6 +1331,7 @@ def test_public_bind_refuses_forged_prepared_source_without_transferable_proof(
     project_root = tmp_path / "repo"
     project_root.mkdir()
     _state_root(project_root)
+    monkeypatch.setenv("MERIDIAN_HARNESS_OPENCODE_VERSION", "v2")
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="deepseek/deepseek-flash",

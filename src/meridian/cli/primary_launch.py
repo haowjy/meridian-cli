@@ -246,7 +246,13 @@ def run_primary_launch(
                 autocompact_pct=autocompact_pct,
             ),
             primary_explicit_agent=agent is not None,
-            session=SessionRequest(continue_source_ref=continue_source_ref),
+            session=SessionRequest(
+                continue_source_ref=continue_source_ref,
+                primary_session_mode=(
+                    session_mode.value if session_mode != SessionMode.FRESH else None
+                ),
+                continue_fork=session_mode == SessionMode.FORK,
+            ),
         ),
         harness_registry=harness_registry,
     )

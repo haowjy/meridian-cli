@@ -6,6 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Preserve explicit fork mode and fork intent in the typed primary session request;
+  keep OpenCode model-override fixtures pinned to V2 while retaining V1 refusal.
 - Pi primary argument validation errors no longer disclose rejected positional,
   response-file, or unknown flag tokens; known bounded options retain useful
   missing-value diagnostics without exposing values.
