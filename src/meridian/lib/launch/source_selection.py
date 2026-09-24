@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from meridian.lib.ops.reference import UntrackedSourceUse
 
 _CHAT_REF = re.compile(r"c[1-9][0-9]*\Z")
 _SPAWN_REF = re.compile(r"p[1-9][0-9]*\Z")
@@ -68,7 +71,7 @@ def validate_primary_source_use(
     harness: str | None,
     operation: Literal["resume", "fork"],
     extra_args: tuple[str, ...] = (),
-) -> object | None:
+) -> UntrackedSourceUse | None:
     """Strictly validate the actual source selection and retain its negative result locally."""
     from meridian.lib.ops.reference import (
         AuthorizedSourceUse,
@@ -119,4 +122,4 @@ def validate_primary_source_use(
             "Cannot launch a caller-supplied tracked source without revalidated "
             "source-use provenance (transport_unqualified)."
         )
-    return result
+    return result if isinstance(result, UntrackedSourceUse) else None

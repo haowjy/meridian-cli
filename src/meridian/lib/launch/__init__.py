@@ -259,7 +259,9 @@ def launch_primary(
     normalize_effective_native_selection(
         original_source,
         prepared.seed_harness_session_id or final_session.requested_harness_session_id,
-        authorized_native_id=getattr(authorized_untracked_source, "native_id", None),
+        authorized_native_id=(
+            authorized_untracked_source.native_id if authorized_untracked_source else None
+        ),
         tracked_claim=False,
     )
     if prepared.harness.id.value != (prepared.request.harness or "").strip().lower():
