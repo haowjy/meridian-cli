@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Skip optional spawn-owner lookup when no chat ID is available.
+
 ### Changed
 
 - Reuse one primary source-use check across early preview and binding, and move
