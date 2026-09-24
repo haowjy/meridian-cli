@@ -5,12 +5,13 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from meridian.lib.harness.native_session_args import NativeSessionSelector
 
 if TYPE_CHECKING:
-    from meridian.lib.launch.request import SessionRequest
+    from meridian.lib.launch.request import SessionRequest, SpawnRequest
+    from meridian.lib.launch.types import LaunchRequest
     from meridian.lib.ops.reference import UntrackedSourceUse
 
 _CHAT_REF = re.compile(r"c[1-9][0-9]*\Z")
@@ -126,8 +127,7 @@ def reconcile_primary_source_selection(
     if selection.operation_facts and selection.operation_facts[0] != selection.operation:
         raise _conflict("operation differs from supplied operation facts")
     if selection.continue_fork_facts and any(
-        value != selection.continue_fork_facts[0]
-        for value in selection.continue_fork_facts[1:]
+        value != selection.continue_fork_facts[0] for value in selection.continue_fork_facts[1:]
     ):
         raise _conflict("fork intent changed")
 
@@ -185,13 +185,17 @@ def reconcile_raw_session_selections(
     selection: PrimarySourceSelection,
     raw_selections: tuple[NativeSessionSelector | None, ...],
     *,
-    operation_explicit: bool,
+    original_request: SpawnRequest | SessionRequest,
+    original_launch_request: LaunchRequest | None = None,
 ) -> NativeSessionSelector | None:
     """Reconcile independent adapter-normalized views without choosing precedence.
 
     Repeated identical views are boundary revalidation of one raw intent. A
     caller must retain the original source reference and authorize the returned
     native ID through its ordinary source-use seam; this function does no I/O.
+    ``original_request`` must be the unmaterialized raw request, so field
+    presence and ``context_from`` remain available before operation defaults in
+    ``selection`` can erase whether the caller specified them.
     """
     present = tuple(item for item in raw_selections if item is not None)
     if not present:
@@ -200,15 +204,50 @@ def reconcile_raw_session_selections(
     if any(item != first for item in present[1:]):
         raise _conflict("independent raw selectors differ")
 
-    if selection.operation == "fresh" and operation_explicit:
+    original_session = cast(
+        "SessionRequest",
+        original_request
+        if hasattr(original_request, "primary_session_mode")
+        else original_request.session,
+    )
+    session_mode = (original_session.primary_session_mode or "").strip().lower()
+    explicit_session_fresh = (
+        "primary_session_mode" in original_session.model_fields_set and session_mode == "fresh"
+    )
+    context_from = getattr(original_request, "context_from", ())
+    launch_mode = (
+        original_launch_request.session_mode.value if original_launch_request is not None else ""
+    )
+    explicit_launch_fresh = (
+        original_launch_request is not None
+        and "session_mode" in original_launch_request.model_fields_set
+        and launch_mode == "fresh"
+    )
+    original_operation_facts = session_operation_facts(original_session)
+    if (
+        original_launch_request is not None
+        and "session_mode" in original_launch_request.model_fields_set
+    ):
+        original_operation_facts = (*original_operation_facts, launch_mode)
+    explicit_fresh = (
+        explicit_session_fresh
+        or bool(context_from)
+        or explicit_launch_fresh
+        or bool(original_launch_request and original_launch_request.context_from)
+    )
+    if explicit_fresh:
         raise _conflict("explicit fresh operation conflicts with raw native source")
+    if selection.operation == "fresh" and "fresh" in selection.operation_facts:
+        raise _conflict("materialized fresh operation conflicts with raw native source")
     if selection.operation == "fresh" and selection.source_ref is not None:
         raise _conflict("typed source conflicts with fresh operation")
     if selection.operation in ("resume", "fork") and selection.operation != first.operation:
         raise _conflict("raw selector operation differs from typed operation")
-    operation_facts = (*selection.operation_facts, *(
-        "fork" if value else "resume" for value in selection.continue_fork_facts
-    ))
+    operation_facts = (
+        *selection.operation_facts,
+        *original_operation_facts,
+        *("fork" if value else "resume" for value in selection.continue_fork_facts),
+    )
     if any(fact != first.operation for fact in operation_facts):
         raise _conflict("raw selector differs from typed operation facts")
     if selection.native_id and selection.native_id.strip() != first.native_id:
@@ -302,9 +341,7 @@ def validate_primary_source_use(
 
         reject_pi_native_source_options(extra_args)
     result = (
-        resolve_source_use(runtime_root, operation, normalized, harness)
-        if normalized
-        else None
+        resolve_source_use(runtime_root, operation, normalized, harness) if normalized else None
     )
     if normalized:
         if isinstance(result, AuthorizedSourceUse):

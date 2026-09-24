@@ -3,11 +3,13 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.harness.native_session_args import NativeSessionSelector
+from meridian.lib.launch.request import SessionRequest, SpawnRequest
 from meridian.lib.launch.source_selection import (
     PrimarySourceSelection,
     reconcile_primary_source_selection,
     reconcile_raw_session_selections,
 )
+from meridian.lib.launch.types import LaunchRequest, SessionMode
 from meridian.lib.ops.reference import UntrackedSourceUse
 
 
@@ -120,9 +122,7 @@ def test_supplied_replay_and_prepared_views_retain_source_and_operation_facts(
 ) -> None:
     original = PrimarySourceSelection("c12", "native-A", "resume", "h1", tmp_path)
     with pytest.raises(ValueError, match="resolver dropped"):
-        reconcile_primary_source_selection(
-            original, resolved_id=None, resolved_id_supplied=True
-        )
+        reconcile_primary_source_selection(original, resolved_id=None, resolved_id_supplied=True)
     with pytest.raises(ValueError, match="original source reference changed"):
         reconcile_primary_source_selection(
             original, resolved_source_ref=None, resolved_source_ref_supplied=True
@@ -147,13 +147,52 @@ def test_raw_selection_reconciliation_distinguishes_unspecified_from_explicit_fr
     raw = NativeSessionSelector("resume", "native-A")
     unspecified = PrimarySourceSelection(None, None, "fresh", "claude", tmp_path)
 
-    assert reconcile_raw_session_selections(unspecified, (None,), operation_explicit=False) is None
     assert (
-        reconcile_raw_session_selections(unspecified, (raw,), operation_explicit=False)
+        reconcile_raw_session_selections(
+            unspecified, (None,), original_request=SpawnRequest(prompt="")
+        )
+        is None
+    )
+    assert (
+        reconcile_raw_session_selections(
+            unspecified, (raw,), original_request=SpawnRequest(prompt="")
+        )
         == raw
     )
-    with pytest.raises(ValueError, match="explicit fresh"):
-        reconcile_raw_session_selections(unspecified, (raw,), operation_explicit=True)
+    raw_fork = NativeSessionSelector("fork", "native-A")
+    assert (
+        reconcile_raw_session_selections(
+            unspecified, (raw_fork,), original_request=SpawnRequest(prompt="")
+        )
+        == raw_fork
+    )
+
+    # These three original requests collapse to the same defaulted selection;
+    # reconciliation must inspect original field presence/context before defaulting.
+    explicit_session_fresh = SessionRequest(primary_session_mode="fresh")
+    explicit_from = SpawnRequest(prompt="", context_from=("p12",))
+    original_launch_fresh = LaunchRequest(session_mode=SessionMode.FRESH)
+    for request, launch_request in (
+        (explicit_session_fresh, None),
+        (SpawnRequest(prompt="", session=explicit_session_fresh), None),
+        (SpawnRequest(prompt=""), original_launch_fresh),
+        (explicit_from, None),
+    ):
+        with pytest.raises(ValueError, match="explicit fresh"):
+            reconcile_raw_session_selections(
+                unspecified,
+                (raw,),
+                original_request=request,
+                original_launch_request=launch_request,
+            )
+
+    materialized = PrimarySourceSelection(
+        None, None, "fresh", "claude", tmp_path, operation_facts=("fresh",)
+    )
+    with pytest.raises(ValueError, match="fresh operation"):
+        reconcile_raw_session_selections(
+            materialized, (raw,), original_request=SpawnRequest(prompt="")
+        )
 
 
 def test_raw_selection_reconciliation_checks_typed_source_and_independent_views(
@@ -162,18 +201,29 @@ def test_raw_selection_reconciliation_checks_typed_source_and_independent_views(
     raw = NativeSessionSelector("resume", "native-A")
     typed = PrimarySourceSelection("native-A", "native-A", "resume", "claude", tmp_path)
 
-    assert reconcile_raw_session_selections(typed, (raw, raw), operation_explicit=True) == raw
+    assert (
+        reconcile_raw_session_selections(
+            typed, (raw, raw), original_request=SessionRequest(primary_session_mode="resume")
+        )
+        == raw
+    )
     with pytest.raises(ValueError, match="typed source"):
         reconcile_raw_session_selections(
             PrimarySourceSelection("native-B", None, "resume", "claude", tmp_path),
             (raw,),
-            operation_explicit=True,
+            original_request=SessionRequest(primary_session_mode="resume"),
         )
     with pytest.raises(ValueError, match="differ"):
         reconcile_raw_session_selections(
             typed,
             (raw, NativeSessionSelector("fork", "native-A")),
-            operation_explicit=True,
+            original_request=SessionRequest(primary_session_mode="resume"),
+        )
+    with pytest.raises(ValueError, match="typed operation"):
+        reconcile_raw_session_selections(
+            PrimarySourceSelection(None, None, "fork", "claude", tmp_path),
+            (raw,),
+            original_request=SessionRequest(primary_session_mode="fork"),
         )
 
 
@@ -190,8 +240,16 @@ def test_raw_selection_preserves_typed_alias_until_authorized_native_comparison(
         lookup_scope=tmp_path,
     )
 
-    assert reconcile_raw_session_selections(typed, (raw,), operation_explicit=True) == raw
-    assert reconcile_primary_source_selection(
-        PrimarySourceSelection("c12", raw.native_id, "resume", "claude", tmp_path),
-        authorized_source=authorization,
-    ) == "native-A"
+    assert (
+        reconcile_raw_session_selections(
+            typed, (raw,), original_request=SessionRequest(primary_session_mode="resume")
+        )
+        == raw
+    )
+    assert (
+        reconcile_primary_source_selection(
+            PrimarySourceSelection("c12", raw.native_id, "resume", "claude", tmp_path),
+            authorized_source=authorization,
+        )
+        == "native-A"
+    )

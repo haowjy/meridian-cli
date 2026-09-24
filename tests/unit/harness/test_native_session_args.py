@@ -15,34 +15,28 @@ def test_unimplemented_adapter_accepts_only_absent_raw_input() -> None:
         normalize_native_session_args(("--resume", "secret-id"), None)
 
 
-def test_adapter_normalizer_consumes_selector_and_preserves_remainder_exactly() -> None:
-    calls = 0
+def test_adapter_normalizer_dispatches_and_returns_result_unchanged() -> None:
+    received: list[tuple[str, ...]] = []
+    result = NormalizedNativeSessionArgs(NativeSessionSelector("resume", "native-A"), ("tail",))
 
     def normalize(args: tuple[str, ...]) -> NormalizedNativeSessionArgs:
-        nonlocal calls
-        calls += 1
-        if args[:2] == ("--resume", "native-A"):
-            return NormalizedNativeSessionArgs(
-                NativeSessionSelector("resume", "native-A"), args[2:]
-            )
-        raise ValueError("unsupported raw selector")
+        received.append(args)
+        return result
 
-    raw = ("--resume", "native-A", "--model=claude-opus-4", "--", "keep bytes")
-    normalized = normalize_native_session_args(raw, normalize)
-
-    assert normalized.selector == NativeSessionSelector("resume", "native-A")
-    assert normalized.remaining_args == ("--model=claude-opus-4", "--", "keep bytes")
-    assert calls == 1
+    raw = ("adapter-owned", "argv")
+    assert normalize_native_session_args(raw, normalize) is result
+    assert received == [raw]
 
 
-def test_adapter_normalizer_refuses_duplicate_selector_vector() -> None:
+def test_adapter_normalizer_propagates_exception_unchanged() -> None:
+    failure = ValueError("adapter rejected input")
+
     def normalize(args: tuple[str, ...]) -> NormalizedNativeSessionArgs:
-        if args == ("--resume", "native-A"):
-            return NormalizedNativeSessionArgs(NativeSessionSelector("resume", "native-A"), ())
-        raise ValueError("duplicate or malformed selector")
+        raise failure
 
-    with pytest.raises(ValueError, match="duplicate"):
-        normalize_native_session_args(("--resume", "native-A", "--resume", "native-A"), normalize)
+    with pytest.raises(ValueError) as raised:
+        normalize_native_session_args(("adapter-owned",), normalize)
+    assert raised.value is failure
 
 
 def test_selector_value_rejects_blank_native_ids() -> None:
