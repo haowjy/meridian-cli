@@ -533,6 +533,52 @@ def test_fresh_codex_managed_model_option_is_refused_before_prepare(
     assert "never-display-this-value" not in str(error.value)
 
 
+@pytest.mark.parametrize(
+    ("harness", "raw_args"),
+    [
+        (HarnessId.CLAUDE, ("--system-prompt=synthetic",)),
+        (HarnessId.PI, ("--thinking", "high")),
+        (HarnessId.OPENCODE, ("--log-level", "INFO")),
+    ],
+)
+def test_inferred_fresh_adapter_admits_its_benign_primary_options(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    harness: HarnessId,
+    raw_args: tuple[str, ...],
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    _write_minimal_mars_config(project_root)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model=("openai/gpt-5.4-mini" if harness == HarnessId.OPENCODE else "gpt-5.4-mini"),
+        harness=harness,
+    )
+    admitted: list[tuple[str, ...]] = []
+    original_prepare = launch_context.prepare_launch_surface
+
+    def record_prepare(**kwargs: object) -> object:
+        request = kwargs["request"]
+        admitted.append(request.extra_args)  # type: ignore[attr-defined]
+        return original_prepare(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(launch_context, "prepare_launch_surface", record_prepare)
+
+    result = launch_primary(
+        project_root=project_root,
+        request=PrimaryLaunchRequest(
+            model=("openai/gpt-5.4-mini" if harness == HarnessId.OPENCODE else "gpt-5.4-mini"),
+            passthrough_args=raw_args,
+            dry_run=True,
+        ),
+        harness_registry=get_default_harness_registry(),
+    )
+
+    assert admitted == [raw_args]
+    assert result.command or result.launch_plan is not None
+
+
 def test_primary_launch_materializes_context_from_work(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
