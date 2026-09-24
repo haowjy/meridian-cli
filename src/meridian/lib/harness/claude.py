@@ -1,6 +1,7 @@
 """Claude CLI harness adapter."""
 
 import json
+import re
 from pathlib import Path
 from typing import Any, ClassVar, cast
 from uuid import uuid4
@@ -61,6 +62,11 @@ from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR
 from meridian.lib.harness.launch_types import SessionSeed
+from meridian.lib.harness.native_session_args import (
+    NativeSessionSelector,
+    NativeSessionSurface,
+    NormalizedNativeSessionArgs,
+)
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,
@@ -92,6 +98,112 @@ from meridian.lib.launch.launch_types import (
 )
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.permissions import PermissionConfig
+
+_CLAUDE_PRIMARY_VALUE_OPTIONS = frozenset(
+    {
+        "--model",
+        "--effort",
+        "--permission-mode",
+        "--allowedTools",
+        "--disallowedTools",
+        "--system-prompt",
+        "--append-system-prompt",
+        "--add-dir",
+    }
+)
+_CLAUDE_PRIMARY_SELECTOR_OPTIONS = frozenset({"--resume", "-r"})
+_MERIDIAN_SESSION_ALIAS = re.compile(r"^[cp]\d+$")
+
+
+def normalize_primary_session_args(
+    args: tuple[str, ...], surface: NativeSessionSurface = "subprocess"
+) -> NormalizedNativeSessionArgs:
+    """Normalize Claude's bounded primary raw-selector grammar.
+
+    Only the subprocess command has a supported raw passthrough contract. All
+    other tokens must have a known option role so selection cannot hide in an
+    unknown arity or positional/subcommand escape.
+    """
+    if surface != "subprocess":
+        raise ValueError("Claude primary raw arguments are unsupported on managed surface")
+
+    selector: NativeSessionSelector | None = None
+    saw_fork = False
+    remaining: list[str] = []
+    index = 0
+
+    def value_after(option: str, value: str | None) -> str:
+        if value is None or not value.strip() or value.startswith("-"):
+            raise ValueError(f"Claude primary option {option} requires an unambiguous value")
+        return value
+
+    while index < len(args):
+        token = args[index]
+        if token == "--" or token.startswith("@") or not token.startswith("-"):
+            raise ValueError("Claude primary raw arguments contain unsupported positional syntax")
+
+        if token in _CLAUDE_PRIMARY_SELECTOR_OPTIONS:
+            if selector is not None:
+                raise ValueError("Claude primary raw arguments repeat a session selector")
+            index += 1
+            native_id = value_after(token, args[index] if index < len(args) else None)
+            if _MERIDIAN_SESSION_ALIAS.fullmatch(native_id):
+                raise ValueError("Claude raw selector requires a native ID, not a Meridian alias")
+            selector = NativeSessionSelector("resume", native_id)
+            index += 1
+            continue
+
+        if token.startswith("--resume="):
+            if selector is not None:
+                raise ValueError("Claude primary raw arguments repeat a session selector")
+            native_id = value_after("--resume", token.partition("=")[2])
+            if _MERIDIAN_SESSION_ALIAS.fullmatch(native_id):
+                raise ValueError("Claude raw selector requires a native ID, not a Meridian alias")
+            selector = NativeSessionSelector("resume", native_id)
+            index += 1
+            continue
+
+        if token == "--fork-session":
+            if saw_fork:
+                raise ValueError("Claude primary raw arguments repeat --fork-session")
+            saw_fork = True
+            index += 1
+            continue
+
+        if token in {"--continue", "-c"}:
+            raise ValueError(
+                "Claude implicit latest-session selection is unsupported; use --resume ID"
+            )
+        if token == "--session-id" or token.startswith("--session-id="):
+            raise ValueError(
+                "Claude raw --session-id is unsupported; use Meridian's fresh-session target"
+            )
+
+        if token in _CLAUDE_PRIMARY_VALUE_OPTIONS:
+            if index + 1 >= len(args):
+                raise ValueError(f"Claude primary option {token} requires a value")
+            value_after(token, args[index + 1])
+            remaining.extend((token, args[index + 1]))
+            index += 2
+            continue
+
+        option, separator, value = token.partition("=")
+        if separator and option in _CLAUDE_PRIMARY_VALUE_OPTIONS:
+            value_after(option, value)
+            remaining.append(token)
+            index += 1
+            continue
+        if token == "--dangerously-skip-permissions":
+            remaining.append(token)
+            index += 1
+            continue
+        raise ValueError("Claude primary raw arguments contain an unsupported option")
+
+    if saw_fork and selector is None:
+        raise ValueError("Claude --fork-session requires one explicit --resume ID")
+    if selector is not None and saw_fork:
+        selector = NativeSessionSelector("fork", selector.native_id)
+    return NormalizedNativeSessionArgs(selector, tuple(remaining))
 
 
 def build_claude_adhoc_agent_json(
