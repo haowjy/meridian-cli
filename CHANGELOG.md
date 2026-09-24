@@ -6,6 +6,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Added an adapter-owned Pi exact-source qualifier and typed exact-path preflight;
+  descriptor-based POSIX checks validate the reported header and object stamps
+  without discovering or mutating native journals.
 - Added a standalone Pi native-journal reopen-default lineage projector with
   qualified 0.87.1 legacy-v3 selection, shared entry-type recognition, and
   explicit source completeness; exact native-source routing remains pending.
