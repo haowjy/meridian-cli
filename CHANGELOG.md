@@ -15,7 +15,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Gate tracked Pi managed-extension turn notifications until the first admitted agent
   run; revoke pending delivery across selection changes and close while preserving
-  ordinary untracked notification behavior.
+  ordinary untracked notification behavior. Cancel pending bash pings on a
+  before-switch selection only for tracked admission attempts, so cancelled
+  selections preserve ordinary background-task reminders.
 - Bind managed-bash pings to their originating admission revision and drain them on
   replacement; repeat spawn-watch scans for the generation admitted during prior I/O.
 

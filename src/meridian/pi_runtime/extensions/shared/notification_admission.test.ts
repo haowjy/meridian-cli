@@ -39,4 +39,19 @@ describe("managed notification admission", () => {
     gate.agentStart();
     expect(gate.allows()).toBe(false);
   });
+
+  it("rejects a tracked producer from A after an async wait and B readmission", async () => {
+    const gate = notificationAdmission(capabilityEnv("attempt", `late-${Math.random()}`));
+    const revisionA = gate.agentStart();
+    let releaseProducer!: () => void;
+    const producer = new Promise<void>((resolve) => { releaseProducer = resolve; });
+    const sendAfterPersistence = producer.then(() => gate.allows(revisionA));
+
+    gate.suspend();
+    gate.agentStart(); // B is admitted while A's persistence is still pending.
+    releaseProducer();
+
+    await expect(sendAfterPersistence).resolves.toBe(false);
+    expect(gate.allows()).toBe(true);
+  });
 });

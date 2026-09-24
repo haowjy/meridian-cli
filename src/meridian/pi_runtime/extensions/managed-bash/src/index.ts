@@ -222,7 +222,7 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
 
   pi.on?.("session_before_switch", async () => {
     admission.suspend();
-    await runtime.cancelBackgroundPings();
+    if (admission.tracked) await runtime.cancelBackgroundPings();
   });
 
   pi.on?.("session_shutdown", async (event) => {
