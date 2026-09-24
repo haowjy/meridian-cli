@@ -11,6 +11,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Keep exact model intent typed in the session fold, retract conflicting startup
+  facts with their membership, and refuse late or contradictory seed intent.
+
 - Reject conflicting linked-spawn work/path metadata, detach checked policy
   snapshots from mutable rows, and quarantine invalid UTF-8 spawn state.
 

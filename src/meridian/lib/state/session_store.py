@@ -1277,6 +1277,8 @@ def record_model_selection(
         if event.kind == "initial_seed" and source_start.model_selection_protocol is not None:
             raise ValueError("cannot seed a new-protocol session from prelaunch intent")
         if isinstance(event, SourceModelSelectionEvent):
+            if event.startup_attempt_id is not None and not event.startup_attempt_id.strip():
+                return False
             if source_start.spawn_id != event.spawn_id:
                 raise ValueError("v2 selection spawn differs from captured start")
             if not requested_source_eligible(snapshot.identity, event.source):
@@ -1299,7 +1301,24 @@ def record_model_selection(
                 ).encode()
                 if prior != semantic:
                     raise ValueError("contradictory exact model selection")
+                metadata.validate_source_selection(event, committed_duplicate=True)
                 return False
+            try:
+                metadata.validate_source_selection(event)
+            except ValueError:
+                if (
+                    event.harness_session_id is None
+                    and metadata.source_selection_conflicts(event)
+                ):
+                    return False
+                if event.kind == "initial_seed" and any(
+                    isinstance(fact.event, SourceModelSelectionEvent)
+                    and fact.event.source == event.source
+                    and fact.event.kind == "invocation_started"
+                    for fact in metadata.model_intents
+                ):
+                    return False
+                raise
         # Even a metadata no-op must not hide an attempted historical mutation.
         plan_identity(snapshot.identity, event)
         metadata.validate_startup(event)

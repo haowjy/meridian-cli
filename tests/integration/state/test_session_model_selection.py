@@ -5,13 +5,28 @@ from __future__ import annotations
 import os
 import socket
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
 
+_guard_home = tempfile.mkdtemp(prefix="model-selection-guard-")
+for _key in tuple(os.environ):
+    if _key.startswith(("MERIDIAN_", "_MERIDIAN_", "CODEX_", "CLAUDE_", "PI_", "OPENCODE_")):
+        os.environ.pop(_key, None)
+os.environ["HOME"] = _guard_home
+os.environ["MERIDIAN_HOME"] = str(Path(_guard_home) / "meridian")
+os.environ["XDG_CONFIG_HOME"] = str(Path(_guard_home) / "config")
+os.environ["XDG_DATA_HOME"] = str(Path(_guard_home) / "data")
+os.environ["XDG_CACHE_HOME"] = str(Path(_guard_home) / "cache")
+
+
+_denied_attempts: list[str] = []
+
 
 def _hard_deny(*args: object, **kwargs: object) -> None:
     _ = args, kwargs
+    _denied_attempts.append("process or network")
     raise AssertionError("process or network effect attempted")
 
 
@@ -26,15 +41,49 @@ class _InternetDeniedSocket(_original_socket):
 
 
 # Import the state surface with process and internet socket creation disabled.
-_original_boundaries = (subprocess.Popen, os.system, socket.socket, socket.create_connection)
+_original_boundaries = (
+    subprocess.Popen,
+    os.system,
+    socket.socket,
+    socket.create_connection,
+    os.fork,
+    os.forkpty,
+    os.execv,
+)
 subprocess.Popen = _hard_deny  # type: ignore[assignment]
 os.system = _hard_deny  # type: ignore[assignment]
 socket.socket = _InternetDeniedSocket  # type: ignore[assignment]
 socket.create_connection = _hard_deny  # type: ignore[assignment]
+os.fork = _hard_deny  # type: ignore[assignment]
+os.forkpty = _hard_deny  # type: ignore[assignment]
+os.execv = _hard_deny  # type: ignore[assignment]
+for _denied_call in (lambda: subprocess.Popen(["not-run"]), lambda: os.fork()):
+    try:
+        _denied_call()
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("process guard self-test did not deny")
+try:
+    socket.socket()
+except AssertionError:
+    pass
+else:
+    raise AssertionError("socket guard self-test did not deny")
+assert len(_denied_attempts) == 3
+_denied_attempts.clear()
 try:
     from meridian.lib.state import session_store as store
 finally:
-    subprocess.Popen, os.system, socket.socket, socket.create_connection = _original_boundaries
+    (
+        subprocess.Popen,
+        os.system,
+        socket.socket,
+        socket.create_connection,
+        os.fork,
+        os.forkpty,
+        os.execv,
+    ) = _original_boundaries
 
 
 def _deny_effects(monkeypatch: pytest.MonkeyPatch) -> list[str]:
@@ -50,6 +99,9 @@ def _deny_effects(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
     monkeypatch.setattr(subprocess, "Popen", denied("process"))
     monkeypatch.setattr(os, "system", denied("process"))
+    monkeypatch.setattr(os, "fork", denied("process"))
+    monkeypatch.setattr(os, "forkpty", denied("process"))
+    monkeypatch.setattr(os, "execv", denied("process"))
     class DeniedInternetSocket(_original_socket):
         def __new__(cls, family=socket.AF_INET, *args, **kwargs):
             if family != socket.AF_UNIX:
@@ -67,6 +119,7 @@ def _guard_exact_model_tests(
 ) -> None:
     guarded_prefixes = (
         "test_exact_",
+        "test_v1_",
         "test_same_native_id_",
         "test_two_stores_",
         "test_conflicting_startup_",
@@ -331,9 +384,19 @@ def test_exact_model_facts_are_source_scoped_immutable_and_zero_read(
         return original(raw)
 
     monkeypatch.setattr(session_store_module, "read_journal", count_read)
+    decode_calls: list[object] = []
+    original_decode = authority.decode_row
+
+    def count_decode(payload):
+        decode_calls.append(payload)
+        return original_decode(payload)
+
+    monkeypatch.setattr(authority, "decode_row", count_decode)
     first = session_store_module.read_native_source_use_snapshot(tmp_path)
     assert isinstance(first, session_store_module.NativeSourceUseSnapshot)
     assert len(reads) == 1
+    decode_count_after_fold = len(decode_calls)
+    assert len(decode_calls) == decode_count_after_fold
     facts = first.replay_model_facts(source)
     assert isinstance(facts, authority.ReplayModelFacts)
     assert facts.latest_invocation is not None
@@ -343,6 +406,46 @@ def test_exact_model_facts_are_source_scoped_immutable_and_zero_read(
         "source": "fixture"
     }
     assert len(reads) == 1
+    assert len(decode_calls) == decode_count_after_fold
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [("one_wrong_update", "unavailable"), ("seed_after_invocation", "rejected")],
+)
+def test_exact_startup_conflicts_and_seed_order_are_not_usable(
+    tmp_path: Path, case: str, expected: str
+) -> None:
+    from meridian.lib.state import session_authority as authority
+    from meridian.lib.state import session_store as session_store_module
+
+    source, generation = _exact_journal(tmp_path)
+    invocation = _v2_event(source, generation, "accepted")
+    if case == "one_wrong_update":
+        assert store.record_model_selection(tmp_path, invocation)
+        update = store.SessionUpdateEvent(
+            chat_id="c1",
+            session_instance_id=generation,
+            startup_attempt_id="attempt-a",
+            harness_session_id="other",
+        )
+        with (tmp_path / "sessions.jsonl").open("ab") as handle:
+            handle.write((update.model_dump_json(exclude_none=True) + "\n").encode())
+        snapshot = session_store_module.read_native_source_use_snapshot(tmp_path)
+        assert isinstance(snapshot, session_store_module.NativeSourceUseSnapshot)
+        assert isinstance(snapshot.replay_model_facts(source), authority.FactsUnavailable)
+        assert expected == "unavailable"
+        assert snapshot.journal.metadata.selections == frozenset()
+        return
+
+    assert store.record_model_selection(tmp_path, invocation)
+    seed = invocation.model_copy(update={"kind": "initial_seed", "startup_attempt_id": None})
+    assert not store.record_model_selection(tmp_path, seed)
+    with (tmp_path / "sessions.jsonl").open("ab") as handle:
+        handle.write((seed.model_dump_json(exclude_none=True) + "\n").encode())
+    snapshot = session_store_module.read_native_source_use_snapshot(tmp_path)
+    assert isinstance(snapshot, session_store_module.NativeIdUnavailable)
+    assert expected == "rejected"
 
 
 def test_same_native_id_in_another_store_does_not_share_v2_intent(tmp_path: Path) -> None:

@@ -9,7 +9,7 @@ import json
 import re
 import unicodedata
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Annotated, Literal, NamedTuple, Self, assert_never, cast
@@ -1660,17 +1660,50 @@ def plan_source(
 class BoundModelIntent:
     """Immutable source-correlated model intent retained in journal append order."""
 
-    _wire: bytes
+    _event: SessionModelSelectionEvent | SourceModelSelectionEvent
     journal_ordinal: int
     effective_native_id: str | None
     correlation: Literal["exact_source", "legacy_unscoped", "ambiguous"]
 
     @property
     def event(self) -> SessionModelSelectionEvent | SourceModelSelectionEvent:
-        event = decode_row(json.loads(self._wire))
-        if not isinstance(event, (SessionModelSelectionEvent, SourceModelSelectionEvent)):
-            raise ValueError("retained model intent has an invalid event type")
-        return event
+        return self._event.model_copy(deep=True)
+
+
+@dataclass
+class _RetainedModelIntent:
+    event: SessionModelSelectionEvent | SourceModelSelectionEvent
+    journal_ordinal: int
+    effective_native_id: str | None
+    correlation: Literal["exact_source", "legacy_unscoped", "ambiguous"]
+
+    def freeze(self) -> BoundModelIntent:
+        return BoundModelIntent(
+            self.event.model_copy(deep=True),
+            self.journal_ordinal,
+            self.effective_native_id,
+            self.correlation,
+        )
+
+
+def _source_selection_prefix_conflict(
+    event: SourceModelSelectionEvent,
+    startup_ids: Mapping["StartupKey", set[str] | frozenset[str]],
+    intents: Sequence[BoundModelIntent | _RetainedModelIntent],
+    *,
+    committed_duplicate: bool = False,
+) -> bool:
+    if event.startup_attempt_id is not None and not event.startup_attempt_id.strip():
+        raise ValueError("startup attempt identity must be nonblank")
+    prior_ids = startup_ids.get(startup_key(event), frozenset())
+    if event.startup_attempt_id is not None and prior_ids - {event.source.key.native_session_id}:
+        return True
+    return not committed_duplicate and event.kind == "initial_seed" and any(
+        isinstance(fact.event, SourceModelSelectionEvent)
+        and fact.event.source == event.source
+        and fact.event.kind == "invocation_started"
+        for fact in intents
+    )
 
 
 @dataclass(frozen=True)
@@ -1702,11 +1735,37 @@ class MetadataProjection:
         self,
         event: SessionUpdateEvent | SessionModelSelectionEvent | SourceModelSelectionEvent,
     ) -> None:
-        if event.startup_attempt_id is None or event.harness_session_id is None:
+        if event.startup_attempt_id is None:
+            return
+        if not event.startup_attempt_id.strip():
+            raise ValueError("startup attempt identity must be nonblank")
+        native_id = (
+            event.source.key.native_session_id
+            if isinstance(event, SourceModelSelectionEvent)
+            else event.harness_session_id
+        )
+        if native_id is None:
             return
         prior = self.startup_ids.get(startup_key(event), frozenset())
-        if prior - {event.harness_session_id}:
+        if prior - {native_id}:
             raise ValueError("startup attempt changed its native conversation identity")
+
+    def validate_source_selection(
+        self, event: SourceModelSelectionEvent, *, committed_duplicate: bool = False
+    ) -> None:
+        """Validate the exact startup assertion against the retained prefix."""
+        if _source_selection_prefix_conflict(
+            event,
+            self.startup_ids,
+            self.model_intents,
+            committed_duplicate=committed_duplicate,
+        ):
+            raise ValueError("v2 selection conflicts with its retained startup prefix")
+
+    def source_selection_conflicts(self, event: SourceModelSelectionEvent) -> bool:
+        return _source_selection_prefix_conflict(
+            event, self.startup_ids, self.model_intents
+        )
 
     def selection_native_id(
         self, event: SessionModelSelectionEvent | SourceModelSelectionEvent
@@ -1788,13 +1847,25 @@ class _MetadataBuilder:
         default_factory=set
     )
     observations: dict[tuple[str, str], str] = field(default_factory=dict)
-    raw_model_intents: list[tuple[bytes, int, str | None, bool]] = field(default_factory=list)
+    model_intents: list[_RetainedModelIntent] = field(default_factory=list)
     conflicting_start_keys: set[tuple[str, str, str]] = field(default_factory=set)
     exact_seen: dict[tuple[object, ...], bytes] = field(default_factory=dict)
-    exact_startup_selections: dict[StartupKey, list[tuple[SourceModelSelectionEvent, str]]] = field(
-        default_factory=dict
-    )
-    retracted_exact_startups: set[StartupKey] = field(default_factory=set)
+
+    def validate_source_selection(
+        self, event: SourceModelSelectionEvent, *, committed_duplicate: bool = False
+    ) -> None:
+        if _source_selection_prefix_conflict(
+            event,
+            self.startup_ids,
+            self.model_intents,
+            committed_duplicate=committed_duplicate,
+        ):
+            raise ValueError("v2 selection conflicts with its retained startup prefix")
+
+    def source_selection_conflicts(self, event: SourceModelSelectionEvent) -> bool:
+        return _source_selection_prefix_conflict(
+            event, self.startup_ids, self.model_intents
+        )
 
     def index_selection(
         self,
@@ -1809,6 +1880,11 @@ class _MetadataBuilder:
             self.invocations[invocation] = self.invocations.get(invocation, 0) + delta
 
     def fold(self, event: JournalEvent, ordinal: int) -> None:
+        source_prefix_conflict = (
+            self.source_selection_conflicts(event)
+            if isinstance(event, SourceModelSelectionEvent)
+            else False
+        )
         if isinstance(event, SessionStartEvent):
             start_key = (event.chat_id, event.session_instance_id, event.harness)
             prior = self.starts.setdefault(start_key, event)
@@ -1839,21 +1915,33 @@ class _MetadataBuilder:
                 if native not in ids:
                     if len(ids) == 1:
                         old = next(iter(ids))
-                        for selection in self.pending.pop(key, ()):
+                        pending = self.pending.pop(key, ())
+                        for selection in pending:
                             self.index_selection(selection, old, -1)
+                            for fact in self.model_intents:
+                                if fact.event is selection:
+                                    fact.correlation = "ambiguous"
                     elif not ids:
-                        for selection in self.pending.get(key, ()):
+                        pending = self.pending.get(key, ())
+                        for selection in pending:
                             self.index_selection(selection, native, 1)
+                            for fact in self.model_intents:
+                                if fact.event is selection:
+                                    fact.effective_native_id = native
                     ids.add(native)
-                    exact_rows = self.exact_startup_selections.get(key, ())
-                    if (
-                        exact_rows
-                        and native not in {expected for _, expected in exact_rows}
-                        and key not in self.retracted_exact_startups
-                    ):
-                        for exact_event, expected in exact_rows:
-                            self.index_selection(exact_event, expected, -1)
-                        self.retracted_exact_startups.add(key)
+                    for fact in self.model_intents:
+                        if (
+                            isinstance(fact.event, SourceModelSelectionEvent)
+                            and fact.event.startup_attempt_id is not None
+                            and startup_key(fact.event) == key
+                            and fact.correlation == "exact_source"
+                            and fact.effective_native_id != native
+                        ):
+                            if fact.effective_native_id is not None:
+                                self.index_selection(
+                                    fact.event, fact.effective_native_id, -1
+                                )
+                            fact.correlation = "ambiguous"
             if isinstance(event, (SessionModelSelectionEvent, SourceModelSelectionEvent)):
                 source_event = isinstance(event, SourceModelSelectionEvent)
                 if source_event:
@@ -1884,45 +1972,37 @@ class _MetadataBuilder:
                         native = next(iter(ids))
                 if native is not None:
                     if source_event and event.startup_attempt_id is not None:
-                        updates = self.update_ids.get(key, set())
-                        if key not in self.retracted_exact_startups and (
-                            not updates or updates == {native}
-                        ):
+                        fact = _RetainedModelIntent(
+                            event,
+                            ordinal,
+                            native,
+                            "ambiguous" if source_prefix_conflict else "exact_source",
+                        )
+                        self.model_intents.append(fact)
+                        if not source_prefix_conflict:
                             self.index_selection(event, native, 1)
-                            self.exact_startup_selections.setdefault(key, []).append(
-                                (event, native)
-                            )
                     else:
                         self.index_selection(event, native, 1)
-                wire = json.dumps(
-                    event.model_dump(mode="json"), separators=(",", ":"), sort_keys=True
-                ).encode()
-                self.raw_model_intents.append((wire, ordinal, native, source_event))
+                        self.model_intents.append(
+                            _RetainedModelIntent(
+                                event,
+                                ordinal,
+                                native,
+                                "legacy_unscoped" if not source_event else "exact_source",
+                            )
+                        )
+                elif not source_event:
+                    self.model_intents.append(
+                        _RetainedModelIntent(event, ordinal, None, "legacy_unscoped")
+                    )
 
     def retained_model_intents(self) -> tuple[BoundModelIntent, ...]:
-        result: list[BoundModelIntent] = []
-        for wire, ordinal, native, exact in self.raw_model_intents:
-            event = decode_row(json.loads(wire))
-            if not isinstance(event, (SessionModelSelectionEvent, SourceModelSelectionEvent)):
-                continue
-            updates = self.update_ids.get(startup_key(event), set())
-            if not exact and event.startup_attempt_id is not None and len(updates) > 1:
-                continue
-            ambiguous = exact and event.startup_attempt_id is not None and len(updates) > 1
-            effective_native_id = (
-                event.source.key.native_session_id
-                if isinstance(event, SourceModelSelectionEvent)
-                else next(iter(updates)) if len(updates) == 1 else native
-            )
-            result.append(
-                BoundModelIntent(
-                    wire,
-                    ordinal,
-                    effective_native_id,
-                    "ambiguous" if ambiguous else "exact_source" if exact else "legacy_unscoped",
-                )
-            )
-        return tuple(result)
+        return tuple(
+            fact.freeze()
+            for fact in self.model_intents
+            if fact.correlation != "ambiguous"
+            or isinstance(fact.event, SourceModelSelectionEvent)
+        )
 
     def snapshot(self) -> MetadataProjection:
         return MetadataProjection(
@@ -2092,6 +2172,8 @@ def fold_row(builder: _JournalBuilder, event: JournalEvent) -> None:
     builder.event_ordinal += 1
     ordinal = builder.event_ordinal
     if isinstance(event, SourceModelSelectionEvent):
+        if event.startup_attempt_id is not None and not event.startup_attempt_id.strip():
+            raise ValueError("startup attempt identity must be nonblank")
         if not requested_source_eligible(builder.identity(), event.source):
             raise ValueError("model selection source is not the current exact prefix pin")
         start_key = (event.chat_id, event.session_instance_id, event.harness)
