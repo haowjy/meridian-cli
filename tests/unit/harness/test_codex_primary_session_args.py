@@ -37,6 +37,26 @@ from meridian.lib.harness.native_session_args import (
             ),
         ),
         (
+            "subprocess",
+            (
+                "--ask-for-approval",
+                "never",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "-c",
+                "tools.web_search=true",
+            ),
+            NormalizedNativeSessionArgs(
+                None,
+                (
+                    "--ask-for-approval",
+                    "never",
+                    "--dangerously-bypass-approvals-and-sandbox",
+                    "-c",
+                    "tools.web_search=true",
+                ),
+            ),
+        ),
+        (
             "managed",
             ("resume", "123e4567-e89b-12d3-a456-426614174000", "--config", "model=\"gpt-5\""),
             NormalizedNativeSessionArgs(
@@ -74,6 +94,15 @@ def test_normalizes_supported_selector_and_preserves_remainder(
         (
             "subprocess",
             ("resume", "123e4567-e89b-12d3-a456-426614174000", "-c", "sandbox_mode={x=1}"),
+        ),
+        (
+            "subprocess",
+            (
+                "-c",
+                "model_reasoning_effort=high",
+                "--config",
+                "model_reasoning_effort=low",
+            ),
         ),
         ("subprocess", ("--model",)),
         ("subprocess", ("-m=gpt-5",)),
