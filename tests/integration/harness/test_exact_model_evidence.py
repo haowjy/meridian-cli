@@ -232,6 +232,35 @@ def test_replaced_file_is_conflict_not_fallback(tmp_path: Path) -> None:
     assert read_model_evidence_exact(source) == ModelSourceConflict("file_changed")
 
 
+@pytest.mark.parametrize("mutation", ["append", "truncate"])
+def test_append_or_truncate_during_content_read_cannot_return_positive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    import os
+
+    source, path = _source(
+        tmp_path / "store",
+        [_header(), _entry("model_change", "a", None, provider="p", modelId="m")],
+    )
+    real_read = os.read
+    mutated = False
+
+    def mutate_after_read(fd: int, amount: int) -> bytes:
+        nonlocal mutated
+        chunk = real_read(fd, amount)
+        if chunk and not mutated:
+            mutated = True
+            if mutation == "append":
+                with path.open("ab") as handle:
+                    handle.write(b"\n")
+            else:
+                path.write_bytes(path.read_bytes()[:-1])
+        return chunk
+
+    monkeypatch.setattr(os, "read", mutate_after_read)
+    assert read_model_evidence_exact(source) == ModelEvidenceUnavailable("changed_during_read")
+
+
 def test_symlink_and_fifo_replacements_are_never_read_as_content(tmp_path: Path) -> None:
     source, path = _source(
         tmp_path / "store",
