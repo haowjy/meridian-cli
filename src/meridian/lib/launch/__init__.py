@@ -106,6 +106,7 @@ def launch_primary(
         prepare_launch_surface,
     )
     from .plan import build_primary_launch_runtime, build_primary_spawn_request
+    from .policies import primary_arg_controls
     from .process import run_harness_process
     from .types import LaunchResult
 
@@ -250,6 +251,7 @@ def launch_primary(
         or None
     )
     spawn_request = spawn_request.model_copy(update=request_updates)
+    original_spawn_request = spawn_request
     prepared_policy = compile_prepared_policy_surface(
         request=spawn_request,
         runtime=runtime,
@@ -269,7 +271,11 @@ def launch_primary(
         else:
             raise ValueError("Selected harness has no supported fresh primary session surface")
         try:
-            normalized = adapter.normalize_primary_session_args(request.passthrough_args, surface)
+            normalized = adapter.normalize_primary_session_args(
+                request.passthrough_args,
+                surface,
+                controls=primary_arg_controls(prepared_policy.resolved_policy),
+            )
         except (TypeError, ValueError):
             # Keep adapter diagnostics out of user-facing output: raw values may contain
             # credentials, and adapters are not required to redact every future grammar.
@@ -282,11 +288,13 @@ def launch_primary(
                 "Raw native-session selectors are unsupported for a fresh launch; "
                 "use Meridian source selection."
             )
-        _refuse_unowned_fresh_scalar_args(normalized.remaining_args)
         # Keep the caller's original vector independent for later source reconciliation;
         # preparation receives only the adapter-admitted executable remainder.
+        warning = "\n".join(
+            part for part in (spawn_request.warning, *normalized.warnings) if part
+        ) or None
         spawn_request = spawn_request.model_copy(
-            update={"extra_args": normalized.remaining_args}
+            update={"extra_args": normalized.remaining_args, "warning": warning}
         )
     elif prepared_policy.resolved_policy.adapter.id.value == "pi":
         from meridian.lib.harness.pi_native_source import reject_pi_native_source_options
@@ -297,6 +305,7 @@ def launch_primary(
         request=spawn_request,
         runtime=runtime,
         prepared_policy=prepared_policy,
+        original_request=original_spawn_request,
     )
     final_session = prepared.request.session
     reconcile_primary_source_selection(
@@ -385,24 +394,6 @@ def _primary_source_operation(request: LaunchRequest) -> Literal["fresh", "resum
     from meridian.lib.launch.source_selection import declared_session_operation
 
     return declared_session_operation(request.session, fallback=request.session_mode.value)
-
-
-def _refuse_unowned_fresh_scalar_args(args: tuple[str, ...]) -> None:
-    """Refuse raw scalar overrides whose final native emission is not owned here."""
-    unsupported = {
-        "--model": "use Meridian's typed model option",
-        "-m": "use Meridian's typed model option",
-        "--effort": "use Meridian's typed effort option",
-        "--permission-mode": "use Meridian's typed permission option",
-    }
-    for token in args:
-        option = token.partition("=")[0]
-        alternative = unsupported.get(option)
-        if alternative is not None:
-            raise ValueError(
-                f"Fresh raw scalar option {option} is unsupported because its precedence "
-                f"cannot be verified; {alternative}."
-            )
 
 
 def _primary_source_operation_facts(request: LaunchRequest) -> tuple[str, ...]:

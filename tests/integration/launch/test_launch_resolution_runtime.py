@@ -9,6 +9,8 @@ import pytest
 
 import meridian.lib.harness.cursor as cursor_harness
 import meridian.lib.launch.context as launch_context
+from meridian.lib.catalog.catalog_session import CatalogSession
+from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.bundle import project_managed_primary_preview
 from meridian.lib.harness.registry import (
@@ -531,6 +533,64 @@ def test_fresh_codex_managed_model_option_is_refused_before_prepare(
 
     assert events == ["route"]
     assert "never-display-this-value" not in str(error.value)
+
+
+def test_fresh_scalar_admission_preserves_raw_request_and_redacts_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    _write_minimal_mars_config(project_root)
+    def empty_aliases(
+        _self: CatalogSession, *, no_refresh_models: bool = False
+    ) -> list[AliasEntry]:
+        _ = no_refresh_models
+        return []
+
+    monkeypatch.setattr(CatalogSession, "load_aliases", empty_aliases)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="owned-model",
+        harness=HarnessId.CLAUDE,
+    )
+    raw_args = ("--model", "secret-native-model")
+    observed: list[tuple[tuple[str, ...], tuple[str, ...], str | None]] = []
+
+    class StopBeforePrepare(Exception):
+        pass
+
+    def stop_before_prepare(**kwargs: object) -> None:
+        executable = kwargs["request"]
+        original = kwargs["original_request"]
+        observed.append(
+            (
+                executable.extra_args,  # type: ignore[attr-defined]
+                original.extra_args,  # type: ignore[attr-defined]
+                executable.warning,  # type: ignore[attr-defined]
+            )
+        )
+        raise StopBeforePrepare()
+
+    monkeypatch.setattr(launch_context, "prepare_launch_surface", stop_before_prepare)
+    request = PrimaryLaunchRequest(
+        model="owned-model",
+        passthrough_args=raw_args,
+        dry_run=True,
+    )
+
+    with pytest.raises(StopBeforePrepare):
+        launch_primary(
+            project_root=project_root,
+            request=request,
+            harness_registry=get_default_harness_registry(),
+        )
+
+    assert request.passthrough_args == raw_args
+    assert observed[0][0] == ()
+    assert observed[0][1] == raw_args
+    assert "Ignored raw model option" in (observed[0][2] or "")
+    assert "secret-native-model" not in (observed[0][2] or "")
 
 
 @pytest.mark.parametrize(

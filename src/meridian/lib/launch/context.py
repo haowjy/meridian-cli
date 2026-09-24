@@ -1547,6 +1547,7 @@ def prepare_launch_surface(
     runtime: LaunchRuntime,
     prepared_policy: PreparedPolicySurface,
     launch_mode: LaunchMode | None = None,
+    original_request: SpawnRequest | None = None,
 ) -> PreparedLaunchSurface:
     """Resolve the expensive, spawn-stable launch surface."""
     project_paths = prepared_policy.project_paths
@@ -1777,7 +1778,7 @@ def prepare_launch_surface(
         has_profile_for_nested_deny=has_profile or using_policy_snapshot,
         model_selection=model_selection,
         alias_catalog=policies.alias_catalog,
-        launch_request=request,
+        launch_request=original_request if original_request is not None else request,
         source_runtime_root=Path(runtime.runtime_root).expanduser().resolve(),
     )
 

@@ -22,7 +22,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Preserve recognized, consistent intentional native-default selections in retained
   model controls; normalize fallback model identity in the shared projection.
 - Admit fresh primary raw arguments with the selected adapter's concrete initial
-  transport before preparation; refuse native selectors and unowned scalar overrides.
+  transport before preparation; reconcile scalar roles against the retained policy
+  and remove the cross-harness launch blacklist.
+- Preserve the original raw spawn request beside the normalized execution request
+  through preparation, and surface only constant redacted normalization warnings.
 - Retain the single normalized project-path snapshot across launch policy resolution and prepared-surface assembly; align the inherited-task-dir test runtime with its authoritative namespace.
 - Route Claude and OpenCode primary raw-session arguments through their registered
   adapters' reviewed normalizers, retaining fail-closed behavior on unsupported surfaces.
