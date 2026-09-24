@@ -1048,6 +1048,29 @@ def test_bare_native_lookup_no_match_and_torn_authority_are_distinct(tmp_path) -
     assert journal.read_bytes() == before
 
 
+def test_bare_native_lookup_preserves_v3_authority_bytes_and_digest(tmp_path) -> None:
+    from tests.support.attempt_owner import begin as begin_v3
+    from tests.support.attempt_owner import key, observe, receipt
+
+    begin_v3(tmp_path, "legacy-run", "legacy-attempt")
+    observe(
+        tmp_path,
+        receipt("legacy-run", "legacy-attempt", "entry", key("fixture")),
+    )
+    journal = tmp_path / "sessions.jsonl"
+    before = journal.read_bytes()
+    boundary = authority.BoundaryEvent.model_validate_json(before.splitlines()[-1])
+    digest = authority.boundary_digest(boundary.fact)
+
+    result = session_store.lookup_native_id_candidates(tmp_path, "fixture:native-1")
+
+    assert isinstance(result, session_store.NativeIdMatches)
+    assert result.candidates[0].provenance == "v3"
+    assert journal.read_bytes() == before
+    reread = authority.BoundaryEvent.model_validate_json(journal.read_bytes().splitlines()[-1])
+    assert authority.boundary_digest(reread.fact) == digest
+
+
 @pytest.mark.parametrize("blocked_boundary", ["entry", "exit"])
 def test_v4_boundary_getter_checks_entry_and_exit_bindings_independently(
     tmp_path, blocked_boundary: str
