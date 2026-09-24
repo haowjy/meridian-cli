@@ -43,6 +43,8 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
 _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
         "recorded_native_source",
+        "continue_source_ref",
+        "continue_source_tracked",
         "agents_payload",
         "claude_native_agents_enabled",
         "base_instructions",

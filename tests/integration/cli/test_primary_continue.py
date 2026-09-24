@@ -202,6 +202,65 @@ def test_direct_launch_revalidates_original_source_reference(tmp_path: Path) -> 
         )
 
 
+@pytest.mark.parametrize("source_ref", ["unknown-native", " "])
+def test_direct_launch_rejects_mismatched_source_description(
+    tmp_path: Path, source_ref: str,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _write_v4_pin(_state_root(project_root))
+
+    with pytest.raises(ValueError, match="source-use authorization refused"):
+        launch_primary(
+            project_root=project_root,
+            request=LaunchRequest(
+                dry_run=True,
+                harness="pi",
+                session=SessionRequest(
+                    requested_harness_session_id="native-conversation",
+                    primary_session_mode="resume",
+                    continue_source_ref=source_ref,
+                    continue_source_tracked=False,
+                ),
+            ),
+            harness_registry=get_default_harness_registry(),
+        )
+
+
+@pytest.mark.parametrize(
+    "selector_args",
+    [
+        ("--continue",),
+        ("-c",),
+        ("--resume",),
+        ("-r",),
+        ("--session-id", "native-conversation"),
+        ("--session-id=native-conversation",),
+        ("--session", "native-conversation"),
+        ("--fork", "native-conversation"),
+    ],
+)
+def test_primary_pi_dry_run_rejects_raw_native_selector_flags(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    selector_args: tuple[str, ...],
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _state_root(project_root)
+
+    with pytest.raises(ValueError, match="native-session selectors"):
+        launch_primary(
+            project_root=project_root,
+            request=LaunchRequest(
+                dry_run=True,
+                harness="pi",
+                passthrough_args=selector_args,
+            ),
+            harness_registry=get_default_harness_registry(),
+        )
+
+
 def test_primary_from_remains_fresh_and_does_not_use_source_authority(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

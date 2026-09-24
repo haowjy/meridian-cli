@@ -539,6 +539,8 @@ def materialize_launch_artifacts(
     projected_roots: tuple[Path, ...] = (),
     interactive: bool = False,
     continue_harness_session_id: str | None = None,
+    continue_source_ref: str | None = None,
+    continue_source_tracked: bool = False,
     recorded_native_source: RecordedNativeSource | None = None,
     continue_fork: bool = False,
     model_override_explicit: bool = False,
@@ -610,6 +612,13 @@ def materialize_launch_artifacts(
         unsafe_no_permissions=unsafe_no_permissions,
     )
     spec = resolve_launch_spec_stage(adapter=harness, run_inputs=run_params, perms=perms)
+    if harness.id == HarnessId.PI:
+        spec = spec.model_copy(
+            update={
+                "continue_source_ref": continue_source_ref,
+                "continue_source_tracked": continue_source_tracked,
+            }
+        )
     if harness.id == HarnessId.CLAUDE:
         spec = spec.model_copy(
             update={"claude_native_agents_enabled": claude_native_agents_enabled}
@@ -1801,17 +1810,24 @@ def bind_launch_context(
         project_paths.project_root, context_config
     )
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
-    source_ref = (
-        prepared.request.session.continue_source_ref
-        or prepared.request.session.requested_harness_session_id
-        or ""
-    ).strip()
     session = prepared.request.session
     tracked_claim = session.continue_source_tracked or session.recorded_native_source is not None
-    if tracked_claim and not source_ref:
+    from meridian.lib.launch.source_selection import normalize_effective_native_selection
+
+    source_ref = normalize_effective_native_selection(
+        session.continue_source_ref,
+        session.requested_harness_session_id,
+        tracked_claim=tracked_claim,
+        extra_args=(
+            prepared.request.extra_args
+            if (prepared.request.harness or "").strip().lower() == "pi"
+            else ()
+        ),
+    )
+    if (prepared.request.harness or "").strip().lower() == "pi" and tracked_claim:
         raise ValueError(
-            "Cannot bind tracked source without its original reference: "
-            "source-use authorization refused."
+            "Tracked Pi resume/fork on the primary native TUI is unqualified "
+            "(transport_unqualified)."
         )
     if source_ref:
         from meridian.lib.ops.reference import (
@@ -1830,6 +1846,12 @@ def bind_launch_context(
             runtime_root, operation, source_ref, prepared.request.harness
         )
         if isinstance(source_use, AuthorizedSourceUse):
+            normalize_effective_native_selection(
+                session.continue_source_ref,
+                session.requested_harness_session_id,
+                authorized_native_id=source_use.source.key.native_session_id,
+                tracked_claim=tracked_claim,
+            )
             raise ValueError(
                 f"Tracked {operation} on the primary launch transport is "
                 "transport_unqualified."
@@ -2114,6 +2136,8 @@ def bind_launch_context(
         projected_roots=projected_roots,
         interactive=is_primary_launch,
         continue_harness_session_id=effective_session_id,
+        continue_source_ref=resolved_request.session.continue_source_ref,
+        continue_source_tracked=resolved_request.session.continue_source_tracked,
         recorded_native_source=resolved_request.session.recorded_native_source,
         continue_fork=(
             bindings.continue_fork_override

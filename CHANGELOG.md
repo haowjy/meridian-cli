@@ -11,6 +11,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Refuse tracked Pi primary resume/fork on the native TUI, including dry-run,
   and block tracked Pi spawn follow-ups until connected admission is owned.
+- Reject mismatched original/native session selectors and Pi raw session-selection
+  flags at shared primary launch and native-TUI projection boundaries.
 - Normalize primary cN/pN/bare source-use references before legacy session
   resolution; refuse unresolved or tracked primary requests before preview,
   and reject tracked replay tails before system-prompt normalization.

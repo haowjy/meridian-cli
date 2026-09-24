@@ -746,6 +746,41 @@ def test_tracked_pi_primary_preview_refuses_unqualified_native_transport(
         )
 
 
+def test_direct_pi_build_refuses_mismatched_source_and_native_selection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _write_minimal_mars_config(project_root)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.5",
+        harness=HarnessId.PI,
+    )
+
+    with pytest.raises(ValueError, match="source-use authorization refused"):
+        build_launch_context(
+            spawn_id="dry-run-pi-mismatched-source",
+            request=SpawnRequest(
+                prompt="continue prompt",
+                prompt_is_composed=False,
+                model="gpt-5.5",
+                harness=HarnessId.PI.value,
+                session=SessionRequest(
+                    requested_harness_session_id="native-conversation",
+                    primary_session_mode="resume",
+                    continue_harness="pi",
+                    continue_source_ref="unknown-native",
+                    continue_source_tracked=False,
+                ),
+            ),
+            runtime=build_primary_launch_runtime(project_root=project_root),
+            harness_registry=get_default_harness_registry(),
+            dry_run=True,
+        )
+
+
 def test_opencode_from_creates_fresh_session_with_context_in_prompt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

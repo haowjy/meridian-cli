@@ -113,21 +113,32 @@ def launch_primary(
     # Library callers can bypass the CLI's source-use normalization. Re-resolve
     # the original reference here; serialized booleans and source DTOs are not
     # evidence that an input was genuinely untracked.
+    from meridian.lib.launch.source_selection import normalize_effective_native_selection
     from meridian.lib.ops.reference import (
         AuthorizedSourceUse,
         SourceUseRefused,
         resolve_source_use,
     )
 
-    source_ref = (
-        request.session.continue_source_ref
-        or request.session.requested_harness_session_id
-        or ""
-    ).strip()
     tracked_claim = (
         request.session.continue_source_tracked
         or request.session.recorded_native_source is not None
     )
+    source_ref = normalize_effective_native_selection(
+        request.session.continue_source_ref,
+        request.session.requested_harness_session_id,
+        tracked_claim=tracked_claim,
+        extra_args=(
+            request.passthrough_args
+            if (request.harness or "").strip().lower() == "pi"
+            else ()
+        ),
+    )
+    if (request.harness or "").strip().lower() == "pi" and tracked_claim:
+        raise ValueError(
+            "Tracked Pi resume/fork on the primary native TUI is unqualified "
+            "(transport_unqualified)."
+        )
     if tracked_claim and not source_ref:
         raise ValueError(
             "Cannot launch tracked source without its original reference: "
@@ -148,6 +159,12 @@ def launch_primary(
             request.harness,
         )
         if isinstance(source_use, AuthorizedSourceUse):
+            normalize_effective_native_selection(
+                request.session.continue_source_ref,
+                request.session.requested_harness_session_id,
+                authorized_native_id=source_use.source.key.native_session_id,
+                tracked_claim=tracked_claim,
+            )
             raise ValueError(
                 f"Cannot {operation} tracked source on the primary launch transport: "
                 "transport_unqualified. Tracked primary resume/fork is unsupported "
