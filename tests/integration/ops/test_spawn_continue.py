@@ -42,6 +42,7 @@ def _seed_spawn(
     *,
     spawn_id: str,
     harness_session_id: str | None,
+    harness: str = "codex",
     work_id: str | None = "w-spawn",
     task_cwd: str | None = None,
     launch_policy_snapshot: LaunchPolicySnapshot | None = None,
@@ -49,7 +50,7 @@ def _seed_spawn(
     snapshot = launch_policy_snapshot
     session_store.start_session(
         runtime_root, chat_id="c-seed", spawn_id=spawn_id,
-        harness=snapshot.harness if snapshot is not None else "codex",
+        harness=snapshot.harness if snapshot is not None else harness,
         harness_session_id=harness_session_id or "",
         model=snapshot.model if snapshot is not None else "gpt-5.3-codex",
     )
@@ -61,7 +62,7 @@ def _seed_spawn(
         model=snapshot.model if snapshot is not None else "gpt-5.3-codex",
         agent=(snapshot.agent or "coder") if snapshot is not None else "coder",
         skills=snapshot.skills if snapshot is not None else ("skill-c",),
-        harness=snapshot.harness if snapshot is not None else "codex",
+        harness=snapshot.harness if snapshot is not None else harness,
         prompt="seed prompt",
         work_id=work_id,
         harness_session_id=harness_session_id,
@@ -110,6 +111,33 @@ def test_spawn_continue_requires_recorded_session(tmp_path: Path) -> None:
                 project_root=project_root.as_posix(),
             )
         )
+
+
+def test_spawn_continue_blocks_tracked_pi_before_creating_spawn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    _seed_spawn(
+        runtime_root,
+        spawn_id="p12",
+        harness_session_id="synthetic-pi-id",
+        harness="pi",
+    )
+    calls = _record_spawn_create(monkeypatch)
+
+    with pytest.raises(ValueError, match="connected-state admission owner"):
+        spawn_api.spawn_continue_sync(
+            SpawnContinueInput(
+                spawn_id="p12",
+                prompt="must not reach Pi",
+                project_root=project_root.as_posix(),
+            )
+        )
+
+    assert calls == []
 
 
 @pytest.mark.parametrize(
