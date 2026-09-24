@@ -30,13 +30,18 @@ def test_projects_reopen_default_lineage_before_common_normalization() -> None:
             "type": "message",
             "id": "b",
             "parentId": "a",
-            "message": {"role": "assistant", "content": "branch B"},
+            "message": {"role": "assistant", "provider": "p", "model": "m", "content": "branch B"},
         },
         {
             "type": "message",
             "id": "wrong",
             "parentId": "a",
-            "message": {"role": "assistant", "content": "off-lineage wrong"},
+            "message": {
+                "role": "assistant",
+                "provider": "p",
+                "model": "m",
+                "content": "off-lineage wrong",
+            },
         },
         {
             "type": "compaction",
@@ -56,7 +61,12 @@ def test_projects_reopen_default_lineage_before_common_normalization() -> None:
             "type": "message",
             "id": "leaf",
             "parentId": "summary",
-            "message": {"role": "assistant", "content": "selected response"},
+            "message": {
+                "role": "assistant",
+                "provider": "p",
+                "model": "m",
+                "content": "selected response",
+            },
         },
     )
     projection = project_pi_reopen_default(source)
@@ -112,9 +122,9 @@ def test_reports_missing_parent_and_cycle_without_claiming_complete() -> None:
         )
     )
     assert missing.complete is False
-    assert any("missing parent" in reason for reason in missing.reasons)
+    assert "missing_parent" in missing.reasons
     assert cycle.complete is False
-    assert "cycle in Pi parent chain" in cycle.reasons
+    assert "cycle" in cycle.reasons
 
 
 def test_torn_tail_is_excluded_and_stable_source_order_is_retained() -> None:
@@ -136,7 +146,7 @@ def test_torn_tail_is_excluded_and_stable_source_order_is_retained() -> None:
     source = _journal(*complete_rows) + '{"type":"message","id":"half"'
     projection = project_pi_reopen_default(source)
     assert projection.complete is False
-    assert any("malformed row" in reason for reason in projection.reasons)
+    assert "malformed_row" in projection.reasons
     assert [event.get("id") for event in projection.events] == ["synthetic", "a", "b"]
 
     reordered = project_pi_reopen_default(
@@ -178,7 +188,7 @@ def test_unknown_row_type_marks_projection_incomplete() -> None:
         )
     )
     assert projection.complete is False
-    assert "unknown row type: future_pi_entry" in projection.reasons
+    assert "unknown_type" in projection.reasons
 
 
 def test_0871_legacy_v3_matches_native_last_entry_and_complete_unterminated_row() -> None:
@@ -194,7 +204,7 @@ def test_0871_legacy_v3_matches_native_last_entry_and_complete_unterminated_row(
             "type": "message",
             "id": "selected",
             "parentId": "root",
-            "message": {"role": "assistant", "content": "selected"},
+            "message": {"role": "assistant", "provider": "p", "model": "m", "content": "selected"},
         },
     ).rstrip("\n")
     projection = project_pi_reopen_default(source)
@@ -229,8 +239,13 @@ def test_selected_ancestry_is_parent_order_not_physical_order() -> None:
     projection = project_pi_reopen_default(
         _journal(
             _header(),
-            {"type": "message", "id": "child", "parentId": "root"},
-            {"type": "message", "id": "root", "parentId": None},
+            {
+                "type": "message",
+                "id": "child",
+                "parentId": "root",
+                "message": {"role": "assistant", "provider": "p", "model": "m"},
+            },
+            {"type": "message", "id": "root", "parentId": None, "message": {"role": "user"}},
             {
                 "type": "label",
                 "id": "leaf",
@@ -242,7 +257,10 @@ def test_selected_ancestry_is_parent_order_not_physical_order() -> None:
     )
     assert projection.complete is True
     assert [event.get("id") for event in projection.events] == [
-        "synthetic", "root", "child", "leaf"
+        "synthetic",
+        "root",
+        "child",
+        "leaf",
     ]
 
 
@@ -251,4 +269,4 @@ def test_stream_event_names_are_not_native_journal_entry_types() -> None:
         _journal(_header(), {"type": "text_delta", "id": "x", "parentId": None})
     )
     assert projection.complete is False
-    assert "unknown row type: text_delta" in projection.reasons
+    assert "unknown_type" in projection.reasons

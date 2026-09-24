@@ -4,58 +4,22 @@ from __future__ import annotations
 
 import json
 import os
-import socket
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
 
-# This file is intentionally safe before importing Meridian: isolate all home
-# roots and install denial hooks at module import, then prove both guards work.
-_GUARD_HOME = Path(tempfile.mkdtemp(prefix="meridian-exact-evidence-home-"))
-for _key in tuple(os.environ):
-    if _key.startswith(("MERIDIAN", "_MERIDIAN", "PI_", "CODEX", "CLAUDE", "XDG", "MARS")):
-        os.environ.pop(_key, None)
-for _key in ("HOME", "MERIDIAN_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"):
-    os.environ[_key] = str(_GUARD_HOME)
-_DENIED_ATTEMPTS: list[str] = []
-
-
-def _deny_external(event: str, _args: tuple[object, ...]) -> None:
-    if event.startswith(
-        ("subprocess.", "socket.", "os.exec", "os.spawn", "os.posix_spawn")
-    ) or event in {
-        "os.system", "os.fork", "os.forkpty"
-    }:
-        _DENIED_ATTEMPTS.append(event)
-        raise RuntimeError(f"guard denied {event}")
-
-
-sys.addaudithook(_deny_external)
-for _self_test in (
-    lambda: subprocess.Popen(["/nonexistent-meridian-denial-self-test"]),
-    lambda: socket.socket(),
-):
-    try:
-        _self_test()
-    except RuntimeError:
-        pass
-    else:
-        raise AssertionError("process/network denial guard did not block its self-test")
-_DENIED_ATTEMPTS.clear()
-
-import meridian.lib.harness.model_observation as model_observation  # noqa: E402
-import meridian.lib.harness.pi_native_source as pi_source  # noqa: E402
-from meridian.lib.harness.model_observation import (  # noqa: E402
+import meridian.lib.harness.model_observation as model_observation
+import meridian.lib.harness.pi_native_source as pi_source
+from meridian.lib.harness.model_observation import (
+    read_model_evidence_exact,
+    )
+from meridian.lib.harness.pi_native_source import PiSourceQualified, qualify_pi_source
+from meridian.lib.state.session_authority import (
     ExactModelObservation,
     ModelEvidenceUnavailable,
     ModelSourceConflict,
-    read_model_evidence_exact,
-)
-from meridian.lib.harness.pi_native_source import PiSourceQualified, qualify_pi_source  # noqa: E402
-from meridian.lib.state.session_authority import (  # noqa: E402
     NativeSessionKey,
     NativeSourceRef,
     RecordedNativeSource,
@@ -139,7 +103,7 @@ def test_torn_or_unknown_lineage_never_returns_older_positive(tmp_path: Path, ta
                 effective_store=tmp_path / "store", session_id="same-id", session_file=str(path)
             ).observation
         }
-)  # type: ignore[union-attr]
+    )  # type: ignore[union-attr]
 
     assert read_model_evidence_exact(source) == ModelEvidenceUnavailable("incomplete")
 
@@ -242,7 +206,7 @@ def test_malformed_off_branch_graph_never_claims_complete(
     assert read_model_evidence_exact(source) == ModelEvidenceUnavailable("incomplete")
 
 
-def test_guarded_suite_and_single_content_horizon(
+def test_exact_read_uses_single_content_horizon(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     source, path = _source(
@@ -261,7 +225,6 @@ def test_guarded_suite_and_single_content_horizon(
     monkeypatch.setattr(os, "read", counted_read)
     assert isinstance(read_model_evidence_exact(source), ExactModelObservation)
     assert captured == path.stat().st_size
-    assert not _DENIED_ATTEMPTS
 
 
 def test_exact_source_never_falls_back_to_discovery(
@@ -287,7 +250,6 @@ def test_exact_source_never_falls_back_to_discovery(
         lambda *args: pytest.fail("legacy reader"),
     )
     assert isinstance(read_model_evidence_exact(source), ExactModelObservation)
-    assert not _DENIED_ATTEMPTS
 
 
 def test_later_assistant_overrides_model_change_and_missing_attribution_cannot_reuse_old(
@@ -448,6 +410,31 @@ def test_symlink_and_fifo_replacements_are_never_read_as_content(tmp_path: Path)
     import os
 
     os.mkfifo(path)
-    result = read_model_evidence_exact(source)
-    assert isinstance(result, (ModelSourceConflict, ModelEvidenceUnavailable))
-    assert not isinstance(result, ExactModelObservation)
+    assert read_model_evidence_exact(source) == ModelSourceConflict("file_changed")
+
+
+def test_guarded_acceptance_runs_in_isolated_child() -> None:
+    """Keep irreversible audit guards and isolated HOME out of pytest workers."""
+    clean_env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("MERIDIAN", "_MERIDIAN", "PI_", "CODEX", "CLAUDE", "XDG", "MARS"))
+        and key
+        not in {"HOME", "MERIDIAN_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"}
+    }
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).parents[2] / "support" / "exact_model_evidence_guard.py"),
+        ],
+        env=clean_env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (
+        result.stdout.strip()
+        == '{"accepted": true, "denied_self_tests": 3, "external_attempts": 0}'
+    )

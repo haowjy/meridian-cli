@@ -113,9 +113,9 @@ def read_pi_exact_content[T](
             acquired = True
             try:
                 before = os.fstat(file_fd)
-                if not stat.S_ISREG(before.st_mode):
-                    return PiExactContentUnavailable("changed_during_read")
                 if _stamp(before) != locator.file_object:
+                    return PiExactContentConflict("file_changed")
+                if not stat.S_ISREG(before.st_mode):
                     return PiExactContentConflict("file_changed")
                 if before.st_size > _MAX_EXACT_CONTENT_BYTES:
                     return PiExactContentUnavailable("unsupported_dialect")

@@ -27,7 +27,13 @@ from meridian.lib.harness.pi_native_source import (
     read_pi_exact_content,
 )
 from meridian.lib.harness.pi_paths import resolve_pi_agent_dir, resolve_pi_spawn_session_root
-from meridian.lib.state.session_authority import LocalObjectStamp, RecordedNativeSource
+from meridian.lib.state.session_authority import (
+    ExactModelEvidence,
+    ExactModelObservation,
+    ModelEvidenceUnavailable,
+    ModelSourceConflict,
+    RecordedNativeSource,
+)
 
 
 @dataclass(frozen=True)
@@ -38,46 +44,6 @@ class NativeModelReadContext:
     claude_config_dir: str | None = None
     pi_session_dir: str | None = None
     launch_env: Mapping[str, str] | None = None
-
-
-@dataclass(frozen=True)
-class ExactModelObservation:
-    source: RecordedNativeSource
-    provider_contract: str
-    view_basis: Literal["reopen-default"]
-    selected_leaf_id: str | None
-    model_basis: Literal["selected_reopen_default"]
-    model_token: str
-    native_provider: str
-    evidence_entry_id: str
-    byte_length: int
-    content_sha256: str
-    file_object: LocalObjectStamp
-    store_object: LocalObjectStamp
-    observed_at: str
-    complete: Literal[True] = True
-
-
-@dataclass(frozen=True)
-class ModelEvidenceUnavailable:
-    reason: Literal[
-        "unsupported_provider",
-        "unsupported_view",
-        "missing",
-        "inaccessible",
-        "unsupported_dialect",
-        "incomplete",
-        "no_model",
-        "changed_during_read",
-    ]
-
-
-@dataclass(frozen=True)
-class ModelSourceConflict:
-    reason: Literal["source_mismatch", "store_changed", "file_changed", "identity_mismatch"]
-
-
-type ExactModelEvidence = ExactModelObservation | ModelEvidenceUnavailable | ModelSourceConflict
 
 
 @dataclass(frozen=True)

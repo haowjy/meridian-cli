@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 - Keep exact Pi source descriptors open through validation and final reobservation; reject changed files and malformed full journals, with guarded adversarial coverage.
+- Isolate guarded exact-provider acceptance in a child process, classify FIFO replacement as a source conflict, and share immutable evidence results in state.
 
 ### Fixed
 
