@@ -32,7 +32,6 @@ if TYPE_CHECKING:
         resolve_policies,
     )
     from meridian.lib.launch.process import ProcessOutcome, run_harness_process
-    from meridian.lib.launch.request import SessionRequest
     from meridian.lib.launch.resolve import (
         ResolvedSkills,
         load_agent_profile_with_fallback,
@@ -114,6 +113,7 @@ def launch_primary(
     from meridian.lib.launch.source_selection import (
         PrimarySourceSelection,
         reconcile_primary_source_selection,
+        session_operation_facts,
         validate_primary_source_use,
     )
 
@@ -293,7 +293,7 @@ def launch_primary(
         ),
         resolved_source_ref=final_session.continue_source_ref,
         resolved_source_ref_supplied=original_session.continue_source_ref is not None,
-        resolved_operation_facts=_session_operation_facts(final_session),
+        resolved_operation_facts=session_operation_facts(final_session),
     )
     preview_context = _bind_launch_context_impl(
         prepared=prepared,
@@ -375,24 +375,6 @@ def _primary_source_operation_facts(request: LaunchRequest) -> tuple[str, ...]:
     return tuple(facts)
 
 
-def _session_operation_facts(session: SessionRequest) -> tuple[str, ...]:
-    """Keep replay/prepared operation assertions independent until comparison."""
-    facts: list[str] = []
-    primary_mode = (session.primary_session_mode or "").strip().lower()
-    if primary_mode:
-        facts.append(primary_mode)
-    if session.continue_fork:
-        facts.append("fork")
-    elif "continue_fork" in session.model_fields_set and (
-        primary_mode in ("resume", "fork")
-        or session.continue_source_ref is not None
-        or session.requested_harness_session_id is not None
-    ):
-        # An effective false at a transformed boundary asserts resume. Do not
-        # infer this from the default at entry, where the field may be absent.
-        facts.append("resume")
-    return tuple(facts)
-
 
 def _resolve_primary_source_request(
     *,
@@ -406,6 +388,7 @@ def _resolve_primary_source_request(
         build_continue_replay_contract,
         continue_replay_source_from_reference,
     )
+    from meridian.lib.launch.source_selection import session_operation_facts
     from meridian.lib.ops.reference import (
         missing_fork_session_error_with_discovery,
         resolve_session_reference,
@@ -519,7 +502,7 @@ def _resolve_primary_source_request(
                 contract.session.continue_source_tracked
                 or contract.session.recorded_native_source is not None
             ),
-            resolved_operation_facts=_session_operation_facts(contract.session),
+            resolved_operation_facts=session_operation_facts(contract.session),
         )
         task_dir = contract.task_dir
         source_warning = resolved.warning

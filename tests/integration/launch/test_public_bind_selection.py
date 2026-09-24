@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 import meridian.lib.launch.context as launch_context
+import meridian.lib.ops.reference as reference
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import RuntimeBindings, bind_launch_context
 from meridian.lib.launch.request import LaunchRuntime, SessionRequest, SpawnRequest
@@ -19,6 +20,7 @@ def _prepared(tmp_path: Path, session: SessionRequest):
         request=request,
         project_root=tmp_path,
         reference_anchor=tmp_path,
+        runtime_root=tmp_path / ".meridian",
         harness_registry=registry,
     )
     runtime = LaunchRuntime(
@@ -164,6 +166,200 @@ def test_public_bind_performs_one_lookup_for_consistent_untracked_native_source(
 
     assert lookups == [("native-A", "native-A", "resume")]
     assert materializations == [True]
+
+
+def test_public_bind_rejects_fresh_mode_with_native_source_before_lookup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepared, runtime, registry = _prepared(
+        tmp_path,
+        SessionRequest(
+            requested_harness_session_id="native-A",
+            continue_source_ref="native-A",
+            primary_session_mode="fresh",
+        ),
+    )
+    lookups, materializations = _stub_effects(monkeypatch)
+
+    with pytest.raises(ValueError, match="source selection conflict"):
+        _bind(prepared, runtime, registry)
+
+    assert lookups == []
+    assert materializations == []
+
+
+def test_public_bind_rejects_changed_fork_flag_before_lookup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepared, runtime, registry = _prepared(
+        tmp_path,
+        SessionRequest(
+            requested_harness_session_id="native-A",
+            continue_source_ref="native-A",
+            continue_fork=True,
+            primary_session_mode="fork",
+        ),
+    )
+    prepared = prepared.__class__(
+        **{
+            **prepared.__dict__,
+            "request": prepared.request.model_copy(
+                update={
+                    "session": prepared.request.session.model_copy(
+                        update={"continue_fork": False}
+                    )
+                }
+            ),
+        }
+    )
+    lookups, materializations = _stub_effects(monkeypatch)
+
+    with pytest.raises(ValueError, match="source selection conflict"):
+        _bind(prepared, runtime, registry)
+
+    assert lookups == []
+    assert materializations == []
+
+
+def test_public_bind_refuses_prepared_namespace_reroot_before_lookup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepared, runtime, registry = _prepared(
+        tmp_path,
+        SessionRequest(continue_source_ref="c42", primary_session_mode="resume"),
+    )
+    runtime = runtime.model_copy(update={"runtime_root": (tmp_path / "R2").as_posix()})
+    lookups, materializations = _stub_effects(monkeypatch)
+
+    with pytest.raises(ValueError, match="runtime namespace changed"):
+        _bind(prepared, runtime, registry)
+
+    assert lookups == []
+    assert materializations == []
+
+
+def test_public_bind_refuses_continue_harness_disagreement_before_lookup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepared, runtime, registry = _prepared(
+        tmp_path,
+        SessionRequest(
+            requested_harness_session_id="native-A",
+            continue_source_ref="native-A",
+            continue_harness="claude",
+        ),
+    )
+    prepared = prepared.__class__(
+        **{
+            **prepared.__dict__,
+            "request": prepared.request.model_copy(
+                update={
+                    "session": prepared.request.session.model_copy(
+                        update={"continue_harness": "codex"}
+                    )
+                }
+            ),
+        }
+    )
+    lookups, materializations = _stub_effects(monkeypatch)
+
+    with pytest.raises(ValueError, match="source harness changed"):
+        _bind(prepared, runtime, registry)
+
+    assert lookups == []
+    assert materializations == []
+
+
+@pytest.mark.parametrize(
+    ("mode", "fork", "expected_fork"),
+    [("resume", False, False), ("fork", True, True)],
+)
+def test_public_bind_materializes_valid_native_selection_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    fork: bool,
+    expected_fork: bool,
+) -> None:
+    prepared, runtime, registry = _prepared(
+        tmp_path,
+        SessionRequest(
+            requested_harness_session_id="native-A",
+            continue_source_ref="native-A",
+            continue_fork=fork,
+            primary_session_mode=mode,
+        ),
+    )
+    calls: list[tuple[str, str, str]] = []
+
+    def authorize(runtime_root, operation, native_id, harness):
+        calls.append((runtime_root.as_posix(), operation, native_id))
+        return UntrackedSourceUse(
+            operation=operation,
+            original_ref=native_id,
+            native_id=native_id,
+            harness=harness,
+            lookup_scope=runtime_root,
+        )
+
+    monkeypatch.setattr(reference, "resolve_source_use", authorize)
+    context = _bind(prepared, runtime, registry)
+
+    assert len(calls) == 1
+    assert calls[0][1:] == (mode, "native-A")
+    assert context.binding.spec.continue_session_id == "native-A"
+    assert context.binding.spec.continue_fork is expected_fork
+    assert context.binding.argv
+
+
+def test_public_bind_fresh_uuid_does_not_query_and_builds_fresh_spec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepared, runtime, registry = _prepared(tmp_path, SessionRequest())
+    calls: list[object] = []
+    monkeypatch.setattr(reference, "resolve_source_use", lambda *args: calls.append(args))
+
+    context = _bind(prepared, runtime, registry)
+
+    assert calls == []
+    assert context.binding.spec.continue_session_id is None
+    assert context.binding.spec.continue_fork is False
+    assert context.binding.argv
+
+
+def test_build_launch_context_materializes_checked_source_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepared, runtime, registry = _prepared(
+        tmp_path,
+        SessionRequest(
+            requested_harness_session_id="native-A",
+            continue_source_ref="native-A",
+        ),
+    )
+    calls: list[str] = []
+
+    def authorize(runtime_root, operation, native_id, harness):
+        calls.append(native_id)
+        return UntrackedSourceUse(
+            operation=operation,
+            original_ref=native_id,
+            native_id=native_id,
+            harness=harness,
+            lookup_scope=runtime_root,
+        )
+
+    monkeypatch.setattr(reference, "resolve_source_use", authorize)
+    context = launch_context.build_launch_context(
+        spawn_id="build-test",
+        request=prepared.launch_request or prepared.request,
+        runtime=runtime,
+        harness_registry=registry,
+    )
+
+    assert calls == ["native-A"]
+    assert context.binding.spec.continue_session_id == "native-A"
+    assert context.binding.argv
 
 
 @pytest.mark.parametrize("resolved_ref", [None, "c18"], ids=["source-dropped", "alias-changed"])

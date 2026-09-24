@@ -6,6 +6,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Refuse source-mode, runtime-namespace, and continuation-harness drift at public bind before source lookup.
+
+### Fixed
+
 - Public launch binding now reconciles original/resolved source intent, runtime seeds, adapter, and fork overrides before source lookup or preview.
 
 - Preserve explicit fresh intent and reject replay/prepared source or mode loss before the next launch stage.

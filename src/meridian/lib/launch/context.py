@@ -283,6 +283,8 @@ class PreparedLaunchSurface:
     # Original launch request preserved for LaunchContext.request compatibility.
     # `request` carries the resolved request used by bind.
     launch_request: SpawnRequest | None = None
+    # Canonical authority namespace under which source aliases were prepared.
+    source_runtime_root: Path | None = None
 
     @property
     def prompt_payload(self) -> PreparedPromptPayload:
@@ -1718,6 +1720,7 @@ def prepare_launch_surface(
         model_selection=model_selection,
         alias_catalog=policies.alias_catalog,
         launch_request=request,
+        source_runtime_root=Path(runtime.runtime_root).expanduser().resolve(),
     )
 
 
@@ -1726,6 +1729,7 @@ def _build_direct_surface(
     request: SpawnRequest,
     project_root: Path,
     reference_anchor: Path,
+    runtime_root: Path,
     harness_registry: HarnessRegistry,
 ) -> PreparedLaunchSurface:
     """Build the lightweight prepared surface for already-resolved DIRECT launches."""
@@ -1778,6 +1782,7 @@ def _build_direct_surface(
         model_selection=None,
         alias_catalog=None,
         launch_request=resolved_request,
+        source_runtime_root=runtime_root.expanduser().resolve(),
     )
 
 
@@ -1790,7 +1795,11 @@ def bind_launch_context(
     harness_registry: HarnessRegistry,
 ) -> LaunchContext:
     """Validate an independently supplied prepared selection, then bind it."""
-    from .source_selection import PrimarySourceSelection, reconcile_primary_source_selection
+    from .source_selection import (
+        PrimarySourceSelection,
+        reconcile_primary_source_selection,
+        session_operation_facts,
+    )
 
     request = prepared.request
     original = prepared.launch_request or request
@@ -1805,7 +1814,16 @@ def bind_launch_context(
             return "resume"
         return "fresh"
 
+    original_facts = session_operation_facts(original_session)
+    resolved_facts = session_operation_facts(resolved_session)
     operation = operation_for(original_session)
+    runtime_root = Path(runtime.runtime_root).expanduser().resolve()
+    prepared_root = prepared.source_runtime_root
+    if prepared_root is None or prepared_root.expanduser().resolve() != runtime_root:
+        raise ValueError(
+            "Primary source selection conflict (prepared runtime namespace changed); "
+            "source-use authorization refused."
+        )
     if original_session.continue_source_tracked != resolved_session.continue_source_tracked:
         raise ValueError(
             "Primary source selection conflict (tracked-source claim changed); "
@@ -1823,11 +1841,17 @@ def bind_launch_context(
         harness=original.harness,
         runtime_root=Path(runtime.runtime_root).expanduser().resolve(),
         seed_id=prepared.seed_harness_session_id,
-        other_harnesses=(request.harness, prepared.harness.id.value),
+        other_harnesses=(
+            request.harness,
+            prepared.harness.id.value,
+            original_session.continue_harness,
+            resolved_session.continue_harness,
+        ),
         # The strict policy boundary below decides whether a consistent
         # tracked claim is authorized; the claim itself is not authority.
         tracked_claim=False,
-        operation_facts=(operation_for(resolved_session),),
+        operation_facts=(*original_facts, *resolved_facts),
+        continue_fork_facts=(original_session.continue_fork, resolved_session.continue_fork),
     )
     if bindings.forked_harness_session_id is not None:
         raise ValueError(
@@ -1854,7 +1878,7 @@ def bind_launch_context(
     session = original_session
     if operation != "fresh":
         validate_primary_source_use(
-            runtime_root=Path(runtime.runtime_root).expanduser().resolve(),
+            runtime_root=runtime_root,
             source_ref=session.continue_source_ref,
             native_selector=checked_source,
             tracked_claim=session.continue_source_tracked,
@@ -2366,6 +2390,7 @@ def _build_launch_context_impl(
             request=request,
             project_root=project_paths.project_root,
             reference_anchor=project_paths.execution_cwd,
+            runtime_root=Path(runtime.runtime_root),
             harness_registry=harness_registry,
         )
 

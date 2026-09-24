@@ -8,10 +8,30 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from meridian.lib.launch.request import SessionRequest
     from meridian.lib.ops.reference import UntrackedSourceUse
 
 _CHAT_REF = re.compile(r"c[1-9][0-9]*\Z")
 _SPAWN_REF = re.compile(r"p[1-9][0-9]*\Z")
+
+
+def session_operation_facts(session: SessionRequest) -> tuple[str, ...]:
+    """Keep replay/prepared operation assertions independent until comparison."""
+    facts: list[str] = []
+    mode = (session.primary_session_mode or "").strip().lower()
+    if mode:
+        facts.append(mode)
+    if session.continue_fork:
+        facts.append("fork")
+    elif "continue_fork" in session.model_fields_set and (
+        mode in ("resume", "fork")
+        or session.continue_source_ref is not None
+        or session.requested_harness_session_id is not None
+    ):
+        # Explicit false at a transformed boundary asserts resume. Do not infer
+        # this from the default at entry, where the field may be absent.
+        facts.append("resume")
+    return tuple(facts)
 
 
 @dataclass(frozen=True)
@@ -27,6 +47,7 @@ class PrimarySourceSelection:
     other_harnesses: tuple[str | None, ...] = ()
     tracked_claim: bool = False
     operation_facts: tuple[str, ...] = ()
+    continue_fork_facts: tuple[bool, ...] = ()
 
 
 def reconcile_primary_source_selection(
@@ -71,6 +92,11 @@ def reconcile_primary_source_selection(
         raise _conflict("conflicting operation facts")
     if selection.operation_facts and selection.operation_facts[0] != selection.operation:
         raise _conflict("operation differs from supplied operation facts")
+    if selection.continue_fork_facts and any(
+        value != selection.continue_fork_facts[0]
+        for value in selection.continue_fork_facts[1:]
+    ):
+        raise _conflict("fork intent changed")
 
     if source_supplied and source is None and any((native_id, seed_id)):
         raise _conflict("blank original source reference")
