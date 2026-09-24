@@ -6,14 +6,11 @@ import json
 import shlex
 import sys
 from pathlib import Path
-from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
 from meridian.cli.argv_normalization import validate_fork_mode
-from meridian.cli.utils import missing_fork_session_error_with_discovery
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
-from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.registry import get_default_harness_registry
@@ -21,18 +18,10 @@ from meridian.lib.launch import LaunchRequest, SessionMode, launch_primary
 from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.continue_replay import (
     MODEL_OVERRIDE_WARNING,
-    build_continue_replay_contract,
-    continue_replay_source_from_reference,
 )
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.resolve import resolve_agent_launch_input
-from meridian.lib.ops.reference import (
-    AuthorizedSourceUse,
-    ResolvedSessionReference,
-    SourceUseRefused,
-    resolve_session_reference,
-    resolve_source_use,
-)
+from meridian.lib.ops.reference import AuthorizedSourceUse, SourceUseRefused, resolve_source_use
 from meridian.lib.ops.spawn.models import normalize_goal
 from meridian.lib.state.paths import resolve_project_runtime_root
 
@@ -119,18 +108,6 @@ class PrimaryLaunchOutput(BaseModel):
         else:
             lines.append(self.message)
         return "\n".join(lines)
-
-
-def resolve_session_target(
-    *,
-    project_root: Path,
-    continue_ref: str,
-    harness_hint: str | None = None,
-) -> ResolvedSessionReference:
-    normalized = continue_ref.strip()
-    if not normalized:
-        raise ValueError("--continue requires a non-empty session reference.")
-    return resolve_session_reference(project_root, normalized, harness_hint=harness_hint)
 
 
 def run_primary_launch(
@@ -225,39 +202,20 @@ def run_primary_launch(
     fork_fresh_target = fork_resolution.fork_fresh_ref
     selected_fork_target = fork_target if fork_target is not None else fork_fresh_target
 
-    continue_harness_session_id: str | None = None
-    continue_chat_id: str | None = None
-    continue_harness: str | None = None
-    continue_fork = False
-    continue_warning: str | None = None
-    forked_from_chat_id: str | None = None
-    forked_from_history_id: UUID | None = None
-    source_control_root: str | None = None
-    source_execution_cwd: str | None = None
-    source_claude_config_dir: str | None = None
-    source_pi_session_dir: str | None = None
-    continue_source_tracked = False
     continue_source_ref: str | None = None
-    continue_launch_policy_snapshot: LaunchPolicySnapshot | None = None
-    continue_passthrough_args: tuple[str, ...] = ()
-    output_forked_from: str | None = None
     session_mode = SessionMode.FRESH
-    continue_session = SessionRequest()
     explicit_harness = harness.strip() if harness is not None and harness.strip() else None
     agent_launch = resolve_agent_launch_input(agent)
-    requested_model: str | None = model
-    requested_agent: str | None = agent_launch.agent
     agent_opt_out = agent_launch.agent_opt_out
-    requested_skills: tuple[str, ...] = skills
-    requested_work_id = work.strip() or None
-    launch_task_dir = normalized_task_dir
     if resume_target is not None:
         if skills:
             raise ValueError("Cannot combine --continue with --skills.")
         if passthrough:
             raise ValueError("Cannot combine --continue with passthrough args (--).")
         source_use = resolve_source_use(
-            resolve_project_runtime_root(project_root), "resume", resume_target,
+            resolve_project_runtime_root(project_root),
+            "resume",
+            resume_target,
             explicit_harness,
         )
         if isinstance(source_use, AuthorizedSourceUse):
@@ -270,72 +228,14 @@ def run_primary_launch(
                 f"Cannot continue source '{resume_target}': source-use authorization "
                 f"refused ({source_use.reason})."
             )
-        resolved_continue = resolve_session_target(
-            project_root=project_root, continue_ref=resume_target, harness_hint=harness,
-        )
-        if resolved_continue.missing_harness_session_id:
-            raise ValueError(
-                missing_fork_session_error_with_discovery(
-                    source_ref=resume_target,
-                    project_root=project_root,
-                    source_harness=resolved_continue.harness,
-                    source_chat_id=resolved_continue.source_chat_id,
-                )
-            )
-        continue_contract = build_continue_replay_contract(
-            source=continue_replay_source_from_reference(
-                source_ref=resume_target,
-                resolved_reference=resolved_continue,
-                harness_session_id=(
-                    resolved_continue.authoritative_harness_session_id
-                ),
-            ),
-            explicit_harness=(
-                explicit_harness
-            ),
-            requested_agent=agent_launch.agent,
-            agent_opt_out=agent_launch.agent_opt_out,
-            requested_model_override=model.strip() or None,
-            runtime_root=resolve_project_runtime_root(project_root),
-        )
-        continue_session = continue_contract.session
-        continue_harness_session_id = continue_contract.session.requested_harness_session_id
-        continue_chat_id = continue_contract.session.continue_chat_id
-        continue_harness = continue_contract.harness
-        continue_warning = resolved_continue.warning
-        source_control_root = continue_contract.session.source_control_root
-        source_execution_cwd = continue_contract.session.source_execution_cwd
-        source_claude_config_dir = continue_contract.session.source_claude_config_dir
-        source_pi_session_dir = continue_contract.session.source_pi_session_dir
-        if requested_work_id is None:
-            requested_work_id = continue_contract.work_id
-        launch_task_dir = continue_contract.task_dir
-        if launch_task_dir is not None and not Path(launch_task_dir).is_dir():
-            continue_warning = _merge_warnings(
-                continue_warning,
-                f"Continued session's task_dir is unavailable or not a directory: "
-                f"{launch_task_dir}; "
-                "falling back to the normal launch directory.",
-            )
-            launch_task_dir = project_root.as_posix()
-        continue_source_tracked = continue_contract.session.continue_source_tracked
-        continue_source_ref = continue_contract.session.continue_source_ref
-        continue_launch_policy_snapshot = continue_contract.launch_policy_snapshot
-        continue_passthrough_args = continue_contract.passthrough_args
-        requested_model = continue_contract.model
-        requested_agent = continue_contract.agent
-        agent_opt_out = continue_contract.agent_opt_out
-        requested_skills = continue_contract.skills
+        continue_source_ref = resume_target
         session_mode = SessionMode.RESUME
-        if continue_source_tracked and continue_harness == "pi":
-            raise ValueError(
-                "Cannot continue tracked Pi source on the primary native TUI: "
-                "transport_unqualified."
-            )
     elif selected_fork_target is not None:
         original_fork_ref = raw_fork_target or raw_fork_fresh_target
         source_use = resolve_source_use(
-            resolve_project_runtime_root(project_root), "fork", original_fork_ref,
+            resolve_project_runtime_root(project_root),
+            "fork",
+            original_fork_ref,
             explicit_harness,
         )
         if isinstance(source_use, AuthorizedSourceUse):
@@ -348,89 +248,21 @@ def run_primary_launch(
                 f"Cannot fork source '{selected_fork_target}': source-use authorization "
                 f"refused ({source_use.reason})."
             )
-        resolved_fork = resolve_session_target(
-            project_root=project_root, continue_ref=selected_fork_target
-        )
-        if resolved_fork.missing_harness_session_id:
-            raise ValueError(
-                missing_fork_session_error_with_discovery(
-                    source_ref=selected_fork_target,
-                    project_root=project_root,
-                    source_harness=resolved_fork.harness,
-                    source_chat_id=resolved_fork.source_chat_id,
-                )
-            )
-
-        source_harness = (
-            resolved_fork.harness.strip()
-            if resolved_fork.harness is not None and resolved_fork.harness.strip()
-            else None
-        )
-        if (
-            explicit_harness is not None
-            and source_harness is not None
-            and explicit_harness != source_harness
-        ):
-            raise ValueError(
-                "Cannot fork across harnesses: "
-                f"source is '{source_harness}', target is '{explicit_harness}'."
-            )
-
-        continue_harness_session_id = resolved_fork.authoritative_harness_session_id
-        continue_harness = explicit_harness or source_harness
-        if continue_harness is None:
-            missing_session_ref = (
-                resolved_fork.authoritative_harness_session_id or selected_fork_target
-            )
-            raise ValueError(
-                f"Session '{missing_session_ref}' "
-                "not recognized by any harness. "
-                "Use --harness to specify which harness owns this session."
-            )
-        continue_warning = resolved_fork.warning
-        continue_fork = True
-        forked_from_chat_id = resolved_fork.source_chat_id
-        forked_from_history_id = resolved_fork.source_history_id
-        source_control_root = resolved_fork.source_control_root
-        source_execution_cwd = resolved_fork.source_execution_cwd
-        source_claude_config_dir = resolved_fork.source_claude_config_dir
-        source_pi_session_dir = resolved_fork.source_pi_session_dir
-        continue_source_tracked = resolved_fork.tracked
-        continue_source_ref = selected_fork_target
-        output_forked_from = resolved_fork.source_chat_id or selected_fork_target
+        continue_source_ref = original_fork_ref
         session_mode = SessionMode.FORK
-
-        if continue_source_tracked and continue_harness == "pi":
-            raise ValueError(
-                "Cannot fork tracked Pi source on the primary native TUI: "
-                "transport_unqualified."
-            )
-
-        if not model.strip() and resolved_fork.source_model is not None:
-            requested_model = resolved_fork.source_model
-        if agent is None and not agent_opt_out and resolved_fork.source_agent is not None:
-            requested_agent = resolved_fork.source_agent
-        if requested_work_id is None and resolved_fork.source_work_id is not None:
-            requested_work_id = resolved_fork.source_work_id
 
     resolved_goal = normalize_goal(goal)
 
     launch_result = launch_primary(
         project_root=project_root,
         request=LaunchRequest(
-            model=requested_model,
-            harness=(
-                continue_harness
-                if (resume_target is not None or selected_fork_target is not None)
-                else harness
-            ),
-            agent=requested_agent,
+            model=model,
+            harness=harness,
+            agent=agent_launch.agent,
             agent_opt_out=agent_opt_out,
-            work_id=requested_work_id,
-            task_dir=launch_task_dir,
-            passthrough_args=(
-                continue_passthrough_args if resume_target is not None else passthrough
-            ),
+            work_id=work.strip() or None,
+            task_dir=normalized_task_dir,
+            passthrough_args=passthrough,
             session_mode=session_mode,
             pinned_context="",
             supplemental_prompt_documents=supplemental_prompt_documents,
@@ -438,7 +270,7 @@ def run_primary_launch(
             context_from=fork_resolution.resolved_context_from,
             reference_files=reference_files,
             prompt=prompt,
-            skills=requested_skills,
+            skills=skills,
             goal=resolved_goal,
             dry_run=dry_run,
             execution_policy=ResolvedExecutionPolicy(
@@ -449,21 +281,9 @@ def run_primary_launch(
                 autocompact=autocompact,
                 autocompact_pct=autocompact_pct,
             ),
-            launch_policy_snapshot=continue_launch_policy_snapshot,
-            session=continue_session.model_copy(update={
-                "requested_harness_session_id": continue_harness_session_id,
-                "continue_harness": continue_harness,
-                "continue_chat_id": continue_chat_id,
-                "continue_fork": continue_fork,
-                "forked_from_chat_id": forked_from_chat_id,
-                "forked_from_history_id": forked_from_history_id,
-                "source_control_root": source_control_root,
-                "source_execution_cwd": source_execution_cwd,
-                "source_claude_config_dir": source_claude_config_dir,
-                "source_pi_session_dir": source_pi_session_dir,
-                "continue_source_tracked": continue_source_tracked,
-                "continue_source_ref": continue_source_ref,
-            }),
+            primary_source_ref=(continue_source_ref if session_mode != SessionMode.FRESH else None),
+            primary_explicit_agent=agent is not None,
+            session=SessionRequest(continue_source_ref=continue_source_ref),
         ),
         harness_registry=harness_registry,
     )
@@ -481,7 +301,10 @@ def run_primary_launch(
         launch_plan=launch_result.launch_plan if dry_run else None,
         continue_ref=launch_result.continue_ref,
         continue_chat_id=continue_chat_id,
-        forked_from=output_forked_from,
+        forked_from=(
+            launch_result.primary_source_chat_id
+            or (selected_fork_target if session_mode == SessionMode.FORK else None)
+        ),
         resume_command=(
             f"meridian --continue {continue_chat_id}"
             if continue_chat_id is not None
@@ -492,7 +315,7 @@ def run_primary_launch(
             )
         ),
         warning=_merge_warnings(
-            continue_warning,
+            launch_result.primary_source_warning,
             history_warning,
             launch_result.warning,
             _headless_claude_startup_warning(project_root),

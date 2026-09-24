@@ -44,19 +44,31 @@ def _write_v4_pin(runtime_root: Path) -> None:
         harness="pi", store="/synthetic/pi", native_session_id="native-conversation"
     )
     begin = native_authority.BeginEventV4(
-        run_id="run", attempt_id="attempt", transport_scope_id="transport",
-        harness="pi", store=key.store, operation="fresh", attempt_number=1,
+        run_id="run",
+        attempt_id="attempt",
+        transport_scope_id="transport",
+        harness="pi",
+        store=key.store,
+        operation="fresh",
+        attempt_number=1,
     )
     fact = native_authority.BoundaryFactV4(
-        run_id="run", attempt_id="attempt", boundary="entry", key=key,
+        run_id="run",
+        attempt_id="attempt",
+        boundary="entry",
+        key=key,
         evidence=native_authority.BoundaryEvidence(
-            transport_scope_id="transport", order=1, correlation="entry",
+            transport_scope_id="transport",
+            order=1,
+            correlation="entry",
             selection=native_authority.CreatedSelection(creation_request="fresh"),
         ),
         file=native_authority.QualifiedLocalFile(
-            kind="local_file", path="/synthetic/pi/native-conversation.jsonl",
+            kind="local_file",
+            path="/synthetic/pi/native-conversation.jsonl",
             store_object={"device": 1, "inode": 10},
-            file_object={"device": 1, "inode": 11}, rule="pi-session-file:v1",
+            file_object={"device": 1, "inode": 11},
+            rule="pi-session-file:v1",
         ),
     )
     builder = native_authority._JournalBuilder()
@@ -85,7 +97,9 @@ def _seed_primary_spawn(
 ) -> None:
     snapshot = launch_policy_snapshot
     session_store.start_session(
-        runtime_root, chat_id="c-primary", spawn_id=spawn_id,
+        runtime_root,
+        chat_id="c-primary",
+        spawn_id=spawn_id,
         harness=snapshot.harness if snapshot is not None else "codex",
         harness_session_id=harness_session_id or "",
         model=snapshot.model if snapshot is not None else "gpt-5.3-codex",
@@ -139,12 +153,20 @@ def _run_primary_continue(
 
 @pytest.mark.parametrize(
     ("ref", "operation"),
-    [("c1", "resume"), ("native-conversation", "resume"),
-     ("p1", "fork"), ("p1", "fork-fresh"),
-     ("c1", "fork"), ("c1", "fork-fresh")],
+    [
+        ("c1", "resume"),
+        ("native-conversation", "resume"),
+        ("p1", "fork"),
+        ("p1", "fork-fresh"),
+        ("c1", "fork"),
+        ("c1", "fork-fresh"),
+    ],
 )
 def test_primary_source_use_aliases_refuse_before_launch(
-    tmp_path: Path, ref: str, operation: str,
+    tmp_path: Path,
+    ref: str,
+    operation: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -178,14 +200,30 @@ def test_primary_source_use_aliases_refuse_before_launch(
         "project_root": project_root,
     }
     expected_reason = "tracked_run_unresolved" if ref == "p1" else "transport_unqualified"
+
+    def fail_if_launch_runs(**kwargs: object) -> None:
+        _ = kwargs
+        pytest.fail("launch preparation ran before source authorization")
+
+    monkeypatch.setattr(primary_launch_module, "launch_primary", fail_if_launch_runs)
     with pytest.raises(ValueError, match=expected_reason):
         run_primary_launch(**cast("Any", kwargs))
 
 
-def test_direct_launch_revalidates_original_source_reference(tmp_path: Path) -> None:
+def test_direct_launch_revalidates_source_before_native_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     _write_v4_pin(_state_root(project_root))
+
+    def fail_if_native_resolution_runs(*args: object, **kwargs: object) -> None:
+        _ = (args, kwargs)
+        pytest.fail("native session resolution ran before launch-owner authorization")
+
+    monkeypatch.setattr(
+        "meridian.lib.ops.reference.resolve_session_reference", fail_if_native_resolution_runs
+    )
 
     with pytest.raises(ValueError, match="transport_unqualified"):
         launch_primary(
@@ -193,9 +231,11 @@ def test_direct_launch_revalidates_original_source_reference(tmp_path: Path) -> 
             request=LaunchRequest(
                 dry_run=True,
                 harness="pi",
+                primary_source_ref="c1",
                 session=SessionRequest(
                     requested_harness_session_id="native-conversation",
                     continue_source_tracked=False,
+                    continue_source_ref="c1",
                 ),
             ),
             harness_registry=get_default_harness_registry(),
@@ -204,7 +244,8 @@ def test_direct_launch_revalidates_original_source_reference(tmp_path: Path) -> 
 
 @pytest.mark.parametrize("source_ref", ["unknown-native", " "])
 def test_direct_launch_rejects_mismatched_source_description(
-    tmp_path: Path, source_ref: str,
+    tmp_path: Path,
+    source_ref: str,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -262,7 +303,8 @@ def test_primary_pi_dry_run_rejects_raw_native_selector_flags(
 
 
 def test_primary_from_remains_fresh_and_does_not_use_source_authority(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -307,7 +349,9 @@ def test_primary_from_remains_fresh_and_does_not_use_source_authority(
     ],
 )
 def test_tracked_replayed_raw_system_flags_refuse_before_normalization(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raw_args: tuple[str, ...],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    raw_args: tuple[str, ...],
 ) -> None:
     monkeypatch.setattr(launch_context, "_build_shared_composition", lambda **kwargs: None)
     request = SpawnRequest(
@@ -341,13 +385,23 @@ def _record_primary_launch(monkeypatch: pytest.MonkeyPatch) -> list[LaunchReques
         request: LaunchRequest,
         harness_registry: object,
     ) -> LaunchResult:
-        _ = (project_root, harness_registry)
+        _ = harness_registry
+        if request.primary_source_ref is not None:
+            from meridian.lib.launch import _resolve_primary_source_request
+
+            request = _resolve_primary_source_request(
+                request=request,
+                project_root=project_root,
+                harness_registry=get_default_harness_registry(),
+            )
         requests.append(request)
         return LaunchResult(
             command=(),
             exit_code=0,
             continue_ref=request.session.requested_harness_session_id,
             continue_chat_id=request.session.continue_chat_id,
+            primary_source_chat_id=request.primary_source_chat_id,
+            primary_source_warning=request.primary_source_warning,
         )
 
     monkeypatch.setattr(primary_launch_module, "launch_primary", launch_primary)

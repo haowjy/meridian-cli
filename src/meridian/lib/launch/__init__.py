@@ -139,6 +139,15 @@ def launch_primary(
         operation=operation,
         extra_args=request.passthrough_args,
     )
+    # Keep the source-dependent part of the primary CLI adapter here: this is
+    # the first safe point for native session discovery and replay/model reads.
+    # The CLI's earlier authorization check remains in place during this move.
+    if request.primary_source_ref is not None:
+        request = _resolve_primary_source_request(
+            request=request,
+            project_root=resolved_project_root,
+            harness_registry=harness_registry,
+        )
     explicit_work_id = _explicit_work_id_for_launch(request)
     runtime_root_for_context = resolve_runtime_root_for_read(resolved_project_root)
     runtime_context = resolve_runtime_context(
@@ -267,6 +276,8 @@ def launch_primary(
             continue_ref=None,
             continue_chat_id=None,
             warning=warning,
+            primary_source_warning=request.primary_source_warning,
+            primary_source_chat_id=request.primary_source_chat_id,
             terminal_surface_mode=(
                 preview_context.resolved_request.terminal_surface_mode.value
                 if preview_context.resolved_request.terminal_surface_mode is not None
@@ -284,6 +295,140 @@ def launch_primary(
         continue_chat_id=outcome.chat_id,
         primary_spawn_id=outcome.primary_spawn_id,
         warning=warning,
+        primary_source_warning=request.primary_source_warning,
+        primary_source_chat_id=request.primary_source_chat_id,
+    )
+
+
+def _resolve_primary_source_request(
+    *, request: LaunchRequest, project_root: Path, harness_registry: HarnessRegistry
+) -> LaunchRequest:
+    """Resolve native source details only after launch_primary's authority gate."""
+    from meridian.cli.utils import missing_fork_session_error_with_discovery
+    from meridian.lib.launch.continue_replay import (
+        build_continue_replay_contract,
+        continue_replay_source_from_reference,
+    )
+    from meridian.lib.launch.resolve import resolve_agent_launch_input
+    from meridian.lib.ops.reference import resolve_session_reference
+    from meridian.lib.state.paths import resolve_project_runtime_root
+
+    _ = harness_registry
+    source_ref = request.primary_source_ref
+    assert source_ref is not None
+    operation = "resume" if request.session_mode.value == "resume" else "fork"
+    resolved = resolve_session_reference(
+        project_root,
+        source_ref,
+        harness_hint=request.harness if operation == "resume" else None,
+    )
+    if resolved.missing_harness_session_id:
+        raise ValueError(
+            missing_fork_session_error_with_discovery(
+                source_ref=source_ref,
+                project_root=project_root,
+                source_harness=resolved.harness,
+                source_chat_id=resolved.source_chat_id,
+            )
+        )
+    session = request.session
+    runtime_root = resolve_project_runtime_root(project_root)
+    if operation == "resume":
+        agent = resolve_agent_launch_input(request.agent)
+        contract = build_continue_replay_contract(
+            source=continue_replay_source_from_reference(
+                source_ref=source_ref,
+                resolved_reference=resolved,
+                harness_session_id=resolved.authoritative_harness_session_id,
+            ),
+            explicit_harness=request.harness,
+            requested_agent=agent.agent,
+            agent_opt_out=agent.agent_opt_out,
+            requested_model_override=(request.model or "").strip() or None,
+            runtime_root=runtime_root,
+        )
+        task_dir = contract.task_dir
+        source_warning = resolved.warning
+        if task_dir is not None and not Path(task_dir).is_dir():
+            task_dir = project_root.as_posix()
+            warning = (
+                "Continued session's task_dir is unavailable or not a directory: "
+                f"{contract.task_dir}; falling back to the normal launch directory."
+            )
+            source_warning = f"{source_warning}; {warning}" if source_warning else warning
+        return request.model_copy(
+            update={
+                "model": contract.model,
+                "harness": contract.harness,
+                "agent": contract.agent,
+                "agent_opt_out": contract.agent_opt_out,
+                "skills": contract.skills,
+                "task_dir": task_dir,
+                "work_id": request.work_id or contract.work_id,
+                "passthrough_args": contract.passthrough_args,
+                "launch_policy_snapshot": contract.launch_policy_snapshot,
+                "primary_source_warning": source_warning,
+                "primary_source_chat_id": resolved.source_chat_id,
+                "session": session.model_copy(
+                    update={
+                        "requested_harness_session_id": (
+                            contract.session.requested_harness_session_id
+                        ),
+                        "continue_chat_id": contract.session.continue_chat_id,
+                        "continue_harness": contract.harness,
+                        "source_control_root": contract.session.source_control_root,
+                        "source_execution_cwd": contract.session.source_execution_cwd,
+                        "source_claude_config_dir": contract.session.source_claude_config_dir,
+                        "source_pi_session_dir": contract.session.source_pi_session_dir,
+                        "continue_source_tracked": contract.session.continue_source_tracked,
+                        "continue_source_ref": contract.session.continue_source_ref,
+                    }
+                ),
+            }
+        )
+
+    source_harness = (
+        resolved.harness.strip() if resolved.harness and resolved.harness.strip() else None
+    )
+    explicit_harness = (request.harness or "").strip() or None
+    if explicit_harness and source_harness and explicit_harness != source_harness:
+        raise ValueError(
+            "Cannot fork across harnesses: "
+            f"source is '{source_harness}', target is '{explicit_harness}'."
+        )
+    harness = explicit_harness or source_harness
+    if harness is None:
+        missing_ref = resolved.authoritative_harness_session_id or source_ref
+        raise ValueError(
+            f"Session '{missing_ref}' not recognized by any harness. "
+            "Use --harness to specify which harness owns this session."
+        )
+    return request.model_copy(
+        update={
+            "model": request.model or resolved.source_model,
+            "agent": request.agent
+            if request.primary_explicit_agent or request.agent_opt_out
+            else (request.agent or resolved.source_agent),
+            "work_id": request.work_id or resolved.source_work_id,
+            "harness": harness,
+            "primary_source_warning": resolved.warning,
+            "primary_source_chat_id": resolved.source_chat_id,
+            "session": session.model_copy(
+                update={
+                    "requested_harness_session_id": resolved.authoritative_harness_session_id,
+                    "continue_harness": harness,
+                    "continue_fork": True,
+                    "forked_from_chat_id": resolved.source_chat_id,
+                    "forked_from_history_id": resolved.source_history_id,
+                    "source_control_root": resolved.source_control_root,
+                    "source_execution_cwd": resolved.source_execution_cwd,
+                    "source_claude_config_dir": resolved.source_claude_config_dir,
+                    "source_pi_session_dir": resolved.source_pi_session_dir,
+                    "continue_source_tracked": resolved.tracked,
+                    "continue_source_ref": source_ref,
+                }
+            ),
+        }
     )
 
 

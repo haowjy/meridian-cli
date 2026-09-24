@@ -6,6 +6,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Move primary continue/fork native resolution and replay preparation into
+  `launch_primary`, after the launch owner's source check; retain the early CLI gate.
+
 - Reuse one primary source-use check across early preview and binding, and move
   raw Pi session-option refusal semantics into the Pi adapter for spawn reuse.
 - Correct OpenCode primary continuation coverage: genuinely untracked native IDs
