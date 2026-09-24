@@ -155,6 +155,121 @@ def test_authorized_metadata_rejects_linked_row_generation_mismatch(
     assert result == SourceMetadataUnavailable("c1", "linked_spawn_mismatch")
 
 
+def test_authorized_metadata_rejects_conflicting_lifecycle_context(
+    tmp_path: Path, monkeypatch
+) -> None:
+    admitted, snapshot = _linked_spawn_fixture(tmp_path)
+    lifecycle = admitted.authority.journal.lifecycle["c1"].model_copy(
+        update={
+            "active_work_id": "work-a",
+            "control_root": "/control-a",
+            "task_cwd": "/task-a",
+            "execution_cwd": "/exec-a",
+        }
+    )
+    journal = replace(admitted.authority.journal, lifecycle={"c1": lifecycle})
+    admitted = replace(
+        admitted, authority=session_store.NativeSourceUseSnapshot(journal)
+    )
+    row = spawn_store.SpawnRecord(
+        id="p1",
+        chat_id="c1",
+        session_instance_id="generation-a",
+        harness="pi",
+        harness_session_id="conversation",
+        launch_policy_snapshot=snapshot,
+        work_id="work-a",
+        control_root="/control-a",
+        task_cwd="/task-a",
+        execution_cwd="/exec-a",
+    )
+    monkeypatch.setattr(spawn_store, "get_spawn", lambda *args, **kwargs: row)
+
+    for field in ("work_id", "control_root", "task_cwd", "execution_cwd"):
+        conflict = row.model_copy(update={field: "different"})
+        monkeypatch.setattr(
+            spawn_store, "get_spawn", lambda *args, row=conflict, **kwargs: row
+        )
+        result = resolve_authorized_source_metadata(admitted)
+        assert result == SourceMetadataUnavailable(
+            "c1", "linked_spawn_mismatch", field
+        )
+
+    absent = row.model_copy(
+        update={
+            "work_id": None,
+            "control_root": None,
+            "task_cwd": None,
+            "execution_cwd": None,
+        }
+    )
+    monkeypatch.setattr(spawn_store, "get_spawn", lambda *args, **kwargs: absent)
+    result = resolve_authorized_source_metadata(admitted)
+    assert isinstance(result, AuthorizedSourceMetadata)
+
+    # Missing lifecycle context is also permitted; this join never fills it
+    # from the row, but it does not reject otherwise-matching metadata.
+    no_context_root = tmp_path / "no-context"
+    no_context_root.mkdir()
+    admitted_without_context, _ = _linked_spawn_fixture(no_context_root)
+    monkeypatch.setattr(spawn_store, "get_spawn", lambda *args, **kwargs: row)
+    result = resolve_authorized_source_metadata(admitted_without_context)
+    assert isinstance(result, AuthorizedSourceMetadata)
+
+
+def test_authorized_metadata_detaches_entire_policy_snapshot(
+    tmp_path: Path, monkeypatch
+) -> None:
+    admitted, snapshot = _linked_spawn_fixture(tmp_path)
+    snapshot = snapshot.model_copy(
+        update={
+            "env": {"STORE": "original"},
+            "agent_profile": {"nested": {"value": "original"}},
+            "selection_report": {"nested": {"value": "original"}},
+            "field_provenance": {"model": "original"},
+        }
+    )
+    row = spawn_store.SpawnRecord(
+        id="p1",
+        chat_id="c1",
+        session_instance_id="generation-a",
+        harness="pi",
+        harness_session_id="conversation",
+        launch_policy_snapshot=snapshot,
+    )
+    monkeypatch.setattr(spawn_store, "get_spawn", lambda *args, **kwargs: row)
+
+    retained = resolve_authorized_source_metadata(admitted)
+    assert isinstance(retained, AuthorizedSourceMetadata)
+    assert retained.admitted.authority is admitted.authority
+    assert retained.launch_policy_snapshot is not snapshot
+
+    snapshot.env["STORE"] = "changed"
+    snapshot.agent_profile["nested"]["value"] = "changed"
+    snapshot.selection_report["nested"]["value"] = "changed"
+    snapshot.field_provenance["model"] = "changed"
+    assert retained.launch_policy_snapshot.env == {"STORE": "original"}
+    assert retained.launch_policy_snapshot.agent_profile == {
+        "nested": {"value": "original"}
+    }
+    assert retained.launch_policy_snapshot.selection_report == {
+        "nested": {"value": "original"}
+    }
+    assert retained.launch_policy_snapshot.field_provenance == {"model": "original"}
+
+
+def test_invalid_utf8_linked_spawn_state_returns_typed_unavailable(tmp_path: Path) -> None:
+    admitted, _snapshot = _linked_spawn_fixture(tmp_path)
+    state_path = tmp_path / "spawns" / "p1" / "state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_bytes(b"\xff")
+
+    result = resolve_authorized_source_metadata(admitted)
+
+    assert result == SourceMetadataUnavailable("c1", "linked_spawn_invalid")
+    assert state_path.read_bytes() == b"\xff"
+
+
 def test_bare_id_requires_clean_unique_v4_claim_and_harness_match(tmp_path: Path) -> None:
     _pinned_journal(tmp_path)
 

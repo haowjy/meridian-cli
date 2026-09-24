@@ -202,12 +202,27 @@ def resolve_authorized_source_metadata(
     ):
         return SourceMetadataUnavailable(admitted.original_ref, "linked_spawn_mismatch")
 
+    for row_field, lifecycle_field in (
+        ("work_id", "active_work_id"),
+        ("control_root", "control_root"),
+        ("task_cwd", "task_cwd"),
+        ("execution_cwd", "execution_cwd"),
+    ):
+        row_value = getattr(row, row_field)
+        lifecycle_value = getattr(lifecycle, lifecycle_field)
+        if row_value and lifecycle_value and row_value != lifecycle_value:
+            return SourceMetadataUnavailable(
+                admitted.original_ref, "linked_spawn_mismatch", row_field
+            )
+
     snapshot = row.launch_policy_snapshot
     if snapshot is None:
         return SourceMetadataUnavailable(admitted.original_ref, "snapshot_missing")
     if snapshot.schema_version != 1 or snapshot.harness != source.key.harness:
         return SourceMetadataUnavailable(admitted.original_ref, "snapshot_invalid")
-    return AuthorizedSourceMetadata(admitted, lifecycle, snapshot, row.state_revision)
+    return AuthorizedSourceMetadata(
+        admitted, lifecycle, snapshot.model_copy(deep=True), row.state_revision
+    )
 
 
 async def resolve_native_reference(

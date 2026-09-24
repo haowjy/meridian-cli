@@ -173,9 +173,22 @@ def _read_stored_state(spawns_dir: Path, spawn_id: str) -> StoredSpawnState | No
                     )
                 )
             return stored
-        except (json.JSONDecodeError, LegacySpawnStateUpgradeError, ValidationError) as exc:
+        except (
+            json.JSONDecodeError,
+            LegacySpawnStateUpgradeError,
+            UnicodeDecodeError,
+            ValidationError,
+        ) as exc:
             if isinstance(exc, ValidationError):
                 errors: tuple[object, ...] = tuple(exc.errors(include_url=False))
+            elif isinstance(exc, UnicodeDecodeError):
+                errors = (
+                    {
+                        "type": "encoding_invalid",
+                        "loc": (exc.start, exc.end),
+                        "msg": "Spawn state is not valid UTF-8",
+                    },
+                )
             elif isinstance(exc, LegacySpawnStateUpgradeError):
                 errors = (
                     {

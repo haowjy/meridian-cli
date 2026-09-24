@@ -6,6 +6,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Reject conflicting linked-spawn work/path metadata, detach checked policy
+  snapshots from mutable rows, and quarantine invalid UTF-8 spawn state.
+
 - Retain admitted native source authority for exact linked-metadata reads; omit prompt bodies and fail closed on lifecycle or spawn mismatches.
 
 - Reconcile Claude raw model and effort duplicates against retained emitted controls
