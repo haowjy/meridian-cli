@@ -9,6 +9,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pi primary argument validation errors no longer disclose rejected positional,
   response-file, or unknown flag tokens; known bounded options retain useful
   missing-value diagnostics without exposing values.
+- Skip optional spawn-owner lookup when no chat ID is available.
 
 ### Changed
 

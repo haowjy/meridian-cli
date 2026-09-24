@@ -305,7 +305,12 @@ def start_spawn(
         parent = (
             _read_state(paths.spawns_dir, parent_id, include_prompt=False) if parent_id else None
         )
-        owner = get_session_record(runtime_root, owner_chat_id or chat_id)
+        owner_chat_id_ref = owner_chat_id or chat_id
+        owner = (
+            get_session_record(runtime_root, owner_chat_id_ref)
+            if owner_chat_id_ref
+            else None
+        )
         record = SpawnRecord(
             session_instance_id=owner.session_instance_id if owner and kind == "primary" else None,
             parent_history_id=parent.history_id if parent else None,
