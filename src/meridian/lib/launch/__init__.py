@@ -46,6 +46,7 @@ if TYPE_CHECKING:
         SessionMode,
         build_primary_prompt,
     )
+    from meridian.lib.ops.reference import UntrackedSourceUse
 
 
 def _explicit_work_id_for_launch(request: LaunchRequest) -> str | None:
@@ -109,16 +110,33 @@ def launch_primary(
     from .types import LaunchResult
 
     resolved_project_root = resolve_project_root_resolution(project_root).project_root
-    from meridian.lib.launch.source_selection import validate_primary_source_use
+    from meridian.lib.launch.source_selection import (
+        PrimarySourceSelection,
+        reconcile_primary_source_selection,
+        validate_primary_source_use,
+    )
 
     original_session = request.session
-    original_source = (original_session.continue_source_ref or "").strip() or None
     operation = _primary_source_operation(request)
-    authorized_untracked_source = validate_primary_source_use(
-        runtime_root=(
-            resolve_runtime_root_for_read(resolved_project_root)
-            or resolve_project_paths(resolved_project_root).root_dir
+    source_runtime_root = (
+        resolve_runtime_root_for_read(resolved_project_root)
+        or resolve_project_paths(resolved_project_root).root_dir
+    )
+    source_selection = PrimarySourceSelection(
+        source_ref=original_session.continue_source_ref,
+        native_id=original_session.requested_harness_session_id,
+        operation=(
+            "fresh"
+            if request.session_mode.value == "fresh"
+            else operation
         ),
+        harness=request.harness,
+        runtime_root=source_runtime_root,
+        other_harnesses=(original_session.continue_harness,),
+    )
+    reconcile_primary_source_selection(source_selection)
+    authorized_untracked_source = validate_primary_source_use(
+        runtime_root=source_runtime_root,
         source_ref=original_session.continue_source_ref,
         native_selector=original_session.requested_harness_session_id,
         tracked_claim=(
@@ -130,6 +148,9 @@ def launch_primary(
         operation=operation,
         extra_args=request.passthrough_args,
     )
+    reconcile_primary_source_selection(
+        source_selection, authorized_source=authorized_untracked_source
+    )
     # Keep the source-dependent part of the primary CLI adapter here: this is
     # the first safe point for native session discovery and replay/model reads.
     if request.session.continue_source_ref is not None:
@@ -137,6 +158,7 @@ def launch_primary(
             request=request,
             project_root=resolved_project_root,
             harness_registry=harness_registry,
+            authorized_source=authorized_untracked_source,
         )
     explicit_work_id = _explicit_work_id_for_launch(request)
     runtime_root_for_context = resolve_runtime_root_for_read(resolved_project_root)
@@ -240,32 +262,42 @@ def launch_primary(
         runtime=runtime,
         prepared_policy=prepared_policy,
     )
-    from meridian.lib.launch.source_selection import normalize_effective_native_selection
-
     final_session = prepared.request.session
     final_operation = (
         "fork"
         if final_session.continue_fork
         or (final_session.primary_session_mode or "").strip().lower() == "fork"
-        else "resume"
+        else (
+            "resume"
+            if (final_session.primary_session_mode or "").strip().lower() == "resume"
+            or final_session.requested_harness_session_id
+            else source_selection.operation
+        )
     )
-    if (
-        (final_session.continue_source_ref or "").strip() != (original_source or "")
-        or final_operation != operation
-        or final_session.continue_source_tracked
-        or final_session.recorded_native_source is not None
-    ):
-        raise ValueError("Primary source selection changed during preparation; refusing launch.")
-    normalize_effective_native_selection(
-        original_source,
-        prepared.seed_harness_session_id or final_session.requested_harness_session_id,
-        authorized_native_id=(
-            authorized_untracked_source.native_id if authorized_untracked_source else None
+    reconcile_primary_source_selection(
+        PrimarySourceSelection(
+            source_ref=original_session.continue_source_ref,
+            native_id=original_session.requested_harness_session_id,
+            operation=source_selection.operation,
+            harness=request.harness,
+            runtime_root=source_runtime_root,
+            seed_id=prepared.seed_harness_session_id,
+            other_harnesses=(
+                original_session.continue_harness,
+                prepared.request.harness,
+                prepared.harness.id.value,
+            ),
         ),
-        tracked_claim=False,
+        authorized_source=authorized_untracked_source,
+        resolved_id=final_session.requested_harness_session_id,
+        resolved_harness=prepared.request.session.continue_harness,
+        resolved_tracked=(
+            final_session.continue_source_tracked
+            or final_session.recorded_native_source is not None
+        ),
+        resolved_source_ref=final_session.continue_source_ref,
+        resolved_operation=final_operation,
     )
-    if prepared.harness.id.value != (prepared.request.harness or "").strip().lower():
-        raise ValueError("Prepared harness does not match the authorized launch selection.")
     preview_context = _bind_launch_context_impl(
         prepared=prepared,
         bindings=RuntimeBindings(
@@ -333,7 +365,11 @@ def _primary_source_operation(request: LaunchRequest) -> Literal["resume", "fork
 
 
 def _resolve_primary_source_request(
-    *, request: LaunchRequest, project_root: Path, harness_registry: HarnessRegistry
+    *,
+    request: LaunchRequest,
+    project_root: Path,
+    harness_registry: HarnessRegistry,
+    authorized_source: UntrackedSourceUse | None = None,
 ) -> LaunchRequest:
     """Resolve native source details only after launch_primary's authority gate."""
     from meridian.lib.launch.continue_replay import (
@@ -355,6 +391,34 @@ def _resolve_primary_source_request(
         source_ref,
         harness_hint=request.harness if operation == "resume" else None,
     )
+    # The legacy resolver may discover native state, but a contradictory result
+    # must stop here, before replay reads native model history or writes an
+    # observation. The strict negative lookup above remains the sole authority
+    # lookup for this owner call.
+    from meridian.lib.launch.source_selection import (
+        PrimarySourceSelection,
+        reconcile_primary_source_selection,
+    )
+
+    runtime_root = (
+        authorized_source.lookup_scope
+        if authorized_source is not None
+        else resolve_project_runtime_root(project_root)
+    )
+    reconcile_primary_source_selection(
+        PrimarySourceSelection(
+            source_ref=request.session.continue_source_ref,
+            native_id=request.session.requested_harness_session_id,
+            operation=operation,
+            harness=request.harness,
+            runtime_root=runtime_root,
+            other_harnesses=(request.session.continue_harness,),
+        ),
+        authorized_source=authorized_source,
+        resolved_id=resolved.authoritative_harness_session_id,
+        resolved_harness=resolved.harness,
+        resolved_tracked=resolved.tracked and authorized_source is not None,
+    )
     if resolved.missing_harness_session_id:
         raise ValueError(
             missing_fork_session_error_with_discovery(
@@ -365,7 +429,6 @@ def _resolve_primary_source_request(
             )
         )
     session = request.session
-    runtime_root = resolve_project_runtime_root(project_root)
     if operation == "resume":
         contract = build_continue_replay_contract(
             source=continue_replay_source_from_reference(

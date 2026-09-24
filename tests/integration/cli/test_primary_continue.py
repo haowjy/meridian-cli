@@ -23,6 +23,7 @@ from meridian.lib.launch import LaunchRequest, LaunchResult, launch_primary
 from meridian.lib.launch.process import ProcessOutcome
 from meridian.lib.launch.request import SessionRequest, SpawnRequest
 from meridian.lib.launch.types import SessionMode
+from meridian.lib.ops.reference import UntrackedSourceUse
 from meridian.lib.state import session_authority as native_authority
 from meridian.lib.state import session_store, spawn_store, work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths, resolve_project_runtime_root_for_write
@@ -257,6 +258,7 @@ def test_direct_launch_revalidates_source_before_native_resolution(
             request=LaunchRequest(
                 dry_run=True,
                 harness="pi",
+                session_mode=SessionMode.RESUME,
                 session=SessionRequest(
                     requested_harness_session_id="native-conversation",
                     continue_source_tracked=False,
@@ -290,6 +292,126 @@ def test_direct_launch_rejects_mismatched_source_description(
                     primary_session_mode="resume",
                     continue_source_ref=source_ref,
                     continue_source_tracked=False,
+                ),
+            ),
+            harness_registry=get_default_harness_registry(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("resolved_id", "resolved_harness", "tracked"),
+    [("native-B", "h1", False), ("native-A", "h2", False), ("native-A", "h1", True)],
+)
+def test_primary_resolver_conflict_stops_before_replay_and_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    resolved_id: str,
+    resolved_harness: str,
+    tracked: bool,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    import meridian.lib.launch.continue_replay as continue_replay
+    import meridian.lib.launch.source_selection as source_selection
+    import meridian.lib.ops.reference as reference
+
+    monkeypatch.setattr(
+        source_selection,
+        "validate_primary_source_use",
+        lambda **kwargs: UntrackedSourceUse(
+            operation="resume",
+            original_ref="native-A",
+            native_id="native-A",
+            harness="h1",
+            lookup_scope=runtime_root,
+        ),
+    )
+    monkeypatch.setattr(
+        reference,
+        "resolve_session_reference",
+        lambda *args, **kwargs: SimpleNamespace(
+            authoritative_harness_session_id=resolved_id,
+            harness=resolved_harness,
+            tracked=tracked,
+        ),
+    )
+    replay_calls: list[str] = []
+    model_reads: list[str] = []
+    observations: list[str] = []
+    work_materializations: list[str] = []
+    monkeypatch.setattr(
+        continue_replay,
+        "build_continue_replay_contract",
+        lambda **kwargs: replay_calls.append("contract"),
+    )
+    monkeypatch.setattr(
+        continue_replay,
+        "read_last_executed_model",
+        lambda *args, **kwargs: model_reads.append("read"),
+    )
+    monkeypatch.setattr(
+        continue_replay,
+        "record_model_observation",
+        lambda *args, **kwargs: observations.append("write"),
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch._resolve_work_id_for_launch",
+        lambda *args, **kwargs: work_materializations.append("work"),
+    )
+
+    with pytest.raises(ValueError, match="source selection conflict"):
+        launch_primary(
+            project_root=project_root,
+            request=LaunchRequest(
+                dry_run=True,
+                harness="h1",
+                session_mode=SessionMode.RESUME,
+                session=SessionRequest(
+                    requested_harness_session_id="native-A",
+                    continue_source_ref="native-A",
+                    primary_session_mode="resume",
+                ),
+            ),
+            harness_registry=get_default_harness_registry(),
+        )
+
+    assert replay_calls == []
+    assert model_reads == []
+    assert observations == []
+    assert work_materializations == []
+
+
+@pytest.mark.parametrize(
+    ("source_ref", "native_id"),
+    [("native-A", "native-B"), (" ", "native-A")],
+)
+def test_primary_original_source_conflict_stops_before_strict_lookup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source_ref: str,
+    native_id: str,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    import meridian.lib.launch.source_selection as source_selection
+
+    monkeypatch.setattr(
+        source_selection,
+        "validate_primary_source_use",
+        lambda **kwargs: pytest.fail("conflicting source should not query authority"),
+    )
+    with pytest.raises(ValueError, match="source selection conflict"):
+        launch_primary(
+            project_root=project_root,
+            request=LaunchRequest(
+                dry_run=True,
+                harness="h1",
+                session_mode=SessionMode.RESUME,
+                session=SessionRequest(
+                    requested_harness_session_id=native_id,
+                    continue_source_ref=source_ref,
+                    primary_session_mode="resume",
                 ),
             ),
             harness_registry=get_default_harness_registry(),

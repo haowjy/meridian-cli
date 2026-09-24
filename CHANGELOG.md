@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Reconcile primary source identity and operation before lookup, and reject contradictory legacy resolver results before continue replay/model history.
+
 ### Changed
 
 - Consolidate primary source authorization in synchronous launch preparation; remove transferable source proofs and duplicate CLI lookup. Public bind and runner execution revalidate independently.
