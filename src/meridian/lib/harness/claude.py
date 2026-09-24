@@ -124,6 +124,13 @@ _CLAUDE_NATIVE_SESSION_ID = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
 _SAFE_OPTION_NAME = re.compile(r"^(?:--[A-Za-z][A-Za-z0-9-]*|-[A-Za-z])$")
+_CLAUDE_EFFORT_PROJECTION = {
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": "xhigh",
+    "max": "max",
+}
 
 
 def normalize_primary_session_args(
@@ -173,6 +180,11 @@ def normalize_primary_session_args(
             if effort is None or not effort.strip() or effort.strip().lower() == "default":
                 raise ValueError(
                     "Claude raw effort option has no emitted Meridian effort; "
+                    "use Meridian's effort configuration"
+                )
+            if effort.strip() not in _CLAUDE_EFFORT_PROJECTION:
+                raise ValueError(
+                    "Claude raw effort option has unsupported Meridian effort; "
                     "use Meridian's effort configuration"
                 )
             if option in seen_controlled_scalars:
@@ -514,13 +526,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         normalized_effort = None
         if effort is not None:
             normalized_value = str(effort).strip()
-            normalized_effort = {
-                "low": "low",
-                "medium": "medium",
-                "high": "high",
-                "xhigh": "xhigh",
-                "max": "max",
-            }.get(normalized_value, normalized_value)
+            normalized_effort = _CLAUDE_EFFORT_PROJECTION.get(normalized_value, normalized_value)
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
         effective_extra_args = run.extra_args
         if continue_session_id is None and not has_session_identity_in_args(run.extra_args):

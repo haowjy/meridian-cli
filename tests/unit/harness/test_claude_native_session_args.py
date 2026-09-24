@@ -191,18 +191,31 @@ def test_controls_parse_roles_once_and_refuse_repeated_raw_model() -> None:
 
 
 @pytest.mark.parametrize("raw", [("--effort", "high"), ("--effort=low",)])
-def test_supported_emitted_effort_strips_equal_or_different_duplicate(raw: tuple[str, ...]) -> None:
-    result = normalize_primary_session_args(raw, controls=_controls(effort="medium"))
-    assert result.remaining_args == ()
-    assert result.warnings == (
-        "Ignored raw effort option; Meridian's resolved effort takes precedence.",
-    )
+def test_supported_emitted_effort_strips_equal_or_different_duplicate(
+    raw: tuple[str, ...],
+) -> None:
+    for retained_effort in ("low", "medium", "high", "xhigh", "max"):
+        result = normalize_primary_session_args(raw, controls=_controls(effort=retained_effort))
+        assert result.remaining_args == ()
+        assert result.warnings == (
+            "Ignored raw effort option; Meridian's resolved effort takes precedence.",
+        )
 
 
 @pytest.mark.parametrize("effort", [None, "", "default"])
 def test_absent_or_unemitted_effort_refuses_raw_scalar(effort: str | None) -> None:
     with pytest.raises(ValueError, match="no emitted Meridian effort"):
         normalize_primary_session_args(("--effort", "high"), controls=_controls(effort=effort))
+    for unsupported in ("future-secret-effort", "HIGH", "--permission-mode"):
+        with pytest.raises(ValueError) as error:
+            normalize_primary_session_args(
+                ("--effort=low",), controls=_controls(effort=unsupported)
+            )
+        assert str(error.value) == (
+            "Claude raw effort option has unsupported Meridian effort; "
+            "use Meridian's effort configuration"
+        )
+        assert unsupported not in str(error.value)
 
 
 def test_permission_and_bypass_controls_refuse_before_other_scalar_suppression() -> None:
