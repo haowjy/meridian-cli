@@ -13,7 +13,13 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.permission_broker import PermissionBroker
+from meridian.lib.harness.pi_native_source import reject_pi_native_source_options
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.ops.reference import (
+    AuthorizedSourceUse,
+    SourceUseRefused,
+    resolve_source_use,
+)
 from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
     resolve_spawn_log_dir,
@@ -33,7 +39,9 @@ async def dispatch_start(
     config: ConnectionConfig,
     spec: ResolvedLaunchSpec,
 ) -> HarnessConnection[Any]:
-    """Dispatch one start call through bundle lookup and runtime type guard."""
+    """Dispatch one untracked start after refusing unsupported native claims."""
+
+    _refuse_unowned_tracked_selection(config, spec)
 
     from meridian.lib.harness.connections import get_connection_class
 
@@ -95,6 +103,47 @@ async def dispatch_start(
         await reap_on_ownership_transfer_failure(connection.stop)
         raise
     return connection
+
+
+def _refuse_unowned_tracked_selection(
+    config: ConnectionConfig,
+    spec: ResolvedLaunchSpec,
+) -> None:
+    """Close direct-spec bypasses before adapter lookup or connection creation."""
+
+    if spec.recorded_native_source is not None:
+        raise ValueError(
+            "Tracked native startup is blocked pending owned admission "
+            "(owner_required); no connection was started."
+        )
+
+    selected_id = (spec.continue_session_id or "").strip()
+    if selected_id:
+        if config.runtime_root is None:
+            raise ValueError(
+                "Cannot classify native selection without runtime authority; "
+                "no connection was started."
+            )
+        result = resolve_source_use(
+            config.runtime_root,
+            "fork" if spec.continue_fork else "resume",
+            selected_id,
+            explicit_harness=str(config.harness_id),
+        )
+        if isinstance(result, (AuthorizedSourceUse, SourceUseRefused)):
+            raise ValueError(
+                f"Native selection '{selected_id}' is not eligible for immediate start "
+                f"({getattr(result, 'reason', 'owner_required')}); no connection was started."
+            )
+
+    if config.harness_id == HarnessId.PI:
+        try:
+            reject_pi_native_source_options(spec.extra_args)
+        except ValueError as exc:
+            raise ValueError(
+                "Raw Pi native selection cannot be classified at dispatch; "
+                "no connection was started."
+            ) from exc
 
 
 def select_dispatch_transport(

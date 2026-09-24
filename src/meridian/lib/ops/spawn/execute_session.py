@@ -14,6 +14,7 @@ from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state.session_store import get_session_active_work_id, update_session_work_id
 
 from .execute_init import LaunchUserInputError
+from .source_selection import normalize_untracked_spawn_selection
 
 
 class _SessionExecutionContext(BaseModel):
@@ -30,19 +31,24 @@ def _resolve_session_continuation(
     request: SpawnRequest,
     harness_id: HarnessId,
     harness_adapter: object,
+    runtime_root: Path,
 ) -> SessionRequest:
     from typing import Any
 
     adapter: Any = harness_adapter
+    try:
+        normalized_session = normalize_untracked_spawn_selection(
+            request.session,
+            runtime_root=runtime_root,
+            harness=str(harness_id),
+        )
+    except ValueError as exc:
+        raise LaunchUserInputError(str(exc)) from exc
     requested_harness_session_id = (
-        request.session.requested_harness_session_id or ""
+        normalized_session.requested_harness_session_id or ""
     ).strip() or None
     requested_continue_fork = request.session.continue_fork
     requested_harness = (request.session.continue_harness or "").strip()
-    if request.session.continue_source_tracked and requested_harness_session_id is None:
-        raise LaunchUserInputError(
-            "Source reference has no recorded harness session — cannot continue/fork."
-        )
 
     resolved_continue_harness_session_id: str | None = None
     resolved_continue_fork = False
@@ -67,9 +73,6 @@ def _resolve_session_continuation(
     return request.session.model_copy(update={
         "requested_harness_session_id": resolved_continue_harness_session_id,
         "continue_fork": resolved_continue_fork,
-        # pN continuation resolves its own attempt/session semantics and must
-        # never inherit a primary cN native-source credential.
-        "recorded_native_source": None,
     })
 
 

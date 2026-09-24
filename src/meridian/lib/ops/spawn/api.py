@@ -37,7 +37,15 @@ from meridian.lib.launch.continue_replay import (
 )
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.ops.mars import mars_agent_subagents, mars_list_subagents
-from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
+from meridian.lib.ops.reference import (
+    AuthorizedSourceUse,
+    ResolvedSessionReference,
+    SourceUseOperation,
+    SourceUseRefused,
+    UntrackedSourceUse,
+    resolve_session_reference,
+    resolve_source_use,
+)
 from meridian.lib.ops.runtime import (
     OperationRuntime,
     build_runtime_from_root_and_config,
@@ -1957,6 +1965,10 @@ def _source_spawn_for_follow_up(
     runtime_root: Path | None = None,
     harness_hint: str | None = None,
 ) -> tuple[str, SpawnRecord, ResolvedSessionReference]:
+    if runtime_root is not None:
+        _require_untracked_spawn_source(
+            runtime_root, payload_spawn_id, "resume", harness_hint
+        )
     resolved_spawn_id = resolve_spawn_reference(
         project_root,
         payload_spawn_id,
@@ -1984,6 +1996,41 @@ def _source_spawn_for_follow_up(
             f"Spawn '{payload_spawn_id}' not found; continuation requires retained spawn metadata"
         )
     return resolved_spawn_id, row, resolved_reference
+
+
+def _require_untracked_spawn_source(
+    runtime_root: Path,
+    original_ref: str,
+    operation: SourceUseOperation,
+    harness_hint: str | None = None,
+) -> UntrackedSourceUse:
+    """Reject tracked source use before legacy reference rewriting or side effects."""
+    result = resolve_source_use(
+        runtime_root,
+        operation,
+        original_ref,
+        explicit_harness=harness_hint,
+    )
+    if isinstance(result, UntrackedSourceUse):
+        return result
+    if isinstance(result, SourceUseRefused):
+        if result.reason == "tracked_run_unresolved":
+            detail = "run has no authoritative terminal-attempt exit-chat correlation"
+        else:
+            detail = result.reason.replace("_", " ")
+        raise ValueError(
+            f"Tracked source '{original_ref.strip()}' is unavailable for {operation} "
+            f"({detail}); no spawn was started."
+        )
+    assert isinstance(result, AuthorizedSourceUse)
+    if operation == "fork":
+        raise ValueError(
+            "Tracked fork is unqualified (operation_unqualified); no spawn was started."
+        )
+    raise ValueError(
+        "Tracked exact resume is blocked pending owned Pi RPC admission "
+        "(owner_required); no spawn was started."
+    )
 
 
 def _prompt_for_follow_up(
@@ -2190,16 +2237,15 @@ def spawn_fork_sync(
     if runtime_root is None:
         raise ValueError(f"Session reference '{normalized_source_ref}' not found")
 
+    _require_untracked_spawn_source(
+        runtime_root, normalized_source_ref, "fork", payload.harness
+    )
+
     resolved_reference = resolve_session_reference(
         project_root,
         normalized_source_ref,
         runtime_root=runtime_root,
     )
-    if resolved_reference.tracked and resolved_reference.harness == "pi":
-        raise ValueError(
-            "Tracked Pi fork is unqualified (operation_unqualified); "
-            "no spawn was started."
-        )
     if resolved_reference.missing_harness_session_id:
         raise ValueError(_missing_follow_up_session_error(normalized_source_ref))
 

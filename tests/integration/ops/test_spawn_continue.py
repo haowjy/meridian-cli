@@ -13,13 +13,20 @@ import pytest
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
-from meridian.lib.launch.request import SpawnRequest
+from meridian.lib.launch.request import SessionRequest, SpawnRequest
 from meridian.lib.ops.reference import ResolvedSessionReference
 from meridian.lib.ops.reference_recovery import RecoveryProvenance, RecoveryResult
-from meridian.lib.ops.spawn.execute_init import resolve_spawn_work_id
+from meridian.lib.ops.spawn.execute_session import _resolve_session_continuation
 from meridian.lib.ops.spawn.models import SpawnActionOutput, SpawnContinueInput, SpawnCreateInput
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.session_authority import (
+    LocalObjectStamp,
+    NativeSessionKey,
+    NativeSourceRef,
+    QualifiedLocalFile,
+    RecordedNativeSource,
+)
 from tests.support.launch import stub_bundle_request_and_resolve
 
 
@@ -103,7 +110,7 @@ def test_spawn_continue_requires_recorded_session(tmp_path: Path) -> None:
     runtime_root = _state_root(project_root)
     _seed_spawn(runtime_root, spawn_id="p11", harness_session_id=None)
 
-    with pytest.raises(ValueError, match="no recorded session"):
+    with pytest.raises(ValueError, match="terminal-attempt exit-chat correlation"):
         spawn_api.spawn_continue_sync(
             SpawnContinueInput(
                 spawn_id="p11",
@@ -124,11 +131,11 @@ def test_spawn_continue_blocks_tracked_pi_before_creating_spawn(
         runtime_root,
         spawn_id="p12",
         harness_session_id="synthetic-pi-id",
-        harness="pi",
+        harness="codex",
     )
     calls = _record_spawn_create(monkeypatch)
 
-    with pytest.raises(ValueError, match="connected-state admission owner"):
+    with pytest.raises(ValueError, match="terminal-attempt exit-chat correlation"):
         spawn_api.spawn_continue_sync(
             SpawnContinueInput(
                 spawn_id="p12",
@@ -138,6 +145,166 @@ def test_spawn_continue_blocks_tracked_pi_before_creating_spawn(
         )
 
     assert calls == []
+
+
+def test_spawn_fork_refuses_tracked_run_before_creating_spawn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    _seed_spawn(runtime_root, spawn_id="p13", harness_session_id="mutable-id")
+    calls = _record_spawn_create(monkeypatch)
+
+    with pytest.raises(ValueError, match="terminal-attempt exit-chat correlation"):
+        spawn_api.spawn_fork_sync(spawn_api.SpawnForkInput(
+            source_ref="p13", prompt="must not start",
+            project_root=project_root.as_posix(),
+        ))
+
+    assert calls == []
+
+
+def test_spawn_worker_revalidates_original_run_even_when_tracking_flag_is_cleared(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    _seed_spawn(runtime_root, spawn_id="p14", harness_session_id="mutable-id")
+    request = SpawnRequest(
+        prompt="must not start",
+        harness="pi",
+        session=SessionRequest(
+            requested_harness_session_id="mutable-id",
+            continue_source_ref="p14",
+            continue_source_tracked=False,
+            recorded_native_source=None,
+        ),
+    )
+    adapter = type("Adapter", (), {
+        "capabilities": type("Capabilities", (), {
+            "supports_session_resume": True,
+            "supports_session_fork": True,
+        })(),
+    })()
+
+    from meridian.lib.ops.spawn.execute_init import LaunchUserInputError
+
+    with pytest.raises(LaunchUserInputError, match="tracked_run_unresolved"):
+        _resolve_session_continuation(
+            request=request,
+            harness_id=HarnessId.CODEX,
+            harness_adapter=adapter,
+            runtime_root=runtime_root,
+        )
+
+
+def test_spawn_worker_does_not_accept_fabricated_source_for_untracked_id(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    request = SpawnRequest(
+        prompt="must not start",
+        harness="pi",
+        session=SessionRequest(
+            requested_harness_session_id="never-recorded",
+            recorded_native_source=RecordedNativeSource(
+                ref=NativeSourceRef(
+                    chat_id="c1", binding_event_id="a" * 64, locator_event_id="b" * 64
+                ),
+                key=NativeSessionKey(
+                    harness="pi", store="/store", native_session_id="never-recorded"
+                ),
+                locator=QualifiedLocalFile(
+                    kind="local_file", path="/store/never-recorded.jsonl",
+                    store_object=LocalObjectStamp(device=1, inode=2),
+                    file_object=LocalObjectStamp(device=1, inode=3),
+                    rule="pi_rpc_exact_v1",
+                ),
+            ),
+        ),
+    )
+    adapter = type("Adapter", (), {
+        "capabilities": type("Capabilities", (), {
+            "supports_session_resume": True,
+            "supports_session_fork": True,
+        })(),
+    })()
+
+    from meridian.lib.ops.spawn.execute_init import LaunchUserInputError
+
+    with pytest.raises(LaunchUserInputError, match=r"owner_required|Recorded spawn source"):
+        _resolve_session_continuation(
+            request=request,
+            harness_id=HarnessId.PI,
+            harness_adapter=adapter,
+            runtime_root=runtime_root,
+        )
+
+
+def test_spawn_worker_rejects_mismatched_reference_and_executable_selection(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    _seed_spawn(runtime_root, spawn_id="p-mismatch", harness_session_id="KNOWN")
+    request = SpawnRequest(
+        prompt="must not start",
+        harness="codex",
+        session=SessionRequest(
+            requested_harness_session_id="KNOWN",
+            continue_source_ref="never-recorded",
+            continue_source_tracked=False,
+        ),
+    )
+    adapter = type("Adapter", (), {
+        "capabilities": type("Capabilities", (), {
+            "supports_session_resume": True,
+            "supports_session_fork": True,
+        })(),
+    })()
+
+    from meridian.lib.ops.spawn.execute_init import LaunchUserInputError
+
+    with pytest.raises(LaunchUserInputError, match=r"disagree|native_claim_blocked"):
+        _resolve_session_continuation(
+            request=request,
+            harness_id=HarnessId.CODEX,
+            harness_adapter=adapter,
+            runtime_root=runtime_root,
+        )
+
+
+def test_spawn_worker_rejects_tracked_flag_without_any_selection(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    request = SpawnRequest(
+        prompt="must not start",
+        harness="pi",
+        session=SessionRequest(continue_source_tracked=True),
+    )
+    adapter = type("Adapter", (), {
+        "capabilities": type("Capabilities", (), {
+            "supports_session_resume": True,
+            "supports_session_fork": True,
+        })(),
+    })()
+
+    from meridian.lib.ops.spawn.execute_init import LaunchUserInputError
+
+    with pytest.raises(LaunchUserInputError, match="no native selection"):
+        _resolve_session_continuation(
+            request=request,
+            harness_id=HarnessId.PI,
+            harness_adapter=adapter,
+            runtime_root=runtime_root,
+        )
 
 
 @pytest.mark.parametrize(
@@ -167,7 +334,7 @@ def test_spawn_continue_rejects_policy_changes(
     runtime_root = _state_root(project_root)
     _seed_spawn(runtime_root, spawn_id="p25", harness_session_id="session-25")
 
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(ValueError, match="terminal-attempt exit-chat correlation"):
         spawn_api.spawn_continue_sync(
             SpawnContinueInput(
                 spawn_id="p25",
@@ -177,9 +344,9 @@ def test_spawn_continue_rejects_policy_changes(
             )
         )
 
-    message = str(exc_info.value)
-    assert flag in message
-    assert guidance in message
+    # pN remains a tracked run reference even when caller policy is altered;
+    # B3b refuses before replay or spawn creation until terminal-attempt
+    # correlation exists.
 
 
 def test_spawn_continue_maps_source_contract_to_spawn_create(
@@ -210,27 +377,12 @@ def test_spawn_continue_maps_source_contract_to_spawn_create(
     )
     calls = _record_spawn_create(monkeypatch)
 
-    result = spawn_api.spawn_continue_sync(
-        SpawnContinueInput(
-            spawn_id="p28",
-            prompt="follow-up prompt",
+    with pytest.raises(ValueError, match="terminal-attempt exit-chat correlation"):
+        spawn_api.spawn_continue_sync(SpawnContinueInput(
+            spawn_id="p28", prompt="follow-up prompt",
             project_root=project_root.as_posix(),
-        )
-    )
-
-    assert result.command == "spawn.continue"
-    payload, request = calls[0]
-    assert payload.launch_policy_snapshot == snapshot
-    assert payload.work == "w-spawn"
-    assert payload.task_dir == source_task_dir.as_posix()
-    assert payload.model == snapshot.model
-    assert payload.agent == snapshot.agent
-    assert payload.passthrough_args == snapshot.extra_args
-    assert request.launch_policy_snapshot is not None
-    assert request.launch_policy_snapshot.extra_args == snapshot.extra_args
-    assert request.work_id_hint == "w-spawn"
-    assert request.task_cwd == source_task_dir.as_posix()
-    assert request.session.requested_harness_session_id == "session-28"
+        ))
+    assert calls == []
 
 
 def test_spawn_continue_does_not_inherit_ambient_work_or_task_dir(
@@ -261,21 +413,12 @@ def test_spawn_continue_does_not_inherit_ambient_work_or_task_dir(
     monkeypatch.setenv("MERIDIAN_TASK_DIR", ambient_task_dir.as_posix())
     calls = _record_spawn_create(monkeypatch)
 
-    spawn_api.spawn_continue_sync(
-        SpawnContinueInput(
-            spawn_id="p29",
-            prompt="follow-up prompt",
+    with pytest.raises(ValueError, match="terminal-attempt exit-chat correlation"):
+        spawn_api.spawn_continue_sync(SpawnContinueInput(
+            spawn_id="p29", prompt="follow-up prompt",
             project_root=project_root.as_posix(),
-        )
-    )
-
-    payload, request = calls[0]
-    assert payload.work == ""
-    assert payload.task_dir == project_root.as_posix()
-    assert request.work_id_hint is None
-    assert request.task_cwd == project_root.as_posix()
-    assert request.task_cwd_work_item is None
-    assert resolve_spawn_work_id(payload, request) is None
+        ))
+    assert calls == []
 
 
 def test_spawn_continue_legacy_source_uses_persisted_context(
@@ -302,22 +445,12 @@ def test_spawn_continue_legacy_source_uses_persisted_context(
     )
     calls = _record_spawn_create(monkeypatch)
 
-    spawn_api.spawn_continue_sync(
-        SpawnContinueInput(
-            spawn_id="p30",
-            prompt="follow-up prompt",
+    with pytest.raises(ValueError, match="terminal-attempt exit-chat correlation"):
+        spawn_api.spawn_continue_sync(SpawnContinueInput(
+            spawn_id="p30", prompt="follow-up prompt",
             project_root=project_root.as_posix(),
-        )
-    )
-
-    payload, request = calls[0]
-    assert payload.launch_policy_snapshot is None
-    assert payload.work == "w-spawn"
-    assert payload.task_dir == source_task_dir.as_posix()
-    assert request.work_id_hint == "w-spawn"
-    assert request.task_cwd == source_task_dir.as_posix()
-    assert request.harness == "codex"
-    assert request.model == "gpt-5.3-codex"
+        ))
+    assert calls == []
 
 
 def _recovered_reference(
@@ -367,15 +500,12 @@ def test_spawn_continue_uses_recovered_session_id(
     )
     calls = _record_spawn_create(monkeypatch)
 
-    spawn_api.spawn_continue_sync(
-        SpawnContinueInput(
-            spawn_id="p32",
-            prompt="follow-up prompt",
+    with pytest.raises(ValueError, match="terminal-attempt exit-chat correlation"):
+        spawn_api.spawn_continue_sync(SpawnContinueInput(
+            spawn_id="p32", prompt="follow-up prompt",
             project_root=project_root.as_posix(),
-        )
-    )
-
-    assert calls[0][0].session.requested_harness_session_id == "recovered-session"
+        ))
+    assert calls == []
 
 
 def test_spawn_fork_uses_recovered_session_id(
@@ -402,12 +532,9 @@ def test_spawn_fork_uses_recovered_session_id(
     )
     calls = _record_spawn_create(monkeypatch)
 
-    spawn_api.spawn_fork_sync(
-        spawn_api.SpawnForkInput(
-            source_ref="p33",
-            prompt="fork prompt",
+    with pytest.raises(ValueError, match="unknown ref"):
+        spawn_api.spawn_fork_sync(spawn_api.SpawnForkInput(
+            source_ref="p33", prompt="fork prompt",
             project_root=project_root.as_posix(),
-        )
-    )
-
-    assert calls[0][0].session.requested_harness_session_id == "recovered-session"
+        ))
+    assert calls == []

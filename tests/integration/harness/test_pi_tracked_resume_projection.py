@@ -79,7 +79,8 @@ def test_native_tui_projector_refuses_recorded_source(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("argument", [
     "task text", "@instructions.txt", "--session=/tmp/other", "--append-system-prompt=x",
-    "--mode=rpc", "--extension=x", "--reload", "--unknown-flag",
+    "--mode=rpc", "--extension=x", "--reload", "--unknown-flag", "--session-dir",
+    "--session-dir=/tmp/override",
 ])
 def test_tracked_resume_rejects_raw_passthrough(tmp_path: Path, argument: str) -> None:
     store = tmp_path / "store"

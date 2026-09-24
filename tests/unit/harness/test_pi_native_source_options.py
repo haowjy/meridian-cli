@@ -19,6 +19,8 @@ from meridian.lib.harness.pi_native_source import (
         ("--session=ses_abc",),
         ("--session", "ses_abc"),
         ("--fork",),
+        ("--session-dir", "/tmp/override"),
+        ("--session-dir=/tmp/override",),
     ],
 )
 def test_pi_raw_native_selector_options_are_rejected(args: tuple[str, ...]) -> None:

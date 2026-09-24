@@ -114,6 +114,7 @@ async def _prepare_execution_handoff(
             request=request,
             harness_id=harness_id,
             harness_adapter=harness_adapter,
+            runtime_root=runtime_root,
         )
 
         resolved_request = request.model_copy(update={"session": resolved_session})

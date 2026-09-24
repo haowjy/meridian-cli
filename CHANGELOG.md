@@ -69,8 +69,19 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Resolve each cN/bare source-use decision from one strict, non-repairing
   authority snapshot; refuse unresolved pN and authority I/O failures.
 
+- Normalize original spawn continue/fork references before legacy spawn rewriting;
+  revalidate worker source authority and refuse tracked operations before spawn
+  creation or process startup.
+
 - Refuse tracked Pi primary resume/fork on the native TUI, including dry-run,
   and block tracked Pi spawn follow-ups until connected admission is owned.
+- Revalidate spawn source references against the executable selection at prepare
+  and worker boundaries; refuse tracked or ambiguous direct dispatch before
+  connection creation.
+- Route streaming Pi spawn selector checks through the Pi-owned refusal helper,
+  including `-c` and `-r` aliases, before connection startup.
+- Reject Pi `--session-dir` passthrough overrides before connection startup,
+  preserving Meridian-managed store isolation.
 - Reject mismatched original/native session selectors and Pi raw session-selection
   flags at shared primary launch and native-TUI projection boundaries.
 - Normalize primary cN/pN/bare source-use references before legacy session
