@@ -11,6 +11,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Retain admitted native source authority for exact linked-metadata reads; omit prompt bodies and fail closed on lifecycle or spawn mismatches.
 
+- Add bounded exact Pi reopen-setting evidence for recorded sources; preserve
+  lineage settings order and refuse incomplete, changed, or unsupported reads.
+
 - Reconcile Claude raw model and effort duplicates against retained emitted controls
   in its bounded argument traversal; refuse unowned permission scalars and tool
   allows that conflict with mandatory Agent denials.

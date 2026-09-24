@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import hashlib
 import json
 import os
 import stat
@@ -21,6 +22,7 @@ from meridian.lib.state.session_authority import (
     LocalObjectStamp,
     PendingLocalFile,
     QualifiedLocalFile,
+    RecordedNativeSource,
 )
 
 SourceFailure = Literal[
@@ -45,6 +47,100 @@ class PiSourceUnavailable:
 
 
 type PiSourceObservation = PiSourceQualified | PiSourcePending | PiSourceUnavailable
+
+
+@dataclass(frozen=True)
+class PiExactContent:
+    data: bytes
+    byte_length: int
+    content_sha256: str
+    file_object: LocalObjectStamp
+    store_object: LocalObjectStamp
+
+
+@dataclass(frozen=True)
+class PiExactContentUnavailable:
+    reason: Literal["missing", "inaccessible", "unsupported_dialect", "changed_during_read"]
+
+
+@dataclass(frozen=True)
+class PiExactContentConflict:
+    reason: Literal["source_mismatch", "store_changed", "file_changed", "identity_mismatch"]
+
+
+type PiExactContentResult = PiExactContent | PiExactContentUnavailable | PiExactContentConflict
+
+
+_MAX_EXACT_CONTENT_BYTES = 64 * 1024 * 1024
+
+
+def read_pi_exact_content(source: RecordedNativeSource) -> PiExactContentResult:
+    """Read one recorded Pi file through held no-follow descriptors.
+
+    The source locator is a recorded store/file object witness, not a discovery
+    hint; no aliases or candidate roots are considered.
+    """
+    locator = source.locator
+    root = Path(source.key.store)
+    path = Path(locator.path)
+    if not root.is_absolute() or not path.is_absolute() or not _descendant(path, root):
+        return PiExactContentConflict("source_mismatch")
+    try:
+        with _open_directory(root) as root_fd:
+            store_stat = os.fstat(root_fd)
+            if _stamp(store_stat) != locator.store_object:
+                return PiExactContentConflict("store_changed")
+            directories, file_fd = _open_file_with_directories(root_fd, root, path)
+            try:
+                before = os.fstat(file_fd)
+                if not stat.S_ISREG(before.st_mode):
+                    return PiExactContentUnavailable("changed_during_read")
+                if _stamp(before) != locator.file_object:
+                    return PiExactContentConflict("file_changed")
+                if before.st_size > _MAX_EXACT_CONTENT_BYTES:
+                    return PiExactContentUnavailable("unsupported_dialect")
+                remaining = before.st_size
+                chunks: list[bytes] = []
+                digest = hashlib.sha256()
+                while remaining:
+                    chunk = os.read(file_fd, min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    chunks.append(chunk)
+                    digest.update(chunk)
+                after = os.fstat(file_fd)
+                data = b"".join(chunks)
+                if remaining or _stat_stamp(file_fd) != locator.file_object:
+                    return PiExactContentUnavailable("changed_during_read")
+                if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+                    after.st_size,
+                    after.st_mtime_ns,
+                    after.st_ctime_ns,
+                ):
+                    return PiExactContentUnavailable("changed_during_read")
+                failure = _reobserve_namespace(root, path, root_fd, directories, file_fd, None)
+                if failure == "store_changed":
+                    return PiExactContentConflict("store_changed")
+                if failure:
+                    return PiExactContentConflict("file_changed")
+                if _stat_stamp(root_fd) != locator.store_object:
+                    return PiExactContentConflict("store_changed")
+                if _stat_stamp(file_fd) != locator.file_object:
+                    return PiExactContentConflict("file_changed")
+                return PiExactContent(
+                    data, len(data), digest.hexdigest(), locator.file_object, locator.store_object
+                )
+            finally:
+                os.close(file_fd)
+                _close_fds(directories)
+    except OSError as exc:
+        reason = _os_failure(exc)
+        if reason == "missing":
+            return PiExactContentUnavailable("missing")
+        if reason == "inaccessible":
+            return PiExactContentUnavailable("inaccessible")
+        return PiExactContentConflict("file_changed")
 
 
 _REFUSED_SOURCE_OPTIONS = frozenset(

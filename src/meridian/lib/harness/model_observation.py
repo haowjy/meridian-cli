@@ -13,12 +13,21 @@ import os
 import sqlite3
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from meridian.lib.harness import claude_sessions, codex_rollout, opencode_transcript
 from meridian.lib.harness.codex_rollout import CODEX_ROLLOUT_FILENAME_RE
+from meridian.lib.harness.pi_journal import project_pi_reopen_default
+from meridian.lib.harness.pi_native_source import (
+    PiExactContent,
+    PiExactContentConflict,
+    PiExactContentUnavailable,
+    read_pi_exact_content,
+)
 from meridian.lib.harness.pi_paths import resolve_pi_agent_dir, resolve_pi_spawn_session_root
+from meridian.lib.state.session_authority import LocalObjectStamp, RecordedNativeSource
 
 
 @dataclass(frozen=True)
@@ -29,6 +38,125 @@ class NativeModelReadContext:
     claude_config_dir: str | None = None
     pi_session_dir: str | None = None
     launch_env: Mapping[str, str] | None = None
+
+
+@dataclass(frozen=True)
+class ExactModelObservation:
+    source: RecordedNativeSource
+    provider_contract: str
+    view_basis: Literal["reopen-default"]
+    selected_leaf_id: str | None
+    model_basis: Literal["selected_reopen_default"]
+    model_token: str
+    native_provider: str
+    evidence_entry_id: str
+    byte_length: int
+    content_sha256: str
+    file_object: LocalObjectStamp
+    store_object: LocalObjectStamp
+    observed_at: str
+    complete: Literal[True] = True
+
+
+@dataclass(frozen=True)
+class ModelEvidenceUnavailable:
+    reason: Literal[
+        "unsupported_provider",
+        "unsupported_view",
+        "missing",
+        "inaccessible",
+        "unsupported_dialect",
+        "incomplete",
+        "no_model",
+        "changed_during_read",
+    ]
+
+
+@dataclass(frozen=True)
+class ModelSourceConflict:
+    reason: Literal["source_mismatch", "store_changed", "file_changed", "identity_mismatch"]
+
+
+type ExactModelEvidence = ExactModelObservation | ModelEvidenceUnavailable | ModelSourceConflict
+
+
+def read_model_evidence_exact(
+    source: RecordedNativeSource,
+    *,
+    view: Literal["reopen-default", "process-active"] = "reopen-default",
+) -> ExactModelEvidence:
+    """Read selected Pi reopen settings from one exact, recorded native file."""
+    if view != "reopen-default":
+        return ModelEvidenceUnavailable("unsupported_view")
+    if source.key.harness != "pi":
+        return ModelEvidenceUnavailable("unsupported_provider")
+    content = read_pi_exact_content(source)
+    if isinstance(content, PiExactContentConflict):
+        return ModelSourceConflict(content.reason)
+    if isinstance(content, PiExactContentUnavailable):
+        return ModelEvidenceUnavailable(content.reason)
+    assert isinstance(content, PiExactContent)
+    try:
+        text = content.data.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return ModelEvidenceUnavailable("incomplete")
+    projection = project_pi_reopen_default(text)
+    if not projection.complete:
+        if any("unsupported Pi native dialect" in reason for reason in projection.reasons):
+            return ModelEvidenceUnavailable("unsupported_dialect")
+        return ModelEvidenceUnavailable("incomplete")
+    header = projection.events[0]
+    if header.get("id") != source.key.native_session_id:
+        return ModelSourceConflict("identity_mismatch")
+    selected: tuple[str, str, str] | None = None
+    leaf_id: str | None = None
+    for row in projection.events[1:]:
+        entry_id = row.get("id")
+        if isinstance(entry_id, str):
+            leaf_id = entry_id
+        entry_type = row.get("type")
+        if entry_type == "model_change":
+            provider, model = row.get("provider"), row.get("modelId")
+            if (
+                not isinstance(provider, str)
+                or not provider.strip()
+                or not isinstance(model, str)
+                or not model.strip()
+            ):
+                return ModelEvidenceUnavailable("incomplete")
+            selected = (provider, model, str(entry_id))
+        elif entry_type == "message":
+            message = row.get("message")
+            if not isinstance(message, dict) or not isinstance(message.get("role"), str):
+                return ModelEvidenceUnavailable("incomplete")
+            if message.get("role") == "assistant":
+                provider, model = message.get("provider"), message.get("model")
+                if (
+                    not isinstance(provider, str)
+                    or not provider.strip()
+                    or not isinstance(model, str)
+                    or not model.strip()
+                ):
+                    return ModelEvidenceUnavailable("incomplete")
+                selected = (provider, model, str(entry_id))
+    if selected is None:
+        return ModelEvidenceUnavailable("no_model")
+    provider, model, entry_id = selected
+    return ExactModelObservation(
+        source=source,
+        provider_contract="pi-0.87.1-legacy-v3-settings-v1",
+        view_basis="reopen-default",
+        selected_leaf_id=leaf_id,
+        model_basis="selected_reopen_default",
+        model_token=model,
+        native_provider=provider,
+        evidence_entry_id=entry_id,
+        byte_length=content.byte_length,
+        content_sha256=content.content_sha256,
+        file_object=content.file_object,
+        store_object=content.store_object,
+        observed_at=datetime.now(UTC).isoformat(),
+    )
 
 
 def _nested_str(payload: object, *keys: str) -> str | None:
@@ -62,7 +190,9 @@ def _iter_json_objects(path: Path) -> Iterator[dict[str, object]]:
 
 
 def _read_claude_last_model(
-    project_root: Path, config_root_hint: Path | None, session_id: str,
+    project_root: Path,
+    config_root_hint: Path | None,
+    session_id: str,
 ) -> str | None:
     for project_dir in claude_sessions.candidate_claude_project_dirs(
         project_root, config_root_hint
@@ -178,9 +308,7 @@ def read_last_executed_model(
             if context.project_root is None:
                 return None
             config_root_hint = (
-                Path(context.claude_config_dir).expanduser()
-                if context.claude_config_dir
-                else None
+                Path(context.claude_config_dir).expanduser() if context.claude_config_dir else None
             )
             return _read_claude_last_model(
                 Path(context.project_root).expanduser(),
