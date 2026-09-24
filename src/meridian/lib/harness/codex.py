@@ -59,6 +59,11 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.connections.codex_ws import CodexConnection
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
+from meridian.lib.harness.native_session_args import (
+    NativeSessionSelector,
+    NativeSessionSurface,
+    NormalizedNativeSessionArgs,
+)
 from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
@@ -246,8 +251,156 @@ def _owns_session(project_root: Path, session_ref: str) -> bool:
     return False
 
 
+_CODEX_NATIVE_ID = re.compile(r"^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
+_CODEX_CONFIG_ENUMS: dict[str, frozenset[str]] = {
+    "model_reasoning_effort": frozenset({"low", "medium", "high", "xhigh"}),
+    "sandbox_mode": frozenset({"read-only", "workspace-write", "danger-full-access"}),
+    "approval_policy": frozenset({"on-request", "untrusted", "never"}),
+    "tools.web_search": frozenset({"true", "false"}),
+}
+
+
+def _validate_codex_config(raw: str) -> None:
+    key, separator, value = raw.partition("=")
+    if not separator or not key or not value or "=" in value:
+        raise ValueError("Codex --config requires one key=value scalar assignment")
+    allowed = {
+        "model",
+        "model_reasoning_effort",
+        "sandbox_mode",
+        "approval_policy",
+        "tools.web_search",
+    }
+    if key not in allowed:
+        raise ValueError(f"unsupported Codex --config key '{key}'")
+    if key == "model":
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            decoded = value
+            if any(char.isspace() for char in value) or any(
+                char in value for char in '\"[]{}'
+            ):
+                raise ValueError("Codex model config must be one scalar string") from None
+        if not isinstance(decoded, str) or not decoded.strip():
+            raise ValueError("Codex model config must be a nonblank scalar string")
+    else:
+        if value.startswith('"'):
+            try:
+                decoded = json.loads(value)
+            except json.JSONDecodeError:
+                raise ValueError("invalid Codex --config scalar") from None
+            if not isinstance(decoded, str):
+                raise ValueError("Codex --config value must be a scalar")
+            value = decoded
+        if value not in _CODEX_CONFIG_ENUMS[key]:
+            raise ValueError(f"unsupported Codex --config value for '{key}'")
+    # Managed matching against effective thread fields belongs to the later
+    # bootstrap consumer, not this syntax normalizer.
+
+
+def _normalize_codex_primary_session_args(
+    args: tuple[str, ...], surface: NativeSessionSurface
+) -> NormalizedNativeSessionArgs:
+    selector: NativeSessionSelector | None = None
+    index = 0
+    if args and args[0] == "resume":
+        if len(args) < 2 or args[1].startswith("-") or not _CODEX_NATIVE_ID.fullmatch(args[1]):
+            raise ValueError("Codex resume requires an exact native thread ID")
+        selector = NativeSessionSelector("resume", args[1])
+        index = 2
+
+    remaining: list[str] = []
+    seen_config_keys: set[str] = set()
+    valued_options = {
+        "--model": "subprocess",
+        "-m": "subprocess",
+        "--sandbox": "subprocess",
+        "--ask-for-approval": "subprocess",
+    }
+    booleans = {
+        "--full-auto": "subprocess",
+        "--dangerously-bypass-approvals-and-sandbox": "subprocess",
+        "--search": "subprocess",
+    }
+    while index < len(args):
+        token = args[index]
+        if token == "--" or token.startswith("@") or not token.startswith("-"):
+            raise ValueError("Codex raw arguments cannot contain positional or indirection input")
+        if token in {"-c", "--config"} or token.startswith("--config="):
+            if token.startswith("--config="):
+                value = token.partition("=")[2]
+                consumed = 1
+            else:
+                if index + 1 >= len(args):
+                    raise ValueError("Codex --config requires a value")
+                value = args[index + 1]
+                consumed = 2
+            _validate_codex_config(value)
+            key = value.partition("=")[0]
+            if key in seen_config_keys:
+                raise ValueError(f"duplicate Codex --config key '{key}'")
+            seen_config_keys.add(key)
+            remaining.extend(args[index : index + consumed])
+            index += consumed
+            continue
+        if token in valued_options:
+            if surface != valued_options[token]:
+                raise ValueError(f"Codex option '{token}' is not supported on {surface}")
+            if index + 1 >= len(args) or not args[index + 1].strip():
+                raise ValueError(f"Codex option '{token}' requires a value")
+            value = args[index + 1]
+            if token == "--sandbox" and value not in {
+                "read-only", "workspace-write", "danger-full-access"
+            }:
+                raise ValueError("unsupported Codex sandbox value")
+            if token == "--ask-for-approval" and value not in {
+                "on-request", "untrusted", "never"
+            }:
+                raise ValueError("unsupported Codex approval value")
+            remaining.extend((token, value))
+            index += 2
+            continue
+        if (
+            token.startswith("--model=")
+            or token.startswith("--sandbox=")
+            or token.startswith("--ask-for-approval=")
+        ):
+            if surface != "subprocess":
+                raise ValueError(
+                    f"Codex option '{token.partition('=')[0]}' is not supported on {surface}"
+                )
+            name, _, value = token.partition("=")
+            if not value.strip():
+                raise ValueError(f"Codex option '{name}' requires a value")
+            if name == "--sandbox" and value not in {
+                "read-only", "workspace-write", "danger-full-access"
+            }:
+                raise ValueError("unsupported Codex sandbox value")
+            if name == "--ask-for-approval" and value not in {
+                "on-request", "untrusted", "never"
+            }:
+                raise ValueError("unsupported Codex approval value")
+            remaining.append(token)
+            index += 1
+            continue
+        if token in booleans:
+            if surface != booleans[token]:
+                raise ValueError(f"Codex option '{token}' is not supported on {surface}")
+            remaining.append(token)
+            index += 1
+            continue
+        raise ValueError(f"unsupported Codex raw argument '{token}'")
+    return NormalizedNativeSessionArgs(selector, tuple(remaining))
+
+
 class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """SubprocessHarness implementation for `codex`."""
+
+    def normalize_primary_session_args(
+        self, args: tuple[str, ...], surface: NativeSessionSurface
+    ) -> NormalizedNativeSessionArgs:
+        return _normalize_codex_primary_session_args(args, surface)
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_CODEX_SUBPROCESS
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_CODEX
