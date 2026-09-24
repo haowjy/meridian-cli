@@ -2,13 +2,23 @@
 
 import pytest
 
+from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.harness.claude import normalize_primary_session_args
 from meridian.lib.harness.native_session_args import (
     NativeSessionSelector,
     NormalizedNativeSessionArgs,
+    PrimaryArgControls,
 )
 
 _NATIVE_ID = "550e8400-e29b-41d4-a716-446655440000"
+
+
+def _controls(*, model: str | None = "sonnet", controlled: bool = True, effort: str | None = None):
+    return PrimaryArgControls(
+        model=model,
+        model_controlled=controlled,
+        execution_policy=ResolvedExecutionPolicy(effort=effort),
+    )
 
 
 @pytest.mark.parametrize(
@@ -121,6 +131,109 @@ def test_refuses_ambiguous_or_unbounded_claude_primary_args(raw: tuple[str, ...]
 def test_claude_primary_managed_surface_is_unsupported() -> None:
     with pytest.raises(ValueError, match="managed"):
         normalize_primary_session_args((), surface="managed")
+
+
+@pytest.mark.parametrize("raw", [("--model", "sonnet"), ("--model=attacker-model",)])
+def test_controls_strip_equal_or_different_generated_model_with_redacted_warning(
+    raw: tuple[str, ...],
+) -> None:
+    result = normalize_primary_session_args(raw, controls=_controls())
+    assert result.remaining_args == ()
+    assert result.warnings == (
+        "Ignored raw model option; Meridian's resolved model takes precedence.",
+    )
+    assert "attacker-model" not in str(result.warnings)
+
+
+def test_controlled_default_model_strips_raw_model_because_projector_omits_it() -> None:
+    result = normalize_primary_session_args(
+        ("--model=raw-model",), controls=_controls(model=None)
+    )
+    assert result.remaining_args == ()
+    assert len(result.warnings) == 1
+
+
+def test_claude_projector_owns_nonblank_model_and_effort_and_omits_default_model() -> None:
+    from meridian.lib.harness.adapter import SpawnParams
+    from meridian.lib.harness.claude import ClaudeAdapter
+    from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
+    from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
+
+    spec = ClaudeAdapter().resolve_launch_spec(
+        SpawnParams(prompt="safe"), UnsafeNoOpPermissionResolver(_suppress_warning=True)
+    ).model_copy(update={"model": "", "effort": "high"})
+    argv = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+    assert "--model" not in argv
+    assert argv[argv.index("--effort") + 1] == "high"
+
+
+def test_unknown_model_provenance_refuses_scalar_but_benign_prompt_is_valid() -> None:
+    with pytest.raises(ValueError, match="unknown Meridian provenance"):
+        normalize_primary_session_args(
+            ("--model", "secret-model"), controls=_controls(controlled=False)
+        )
+    result = normalize_primary_session_args(
+        ("--system-prompt=--model",), controls=_controls(controlled=False)
+    )
+    assert result.remaining_args == ("--system-prompt=--model",)
+
+
+def test_controls_parse_roles_once_and_refuse_repeated_raw_model() -> None:
+    with pytest.raises(ValueError, match="repeat the model"):
+        normalize_primary_session_args(
+            ("--model", "first", "--model=second"), controls=_controls()
+        )
+    # Inline values are consumed as values, never reinterpreted as option names.
+    result = normalize_primary_session_args(
+        ("--model=--effort", "--append-system-prompt=--model"), controls=_controls()
+    )
+    assert result.remaining_args == ("--append-system-prompt=--model",)
+
+
+@pytest.mark.parametrize("raw", [("--effort", "high"), ("--effort=low",)])
+def test_supported_emitted_effort_strips_equal_or_different_duplicate(
+    raw: tuple[str, ...],
+) -> None:
+    for retained_effort in ("low", "medium", "high", "xhigh", "max"):
+        result = normalize_primary_session_args(raw, controls=_controls(effort=retained_effort))
+        assert result.remaining_args == ()
+        assert result.warnings == (
+            "Ignored raw effort option; Meridian's resolved effort takes precedence.",
+        )
+
+
+@pytest.mark.parametrize("effort", [None, "", "default"])
+def test_absent_or_unemitted_effort_refuses_raw_scalar(effort: str | None) -> None:
+    with pytest.raises(ValueError, match="no emitted Meridian effort"):
+        normalize_primary_session_args(("--effort", "high"), controls=_controls(effort=effort))
+    for unsupported in ("future-secret-effort", "HIGH", "--permission-mode"):
+        with pytest.raises(ValueError) as error:
+            normalize_primary_session_args(
+                ("--effort=low",), controls=_controls(effort=unsupported)
+            )
+        assert str(error.value) == (
+            "Claude raw effort option has unsupported Meridian effort; "
+            "use Meridian's effort configuration"
+        )
+        assert unsupported not in str(error.value)
+
+
+def test_permission_and_bypass_controls_refuse_before_other_scalar_suppression() -> None:
+    with pytest.raises(ValueError, match="permission mode"):
+        normalize_primary_session_args(
+            ("--model", "sonnet", "--permission-mode", "default"), controls=_controls()
+        )
+    with pytest.raises(ValueError, match="permission bypass"):
+        normalize_primary_session_args(("--dangerously-skip-permissions",), controls=_controls())
+
+
+def test_tool_lists_keep_additive_projection_but_refuse_mandatory_agent_denial() -> None:
+    raw = ("--allowedTools=Read,Write", "--disallowedTools", "Bash")
+    assert normalize_primary_session_args(raw, controls=_controls()).remaining_args == raw
+    with pytest.raises(ValueError, match="mandatory Agent denial"):
+        normalize_primary_session_args(
+            ("--allowedTools=Read,Agent(Explore)",), controls=_controls()
+        )
 
 
 def test_generated_claude_resume_projection_keeps_identity_separate_from_raw_tail() -> None:

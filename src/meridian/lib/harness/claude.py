@@ -68,7 +68,10 @@ from meridian.lib.harness.native_session_args import (
     NormalizedNativeSessionArgs,
     PrimaryArgControls,
 )
-from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
+from meridian.lib.harness.projections.project_claude import (
+    _CLAUDE_BUILTIN_AGENT_DENY_TOOLS,  # pyright: ignore[reportPrivateUsage]
+    project_claude_spec_to_cli_args,
+)
 from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,
     EventSemantics,
@@ -113,10 +116,21 @@ _CLAUDE_PRIMARY_VALUE_OPTIONS = frozenset(
     }
 )
 _CLAUDE_PRIMARY_SELECTOR_OPTIONS = frozenset({"--resume", "-r"})
+_CLAUDE_PRIMARY_CONTROL_WARNINGS = {
+    "model": "Ignored raw model option; Meridian's resolved model takes precedence.",
+    "effort": "Ignored raw effort option; Meridian's resolved effort takes precedence.",
+}
 _CLAUDE_NATIVE_SESSION_ID = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
 _SAFE_OPTION_NAME = re.compile(r"^(?:--[A-Za-z][A-Za-z0-9-]*|-[A-Za-z])$")
+_CLAUDE_EFFORT_PROJECTION = {
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": "xhigh",
+    "max": "max",
+}
 
 
 def normalize_primary_session_args(
@@ -131,14 +145,65 @@ def normalize_primary_session_args(
     other tokens must have a known option role so selection cannot hide in an
     unknown arity or positional/subcommand escape.
     """
-    _ = controls
     if surface != "subprocess":
         raise ValueError("Claude primary raw arguments are unsupported on managed surface")
 
     selector: NativeSessionSelector | None = None
     saw_fork = False
     remaining: list[str] = []
+    warnings: list[str] = []
+    seen_controlled_scalars: set[str] = set()
     index = 0
+
+    def scalar_role(option: str, value: str) -> bool:
+        """Consume a proven owned scalar, returning whether it was suppressed."""
+        if controls is None:
+            return False
+        if option not in {"--model", "--effort"}:
+            return False
+        if option == "--model":
+            if not controls.model_controlled:
+                raise ValueError(
+                    "Claude raw model option has unknown Meridian provenance; "
+                    "use Meridian's model configuration"
+                )
+            if option in seen_controlled_scalars:
+                raise ValueError("Claude primary raw arguments repeat the model option")
+            seen_controlled_scalars.add(option)
+            # The Claude projector omits falsey models, which is its native-default
+            # path. Provenance is the control carrier's explicit ownership proof.
+            if controls.model is None or not controls.model.strip():
+                warnings.append(_CLAUDE_PRIMARY_CONTROL_WARNINGS["model"])
+                return True
+        else:
+            effort = controls.execution_policy.effort
+            if effort is None or not effort.strip() or effort.strip().lower() == "default":
+                raise ValueError(
+                    "Claude raw effort option has no emitted Meridian effort; "
+                    "use Meridian's effort configuration"
+                )
+            if effort.strip() not in _CLAUDE_EFFORT_PROJECTION:
+                raise ValueError(
+                    "Claude raw effort option has unsupported Meridian effort; "
+                    "use Meridian's effort configuration"
+                )
+            if option in seen_controlled_scalars:
+                raise ValueError("Claude primary raw arguments repeat the effort option")
+            seen_controlled_scalars.add(option)
+        warnings.append(_CLAUDE_PRIMARY_CONTROL_WARNINGS[option.removeprefix("--")])
+        return True
+
+    def tool_list_value(option: str, value: str) -> None:
+        if controls is None:
+            return
+        entries = tuple(entry.strip() for entry in value.split(",") if entry.strip())
+        if option == "--allowedTools" and any(
+            entry in _CLAUDE_BUILTIN_AGENT_DENY_TOOLS for entry in entries
+        ):
+            raise ValueError(
+                "Claude raw allowed-tools list conflicts with mandatory Agent denial; "
+                "use Meridian's tool permissions"
+            )
 
     def value_after(
         option: str, value: str | None, *, reject_option_like: bool = True
@@ -214,18 +279,41 @@ def normalize_primary_session_args(
         if token in _CLAUDE_PRIMARY_VALUE_OPTIONS:
             if index + 1 >= len(args):
                 raise ValueError(f"Claude primary option {token} requires a value")
-            value_after(token, args[index + 1])
-            remaining.extend((token, args[index + 1]))
+            value = value_after(token, args[index + 1])
+            suppressed = scalar_role(token, value)
+            if token in {"--allowedTools", "--disallowedTools"}:
+                tool_list_value(token, value)
+            if not suppressed:
+                if controls is not None and token == "--permission-mode":
+                    raise ValueError(
+                        "Claude raw permission mode is unsupported; "
+                        "use Meridian's typed permission configuration"
+                    )
+                remaining.extend((token, value))
             index += 2
             continue
 
         option, separator, value = token.partition("=")
         if separator and option in _CLAUDE_PRIMARY_VALUE_OPTIONS:
-            value_after(option, value, reject_option_like=False)
-            remaining.append(token)
+            decoded = value_after(option, value, reject_option_like=False)
+            suppressed = scalar_role(option, decoded)
+            if option in {"--allowedTools", "--disallowedTools"}:
+                tool_list_value(option, decoded)
+            if controls is not None and option == "--permission-mode":
+                raise ValueError(
+                    "Claude raw permission mode is unsupported; "
+                    "use Meridian's typed permission configuration"
+                )
+            if not suppressed:
+                remaining.append(token)
             index += 1
             continue
         if token == "--dangerously-skip-permissions":
+            if controls is not None:
+                raise ValueError(
+                    "Claude raw permission bypass is unsupported; "
+                    "use Meridian's typed permission configuration"
+                )
             remaining.append(token)
             index += 1
             continue
@@ -235,7 +323,7 @@ def normalize_primary_session_args(
         raise ValueError("Claude --fork-session requires one explicit --resume ID")
     if selector is not None and saw_fork:
         selector = NativeSessionSelector("fork", selector.native_id)
-    return NormalizedNativeSessionArgs(selector, tuple(remaining))
+    return NormalizedNativeSessionArgs(selector, tuple(remaining), tuple(dict.fromkeys(warnings)))
 
 
 def build_claude_adhoc_agent_json(
@@ -438,13 +526,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         normalized_effort = None
         if effort is not None:
             normalized_value = str(effort).strip()
-            normalized_effort = {
-                "low": "low",
-                "medium": "medium",
-                "high": "high",
-                "xhigh": "xhigh",
-                "max": "max",
-            }.get(normalized_value, normalized_value)
+            normalized_effort = _CLAUDE_EFFORT_PROJECTION.get(normalized_value, normalized_value)
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
         effective_extra_args = run.extra_args
         if continue_session_id is None and not has_session_identity_in_args(run.extra_args):
