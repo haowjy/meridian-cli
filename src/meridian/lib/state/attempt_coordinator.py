@@ -168,9 +168,19 @@ class AttemptCoordinator:
         assert self._exit_observation is not None
         observation = self._exit_observation
         try:
-            witness = await observation
+            # The coordinator owns this single-flight close operation, not the
+            # current waiter. Cancellation must not cancel the transport close
+            # or discard a terminal witness that may already be complete.
+            witness = await asyncio.shield(observation)
         except BaseException:
-            if self._exit_observation is observation:
+            # A completed failure occurred before a terminal observation and
+            # may be retried. A cancelled waiter (including one arriving after
+            # successful completion) leaves the operation/result for retry.
+            if (
+                self._exit_observation is observation
+                and observation.done()
+                and (observation.cancelled() or observation.exception() is not None)
+            ):
                 self._exit_observation = None
             raise
         async with self._admission_lock:

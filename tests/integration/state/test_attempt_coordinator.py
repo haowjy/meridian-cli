@@ -191,6 +191,87 @@ async def test_commit_exit_drains_uncertain_entry_but_returns_terminal_result(
 
 
 @pytest.mark.asyncio
+async def test_cancelled_exit_waiter_keeps_suspended_close_single_flight(tmp_path):
+    owner, coordinator = attempt(tmp_path)
+    await coordinator.begin()
+    owner.script.append(owner.observation(terminal()))
+    closing = asyncio.Event()
+    release = asyncio.Event()
+    original_close = owner.close_and_observe_exit
+
+    async def suspended_close():
+        closing.set()
+        await release.wait()
+        return await original_close()
+
+    owner.close_and_observe_exit = suspended_close
+    waiter = asyncio.create_task(coordinator.commit_exit())
+    await closing.wait()
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert coordinator._exit_observation is not None
+    release.set()
+    result = await coordinator.commit_exit()
+    assert result.chat_id == "c1"
+    assert owner.events.count("close_and_observe_exit") == 1
+    assert coordinator.boundaries().exit_chat_id == "c1"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_exit_waiter_keeps_completed_close_witness(tmp_path):
+    owner, coordinator = attempt(tmp_path)
+    await coordinator.begin()
+    owner.script.append(owner.observation(terminal()))
+    waiter: asyncio.Task | None = None
+    close_returned = asyncio.Event()
+    original_close = owner.close_and_observe_exit
+
+    async def completed_close():
+        witness = await original_close()
+        # Run after this task finishes but before the awaiting commit_exit task
+        # can consume its result.
+        asyncio.get_running_loop().call_soon(waiter.cancel)
+        close_returned.set()
+        return witness
+
+    owner.close_and_observe_exit = completed_close
+    waiter = asyncio.create_task(coordinator.commit_exit())
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    await close_returned.wait()
+    assert coordinator._exit_observation is not None
+    result = await coordinator.commit_exit()
+    assert result.chat_id == "c1"
+    assert owner.events.count("close_and_observe_exit") == 1
+    assert coordinator.boundaries().exit_chat_id == "c1"
+
+
+@pytest.mark.asyncio
+async def test_failed_close_is_cleared_and_retry_observes_exit(tmp_path):
+    owner, coordinator = attempt(tmp_path)
+    await coordinator.begin()
+    owner.script.append(owner.observation(terminal()))
+    original_close = owner.close_and_observe_exit
+    calls = 0
+
+    async def fail_once():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("close failed before terminal observation")
+        return await original_close()
+
+    owner.close_and_observe_exit = fail_once
+    with pytest.raises(OSError, match="close failed"):
+        await coordinator.commit_exit()
+    assert coordinator._exit_observation is None
+    assert (await coordinator.commit_exit()).chat_id == "c1"
+    assert calls == 2
+    assert coordinator.boundaries().exit_chat_id == "c1"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("wrong", ["owner", "connection", "child", "store", "harness"])
 async def test_copied_scope_wrong_owner_and_namespace_do_not_deliver(tmp_path, wrong):
     owner, coordinator = attempt(tmp_path)
