@@ -156,7 +156,9 @@ class _SessionTransaction:
 
 
 @contextmanager
-def _sessions_transaction(paths: RuntimePaths, *, require_existing_root: bool = False):
+def _sessions_transaction(
+    paths: RuntimePaths, *, require_existing_root: bool = False, repair_tail: bool = True
+):
     """Own lock order, one strict projection, repair, and durable confirmation."""
     with lock_file(paths.project_lifetime_flock, mode="shared"):
         if require_existing_root and not paths.root_dir.is_dir():
@@ -172,7 +174,8 @@ def _sessions_transaction(paths: RuntimePaths, *, require_existing_root: bool = 
             transaction = _SessionTransaction(paths.sessions_jsonl, raw, read_journal(raw))
             try:
                 yield transaction
-                transaction.prepare()
+                if repair_tail:
+                    transaction.prepare()
             finally:
                 _confirm_sessions_durability(paths.sessions_jsonl)
 
@@ -318,6 +321,130 @@ def get_native_binding(runtime_root: Path, chat_id: str) -> NativeBindingStatus:
         # Replay rejected the whole snapshot; do not expose a prefix key or repair bytes.
         normalized = ChatId(normalize_optional_identity(chat_id) or "")
         return UnavailableBinding(normalized, "authority_invalid")
+
+
+@dataclass(frozen=True)
+class NativeIdCandidate:
+    """One recorded claim for a bare native ID, with its source provenance."""
+
+    harness: str
+    store: str | None
+    native_session_id: str
+    chat_id: str
+    provenance: Literal["v4", "v3", "legacy_lifecycle"]
+    protocol: str | None
+    pin: str | None
+    blocked: str | None
+    generation: str | None = None
+
+
+@dataclass(frozen=True)
+class NativeIdMatches:
+    candidates: tuple[NativeIdCandidate, ...]
+
+
+@dataclass(frozen=True)
+class NativeIdNoMatch:
+    """A complete, valid authority replay had no claim for the ID."""
+
+
+@dataclass(frozen=True)
+class NativeIdUnavailable:
+    reason: Literal["authority_invalid"]
+
+
+@dataclass(frozen=True)
+class NativeIdAmbiguous:
+    candidates: tuple[NativeIdCandidate, ...]
+
+
+type NativeIdLookup = NativeIdMatches | NativeIdNoMatch | NativeIdUnavailable | NativeIdAmbiguous
+
+
+def lookup_native_id_candidates(
+    runtime_root: Path, native_session_id: str, *, harness: str | None = None
+) -> NativeIdLookup:
+    """Strictly look up every journal claim for a native ID in one locked replay.
+
+    No filesystem discovery or SQLite projection participates. Lifecycle claims
+    are retained as evidence but never promoted to v4 binding authority.
+    """
+    normalized_id = normalize_optional_identity(native_session_id)
+    if normalized_id is None:
+        return NativeIdNoMatch()
+    harness_filter = harness.strip().lower() if harness is not None else None
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    try:
+        with _sessions_transaction(paths, repair_tail=False) as transaction:
+            if transaction.journal.tail == "torn":
+                raise InvalidSessionJournal("Torn sessions.jsonl tail")
+            snapshot = transaction.snapshot
+    except InvalidSessionJournal:
+        return NativeIdUnavailable("authority_invalid")
+
+    candidates: list[NativeIdCandidate] = []
+    for binding in snapshot.identity.native_bindings.values():
+        key = binding.key
+        if key.native_session_id != normalized_id or (
+            harness_filter is not None and key.harness != harness_filter
+        ):
+            continue
+        source = binding.source
+        pin = (
+            "pinned"
+            if isinstance(source, Pinned)
+            else ("pending" if isinstance(source, Pending) else "unobserved")
+        )
+        blocked = (
+            "source_conflict"
+            if binding.conflict is not None
+            else "locator_unrecorded"
+            if isinstance(source, LocatorUnrecorded)
+            else None
+        )
+        candidates.append(
+            NativeIdCandidate(
+                key.harness,
+                key.store,
+                normalized_id,
+                str(binding.chat_id),
+                "v4" if binding.protocol == "v4" else "v3",
+                binding.protocol,
+                pin,
+                blocked,
+            )
+        )
+
+    for record in snapshot.lifecycle_generations:
+        record_harness = record.harness.strip().lower()
+        if harness_filter is not None and record_harness != harness_filter:
+            continue
+        for alias in record.harness_session_ids:
+            if alias != normalized_id:
+                continue
+            candidates.append(
+                NativeIdCandidate(
+                    record_harness,
+                    None,
+                    normalized_id,
+                    str(record.chat_id),
+                    "legacy_lifecycle",
+                    None,
+                    None,
+                    "legacy_unverified",
+                    record.session_instance_id or None,
+                )
+            )
+
+    # Keep each generation/authority claim: a shared chat does not erase the
+    # historical and legacy evidence needed by strict callers.
+    matches = tuple(candidates)
+    if not matches:
+        return NativeIdNoMatch()
+    ownership = {(item.harness, item.store, item.chat_id, item.provenance) for item in matches}
+    if len(ownership) > 1 or len(matches) > 1:
+        return NativeIdAmbiguous(matches)
+    return NativeIdMatches(matches)
 
 
 def _get_native_binding(runtime_root: Path, chat_id: str) -> NativeBindingStatus:

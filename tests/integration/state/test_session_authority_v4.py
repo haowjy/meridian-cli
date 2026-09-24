@@ -10,17 +10,25 @@ from meridian.lib.state import session_authority as authority
 from meridian.lib.state import session_store
 
 
-def _key(store: str = "/native/store", session_id: str = "session") -> authority.NativeSessionKey:
-    return authority.NativeSessionKey(harness="pi", store=store, native_session_id=session_id)
+def _key(
+    store: str = "/native/store", session_id: str = "session", harness: str = "pi"
+) -> authority.NativeSessionKey:
+    return authority.NativeSessionKey(harness=harness, store=store, native_session_id=session_id)
 
 
-def _begin(run_id: str = "run", attempt_id: str = "attempt") -> authority.BeginEventV4:
+def _begin(
+    run_id: str = "run",
+    attempt_id: str = "attempt",
+    *,
+    harness: str = "pi",
+    store: str = "/native/store",
+) -> authority.BeginEventV4:
     return authority.BeginEventV4(
         run_id=run_id,
         attempt_id=attempt_id,
         transport_scope_id="transport",
-        harness="pi",
-        store="/native/store",
+        harness=harness,
+        store=store,
         operation="fresh",
         attempt_number=1,
     )
@@ -42,6 +50,7 @@ def _fact(
     *,
     order: int = 1,
     session_id: str = "session",
+    key: authority.NativeSessionKey | None = None,
 ) -> authority.BoundaryFactV4:
     entry = boundary == "entry"
     evidence = authority.BoundaryEvidence(
@@ -55,7 +64,7 @@ def _fact(
         run_id="run",
         attempt_id="attempt",
         boundary=boundary,
-        key=_key(session_id=session_id),
+        key=key or _key(session_id=session_id),
         evidence=evidence,
         file=observation,
     )
@@ -162,9 +171,7 @@ def test_exact_conflict_retry_survives_successor_begin_without_new_row() -> None
     entry = _fact("entry", _file("/native/store/session.jsonl", inode=10))
     builder = _fold(_begin())
     authority.fold_row(builder, _accept(builder, entry))
-    trigger = _fact(
-        "exit", _file("/native/store/other.jsonl", inode=10, file_inode=12), order=2
-    )
+    trigger = _fact("exit", _file("/native/store/other.jsonl", inode=10, file_inode=12), order=2)
     conflict = _accept(builder, trigger)
     assert isinstance(conflict, authority.LocatorConflictEvent)
     authority.fold_row(builder, conflict)
@@ -901,6 +908,144 @@ def test_native_binding_read_does_not_hide_durability_failure(tmp_path, monkeypa
     monkeypatch.setattr(session_store.os, "fsync", fail_sync)
     with pytest.raises(OSError, match="persistent file sync failure"):
         session_store.get_native_binding(tmp_path, "c1")
+
+
+def test_bare_native_lookup_returns_all_store_claims_and_honors_harness(tmp_path) -> None:
+    rows: list[authority.V4AttemptEvent] = []
+    keys = (("pi", "/native/one"), ("pi", "/native/two"), ("claude", "/native/one"))
+    for index, (harness, store) in enumerate(keys):
+        run_id = f"run-{index}"
+        begin = _begin(run_id, "attempt", harness=harness, store=store)
+        key = _key(store, "shared", harness)
+        fact = _fact(
+            "entry",
+            _file(f"{store}/session.jsonl", inode=10 + index),
+            session_id="shared",
+            key=key,
+        )
+        fact = fact.model_copy(update={"run_id": run_id})
+        builder = _fold(begin)
+        boundary = _accept(builder, fact, chat_id=f"c{index + 1}")
+        rows.extend((begin, boundary))
+    journal = tmp_path / "sessions.jsonl"
+    journal.write_text("".join(f"{row.model_dump_json()}\n" for row in rows), encoding="utf-8")
+
+    result = session_store.lookup_native_id_candidates(tmp_path, "shared")
+    assert isinstance(result, session_store.NativeIdAmbiguous)
+    assert {(item.harness, item.store, item.chat_id) for item in result.candidates} == {
+        ("pi", "/native/one", "c1"),
+        ("pi", "/native/two", "c2"),
+        ("claude", "/native/one", "c3"),
+    }
+    constrained = session_store.lookup_native_id_candidates(tmp_path, "shared", harness="pi")
+    assert isinstance(constrained, session_store.NativeIdAmbiguous)
+    assert {item.store for item in constrained.candidates} == {"/native/one", "/native/two"}
+
+
+def test_bare_native_lookup_preserves_legacy_generations_and_historical_aliases(tmp_path) -> None:
+    session_store.start_session(tmp_path, "pi", "alias", "test", chat_id="c1")
+    session_store.start_session(tmp_path, "pi", "alias", "test", chat_id="c2")
+    before = (tmp_path / "sessions.jsonl").read_bytes()
+
+    result = session_store.lookup_native_id_candidates(tmp_path, "alias", harness="pi")
+    assert isinstance(result, session_store.NativeIdAmbiguous)
+    assert {(item.chat_id, item.provenance) for item in result.candidates} == {
+        ("c1", "legacy_lifecycle"),
+        ("c2", "legacy_lifecycle"),
+    }
+    assert (tmp_path / "sessions.jsonl").read_bytes() == before
+
+
+def test_bare_native_lookup_treats_legacy_plus_v4_as_ambiguous(tmp_path) -> None:
+    session_store.start_session(tmp_path, "pi", "shared", "test", chat_id="c2")
+    begin = _begin()
+    fact = _fact(
+        "entry",
+        _file("/native/store/session.jsonl", inode=10),
+        session_id="shared",
+    )
+    boundary = _accept(_fold(begin), fact, chat_id="c1")
+    with (tmp_path / "sessions.jsonl").open("ab") as stream:
+        stream.write(f"{begin.model_dump_json()}\n{boundary.model_dump_json()}\n".encode())
+
+    result = session_store.lookup_native_id_candidates(tmp_path, "shared")
+    assert isinstance(result, session_store.NativeIdAmbiguous)
+    assert {item.provenance for item in result.candidates} == {"v4", "legacy_lifecycle"}
+
+
+def test_bare_native_lookup_includes_retained_historical_alias(tmp_path) -> None:
+    record = authority.SessionRecord(
+        chat_id="c9",
+        record_mode="historical",
+        kind="primary",
+        harness="pi",
+        harness_session_id="old-native",
+        harness_session_ids=("old-native", "older-alias"),
+        model="test",
+        agent="",
+        agent_path="",
+        skills=(),
+        skill_paths=(),
+        params=(),
+        started_at="2026-01-01T00:00:00Z",
+        stopped_at="2026-01-01T01:00:00Z",
+        session_instance_id="history-generation",
+    )
+    event = authority.SessionHistoricalEvent(record=record)
+    (tmp_path / "sessions.jsonl").write_text(f"{event.model_dump_json()}\n", encoding="utf-8")
+
+    result = session_store.lookup_native_id_candidates(tmp_path, "older-alias")
+    assert isinstance(result, session_store.NativeIdMatches)
+    assert result.candidates == (
+        session_store.NativeIdCandidate(
+            "pi",
+            None,
+            "older-alias",
+            "c9",
+            "legacy_lifecycle",
+            None,
+            None,
+            "legacy_unverified",
+            "history-generation",
+        ),
+    )
+
+
+def test_bare_native_lookup_exposes_blocked_v4_candidate(tmp_path) -> None:
+    original = _fact("entry", _file("/native/store/a.jsonl", inode=10), session_id="blocked")
+    changed = _fact(
+        "exit",
+        _file("/native/store/b.jsonl", inode=10, file_inode=22),
+        order=2,
+        session_id="blocked",
+    )
+    builder = _fold(_begin())
+    entry = _accept(builder, original)
+    authority.fold_row(builder, entry)
+    conflict = _accept(builder, changed)
+    journal = tmp_path / "sessions.jsonl"
+    journal.write_text(
+        "".join(f"{row.model_dump_json()}\n" for row in (_begin(), entry, conflict)),
+        encoding="utf-8",
+    )
+
+    result = session_store.lookup_native_id_candidates(tmp_path, "blocked")
+    assert isinstance(result, session_store.NativeIdMatches)
+    assert result.candidates[0].blocked == "source_conflict"
+
+
+def test_bare_native_lookup_no_match_and_torn_authority_are_distinct(tmp_path) -> None:
+    assert isinstance(
+        session_store.lookup_native_id_candidates(tmp_path, "missing"),
+        session_store.NativeIdNoMatch,
+    )
+    journal = tmp_path / "sessions.jsonl"
+    journal.write_bytes(b'{"event":"start"')
+    before = journal.read_bytes()
+    assert session_store.lookup_native_id_candidates(tmp_path, "missing") == (
+        session_store.NativeIdUnavailable("authority_invalid")
+    )
+    assert journal.read_bytes() == before
 
 
 @pytest.mark.parametrize("blocked_boundary", ["entry", "exit"])

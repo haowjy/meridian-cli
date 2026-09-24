@@ -1175,9 +1175,7 @@ def _binding_result(binding: NativeBinding, *, invalidated: bool = False) -> Att
     return AcceptedBoundary(binding.chat_id, binding.binding_event_id, locator)
 
 
-def requested_source_eligible(
-    identity: IdentityProjection, source: RecordedNativeSource
-) -> bool:
+def requested_source_eligible(identity: IdentityProjection, source: RecordedNativeSource) -> bool:
     """Whether a recorded v4 source still names its current operational pin."""
     binding = identity.native_bindings.get(native_key_tuple(source.key))
     return bool(
@@ -1624,6 +1622,7 @@ class MetadataProjection:
 class JournalSnapshot:
     identity: IdentityProjection
     lifecycle: Mapping[str, SessionRecord]
+    lifecycle_generations: tuple[SessionRecord, ...]
     metadata: MetadataProjection
     attempts: AttemptProjection
 
@@ -1730,6 +1729,9 @@ class _JournalBuilder:
     max_canonical_number: int = 0
     lifecycle: dict[str, SessionRecord] = field(default_factory=dict)
     lifecycle_ids: dict[str, dict[HarnessSessionId, None]] = field(default_factory=dict)
+    generations: dict[tuple[str, str], dict[str, SessionRecord]] = field(default_factory=dict)
+    latest_blank_generation: dict[str, str] = field(default_factory=dict)
+    event_ordinal: int = 0
     metadata: _MetadataBuilder = field(default_factory=_MetadataBuilder)
     attempts: dict[tuple[str, str], AttemptState] = field(default_factory=dict)
     latest: dict[str, BeginEvent | BeginEventV4] = field(default_factory=dict)
@@ -1765,6 +1767,16 @@ class _JournalBuilder:
         )
 
     def fold_lifecycle(self, event: SessionEvent) -> None:
+        generation = event.session_instance_id
+        if not generation:
+            if isinstance(event, SessionStartEvent):
+                self.latest_blank_generation[event.chat_id] = f"legacy:{self.event_ordinal}"
+            generation = self.latest_blank_generation.get(event.chat_id, "")
+        project_session_event(
+            self.generations.setdefault((event.chat_id, generation), {}),
+            event,
+        )
+        self.event_ordinal += 1
         if isinstance(event, SessionStartEvent):
             self.lifecycle_ids[event.chat_id] = (
                 {event.harness_session_id: None} if event.harness_session_id is not None else {}
@@ -1794,6 +1806,7 @@ class _JournalBuilder:
                     for chat, record in self.lifecycle.items()
                 }
             ),
+            tuple(record for rows in self.generations.values() for record in rows.values()),
             self.metadata.snapshot(),
             AttemptProjection(
                 MappingProxyType(self.attempts), MappingProxyType(self.latest), self.effective_exits
@@ -1921,9 +1934,7 @@ def read_journal(raw: bytes) -> JournalRead:
         try:
             fold_row(builder, decode_row(payload))
         except ValueError as exc:
-            raise InvalidSessionJournal(
-                f"Invalid sessions.jsonl row {index + 1}: {exc}"
-            ) from exc
+            raise InvalidSessionJournal(f"Invalid sessions.jsonl row {index + 1}: {exc}") from exc
         offset += len(line) + int(terminated)
         if not terminated:
             tail = "complete_without_delimiter"

@@ -11,6 +11,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Add a strict, provenance-preserving bare native-ID candidate lookup over one
+  locked `sessions.jsonl` replay; ambiguity and corrupt authority fail closed.
+
 - Carry purpose-authorized pinned Pi native sources from top-level cN continuation
   through launch composition; Pi resumes use the exact preflighted file and store,
   while tracked passthrough arguments fail closed. Actual tracked execution stays
