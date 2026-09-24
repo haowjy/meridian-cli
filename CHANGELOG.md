@@ -4,8 +4,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Claude raw resume now requires a canonical native UUID, equals-form prompt values may begin with `-`, and unsupported-option errors name only the safe option spelling.
+
 ### Changed
 
+- Normalize bounded Claude primary raw session selectors while preserving supported safe arguments.
 - Add a typed primary-only adapter hook for fail-closed raw native-session argument normalization.
 - Include the selected subprocess or managed surface in native-session argument normalization.
 - Define a fail-closed adapter-local raw native-session normalization seam; remove dormant selection-inspection ports.
