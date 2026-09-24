@@ -41,22 +41,32 @@ class PiSourceUnavailable:
 type PiSourceObservation = PiSourceQualified | PiSourcePending | PiSourceUnavailable
 
 
-_NATIVE_SELECTOR_OPTIONS = frozenset(
-    {"--continue", "-c", "--resume", "-r", "--session-id", "--session", "--fork"}
+_REFUSED_SOURCE_OPTIONS = frozenset(
+    {
+        "--continue",
+        "-c",
+        "--resume",
+        "-r",
+        "--session-id",
+        "--session",
+        "--fork",
+        "--session-dir",
+    }
 )
 
 
 def reject_pi_native_source_options(args: Sequence[str]) -> None:
-    """Reject raw Pi session selectors so Meridian remains the lineage owner.
+    """Reject raw Pi source selectors and managed-store overrides.
 
     Exported for primary and spawn dispatch; Pi-specific option syntax lives
-    here rather than in harness-agnostic launch selection policy.
+    here rather than in harness-agnostic launch selection policy. Meridian
+    also owns the session directory for managed session isolation.
     """
     if any(
-        token in _NATIVE_SELECTOR_OPTIONS
+        token in _REFUSED_SOURCE_OPTIONS
         or any(
             token.startswith(f"{option}=")
-            for option in _NATIVE_SELECTOR_OPTIONS
+            for option in _REFUSED_SOURCE_OPTIONS
             if option.startswith("--")
         )
         for token in args

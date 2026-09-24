@@ -120,7 +120,16 @@ async def test_dispatch_refuses_selection_matching_recorded_native_claim(
 
 @pytest.mark.parametrize(
     "extra_args",
-    ["-c", "-r", "--continue", "--resume", "--continue=latest", "--resume=latest"],
+    [
+        "-c",
+        "-r",
+        "--continue",
+        "--resume",
+        "--continue=latest",
+        "--resume=latest",
+        "--session-dir",
+        "--session-dir=/synthetic",
+    ],
 )
 @pytest.mark.parametrize("prompt", ["task", ""])
 @pytest.mark.asyncio

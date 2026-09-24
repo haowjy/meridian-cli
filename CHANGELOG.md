@@ -24,6 +24,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   connection creation.
 - Route streaming Pi spawn selector checks through the Pi-owned refusal helper,
   including `-c` and `-r` aliases, before connection startup.
+- Reject Pi `--session-dir` passthrough overrides before connection startup,
+  preserving Meridian-managed store isolation.
 - Reject mismatched original/native session selectors and Pi raw session-selection
   flags at shared primary launch and native-TUI projection boundaries.
 - Normalize primary cN/pN/bare source-use references before legacy session
