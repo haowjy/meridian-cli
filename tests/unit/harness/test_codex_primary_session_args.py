@@ -53,6 +53,36 @@ def test_normalizes_supported_selector_and_preserves_remainder(
     assert CodexAdapter().normalize_primary_session_args(args, surface) == expected
 
 
+def test_accepts_one_raw_bypass_flag_byte_for_byte() -> None:
+    args = ("--dangerously-bypass-approvals-and-sandbox",)
+
+    assert CodexAdapter().normalize_primary_session_args(args, "subprocess") == (
+        NormalizedNativeSessionArgs(None, args)
+    )
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        (
+            "--dangerously-bypass-approvals-and-sandbox",
+            "--dangerously-bypass-approvals-and-sandbox",
+        ),
+        (
+            "resume",
+            "123e4567-e89b-12d3-a456-426614174000",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "--dangerously-bypass-approvals-and-sandbox",
+        ),
+    ],
+)
+def test_refuses_duplicate_raw_bypass_flag(args: tuple[str, ...]) -> None:
+    with pytest.raises(ValueError) as error:
+        CodexAdapter().normalize_primary_session_args(args, "subprocess")
+
+    assert str(error.value) == "duplicate Codex raw bypass option"
+
+
 @pytest.mark.parametrize(
     ("surface", "args"),
     [

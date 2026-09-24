@@ -8,6 +8,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   validated transport-specific passthrough options.
 - Refuse Codex raw policy flags and ambiguous or unsafe scalar passthrough, and
   place generated workspace roots before resumed exec selection.
+- Refuse repeated Codex raw bypass flags while preserving one accepted flag.
 
 ### Changed
 

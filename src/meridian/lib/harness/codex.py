@@ -328,6 +328,7 @@ def _normalize_codex_primary_session_args(
     remaining: list[str] = []
     seen_config_keys: set[str] = set()
     model_seen = False
+    bypass_seen = False
     refused_options = {
         "--sandbox": (
             "Codex raw --sandbox is unsupported on {surface}; "
@@ -419,6 +420,9 @@ def _normalize_codex_primary_session_args(
                     "Codex raw bypass is unsupported on managed app-server; "
                     "use Meridian --sandbox and --approval."
                 )
+            if bypass_seen:
+                raise ValueError("duplicate Codex raw bypass option")
+            bypass_seen = True
             remaining.append(token)
             index += 1
             continue
