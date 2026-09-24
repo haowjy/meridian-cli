@@ -2,9 +2,11 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.harness.native_session_args import NativeSessionSelector
 from meridian.lib.launch.source_selection import (
     PrimarySourceSelection,
     reconcile_primary_source_selection,
+    reconcile_raw_session_selections,
 )
 from meridian.lib.ops.reference import UntrackedSourceUse
 
@@ -137,3 +139,59 @@ def test_supplied_replay_and_prepared_views_retain_source_and_operation_facts(
         )
     with pytest.raises(ValueError, match="source selection conflict"):
         reconcile_primary_source_selection(original, resolved_tracked=True)
+
+
+def test_raw_selection_reconciliation_distinguishes_unspecified_from_explicit_fresh(
+    tmp_path: Path,
+) -> None:
+    raw = NativeSessionSelector("resume", "native-A")
+    unspecified = PrimarySourceSelection(None, None, "fresh", "claude", tmp_path)
+
+    assert reconcile_raw_session_selections(unspecified, (None,), operation_explicit=False) is None
+    assert (
+        reconcile_raw_session_selections(unspecified, (raw,), operation_explicit=False)
+        == raw
+    )
+    with pytest.raises(ValueError, match="explicit fresh"):
+        reconcile_raw_session_selections(unspecified, (raw,), operation_explicit=True)
+
+
+def test_raw_selection_reconciliation_checks_typed_source_and_independent_views(
+    tmp_path: Path,
+) -> None:
+    raw = NativeSessionSelector("resume", "native-A")
+    typed = PrimarySourceSelection("native-A", "native-A", "resume", "claude", tmp_path)
+
+    assert reconcile_raw_session_selections(typed, (raw, raw), operation_explicit=True) == raw
+    with pytest.raises(ValueError, match="typed source"):
+        reconcile_raw_session_selections(
+            PrimarySourceSelection("native-B", None, "resume", "claude", tmp_path),
+            (raw,),
+            operation_explicit=True,
+        )
+    with pytest.raises(ValueError, match="differ"):
+        reconcile_raw_session_selections(
+            typed,
+            (raw, NativeSessionSelector("fork", "native-A")),
+            operation_explicit=True,
+        )
+
+
+def test_raw_selection_preserves_typed_alias_until_authorized_native_comparison(
+    tmp_path: Path,
+) -> None:
+    raw = NativeSessionSelector("resume", "native-A")
+    typed = PrimarySourceSelection("c12", None, "resume", "claude", tmp_path)
+    authorization = UntrackedSourceUse(
+        operation="resume",
+        original_ref="c12",
+        native_id="native-A",
+        harness="claude",
+        lookup_scope=tmp_path,
+    )
+
+    assert reconcile_raw_session_selections(typed, (raw,), operation_explicit=True) == raw
+    assert reconcile_primary_source_selection(
+        PrimarySourceSelection("c12", raw.native_id, "resume", "claude", tmp_path),
+        authorized_source=authorization,
+    ) == "native-A"

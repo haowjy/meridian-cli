@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from meridian.lib.harness.native_session_args import NativeSessionSelector
+
 if TYPE_CHECKING:
     from meridian.lib.launch.request import SessionRequest
     from meridian.lib.ops.reference import UntrackedSourceUse
@@ -177,6 +179,45 @@ def reconcile_primary_source_selection(
         if authorized_source.lookup_scope != selection.runtime_root:
             raise _conflict("source lookup namespace changed")
     return native_facts[0] if native_facts else None
+
+
+def reconcile_raw_session_selections(
+    selection: PrimarySourceSelection,
+    raw_selections: tuple[NativeSessionSelector | None, ...],
+    *,
+    operation_explicit: bool,
+) -> NativeSessionSelector | None:
+    """Reconcile independent adapter-normalized views without choosing precedence.
+
+    Repeated identical views are boundary revalidation of one raw intent. A
+    caller must retain the original source reference and authorize the returned
+    native ID through its ordinary source-use seam; this function does no I/O.
+    """
+    present = tuple(item for item in raw_selections if item is not None)
+    if not present:
+        return None
+    first = present[0]
+    if any(item != first for item in present[1:]):
+        raise _conflict("independent raw selectors differ")
+
+    if selection.operation == "fresh" and operation_explicit:
+        raise _conflict("explicit fresh operation conflicts with raw native source")
+    if selection.operation == "fresh" and selection.source_ref is not None:
+        raise _conflict("typed source conflicts with fresh operation")
+    if selection.operation in ("resume", "fork") and selection.operation != first.operation:
+        raise _conflict("raw selector operation differs from typed operation")
+    operation_facts = (*selection.operation_facts, *(
+        "fork" if value else "resume" for value in selection.continue_fork_facts
+    ))
+    if any(fact != first.operation for fact in operation_facts):
+        raise _conflict("raw selector differs from typed operation facts")
+    if selection.native_id and selection.native_id.strip() != first.native_id:
+        raise _conflict("raw selector differs from typed native source")
+
+    source = _optional(selection.source_ref)
+    if source and not _is_alias(source) and source != first.native_id:
+        raise _conflict("raw selector differs from typed source reference")
+    return first
 
 
 def _optional(value: str | None) -> str | None:

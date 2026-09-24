@@ -6,7 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- Add explicit, pure native-selection inspection ports for raw args and final executable selections; unregistered inspectors report unsupported, never absent/fresh.
+- Define a fail-closed adapter-local raw native-session normalization seam; remove dormant selection-inspection ports.
 
 ### Fixed
 
