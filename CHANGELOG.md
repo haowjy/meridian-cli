@@ -7,6 +7,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - Added a standalone Pi native-journal reopen-default lineage projector with
+  qualified 0.87.1 legacy-v3 selection, shared entry-type recognition, and
   explicit source completeness; exact native-source routing remains pending.
 
 - Added a process-scoped Pi session-boundary observer with bounded atomic state

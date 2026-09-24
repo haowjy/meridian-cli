@@ -1,8 +1,9 @@
-"""Selected-lineage projection for an exact Pi native JSONL journal.
+"""Selected-lineage projection for a qualified Pi 0.87.1 legacy-v3 journal.
 
-Pi appends a tree-shaped journal. The last persisted leaf directive (or the last
-entry when no directive follows) is Pi's reopen-default position; it is not
-evidence of a process's live in-memory leaf.
+This supports the installed SessionManager's v3 reopen behavior only: each
+entry row replaces the leaf, and parentId is followed to the root. A v3 header
+alone is not dialect evidence; leaf directives and unknown entry types are
+refused rather than interpreted using another Pi storage implementation.
 """
 
 from __future__ import annotations
@@ -11,52 +12,9 @@ import json
 from dataclasses import dataclass
 from typing import Literal, cast
 
-PiViewBasis = Literal["reopen-default"]
+from meridian.lib.harness.transcript import PI_JOURNAL_ENTRY_TYPES
 
-_KNOWN_ENTRY_TYPES = frozenset(
-    {
-        "message",
-        "compaction",
-        "branch_summary",
-        "custom_message",
-        "model_change",
-        "thinking_level_change",
-        "custom",
-        "label",
-        "session_info",
-        "thinking_start",
-        "thinking_delta",
-        "thinking_end",
-        "tool_execution_start",
-        "tool_execution_update",
-        "tool_execution_end",
-        "bash_execution",
-        "text_delta",
-        "image_delta",
-        "agent_start",
-        "agent_end",
-        "agent_error",
-        "agent_message_start",
-        "agent_message_end",
-        "agent_message_delta",
-        "agent_tool_start",
-        "agent_tool_end",
-        "agent_tool_update",
-        "agent_tool_error",
-        "agent_tool_result",
-        "agent_tool_call",
-        "agent_tool_call_result",
-        "agent_thinking_start",
-        "agent_thinking_delta",
-        "agent_thinking_end",
-        "agent_text_start",
-        "agent_text_delta",
-        "agent_text_end",
-        "agent_image_start",
-        "agent_image_delta",
-        "agent_image_end",
-    }
-)
+PiViewBasis = Literal["reopen-default"]
 
 
 @dataclass(frozen=True)
@@ -70,19 +28,13 @@ class PiJournalProjection:
 
 
 def project_pi_reopen_default(source: str) -> PiJournalProjection:
-    """Select the exact journal's persisted reopen-default root-to-leaf lineage.
+    """Project the installed Pi 0.87.1 legacy-v3 reader's persisted branch.
 
-    The caller supplies bytes decoded as UTF-8 from the already-authorized Pi
-    source. This pure projector deliberately does not discover or open files.
-    It preserves source order among selected ancestors, while excluding sibling
-    branches. Incomplete sources are returned with reasons, never represented as
-    complete empty transcripts.
+    The caller supplies the exact already-authorized source. Complete final
+    JSON rows are accepted without a trailing LF, as in SessionManager. This
+    pure projector neither discovers nor opens files.
     """
     reasons: list[str] = []
-    if source and not source.endswith("\n"):
-        reasons.append("torn partial line")
-        source = source[: source.rfind("\n") + 1]
-
     rows: list[dict[str, object]] = []
     for line_number, line in enumerate(source.splitlines(), start=1):
         if not line.strip():
@@ -104,38 +56,34 @@ def project_pi_reopen_default(source: str) -> PiJournalProjection:
     header = rows[0]
     if not isinstance(header.get("id"), str) or "cwd" not in header:
         reasons.append("invalid Pi session header")
-    if type(header.get("version", 1)) is not int or header.get("version", 1) not in (1, 2, 3):
-        reasons.append("unsupported Pi session version")
+    if header.get("version") != 3 or type(header.get("version")) is not int:
+        reasons.append("unsupported Pi native dialect; expected legacy v3")
 
-    entries: dict[str, tuple[int, dict[str, object]]] = {}
+    entries: dict[str, dict[str, object]] = {}
     leaf_id: str | None = None
-    for index, row in enumerate(rows[1:]):
+    for line_number, row in enumerate(rows[1:], start=2):
         entry_type = row.get("type")
-        if not isinstance(entry_type, str) or not isinstance(row.get("id"), str):
-            reasons.append(f"unknown row at line {index + 2}")
-            continue
+        entry_id = row.get("id")
         if entry_type == "leaf":
-            target = row.get("targetId")
-            if target is not None and not isinstance(target, str):
-                reasons.append(f"invalid leaf target at line {index + 2}")
-                continue
-            leaf_id = target
+            reasons.append(f"unsupported Pi native leaf directive at line {line_number}")
+            continue
+        if not isinstance(entry_type, str) or not isinstance(entry_id, str) or not entry_id:
+            reasons.append(f"invalid Pi entry identity at line {line_number}")
             continue
         parent = row.get("parentId")
         if "parentId" not in row or (parent is not None and not isinstance(parent, str)):
-            reasons.append(f"invalid parent at line {index + 2}")
+            reasons.append(f"invalid parent at line {line_number}")
             continue
-        entry_id = cast("str", row["id"])
         if entry_id in entries:
             reasons.append(f"duplicate entry id: {entry_id}")
             continue
-        if entry_type not in _KNOWN_ENTRY_TYPES:
+        if entry_type not in PI_JOURNAL_ENTRY_TYPES:
             reasons.append(f"unknown row type: {entry_type}")
-        entries[entry_id] = (index + 1, row)
-        # JsonlSessionStorage updates its leaf from every non-leaf row.
+        entries[entry_id] = row
+        # SessionManager._buildIndex sets leaf to every non-session entry.
         leaf_id = entry_id
 
-    selected: list[tuple[int, dict[str, object]]] = []
+    leaf_to_root: list[dict[str, object]] = []
     visited: set[str] = set()
     current = leaf_id
     while current is not None:
@@ -143,18 +91,16 @@ def project_pi_reopen_default(source: str) -> PiJournalProjection:
             reasons.append("cycle in Pi parent chain")
             break
         visited.add(current)
-        found = entries.get(current)
-        if found is None:
+        row = entries.get(current)
+        if row is None:
             reasons.append(f"missing parent or leaf entry: {current}")
             break
-        index, row = found
-        selected.append((index, row))
+        leaf_to_root.append(row)
         parent = row.get("parentId")
         current = parent if isinstance(parent, str) else None
 
-    selected.sort(key=lambda item: item[0])
     return PiJournalProjection(
-        (header, *(row for _, row in selected)),
+        (header, *reversed(leaf_to_root)),
         "reopen-default",
         not reasons,
         tuple(dict.fromkeys(reasons)),

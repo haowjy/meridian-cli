@@ -40,6 +40,22 @@ _TRANSCRIPT_TEXT_KEYS: tuple[str, ...] = (
 )
 _MAX_PREVIEW = 120
 
+# Native Pi journal records that this normalizer understands structurally.
+# Keep selection's completeness policy aligned with content normalization.
+PI_JOURNAL_ENTRY_TYPES = frozenset(
+    {
+        "message",
+        "compaction",
+        "branch_summary",
+        "custom_message",
+        "model_change",
+        "thinking_level_change",
+        "custom",
+        "label",
+        "session_info",
+    }
+)
+
 
 class ToolCall(NamedTuple):
     """Normalized tool invocation — harness-agnostic."""
@@ -774,18 +790,7 @@ class TranscriptNormalizer:
         native_entry = isinstance(entry_id, str) and "parentId" in event
         if not self.pi_session and not (
             native_entry
-            and event_type
-            in (
-                "message",
-                "compaction",
-                "branch_summary",
-                "custom_message",
-                "model_change",
-                "thinking_level_change",
-                "custom",
-                "label",
-                "session_info",
-            )
+            and event_type in PI_JOURNAL_ENTRY_TYPES
             and (event_type != "message" or isinstance(event.get("message"), dict))
         ):
             return None

@@ -136,7 +136,7 @@ def test_torn_tail_is_excluded_and_stable_source_order_is_retained() -> None:
     source = _journal(*complete_rows) + '{"type":"message","id":"half"'
     projection = project_pi_reopen_default(source)
     assert projection.complete is False
-    assert "torn partial line" in projection.reasons
+    assert any("malformed row" in reason for reason in projection.reasons)
     assert [event.get("id") for event in projection.events] == ["synthetic", "a", "b"]
 
     reordered = project_pi_reopen_default(
@@ -179,3 +179,76 @@ def test_unknown_row_type_marks_projection_incomplete() -> None:
     )
     assert projection.complete is False
     assert "unknown row type: future_pi_entry" in projection.reasons
+
+
+def test_0871_legacy_v3_matches_native_last_entry_and_complete_unterminated_row() -> None:
+    source = _journal(
+        _header(),
+        {
+            "type": "message",
+            "id": "root",
+            "parentId": None,
+            "message": {"role": "user", "content": "root"},
+        },
+        {
+            "type": "message",
+            "id": "selected",
+            "parentId": "root",
+            "message": {"role": "assistant", "content": "selected"},
+        },
+    ).rstrip("\n")
+    projection = project_pi_reopen_default(source)
+    assert projection.complete is True
+    assert [event.get("id") for event in projection.events] == ["synthetic", "root", "selected"]
+
+
+def test_leaf_directive_is_unsupported_not_a_selection_dialect() -> None:
+    projection = project_pi_reopen_default(
+        _journal(
+            _header(),
+            {"type": "message", "id": "root", "parentId": None},
+            {"type": "leaf", "id": "select", "parentId": "wrong", "targetId": "root"},
+        )
+    )
+    assert projection.complete is False
+    assert any("unsupported" in reason for reason in projection.reasons)
+
+
+def test_malformed_leaf_directive_cannot_become_complete_empty_projection() -> None:
+    projection = project_pi_reopen_default(
+        _journal(
+            _header(),
+            {"type": "leaf", "id": "select", "parentId": "wrong"},
+        )
+    )
+    assert projection.complete is False
+    assert len(projection.events) == 1
+
+
+def test_selected_ancestry_is_parent_order_not_physical_order() -> None:
+    projection = project_pi_reopen_default(
+        _journal(
+            _header(),
+            {"type": "message", "id": "child", "parentId": "root"},
+            {"type": "message", "id": "root", "parentId": None},
+            {
+                "type": "label",
+                "id": "leaf",
+                "parentId": "child",
+                "targetId": "child",
+                "label": "branch",
+            },
+        )
+    )
+    assert projection.complete is True
+    assert [event.get("id") for event in projection.events] == [
+        "synthetic", "root", "child", "leaf"
+    ]
+
+
+def test_stream_event_names_are_not_native_journal_entry_types() -> None:
+    projection = project_pi_reopen_default(
+        _journal(_header(), {"type": "text_delta", "id": "x", "parentId": None})
+    )
+    assert projection.complete is False
+    assert "unknown row type: text_delta" in projection.reasons

@@ -83,12 +83,14 @@ Unknown material records/content set `rendering_reason`; consumers must not call
 that a complete empty rendering. Raw storage remains unchanged.
 
 `pi_journal.project_pi_reopen_default(source_text)` is a standalone pure projection
-for an already supplied exact Pi JSONL source. It follows Pi 0.87.1's persisted
-leaf semantics and selects the root-to-leaf lineage before normalizer input. Its
-`view_basis` is always `reopen-default`, never a live process leaf; `complete` and
-`reasons` expose missing parents, cycles, torn tails, malformed/unknown rows, and
-other uncertainty. It deliberately does no source discovery, persistence, or
-provider registration. Exact native-source routing is not yet wired because the
+for an already supplied exact Pi JSONL source. It qualifies the installed Pi
+0.87.1 legacy-v3 reader shape (every entry updates the leaf; `getBranch()` follows
+parents and reverses the path), not every journal with a `version: 3` header.
+Complete final JSON rows need no trailing LF. Leaf directives and unknown row
+types are unsupported and make the projection incomplete; they are never honored
+as selectors. Its `view_basis` is always `reopen-default`, never a live process
+leaf. It deliberately does no source discovery, persistence, or provider
+registration. Exact native-source routing is not yet wired because the
 recorded-source authority seam is not present in this implementation slice. Until
 that seam lands, existing generic JSONL paths retain their existing behavior and
 must not be described as Pi lineage-aware.
