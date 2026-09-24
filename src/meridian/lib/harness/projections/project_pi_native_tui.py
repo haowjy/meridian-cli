@@ -10,6 +10,7 @@ from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
 from meridian.lib.harness.projections.permission_flags import resolve_permission_flags
+from meridian.lib.harness.projections.project_pi_common import project_pi_thinking_level
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 logger = logging.getLogger(__name__)
@@ -66,15 +67,6 @@ _MANAGED_FLAG_ALIASES: dict[str, tuple[str, ...]] = {
     "--no-extensions": ("--no-extensions",),
     "-e": ("-e", "--extension"),
 }
-
-_EFFORT_TO_THINKING: dict[str, str] = {
-    "low": "minimal",
-    "medium": "medium",
-    "high": "high",
-    "xhigh": "xhigh",
-    "max": "xhigh",
-}
-
 
 def _has_flag(args: Sequence[str], flag: str) -> bool:
     for token in args:
@@ -158,7 +150,7 @@ def _project_model_arg(spec: ResolvedLaunchSpec) -> str | None:
 
 
 def _project_thinking_level(spec: ResolvedLaunchSpec) -> str | None:
-    return _EFFORT_TO_THINKING.get((spec.effort or "").strip().lower())
+    return project_pi_thinking_level(spec.effort)
 
 
 def project_pi_native_tui_spec_to_cli_args(
