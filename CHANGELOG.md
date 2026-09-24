@@ -6,6 +6,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Reconcile Claude raw model and effort duplicates against retained emitted controls
+  in its bounded argument traversal; refuse unowned permission scalars and tool
+  allows that conflict with mandatory Agent denials.
 - Preserve recognized, consistent intentional native-default selections in retained
   model controls; normalize fallback model identity in the shared projection.
 - Admit fresh primary raw arguments with the selected adapter's concrete initial
