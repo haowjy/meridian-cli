@@ -231,11 +231,10 @@ def run_primary_launch(
         continue_source_ref = resume_target
         session_mode = SessionMode.RESUME
     elif selected_fork_target is not None:
-        original_fork_ref = raw_fork_target or raw_fork_fresh_target
         source_use = resolve_source_use(
             resolve_project_runtime_root(project_root),
             "fork",
-            original_fork_ref,
+            selected_fork_target,
             explicit_harness,
         )
         if isinstance(source_use, AuthorizedSourceUse):
@@ -248,7 +247,7 @@ def run_primary_launch(
                 f"Cannot fork source '{selected_fork_target}': source-use authorization "
                 f"refused ({source_use.reason})."
             )
-        continue_source_ref = original_fork_ref
+        continue_source_ref = selected_fork_target
         session_mode = SessionMode.FORK
 
     resolved_goal = normalize_goal(goal)
@@ -281,7 +280,6 @@ def run_primary_launch(
                 autocompact=autocompact,
                 autocompact_pct=autocompact_pct,
             ),
-            primary_source_ref=(continue_source_ref if session_mode != SessionMode.FRESH else None),
             primary_explicit_agent=agent is not None,
             session=SessionRequest(continue_source_ref=continue_source_ref),
         ),

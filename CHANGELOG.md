@@ -4,6 +4,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Make primary authorization and replay share one session reference, resolve bare
+  fork sentinels before authorization, and preserve exact-continue provenance and
+  agent opt-out semantics.
+- Keep launch diagnostics in the inward ops layer rather than importing CLI code.
+
 ### Changed
 
 - Move primary continue/fork native resolution and replay preparation into

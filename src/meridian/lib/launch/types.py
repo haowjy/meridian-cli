@@ -53,10 +53,8 @@ class LaunchRequest(BaseModel):
     work_id: str | None = None
     task_dir: str | None = None
     session_mode: SessionMode = SessionMode.FRESH
-    # Original primary selector; source discovery/replay must happen only inside
-    # launch_primary, after its authority check. These fields are CLI input hints,
-    # not authorization evidence.
-    primary_source_ref: str | None = None
+    # Source identity is carried once, on SessionRequest.continue_source_ref;
+    # launch authorization and replay must consume that same reference.
     primary_explicit_agent: bool = False
     primary_source_warning: str | None = None
     primary_source_chat_id: str | None = None

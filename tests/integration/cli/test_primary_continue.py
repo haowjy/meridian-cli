@@ -213,6 +213,9 @@ def test_primary_source_use_aliases_refuse_before_launch(
 def test_direct_launch_revalidates_source_before_native_resolution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import meridian.lib.launch.continue_replay as continue_replay
+    import meridian.lib.ops.reference as reference
+
     project_root = tmp_path / "repo"
     project_root.mkdir()
     _write_v4_pin(_state_root(project_root))
@@ -224,6 +227,24 @@ def test_direct_launch_revalidates_source_before_native_resolution(
     monkeypatch.setattr(
         "meridian.lib.ops.reference.resolve_session_reference", fail_if_native_resolution_runs
     )
+    native_reads: list[object] = []
+    observations: list[object] = []
+    detections: list[object] = []
+    monkeypatch.setattr(
+        continue_replay,
+        "read_last_executed_model",
+        lambda *args, **kwargs: native_reads.append(args),
+    )
+    monkeypatch.setattr(
+        continue_replay,
+        "record_model_observation",
+        lambda *args, **kwargs: observations.append(args),
+    )
+    monkeypatch.setattr(
+        reference,
+        "infer_harness_from_untracked_session_ref",
+        lambda *args, **kwargs: detections.append(args),
+    )
 
     with pytest.raises(ValueError, match="transport_unqualified"):
         launch_primary(
@@ -231,7 +252,6 @@ def test_direct_launch_revalidates_source_before_native_resolution(
             request=LaunchRequest(
                 dry_run=True,
                 harness="pi",
-                primary_source_ref="c1",
                 session=SessionRequest(
                     requested_harness_session_id="native-conversation",
                     continue_source_tracked=False,
@@ -240,6 +260,9 @@ def test_direct_launch_revalidates_source_before_native_resolution(
             ),
             harness_registry=get_default_harness_registry(),
         )
+    assert native_reads == []
+    assert observations == []
+    assert detections == []
 
 
 @pytest.mark.parametrize("source_ref", ["unknown-native", " "])
@@ -386,7 +409,7 @@ def _record_primary_launch(monkeypatch: pytest.MonkeyPatch) -> list[LaunchReques
         harness_registry: object,
     ) -> LaunchResult:
         _ = harness_registry
-        if request.primary_source_ref is not None:
+        if request.session.continue_source_ref is not None:
             from meridian.lib.launch import _resolve_primary_source_request
 
             request = _resolve_primary_source_request(
@@ -804,7 +827,7 @@ def _opencode_continue_spec_model(
     return spec_models[0]
 
 
-def test_opencode_exact_continue_replay_drops_model_from_spec(
+def test_opencode_exact_continue_explicitly_requested_model_stays_in_spec(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -812,9 +835,9 @@ def test_opencode_exact_continue_replay_drops_model_from_spec(
         _opencode_continue_spec_model(
             tmp_path=tmp_path,
             monkeypatch=monkeypatch,
-            selection_source="recorded_selection",
+            selection_source="explicit_override",
         )
-        is None
+        == "deepseek/deepseek-flash"
     )
 
 
@@ -830,3 +853,87 @@ def test_opencode_exact_continue_explicit_override_keeps_model_in_spec(
         )
         == "deepseek/deepseek-flash"
     )
+
+
+def test_primary_handler_preserves_observed_model_provenance_through_bind(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.launch.continue_replay as continue_replay
+
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _state_root(project_root)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="deepseek/deepseek-flash",
+        model_token="deepseek-flash",
+        harness=HarnessId.OPENCODE,
+        harness_model="deepseek/deepseek-flash",
+    )
+    monkeypatch.setattr(
+        continue_replay, "read_last_executed_model", lambda *args, **kwargs: "deepseek-flash"
+    )
+    monkeypatch.setattr(
+        continue_replay, "_observed_model_routes_to_harness", lambda *args: True
+    )
+    bound_contexts: list[Any] = []
+    real_bind = launch_context.bind_launch_context
+
+    def capture_bind(*args: Any, **kwargs: Any) -> Any:
+        context = real_bind(*args, **kwargs)
+        bound_contexts.append(context)
+        return context
+
+    monkeypatch.setattr(launch_context, "bind_launch_context", capture_bind)
+    output = _run_primary_continue(
+        project_root, "raw-session", harness="opencode", dry_run=True
+    )
+
+    assert output.message == "Resume dry-run."
+    assert bound_contexts
+    session = bound_contexts[-1].resolved_request.session
+    assert session.conversation_intent is not None
+    assert session.conversation_intent.selection_source == "observed_last_used"
+    assert bound_contexts[-1].binding.spec.model is None
+
+
+def test_primary_handler_rejects_exact_continue_agent_opt_out(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _state_root(project_root)
+
+    with pytest.raises(ValueError, match="agent opt-out"):
+        _run_primary_continue(
+            project_root,
+            "raw-session",
+            harness="opencode",
+            agent="",
+            dry_run=True,
+        )
+
+
+@pytest.mark.parametrize("flag", ["fork_ref", "fork_fresh_ref"])
+def test_bare_fork_inference_authorizes_resolved_spawn_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    flag: str,
+) -> None:
+    from meridian.cli.argv_normalization import SELF_FORK_REF_SENTINEL
+
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    _seed_primary_spawn(runtime_root, spawn_id="p999", harness_session_id="native-999")
+    monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p999")
+
+    with pytest.raises(ValueError, match="tracked_run_unresolved"):
+        _run_primary_continue(
+            project_root,
+            continue_ref=None,
+            harness=None,
+            dry_run=True,
+            **{flag: SELF_FORK_REF_SENTINEL},
+        )

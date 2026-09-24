@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from meridian.lib.launch.launch_types import summarize_composition_warnings
 from meridian.lib.launch.resolution import resolve_launch_inputs
@@ -110,22 +110,16 @@ def launch_primary(
     from .types import LaunchResult
 
     resolved_project_root = resolve_project_root_resolution(project_root).project_root
-    # Library callers can bypass the CLI's source-use normalization. Re-resolve
-    # the original reference here; serialized booleans and source DTOs are not
-    # evidence that an input was genuinely untracked.
+    # Library callers can bypass the CLI's source-use normalization. Revalidate
+    # the same session reference replay will consume; serialized booleans and
+    # source DTOs are not evidence that an input was genuinely untracked.
     from meridian.lib.launch.source_selection import check_primary_source_use
 
     tracked_claim = (
         request.session.continue_source_tracked
         or request.session.recorded_native_source is not None
     )
-    operation = (
-        "fork"
-        if request.session.continue_fork
-        or (request.session.primary_session_mode or "").strip().lower() == "fork"
-        or request.session_mode.value == "fork"
-        else "resume"
-    )
+    operation = _primary_source_operation(request)
     source_check = check_primary_source_use(
         runtime_root=(
             resolve_project_runtime_root_or_none(resolved_project_root)
@@ -142,7 +136,7 @@ def launch_primary(
     # Keep the source-dependent part of the primary CLI adapter here: this is
     # the first safe point for native session discovery and replay/model reads.
     # The CLI's earlier authorization check remains in place during this move.
-    if request.primary_source_ref is not None:
+    if request.session.continue_source_ref is not None:
         request = _resolve_primary_source_request(
             request=request,
             project_root=resolved_project_root,
@@ -300,23 +294,35 @@ def launch_primary(
     )
 
 
+def _primary_source_operation(request: LaunchRequest) -> Literal["resume", "fork"]:
+    """Return the operation used consistently by authorization and replay."""
+    return (
+        "fork"
+        if request.session.continue_fork
+        or (request.session.primary_session_mode or "").strip().lower() == "fork"
+        or request.session_mode.value == "fork"
+        else "resume"
+    )
+
+
 def _resolve_primary_source_request(
     *, request: LaunchRequest, project_root: Path, harness_registry: HarnessRegistry
 ) -> LaunchRequest:
     """Resolve native source details only after launch_primary's authority gate."""
-    from meridian.cli.utils import missing_fork_session_error_with_discovery
     from meridian.lib.launch.continue_replay import (
         build_continue_replay_contract,
         continue_replay_source_from_reference,
     )
-    from meridian.lib.launch.resolve import resolve_agent_launch_input
-    from meridian.lib.ops.reference import resolve_session_reference
+    from meridian.lib.ops.reference import (
+        missing_fork_session_error_with_discovery,
+        resolve_session_reference,
+    )
     from meridian.lib.state.paths import resolve_project_runtime_root
 
     _ = harness_registry
-    source_ref = request.primary_source_ref
+    source_ref = request.session.continue_source_ref
     assert source_ref is not None
-    operation = "resume" if request.session_mode.value == "resume" else "fork"
+    operation = _primary_source_operation(request)
     resolved = resolve_session_reference(
         project_root,
         source_ref,
@@ -334,7 +340,6 @@ def _resolve_primary_source_request(
     session = request.session
     runtime_root = resolve_project_runtime_root(project_root)
     if operation == "resume":
-        agent = resolve_agent_launch_input(request.agent)
         contract = build_continue_replay_contract(
             source=continue_replay_source_from_reference(
                 source_ref=source_ref,
@@ -342,8 +347,8 @@ def _resolve_primary_source_request(
                 harness_session_id=resolved.authoritative_harness_session_id,
             ),
             explicit_harness=request.harness,
-            requested_agent=agent.agent,
-            agent_opt_out=agent.agent_opt_out,
+            requested_agent=request.agent,
+            agent_opt_out=request.agent_opt_out,
             requested_model_override=(request.model or "").strip() or None,
             runtime_root=runtime_root,
         )
@@ -369,21 +374,7 @@ def _resolve_primary_source_request(
                 "launch_policy_snapshot": contract.launch_policy_snapshot,
                 "primary_source_warning": source_warning,
                 "primary_source_chat_id": resolved.source_chat_id,
-                "session": session.model_copy(
-                    update={
-                        "requested_harness_session_id": (
-                            contract.session.requested_harness_session_id
-                        ),
-                        "continue_chat_id": contract.session.continue_chat_id,
-                        "continue_harness": contract.harness,
-                        "source_control_root": contract.session.source_control_root,
-                        "source_execution_cwd": contract.session.source_execution_cwd,
-                        "source_claude_config_dir": contract.session.source_claude_config_dir,
-                        "source_pi_session_dir": contract.session.source_pi_session_dir,
-                        "continue_source_tracked": contract.session.continue_source_tracked,
-                        "continue_source_ref": contract.session.continue_source_ref,
-                    }
-                ),
+                "session": contract.session,
             }
         )
 
