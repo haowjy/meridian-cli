@@ -291,14 +291,19 @@ def project_opencode_primary_preview(
         (env or {}).get("MERIDIAN_HARNESS_OPENCODE_VERSION"),
         binary="opencode",
     )
+    continuing = bool(spec.continue_session_id)
+    if continuing and spec.model and version == "v1":
+        # Keep dry-run aligned with OpenCodeV1Connection._create_session: V1
+        # resumes the committed native model and cannot apply an override.
+        raise ValueError(
+            "OpenCode 1.x cannot switch the model when resuming a session "
+            f"(requested model '{spec.model}'). Upgrade to OpenCode 2 or "
+            "omit the explicit --model."
+        )
     backend = project_opencode_spec_to_serve_command(spec, host="127.0.0.1", port=0)
     backend[backend.index("--port") + 1] = "<port>"
-    continuing = bool(spec.continue_session_id)
     if version == "v2":
-        probe_step = (
-            "GET /api/config, /api/provider and /api/agent; "
-            "apply the requested model via POST /api/session/{id}/model.",
-        )
+        probe_step = ("GET /api/config, /api/provider and /api/agent;",)
         attach_command = build_opencode_server_attach_command(
             spec.continue_session_id or "<session>", "http://127.0.0.1:<port>"
         )
@@ -316,13 +321,16 @@ def project_opencode_primary_preview(
             spec.continue_session_id or "<session>", "http://127.0.0.1:<port>"
         )
         bootstrap_path = f"/session/{spec.continue_session_id}" if continuing else "/session"
-    steps = (
-        ("Preserve the existing native session's committed agent/model.",)
-        if continuing
-        else (*probe_step,)
-        if spec.model
-        else ("Use native model defaults.",)
-    )
+    if continuing:
+        steps = (
+            ("Preserve the existing native session's committed agent/model.",)
+            if not spec.model
+            else (f"Apply the requested model via POST /api/session/{{id}}/model: {spec.model}.",)
+        )
+    elif spec.model:
+        steps = (*probe_step,)
+    else:
+        steps = ("Use native model defaults.",)
     return ManagedPrimaryPreview(
         backend_command=tuple(backend),
         bootstrap_method="GET" if continuing else "POST",
@@ -338,7 +346,8 @@ def project_opencode_primary_preview(
             "Native configuration and actual message model are unavailable in dry-run.",
             "Fail on rejected configuration or uncertain cleanup; no black-box fallback.",
         ),
-        model=spec.model if not continuing else None,
+        model=spec.model if (not continuing or version == "v2") else None,
+        requested_model=spec.model,
     )
 
 

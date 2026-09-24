@@ -9,6 +9,7 @@ import pytest
 
 import meridian.lib.harness.cursor as cursor_harness
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.bundle import project_managed_primary_preview
 from meridian.lib.harness.registry import (
     HarnessRegistry,
     get_default_harness_registry,
@@ -29,6 +30,7 @@ from meridian.lib.state.paths import (
     resolve_project_paths,
     resolve_project_runtime_root_for_write,
 )
+from meridian.lib.state.session_authority import ConversationModelSelection
 from tests.support.fixtures import write_agent
 from tests.support.launch import stub_bundle_request_and_resolve
 
@@ -708,6 +710,86 @@ def test_opencode_genuinely_untracked_primary_continue_preserves_explicit_model(
     assert preview.harness.id is HarnessId.OPENCODE
     assert preview.binding.spec.continue_session_id == "ses_abc"
     assert preview.binding.spec.model == "openai/gpt-5.5"
+
+
+@pytest.mark.parametrize(
+    ("version", "explicit_model"),
+    [("v1", True), ("v1", False), ("v2", True), ("v2", False)],
+    ids=["v1-explicit", "v1-observed", "v2-explicit", "v2-observed"],
+)
+def test_opencode_continue_managed_preview_matches_version_model_behavior(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    version: str,
+    explicit_model: bool,
+) -> None:
+    """The bound managed plan must describe only a model action the transport supports."""
+    _write_minimal_mars_config(tmp_path)
+    monkeypatch.setenv("MERIDIAN_HARNESS_OPENCODE_VERSION", version)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="openai/gpt-5.5",
+        harness=HarnessId.OPENCODE,
+    )
+
+    bound = build_launch_context(
+        spawn_id=f"dry-run-opencode-{version}-{'explicit' if explicit_model else 'observed'}",
+        request=SpawnRequest(
+            prompt="continue prompt",
+            prompt_is_composed=False,
+            model="openai/gpt-5.5" if explicit_model else None,
+            harness=HarnessId.OPENCODE.value,
+            session=SessionRequest(
+                requested_harness_session_id="ses_abc",
+                primary_session_mode="resume",
+                continue_harness="opencode",
+                continue_source_ref="ses_abc",
+                continue_source_tracked=False,
+                conversation_intent=(
+                    None
+                    if explicit_model
+                    else ConversationModelSelection(
+                        selection_source="observed_last_used",
+                        requested_token="openai/gpt-5.5",
+                        selected_token="openai/gpt-5.5",
+                        canonical_model_id="openai/gpt-5.5",
+                        harness_model_id="openai/gpt-5.5",
+                        model_mode="named",
+                    )
+                ),
+            ),
+        ),
+        runtime=build_primary_launch_runtime(project_root=tmp_path),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+    assert bound.binding.spec.continue_session_id == "ses_abc"
+    if not explicit_model:
+        assert bound.binding.spec.model is None
+
+    if version == "v1" and explicit_model:
+        with pytest.raises(ValueError, match=r"OpenCode 1.x cannot switch the model"):
+            project_managed_primary_preview(
+                HarnessId.OPENCODE,
+                bound.binding.spec,
+                project_root=tmp_path,
+                env=bound.binding.environment.final_env,
+            )
+        return
+    plan = project_managed_primary_preview(
+        HarnessId.OPENCODE,
+        bound.binding.spec,
+        project_root=tmp_path,
+        env=bound.binding.environment.final_env,
+    )
+    assert plan is not None
+    if explicit_model:
+        assert plan.model == plan.requested_model == "openai/gpt-5.5"
+        assert any("POST /api/session/{id}/model" in step for step in plan.steps)
+    else:
+        assert plan.model is None
+        assert plan.requested_model is None
+        assert "Preserve the existing native session's committed agent/model." in plan.steps
 
 
 @pytest.mark.parametrize("source_ref", ["unknown-native", "p123"])
