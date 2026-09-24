@@ -11,14 +11,18 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Added typed, strict native-session binding and attempt-boundary authority to
   the existing session journal, with crash-safe replay and fail-closed writers.
 - Added dormant v4 native-file observation replay with frozen v3 decoding,
-  first-qualified-pin provenance, bounded source conflicts and torn-tail refusal.
-  No live v4 writer or native authorization path is enabled.
+  first-observation/pin provenance, derived bounded source conflicts and
+  torn-tail refusal. No live v4 writer or native authorization path is enabled.
 
 ### Changed
 
 - Extract common native-boundary phase, owner, ordering, retry, and refutation
   validation for the frozen v3 reducer; pin v3 wire and digest goldens. Dormant
   v4 live writing remains disabled and its reducer is not yet cut over.
+- Replace dormant v4 optional source-state fields with closed provenance-bearing
+  locator states and one pure source decision; replay derives exact conflict rows
+  from their triggering facts. Resolve entry and exit binding eligibility
+  independently without enabling the v4 writer.
 
 - Gate tracked Pi managed-extension turn notifications until the first admitted agent
   run; revoke pending delivery across selection changes and close while preserving

@@ -36,6 +36,8 @@ from meridian.lib.state.session_authority import (
 from meridian.lib.state.session_authority import (
     AttemptFact,
     BeginIntent,
+    BoundaryEvent,
+    BoundaryEventV4,
     BoundaryFact,
     IdentityDelta,
     JournalRead,
@@ -284,20 +286,19 @@ def get_native_attempt_boundaries(
         if state is None:
             return AttemptBoundaries(None, None, False)
         invalidated = state.invalidation is not None
-        key = (
-            state.exit.fact.key
-            if state.exit is not None
-            else (state.entry.fact.key if state.entry is not None else None)
-        )
-        binding = (
-            snapshot.identity.native_bindings.get(native_key_tuple(key))
-            if key is not None
-            else None
-        )
-        source_blocked = binding is not None and binding.conflict is not None
+        def boundary_is_blocked(boundary: BoundaryEvent | BoundaryEventV4 | None) -> bool:
+            if boundary is None:
+                return False
+            binding = snapshot.identity.native_bindings.get(
+                native_key_tuple(boundary.fact.key)
+            )
+            return binding is not None and binding.conflict is not None
+
         return AttemptBoundaries(
-            state.entry.chat_id if state.entry and not source_blocked else None,
-            state.exit.chat_id if state.exit and not invalidated and not source_blocked else None,
+            state.entry.chat_id if state.entry and not boundary_is_blocked(state.entry) else None,
+            state.exit.chat_id
+            if state.exit and not invalidated and not boundary_is_blocked(state.exit)
+            else None,
             invalidated,
         )
 

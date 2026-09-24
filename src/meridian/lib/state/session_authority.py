@@ -515,15 +515,39 @@ class AcquiredStoreGuard(NamedTuple):
     store_event_id: str
 
 
+@dataclass(frozen=True)
+class LocatorUnrecorded:
+    """V3 binding: locator state was never part of its wire protocol."""
+
+
+@dataclass(frozen=True)
+class Unobserved:
+    observation: NoFileObservation
+    event_id: str
+
+
+@dataclass(frozen=True)
+class Pending:
+    observation: PendingLocalFile
+    event_id: str
+
+
+@dataclass(frozen=True)
+class Pinned:
+    observation: QualifiedLocalFile
+    event_id: str
+
+
+type LocatorState = LocatorUnrecorded | Unobserved | Pending | Pinned
+
+
 class NativeBinding(NamedTuple):
     chat_id: ChatId
     key: NativeSessionKey
     binding_event_id: str
     protocol: Literal["v3", "v4"]
+    source: LocatorState
     store_guard: AcquiredStoreGuard | None = None
-    source_state: Literal["locator_unrecorded", "unobserved", "pending", "pinned"] = "unobserved"
-    locator: QualifiedLocalFile | None = None
-    locator_event_id: str | None = None
     conflict: LocatorConflictEvent | None = None
 
 
@@ -1201,11 +1225,75 @@ def _same_pin(left: QualifiedLocalFile, right: QualifiedLocalFile) -> bool:
     )
 
 
+class SourceUnchanged(NamedTuple):
+    binding: NativeBinding
+
+
+class SourceAdvanced(NamedTuple):
+    binding: NativeBinding
+
+
+class SourceBlocked(NamedTuple):
+    binding: NativeBinding
+    reason: Literal["different_file", "store_replaced"]
+
+
+type SourceDecision = SourceUnchanged | SourceAdvanced | SourceBlocked
+
+
+def plan_source(
+    binding: NativeBinding,
+    fact: BoundaryFactV4,
+    *,
+    mode: Literal["assign", "check_only"],
+) -> SourceDecision:
+    """Derive one v4 source transition from a boundary fact; never performs I/O."""
+    if binding.protocol != "v4":
+        raise ValueError("v4 source decision requires a v4 binding")
+    if binding.conflict is not None:
+        return SourceBlocked(binding, binding.conflict.reason)
+    observation = fact.file
+    digest = boundary_digest_v4(fact)
+    store_guard = binding.store_guard
+    if isinstance(observation, (PendingLocalFile, QualifiedLocalFile)):
+        if store_guard is not None and observation.store_object != store_guard.object:
+            return SourceBlocked(binding, "store_replaced")
+        if (
+            isinstance(binding.source, Pinned)
+            and isinstance(observation, QualifiedLocalFile)
+            and not _same_pin(binding.source.observation, observation)
+        ):
+            return SourceBlocked(binding, "different_file")
+
+    if mode == "check_only":
+        return SourceUnchanged(binding)
+
+    # Assignment may acquire the first guard and advance observation state.
+    new_guard = store_guard
+    if isinstance(observation, (PendingLocalFile, QualifiedLocalFile)) and new_guard is None:
+        new_guard = AcquiredStoreGuard(observation.store_object, digest)
+
+    source = binding.source
+    if isinstance(observation, NoFileObservation):
+        if isinstance(source, LocatorUnrecorded):
+            source = Unobserved(observation, digest)
+    elif isinstance(observation, PendingLocalFile):
+        if isinstance(source, (LocatorUnrecorded, Unobserved)):
+            source = Pending(observation, digest)
+    elif not isinstance(source, Pinned):
+        source = Pinned(observation, digest)
+
+    updated = binding._replace(source=source, store_guard=new_guard)
+    if updated == binding:
+        return SourceUnchanged(binding)
+    return SourceAdvanced(updated)
+
+
 def plan_attempt_v4(
     states: Mapping[tuple[str, str], AttemptState | V4AttemptState],
     latest: Mapping[str, BeginEvent | BeginEventV4],
     identity: IdentityProjection,
-    fact: BeginIntentV4 | BoundaryFactV4 | LocatorConflictEvent,
+    fact: BeginIntentV4 | BoundaryFactV4,
     *,
     assigned_chat: ChatId | None = None,
 ) -> V4Transition | NeedChat:
@@ -1230,9 +1318,9 @@ def plan_attempt_v4(
                 or binding.conflict is not None
                 or binding.chat_id != source.ref.chat_id
                 or binding.binding_event_id != source.ref.binding_event_id
-                or binding.locator_event_id != source.ref.locator_event_id
-                or binding.locator != source.locator
-                or binding.locator is None
+                or not isinstance(binding.source, Pinned)
+                or binding.source.event_id != source.ref.locator_event_id
+                or binding.source.observation != source.locator
             ):
                 raise ValueError("resume/fork requires the current unblocked recorded source")
         if state is not None:
@@ -1246,64 +1334,6 @@ def plan_attempt_v4(
     if state is None or not isinstance(state, V4AttemptState):
         raise ValueError("v4 boundary belongs to unknown or non-v4 attempt")
     begin = state.begin
-    if isinstance(fact, LocatorConflictEvent):
-        trigger = fact.fact
-        if (
-            trigger.evidence.transport_scope_id != begin.transport_scope_id
-            or trigger.key.harness != begin.harness
-            or trigger.key.store != begin.store
-            or current_latest is None
-            or current_latest.attempt_id != fact.attempt_id
-        ):
-            raise ValueError("locator conflict is not owned by the current attempt")
-        if trigger.boundary == "entry":
-            selection = trigger.evidence.selection
-            if (
-                selection is None
-                or selection.operation != begin.operation
-                or begin.operation != "fresh"
-                or not isinstance(selection, CreatedSelection)
-                or state.entry is not None
-                or state.exit is not None
-            ):
-                raise ValueError("locator conflict entry is not an assignable boundary")
-        elif state.entry is not None and (
-            trigger.evidence.order <= state.entry.fact.evidence.order
-        ):
-            raise ValueError("locator conflict exit does not follow the accepted entry")
-        if state.exit is not None and (
-            trigger.key != state.exit.fact.key
-            or trigger.evidence.order < state.exit.fact.evidence.order
-        ):
-            raise ValueError("locator conflict does not target the accepted exit identity")
-        binding = identity.native_bindings.get(native_key_tuple(trigger.key))
-        if binding is None or binding.conflict is not None:
-            raise ValueError("locator conflict has no unblocked native binding")
-        if binding.store_guard is None:
-            raise ValueError("locator conflict has no acquired store guard")
-        if (
-            fact.chat_id != binding.chat_id
-            or fact.binding_event_id != binding.binding_event_id
-            or fact.store_event_id != binding.store_guard.store_event_id
-            or fact.locator_event_id != binding.locator_event_id
-        ):
-            raise ValueError("locator conflict target does not match binding provenance")
-        observation = trigger.file
-        if fact.reason == "different_file":
-            if (
-                binding.locator is None
-                or not isinstance(observation, QualifiedLocalFile)
-                or observation.store_object != binding.store_guard.object
-                or _same_pin(binding.locator, observation)
-            ):
-                raise ValueError("different-file conflict does not prove a competing pin")
-        elif (
-            not isinstance(observation, (PendingLocalFile, QualifiedLocalFile))
-            or observation.store_object == binding.store_guard.object
-        ):
-            raise ValueError("store-replaced conflict does not prove a competing store")
-        return V4Transition(state, fact, fact.chat_id, binding._replace(conflict=fact), True)
-
     evidence = fact.evidence
     if (fact.run_id, fact.attempt_id) != (begin.run_id, begin.attempt_id):
         raise ValueError("boundary belongs to a different attempt")
@@ -1366,52 +1396,28 @@ def plan_attempt_v4(
     target_chat = existing.chat_id if existing is not None else assigned_chat
     assert target_chat is not None
     digest = boundary_digest_v4(fact)
-    binding = existing or NativeBinding(target_chat, fact.key, digest, "v4")
-    observation = fact.file
-    if isinstance(observation, (PendingLocalFile, QualifiedLocalFile)):
+    binding = existing or NativeBinding(
+        target_chat, fact.key, digest, "v4", LocatorUnrecorded()
+    )
+    source = plan_source(binding, fact, mode="assign")
+    if isinstance(source, SourceBlocked):
         if binding.store_guard is None:
-            binding = binding._replace(
-                store_guard=AcquiredStoreGuard(observation.store_object, digest),
-                source_state="pending"
-                if isinstance(observation, PendingLocalFile)
-                else "unobserved",
-            )
-        elif observation.store_object != binding.store_guard.object:
-            conflict = LocatorConflictEvent(
-                run_id=fact.run_id,
-                attempt_id=fact.attempt_id,
-                fact=fact,
-                chat_id=binding.chat_id,
-                binding_event_id=binding.binding_event_id,
-                store_event_id=binding.store_guard.store_event_id,
-                locator_event_id=binding.locator_event_id,
-                reason="store_replaced",
-            )
-            return V4Transition(
-                state, conflict, binding.chat_id, binding._replace(conflict=conflict), True
-            )
-        if isinstance(observation, QualifiedLocalFile):
-            if binding.locator is None:
-                binding = binding._replace(
-                    locator=observation, locator_event_id=digest, source_state="pinned"
-                )
-            elif not _same_pin(binding.locator, observation):
-                assert binding.store_guard is not None
-                conflict = LocatorConflictEvent(
-                    run_id=fact.run_id,
-                    attempt_id=fact.attempt_id,
-                    fact=fact,
-                    chat_id=binding.chat_id,
-                    binding_event_id=binding.binding_event_id,
-                    store_event_id=binding.store_guard.store_event_id,
-                    locator_event_id=binding.locator_event_id,
-                    reason="different_file",
-                )
-                return V4Transition(
-                    state, conflict, binding.chat_id, binding._replace(conflict=conflict), True
-                )
-        elif binding.locator is None:
-            binding = binding._replace(source_state="pending")
+            raise AssertionError("source conflict requires an acquired store guard")
+        pinned_event_id = binding.source.event_id if isinstance(binding.source, Pinned) else None
+        conflict = LocatorConflictEvent(
+            run_id=fact.run_id,
+            attempt_id=fact.attempt_id,
+            fact=fact,
+            chat_id=binding.chat_id,
+            binding_event_id=binding.binding_event_id,
+            store_event_id=binding.store_guard.store_event_id,
+            locator_event_id=pinned_event_id,
+            reason=source.reason,
+        )
+        return V4Transition(
+            state, conflict, binding.chat_id, binding._replace(conflict=conflict), True
+        )
+    binding = source.binding
     if fact.boundary == "exit" and state.exit is not None:
         previous = state.exit.fact
         if fact == previous or (
@@ -1688,7 +1694,7 @@ def fold_row(builder: _JournalBuilder, event: JournalEvent) -> None:
                     event.fact.key,
                     boundary_digest(event.fact),
                     "v3",
-                    source_state="locator_unrecorded",
+                    LocatorUnrecorded(),
                 )
     else:
         delta = plan_identity(builder.identity(), event)

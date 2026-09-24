@@ -104,9 +104,10 @@ def test_v4_first_qualified_pin_survives_same_file_boundary() -> None:
     authority.fold_row(builder, second)
     binding = builder.identity().native_bindings[authority.native_key_tuple(entry_fact.key)]
 
-    assert first_binding.source_state == "pinned"
-    assert binding.locator == first_binding.locator
-    assert binding.locator_event_id == authority.boundary_digest_v4(entry_fact)
+    assert isinstance(first_binding.source, authority.Pinned)
+    assert isinstance(binding.source, authority.Pinned)
+    assert binding.source.observation == first_binding.source.observation
+    assert binding.source.event_id == authority.boundary_digest_v4(entry_fact)
     assert binding.chat_id == "c1"
     assert builder.identity().key_to_chat[authority.native_key_tuple(entry_fact.key)] == "c1"
 
@@ -164,16 +165,16 @@ def test_v4_resume_begin_requires_exact_current_recorded_source() -> None:
     builder = _fold(_begin())
     authority.fold_row(builder, _accept(builder, fact))
     binding = builder.identity().native_bindings[authority.native_key_tuple(fact.key)]
-    assert binding.locator is not None and binding.locator_event_id is not None
+    assert isinstance(binding.source, authority.Pinned)
     assert binding.store_guard is not None
     source = authority.RecordedNativeSource(
         ref=authority.NativeSourceRef(
             chat_id=binding.chat_id,
             binding_event_id=binding.binding_event_id,
-            locator_event_id=binding.locator_event_id,
+            locator_event_id=binding.source.event_id,
         ),
         key=fact.key,
-        locator=binding.locator,
+        locator=binding.source.observation,
     )
     intent = authority.BeginIntentV4(
         run_id="resume-run",
@@ -215,8 +216,8 @@ def test_v4_pending_can_pin_at_exit_and_exit_only_can_create_pin() -> None:
     row = _accept(builder, pin_exit)
     authority.fold_row(builder, row)
     binding = builder.identity().native_bindings[authority.native_key_tuple(pin_exit.key)]
-    assert binding.source_state == "pinned"
-    assert binding.locator_event_id == authority.boundary_digest_v4(pin_exit)
+    assert isinstance(binding.source, authority.Pinned)
+    assert binding.source.event_id == authority.boundary_digest_v4(pin_exit)
     assert binding.store_guard is not None
     assert binding.store_guard.store_event_id == authority.boundary_digest_v4(pending_entry)
 
@@ -230,8 +231,99 @@ def test_v4_pending_can_pin_at_exit_and_exit_only_can_create_pin() -> None:
         authority.native_key_tuple(exit_only.key)
     ]
     assert exit_binding.chat_id == "c1"
-    assert exit_binding.source_state == "pinned"
+    assert isinstance(exit_binding.source, authority.Pinned)
     assert exit_builder.attempts[("run", "attempt")].entry is None
+
+
+@pytest.mark.parametrize("first_reason", ["not_reported", "unsupported_locator"])
+def test_v4_unobserved_retains_first_no_file_reason_and_provenance(first_reason: str) -> None:
+    first = authority.NoFileObservation(kind="no_file_observation", reason=first_reason)
+    later_reason = "unsupported_locator" if first_reason == "not_reported" else "not_reported"
+    later = authority.NoFileObservation(kind="no_file_observation", reason=later_reason)
+    entry = _fact("entry", first)
+    exit_fact = _fact("exit", later, order=2)
+    builder = _fold(_begin())
+    authority.fold_row(builder, _accept(builder, entry))
+    authority.fold_row(builder, _accept(builder, exit_fact))
+    binding = builder.identity().native_bindings[authority.native_key_tuple(entry.key)]
+
+    assert isinstance(binding.source, authority.Unobserved)
+    assert binding.source.observation == first
+    assert binding.source.event_id == authority.boundary_digest_v4(entry)
+    assert binding.store_guard is None
+
+
+def test_v4_pending_retains_first_path_but_can_pin_a_later_file() -> None:
+    pending_p = authority.PendingLocalFile(
+        kind="local_file_pending",
+        path="/native/store/p.jsonl",
+        store_object={"device": 1, "inode": 10},
+    )
+    pending_q = pending_p.model_copy(update={"path": "/native/store/q.jsonl"})
+    entry = _fact("entry", pending_p)
+    later_pending = _fact("exit", pending_q, order=2)
+    builder = _fold(_begin())
+    authority.fold_row(builder, _accept(builder, entry))
+    authority.fold_row(builder, _accept(builder, later_pending))
+    binding = builder.identity().native_bindings[authority.native_key_tuple(entry.key)]
+
+    assert isinstance(binding.source, authority.Pending)
+    assert binding.source.observation == pending_p
+    assert binding.source.event_id == authority.boundary_digest_v4(entry)
+    assert binding.store_guard is not None
+    assert binding.store_guard.store_event_id == authority.boundary_digest_v4(entry)
+
+    pin_q = _fact("exit", _file("/native/store/q.jsonl", inode=10), order=3)
+    # The dormant v4 terminal policy does not accept a second exit; exercise the
+    # source decision directly to cover the source-only pending-to-pin rule.
+    decision = authority.plan_source(binding, pin_q, mode="assign")
+    assert isinstance(decision, authority.SourceAdvanced)
+    assert isinstance(decision.binding.source, authority.Pinned)
+    assert decision.binding.source.observation.path == "/native/store/q.jsonl"
+    assert decision.binding.source.event_id == authority.boundary_digest_v4(pin_q)
+    assert decision.binding.store_guard == binding.store_guard
+
+
+def test_v4_no_file_to_pending_to_pin_keeps_distinct_provenance() -> None:
+    absent = authority.NoFileObservation(kind="no_file_observation", reason="not_reported")
+    pending = authority.PendingLocalFile(
+        kind="local_file_pending",
+        path="/native/store/session.jsonl",
+        store_object={"device": 1, "inode": 10},
+    )
+    entry = _fact("entry", absent)
+    exit_fact = _fact("exit", pending, order=2)
+    builder = _fold(_begin())
+    authority.fold_row(builder, _accept(builder, entry))
+    authority.fold_row(builder, _accept(builder, exit_fact))
+    binding = builder.identity().native_bindings[authority.native_key_tuple(entry.key)]
+    assert isinstance(binding.source, authority.Pending)
+    assert binding.source.event_id == authority.boundary_digest_v4(exit_fact)
+    assert binding.store_guard is not None
+    assert binding.store_guard.store_event_id == authority.boundary_digest_v4(exit_fact)
+
+    pin = _fact("exit", _file(pending.path, inode=10), order=3)
+    decision = authority.plan_source(binding, pin, mode="assign")
+    assert isinstance(decision, authority.SourceAdvanced)
+    assert isinstance(decision.binding.source, authority.Pinned)
+    assert decision.binding.source.event_id == authority.boundary_digest_v4(pin)
+    assert decision.binding.store_guard is not None
+    assert decision.binding.store_guard.store_event_id == authority.boundary_digest_v4(exit_fact)
+
+
+def test_v4_check_only_source_decision_does_not_acquire_guard_or_pin() -> None:
+    absent = authority.NoFileObservation(kind="no_file_observation", reason="not_reported")
+    entry = _fact("entry", absent)
+    builder = _fold(_begin())
+    authority.fold_row(builder, _accept(builder, entry))
+    binding = builder.identity().native_bindings[authority.native_key_tuple(entry.key)]
+    later = _fact("exit", _file("/native/store/session.jsonl", inode=10), order=2)
+
+    decision = authority.plan_source(binding, later, mode="check_only")
+    assert isinstance(decision, authority.SourceUnchanged)
+    assert decision.binding == binding
+    assert decision.binding.store_guard is None
+    assert isinstance(decision.binding.source, authority.Unobserved)
 
 
 @pytest.mark.parametrize("conflict_kind", ["different_file", "store_replaced"])
@@ -275,9 +367,16 @@ def test_v4_conflict_target_is_replayed_against_prefix() -> None:
     authority.fold_row(builder, _accept(builder, original))
     expected = _accept(builder, changed)
     assert isinstance(expected, authority.LocatorConflictEvent)
-    forged = expected.model_copy(update={"binding_event_id": "0" * 64})
-    with pytest.raises(ValueError, match="Noncanonical"):
-        authority.fold_row(builder, forged)
+    for changes in (
+        {"binding_event_id": "0" * 64},
+        {"chat_id": "c99"},
+        {"store_event_id": "0" * 64},
+        {"locator_event_id": "0" * 64},
+        {"reason": "store_replaced"},
+    ):
+        forged = expected.model_copy(update=changes)
+        with pytest.raises(ValueError, match="Noncanonical"):
+            authority.fold_row(builder, forged)
     authority.fold_row(builder, expected)
     with pytest.raises(ValueError, match="blocked"):
         authority.fold_row(builder, expected)
@@ -301,6 +400,53 @@ def test_v4_conflict_suppresses_legacy_key_and_effective_boundary_getters(tmp_pa
         None,
         False,
     )
+
+
+@pytest.mark.parametrize("blocked_boundary", ["entry", "exit"])
+def test_v4_boundary_getter_checks_entry_and_exit_bindings_independently(
+    tmp_path, blocked_boundary: str
+) -> None:
+    entry_a = _fact("entry", _file("/native/store/a.jsonl", inode=10), session_id="a")
+    builder = _fold(_begin())
+    entry_row = _accept(builder, entry_a)
+    authority.fold_row(builder, entry_row)
+    rows: list[authority.V4AttemptEvent] = [_begin(), entry_row]
+
+    if blocked_boundary == "entry":
+        conflict_fact = _fact(
+            "exit", _file("/native/store/a2.jsonl", inode=10, file_inode=22),
+            order=2, session_id="a",
+        )
+        conflict = _accept(builder, conflict_fact)
+        assert isinstance(conflict, authority.LocatorConflictEvent)
+        authority.fold_row(builder, conflict)
+        rows.append(conflict)
+        exit_b = _fact("exit", _file("/native/store/b.jsonl", inode=30), order=3, session_id="b")
+        exit_row = _accept(builder, exit_b, chat_id="c2")
+        assert isinstance(exit_row, authority.BoundaryEventV4)
+        authority.fold_row(builder, exit_row)
+        rows.append(exit_row)
+        expected = (None, "c2", False)
+    else:
+        exit_b = _fact("exit", _file("/native/store/b.jsonl", inode=30), order=2, session_id="b")
+        exit_row = _accept(builder, exit_b, chat_id="c2")
+        assert isinstance(exit_row, authority.BoundaryEventV4)
+        authority.fold_row(builder, exit_row)
+        rows.append(exit_row)
+        conflict_fact = _fact(
+            "exit", _file("/native/store/b2.jsonl", inode=30, file_inode=32),
+            order=3, session_id="b",
+        )
+        conflict = _accept(builder, conflict_fact)
+        assert isinstance(conflict, authority.LocatorConflictEvent)
+        authority.fold_row(builder, conflict)
+        rows.append(conflict)
+        expected = ("c1", None, False)
+
+    (tmp_path / "sessions.jsonl").write_text(
+        "".join(f"{row.model_dump_json()}\n" for row in rows)
+    )
+    assert session_store.get_native_attempt_boundaries(tmp_path, "run", "attempt") == expected
 
 
 def test_v4_codec_rejects_malformed_unknown_and_torn_authority_tail() -> None:
