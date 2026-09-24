@@ -159,11 +159,11 @@ def project_codex_spec_to_cli_args(
     if spec.web_search_enabled:
         command.extend(("-c", "tools.web_search=true"))
 
-    if harness_session_id:
-        command.extend(("resume", harness_session_id))
-
     for root in spec.projected_roots:
         command.extend(("--add-dir", root.as_posix()))
+
+    if harness_session_id:
+        command.extend(("resume", harness_session_id))
 
     command.extend(spec.extra_args)
 
