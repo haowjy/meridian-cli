@@ -62,6 +62,7 @@ from meridian.lib.state.paths import (
     resolve_project_paths,
     resolve_spawn_log_dir,
 )
+from meridian.lib.state.session_authority import RecordedNativeSource
 from meridian.lib.state.spawn.model import LaunchMode
 from meridian.lib.state.work_scope import resolve_bound_work_scope
 from meridian.lib.telemetry import emit_telemetry
@@ -538,6 +539,7 @@ def materialize_launch_artifacts(
     projected_roots: tuple[Path, ...] = (),
     interactive: bool = False,
     continue_harness_session_id: str | None = None,
+    recorded_native_source: RecordedNativeSource | None = None,
     continue_fork: bool = False,
     model_override_explicit: bool = False,
     context_from_payload: tuple[str, ...] = (),
@@ -592,6 +594,7 @@ def materialize_launch_artifacts(
         projected_roots=projected_roots,
         interactive=interactive,
         continue_harness_session_id=continue_harness_session_id,
+        recorded_native_source=recorded_native_source,
         continue_fork=continue_fork,
         appended_system_prompt=effective_appended_system or None,
         context_from_payload=context_from_payload,
@@ -1786,6 +1789,15 @@ def bind_launch_context(
     system_temp_root = Path(tempfile.gettempdir()).resolve()
     resolved_request = prepared.request
     harness = prepared.harness
+    recorded_source = resolved_request.session.recorded_native_source
+    if recorded_source is not None:
+        if harness.id != HarnessId.PI or resolved_request.session.continue_fork:
+            raise ValueError("Recorded native source is valid only for exact Pi continuation")
+        if resolved_request.env:
+            raise ValueError(
+                "Tracked Pi continuation does not accept raw environment overrides; "
+                "refusing continue"
+            )
     effective_session_id = bindings.forked_harness_session_id or prepared.seed_harness_session_id
     composition_warnings = prepared.composition_warnings
     prompt_payload = prepared.prompt_payload
@@ -2025,6 +2037,7 @@ def bind_launch_context(
         projected_roots=projected_roots,
         interactive=is_primary_launch,
         continue_harness_session_id=effective_session_id,
+        recorded_native_source=resolved_request.session.recorded_native_source,
         continue_fork=(
             bindings.continue_fork_override
             if bindings.continue_fork_override is not None

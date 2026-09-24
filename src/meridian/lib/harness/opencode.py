@@ -429,6 +429,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "task_cwd",
             "pi_harness_profile",
             "claude_allow_builtin_agents",
+            "recorded_native_source",
         }
     )
 

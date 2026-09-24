@@ -35,6 +35,7 @@ from meridian.lib.launch.launch_types import (
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.permissions import PermissionConfig
 from meridian.lib.state.primary_meta import HarnessSessionDiscovery
+from meridian.lib.state.session_authority import RecordedNativeSource
 
 AdapterSpecT = TypeVar("AdapterSpecT", bound=ResolvedLaunchSpec, covariant=True)
 
@@ -281,6 +282,7 @@ class SpawnParams(BaseModel):
     projected_roots: tuple[Path, ...] = ()
     interactive: bool = False
     continue_harness_session_id: str | None = None
+    recorded_native_source: RecordedNativeSource | None = None
     continue_fork: bool = False
     appended_system_prompt: str | None = None
     user_turn_content: str | None = None

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from pathlib import Path
 
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.pi_native_source import preflight_pi_source
 from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
@@ -21,6 +23,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "effort",
         "continue_session_id",
         "continue_fork",
+        "recorded_native_source",
         "permission_resolver",
         "extra_args",
         "interactive",
@@ -166,6 +169,27 @@ def project_pi_spec_to_cli_args(
 
     command: list[str] = list(base_command)
     passthrough_tail = spec.extra_args
+    recorded_source = spec.recorded_native_source
+    if recorded_source is not None:
+        if (
+            recorded_source.key.harness != "pi"
+            or spec.continue_fork
+            or spec.continue_session_id != recorded_source.key.native_session_id
+        ):
+            raise ValueError("Tracked Pi continuation does not match its recorded native source")
+        if passthrough_tail:
+            raise ValueError(
+                "Tracked Pi continuation does not accept raw extra_args; "
+                "use managed launch options instead"
+            )
+        source_check = preflight_pi_source(
+            recorded_source.locator,
+            effective_store=Path(recorded_source.key.store),
+            session_id=recorded_source.key.native_session_id,
+        )
+        if source_check.status != "eligible":
+            reason = source_check.reason or "unavailable"
+            raise ValueError(f"Tracked Pi source is unavailable ({reason}); refusing continue")
 
     model_arg = _project_model_arg(spec)
     if model_arg is not None:
@@ -182,7 +206,11 @@ def project_pi_spec_to_cli_args(
     if spec.appended_system_prompt:
         command.extend(("--append-system-prompt", spec.appended_system_prompt))
 
-    continue_session_id = (spec.continue_session_id or "").strip()
+    continue_session_id = (
+        recorded_source.locator.path
+        if recorded_source is not None
+        else (spec.continue_session_id or "").strip()
+    )
     has_continue_session = bool(continue_session_id)
     has_continue_fork = has_continue_session and spec.continue_fork
     _reject_mode_collisions(passthrough_tail)
@@ -251,7 +279,10 @@ def project_pi_spec_to_cli_args(
         else:
             command.extend(("--session", continue_session_id))
 
-    command.extend(("--session-dir", _default_pi_session_dir()))
+    command.extend((
+        "--session-dir",
+        recorded_source.key.store if recorded_source is not None else _default_pi_session_dir(),
+    ))
 
     if not spec.load_all_pi_extensions:
         command.append("--no-extensions")

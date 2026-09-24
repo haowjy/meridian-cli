@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast, runtime_checkabl
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy as ResolvedExecutionPolicy
+from meridian.lib.state.session_authority import RecordedNativeSource
 
 if TYPE_CHECKING:
     from meridian.lib.core.types import HarnessId
@@ -79,6 +80,7 @@ class ResolvedLaunchSpec(BaseModel):
     # Session continuity
     continue_session_id: str | None = None
     continue_fork: bool = False
+    recorded_native_source: RecordedNativeSource | None = None
 
     # Permissions
     permission_resolver: PermissionResolver

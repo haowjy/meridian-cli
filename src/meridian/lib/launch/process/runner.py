@@ -770,6 +770,11 @@ def run_harness_process(
     command = preview_context.binding.argv
     spawn_request = preview_context.request
     preview_request = preview_context.resolved_request
+    if preview_request.session.recorded_native_source is not None:
+        raise RuntimeError(
+            "Tracked Pi source selection is ready, but execution is blocked until the "
+            "B3c connected-state entry gate is wired. No task was delivered."
+        )
     requested_harness_session_id = (
         preview_request.session.requested_harness_session_id or ""
     ).strip()

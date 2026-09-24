@@ -67,6 +67,9 @@ def _resolve_session_continuation(
     return request.session.model_copy(update={
         "requested_harness_session_id": resolved_continue_harness_session_id,
         "continue_fork": resolved_continue_fork,
+        # pN continuation resolves its own attempt/session semantics and must
+        # never inherit a primary cN native-source credential.
+        "recorded_native_source": None,
     })
 
 

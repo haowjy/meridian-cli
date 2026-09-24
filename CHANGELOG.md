@@ -6,6 +6,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Carry purpose-authorized pinned Pi native sources from top-level cN continuation
+  through launch composition; Pi resumes use the exact preflighted file and store,
+  while tracked passthrough arguments fail closed. Actual tracked execution stays
+  blocked until B3c's connected-state entry gate is wired.
+
 - Added a confirming `get_native_binding()` state read and purpose-aware cN
   reference resolver. Only an unblocked v4 qualified pin yields provenance;
   inspection remains explicitly non-authorizing and physical source checks

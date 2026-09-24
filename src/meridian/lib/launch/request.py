@@ -10,6 +10,7 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.launch_types import TerminalSurfaceMode
+from meridian.lib.state.session_authority import RecordedNativeSource
 from meridian.lib.state.session_store import ConversationModelSelection, SessionModelSelectionEvent
 from meridian.lib.tools import ToolsField
 
@@ -53,6 +54,9 @@ class SessionRequest(BaseModel):
     continue_harness: str | None = None
     continue_source_tracked: bool = False
     continue_source_ref: str | None = None
+    # Purpose-authorized exact native source; set only by primary cN resume.
+    # Spawn pN replay deliberately does not inherit this credential.
+    recorded_native_source: RecordedNativeSource | None = None
     primary_session_mode: str | None = None
     conversation_intent: ConversationModelSelection | None = None
 

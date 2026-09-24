@@ -31,6 +31,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
 
 _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
+        "recorded_native_source",
         "harness",
         "agent_name",
         "agents_payload",

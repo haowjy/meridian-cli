@@ -202,6 +202,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "reference_items",
             "task_cwd",
             "pi_harness_profile",
+            "recorded_native_source",
         }
     )
 

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import re
 import shlex
 import sys
 from pathlib import Path
@@ -26,7 +28,13 @@ from meridian.lib.launch.continue_replay import (
 )
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.resolve import resolve_agent_launch_input
-from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
+from meridian.lib.ops.reference import (
+    AuthorizedNativeTarget,
+    NativeUnavailable,
+    ResolvedSessionReference,
+    resolve_native_reference,
+    resolve_session_reference,
+)
 from meridian.lib.ops.spawn.models import normalize_goal
 from meridian.lib.state.paths import resolve_project_runtime_root
 
@@ -232,6 +240,7 @@ def run_primary_launch(
     source_pi_session_dir: str | None = None
     continue_source_tracked = False
     continue_source_ref: str | None = None
+    recorded_native_source = None
     continue_launch_policy_snapshot: LaunchPolicySnapshot | None = None
     continue_passthrough_args: tuple[str, ...] = ()
     output_forked_from: str | None = None
@@ -253,7 +262,36 @@ def run_primary_launch(
         resolved_continue = resolve_session_target(
             project_root=project_root, continue_ref=resume_target, harness_hint=harness,
         )
-        if resolved_continue.missing_harness_session_id:
+        native_target = None
+        if re.fullmatch(r"c\d+", resume_target):
+            native_target = asyncio.run(
+                resolve_native_reference(
+                    resolve_project_runtime_root(project_root),
+                    resume_target,
+                    purpose="resume",
+                )
+            )
+            if not isinstance(native_target, AuthorizedNativeTarget):
+                reason = (
+                    native_target.reason
+                    if isinstance(native_target, NativeUnavailable)
+                    else "authority unavailable"
+                )
+                raise ValueError(
+                    f"Cannot continue tracked session '{resume_target}': "
+                    f"exact native source is unavailable ({reason})."
+                )
+            recorded_native_source = native_target.source
+            if recorded_native_source.key.harness != "pi":
+                raise ValueError(
+                    f"Cannot continue tracked session '{resume_target}': "
+                    "exact-source tracked continue is currently available only for Pi."
+                )
+            if explicit_harness is not None and explicit_harness != "pi":
+                raise ValueError(
+                    "Cannot continue a tracked Pi session with a different harness."
+                )
+        if resolved_continue.missing_harness_session_id and native_target is None:
             raise ValueError(
                 missing_fork_session_error_with_discovery(
                     source_ref=resume_target,
@@ -266,9 +304,15 @@ def run_primary_launch(
             source=continue_replay_source_from_reference(
                 source_ref=resume_target,
                 resolved_reference=resolved_continue,
-                harness_session_id=resolved_continue.authoritative_harness_session_id,
+                harness_session_id=(
+                    recorded_native_source.key.native_session_id
+                    if recorded_native_source is not None
+                    else resolved_continue.authoritative_harness_session_id
+                ),
             ),
-            explicit_harness=explicit_harness,
+            explicit_harness=(
+                "pi" if recorded_native_source is not None else explicit_harness
+            ),
             requested_agent=agent_launch.agent,
             agent_opt_out=agent_launch.agent_opt_out,
             requested_model_override=model.strip() or None,
@@ -278,6 +322,18 @@ def run_primary_launch(
         continue_harness_session_id = continue_contract.session.requested_harness_session_id
         continue_chat_id = continue_contract.session.continue_chat_id
         continue_harness = continue_contract.harness
+        if recorded_native_source is not None:
+            continue_harness_session_id = recorded_native_source.key.native_session_id
+            continue_chat_id = recorded_native_source.ref.chat_id
+            continue_harness = "pi"
+            continue_session = continue_session.model_copy(update={
+                "requested_harness_session_id": continue_harness_session_id,
+                "continue_chat_id": continue_chat_id,
+                "continue_harness": "pi",
+                "continue_source_tracked": True,
+                "continue_source_ref": resume_target,
+                "recorded_native_source": recorded_native_source,
+            })
         continue_warning = resolved_continue.warning
         source_control_root = continue_contract.session.source_control_root
         source_execution_cwd = continue_contract.session.source_execution_cwd
@@ -296,6 +352,9 @@ def run_primary_launch(
             launch_task_dir = project_root.as_posix()
         continue_source_tracked = continue_contract.session.continue_source_tracked
         continue_source_ref = continue_contract.session.continue_source_ref
+        if recorded_native_source is not None:
+            continue_source_tracked = True
+            continue_source_ref = resume_target
         continue_launch_policy_snapshot = continue_contract.launch_policy_snapshot
         continue_passthrough_args = continue_contract.passthrough_args
         requested_model = continue_contract.model
