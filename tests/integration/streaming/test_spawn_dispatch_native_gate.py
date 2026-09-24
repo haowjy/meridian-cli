@@ -118,22 +118,45 @@ async def test_dispatch_refuses_selection_matching_recorded_native_claim(
     assert started == []
 
 
+@pytest.mark.parametrize(
+    "extra_args",
+    ["-c", "-r", "--continue", "--resume", "--continue=latest", "--resume=latest"],
+)
+@pytest.mark.parametrize("prompt", ["task", ""])
 @pytest.mark.asyncio
-async def test_dispatch_refuses_raw_pi_selection_option(tmp_path: Path) -> None:
+async def test_dispatch_refuses_raw_pi_selection_option_before_connection_start(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    extra_args: str,
+    prompt: str,
+) -> None:
+    started: list[bool] = []
+
+    class RecordingConnection:
+        async def start(self, _config: object, _spec: object) -> None:
+            started.append(True)
+
+    monkeypatch.setattr(spawn_dispatch, "_ensure_harness_bootstrap", lambda: None)
+    monkeypatch.setattr(
+        "meridian.lib.harness.connections.get_connection_class",
+        lambda *_args: RecordingConnection,
+    )
     config = ConnectionConfig(
         spawn_id="p1",
         harness_id=HarnessId.PI,
-        prompt="",
+        prompt=prompt,
         control_root=tmp_path,
         child_env={},
         runtime_root=tmp_path / "runtime",
     )
     spec = ResolvedLaunchSpec(
+        prompt=prompt,
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        extra_args=("--session", "/tmp/selected.jsonl"),
+        extra_args=(extra_args,),
     )
     with pytest.raises(ValueError, match="Raw Pi native selection"):
         await spawn_dispatch.dispatch_start(config, spec)
+    assert started == []
 
 
 @pytest.mark.parametrize("harness", [HarnessId.PI, HarnessId.CODEX])

@@ -13,6 +13,7 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.permission_broker import PermissionBroker
+from meridian.lib.harness.pi_native_source import reject_pi_native_source_options
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.ops.reference import (
     AuthorizedSourceUse,
@@ -135,30 +136,14 @@ def _refuse_unowned_tracked_selection(
                 f"({getattr(result, 'reason', 'owner_required')}); no connection was started."
             )
 
-    if config.harness_id == HarnessId.PI and _has_pi_native_selector(spec.extra_args):
-        raise ValueError(
-            "Raw Pi native selection cannot be classified at dispatch; "
-            "no connection was started."
-        )
-
-
-def _has_pi_native_selector(args: tuple[str, ...]) -> bool:
-    """Detect raw argv forms which can select or relocate a Pi native session."""
-
-    selector_options = {
-        "--session",
-        "--session-dir",
-        "--session-file",
-        "--continue",
-        "--resume",
-        "--fork",
-        "--last-session",
-    }
-    return any(
-        arg in selector_options
-        or any(arg.startswith(f"{option}=") for option in selector_options)
-        for arg in args
-    )
+    if config.harness_id == HarnessId.PI:
+        try:
+            reject_pi_native_source_options(spec.extra_args)
+        except ValueError as exc:
+            raise ValueError(
+                "Raw Pi native selection cannot be classified at dispatch; "
+                "no connection was started."
+            ) from exc
 
 
 def select_dispatch_transport(
