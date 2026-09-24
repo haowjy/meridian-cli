@@ -7,7 +7,7 @@ import tempfile
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import structlog
 from pydantic import ValidationError
@@ -126,6 +126,7 @@ from .request import (
     LaunchCompositionSurface,
     LaunchRuntime,
     RequestPromptPayload,
+    SessionRequest,
     SpawnRequest,
     is_exact_continue_session,
 )
@@ -1789,33 +1790,79 @@ def bind_launch_context(
     harness_registry: HarnessRegistry,
 ) -> LaunchContext:
     """Validate an independently supplied prepared selection, then bind it."""
-    session = prepared.request.session
-    operation = (
-        "fork"
-        if session.continue_fork
-        or (session.primary_session_mode or "").strip().lower() == "fork"
-        else "resume"
-    )
-    actual_selector = (
-        bindings.forked_harness_session_id or prepared.seed_harness_session_id
-    )
-    if (
-        prepared.harness.id.value != (prepared.request.harness or "").strip().lower()
-    ):
-        raise ValueError("Prepared harness does not match the selected launch harness.")
-    validate_primary_source_use(
-        runtime_root=Path(runtime.runtime_root).expanduser().resolve(),
-        source_ref=session.continue_source_ref,
-        native_selector=actual_selector or session.requested_harness_session_id,
-        tracked_claim=(
-            session.continue_source_tracked
-            or session.recorded_native_source is not None
-        ),
-        recorded_source=session.recorded_native_source,
-        harness=prepared.request.harness,
+    from .source_selection import PrimarySourceSelection, reconcile_primary_source_selection
+
+    request = prepared.request
+    original = prepared.launch_request or request
+    original_session = original.session
+    resolved_session = request.session
+
+    def operation_for(session: SessionRequest) -> Literal["fresh", "resume", "fork"]:
+        mode = (session.primary_session_mode or "").strip().lower()
+        if session.continue_fork or mode == "fork":
+            return "fork"
+        if mode == "resume" or session.continue_source_ref or session.requested_harness_session_id:
+            return "resume"
+        return "fresh"
+
+    operation = operation_for(original_session)
+    if original_session.continue_source_tracked != resolved_session.continue_source_tracked:
+        raise ValueError(
+            "Primary source selection conflict (tracked-source claim changed); "
+            "source-use authorization refused."
+        )
+    if operation == "fresh" and original_session.continue_source_tracked:
+        raise ValueError(
+            "Primary source selection conflict (fresh launch claimed tracked source); "
+            "source-use authorization refused."
+        )
+    selection = PrimarySourceSelection(
+        source_ref=original_session.continue_source_ref,
+        native_id=original_session.requested_harness_session_id,
         operation=operation,
-        extra_args=prepared.request.extra_args,
+        harness=original.harness,
+        runtime_root=Path(runtime.runtime_root).expanduser().resolve(),
+        seed_id=prepared.seed_harness_session_id,
+        other_harnesses=(request.harness, prepared.harness.id.value),
+        # The strict policy boundary below decides whether a consistent
+        # tracked claim is authorized; the claim itself is not authority.
+        tracked_claim=False,
+        operation_facts=(operation_for(resolved_session),),
     )
+    if bindings.forked_harness_session_id is not None:
+        raise ValueError(
+            "Primary source selection conflict (caller-supplied fork target); "
+            "source-use authorization refused."
+        )
+    if bindings.continue_fork_override is not None:
+        raise ValueError(
+            "Primary source selection conflict (caller-supplied fork override); "
+            "source-use authorization refused."
+        )
+    checked_source = reconcile_primary_source_selection(
+        selection,
+        resolved_id=resolved_session.requested_harness_session_id,
+        resolved_id_supplied=original_session.requested_harness_session_id is not None,
+        resolved_harness=request.harness,
+        resolved_source_ref=resolved_session.continue_source_ref,
+        resolved_source_ref_supplied=(
+            original_session.continue_source_ref is not None
+            or resolved_session.continue_source_ref is not None
+        ),
+        resolved_operation=operation_for(resolved_session),
+    )
+    session = original_session
+    if operation != "fresh":
+        validate_primary_source_use(
+            runtime_root=Path(runtime.runtime_root).expanduser().resolve(),
+            source_ref=session.continue_source_ref,
+            native_selector=checked_source,
+            tracked_claim=session.continue_source_tracked,
+            recorded_source=None,
+            harness=original.harness,
+            operation=operation,
+            extra_args=original.extra_args,
+        )
     return _bind_launch_context_impl(
         prepared=prepared,
         bindings=bindings,

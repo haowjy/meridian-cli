@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Public launch binding now reconciles original/resolved source intent, runtime seeds, adapter, and fork overrides before source lookup or preview.
+
 - Preserve explicit fresh intent and reject replay/prepared source or mode loss before the next launch stage.
 
 - Refuse native source loss, conflicting operation claims, resolver snapshot harness drift, and replay selector changes before launch preparation.
