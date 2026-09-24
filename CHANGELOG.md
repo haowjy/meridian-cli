@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Retain the single normalized project-path snapshot across launch policy resolution and prepared-surface assembly; align the inherited-task-dir test runtime with its authoritative namespace.
 - Route Claude and OpenCode primary raw-session arguments through their registered
   adapters' reviewed normalizers, retaining fail-closed behavior on unsupported surfaces.
 - Preserve explicit fork mode and fork intent in the typed primary session request;

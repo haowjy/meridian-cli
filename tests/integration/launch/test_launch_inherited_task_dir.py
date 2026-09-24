@@ -92,7 +92,7 @@ def test_bind_child_env_uses_resolved_task_dir_not_stale_parent_inherited(
     )
     launch_runtime = build_spawn_mars_runtime(
         runtime=runtime,
-        runtime_root=project_root / ".meridian",
+        runtime_root=runtime.authority.runtime_root,
         control_root=project_root,
         execution_cwd=artifacts.request.task_cwd,
         argv_intent=LaunchArgvIntent.REQUIRED,
@@ -110,6 +110,21 @@ def test_bind_child_env_uses_resolved_task_dir_not_stale_parent_inherited(
     child_env = bound.binding.environment.child_context_env
     assert child_env["MERIDIAN_TASK_DIR"] == child_task_dir.resolve().as_posix()
     assert child_env["MERIDIAN_TASK_DIR"] != parent_inherited.as_posix()
+
+    mismatched_runtime = build_spawn_mars_runtime(
+        runtime=runtime,
+        runtime_root=project_root / ".meridian",
+        control_root=project_root,
+        execution_cwd=artifacts.request.task_cwd,
+        argv_intent=LaunchArgvIntent.REQUIRED,
+    )
+    with pytest.raises(ValueError, match="prepared runtime namespace changed"):
+        bind_spawn_launch_context(
+            prepared=artifacts.prepared,
+            bindings=RuntimeBindings(spawn_id="p-child", dry_run=True),
+            runtime=mismatched_runtime,
+            harness_registry=get_default_harness_registry(),
+        )
 
 
 def test_parent_scope_file_task_dir_is_inherited_by_child(

@@ -1035,14 +1035,16 @@ def resolve_launch_policy_for_request(
     harness_registry: HarnessRegistry,
     catalog: CatalogSession,
     dry_run: bool = False,
+    project_paths: ProjectConfigPaths | None = None,
 ) -> ResolvedLaunchPolicy:
     """Resolve policy independently from assembling its prepared surface."""
 
-    requested_task_cwd = runtime.resolved_requested_task_cwd or runtime.resolved_control_root
-    project_paths = ProjectConfigPaths(
-        project_root=project_root.expanduser().resolve(),
-        execution_cwd=Path(requested_task_cwd).expanduser().resolve(),
-    )
+    if project_paths is None:
+        requested_task_cwd = runtime.resolved_requested_task_cwd or runtime.resolved_control_root
+        project_paths = ProjectConfigPaths(
+            project_root=project_root.expanduser().resolve(),
+            execution_cwd=Path(requested_task_cwd).expanduser().resolve(),
+        )
     config = (
         MeridianConfig.model_validate(runtime.config_snapshot)
         if runtime.config_snapshot
@@ -1097,14 +1099,16 @@ def assemble_prepared_policy_surface(
     project_root: Path,
     active_work_dir: Path | None = None,
     explicit_work_id: str | None = None,
+    project_paths: ProjectConfigPaths | None = None,
 ) -> PreparedPolicySurface:
     """Package an already-resolved policy with stable launch inputs."""
 
-    requested_task_cwd = runtime.resolved_requested_task_cwd or runtime.resolved_control_root
-    project_paths = ProjectConfigPaths(
-        project_root=project_root.expanduser().resolve(),
-        execution_cwd=Path(requested_task_cwd).expanduser().resolve(),
-    )
+    if project_paths is None:
+        requested_task_cwd = runtime.resolved_requested_task_cwd or runtime.resolved_control_root
+        project_paths = ProjectConfigPaths(
+            project_root=project_root.expanduser().resolve(),
+            execution_cwd=Path(requested_task_cwd).expanduser().resolve(),
+        )
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
     if active_work_dir is None:
         active_work_dir = _resolve_active_work_dir(
@@ -1134,6 +1138,11 @@ def compile_prepared_policy_surface(
 ) -> PreparedPolicySurface:
     """Resolve policy, then package the shared boundary before projector work."""
 
+    requested_task_cwd = runtime.resolved_requested_task_cwd or runtime.resolved_control_root
+    project_paths = ProjectConfigPaths(
+        project_root=project_root.expanduser().resolve(),
+        execution_cwd=Path(requested_task_cwd).expanduser().resolve(),
+    )
     resolved_policy = resolve_launch_policy_for_request(
         request=request,
         runtime=runtime,
@@ -1141,6 +1150,7 @@ def compile_prepared_policy_surface(
         harness_registry=harness_registry,
         catalog=catalog,
         dry_run=dry_run,
+        project_paths=project_paths,
     )
     return assemble_prepared_policy_surface(
         resolved_policy=resolved_policy,
@@ -1148,6 +1158,7 @@ def compile_prepared_policy_surface(
         project_root=project_root,
         active_work_dir=active_work_dir,
         explicit_work_id=explicit_work_id,
+        project_paths=project_paths,
     )
 
 
