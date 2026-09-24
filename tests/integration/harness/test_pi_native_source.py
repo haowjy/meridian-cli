@@ -69,6 +69,7 @@ def test_symlink_is_resolved_once_but_pinned_traversal_rejects_retarget(
 
 def test_rejects_escape_prefix_trap_wrong_and_malformed_headers(tmp_path: Path) -> None:
     root = tmp_path / "sessions"
+    root.mkdir()
     outside = tmp_path / "sessions-copy" / "a.jsonl"
     _journal(outside)
     assert isinstance(
@@ -77,7 +78,6 @@ def test_rejects_escape_prefix_trap_wrong_and_malformed_headers(tmp_path: Path) 
         ),
         source.PiSourceUnavailable,
     )
-
     wrong = root / "wrong.jsonl"
     _journal(wrong, session_id="B")
     assert source.qualify_pi_source(
@@ -88,6 +88,24 @@ def test_rejects_escape_prefix_trap_wrong_and_malformed_headers(tmp_path: Path) 
     assert source.qualify_pi_source(
         effective_store=root, session_id="A", session_file=str(malformed)
     ) == source.PiSourceUnavailable("invalid_native_source")
+
+
+@pytest.mark.parametrize("missing_depth", [1, 2])
+def test_missing_intermediate_path_is_pending_despite_unrelated_same_basename(
+    tmp_path: Path, missing_depth: int
+) -> None:
+    store = tmp_path / "sessions"
+    store.mkdir()
+    _journal(store / "future.jsonl")
+    missing_parts = (f"missing-{index}" for index in range(missing_depth))
+    selected = store.joinpath(*missing_parts, "future.jsonl")
+
+    result = source.qualify_pi_source(
+        effective_store=store, session_id="A", session_file=str(selected)
+    )
+
+    assert isinstance(result, source.PiSourcePending)
+    assert result.observation.path == str(selected)
 
 
 def test_missing_is_pending_and_same_id_claims_keep_exact_distinct_files(

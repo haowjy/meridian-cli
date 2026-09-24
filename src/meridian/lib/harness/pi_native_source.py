@@ -76,8 +76,6 @@ def qualify_pi_source(
                     return PiSourceUnavailable("store_changed")
                 directories, missing_from = _open_parent_directories(root_fd, root, canonical)
                 try:
-                    if not _leaf_missing(directories[-1], canonical.name):
-                        return PiSourceUnavailable("file_changed")
                     failure = _reobserve_namespace(
                         root, canonical, root_fd, directories, None, missing_from
                     )

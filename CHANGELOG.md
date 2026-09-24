@@ -23,6 +23,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Qualify missing Pi paths by reobserving their exact namespace rather than
+  probing a same-named leaf in the deepest existing ancestor.
+
 - Reobserve Pi exact-source root, directory, and file identities through bounded
   no-follow descriptor traversal before accepting; open leaves nonblocking and
   reject nonregular sources before reading.
