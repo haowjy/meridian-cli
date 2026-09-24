@@ -551,27 +551,6 @@ class NativeBinding(NamedTuple):
     conflict: LocatorConflictEvent | None = None
 
 
-class V4AttemptState(NamedTuple):
-    begin: BeginEventV4
-    entry: BoundaryEventV4 | None = None
-    exit: BoundaryEventV4 | None = None
-    invalidation: "Refutation | None" = None
-
-
-class V4Transition(NamedTuple):
-    state: V4AttemptState
-    row: BeginEventV4 | BoundaryEventV4 | LocatorConflictEvent | None
-    chat_id: ChatId | None = None
-    binding: NativeBinding | None = None
-    conflict: bool = False
-
-
-type V4AttemptEvent = BeginEventV4 | BoundaryEventV4 | LocatorConflictEvent
-_V4_ATTEMPT_SCHEMA = TypeAdapter[V4AttemptEvent](
-    Annotated[V4AttemptEvent, Field(discriminator="action")]
-)
-
-
 class BeginIntent(BaseModel):
     """Immutable owner context; intent does not certify ownership."""
 
@@ -665,16 +644,62 @@ class Refutation(BaseModel):
         return self
 
 
+class RefutationV4(BaseModel):
+    """V4 wire form of the common bounded exit-invalidation transition."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    v: Literal[4] = 4
+    event: Literal["native_attempt"] = "native_attempt"
+    action: Literal["invalidate_exit"] = "invalidate_exit"
+    run_id: BoundedCorrelation
+    attempt_id: BoundedCorrelation
+    transport_scope_id: BoundedCorrelation
+    target_event_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    order: int = Field(ge=0)
+    reason: Literal["identity_conflict", "same_boundary_conflict", "finality_refuted"]
+    conflicting_key: NativeSessionKey | None = None
+    causal_reference: BoundedCorrelation
+
+    @model_validator(mode="after")
+    def bounded_evidence(self) -> Self:
+        if self.conflicting_key is not None and len(self.conflicting_key.model_dump_json()) > 4096:
+            raise ValueError("refutation identity evidence exceeds bounded summary")
+        return self
+
+
+type V4AttemptEvent = BeginEventV4 | BoundaryEventV4 | LocatorConflictEvent | RefutationV4
+_V4_ATTEMPT_SCHEMA = TypeAdapter[V4AttemptEvent](
+    Annotated[V4AttemptEvent, Field(discriminator="action")]
+)
+
+
 type SessionAttemptEvent = BeginEvent | BoundaryEvent | Refutation
-type AttemptFact = BeginIntent | BoundaryFact | Refutation
+type AttemptFact = (
+    BeginIntent | BeginIntentV4 | BoundaryFact | BoundaryFactV4 | Refutation | RefutationV4
+)
 _ATTEMPT_SCHEMA = TypeAdapter[SessionAttemptEvent](
     Annotated[SessionAttemptEvent, Field(discriminator="action")]
 )
 
 
-class BoundaryAcceptance(NamedTuple):
-    chat_id: str | None
-    invalidated: bool = False
+@dataclass(frozen=True)
+class Begun:
+    attempt_number: int
+
+
+@dataclass(frozen=True)
+class AcceptedBoundary:
+    chat_id: ChatId
+    binding_event_id: str
+    locator_event_id: str | None = None
+
+
+@dataclass(frozen=True)
+class UnresolvedBoundary:
+    reason: Literal["source_conflict", "exit_invalidated", "reconciliation_required"]
+
+
+type AttemptResult = Begun | AcceptedBoundary | UnresolvedBoundary
 
 
 class AttemptBoundaries(NamedTuple):
@@ -937,15 +962,15 @@ def plan_identity(
 
 @dataclass(frozen=True)
 class AttemptState:
-    begin: BeginEvent
-    entry: BoundaryEvent | None = None
-    exit: BoundaryEvent | None = None
-    invalidation: Refutation | None = None
+    begin: BeginEvent | BeginEventV4
+    entry: BoundaryEvent | BoundaryEventV4 | None = None
+    exit: BoundaryEvent | BoundaryEventV4 | None = None
+    invalidation: Refutation | RefutationV4 | None = None
 
 
 @dataclass(frozen=True)
 class AttemptProjection:
-    states: Mapping[tuple[str, str], AttemptState | V4AttemptState]
+    states: Mapping[tuple[str, str], AttemptState]
     latest: Mapping[str, BeginEvent | BeginEventV4]
     effective_exits: int
 
@@ -953,9 +978,10 @@ class AttemptProjection:
 @dataclass(frozen=True)
 class AttemptTransition:
     state: AttemptState
-    row: SessionAttemptEvent | None
-    result: BoundaryAcceptance = field(default_factory=lambda: BoundaryAcceptance(None))
+    row: SessionAttemptEvent | V4AttemptEvent | None
+    result: AttemptResult
     identity: IdentityDelta = IdentityDelta()
+    binding: NativeBinding | None = None
     exit_delta: int = 0
 
 
@@ -964,7 +990,15 @@ class _BoundaryDecision:
     """Version-neutral phase result; wire rows and digests stay versioned."""
 
     action: Literal[
-        "assign", "repeat", "repeat_entry", "invalidated", "confirm", "stale", "changed", "refute"
+        "assign",
+        "repeat",
+        "repeat_entry",
+        "invalidated",
+        "invalidated_check",
+        "confirm",
+        "stale",
+        "changed",
+        "refute",
     ]
     refutation_reason: Literal["same_boundary_conflict", "identity_conflict"] | None = None
 
@@ -998,9 +1032,7 @@ def _classify_boundary_phase(
 
     Both frozen codecs expose the same phase evidence. Callers retain their typed
     facts so digest and serialization semantics remain protocol-specific. The
-    later v4 cutover replaces its boundary branch with this classifier and routes
-    its refutation row through _validate_refutation_reason; no wire normalization
-    or v4 live writer belongs here.
+    Wire facts remain typed by protocol; this is the shared phase authority.
     """
     evidence = proposed.evidence
     _validate_boundary_owner(
@@ -1021,6 +1053,14 @@ def _classify_boundary_phase(
         if entry_order is not None and evidence.order <= entry_order:
             raise ValueError("terminal boundary must follow accepted entry ordering evidence")
         if invalidated:
+            if accepted_exit is not None and (
+                proposed == accepted_exit
+                or (
+                    proposed.key == accepted_exit.key
+                    and evidence.order > accepted_exit.evidence.order
+                )
+            ):
+                return _BoundaryDecision("invalidated_check")
             return _BoundaryDecision("invalidated")
         if accepted_exit is None:
             decision = _BoundaryDecision("assign")
@@ -1066,6 +1106,66 @@ def _validate_refutation_reason(
         raise ValueError("identity refutation requires a different key at equal/later order")
 
 
+def _is_v4_fact(fact: object) -> bool:
+    return isinstance(fact, (BeginIntentV4, BoundaryFactV4, RefutationV4))
+
+
+def _binding_result(binding: NativeBinding, *, invalidated: bool = False) -> AttemptResult:
+    if invalidated:
+        return UnresolvedBoundary("exit_invalidated")
+    if binding.conflict is not None:
+        return UnresolvedBoundary("source_conflict")
+    locator = binding.source.event_id if isinstance(binding.source, Pinned) else None
+    return AcceptedBoundary(binding.chat_id, binding.binding_event_id, locator)
+
+
+def result_for_boundary(
+    identity: IdentityProjection,
+    state: AttemptState,
+    boundary: BoundaryEvent | BoundaryEventV4 | None,
+) -> AttemptResult | None:
+    """Resolve one boundary against its own binding and current finality."""
+    if boundary is None:
+        return None
+    binding = identity.native_bindings.get(native_key_tuple(boundary.fact.key))
+    if binding is None:
+        return UnresolvedBoundary("reconciliation_required")
+    invalidated = boundary.fact.boundary == "exit" and state.invalidation is not None
+    return _binding_result(binding, invalidated=invalidated)
+
+
+def _fact_digest(fact: BoundaryFact | BoundaryFactV4) -> str:
+    return boundary_digest_v4(fact) if isinstance(fact, BoundaryFactV4) else boundary_digest(fact)
+
+
+def _make_refutation(
+    fact: BoundaryFact | BoundaryFactV4,
+    accepted: BoundaryEvent | BoundaryEventV4,
+    reason: Literal["same_boundary_conflict", "identity_conflict"],
+) -> Refutation | RefutationV4:
+    if isinstance(fact, BoundaryFactV4):
+        return RefutationV4(
+            run_id=fact.run_id,
+            attempt_id=fact.attempt_id,
+            transport_scope_id=fact.evidence.transport_scope_id,
+            target_event_id=_fact_digest(accepted.fact),
+            order=fact.evidence.order,
+            reason=reason,
+            conflicting_key=fact.key,
+            causal_reference=_fact_digest(fact),
+        )
+    return Refutation(
+        run_id=fact.run_id,
+        attempt_id=fact.attempt_id,
+        transport_scope_id=fact.evidence.transport_scope_id,
+        target_event_id=_fact_digest(accepted.fact),
+        order=fact.evidence.order,
+        reason=reason,
+        conflicting_key=fact.key,
+        causal_reference=_fact_digest(fact),
+    )
+
+
 def plan_attempt(
     attempts: AttemptProjection,
     identity: IdentityProjection,
@@ -1073,42 +1173,63 @@ def plan_attempt(
     *,
     assigned_chat: ChatId | None = None,
 ) -> AttemptTransition | NeedChat:
-    """One attempt policy for proposals and replay; no mutation or prefix copies.
-
-    Allocation is a handshake: NeedChat repeats only this fact with an available
-    alias. Strict replay supplies the recorded alias and compares the entire row.
-    """
+    """The sole attempt policy for both codecs, live proposals and strict replay."""
     state = attempts.states.get((fact.run_id, fact.attempt_id))
     latest = attempts.latest.get(fact.run_id)
-    if isinstance(fact, BeginIntent):
+    v4 = _is_v4_fact(fact)
+    if isinstance(fact, (BeginIntent, BeginIntentV4)):
         if fact.operation == "fresh":
             if fact.requested_source is not None:
                 raise ValueError("fresh intent forbids a requested source")
-        elif (
-            fact.requested_source is None
-            or native_key_tuple(fact.requested_source) not in identity.key_to_chat
-        ):
+        elif fact.requested_source is None:
             raise ValueError("resume/fork intent requires its pinned source key")
+        else:
+            source_key = (
+                fact.requested_source.key
+                if isinstance(fact, BeginIntentV4)
+                else fact.requested_source
+            )
+            source_binding = identity.native_bindings.get(native_key_tuple(source_key))
+            if source_binding is None or source_binding.protocol != ("v4" if v4 else "v3"):
+                raise ValueError("resume/fork source requires same-protocol native binding")
+            if isinstance(fact, BeginIntentV4):
+                source = fact.requested_source
+                assert source is not None
+                if (
+                    source_binding.conflict is not None
+                    or source_binding.chat_id != source.ref.chat_id
+                    or source_binding.binding_event_id != source.ref.binding_event_id
+                    or not isinstance(source_binding.source, Pinned)
+                    or source_binding.source.event_id != source.ref.locator_event_id
+                    or source_binding.source.observation != source.locator
+                ):
+                    raise ValueError("resume/fork requires the current unblocked recorded source")
         if state is not None:
-            if not isinstance(state, AttemptState):
-                raise ValueError("native attempt cannot mix v3 and v4 rows")
-            if state.begin.intent() != fact:
+            if state.begin.intent() != fact or isinstance(state.begin, BeginEventV4) != v4:
                 raise ValueError("attempt begin context is immutable")
-            return AttemptTransition(state, None)
-        if latest is not None and not isinstance(latest, BeginEvent):
+            return AttemptTransition(state, None, Begun(state.begin.attempt_number))
+        if latest is not None and isinstance(latest, BeginEventV4) != v4:
             raise ValueError("native attempt cannot mix v3 and v4 rows")
-        event = BeginEvent(
-            **fact.model_dump(), attempt_number=1 + (latest.attempt_number if latest else 0)
+        number = latest.attempt_number if latest is not None else 0
+        event = (
+            BeginEventV4(**fact.model_dump(), attempt_number=number + 1)
+            if isinstance(fact, BeginIntentV4)
+            else BeginEvent(**fact.model_dump(), attempt_number=number + 1)
         )
-        return AttemptTransition(AttemptState(event), event)
-    if state is None or not isinstance(state, AttemptState):
+        return AttemptTransition(AttemptState(event), event, Begun(number + 1))
+
+    if state is None:
         raise ValueError("boundary fact belongs to an unknown or unstarted attempt")
     begin = state.begin
-    if isinstance(fact, Refutation):
+    if isinstance(begin, BeginEventV4) != v4:
+        raise ValueError("native attempt cannot mix v3 and v4 rows")
+    if isinstance(fact, (Refutation, RefutationV4)):
+        if isinstance(fact, RefutationV4) != isinstance(begin, BeginEventV4):
+            raise ValueError("refutation protocol differs from native attempt")
         if fact.transport_scope_id != begin.transport_scope_id:
             raise ValueError("observation is not owned by this transport attempt")
         accepted = state.exit
-        if accepted is None or fact.target_event_id != boundary_digest(accepted.fact):
+        if accepted is None or fact.target_event_id != _fact_digest(accepted.fact):
             raise ValueError("refutation does not name this attempt's accepted exit")
         _validate_refutation_reason(
             accepted_key=accepted.fact.key,
@@ -1118,13 +1239,14 @@ def plan_attempt(
             conflicting_key=fact.conflicting_key,
         )
         if state.invalidation is not None:
-            return AttemptTransition(state, None, BoundaryAcceptance(None, True))
+            return AttemptTransition(state, None, UnresolvedBoundary("exit_invalidated"))
         return AttemptTransition(
             AttemptState(begin, state.entry, accepted, fact),
             fact,
-            BoundaryAcceptance(None, True),
+            UnresolvedBoundary("exit_invalidated"),
             exit_delta=-1,
         )
+
     _validate_boundary_owner(
         fact,
         owner_scope=begin.transport_scope_id,
@@ -1134,42 +1256,98 @@ def plan_attempt(
     evidence = fact.evidence
     if fact.boundary == "entry":
         selection = evidence.selection
+        requested = (
+            begin.requested_source.key
+            if isinstance(begin, BeginEventV4) and begin.requested_source
+            else begin.requested_source
+        )
         if (
             selection is None
             or selection.operation != begin.operation
             or (
                 isinstance(selection, (ResumeSelection, ForkSelection))
-                and selection.source != begin.requested_source
+                and selection.source != requested
             )
         ):
             raise ValueError("observation operation/source differs from immutable attempt intent")
-        if begin.operation == "resume" and fact.key != begin.requested_source:
+        if begin.operation == "resume" and fact.key != requested:
             raise ValueError("resume entry does not match its pinned native source")
         if begin.operation == "fork" and (
-            fact.key == begin.requested_source or not isinstance(selection, ForkSelection)
+            fact.key == requested or not isinstance(selection, ForkSelection)
         ):
             raise ValueError("fork entry lacks distinct target and pinned source evidence")
         if begin.operation == "fresh" and not isinstance(selection, CreatedSelection):
             raise ValueError("fresh entry lacks fresh-target evidence")
+
+    prior_binding = identity.native_bindings.get(native_key_tuple(fact.key))
+    if (
+        isinstance(fact, BoundaryFactV4)
+        and prior_binding is not None
+        and prior_binding.conflict is not None
+        and prior_binding.conflict.fact == fact
+        and (prior_binding.conflict.run_id, prior_binding.conflict.attempt_id)
+        == (fact.run_id, fact.attempt_id)
+    ):
+        return AttemptTransition(state, None, UnresolvedBoundary("source_conflict"))
+
     decision = _classify_boundary_phase(
         owner_scope=begin.transport_scope_id,
         owner_harness=begin.harness,
         owner_store=begin.store,
         latest_attempt_id=latest.attempt_id if latest is not None else None,
-        entry_order=(state.entry.fact.evidence.order if state.entry is not None else None),
-        accepted_entry=state.entry.fact if state.entry is not None else None,
-        accepted_exit=state.exit.fact if state.exit is not None else None,
+        entry_order=state.entry.fact.evidence.order if state.entry else None,
+        accepted_entry=state.entry.fact if state.entry else None,
+        accepted_exit=state.exit.fact if state.exit else None,
         invalidated=state.invalidation is not None,
         proposed=fact,
     )
     if decision.action == "repeat_entry":
         assert state.entry is not None
-        return AttemptTransition(state, None, BoundaryAcceptance(state.entry.chat_id))
+        result = result_for_boundary(identity, state, state.entry)
+        assert result is not None
+        return AttemptTransition(state, None, result)
     if decision.action == "invalidated":
-        return AttemptTransition(state, None, BoundaryAcceptance(None, True))
+        return AttemptTransition(state, None, UnresolvedBoundary("exit_invalidated"))
     if decision.action in ("repeat", "confirm"):
         assert state.exit is not None
-        return AttemptTransition(state, None, BoundaryAcceptance(state.exit.chat_id))
+        result = result_for_boundary(identity, state, state.exit)
+        assert result is not None
+        if (
+            decision.action == "confirm"
+            and isinstance(fact, BoundaryFactV4)
+            and state.invalidation is None
+        ):
+            binding = identity.native_bindings[native_key_tuple(state.exit.fact.key)]
+            if binding.conflict is not None:
+                return AttemptTransition(state, None, UnresolvedBoundary("source_conflict"))
+            source = plan_source(binding, fact, mode="check_only")
+            if isinstance(source, SourceBlocked):
+                conflict = _conflict_row(fact, source.binding, source.reason)
+                return AttemptTransition(
+                    state,
+                    conflict,
+                    UnresolvedBoundary("source_conflict"),
+                    binding=source.binding._replace(conflict=conflict),
+                )
+        return AttemptTransition(state, None, result)
+    if decision.action == "invalidated_check":
+        assert state.exit is not None
+        binding = identity.native_bindings.get(native_key_tuple(state.exit.fact.key))
+        if binding is None:
+            raise ValueError("accepted exit has no canonical native binding")
+        if isinstance(fact, BoundaryFactV4):
+            if binding.conflict is not None:
+                return AttemptTransition(state, None, UnresolvedBoundary("exit_invalidated"))
+            source = plan_source(binding, fact, mode="check_only")
+            if isinstance(source, SourceBlocked):
+                conflict = _conflict_row(fact, source.binding, source.reason)
+                return AttemptTransition(
+                    state,
+                    conflict,
+                    UnresolvedBoundary("exit_invalidated"),
+                    binding=source.binding._replace(conflict=conflict),
+                )
+        return AttemptTransition(state, None, UnresolvedBoundary("exit_invalidated"))
     if decision.action == "stale":
         raise ValueError("contradictory boundary fact predates accepted exit")
     if decision.action == "changed":
@@ -1177,26 +1355,49 @@ def plan_attempt(
     if decision.action == "refute":
         assert state.exit is not None and decision.refutation_reason is not None
         return plan_attempt(
-            attempts,
-            identity,
-            Refutation(
-                run_id=fact.run_id,
-                attempt_id=fact.attempt_id,
-                transport_scope_id=evidence.transport_scope_id,
-                target_event_id=boundary_digest(state.exit.fact),
-                order=evidence.order,
-                reason=decision.refutation_reason,
-                conflicting_key=fact.key,
-                causal_reference=boundary_digest(fact),
-            ),
+            attempts, identity, _make_refutation(fact, state.exit, decision.refutation_reason)
         )
-    binding = plan_identity(identity, BindNative(fact.key), assigned_chat=assigned_chat)
-    if isinstance(binding, NeedChat):
-        return binding
-    assert isinstance(binding, IdentityDelta) and binding.chat_id is not None
-    row = BoundaryEvent(
-        run_id=fact.run_id, attempt_id=fact.attempt_id, fact=fact, chat_id=binding.chat_id
-    )
+
+    key_id = native_key_tuple(fact.key)
+    binding = identity.native_bindings.get(key_id)
+    protocol = "v4" if isinstance(fact, BoundaryFactV4) else "v3"
+    if binding is not None and binding.protocol != protocol:
+        raise ValueError("native binding requires explicit cross-protocol reconciliation")
+    if binding is not None and binding.conflict is not None:
+        return AttemptTransition(state, None, UnresolvedBoundary("source_conflict"))
+    if binding is None and key_id in identity.key_to_chat:
+        raise ValueError("legacy native binding requires explicit reconciliation")
+    if binding is None and assigned_chat is None:
+        return NeedChat()
+    claim = plan_identity(identity, BindNative(fact.key), assigned_chat=assigned_chat)
+    if isinstance(claim, NeedChat):
+        return claim
+    assert isinstance(claim, IdentityDelta) and claim.chat_id is not None
+    row: BoundaryEvent | BoundaryEventV4
+    if isinstance(fact, BoundaryFactV4):
+        binding = binding or NativeBinding(
+            claim.chat_id, fact.key, boundary_digest_v4(fact), "v4", LocatorUnrecorded()
+        )
+        source = plan_source(binding, fact, mode="assign")
+        if isinstance(source, SourceBlocked):
+            conflict = _conflict_row(fact, source.binding, source.reason)
+            return AttemptTransition(
+                state,
+                conflict,
+                UnresolvedBoundary("source_conflict"),
+                binding=source.binding._replace(conflict=conflict),
+            )
+        binding = source.binding
+        row = BoundaryEventV4(
+            run_id=fact.run_id, attempt_id=fact.attempt_id, fact=fact, chat_id=claim.chat_id
+        )
+    else:
+        binding = binding or NativeBinding(
+            claim.chat_id, fact.key, boundary_digest(fact), "v3", LocatorUnrecorded()
+        )
+        row = BoundaryEvent(
+            run_id=fact.run_id, attempt_id=fact.attempt_id, fact=fact, chat_id=claim.chat_id
+        )
     next_state = AttemptState(
         begin,
         row if fact.boundary == "entry" else state.entry,
@@ -1204,11 +1405,27 @@ def plan_attempt(
         state.invalidation,
     )
     return AttemptTransition(
-        next_state,
-        row,
-        BoundaryAcceptance(binding.chat_id),
-        binding,
-        int(fact.boundary == "exit"),
+        next_state, row, _binding_result(binding), claim, binding, int(fact.boundary == "exit")
+    )
+
+
+def _conflict_row(
+    fact: BoundaryFactV4,
+    binding: NativeBinding,
+    reason: Literal["different_file", "store_replaced"],
+) -> LocatorConflictEvent:
+    if binding.store_guard is None:
+        raise AssertionError("source conflict requires an acquired store guard")
+    locator_event_id = binding.source.event_id if isinstance(binding.source, Pinned) else None
+    return LocatorConflictEvent(
+        run_id=fact.run_id,
+        attempt_id=fact.attempt_id,
+        fact=fact,
+        chat_id=binding.chat_id,
+        binding_event_id=binding.binding_event_id,
+        store_event_id=binding.store_guard.store_event_id,
+        locator_event_id=locator_event_id,
+        reason=reason,
     )
 
 
@@ -1287,155 +1504,6 @@ def plan_source(
     if updated == binding:
         return SourceUnchanged(binding)
     return SourceAdvanced(updated)
-
-
-def plan_attempt_v4(
-    states: Mapping[tuple[str, str], AttemptState | V4AttemptState],
-    latest: Mapping[str, BeginEvent | BeginEventV4],
-    identity: IdentityProjection,
-    fact: BeginIntentV4 | BoundaryFactV4,
-    *,
-    assigned_chat: ChatId | None = None,
-) -> V4Transition | NeedChat:
-    """Pure v4 journal transition. File facts are lexical values; this does no I/O."""
-    state = states.get((fact.run_id, fact.attempt_id))
-    current_latest = latest.get(fact.run_id)
-    if isinstance(fact, BeginIntentV4):
-        if state is not None and not isinstance(state, V4AttemptState):
-            raise ValueError("native attempt cannot mix v3 and v4 rows")
-        if current_latest is not None and not isinstance(current_latest, BeginEventV4):
-            raise ValueError("native attempt cannot mix v3 and v4 rows")
-        if fact.operation == "fresh" and fact.requested_source is not None:
-            raise ValueError("fresh intent forbids a requested source")
-        if fact.operation != "fresh":
-            source = fact.requested_source
-            if source is None:
-                raise ValueError("resume/fork requires a recorded source")
-            binding = identity.native_bindings.get(native_key_tuple(source.key))
-            if (
-                binding is None
-                or binding.protocol != "v4"
-                or binding.conflict is not None
-                or binding.chat_id != source.ref.chat_id
-                or binding.binding_event_id != source.ref.binding_event_id
-                or not isinstance(binding.source, Pinned)
-                or binding.source.event_id != source.ref.locator_event_id
-                or binding.source.observation != source.locator
-            ):
-                raise ValueError("resume/fork requires the current unblocked recorded source")
-        if state is not None:
-            if state.begin.intent() != fact:
-                raise ValueError("attempt begin context is immutable")
-            return V4Transition(state, None)
-        number = current_latest.attempt_number if current_latest is not None else 0
-        event = BeginEventV4(**fact.model_dump(), attempt_number=number + 1)
-        return V4Transition(V4AttemptState(event), event)
-
-    if state is None or not isinstance(state, V4AttemptState):
-        raise ValueError("v4 boundary belongs to unknown or non-v4 attempt")
-    begin = state.begin
-    evidence = fact.evidence
-    if (fact.run_id, fact.attempt_id) != (begin.run_id, begin.attempt_id):
-        raise ValueError("boundary belongs to a different attempt")
-    if evidence.transport_scope_id != begin.transport_scope_id:
-        raise ValueError("observation is not owned by this transport attempt")
-    if fact.key.harness != begin.harness or fact.key.store != begin.store:
-        raise ValueError("observation differs from acquired harness/store")
-    if fact.boundary == "entry":
-        selection = evidence.selection
-        if (
-            selection is None
-            or selection.operation != begin.operation
-            or (
-                isinstance(selection, (ResumeSelection, ForkSelection))
-                and (
-                    begin.requested_source is None or selection.source != begin.requested_source.key
-                )
-            )
-        ):
-            raise ValueError("entry operation differs from immutable attempt intent")
-        requested = begin.requested_source
-        if begin.operation != "fresh" and requested is None:
-            raise ValueError("resume/fork entry lacks its recorded source")
-        if begin.operation == "resume" and requested is not None and fact.key != requested.key:
-            raise ValueError("resume entry does not match its recorded native source")
-        if (
-            begin.operation == "fork"
-            and requested is not None
-            and (fact.key == requested.key or not isinstance(selection, ForkSelection))
-        ):
-            raise ValueError("fork entry lacks a distinct target and recorded source")
-        if begin.operation == "fresh" and not isinstance(selection, CreatedSelection):
-            raise ValueError("fresh entry lacks fresh-target evidence")
-        if state.entry is not None:
-            if state.entry.fact == fact:
-                return V4Transition(state, None, state.entry.chat_id)
-            raise ValueError("attempt entry identity is immutable")
-        if state.exit is not None:
-            raise ValueError("entry cannot be assigned retroactively after exit")
-    elif state.entry is not None and evidence.order <= state.entry.fact.evidence.order:
-        raise ValueError("terminal boundary must follow accepted entry ordering evidence")
-    if current_latest is None or current_latest.attempt_id != fact.attempt_id:
-        raise ValueError("boundary fact belongs to a superseded attempt")
-
-    key_id = native_key_tuple(fact.key)
-    existing = identity.native_bindings.get(key_id)
-    if existing is not None and existing.conflict is not None:
-        raise ValueError("native binding is blocked by a source conflict")
-    if existing is not None and existing.protocol != "v4":
-        raise ValueError("v3 native bindings require explicit reconciliation")
-    chat = identity.key_to_chat.get(key_id)
-    if existing is None and chat is not None:
-        raise ValueError("legacy or v3 native binding requires explicit reconciliation")
-    if existing is None and assigned_chat is None:
-        return NeedChat()
-    if existing is None and assigned_chat in identity.refs:
-        raise ValueError("native claim on occupied chat alias")
-    if existing is not None and assigned_chat is not None and assigned_chat != existing.chat_id:
-        raise ValueError("native key is already bound to a different chat")
-    target_chat = existing.chat_id if existing is not None else assigned_chat
-    assert target_chat is not None
-    digest = boundary_digest_v4(fact)
-    binding = existing or NativeBinding(
-        target_chat, fact.key, digest, "v4", LocatorUnrecorded()
-    )
-    source = plan_source(binding, fact, mode="assign")
-    if isinstance(source, SourceBlocked):
-        if binding.store_guard is None:
-            raise AssertionError("source conflict requires an acquired store guard")
-        pinned_event_id = binding.source.event_id if isinstance(binding.source, Pinned) else None
-        conflict = LocatorConflictEvent(
-            run_id=fact.run_id,
-            attempt_id=fact.attempt_id,
-            fact=fact,
-            chat_id=binding.chat_id,
-            binding_event_id=binding.binding_event_id,
-            store_event_id=binding.store_guard.store_event_id,
-            locator_event_id=pinned_event_id,
-            reason=source.reason,
-        )
-        return V4Transition(
-            state, conflict, binding.chat_id, binding._replace(conflict=conflict), True
-        )
-    binding = source.binding
-    if fact.boundary == "exit" and state.exit is not None:
-        previous = state.exit.fact
-        if fact == previous or (
-            fact.key == previous.key and evidence.order > previous.evidence.order
-        ):
-            return V4Transition(state, None, state.exit.chat_id)
-        if fact.key != previous.key:
-            raise ValueError("v4 exit identity contradiction requires explicit refutation")
-        raise ValueError("changed same-key boundary fact at equal order is not a confirmation")
-    row = BoundaryEventV4(
-        run_id=fact.run_id, attempt_id=fact.attempt_id, fact=fact, chat_id=target_chat
-    )
-    next_state = V4AttemptState(
-        begin,
-        row if fact.boundary == "entry" else state.entry,
-        row if fact.boundary == "exit" else state.exit,
-    )
-    return V4Transition(next_state, row, target_chat, binding)
 
 
 @dataclass(frozen=True)
@@ -1569,7 +1637,7 @@ class _JournalBuilder:
     lifecycle: dict[str, SessionRecord] = field(default_factory=dict)
     lifecycle_ids: dict[str, dict[HarnessSessionId, None]] = field(default_factory=dict)
     metadata: _MetadataBuilder = field(default_factory=_MetadataBuilder)
-    attempts: dict[tuple[str, str], AttemptState | V4AttemptState] = field(default_factory=dict)
+    attempts: dict[tuple[str, str], AttemptState] = field(default_factory=dict)
     latest: dict[str, BeginEvent | BeginEventV4] = field(default_factory=dict)
     effective_exits: int = 0
 
@@ -1644,58 +1712,50 @@ def boundary_digest(fact: BoundaryFact) -> str:
 
 
 def fold_row(builder: _JournalBuilder, event: JournalEvent) -> None:
-    if isinstance(event, (BeginEventV4, BoundaryEventV4, LocatorConflictEvent)):
-        fact = event.intent() if isinstance(event, BeginEventV4) else event.fact
-        transition = plan_attempt_v4(
-            builder.attempts,
-            builder.latest,
-            builder.identity(),
-            fact,
-            assigned_chat=event.chat_id if isinstance(event, BoundaryEventV4) else None,
-        )
-        if isinstance(transition, NeedChat) or transition.row != event:
-            raise ValueError("Noncanonical or duplicate v4 native attempt row/assignment")
-        builder.attempts[(event.run_id, event.attempt_id)] = transition.state
-        if isinstance(event, BeginEventV4):
-            builder.latest[event.run_id] = event
-        if transition.binding is not None:
-            identity = transition.binding
-            key_id = native_key_tuple(identity.key)
-            builder.native_bindings[key_id] = identity
-            if isinstance(event, BoundaryEventV4):
-                delta = IdentityDelta(identity.chat_id, Operational(), identity.key)
-                builder.apply_identity(delta)
-        return
-    if isinstance(event, (BeginEvent, BoundaryEvent, Refutation)):
+    if isinstance(
+        event,
+        (
+            BeginEvent,
+            BeginEventV4,
+            BoundaryEvent,
+            BoundaryEventV4,
+            Refutation,
+            RefutationV4,
+            LocatorConflictEvent,
+        ),
+    ):
         fact = (
             event.intent()
-            if isinstance(event, BeginEvent)
-            else (event.fact if isinstance(event, BoundaryEvent) else event)
+            if isinstance(event, (BeginEvent, BeginEventV4))
+            else (
+                event.fact
+                if isinstance(event, (BoundaryEvent, BoundaryEventV4, LocatorConflictEvent))
+                else event
+            )
         )
         transition = plan_attempt(
             builder.attempt_view(),
             builder.identity(),
             fact,
-            assigned_chat=event.chat_id if isinstance(event, BoundaryEvent) else None,
+            assigned_chat=event.chat_id
+            if isinstance(event, (BoundaryEvent, BoundaryEventV4))
+            else None,
         )
         # A no-op is valid for live retry, never as a persisted duplicate row.
         if isinstance(transition, NeedChat) or transition.row != event:
             raise ValueError("Noncanonical or duplicate native attempt row/assignment")
         builder.attempts[(event.run_id, event.attempt_id)] = transition.state
-        if isinstance(event, BeginEvent):
+        if isinstance(event, (BeginEvent, BeginEventV4)):
             builder.latest[event.run_id] = event
         builder.effective_exits += transition.exit_delta
+        if transition.binding is not None:
+            builder.native_bindings[native_key_tuple(transition.binding.key)] = transition.binding
         delta = transition.identity
-        if isinstance(event, BoundaryEvent):
-            key_id = native_key_tuple(event.fact.key)
-            if key_id not in builder.native_bindings:
-                builder.native_bindings[key_id] = NativeBinding(
-                    event.chat_id,
-                    event.fact.key,
-                    boundary_digest(event.fact),
-                    "v3",
-                    LocatorUnrecorded(),
-                )
+        if isinstance(event, (BoundaryEvent, BoundaryEventV4)):
+            builder.apply_identity(delta)
+            return
+        if isinstance(event, LocatorConflictEvent):
+            return
     else:
         delta = plan_identity(builder.identity(), event)
         if isinstance(delta, NoOp):

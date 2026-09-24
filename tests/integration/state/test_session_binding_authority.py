@@ -290,13 +290,13 @@ def test_late_exit_contradiction_is_durable_and_invalidates_only_attempt(tmp_pat
     observe(root, receipt("run", "attempt", "entry", a))
     accepted = receipt("run", "attempt", "exit", a, order=3)
     observe(root, accepted)
-    assert observe(
-        root, receipt("run", "attempt", "exit", b, order=4)
-    ) == session_store.BoundaryAcceptance(None, True)
+    contradiction = observe(root, receipt("run", "attempt", "exit", b, order=4))
+    assert isinstance(contradiction, session_store.UnresolvedBoundary)
+    assert contradiction.reason == "exit_invalidated"
     journal = root / "sessions.jsonl"
     durable = journal.read_bytes()
     assert b'"action":"invalidate_exit"' in durable
-    assert observe(root, accepted).invalidated
+    assert isinstance(observe(root, accepted), session_store.UnresolvedBoundary)
     assert session_store.get_native_attempt_boundaries(root, "run", "attempt").exit_chat_id is None
     assert session_store.get_native_session_key(root, "c1") == a
     assert journal.read_bytes() == durable

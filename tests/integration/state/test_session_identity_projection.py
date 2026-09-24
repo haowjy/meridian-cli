@@ -494,7 +494,7 @@ def test_invalidation_retains_all_native_pins_and_high_water(tmp_path):
             ),
         }
     )
-    assert observe(tmp_path, contradiction).invalidated
+    assert isinstance(observe(tmp_path, contradiction), authority.UnresolvedBoundary)
     store.RuntimePaths.from_root_dir(tmp_path).session_id_counter.unlink()
     assert store.reserve_chat_id(tmp_path) == "c3"
     assert store.get_native_session_key(tmp_path, "c1") == entry.key

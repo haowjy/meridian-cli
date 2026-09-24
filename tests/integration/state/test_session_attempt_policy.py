@@ -148,7 +148,7 @@ def test_superseded_exit_can_be_refuted_without_assigning_old_boundaries(tmp_pat
     successor = observe(tmp_path, receipt("run", "new", "exit", key("/native/new")))
     assert observe(tmp_path, accepted).chat_id == pinned
     contradiction = receipt("run", "old", "exit", key("/native/conflict"), order=3)
-    assert observe(tmp_path, contradiction).invalidated
+    assert isinstance(observe(tmp_path, contradiction), authority.UnresolvedBoundary)
     assert store.get_native_attempt_boundaries(tmp_path, "run", "old").exit_invalidated
     assert (
         store.get_native_attempt_boundaries(tmp_path, "run", "new").exit_chat_id
@@ -157,7 +157,7 @@ def test_superseded_exit_can_be_refuted_without_assigning_old_boundaries(tmp_pat
     assert store.get_native_session_key(tmp_path, str(pinned)) == accepted.key
     before = (tmp_path / "sessions.jsonl").read_bytes()
     for observation in (accepted, contradiction):
-        assert observe(tmp_path, observation).invalidated
+        assert isinstance(observe(tmp_path, observation), authority.UnresolvedBoundary)
     with pytest.raises(ValueError):
         observe(tmp_path, receipt("run", "old", "entry", accepted.key))
     assert (tmp_path / "sessions.jsonl").read_bytes() == before
@@ -166,7 +166,10 @@ def test_superseded_exit_can_be_refuted_without_assigning_old_boundaries(tmp_pat
 def test_equal_order_different_key_refutes_exit(tmp_path: Path):
     begin(tmp_path, "run", "attempt")
     observe(tmp_path, receipt("run", "attempt", "exit", key("/native/one")))
-    assert observe(tmp_path, receipt("run", "attempt", "exit", key("/native/two"))).invalidated
+    assert isinstance(
+        observe(tmp_path, receipt("run", "attempt", "exit", key("/native/two"))),
+        authority.UnresolvedBoundary,
+    )
     assert store.get_native_session_key(tmp_path, "c1") == key("/native/one")
     assert store.get_native_session_key(tmp_path, "c2") is None
 
@@ -185,10 +188,10 @@ def test_same_key_finality_refutation_is_bounded_and_absorbing(tmp_path: Path):
         conflicting_key=accepted.key,
         causal_reference="input-gate-reopened-after-terminal",
     )
-    assert refute(tmp_path, refutation).invalidated
+    assert isinstance(refute(tmp_path, refutation), authority.UnresolvedBoundary)
     before = (tmp_path / "sessions.jsonl").read_bytes()
-    assert refute(tmp_path, refutation).invalidated
-    assert observe(tmp_path, accepted).invalidated
+    assert isinstance(refute(tmp_path, refutation), authority.UnresolvedBoundary)
+    assert isinstance(observe(tmp_path, accepted), authority.UnresolvedBoundary)
     assert (tmp_path / "sessions.jsonl").read_bytes() == before
     assert store.get_native_session_key(tmp_path, "c1") == accepted.key
 

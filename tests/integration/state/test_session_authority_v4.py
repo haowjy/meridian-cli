@@ -73,17 +73,15 @@ def _accept(
     fact: authority.BoundaryFactV4,
     chat_id: str | None = None,
 ) -> authority.V4AttemptEvent:
-    result = authority.plan_attempt_v4(
-        builder.attempts,
-        builder.latest,
+    result = authority.plan_attempt(
+        builder.attempt_view(),
         builder.identity(),
         fact,
         assigned_chat=chat_id,
     )
     if isinstance(result, authority.NeedChat):
-        result = authority.plan_attempt_v4(
-            builder.attempts,
-            builder.latest,
+        result = authority.plan_attempt(
+            builder.attempt_view(),
             builder.identity(),
             fact,
             assigned_chat=chat_id or "c1",
@@ -139,16 +137,14 @@ def test_v4_same_native_id_in_different_stores_gets_distinct_bindings() -> None:
         }
     )
     authority.fold_row(builder, second_begin)
-    row = authority.plan_attempt_v4(
-        builder.attempts,
-        builder.latest,
+    row = authority.plan_attempt(
+        builder.attempt_view(),
         builder.identity(),
         second_fact,
     )
     assert isinstance(row, authority.NeedChat)
-    accepted = authority.plan_attempt_v4(
-        builder.attempts,
-        builder.latest,
+    accepted = authority.plan_attempt(
+        builder.attempt_view(),
         builder.identity(),
         second_fact,
         assigned_chat="c2",
@@ -185,9 +181,7 @@ def test_v4_resume_begin_requires_exact_current_recorded_source() -> None:
         operation="resume",
         requested_source=source,
     )
-    transition = authority.plan_attempt_v4(
-        builder.attempts, builder.latest, builder.identity(), intent
-    )
+    transition = authority.plan_attempt(builder.attempt_view(), builder.identity(), intent)
     assert not isinstance(transition, authority.NeedChat)
     assert isinstance(transition.row, authority.BeginEventV4)
 
@@ -199,7 +193,7 @@ def test_v4_resume_begin_requires_exact_current_recorded_source() -> None:
         }
     )
     with pytest.raises(ValueError, match="current unblocked recorded source"):
-        authority.plan_attempt_v4(builder.attempts, builder.latest, builder.identity(), forged)
+        authority.plan_attempt(builder.attempt_view(), builder.identity(), forged)
 
 
 def test_v4_pending_can_pin_at_exit_and_exit_only_can_create_pin() -> None:
@@ -355,8 +349,12 @@ def test_v4_conflict_is_absorbing_and_does_not_allocate_another_chat(conflict_ki
     binding = builder.identity().native_bindings[authority.native_key_tuple(first_fact.key)]
     assert binding.conflict == conflict
     assert binding.chat_id == "c1"
-    with pytest.raises(ValueError, match="blocked"):
-        _accept(builder, _fact("exit", initial_obs, order=3))
+    blocked = authority.plan_attempt(
+        builder.attempt_view(), builder.identity(), _fact("exit", initial_obs, order=3)
+    )
+    assert isinstance(blocked, authority.AttemptTransition)
+    assert blocked.row is None
+    assert blocked.result == authority.UnresolvedBoundary("source_conflict")
     assert "c2" not in builder.identity().refs
 
 
@@ -378,8 +376,270 @@ def test_v4_conflict_target_is_replayed_against_prefix() -> None:
         with pytest.raises(ValueError, match="Noncanonical"):
             authority.fold_row(builder, forged)
     authority.fold_row(builder, expected)
-    with pytest.raises(ValueError, match="blocked"):
+    with pytest.raises(ValueError, match="Noncanonical or duplicate"):
         authority.fold_row(builder, expected)
+
+
+def test_v4_conflict_retry_is_blocked_without_a_row_and_duplicate_replay_fails() -> None:
+    entry = _fact("entry", _file("/native/store/one.jsonl", inode=10))
+    changed = _fact("exit", _file("/native/store/two.jsonl", inode=10, file_inode=22), order=2)
+    builder = _fold(_begin())
+    entry_row = _accept(builder, entry)
+    authority.fold_row(builder, entry_row)
+    conflict = _accept(builder, changed)
+    assert isinstance(conflict, authority.LocatorConflictEvent)
+    authority.fold_row(builder, conflict)
+
+    retry = authority.plan_attempt(builder.attempt_view(), builder.identity(), changed)
+    assert isinstance(retry, authority.AttemptTransition)
+    assert retry.row is None
+    assert retry.result == authority.UnresolvedBoundary("source_conflict")
+    changed_retry = changed.model_copy(
+        update={
+            "evidence": changed.evidence.model_copy(update={"order": 3, "correlation": "later"}),
+            "file": _file("/native/store/three.jsonl", inode=10, file_inode=23),
+        }
+    )
+    blocked_retry = authority.plan_attempt(
+        builder.attempt_view(), builder.identity(), changed_retry
+    )
+    assert isinstance(blocked_retry, authority.AttemptTransition)
+    assert blocked_retry.row is None
+    assert blocked_retry.result == authority.UnresolvedBoundary("source_conflict")
+    entry_retry = authority.plan_attempt(builder.attempt_view(), builder.identity(), entry)
+    assert isinstance(entry_retry, authority.AttemptTransition)
+    assert isinstance(entry_retry.result, authority.UnresolvedBoundary)
+    with pytest.raises(ValueError, match="Noncanonical or duplicate"):
+        authority.fold_row(builder, conflict)
+
+
+def test_v4_stale_source_fact_cannot_conflict_and_late_exit_refutes_without_allocating() -> None:
+    entry = _fact("entry", _file("/native/store/one.jsonl", inode=10))
+    accepted = _fact("exit", _file("/native/store/one.jsonl", inode=10), order=3)
+    stale = _fact("exit", _file("/native/store/two.jsonl", inode=10, file_inode=22), order=2)
+    builder = _fold(_begin())
+    authority.fold_row(builder, _accept(builder, entry))
+    authority.fold_row(builder, _accept(builder, accepted))
+    assert builder.effective_exits == 1
+    with pytest.raises(ValueError, match="predates"):
+        authority.plan_attempt(builder.attempt_view(), builder.identity(), stale)
+
+    # Establish Y independently, then report it against old owner's accepted X.
+    y_entry = entry.model_copy(
+        update={
+            "run_id": "other-run",
+            "attempt_id": "other-attempt",
+            "key": _key(session_id="y"),
+            "evidence": entry.evidence.model_copy(update={"transport_scope_id": "other-transport"}),
+        }
+    )
+    y_begin = authority.BeginEventV4(
+        run_id="other-run",
+        attempt_id="other-attempt",
+        transport_scope_id="other-transport",
+        harness="pi",
+        store="/native/store",
+        operation="fresh",
+        attempt_number=1,
+    )
+    authority.fold_row(builder, y_begin)
+    authority.fold_row(builder, _accept(builder, y_entry, chat_id="c2"))
+    successor = authority.BeginEventV4(
+        run_id="run",
+        attempt_id="successor",
+        transport_scope_id="successor-transport",
+        harness="pi",
+        store="/native/store",
+        operation="fresh",
+        attempt_number=2,
+    )
+    authority.fold_row(builder, successor)
+    contradiction = accepted.model_copy(
+        update={
+            "key": y_entry.key,
+            "evidence": accepted.evidence.model_copy(update={"order": 4, "correlation": "late-y"}),
+        }
+    )
+    transition = authority.plan_attempt(builder.attempt_view(), builder.identity(), contradiction)
+    assert isinstance(transition, authority.AttemptTransition)
+    assert isinstance(transition.row, authority.RefutationV4)
+    assert transition.exit_delta == -1
+    assert builder.identity().key_to_chat[authority.native_key_tuple(y_entry.key)] == "c2"
+    authority.fold_row(builder, transition.row)
+    state = builder.attempts[("run", "attempt")]
+    assert isinstance(state.invalidation, authority.RefutationV4)
+    assert builder.effective_exits == 0
+
+
+def test_v4_different_key_exit_contradiction_never_requests_chat_allocation() -> None:
+    builder = _fold(_begin())
+    accepted = _fact("exit", _file("/native/store/one.jsonl", inode=10), order=1)
+    authority.fold_row(builder, _accept(builder, accepted))
+    successor = authority.BeginEventV4(
+        run_id="run",
+        attempt_id="successor",
+        transport_scope_id="successor-transport",
+        harness="pi",
+        store="/native/store",
+        operation="fresh",
+        attempt_number=2,
+    )
+    authority.fold_row(builder, successor)
+    unbound = _fact(
+        "exit", _file("/native/store/unbound.jsonl", inode=20), order=2, session_id="unbound"
+    )
+    transition = authority.plan_attempt(builder.attempt_view(), builder.identity(), unbound)
+    assert isinstance(transition, authority.AttemptTransition)
+    assert isinstance(transition.row, authority.RefutationV4)
+    assert authority.native_key_tuple(unbound.key) not in builder.identity().key_to_chat
+    assert transition.binding is None
+
+
+def test_v4_invalidated_exit_checks_only_exact_or_later_same_key_source() -> None:
+    entry = _fact("entry", _file("/native/store/one.jsonl", inode=10))
+    exit_fact = _fact("exit", _file("/native/store/one.jsonl", inode=10), order=3)
+    builder = _fold(_begin())
+    authority.fold_row(builder, _accept(builder, entry))
+    authority.fold_row(builder, _accept(builder, exit_fact))
+    refutation = authority.RefutationV4(
+        run_id="run",
+        attempt_id="attempt",
+        transport_scope_id="transport",
+        target_event_id=authority.boundary_digest_v4(exit_fact),
+        order=4,
+        reason="finality_refuted",
+        conflicting_key=exit_fact.key,
+        causal_reference="terminal-reopened",
+    )
+    assert isinstance(
+        authority.decode_row(refutation.model_dump(mode="json")), authority.RefutationV4
+    )
+    authority.fold_row(builder, refutation)
+    later = _fact("exit", _file("/native/store/two.jsonl", inode=10, file_inode=22), order=5)
+    transition = authority.plan_attempt(builder.attempt_view(), builder.identity(), later)
+    assert isinstance(transition, authority.AttemptTransition)
+    assert isinstance(transition.row, authority.LocatorConflictEvent)
+    assert transition.result == authority.UnresolvedBoundary("exit_invalidated")
+    authority.fold_row(builder, transition.row)
+    state = builder.attempts[("run", "attempt")]
+    assert state.invalidation == refutation
+    assert builder.effective_exits == 0
+    assert (
+        builder.identity().native_bindings[authority.native_key_tuple(exit_fact.key)].conflict
+        is not None
+    )
+
+    stale = later.model_copy(update={"evidence": later.evidence.model_copy(update={"order": 2})})
+    # Owner/context is valid, but the invalidated classifier absorbs it without source authority.
+    retry = authority.plan_attempt(builder.attempt_view(), builder.identity(), stale)
+    assert isinstance(retry, authority.AttemptTransition)
+    assert retry.row is None
+    assert retry.result == authority.UnresolvedBoundary("exit_invalidated")
+
+
+def test_v3_and_v4_cannot_adopt_each_others_binding_but_unrelated_runs_coexist() -> None:
+    v4_fact = _fact("entry", _file("/native/store/one.jsonl", inode=10))
+    builder = _fold(_begin())
+    authority.fold_row(builder, _accept(builder, v4_fact))
+
+    v3_begin = authority.BeginIntent(
+        run_id="v3-run",
+        attempt_id="v3-attempt",
+        transport_scope_id="v3-transport",
+        harness="pi",
+        store="/native/store",
+        operation="resume",
+        requested_source=v4_fact.key,
+    )
+    with pytest.raises(ValueError, match="same-protocol"):
+        authority.plan_attempt(builder.attempt_view(), builder.identity(), v3_begin)
+    v3_target_intent = authority.BeginIntent(
+        run_id="v3-target",
+        attempt_id="v3-target-attempt",
+        transport_scope_id="v3-target-transport",
+        harness="pi",
+        store="/native/store",
+        operation="fresh",
+    )
+    authority.fold_row(
+        builder,
+        authority.BeginEvent(**v3_target_intent.model_dump(), attempt_number=1),
+    )
+    v3_target_fact = authority.BoundaryFact(
+        run_id="v3-target",
+        attempt_id="v3-target-attempt",
+        boundary="entry",
+        key=v4_fact.key,
+        evidence=authority.BoundaryEvidence(
+            transport_scope_id="v3-target-transport",
+            order=1,
+            correlation="v3-target-entry",
+            selection=authority.CreatedSelection(creation_request="create-v3-target"),
+        ),
+    )
+    with pytest.raises(ValueError, match="cross-protocol"):
+        authority.plan_attempt(builder.attempt_view(), builder.identity(), v3_target_fact)
+    unrelated = authority.BeginIntent(
+        run_id="other-v3",
+        attempt_id="other-attempt",
+        transport_scope_id="other-transport",
+        harness="pi",
+        store="/native/store",
+        operation="fresh",
+    )
+    assert isinstance(
+        authority.plan_attempt(builder.attempt_view(), builder.identity(), unrelated).row,
+        authority.BeginEvent,
+    )
+
+    # The opposite direction rejects both Begin-source adoption and assignment.
+    v3_native_key = _key(session_id="v3")
+    v3_fact = authority.BoundaryFact(
+        run_id="v3-source",
+        attempt_id="v3-source-attempt",
+        boundary="entry",
+        key=v3_native_key,
+        evidence=authority.BoundaryEvidence(
+            transport_scope_id="source-transport",
+            order=1,
+            correlation="v3-entry",
+            selection=authority.CreatedSelection(creation_request="create-v3"),
+        ),
+    )
+    v3_fresh = authority.BeginIntent(
+        run_id="v3-source",
+        attempt_id="v3-source-attempt",
+        transport_scope_id="source-transport",
+        harness="pi",
+        store="/native/store",
+        operation="fresh",
+    )
+    v3_begin_row = authority.BeginEvent(**v3_fresh.model_dump(), attempt_number=1)
+    authority.fold_row(builder, v3_begin_row)
+    accepted_v3 = authority.plan_attempt(
+        builder.attempt_view(), builder.identity(), v3_fact, assigned_chat="c2"
+    )
+    assert isinstance(accepted_v3, authority.AttemptTransition)
+    authority.fold_row(builder, accepted_v3.row)
+    v4_resume = authority.BeginIntentV4(
+        run_id="v4-resume",
+        attempt_id="v4-resume-attempt",
+        transport_scope_id="resume-transport",
+        harness="pi",
+        store="/native/store",
+        operation="resume",
+        requested_source=authority.RecordedNativeSource(
+            ref=authority.NativeSourceRef(
+                chat_id="c2",
+                binding_event_id=authority.boundary_digest(v3_fact),
+                locator_event_id="0" * 64,
+            ),
+            key=v3_native_key,
+            locator=_file("/native/store/v3.jsonl", inode=30),
+        ),
+    )
+    with pytest.raises(ValueError, match="same-protocol"):
+        authority.plan_attempt(builder.attempt_view(), builder.identity(), v4_resume)
 
 
 def test_v4_conflict_suppresses_legacy_key_and_effective_boundary_getters(tmp_path) -> None:
@@ -414,8 +674,10 @@ def test_v4_boundary_getter_checks_entry_and_exit_bindings_independently(
 
     if blocked_boundary == "entry":
         conflict_fact = _fact(
-            "exit", _file("/native/store/a2.jsonl", inode=10, file_inode=22),
-            order=2, session_id="a",
+            "exit",
+            _file("/native/store/a2.jsonl", inode=10, file_inode=22),
+            order=2,
+            session_id="a",
         )
         conflict = _accept(builder, conflict_fact)
         assert isinstance(conflict, authority.LocatorConflictEvent)
@@ -434,8 +696,10 @@ def test_v4_boundary_getter_checks_entry_and_exit_bindings_independently(
         authority.fold_row(builder, exit_row)
         rows.append(exit_row)
         conflict_fact = _fact(
-            "exit", _file("/native/store/b2.jsonl", inode=30, file_inode=32),
-            order=3, session_id="b",
+            "exit",
+            _file("/native/store/b2.jsonl", inode=30, file_inode=32),
+            order=3,
+            session_id="b",
         )
         conflict = _accept(builder, conflict_fact)
         assert isinstance(conflict, authority.LocatorConflictEvent)
@@ -443,9 +707,7 @@ def test_v4_boundary_getter_checks_entry_and_exit_bindings_independently(
         rows.append(conflict)
         expected = ("c1", None, False)
 
-    (tmp_path / "sessions.jsonl").write_text(
-        "".join(f"{row.model_dump_json()}\n" for row in rows)
-    )
+    (tmp_path / "sessions.jsonl").write_text("".join(f"{row.model_dump_json()}\n" for row in rows))
     assert session_store.get_native_attempt_boundaries(tmp_path, "run", "attempt") == expected
 
 

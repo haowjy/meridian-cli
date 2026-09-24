@@ -31,13 +31,10 @@ from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.liveness import is_process_alive_with_birth
 from meridian.lib.state.paths import RuntimePaths, normalize_path_for_write
 from meridian.lib.state.session_authority import (
-    AttemptBoundaries as AttemptBoundaries,
-)
-from meridian.lib.state.session_authority import (
+    AcceptedBoundary,
     AttemptFact,
+    AttemptResult,
     BeginIntent,
-    BoundaryEvent,
-    BoundaryEventV4,
     BoundaryFact,
     IdentityDelta,
     JournalRead,
@@ -51,11 +48,12 @@ from meridian.lib.state.session_authority import (
     plan_attempt,
     plan_identity,
     read_journal,
+    result_for_boundary,
     selection_startup_key,
     startup_key,
 )
 from meridian.lib.state.session_authority import (
-    BoundaryAcceptance as BoundaryAcceptance,
+    AttemptBoundaries as AttemptBoundaries,
 )
 from meridian.lib.state.session_authority import (
     ConversationModelSelection as ConversationModelSelection,
@@ -89,6 +87,12 @@ from meridian.lib.state.session_authority import (
 )
 from meridian.lib.state.session_authority import (
     SessionUpdateEvent as SessionUpdateEvent,
+)
+from meridian.lib.state.session_authority import (
+    UnresolvedBoundary as UnresolvedBoundary,
+)
+from meridian.lib.state.session_authority import (
+    V4AttemptEvent as V4AttemptEvent,
 )
 from meridian.lib.state.session_authority import (
     project_session_event as project_session_event,
@@ -183,7 +187,7 @@ def _commit_attempt(
     observation: BoundaryFact | Refutation | None = None,
     *,
     for_input: bool = False,
-) -> BoundaryAcceptance:
+) -> AttemptResult:
     """Coordinator-only persistence. Facts are not an authority-issuing API."""
     fact: AttemptFact = context if observation is None else observation
     paths = RuntimePaths.from_root_dir(runtime_root)
@@ -204,6 +208,8 @@ def _commit_attempt(
             chat = _allocate_binding_chat_id(paths, transaction)
             decision = plan_attempt(snapshot.attempts, snapshot.identity, fact, assigned_chat=chat)
         assert not isinstance(decision, NeedChat)
+        if for_input and not isinstance(decision.result, AcceptedBoundary):
+            raise ValueError("input unresolved: native boundary is not currently eligible")
         if decision.row is not None:
             _append_authority_event(paths.sessions_jsonl, transaction, decision.row)
         return decision.result
@@ -240,7 +246,7 @@ def _append_proposed_row(
 
 
 def _append_authority_event(
-    path: Path, transaction: _SessionTransaction, event: SessionAttemptEvent
+    path: Path, transaction: _SessionTransaction, event: SessionAttemptEvent | V4AttemptEvent
 ) -> None:
     """Append through the active transaction and resolve ambiguous writes."""
     try:
@@ -286,19 +292,12 @@ def get_native_attempt_boundaries(
         if state is None:
             return AttemptBoundaries(None, None, False)
         invalidated = state.invalidation is not None
-        def boundary_is_blocked(boundary: BoundaryEvent | BoundaryEventV4 | None) -> bool:
-            if boundary is None:
-                return False
-            binding = snapshot.identity.native_bindings.get(
-                native_key_tuple(boundary.fact.key)
-            )
-            return binding is not None and binding.conflict is not None
+        entry_result = result_for_boundary(snapshot.identity, state, state.entry)
+        exit_result = result_for_boundary(snapshot.identity, state, state.exit)
 
         return AttemptBoundaries(
-            state.entry.chat_id if state.entry and not boundary_is_blocked(state.entry) else None,
-            state.exit.chat_id
-            if state.exit and not invalidated and not boundary_is_blocked(state.exit)
-            else None,
+            entry_result.chat_id if isinstance(entry_result, AcceptedBoundary) else None,
+            exit_result.chat_id if isinstance(exit_result, AcceptedBoundary) else None,
             invalidated,
         )
 

@@ -352,7 +352,7 @@ async def test_terminal_contradiction_survives_failed_append_and_retries_before_
             with pytest.raises(OSError):
                 await old.commit_exit()  # Retry retained fact, not another observation.
         assert path.read_bytes() == before
-    assert (await old.commit_exit()).invalidated
+    assert isinstance(await old.commit_exit(), store.UnresolvedBoundary)
     assert old.boundaries().exit_invalidated
     assert new.boundaries().exit_chat_id == new_chat
     assert store.get_native_session_key(tmp_path, str(old_chat)) == key("native")

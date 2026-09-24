@@ -15,9 +15,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.state import session_store
 from meridian.lib.state.session_authority import (
+    AcceptedBoundary,
     AttemptBoundaries,
+    AttemptResult,
     BeginIntent,
-    BoundaryAcceptance,
     BoundaryEvidence,
     BoundaryFact,
     BoundedCorrelation,
@@ -124,7 +125,7 @@ class AttemptCoordinator:
         session_store._commit_attempt(self._root, self._context)
         await self._owner.initialize_without_input()
 
-    async def commit_entry(self) -> BoundaryAcceptance:
+    async def commit_entry(self) -> AttemptResult:
         self._entry = None
         self._retry_pending()
         witness = await self._owner.observe_entry()
@@ -133,7 +134,7 @@ class AttemptCoordinator:
         self._entry = fact
         return result
 
-    async def commit_exit(self) -> BoundaryAcceptance:
+    async def commit_exit(self) -> AttemptResult:
         self._closed = True
         retried = self._retry_pending()
         if retried is not None:
@@ -141,9 +142,7 @@ class AttemptCoordinator:
         # Terminal observation is single-flight, but refutation draining remains
         # independent and can make progress while close/observe is suspended.
         if self._exit_observation is None:
-            self._exit_observation = asyncio.create_task(
-                self._owner.close_and_observe_exit()
-            )
+            self._exit_observation = asyncio.create_task(self._owner.close_and_observe_exit())
         observation = self._exit_observation
         try:
             witness = await observation
@@ -192,12 +191,12 @@ class AttemptCoordinator:
             self._root, self._context.run_id, self._context.attempt_id
         )
 
-    def _retry_pending(self) -> BoundaryAcceptance | None:
+    def _retry_pending(self) -> AttemptResult | None:
         if self._pending_refutation is None and self._pending_terminal is None:
             return None
         # Refutation is admitted first, so a pending contradiction can never be
         # obscured by a terminal confirmation for the same exit.
-        result: BoundaryAcceptance | None = None
+        result: AttemptResult | None = None
         if self._pending_refutation is not None:
             refutation = self._pending_refutation
             result = session_store._commit_attempt(self._root, self._context, refutation)
@@ -227,4 +226,8 @@ class AttemptCoordinator:
             raise ValueError("input unresolved: no open durable entry")
         # A missing/replaced/corrupt file or failed sync cannot leave an in-memory
         # gate authorizing input. The transaction rechecks Begin and Entry.
-        session_store._commit_attempt(self._root, self._context, self._entry, for_input=True)
+        result = session_store._commit_attempt(
+            self._root, self._context, self._entry, for_input=True
+        )
+        if not isinstance(result, AcceptedBoundary):
+            raise ValueError("input unresolved: durable entry is no longer eligible")

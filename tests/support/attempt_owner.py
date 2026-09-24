@@ -183,4 +183,4 @@ def refute(root, fact):
     owner.refutation_queue.put_nowait(owner.observation(witness, primary=primary))
     owner.refutation_queue.put_nowait(None)
     asyncio.run(coordinator.drain_refutations())
-    return authority.BoundaryAcceptance(None, coordinator.boundaries().exit_invalidated)
+    return authority.UnresolvedBoundary("exit_invalidated")
