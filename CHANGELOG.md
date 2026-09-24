@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Add explicit, pure native-selection inspection ports for raw args and final executable selections; unregistered inspectors report unsupported, never absent/fresh.
+
 ### Fixed
 
 - Reconcile runner request, prepared surface, binding/spec/argv selectors, adapter, and runtime namespace before session scope; compose legacy missing preparation before effects and bind it privately after row creation.

@@ -28,6 +28,22 @@ Extension Projection section below.
 
 ## Contracts
 
+### Native Selection Inspection
+
+`HarnessProjectionPorts` in `harness/bundle.py` is the adapter-owned, pure
+inspection seam for native session identity. Optional `raw_selection` and
+`executable_selection` callbacks inspect independent raw arg vectors and final
+spec/argv/managed-recipe inputs respectively. Both receive a role
+(`SOURCE`, `CREATE_TARGET`, or `PENDING_FORK`) and return
+`NativeSelectionInspection`: `ABSENT` means no selector was expressed,
+`SELECTED` carries an exact native reference, while `UNKNOWN` and
+`UNSUPPORTED` are not fresh/absent. Missing callbacks explicitly return
+`UNSUPPORTED`; there is no parser fallback. `ExecutableSelectionInput.argv=None`
+represents paths such as SPEC_ONLY and must still be interpreted with its spec
+and managed recipe, never as evidence of a fresh session. Inspectors are
+deterministic and I/O-free; harness branches register their grammar when they
+land. Until then, callers must fail closed on unsupported inspection.
+
 ### Drift Guard (`_guards.py`)
 
 Each projector declares two frozensets at module level:

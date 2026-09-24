@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Generic, Protocol, TypeVar, cast
@@ -48,6 +49,71 @@ class ManagedPrimaryPreviewProjector(Protocol[ProjectorSpecT]):
     ) -> ManagedPrimaryPreview: ...
 
 
+class NativeSelectionRole(StrEnum):
+    """Meaning of a native session reference in a launch selection."""
+
+    SOURCE = "source"
+    CREATE_TARGET = "create_target"
+    PENDING_FORK = "pending_fork"
+
+
+class NativeSelectionStatus(StrEnum):
+    """Inspection outcome; only ABSENT means that no selection was expressed."""
+
+    ABSENT = "absent"
+    SELECTED = "selected"
+    UNKNOWN = "unknown"
+    UNSUPPORTED = "unsupported"
+
+
+@dataclass(frozen=True)
+class NativeSelectionInspection:
+    """One fail-closed result from a pure native-selection inspection."""
+
+    status: NativeSelectionStatus
+    native_ref: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.status is NativeSelectionStatus.SELECTED:
+            if not self.native_ref or not self.native_ref.strip():
+                raise ValueError("selected native session must have a non-empty reference")
+        elif self.native_ref is not None:
+            raise ValueError("only selected native sessions may carry a reference")
+
+
+@dataclass(frozen=True)
+class ExecutableSelectionInput(Generic[SpecT]):
+    """Final executable inputs, including explicit absence of projected argv.
+
+    ``argv=None`` is used by SPEC_ONLY paths; it is not evidence of a fresh
+    launch. The adapter callback must inspect the spec and managed recipe too.
+    """
+
+    spec: SpecT
+    argv: tuple[str, ...] | None
+    managed_recipe: object | None = None
+
+
+class RawSelectionInspector(Protocol):
+    """Deterministic, I/O-free inspection of one independent raw argument vector."""
+
+    def __call__(
+        self,
+        args: tuple[str, ...],
+        role: NativeSelectionRole,
+    ) -> NativeSelectionInspection: ...
+
+
+class ExecutableSelectionInspector(Protocol[SpecT]):
+    """Deterministic, I/O-free inspection of final spec/argv/managed recipe."""
+
+    def __call__(
+        self,
+        executable: ExecutableSelectionInput[SpecT],
+        role: NativeSelectionRole,
+    ) -> NativeSelectionInspection: ...
+
+
 @dataclass(frozen=True)
 class ManagedPrimaryProjectionPorts(Generic[SpecT, BootstrapPayloadT]):
     """Projection helpers for observer/controller-backed primary launches."""
@@ -63,6 +129,28 @@ class HarnessProjectionPorts(Generic[SpecT]):
 
     subprocess_cli_args: SubprocessProjector[SpecT]
     managed_primary: ManagedPrimaryProjectionPorts[SpecT, object] | None = None
+    raw_selection: RawSelectionInspector | None = None
+    executable_selection: ExecutableSelectionInspector[SpecT] | None = None
+
+    def inspect_raw_selection(
+        self,
+        args: tuple[str, ...],
+        role: NativeSelectionRole,
+    ) -> NativeSelectionInspection:
+        """Inspect raw args, distinguishing unsupported from an absent selector."""
+        if self.raw_selection is None:
+            return NativeSelectionInspection(NativeSelectionStatus.UNSUPPORTED)
+        return self.raw_selection(args, role)
+
+    def inspect_executable_selection(
+        self,
+        executable: ExecutableSelectionInput[SpecT],
+        role: NativeSelectionRole,
+    ) -> NativeSelectionInspection:
+        """Inspect final executable inputs; absent argv is passed through unchanged."""
+        if self.executable_selection is None:
+            return NativeSelectionInspection(NativeSelectionStatus.UNSUPPORTED)
+        return self.executable_selection(executable, role)
 
 
 @dataclass(frozen=True)
@@ -302,9 +390,13 @@ def project_managed_primary_preview(
 
 
 __all__ = [
+    "ExecutableSelectionInput",
     "HarnessBundle",
     "HarnessProjectionPorts",
     "ManagedPrimaryProjectionPorts",
+    "NativeSelectionInspection",
+    "NativeSelectionRole",
+    "NativeSelectionStatus",
     "get_bundle_registry",
     "get_connection_cls",
     "get_harness_bundle",
