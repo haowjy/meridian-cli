@@ -956,6 +956,72 @@ def test_bare_native_lookup_preserves_legacy_generations_and_historical_aliases(
     assert (tmp_path / "sessions.jsonl").read_bytes() == before
 
 
+def test_bare_native_lookup_retains_aliases_across_normalized_and_reused_generations(
+    tmp_path,
+) -> None:
+    first = authority.SessionStartEvent(
+        chat_id="c1", harness="pi", harness_session_id="A", session_instance_id="g",
+        model="test", started_at="now",
+    )
+    normalized_update = authority.SessionUpdateEvent(
+        chat_id="c1", session_instance_id=" g ", harness_session_id="B"
+    )
+    repeated_start = first.model_copy(update={"harness_session_id": "C", "harness": "claude"})
+    journal = tmp_path / "sessions.jsonl"
+    journal.write_text(
+        "".join(f"{row.model_dump_json()}\n" for row in (first, normalized_update, repeated_start)),
+        encoding="utf-8",
+    )
+
+    for native_id, expected_harness in (("A", "pi"), ("B", "pi"), ("C", "claude")):
+        result = session_store.lookup_native_id_candidates(tmp_path, native_id)
+        assert isinstance(
+            result, (session_store.NativeIdMatches, session_store.NativeIdAmbiguous)
+        )
+        assert any(
+            candidate.native_session_id == native_id
+            and candidate.harness == expected_harness
+            and candidate.chat_id == "c1"
+            for candidate in result.candidates
+        )
+
+
+@pytest.mark.parametrize(("lifecycle_harness", "lifecycle_id"), [("claude", "A"), ("pi", "B")])
+def test_bare_native_lookup_marks_selected_chat_lifecycle_contradiction_with_harness_filter(
+    tmp_path, lifecycle_harness: str, lifecycle_id: str
+) -> None:
+    begin = _begin()
+    fact = _fact("entry", _file("/native/store/session.jsonl", inode=10), session_id="A")
+    boundary = _accept(_fold(begin), fact, chat_id="c1")
+    lifecycle = authority.SessionStartEvent(
+        chat_id="c1",
+        harness=lifecycle_harness,
+        harness_session_id=lifecycle_id,
+        session_instance_id="g",
+        model="test",
+        started_at="now",
+    )
+    journal = tmp_path / "sessions.jsonl"
+    journal.write_text(
+        "".join(f"{row.model_dump_json()}\n" for row in (begin, boundary, lifecycle)),
+        encoding="utf-8",
+    )
+
+    result = session_store.lookup_native_id_candidates(tmp_path, "A", harness="pi")
+
+    assert isinstance(result, session_store.NativeIdMatches)
+    assert len(result.candidates) == 1
+    assert result.candidates[0].blocked == "selected_chat_conflict"
+
+
+def test_bare_native_lookup_does_not_return_negative_for_blank_input_before_replay(
+    tmp_path,
+) -> None:
+    (tmp_path / "sessions.jsonl").write_bytes(b'{"event":"start"')
+    with pytest.raises(ValueError, match="non-empty"):
+        session_store.lookup_native_id_candidates(tmp_path, " ")
+
+
 def test_bare_native_lookup_treats_legacy_plus_v4_as_ambiguous(tmp_path) -> None:
     session_store.start_session(tmp_path, "pi", "shared", "test", chat_id="c2")
     begin = _begin()

@@ -5,7 +5,7 @@ import os
 import re
 import uuid
 from contextlib import ExitStack, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import IO, Any, Literal, NamedTuple, cast
 
@@ -371,7 +371,7 @@ def lookup_native_id_candidates(
     """
     normalized_id = normalize_optional_identity(native_session_id)
     if normalized_id is None:
-        return NativeIdNoMatch()
+        raise ValueError("native session ID must be non-empty")
     harness_filter = harness.strip().lower() if harness is not None else None
     paths = RuntimePaths.from_root_dir(runtime_root)
     try:
@@ -415,8 +415,9 @@ def lookup_native_id_candidates(
             )
         )
 
-    for record in snapshot.lifecycle_generations:
-        record_harness = record.harness.strip().lower()
+    all_lifecycle_claims = snapshot.lifecycle_claims
+    for record in all_lifecycle_claims:
+        record_harness = record.harness
         if harness_filter is not None and record_harness != harness_filter:
             continue
         for alias in record.harness_session_ids:
@@ -427,14 +428,36 @@ def lookup_native_id_candidates(
                     record_harness,
                     None,
                     normalized_id,
-                    str(record.chat_id),
+                    record.chat_id,
                     "legacy_lifecycle",
                     None,
                     None,
                     "legacy_unverified",
-                    record.session_instance_id or None,
+                    record.generation,
                 )
             )
+
+    # A harness filter narrows matching candidates, not contradictory facts
+    # recorded against the selected chat. Preserve those contradictions on the
+    # pinned candidate so a singleton cannot be mistaken for a clean claim.
+    candidates = [
+        replace(candidate, blocked="selected_chat_conflict")
+        if candidate.provenance in {"v3", "v4"}
+        and candidate.blocked is None
+        and any(
+            claim.chat_id == candidate.chat_id
+            and (
+                any(alias != candidate.native_session_id for alias in claim.harness_session_ids)
+                or (
+                    candidate.native_session_id in claim.harness_session_ids
+                    and claim.harness != candidate.harness
+                )
+            )
+            for claim in all_lifecycle_claims
+        )
+        else candidate
+        for candidate in candidates
+    ]
 
     # Keep each generation/authority claim: a shared chat does not erase the
     # historical and legacy evidence needed by strict callers.

@@ -11,6 +11,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Retain compact lifecycle native-ID claims in the strict journal fold and
+  refuse candidate singletons contradicted by lifecycle evidence on that chat.
+
 - Add a strict, provenance-preserving bare native-ID candidate lookup over one
   locked `sessions.jsonl` replay; ambiguity and corrupt authority fail closed.
 

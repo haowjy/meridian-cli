@@ -1619,23 +1619,48 @@ class MetadataProjection:
 
 
 @dataclass(frozen=True)
-class JournalSnapshot:
-    identity: IdentityProjection
-    lifecycle: Mapping[str, SessionRecord]
-    lifecycle_generations: tuple[SessionRecord, ...]
-    metadata: MetadataProjection
-    attempts: AttemptProjection
-
-
-@dataclass(frozen=True)
 class JournalRead:
-    snapshot: JournalSnapshot
+    snapshot: "JournalSnapshot"
     valid_prefix_end: int
     tail: Literal["empty", "complete_without_delimiter", "torn"]
 
 
 class InvalidSessionJournal(ValueError):
     """Persisted session rows cannot form a complete authoritative snapshot."""
+
+
+@dataclass(frozen=True)
+class LifecycleClaim:
+    """Compact native-ID associations retained from strict lifecycle replay."""
+
+    chat_id: str
+    harness: str
+    generation: str | None
+    harness_session_ids: tuple[str, ...]
+    historical: bool = False
+
+
+@dataclass
+class _LifecycleClaimBuilder:
+    aliases: dict[str, None] = field(default_factory=dict)
+    historical: bool = False
+    generation: str | None = None
+
+
+@dataclass
+class _LifecycleGenerationState:
+    harness: str
+    session_instance_id: str
+    historical: bool = False
+
+
+@dataclass(frozen=True)
+class JournalSnapshot:
+    identity: IdentityProjection
+    lifecycle: Mapping[str, SessionRecord]
+    lifecycle_claims: tuple[LifecycleClaim, ...]
+    metadata: MetadataProjection
+    attempts: AttemptProjection
 
 
 def startup_key(event: SessionUpdateEvent | SessionModelSelectionEvent) -> StartupKey:
@@ -1729,7 +1754,12 @@ class _JournalBuilder:
     max_canonical_number: int = 0
     lifecycle: dict[str, SessionRecord] = field(default_factory=dict)
     lifecycle_ids: dict[str, dict[HarnessSessionId, None]] = field(default_factory=dict)
-    generations: dict[tuple[str, str], dict[str, SessionRecord]] = field(default_factory=dict)
+    lifecycle_claims: dict[tuple[str, str, str], _LifecycleClaimBuilder] = field(
+        default_factory=dict
+    )
+    lifecycle_states: dict[tuple[str, str], _LifecycleGenerationState] = field(
+        default_factory=dict
+    )
     latest_blank_generation: dict[str, str] = field(default_factory=dict)
     event_ordinal: int = 0
     metadata: _MetadataBuilder = field(default_factory=_MetadataBuilder)
@@ -1767,15 +1797,52 @@ class _JournalBuilder:
         )
 
     def fold_lifecycle(self, event: SessionEvent) -> None:
-        generation = event.session_instance_id
+        generation = _normalized_generation(event.session_instance_id)
         if not generation:
             if isinstance(event, SessionStartEvent):
                 self.latest_blank_generation[event.chat_id] = f"legacy:{self.event_ordinal}"
             generation = self.latest_blank_generation.get(event.chat_id, "")
-        project_session_event(
-            self.generations.setdefault((event.chat_id, generation), {}),
-            event,
-        )
+        generation_key = (event.chat_id, generation)
+        if isinstance(event, SessionHistoricalEvent):
+            if event.record.record_mode != "historical" or event.record.stopped_at is None:
+                raise ValueError("Historical imports must be inactive")
+            harness = event.record.harness.strip().lower()
+            claim = self.lifecycle_claims.setdefault(
+                (event.chat_id, generation, harness), _LifecycleClaimBuilder()
+            )
+            claim.historical = True
+            claim.generation = event.record.session_instance_id or None
+            claim.aliases.update(dict.fromkeys(event.record.harness_session_ids))
+            self.lifecycle_states[generation_key] = _LifecycleGenerationState(
+                harness, event.record.session_instance_id, historical=True
+            )
+        elif isinstance(event, SessionStartEvent):
+            harness = event.harness.strip().lower()
+            self.lifecycle_states[generation_key] = _LifecycleGenerationState(
+                harness, event.session_instance_id
+            )
+            claim = self.lifecycle_claims.setdefault(
+                (event.chat_id, generation, harness), _LifecycleClaimBuilder()
+            )
+            claim.generation = event.session_instance_id or None
+            if event.harness_session_id is not None:
+                claim.aliases.setdefault(event.harness_session_id, None)
+        elif isinstance(event, (SessionStopEvent, SessionUpdateEvent)):
+            state = self.lifecycle_states.get(generation_key)
+            if state is not None:
+                claim = self.lifecycle_claims[(event.chat_id, generation, state.harness)]
+                if state.historical and _generation_matches(
+                    state.session_instance_id, event.session_instance_id
+                ):
+                    raise ValueError("Historical session authority contains a mutation")
+                if (
+                    isinstance(event, SessionUpdateEvent)
+                    and event.harness_session_id is not None
+                ):
+                    claim.aliases.setdefault(event.harness_session_id, None)
+                if event.session_instance_id.strip():
+                    state.session_instance_id = event.session_instance_id
+                    claim.generation = event.session_instance_id
         self.event_ordinal += 1
         if isinstance(event, SessionStartEvent):
             self.lifecycle_ids[event.chat_id] = (
@@ -1806,7 +1873,16 @@ class _JournalBuilder:
                     for chat, record in self.lifecycle.items()
                 }
             ),
-            tuple(record for rows in self.generations.values() for record in rows.values()),
+            tuple(
+                LifecycleClaim(
+                    chat,
+                    harness,
+                    claim.generation,
+                    tuple(claim.aliases),
+                    claim.historical,
+                )
+                for (chat, _generation, harness), claim in self.lifecycle_claims.items()
+            ),
             self.metadata.snapshot(),
             AttemptProjection(
                 MappingProxyType(self.attempts), MappingProxyType(self.latest), self.effective_exits
