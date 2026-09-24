@@ -31,6 +31,7 @@ from meridian.lib.state.session_authority import (
     UnobservedSource,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.repository import SpawnStateQuarantined
 
 type NativePurpose = Literal["resume", "fork", "read", "context", "capture", "inspect"]
 type NativeUnavailableReason = Literal[
@@ -85,6 +86,8 @@ class AuthorizedSourceUse:
     operation: SourceUseOperation
     original_ref: str
     source: RecordedNativeSource
+    lookup_scope: Path
+    authority: session_store.NativeSourceUseSnapshot
     source_run_id: str | None = None
     source_attempt_id: str | None = None
     source_boundary_event_id: str | None = None
@@ -112,6 +115,99 @@ class SourceUseRefused:
 
 
 type SourceUseResult = AuthorizedSourceUse | UntrackedSourceUse | SourceUseRefused
+
+
+type SourceMetadataUnavailableReason = Literal[
+    "authority_mismatch",
+    "lifecycle_unavailable",
+    "lifecycle_mismatch",
+    "linked_spawn_missing",
+    "linked_spawn_invalid",
+    "linked_spawn_mismatch",
+    "snapshot_missing",
+    "snapshot_invalid",
+]
+
+
+@dataclass(frozen=True)
+class AuthorizedSourceMetadata:
+    """Metadata joined to one admitted source and its exact linked spawn row."""
+
+    admitted: AuthorizedSourceUse
+    lifecycle: session_store.SessionRecord
+    launch_policy_snapshot: LaunchPolicySnapshot
+    spawn_state_revision: int
+
+
+@dataclass(frozen=True)
+class SourceMetadataUnavailable:
+    """A bounded metadata join failed without changing source authorization."""
+
+    original_ref: str
+    reason: SourceMetadataUnavailableReason
+    field: str | None = None
+
+
+type AuthorizedSourceMetadataResult = AuthorizedSourceMetadata | SourceMetadataUnavailable
+
+
+def resolve_authorized_source_metadata(
+    admitted: AuthorizedSourceUse,
+) -> AuthorizedSourceMetadataResult:
+    """Resolve lifecycle and the exact linked policy row from retained authority.
+
+    This function deliberately performs no reference resolution, authority read,
+    discovery, recovery, or fallback. The caller retains and validates the
+    original lookup scope before invoking this bounded join.
+    """
+    source = admitted.source
+    authority = admitted.authority
+    chat_id = source.ref.chat_id
+    binding = authority.binding(chat_id)
+    expected = _recorded_source_from_binding(binding) if isinstance(
+        binding, OperationalBinding
+    ) else None
+    if expected != source:
+        return SourceMetadataUnavailable(admitted.original_ref, "authority_mismatch")
+
+    lifecycle = authority.journal.lifecycle.get(chat_id)
+    if lifecycle is None:
+        return SourceMetadataUnavailable(admitted.original_ref, "lifecycle_unavailable")
+    if (
+        lifecycle.record_mode != "live"
+        or lifecycle.chat_id != chat_id
+        or lifecycle.harness != source.key.harness
+        or lifecycle.harness_session_id != source.key.native_session_id
+        or not lifecycle.session_instance_id.strip()
+        or lifecycle.spawn_id is None
+        or not _SPAWN_REF_RE.fullmatch(lifecycle.spawn_id)
+    ):
+        return SourceMetadataUnavailable(admitted.original_ref, "lifecycle_mismatch")
+
+    try:
+        row = spawn_store.get_spawn(
+            admitted.lookup_scope, lifecycle.spawn_id, include_prompt=False
+        )
+    except (OSError, SpawnStateQuarantined):
+        return SourceMetadataUnavailable(admitted.original_ref, "linked_spawn_invalid")
+    if row is None:
+        return SourceMetadataUnavailable(admitted.original_ref, "linked_spawn_missing")
+    if (
+        row.record_mode != "live"
+        or row.id != lifecycle.spawn_id
+        or row.chat_id != chat_id
+        or row.session_instance_id != lifecycle.session_instance_id
+        or row.harness != source.key.harness
+        or row.harness_session_id != source.key.native_session_id
+    ):
+        return SourceMetadataUnavailable(admitted.original_ref, "linked_spawn_mismatch")
+
+    snapshot = row.launch_policy_snapshot
+    if snapshot is None:
+        return SourceMetadataUnavailable(admitted.original_ref, "snapshot_missing")
+    if snapshot.schema_version != 1 or snapshot.harness != source.key.harness:
+        return SourceMetadataUnavailable(admitted.original_ref, "snapshot_invalid")
+    return AuthorizedSourceMetadata(admitted, lifecycle, snapshot, row.state_revision)
 
 
 async def resolve_native_reference(
@@ -181,7 +277,9 @@ def resolve_source_use(
         authority = session_store.read_native_source_use_snapshot(runtime_root)
         if isinstance(authority, session_store.NativeIdUnavailable):
             return SourceUseRefused(operation, original_ref, "native_claim_unavailable")
-        resolved = _native_source_for_use(authority, operation, original_ref, ref)
+        resolved = _native_source_for_use(
+            runtime_root, authority, operation, original_ref, ref
+        )
         if isinstance(resolved, AuthorizedSourceUse):
             if harness is not None and resolved.source.key.harness != harness:
                 return SourceUseRefused(operation, original_ref, "harness_mismatch", ref)
@@ -223,7 +321,9 @@ def resolve_source_use(
     if len(candidates) != 1:
         return SourceUseRefused(operation, original_ref, "native_claim_ambiguous")
     candidate = candidates[0]
-    resolved = _native_source_for_use(authority, operation, original_ref, candidate.chat_id)
+    resolved = _native_source_for_use(
+        runtime_root, authority, operation, original_ref, candidate.chat_id
+    )
     if not isinstance(resolved, AuthorizedSourceUse):
         return resolved
     checked = _check_selected_native_claim(authority, operation, original_ref, resolved)
@@ -238,6 +338,7 @@ def resolve_source_use(
 
 
 def _native_source_for_use(
+    lookup_scope: Path,
     authority: session_store.NativeSourceUseSnapshot,
     operation: SourceUseOperation,
     original_ref: str,
@@ -251,7 +352,7 @@ def _native_source_for_use(
     source = _recorded_source_from_binding(binding)
     if source is None:
         return SourceUseRefused(operation, original_ref, "native_claim_blocked", chat_id)
-    return AuthorizedSourceUse(operation, original_ref, source)
+    return AuthorizedSourceUse(operation, original_ref, source, lookup_scope, authority)
 
 
 def _check_selected_native_claim(

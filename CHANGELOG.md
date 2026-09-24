@@ -6,6 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Retain admitted native source authority for exact linked-metadata reads; omit prompt bodies and fail closed on lifecycle or spawn mismatches.
+
 - Reconcile Claude raw model and effort duplicates against retained emitted controls
   in its bounded argument traversal; refuse unowned permission scalars and tool
   allows that conflict with mandatory Agent denials.

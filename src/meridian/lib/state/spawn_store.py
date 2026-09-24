@@ -757,11 +757,14 @@ def list_spawns(
 def get_spawn(
     runtime_root: Path,
     spawn_id: SpawnId | str,
+    *,
+    include_prompt: bool = True,
 ) -> SpawnRecord | None:
     """Return one spawn by ID.
 
-    Reads ``spawns/<id>/state.json`` and its prompt body without locking.
+    Reads ``spawns/<id>/state.json`` without locking and, by default, its prompt
+    body. Metadata-only callers can omit the prompt read.
     """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    return _read_state(paths.spawns_dir, str(spawn_id))
+    return _read_state(paths.spawns_dir, str(spawn_id), include_prompt=include_prompt)

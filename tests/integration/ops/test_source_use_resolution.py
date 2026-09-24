@@ -1,12 +1,17 @@
 """Strict normalization for native resume/fork sources."""
 
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
+from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.ops.reference import (
+    AuthorizedSourceMetadata,
     AuthorizedSourceUse,
+    SourceMetadataUnavailable,
     SourceUseRefused,
     UntrackedSourceUse,
+    resolve_authorized_source_metadata,
     resolve_source_use,
 )
 from meridian.lib.state import session_store, spawn_store
@@ -23,6 +28,131 @@ def test_chat_reference_returns_exact_authorized_source_and_original_ref(tmp_pat
     assert result.source.ref.chat_id == "c1"
     assert result.source.locator == locator
     assert result.source.key.native_session_id == "conversation"
+    assert result.lookup_scope == tmp_path
+    assert result.authority is not None
+
+
+def _linked_spawn_fixture(root: Path) -> tuple[AuthorizedSourceUse, LaunchPolicySnapshot]:
+    _pinned_journal(root)
+    admitted = resolve_source_use(root, "resume", "c1")
+    assert isinstance(admitted, AuthorizedSourceUse)
+    lifecycle = session_store.SessionRecord(
+        chat_id="c1",
+        kind="primary",
+        harness="pi",
+        harness_session_id="conversation",
+        harness_session_ids=(),
+        model="source-model",
+        agent="agent",
+        agent_path="",
+        skills=(),
+        skill_paths=(),
+        params=(),
+        started_at="2025-01-01T00:00:00Z",
+        stopped_at=None,
+        session_instance_id="generation-a",
+        spawn_id="p1",
+    )
+    snapshot = LaunchPolicySnapshot(
+        model="source-model", harness="pi", extra_args=("--from", "c1")
+    )
+    journal = replace(admitted.authority.journal, lifecycle={"c1": lifecycle})
+    authority = session_store.NativeSourceUseSnapshot(journal)
+    return replace(admitted, authority=authority), snapshot
+
+
+def test_authorized_metadata_uses_only_lifecycle_linked_spawn_without_prompt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    folds: list[int] = []
+    read_journal = session_store.read_journal
+
+    def count_folds(raw: bytes):
+        folds.append(len(raw))
+        return read_journal(raw)
+
+    monkeypatch.setattr(session_store, "read_journal", count_folds)
+    admitted, expected_snapshot = _linked_spawn_fixture(tmp_path)
+    reads: list[tuple[str, bool]] = []
+
+    def count_reads(root, spawn_id, *, include_prompt=True):
+        reads.append((str(spawn_id), include_prompt))
+        return rows[str(spawn_id)]
+
+    rows = {
+        "p1": spawn_store.SpawnRecord(
+            id="p1",
+            chat_id="c1",
+            session_instance_id="generation-a",
+            harness="pi",
+            harness_session_id="conversation",
+            launch_policy_snapshot=expected_snapshot,
+        ),
+        "p2": spawn_store.SpawnRecord(
+            id="p2",
+            chat_id="c1",
+            session_instance_id="generation-a",
+            harness="pi",
+            harness_session_id="conversation",
+            launch_policy_snapshot=LaunchPolicySnapshot(model="newer-model", harness="pi"),
+        ),
+    }
+
+    monkeypatch.setattr(spawn_store, "get_spawn", count_reads)
+    metadata = resolve_authorized_source_metadata(admitted)
+
+    assert isinstance(metadata, AuthorizedSourceMetadata)
+    assert metadata.launch_policy_snapshot == expected_snapshot
+    assert metadata.lifecycle.spawn_id == "p1"
+    assert metadata.spawn_state_revision >= 0
+    assert reads == [("p1", False)]
+    assert len(folds) == 1
+
+
+def test_authorized_metadata_fails_closed_on_missing_or_inconsistent_linked_row(
+    tmp_path: Path, monkeypatch
+) -> None:
+    admitted, _ = _linked_spawn_fixture(tmp_path)
+
+    monkeypatch.setattr(spawn_store, "get_spawn", lambda *args, **kwargs: None)
+    missing = resolve_authorized_source_metadata(admitted)
+    assert missing == SourceMetadataUnavailable("c1", "linked_spawn_missing")
+
+    wrong_store_admission = replace(admitted, lookup_scope=tmp_path / "other-store")
+    wrong_scope = resolve_authorized_source_metadata(wrong_store_admission)
+    assert wrong_scope == SourceMetadataUnavailable("c1", "linked_spawn_missing")
+
+
+def test_authorized_metadata_checks_exact_native_key_before_spawn_read(tmp_path: Path) -> None:
+    admitted, _ = _linked_spawn_fixture(tmp_path)
+    other_store_key = admitted.source.key.model_copy(update={"store": "/native/other"})
+    wrong_source = admitted.source.model_copy(update={"key": other_store_key})
+
+    result = resolve_authorized_source_metadata(replace(admitted, source=wrong_source))
+
+    assert result == SourceMetadataUnavailable("c1", "authority_mismatch")
+
+
+def test_authorized_metadata_rejects_linked_row_generation_mismatch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    admitted, snapshot = _linked_spawn_fixture(tmp_path)
+    monkeypatch.setattr(
+        spawn_store,
+        "get_spawn",
+        lambda *args, **kwargs: spawn_store.SpawnRecord(
+            id="p1",
+            chat_id="c1",
+            session_instance_id="older-generation",
+            harness="pi",
+            harness_session_id="conversation",
+            launch_policy_snapshot=snapshot,
+        ),
+    )
+
+    result = resolve_authorized_source_metadata(admitted)
+
+    assert result == SourceMetadataUnavailable("c1", "linked_spawn_mismatch")
 
 
 def test_bare_id_requires_clean_unique_v4_claim_and_harness_match(tmp_path: Path) -> None:

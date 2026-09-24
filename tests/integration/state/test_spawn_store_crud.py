@@ -93,6 +93,17 @@ def test_start_and_update_project_fields_round_trip(tmp_path: Path) -> None:
     assert row.runner_pid == 2222
 
 
+def test_get_spawn_can_omit_prompt_without_changing_default(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root, spawn_id="p1")
+
+    promptless = get_spawn(runtime_root, spawn_id, include_prompt=False)
+    ordinary = get_spawn(runtime_root, spawn_id)
+
+    assert promptless is not None and promptless.prompt is None
+    assert ordinary is not None and ordinary.prompt == "hello"
+
+
 def test_spawn_path_fields_are_normalized_at_write_boundary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
