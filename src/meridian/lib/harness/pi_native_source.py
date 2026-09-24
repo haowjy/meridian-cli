@@ -83,7 +83,12 @@ def read_pi_exact_content(source: RecordedNativeSource) -> PiExactContentResult:
     locator = source.locator
     root = Path(source.key.store)
     path = Path(locator.path)
-    if not root.is_absolute() or not path.is_absolute() or not _descendant(path, root):
+    if (
+        locator.rule != "pi_rpc_exact_v1"
+        or not root.is_absolute()
+        or not path.is_absolute()
+        or not _descendant(path, root)
+    ):
         return PiExactContentConflict("source_mismatch")
     try:
         with _open_directory(root) as root_fd:
