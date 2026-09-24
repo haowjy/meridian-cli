@@ -1635,6 +1635,10 @@ class JournalRead:
     tail: Literal["empty", "complete_without_delimiter", "torn"]
 
 
+class InvalidSessionJournal(ValueError):
+    """Persisted session rows cannot form a complete authoritative snapshot."""
+
+
 def startup_key(event: SessionUpdateEvent | SessionModelSelectionEvent) -> StartupKey:
     return (event.chat_id, event.session_instance_id, event.startup_attempt_id)
 
@@ -1907,9 +1911,9 @@ def read_journal(raw: bytes) -> JournalRead:
             payload: object = json.loads(line.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             if terminated:
-                raise ValueError(f"Corrupt sessions.jsonl row {index + 1}") from exc
+                raise InvalidSessionJournal(f"Corrupt sessions.jsonl row {index + 1}") from exc
             if builder.effective_exits or builder.native_bindings:
-                raise ValueError(
+                raise InvalidSessionJournal(
                     "Torn sessions tail may conceal native authority invalidation"
                 ) from None
             tail = "torn"
@@ -1917,7 +1921,9 @@ def read_journal(raw: bytes) -> JournalRead:
         try:
             fold_row(builder, decode_row(payload))
         except ValueError as exc:
-            raise ValueError(f"Invalid sessions.jsonl row {index + 1}: {exc}") from exc
+            raise InvalidSessionJournal(
+                f"Invalid sessions.jsonl row {index + 1}: {exc}"
+            ) from exc
         offset += len(line) + int(terminated)
         if not terminated:
             tail = "complete_without_delimiter"

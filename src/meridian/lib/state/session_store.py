@@ -41,6 +41,7 @@ from meridian.lib.state.session_authority import (
     BoundaryFactV4,
     Historical,
     IdentityDelta,
+    InvalidSessionJournal,
     JournalRead,
     JournalSnapshot,
     LocatorConflictEvent,
@@ -310,6 +311,16 @@ def get_native_session_key(runtime_root: Path, chat_id: str) -> NativeSessionKey
 
 
 def get_native_binding(runtime_root: Path, chat_id: str) -> NativeBindingStatus:
+    """Return binding status, converting invalid persisted authority to typed refusal."""
+    try:
+        return _get_native_binding(runtime_root, chat_id)
+    except InvalidSessionJournal:
+        # Replay rejected the whole snapshot; do not expose a prefix key or repair bytes.
+        normalized = ChatId(normalize_optional_identity(chat_id) or "")
+        return UnavailableBinding(normalized, "authority_invalid")
+
+
+def _get_native_binding(runtime_root: Path, chat_id: str) -> NativeBindingStatus:
     """Read confirmed native binding provenance without checking native storage.
 
     A returned operational value is journal authority only. In particular, a

@@ -866,7 +866,7 @@ def test_get_native_binding_returns_typed_legacy_and_blocked_status(tmp_path) ->
 @pytest.mark.parametrize(
     "bad_tail", [b"{", b'{"event":"native_attempt","v":4,"action":"future"}\n']
 )
-def test_native_binding_read_replays_strictly_and_refuses_bad_tail(
+def test_native_binding_read_types_invalid_journal_and_preserves_bad_tail(
     tmp_path, bad_tail: bytes
 ) -> None:
     begin = _begin()
@@ -879,7 +879,27 @@ def test_native_binding_read_replays_strictly_and_refuses_bad_tail(
     )
     journal.write_bytes(journal.read_bytes() + bad_tail)
 
-    with pytest.raises(ValueError):
+    before = journal.read_bytes()
+    assert session_store.get_native_binding(tmp_path, "c1") == authority.UnavailableBinding(
+        "c1", "authority_invalid"
+    )
+    assert journal.read_bytes() == before
+
+
+def test_native_binding_read_does_not_hide_durability_failure(tmp_path, monkeypatch) -> None:
+    begin = _begin()
+    fact = _fact("entry", _file("/native/store/session.jsonl", inode=10))
+    boundary = _accept(_fold(begin), fact)
+    journal = tmp_path / "sessions.jsonl"
+    journal.write_text(
+        f"{begin.model_dump_json()}\n{boundary.model_dump_json()}\n", encoding="utf-8"
+    )
+
+    def fail_sync(_fd: int) -> None:
+        raise OSError("persistent file sync failure")
+
+    monkeypatch.setattr(session_store.os, "fsync", fail_sync)
+    with pytest.raises(OSError, match="persistent file sync failure"):
         session_store.get_native_binding(tmp_path, "c1")
 
 

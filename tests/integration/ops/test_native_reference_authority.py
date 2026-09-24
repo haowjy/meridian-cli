@@ -102,6 +102,53 @@ def test_inspect_and_unavailable_refs_never_become_authorized_targets(tmp_path: 
     assert unavailable == reference.NativeUnavailable("c9", "read", "unknown_ref")
 
 
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "corrupt_prefix",
+        "complete_malformed",
+        "interior_corrupt",
+        "unsupported",
+        "duplicate_boundary",
+        "torn_tail",
+    ],
+)
+@pytest.mark.parametrize("purpose", ["read", "inspect"])
+def test_corrupt_journal_fails_whole_native_snapshot_closed(
+    tmp_path: Path, corruption: str, purpose: str
+) -> None:
+    _pinned_journal(tmp_path)
+    journal = tmp_path / "sessions.jsonl"
+    rows = journal.read_bytes().splitlines(keepends=True)
+    pinned = b"".join(rows)
+    invalid_row = b'{"event":"native_attempt","v":4,"action":"future"}\n'
+    if corruption == "corrupt_prefix":
+        raw = b'{"event":"native_attempt","v":5,"action":"begin"}\n' + pinned
+    elif corruption == "complete_malformed":
+        raw = pinned + invalid_row
+    elif corruption == "interior_corrupt":
+        raw = rows[0] + b'{"event":\n' + b"".join(rows[1:])
+    elif corruption == "unsupported":
+        raw = pinned + b'{"event":"native_attempt","v":5,"action":"begin"}\n'
+    elif corruption == "duplicate_boundary":
+        raw = pinned + rows[-1]
+    else:
+        raw = pinned + b'{"event":"native_attempt"'
+    journal.write_bytes(raw)
+
+    result = asyncio.run(
+        reference.resolve_native_reference(tmp_path, "c1", purpose=purpose)  # type: ignore[arg-type]
+    )
+
+    assert journal.read_bytes() == raw
+    if purpose == "inspect":
+        assert result == reference.NativeInspection(
+            "c1", authority.UnavailableBinding("c1", "authority_invalid")
+        )
+    else:
+        assert result == reference.NativeUnavailable("c1", "read", "authority_invalid")
+
+
 def test_v3_key_remains_occupied_but_cannot_authorize_reference_read(tmp_path: Path) -> None:
     from tests.support.attempt_owner import begin, key, observe, receipt
 

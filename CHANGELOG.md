@@ -86,6 +86,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   getters now confirm journal durability, and model writers refuse to recreate
   deleted runtime roots.
 
+### Fixed
+
+- Native reference resolution reports a typed `authority_invalid` refusal for
+  corrupt session journals without exposing a valid prefix or changing evidence.
+
 ## [0.6.6] - 2026-09-22
 
 ### Changed
