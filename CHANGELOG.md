@@ -17,6 +17,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Separate launch policy resolution from prepared-surface packaging so later
+  assembly can reuse one required resolved policy without rerouting.
+
 - Normalize bounded Codex primary raw `resume <UUID>` selectors and retain only
   validated transport-specific passthrough options.
 - Refuse Codex raw policy flags and ambiguous or unsafe scalar passthrough, and

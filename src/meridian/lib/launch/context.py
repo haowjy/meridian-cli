@@ -1027,18 +1027,16 @@ def _resolve_session_continuation(
     )
 
 
-def compile_prepared_policy_surface(
+def resolve_launch_policy_for_request(
     *,
     request: SpawnRequest,
     runtime: LaunchRuntime,
     project_root: Path,
     harness_registry: HarnessRegistry,
     catalog: CatalogSession,
-    active_work_dir: Path | None = None,
-    explicit_work_id: str | None = None,
     dry_run: bool = False,
-) -> PreparedPolicySurface:
-    """Compile the shared launch policy boundary before projector work."""
+) -> ResolvedLaunchPolicy:
+    """Resolve policy independently from assembling its prepared surface."""
 
     requested_task_cwd = runtime.resolved_requested_task_cwd or runtime.resolved_control_root
     project_paths = ProjectConfigPaths(
@@ -1089,6 +1087,24 @@ def compile_prepared_policy_surface(
         )
     )
 
+    return resolved_policy
+
+
+def assemble_prepared_policy_surface(
+    *,
+    resolved_policy: ResolvedLaunchPolicy,
+    runtime: LaunchRuntime,
+    project_root: Path,
+    active_work_dir: Path | None = None,
+    explicit_work_id: str | None = None,
+) -> PreparedPolicySurface:
+    """Package an already-resolved policy with stable launch inputs."""
+
+    requested_task_cwd = runtime.resolved_requested_task_cwd or runtime.resolved_control_root
+    project_paths = ProjectConfigPaths(
+        project_root=project_root.expanduser().resolve(),
+        execution_cwd=Path(requested_task_cwd).expanduser().resolve(),
+    )
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
     if active_work_dir is None:
         active_work_dir = _resolve_active_work_dir(
@@ -1102,6 +1118,36 @@ def compile_prepared_policy_surface(
         runtime_root=runtime_root,
         resolved_policy=resolved_policy,
         active_work_dir=active_work_dir,
+    )
+
+
+def compile_prepared_policy_surface(
+    *,
+    request: SpawnRequest,
+    runtime: LaunchRuntime,
+    project_root: Path,
+    harness_registry: HarnessRegistry,
+    catalog: CatalogSession,
+    active_work_dir: Path | None = None,
+    explicit_work_id: str | None = None,
+    dry_run: bool = False,
+) -> PreparedPolicySurface:
+    """Resolve policy, then package the shared boundary before projector work."""
+
+    resolved_policy = resolve_launch_policy_for_request(
+        request=request,
+        runtime=runtime,
+        project_root=project_root,
+        harness_registry=harness_registry,
+        catalog=catalog,
+        dry_run=dry_run,
+    )
+    return assemble_prepared_policy_surface(
+        resolved_policy=resolved_policy,
+        runtime=runtime,
+        project_root=project_root,
+        active_work_dir=active_work_dir,
+        explicit_work_id=explicit_work_id,
     )
 
 
