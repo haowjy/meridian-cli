@@ -935,6 +935,113 @@ class AttemptTransition:
     exit_delta: int = 0
 
 
+@dataclass(frozen=True)
+class _BoundaryDecision:
+    """Version-neutral phase result; wire rows and digests stay versioned."""
+
+    action: Literal[
+        "assign", "repeat", "repeat_entry", "invalidated", "confirm", "stale", "changed", "refute"
+    ]
+    refutation_reason: Literal["same_boundary_conflict", "identity_conflict"] | None = None
+
+
+def _validate_boundary_owner(
+    proposed: BoundaryFact | BoundaryFactV4,
+    *,
+    owner_scope: str,
+    owner_harness: str,
+    owner_store: str,
+) -> None:
+    if proposed.evidence.transport_scope_id != owner_scope:
+        raise ValueError("observation is not owned by this transport attempt")
+    if proposed.key.harness != owner_harness or proposed.key.store != owner_store:
+        raise ValueError("observation differs from acquired harness/store")
+
+
+def _classify_boundary_phase(
+    *,
+    owner_scope: str,
+    owner_harness: str,
+    owner_store: str,
+    latest_attempt_id: str | None,
+    entry_order: int | None,
+    accepted_entry: BoundaryFact | BoundaryFactV4 | None,
+    accepted_exit: BoundaryFact | BoundaryFactV4 | None,
+    invalidated: bool,
+    proposed: BoundaryFact | BoundaryFactV4,
+) -> _BoundaryDecision:
+    """Classify shared boundary ordering/retry policy before source or allocation.
+
+    Both frozen codecs expose the same phase evidence. Callers retain their typed
+    facts so digest and serialization semantics remain protocol-specific. The
+    later v4 cutover replaces its boundary branch with this classifier and routes
+    its refutation row through _validate_refutation_reason; no wire normalization
+    or v4 live writer belongs here.
+    """
+    evidence = proposed.evidence
+    _validate_boundary_owner(
+        proposed,
+        owner_scope=owner_scope,
+        owner_harness=owner_harness,
+        owner_store=owner_store,
+    )
+    if proposed.boundary == "entry":
+        if accepted_entry is not None:
+            if proposed == accepted_entry:
+                return _BoundaryDecision("repeat_entry")
+            raise ValueError("attempt entry identity is immutable")
+        if accepted_exit is not None:
+            raise ValueError("entry cannot be assigned retroactively after exit")
+        decision = _BoundaryDecision("assign")
+    else:
+        if entry_order is not None and evidence.order <= entry_order:
+            raise ValueError("terminal boundary must follow accepted entry ordering evidence")
+        if invalidated:
+            return _BoundaryDecision("invalidated")
+        if accepted_exit is None:
+            decision = _BoundaryDecision("assign")
+        elif proposed == accepted_exit:
+            return _BoundaryDecision("repeat")
+        else:
+            accepted_order = accepted_exit.evidence.order
+            if evidence.order < accepted_order:
+                return _BoundaryDecision("stale")
+            if proposed.key == accepted_exit.key:
+                if evidence.order > accepted_order:
+                    return _BoundaryDecision("confirm")
+                return _BoundaryDecision("changed")
+            return _BoundaryDecision(
+                "refute",
+                "same_boundary_conflict"
+                if evidence.order == accepted_order
+                else "identity_conflict",
+            )
+    if decision.action == "assign" and latest_attempt_id != proposed.attempt_id:
+        raise ValueError("boundary fact belongs to a superseded attempt")
+    return decision
+
+
+def _validate_refutation_reason(
+    *,
+    accepted_key: NativeSessionKey,
+    accepted_order: int,
+    reason: Literal["same_boundary_conflict", "identity_conflict", "finality_refuted"],
+    order: int,
+    conflicting_key: NativeSessionKey | None,
+) -> None:
+    """Common causal bounds for explicit and synthesized exit refutations."""
+    if reason == "finality_refuted":
+        if order < accepted_order:
+            raise ValueError("finality refutation must causally follow its named exit")
+    elif (
+        conflicting_key is None
+        or conflicting_key == accepted_key
+        or (reason == "same_boundary_conflict" and order != accepted_order)
+        or (reason == "identity_conflict" and order <= accepted_order)
+    ):
+        raise ValueError("identity refutation requires a different key at equal/later order")
+
+
 def plan_attempt(
     attempts: AttemptProjection,
     identity: IdentityProjection,
@@ -973,28 +1080,19 @@ def plan_attempt(
     if state is None or not isinstance(state, AttemptState):
         raise ValueError("boundary fact belongs to an unknown or unstarted attempt")
     begin = state.begin
-    scope = (
-        fact.transport_scope_id
-        if isinstance(fact, Refutation)
-        else fact.evidence.transport_scope_id
-    )
-    if scope != begin.transport_scope_id:
-        raise ValueError("observation is not owned by this transport attempt")
     if isinstance(fact, Refutation):
+        if fact.transport_scope_id != begin.transport_scope_id:
+            raise ValueError("observation is not owned by this transport attempt")
         accepted = state.exit
         if accepted is None or fact.target_event_id != boundary_digest(accepted.fact):
             raise ValueError("refutation does not name this attempt's accepted exit")
-        order = accepted.fact.evidence.order
-        if fact.reason == "finality_refuted":
-            if fact.order < order:
-                raise ValueError("finality refutation must causally follow its named exit")
-        elif (
-            fact.conflicting_key is None
-            or fact.conflicting_key == accepted.fact.key
-            or (fact.reason == "same_boundary_conflict" and fact.order != order)
-            or (fact.reason == "identity_conflict" and fact.order <= order)
-        ):
-            raise ValueError("identity refutation requires a different key at equal/later order")
+        _validate_refutation_reason(
+            accepted_key=accepted.fact.key,
+            accepted_order=accepted.fact.evidence.order,
+            reason=fact.reason,
+            order=fact.order,
+            conflicting_key=fact.conflicting_key,
+        )
         if state.invalidation is not None:
             return AttemptTransition(state, None, BoundaryAcceptance(None, True))
         return AttemptTransition(
@@ -1003,9 +1101,13 @@ def plan_attempt(
             BoundaryAcceptance(None, True),
             exit_delta=-1,
         )
+    _validate_boundary_owner(
+        fact,
+        owner_scope=begin.transport_scope_id,
+        owner_harness=begin.harness,
+        owner_store=begin.store,
+    )
     evidence = fact.evidence
-    if fact.key.harness != begin.harness or fact.key.store != begin.store:
-        raise ValueError("observation differs from acquired harness/store")
     if fact.boundary == "entry":
         selection = evidence.selection
         if (
@@ -1025,46 +1127,45 @@ def plan_attempt(
             raise ValueError("fork entry lacks distinct target and pinned source evidence")
         if begin.operation == "fresh" and not isinstance(selection, CreatedSelection):
             raise ValueError("fresh entry lacks fresh-target evidence")
-        if state.entry is not None:
-            if state.entry.fact == fact:
-                return AttemptTransition(state, None, BoundaryAcceptance(state.entry.chat_id))
-            raise ValueError("attempt entry identity is immutable")
-        if state.exit is not None:
-            raise ValueError("entry cannot be assigned retroactively after exit")
-    else:
-        if state.entry is not None and evidence.order <= state.entry.fact.evidence.order:
-            raise ValueError("terminal boundary must follow accepted entry ordering evidence")
-        if state.invalidation is not None:
-            return AttemptTransition(state, None, BoundaryAcceptance(None, True))
-        if state.exit is not None:
-            prior = state.exit.fact
-            if fact == prior or (fact.key == prior.key and evidence.order > prior.evidence.order):
-                return AttemptTransition(state, None, BoundaryAcceptance(state.exit.chat_id))
-            if evidence.order < prior.evidence.order:
-                raise ValueError("contradictory boundary fact predates accepted exit")
-            if fact.key == prior.key:
-                raise ValueError(
-                    "changed same-key boundary fact at equal order is not a confirmation"
-                )
-            # Normalize terminal contradictions into the very same Refutation path.
-            return plan_attempt(
-                attempts,
-                identity,
-                Refutation(
-                    run_id=fact.run_id,
-                    attempt_id=fact.attempt_id,
-                    transport_scope_id=evidence.transport_scope_id,
-                    target_event_id=boundary_digest(prior),
-                    order=evidence.order,
-                    reason="same_boundary_conflict"
-                    if evidence.order == prior.evidence.order
-                    else "identity_conflict",
-                    conflicting_key=fact.key,
-                    causal_reference=boundary_digest(fact),
-                ),
-            )
-    if latest is None or latest.attempt_id != fact.attempt_id:
-        raise ValueError("boundary fact belongs to a superseded attempt")
+    decision = _classify_boundary_phase(
+        owner_scope=begin.transport_scope_id,
+        owner_harness=begin.harness,
+        owner_store=begin.store,
+        latest_attempt_id=latest.attempt_id if latest is not None else None,
+        entry_order=(state.entry.fact.evidence.order if state.entry is not None else None),
+        accepted_entry=state.entry.fact if state.entry is not None else None,
+        accepted_exit=state.exit.fact if state.exit is not None else None,
+        invalidated=state.invalidation is not None,
+        proposed=fact,
+    )
+    if decision.action == "repeat_entry":
+        assert state.entry is not None
+        return AttemptTransition(state, None, BoundaryAcceptance(state.entry.chat_id))
+    if decision.action == "invalidated":
+        return AttemptTransition(state, None, BoundaryAcceptance(None, True))
+    if decision.action in ("repeat", "confirm"):
+        assert state.exit is not None
+        return AttemptTransition(state, None, BoundaryAcceptance(state.exit.chat_id))
+    if decision.action == "stale":
+        raise ValueError("contradictory boundary fact predates accepted exit")
+    if decision.action == "changed":
+        raise ValueError("changed same-key boundary fact at equal order is not a confirmation")
+    if decision.action == "refute":
+        assert state.exit is not None and decision.refutation_reason is not None
+        return plan_attempt(
+            attempts,
+            identity,
+            Refutation(
+                run_id=fact.run_id,
+                attempt_id=fact.attempt_id,
+                transport_scope_id=evidence.transport_scope_id,
+                target_event_id=boundary_digest(state.exit.fact),
+                order=evidence.order,
+                reason=decision.refutation_reason,
+                conflicting_key=fact.key,
+                causal_reference=boundary_digest(fact),
+            ),
+        )
     binding = plan_identity(identity, BindNative(fact.key), assigned_chat=assigned_chat)
     if isinstance(binding, NeedChat):
         return binding

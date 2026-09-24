@@ -13,6 +13,133 @@ from meridian.lib.state import session_store as store
 from tests.support.attempt_owner import begin, key, observe, receipt, refute
 
 
+def test_v3_attempt_wire_and_digest_goldens_are_frozen():
+    golden = json.loads(
+        (Path(__file__).parents[2] / "fixtures/native-attempt-v3-golden.json").read_text()
+    )
+    native_key = authority.NativeSessionKey(
+        harness="pi", store="/tmp/store", native_session_id="native"
+    )
+    intent = authority.BeginIntent(
+        run_id="run",
+        attempt_id="attempt",
+        transport_scope_id="transport",
+        harness="pi",
+        store="/tmp/store",
+        operation="fresh",
+    )
+    begin_row = authority.BeginEvent(**intent.model_dump(), attempt_number=1)
+    entry_fact = authority.BoundaryFact(
+        run_id="run",
+        attempt_id="attempt",
+        boundary="entry",
+        key=native_key,
+        evidence=authority.BoundaryEvidence(
+            transport_scope_id="transport",
+            order=1,
+            correlation="entry-1",
+            selection=authority.CreatedSelection(creation_request="create-1"),
+        ),
+    )
+    exit_fact = authority.BoundaryFact(
+        run_id="run",
+        attempt_id="attempt",
+        boundary="exit",
+        key=native_key,
+        evidence=authority.BoundaryEvidence(
+            transport_scope_id="transport",
+            order=2,
+            correlation="exit-1",
+            terminal_rule="terminal-1",
+        ),
+    )
+    entry_row = authority.BoundaryEvent(
+        run_id="run", attempt_id="attempt", fact=entry_fact, chat_id="c1"
+    )
+    exit_row = authority.BoundaryEvent(
+        run_id="run", attempt_id="attempt", fact=exit_fact, chat_id="c1"
+    )
+    refutation = authority.Refutation(
+        run_id="run",
+        attempt_id="attempt",
+        transport_scope_id="transport",
+        target_event_id=authority.boundary_digest(exit_fact),
+        order=3,
+        reason="finality_refuted",
+        conflicting_key=native_key,
+        causal_reference="terminal-reopened",
+    )
+
+    assert begin_row.model_dump_json() == golden["begin"]
+    assert entry_row.model_dump_json() == golden["entry"]
+    assert exit_row.model_dump_json() == golden["exit"]
+    assert refutation.model_dump_json() == golden["refutation"]
+    assert authority.boundary_digest(entry_fact) == golden["entry_digest"]
+    assert authority.boundary_digest(exit_fact) == golden["exit_digest"]
+
+
+@pytest.mark.parametrize("protocol", ["v3", "v4"])
+@pytest.mark.parametrize(
+    "case,order,key_suffix,invalidated,expected,reason",
+    [
+        ("assign", 4, "native", False, "assign", None),
+        ("repeat", 3, "native", False, "repeat", None),
+        ("confirm", 5, "native", False, "confirm", None),
+        ("stale", 2, "native", False, "stale", None),
+        ("changed", 3, "other", False, "refute", "same_boundary_conflict"),
+        ("later_conflict", 4, "other", False, "refute", "identity_conflict"),
+        ("absorbed", 2, "native", True, "invalidated", None),
+    ],
+)
+def test_common_boundary_phase_classifier(
+    protocol, case, order, key_suffix, invalidated, expected, reason
+):
+    def fact(boundary: str, fact_order: int, native_id: str):
+        evidence = authority.BoundaryEvidence(
+            transport_scope_id="transport",
+            order=fact_order,
+            correlation=f"{case}-{boundary}",
+            selection=(
+                authority.CreatedSelection(creation_request="create")
+                if boundary == "entry"
+                else None
+            ),
+            terminal_rule="terminal" if boundary == "exit" else None,
+        )
+        common = dict(
+            run_id="run",
+            attempt_id="attempt",
+            boundary=boundary,
+            key=authority.NativeSessionKey(
+                harness="pi", store="/tmp/store", native_session_id=native_id
+            ),
+            evidence=evidence,
+        )
+        if protocol == "v3":
+            return authority.BoundaryFact(**common)
+        return authority.BoundaryFactV4(
+            **common,
+            file=authority.NoFileObservation(kind="no_file_observation", reason="not_reported"),
+        )
+
+    entry = fact("entry", 1, "native")
+    accepted = fact("exit", 3, "native")
+    proposed = fact("exit", order, "native" if key_suffix == "native" else "other")
+    decision = authority._classify_boundary_phase(
+        owner_scope="transport",
+        owner_harness="pi",
+        owner_store="/tmp/store",
+        latest_attempt_id="attempt",
+        entry_order=entry.evidence.order,
+        accepted_entry=entry,
+        accepted_exit=None if case == "assign" else accepted,
+        invalidated=invalidated,
+        proposed=proposed,
+    )
+    assert decision.action == expected, case
+    assert decision.refutation_reason == reason, case
+
+
 def test_superseded_exit_can_be_refuted_without_assigning_old_boundaries(tmp_path: Path):
     begin(tmp_path, "run", "old")
     accepted = receipt("run", "old", "exit", key("/native/old"), order=2)

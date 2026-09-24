@@ -16,6 +16,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Extract common native-boundary phase, owner, ordering, retry, and refutation
+  validation for the frozen v3 reducer; pin v3 wire and digest goldens. Dormant
+  v4 live writing remains disabled and its reducer is not yet cut over.
+
 - Gate tracked Pi managed-extension turn notifications until the first admitted agent
   run; revoke pending delivery across selection changes and close while preserving
   ordinary untracked notification behavior. Cancel pending bash pings on a
