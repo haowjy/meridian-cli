@@ -44,7 +44,13 @@ from meridian.lib.harness.extractors.pi import (
     detect_pi_session_discovery_from_session_files,
     detect_pi_session_id_from_session_files,
 )
+from meridian.lib.harness.native_session_args import (
+    NativeSessionSurface,
+    NormalizedNativeSessionArgs,
+    normalize_native_session_args,
+)
 from meridian.lib.harness.pi_lifecycle_events import redact_pi_command_for_history
+from meridian.lib.harness.pi_native_source import normalize_pi_primary_session_args
 from meridian.lib.harness.pi_paths import (
     pi_agent_dir_env_override,
     pi_meridian_state_dir_env_override,
@@ -128,6 +134,11 @@ def _project_pi_subprocess_cli_args(
 
 class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """Pi harness implementation for native installed ``pi`` launches."""
+
+    def normalize_primary_session_args(
+        self, args: tuple[str, ...], surface: NativeSessionSurface
+    ) -> NormalizedNativeSessionArgs:
+        return normalize_native_session_args(args, surface, normalize_pi_primary_session_args)
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_PI_SUBPROCESS
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_PI

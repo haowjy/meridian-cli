@@ -4,6 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Pi primary argument validation errors no longer disclose rejected positional,
+  response-file, or unknown flag tokens; known bounded options retain useful
+  missing-value diagnostics without exposing values.
+
 ### Changed
 
 - Normalize bounded Codex primary raw `resume <UUID>` selectors and retain only
@@ -14,6 +20,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Normalize bounded Claude primary raw session selectors while preserving supported safe arguments.
 - Restrict raw OpenCode session selectors to native `ses_` IDs and sanitize argument-refusal diagnostics.
 - Normalize bounded OpenCode primary session selectors and refuse unsafe raw launch options.
+- Preserve Pi's bounded API-key, model, thinking, and system-prompt overrides while refusing native selectors and unrecognized raw options on both primary surfaces.
 - Add a typed primary-only adapter hook for fail-closed raw native-session argument normalization.
 - Include the selected subprocess or managed surface in native-session argument normalization.
 - Define a fail-closed adapter-local raw native-session normalization seam; remove dormant selection-inspection ports.

@@ -22,5 +22,20 @@ def test_registered_adapters_refuse_unhandled_primary_native_session_args(
     assert absent.selector is None
     assert absent.remaining_args == ()
 
-    with pytest.raises(ValueError, match="raw native session arguments are unsupported"):
+    with pytest.raises(ValueError):
         adapter.normalize_primary_session_args(("--resume", "session-id"), surface)
+
+
+@pytest.mark.parametrize("surface", SURFACES)
+def test_pi_adapter_retains_only_bounded_primary_overrides(surface: NativeSessionSurface) -> None:
+    adapter = HarnessRegistry.with_defaults().get(HarnessId("pi"))
+    args = ("--api-key", "secret", "--model=gpt-5.5", "-m", "gpt-5.4")
+    normalized = adapter.normalize_primary_session_args(args, surface)
+    assert normalized.selector is None
+    assert normalized.remaining_args == args
+
+    private_value = "SYNTHETIC_PRIVATE_PROFILE_VALUE"
+    with pytest.raises(ValueError, match="not in the bounded primary option set") as error:
+        adapter.normalize_primary_session_args(("--profile", private_value), surface)
+    assert "--profile" not in str(error.value)
+    assert private_value not in str(error.value)
