@@ -81,7 +81,11 @@ def normalize_pi_primary_session_args(
                 raise _pi_primary_arg_error(option, surface, "requires an unambiguous value")
             index += 2
             continue
-        raise _pi_primary_arg_error(option, surface, "is not in the bounded primary option set")
+        if option in _PRIMARY_VALUE_OPTIONS or option in _PRIMARY_SHORT_VALUE_OPTIONS:
+            raise _pi_primary_arg_error(option, surface, "requires a separate unambiguous value")
+        raise ValueError(
+            f"Pi {surface} primary arguments are not in the bounded primary option set"
+        )
 
     return NormalizedNativeSessionArgs(None, args)
 

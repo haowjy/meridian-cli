@@ -4,6 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Pi primary argument validation errors no longer disclose rejected positional,
+  response-file, or unknown flag tokens; known bounded options retain useful
+  missing-value diagnostics without exposing values.
+
 ### Changed
 
 - Preserve Pi's bounded API-key, model, thinking, and system-prompt overrides while refusing native selectors and unrecognized raw options on both primary surfaces.

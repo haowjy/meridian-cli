@@ -59,3 +59,33 @@ def test_pi_primary_normalizer_refuses_unbounded_or_selection_args(
     with pytest.raises(ValueError, match="Pi") as error:
         normalize_pi_primary_session_args(args, surface)
     assert "ses_secret" not in str(error.value)
+
+
+@pytest.mark.parametrize("surface", ["subprocess", "managed"])
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("SYNTHETIC_SECRET_POSITIONAL",),
+        ("@SYNTHETIC_SECRET_RESPONSE_FILE",),
+        ("--SYNTHETIC_SECRET_FLAG=value",),
+        ("SYNTHETIC_SECRET_TOKEN=value",),
+        ("--model=-SYNTHETIC_SECRET_VALUE",),
+        ("-m=SYNTHETIC_SECRET_VALUE",),
+    ],
+)
+def test_pi_primary_argument_errors_do_not_disclose_rejected_tokens(
+    args: tuple[str, ...], surface: NativeSessionSurface,
+) -> None:
+    with pytest.raises(ValueError) as error:
+        normalize_pi_primary_session_args(args, surface)
+    assert "SYNTHETIC_SECRET" not in str(error.value)
+
+
+@pytest.mark.parametrize("surface", ["subprocess", "managed"])
+def test_pi_primary_argument_error_keeps_known_option_and_missing_value(
+    surface: NativeSessionSurface,
+) -> None:
+    with pytest.raises(ValueError) as error:
+        normalize_pi_primary_session_args(("--model",), surface)
+    assert "--model" in str(error.value)
+    assert "requires an unambiguous value" in str(error.value)
