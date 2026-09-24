@@ -112,7 +112,10 @@ _CLAUDE_PRIMARY_VALUE_OPTIONS = frozenset(
     }
 )
 _CLAUDE_PRIMARY_SELECTOR_OPTIONS = frozenset({"--resume", "-r"})
-_MERIDIAN_SESSION_ALIAS = re.compile(r"^[cp]\d+$")
+_CLAUDE_NATIVE_SESSION_ID = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+_SAFE_OPTION_NAME = re.compile(r"^(?:--[A-Za-z][A-Za-z0-9-]*|-[A-Za-z])$")
 
 
 def normalize_primary_session_args(
@@ -132,10 +135,38 @@ def normalize_primary_session_args(
     remaining: list[str] = []
     index = 0
 
-    def value_after(option: str, value: str | None) -> str:
-        if value is None or not value.strip() or value.startswith("-"):
+    def value_after(
+        option: str, value: str | None, *, reject_option_like: bool = True
+    ) -> str:
+        if (
+            value is None
+            or not value.strip()
+            or (reject_option_like and value.startswith("-"))
+        ):
             raise ValueError(f"Claude primary option {option} requires an unambiguous value")
         return value
+
+    def native_session_id(option: str, value: str | None) -> str:
+        native_id = value_after(option, value)
+        if not _CLAUDE_NATIVE_SESSION_ID.fullmatch(native_id):
+            raise ValueError(
+                "Claude raw selector requires a canonical native UUID; "
+                "titles, paths, and latest-session selectors are unsupported"
+            )
+        return native_id
+
+    def unsupported_option(token: str) -> ValueError:
+        option = token.partition("=")[0]
+        if not _SAFE_OPTION_NAME.fullmatch(option):
+            return ValueError(
+                "Claude primary raw arguments contain malformed or unsupported syntax"
+            )
+        if option in {"--settings", "--profile"}:
+            return ValueError(
+                f"Claude primary option {option} is unsupported; "
+                "use Meridian's typed settings/profile configuration"
+            )
+        return ValueError(f"Claude primary raw arguments contain unsupported option {option}")
 
     while index < len(args):
         token = args[index]
@@ -146,9 +177,7 @@ def normalize_primary_session_args(
             if selector is not None:
                 raise ValueError("Claude primary raw arguments repeat a session selector")
             index += 1
-            native_id = value_after(token, args[index] if index < len(args) else None)
-            if _MERIDIAN_SESSION_ALIAS.fullmatch(native_id):
-                raise ValueError("Claude raw selector requires a native ID, not a Meridian alias")
+            native_id = native_session_id(token, args[index] if index < len(args) else None)
             selector = NativeSessionSelector("resume", native_id)
             index += 1
             continue
@@ -156,9 +185,7 @@ def normalize_primary_session_args(
         if token.startswith("--resume="):
             if selector is not None:
                 raise ValueError("Claude primary raw arguments repeat a session selector")
-            native_id = value_after("--resume", token.partition("=")[2])
-            if _MERIDIAN_SESSION_ALIAS.fullmatch(native_id):
-                raise ValueError("Claude raw selector requires a native ID, not a Meridian alias")
+            native_id = native_session_id("--resume", token.partition("=")[2])
             selector = NativeSessionSelector("resume", native_id)
             index += 1
             continue
@@ -189,7 +216,7 @@ def normalize_primary_session_args(
 
         option, separator, value = token.partition("=")
         if separator and option in _CLAUDE_PRIMARY_VALUE_OPTIONS:
-            value_after(option, value)
+            value_after(option, value, reject_option_like=False)
             remaining.append(token)
             index += 1
             continue
@@ -197,7 +224,7 @@ def normalize_primary_session_args(
             remaining.append(token)
             index += 1
             continue
-        raise ValueError("Claude primary raw arguments contain an unsupported option")
+        raise unsupported_option(token)
 
     if saw_fork and selector is None:
         raise ValueError("Claude --fork-session requires one explicit --resume ID")
