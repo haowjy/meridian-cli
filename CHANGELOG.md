@@ -13,6 +13,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Gate tracked Pi managed-extension turn notifications until the first admitted agent
+  run; revoke pending delivery across selection changes and close while preserving
+  ordinary untracked notification behavior.
+
 - Pi RPC now owns one launch-time stdout dispatcher with bounded event buffering and
   correlated state queries. Added explicit deferred prompt delivery and serialized
   switch/query operations; ordinary startup still sends its prompt immediately.
