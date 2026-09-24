@@ -134,11 +134,7 @@ from .resolve import (
     resolve_profile_path,
     resolve_skill_paths,
 )
-from .source_selection import (
-    PrimarySourceCheck,
-    check_primary_source_use,
-    is_primary_source_check,
-)
+from .source_selection import validate_primary_source_use
 from .spawn_guidance import build_guidance_blocks, build_spawn_usage_contract
 from .text_utils import sanitize_prior_output, strip_stale_report_paths
 from .workspace import resolve_workspace_snapshot_for_launch
@@ -286,7 +282,6 @@ class PreparedLaunchSurface:
     # Original launch request preserved for LaunchContext.request compatibility.
     # `request` carries the resolved request used by bind.
     launch_request: SpawnRequest | None = None
-    primary_source_check: PrimarySourceCheck | None = None
 
     @property
     def prompt_payload(self) -> PreparedPromptPayload:
@@ -1491,7 +1486,6 @@ def prepare_launch_surface(
     runtime: LaunchRuntime,
     prepared_policy: PreparedPolicySurface,
     launch_mode: LaunchMode | None = None,
-    primary_source_check: PrimarySourceCheck | None = None,
 ) -> PreparedLaunchSurface:
     """Resolve the expensive, spawn-stable launch surface."""
     project_paths = prepared_policy.project_paths
@@ -1723,7 +1717,6 @@ def prepare_launch_surface(
         model_selection=model_selection,
         alias_catalog=policies.alias_catalog,
         launch_request=request,
-        primary_source_check=primary_source_check,
     )
 
 
@@ -1795,6 +1788,51 @@ def bind_launch_context(
     project_root: Path,
     harness_registry: HarnessRegistry,
 ) -> LaunchContext:
+    """Validate an independently supplied prepared selection, then bind it."""
+    session = prepared.request.session
+    operation = (
+        "fork"
+        if session.continue_fork
+        or (session.primary_session_mode or "").strip().lower() == "fork"
+        else "resume"
+    )
+    actual_selector = (
+        bindings.forked_harness_session_id or prepared.seed_harness_session_id
+    )
+    if (
+        prepared.harness.id.value != (prepared.request.harness or "").strip().lower()
+    ):
+        raise ValueError("Prepared harness does not match the selected launch harness.")
+    validate_primary_source_use(
+        runtime_root=Path(runtime.runtime_root).expanduser().resolve(),
+        source_ref=session.continue_source_ref,
+        native_selector=actual_selector or session.requested_harness_session_id,
+        tracked_claim=(
+            session.continue_source_tracked
+            or session.recorded_native_source is not None
+        ),
+        recorded_source=session.recorded_native_source,
+        harness=prepared.request.harness,
+        operation=operation,
+        extra_args=prepared.request.extra_args,
+    )
+    return _bind_launch_context_impl(
+        prepared=prepared,
+        bindings=bindings,
+        runtime=runtime,
+        project_root=project_root,
+        harness_registry=harness_registry,
+    )
+
+
+def _bind_launch_context_impl(
+    *,
+    prepared: PreparedLaunchSurface,
+    bindings: RuntimeBindings,
+    runtime: LaunchRuntime,
+    project_root: Path,
+    harness_registry: HarnessRegistry,
+) -> LaunchContext:
     """Cheap materialization: env, cwd, spec, argv, permissions."""
 
     _ = (harness_registry, bindings.chat_id)
@@ -1818,40 +1856,6 @@ def bind_launch_context(
         project_paths.project_root, context_config
     )
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
-    session = prepared.request.session
-    tracked_claim = session.continue_source_tracked or session.recorded_native_source is not None
-    operation = (
-        "fork"
-        if session.continue_fork
-        or (session.primary_session_mode or "").strip().lower() == "fork"
-        else "resume"
-    )
-    expected_key = (
-        session.continue_source_ref,
-        session.requested_harness_session_id,
-        tracked_claim,
-        session.recorded_native_source,
-        prepared.request.harness,
-        operation,
-        prepared.request.extra_args,
-    )
-    check = prepared.primary_source_check
-    if (
-        check is None
-        or not is_primary_source_check(check)
-        or check.request_key != expected_key
-        or check.runtime_root != runtime_root
-    ):
-        check = check_primary_source_use(
-            runtime_root=runtime_root,
-            source_ref=session.continue_source_ref,
-            native_selector=session.requested_harness_session_id,
-            tracked_claim=tracked_claim,
-            recorded_source=session.recorded_native_source,
-            harness=prepared.request.harness,
-            operation=operation,
-            extra_args=prepared.request.extra_args,
-        )
     system_temp_root = Path(tempfile.gettempdir()).resolve()
     resolved_request = prepared.request
     harness = prepared.harness

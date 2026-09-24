@@ -51,19 +51,21 @@ snapshot, work, and task directory. Persisted `LaunchPolicySnapshot.model == ""`
 is legacy JSON for harness-default model; replay normalizes it to in-memory
 `None` in `policy_snapshot.py`, not in continue-specific callers.
 
-**Why the split?** The primary CLI path calls `bind_launch_context()` twice: once
-with `dry_run=True` for `--dry-run` display, then again with real spawn ID and paths.
-`prepare_launch_surface()` is expensive and safe to call once. `bind_launch_context()`
-is cheap and idempotent.
+**Why the split?** `launch_primary()` owns one source-use authorization before
+native source resolution, replay/model reads, and work materialization. It then
+prepares once and uses private binding assembly for preview; execution performs
+its own source revalidation before startup effects. Public `bind_launch_context()`
+validates the actual supplied selection on every independent call. Prepared
+surfaces carry no authorization evidence.
 
 ## Three Driving Adapters
 
 Three code paths enter the launch composition seam — each has a defined
 prepare/bind entry:
 
-1. **Primary CLI** (`launch/__init__.py:launch_primary()`): `prepare_launch_surface()`
-   once, then `bind_launch_context()` twice — first for dry-run display, second for
-   `run_harness_process()`.
+1. **Primary CLI** (`launch/__init__.py:launch_primary()`): authorize source intent,
+   resolve source-dependent replay, call `prepare_launch_surface()` once, and bind
+   preview through private assembly. `run_harness_process()` revalidates at execution.
 2. **Spawn subprocess** (`ops/spawn/execute.py`): `compose_spawn_launch_surface()`
    once per operation, then `bind_spawn_launch_context()` for preview and execute.
    Foreground and background paths converge at `launch_prepared_spawn()`.

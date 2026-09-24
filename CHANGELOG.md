@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Consolidate primary source authorization in synchronous launch preparation; remove transferable source proofs and duplicate CLI lookup. Public bind and runner execution revalidate independently.
+
 ### Fixed
 
 - Make primary authorization and replay share one session reference, resolve bare
@@ -14,10 +18,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - Move primary continue/fork native resolution and replay preparation into
-  `launch_primary`, after the launch owner's source check; retain the early CLI gate.
-
-- Reuse one primary source-use check across early preview and binding, and move
-  raw Pi session-option refusal semantics into the Pi adapter for spawn reuse.
+  `launch_primary` after its single source-use query; remove the redundant CLI lookup.
+- Reuse strict source-use policy at primary preparation, independent public bind,
+  and execution boundaries; prepared surfaces carry no transferable approval.
+- Keep raw Pi session-option refusal semantics in the Pi adapter for spawn reuse.
 - Correct OpenCode primary continuation coverage: genuinely untracked native IDs
   retain explicit models; mismatched or tracked aliases are refused.
 - Resolve each cN/bare source-use decision from one strict, non-repairing

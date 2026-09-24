@@ -201,13 +201,18 @@ def test_primary_source_use_aliases_refuse_before_launch(
     }
     expected_reason = "tracked_run_unresolved" if ref == "p1" else "transport_unqualified"
 
-    def fail_if_launch_runs(**kwargs: object) -> None:
-        _ = kwargs
-        pytest.fail("launch preparation ran before source authorization")
+    real_launch_primary = primary_launch_module.launch_primary
+    entered_owner = False
 
-    monkeypatch.setattr(primary_launch_module, "launch_primary", fail_if_launch_runs)
+    def enter_real_owner(**launch_kwargs: object) -> Any:
+        nonlocal entered_owner
+        entered_owner = True
+        return real_launch_primary(**launch_kwargs)
+
+    monkeypatch.setattr(primary_launch_module, "launch_primary", enter_real_owner)
     with pytest.raises(ValueError, match=expected_reason):
         run_primary_launch(**cast("Any", kwargs))
+    assert entered_owner
 
 
 def test_direct_launch_revalidates_source_before_native_resolution(
@@ -331,10 +336,12 @@ def test_primary_from_remains_fresh_and_does_not_use_source_authority(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
+    from meridian.lib.state import session_store
+
     requests = _record_primary_launch(monkeypatch)
     monkeypatch.setattr(
-        primary_launch_module,
-        "resolve_source_use",
+        session_store,
+        "read_native_source_use_snapshot",
         lambda *args, **kwargs: pytest.fail("--from must not enter source-use"),
     )
 
@@ -455,7 +462,6 @@ def test_primary_continue_maps_source_contract_to_launch_request(
         task_cwd=source_task_dir.as_posix(),
         launch_policy_snapshot=snapshot,
     )
-    _record_primary_launch(monkeypatch)
     with pytest.raises(ValueError, match="tracked_run_unresolved"):
         _run_primary_continue(project_root, "p41")
 
@@ -600,14 +606,14 @@ def test_primary_continue_with_stale_work_task_dir_falls_back_without_mutating_w
     if replacement == "file":
         source_task_dir.write_text("replacement", encoding="utf-8")
     contexts: list[Any] = []
-    real_bind_launch_context = launch_context.bind_launch_context
+    real_bind_launch_context = launch_context._bind_launch_context_impl
 
     def bind_launch_context(*args: Any, **kwargs: Any) -> Any:
         context = real_bind_launch_context(*args, **kwargs)
         contexts.append(context)
         return context
 
-    monkeypatch.setattr(launch_context, "bind_launch_context", bind_launch_context)
+    monkeypatch.setattr(launch_context, "_bind_launch_context_impl", bind_launch_context)
 
     with pytest.raises(ValueError, match="tracked_run_unresolved"):
         _run_primary_continue(project_root, "p46", dry_run=True)
@@ -663,11 +669,8 @@ def test_primary_continue_legacy_source_uses_persisted_context(
         task_cwd=source_task_dir.as_posix(),
         launch_policy_snapshot=None,
     )
-    requests = _record_primary_launch(monkeypatch)
-
     with pytest.raises(ValueError, match="tracked_run_unresolved"):
         _run_primary_continue(project_root, "p42")
-    assert requests == []
 
 
 def test_primary_exact_continue_without_source_task_ignores_ambient_task_dir(
@@ -688,14 +691,14 @@ def test_primary_exact_continue_without_source_task_ignores_ambient_task_dir(
         harness_model="openai/gpt-5.3-codex",
     )
     task_cwds: list[str | None] = []
-    real_bind_launch_context = launch_context.bind_launch_context
+    real_bind_launch_context = launch_context._bind_launch_context_impl
 
     def bind_launch_context(*args: Any, **kwargs: Any) -> Any:
         context = real_bind_launch_context(*args, **kwargs)
         task_cwds.append(context.resolved_request.task_cwd)
         return context
 
-    monkeypatch.setattr(launch_context, "bind_launch_context", bind_launch_context)
+    monkeypatch.setattr(launch_context, "_bind_launch_context_impl", bind_launch_context)
 
     launch_primary(
         project_root=project_root,
@@ -761,13 +764,11 @@ def test_fork_old_harness_generation_preserves_selected_history(
     )
     session_store.update_session_spawn_id(root, source, second)
     session_store.stop_session(root, source)
-    requests = _record_primary_launch(monkeypatch)
     with pytest.raises(ValueError, match="native_claim_blocked"):
         _run_primary_continue(
             project_root, continue_ref=None, fork_ref="older-native", dry_run=True
         )
     assert original is not None
-    assert requests == []
 
 
 def _opencode_continue_spec_model(
@@ -776,11 +777,21 @@ def _opencode_continue_spec_model(
     monkeypatch: pytest.MonkeyPatch,
     selection_source: str,
 ) -> str | None:
+    from meridian.lib.state import session_store
     from meridian.lib.state.session_store import ConversationModelSelection
 
     project_root = tmp_path / "repo"
     project_root.mkdir()
     _state_root(project_root)
+    snapshot_reads = 0
+    read_snapshot = session_store.read_native_source_use_snapshot
+
+    def count_snapshot_reads(*args: Any, **kwargs: Any) -> Any:
+        nonlocal snapshot_reads
+        snapshot_reads += 1
+        return read_snapshot(*args, **kwargs)
+
+    monkeypatch.setattr(session_store, "read_native_source_use_snapshot", count_snapshot_reads)
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="deepseek/deepseek-flash",
@@ -789,14 +800,14 @@ def _opencode_continue_spec_model(
         harness_model="deepseek/deepseek-flash",
     )
     spec_models: list[str | None] = []
-    real_bind_launch_context = launch_context.bind_launch_context
+    real_bind_launch_context = launch_context._bind_launch_context_impl
 
     def bind_launch_context(*args: Any, **kwargs: Any) -> Any:
         context = real_bind_launch_context(*args, **kwargs)
         spec_models.append(context.binding.spec.model)
         return context
 
-    monkeypatch.setattr(launch_context, "bind_launch_context", bind_launch_context)
+    monkeypatch.setattr(launch_context, "_bind_launch_context_impl", bind_launch_context)
 
     launch_primary(
         project_root=project_root,
@@ -824,8 +835,95 @@ def _opencode_continue_spec_model(
     )
 
     assert spec_models
+    assert snapshot_reads == 1
     return spec_models[0]
 
+
+
+def test_public_bind_refuses_forged_prepared_source_without_transferable_proof(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    from meridian.lib.launch.context import RuntimeBindings
+    from meridian.lib.state.paths import resolve_project_runtime_root
+    from meridian.lib.state.session_store import ConversationModelSelection
+
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _state_root(project_root)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="deepseek/deepseek-flash",
+        model_token="deepseek-flash",
+        harness=HarnessId.OPENCODE,
+        harness_model="deepseek/deepseek-flash",
+    )
+    prepared_values: list[tuple[Any, Any]] = []
+    real_prepare = launch_context.prepare_launch_surface
+
+    def capture_prepare(*args: Any, **kwargs: Any) -> Any:
+        prepared = real_prepare(*args, **kwargs)
+        prepared_values.append((prepared, kwargs["runtime"]))
+        return prepared
+
+    monkeypatch.setattr(launch_context, "prepare_launch_surface", capture_prepare)
+    launch_primary(
+        project_root=project_root,
+        request=LaunchRequest(
+            model="deepseek/deepseek-flash",
+            harness="opencode",
+            session_mode=SessionMode.RESUME,
+            dry_run=True,
+            session=SessionRequest(
+                requested_harness_session_id="raw-session",
+                continue_harness="opencode",
+                continue_source_ref="raw-session",
+                conversation_intent=ConversationModelSelection(
+                    requested_token="deepseek-flash",
+                    selected_token="deepseek",
+                    canonical_model_id="deepseek-flash",
+                    harness_model_id="deepseek/deepseek-flash",
+                    model_mode="named",
+                    selection_source="explicit_override",
+                ),
+            ),
+        ),
+        harness_registry=get_default_harness_registry(),
+    )
+    assert len(prepared_values) == 1
+    prepared, runtime = prepared_values[0]
+    assert not hasattr(prepared, "primary_source_check")
+
+    _write_v4_pin(resolve_project_runtime_root(project_root))
+    forged_session = prepared.request.session.model_copy(
+        update={
+            "continue_source_ref": "c1",
+            "requested_harness_session_id": "native-conversation",
+            "continue_source_tracked": False,
+            "recorded_native_source": None,
+        }
+    )
+    pi_harness = get_default_harness_registry().get_subprocess_harness(HarnessId.PI)
+    forged = replace(
+        prepared,
+        harness=pi_harness,
+        request=prepared.request.model_copy(
+            update={
+                "harness": "pi",
+                "session": forged_session,
+            }
+        ),
+    )
+    with pytest.raises(ValueError, match="source-use authorization refused"):
+        launch_context.bind_launch_context(
+            prepared=forged,
+            bindings=RuntimeBindings(spawn_id="forged"),
+            runtime=runtime,
+            project_root=project_root,
+            harness_registry=get_default_harness_registry(),
+        )
 
 def test_opencode_exact_continue_explicitly_requested_model_stays_in_spec(
     tmp_path: Path,
@@ -878,14 +976,14 @@ def test_primary_handler_preserves_observed_model_provenance_through_bind(
         continue_replay, "_observed_model_routes_to_harness", lambda *args: True
     )
     bound_contexts: list[Any] = []
-    real_bind = launch_context.bind_launch_context
+    real_bind = launch_context._bind_launch_context_impl
 
     def capture_bind(*args: Any, **kwargs: Any) -> Any:
         context = real_bind(*args, **kwargs)
         bound_contexts.append(context)
         return context
 
-    monkeypatch.setattr(launch_context, "bind_launch_context", capture_bind)
+    monkeypatch.setattr(launch_context, "_bind_launch_context_impl", capture_bind)
     output = _run_primary_continue(
         project_root, "raw-session", harness="opencode", dry_run=True
     )

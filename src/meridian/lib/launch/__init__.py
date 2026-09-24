@@ -97,11 +97,10 @@ def launch_primary(
     from meridian.lib.config.project_root import resolve_project_root_resolution
     from meridian.lib.core.context import resolve_runtime_context
     from meridian.lib.ops.runtime import resolve_runtime_root_for_read
-    from meridian.lib.state.paths import resolve_project_runtime_root_or_none
 
     from .context import (
         RuntimeBindings,
-        bind_launch_context,
+        _bind_launch_context_impl,
         compile_prepared_policy_surface,
         prepare_launch_surface,
     )
@@ -110,32 +109,29 @@ def launch_primary(
     from .types import LaunchResult
 
     resolved_project_root = resolve_project_root_resolution(project_root).project_root
-    # Library callers can bypass the CLI's source-use normalization. Revalidate
-    # the same session reference replay will consume; serialized booleans and
-    # source DTOs are not evidence that an input was genuinely untracked.
-    from meridian.lib.launch.source_selection import check_primary_source_use
+    from meridian.lib.launch.source_selection import validate_primary_source_use
 
-    tracked_claim = (
-        request.session.continue_source_tracked
-        or request.session.recorded_native_source is not None
-    )
+    original_session = request.session
+    original_source = (original_session.continue_source_ref or "").strip() or None
     operation = _primary_source_operation(request)
-    source_check = check_primary_source_use(
+    authorized_untracked_source = validate_primary_source_use(
         runtime_root=(
-            resolve_project_runtime_root_or_none(resolved_project_root)
+            resolve_runtime_root_for_read(resolved_project_root)
             or resolve_project_paths(resolved_project_root).root_dir
         ),
-        source_ref=request.session.continue_source_ref,
-        native_selector=request.session.requested_harness_session_id,
-        tracked_claim=tracked_claim,
-        recorded_source=request.session.recorded_native_source,
+        source_ref=original_session.continue_source_ref,
+        native_selector=original_session.requested_harness_session_id,
+        tracked_claim=(
+            original_session.continue_source_tracked
+            or original_session.recorded_native_source is not None
+        ),
+        recorded_source=original_session.recorded_native_source,
         harness=request.harness,
         operation=operation,
         extra_args=request.passthrough_args,
     )
     # Keep the source-dependent part of the primary CLI adapter here: this is
     # the first safe point for native session discovery and replay/model reads.
-    # The CLI's earlier authorization check remains in place during this move.
     if request.session.continue_source_ref is not None:
         request = _resolve_primary_source_request(
             request=request,
@@ -233,13 +229,42 @@ def launch_primary(
         active_work_dir=active_work_dir,
         dry_run=request.dry_run,
     )
+    if prepared_policy.resolved_policy.adapter.id.value == "pi":
+        from meridian.lib.harness.pi_native_source import reject_pi_native_source_options
+
+        # Check caller/replay-originated raw syntax once routing has identified Pi,
+        # before seed_session and system-argument normalization can consume it.
+        reject_pi_native_source_options(request.passthrough_args)
     prepared = prepare_launch_surface(
         request=spawn_request,
         runtime=runtime,
         prepared_policy=prepared_policy,
-        primary_source_check=source_check,
     )
-    preview_context = bind_launch_context(
+    from meridian.lib.launch.source_selection import normalize_effective_native_selection
+
+    final_session = prepared.request.session
+    final_operation = (
+        "fork"
+        if final_session.continue_fork
+        or (final_session.primary_session_mode or "").strip().lower() == "fork"
+        else "resume"
+    )
+    if (
+        (final_session.continue_source_ref or "").strip() != (original_source or "")
+        or final_operation != operation
+        or final_session.continue_source_tracked
+        or final_session.recorded_native_source is not None
+    ):
+        raise ValueError("Primary source selection changed during preparation; refusing launch.")
+    normalize_effective_native_selection(
+        original_source,
+        prepared.seed_harness_session_id or final_session.requested_harness_session_id,
+        authorized_native_id=getattr(authorized_untracked_source, "native_id", None),
+        tracked_claim=False,
+    )
+    if prepared.harness.id.value != (prepared.request.harness or "").strip().lower():
+        raise ValueError("Prepared harness does not match the authorized launch selection.")
+    preview_context = _bind_launch_context_impl(
         prepared=prepared,
         bindings=RuntimeBindings(
             spawn_id="dry-run-primary",

@@ -21,9 +21,7 @@ from meridian.lib.launch.continue_replay import (
 )
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.resolve import resolve_agent_launch_input
-from meridian.lib.ops.reference import AuthorizedSourceUse, SourceUseRefused, resolve_source_use
 from meridian.lib.ops.spawn.models import normalize_goal
-from meridian.lib.state.paths import resolve_project_runtime_root
 
 
 def _headless_claude_startup_warning(project_root: Path) -> str | None:
@@ -204,7 +202,6 @@ def run_primary_launch(
 
     continue_source_ref: str | None = None
     session_mode = SessionMode.FRESH
-    explicit_harness = harness.strip() if harness is not None and harness.strip() else None
     agent_launch = resolve_agent_launch_input(agent)
     agent_opt_out = agent_launch.agent_opt_out
     if resume_target is not None:
@@ -212,41 +209,9 @@ def run_primary_launch(
             raise ValueError("Cannot combine --continue with --skills.")
         if passthrough:
             raise ValueError("Cannot combine --continue with passthrough args (--).")
-        source_use = resolve_source_use(
-            resolve_project_runtime_root(project_root),
-            "resume",
-            resume_target,
-            explicit_harness,
-        )
-        if isinstance(source_use, AuthorizedSourceUse):
-            raise ValueError(
-                "Tracked primary continuation is unsupported: transport_unqualified. "
-                "The native TUI remains the primary surface; no RPC substitution is made."
-            )
-        if isinstance(source_use, SourceUseRefused):
-            raise ValueError(
-                f"Cannot continue source '{resume_target}': source-use authorization "
-                f"refused ({source_use.reason})."
-            )
         continue_source_ref = resume_target
         session_mode = SessionMode.RESUME
     elif selected_fork_target is not None:
-        source_use = resolve_source_use(
-            resolve_project_runtime_root(project_root),
-            "fork",
-            selected_fork_target,
-            explicit_harness,
-        )
-        if isinstance(source_use, AuthorizedSourceUse):
-            raise ValueError(
-                "Tracked primary fork is unsupported: transport_unqualified. "
-                "The native TUI remains the primary surface; no RPC substitution is made."
-            )
-        if isinstance(source_use, SourceUseRefused):
-            raise ValueError(
-                f"Cannot fork source '{selected_fork_target}': source-use authorization "
-                f"refused ({source_use.reason})."
-            )
         continue_source_ref = selected_fork_target
         session_mode = SessionMode.FORK
 

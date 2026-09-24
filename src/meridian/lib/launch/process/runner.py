@@ -75,7 +75,7 @@ from ..context import (
     LaunchContext,
     PreparedLaunchSurface,
     RuntimeBindings,
-    bind_launch_context,
+    _bind_launch_context_impl,
     build_launch_context,
 )
 from ..fork import materialize_fork
@@ -770,6 +770,27 @@ def run_harness_process(
     command = preview_context.binding.argv
     spawn_request = preview_context.request
     preview_request = preview_context.resolved_request
+    from meridian.lib.launch.source_selection import validate_primary_source_use
+
+    execution_selector = preview_context.binding.effective_harness_session_id
+    validate_primary_source_use(
+        runtime_root=runtime_root,
+        source_ref=preview_request.session.continue_source_ref,
+        native_selector=execution_selector,
+        tracked_claim=(
+            preview_request.session.continue_source_tracked
+            or preview_request.session.recorded_native_source is not None
+        ),
+        recorded_source=preview_request.session.recorded_native_source,
+        harness=preview_context.harness.id,
+        operation=(
+            "fork"
+            if preview_request.session.continue_fork
+            or (preview_request.session.primary_session_mode or "").strip().lower() == "fork"
+            else "resume"
+        ),
+        extra_args=preview_request.extra_args,
+    )
     if preview_request.session.recorded_native_source is not None:
         raise RuntimeError(
             "Tracked Pi source selection is ready, but execution is blocked until the "
@@ -931,7 +952,7 @@ def run_harness_process(
                         runtime_request.execution_policy.autocompact
                     )
                 if prepared is not None:
-                    runtime_context = bind_launch_context(
+                    runtime_context = _bind_launch_context_impl(
                         prepared=prepared,
                         bindings=RuntimeBindings(
                             spawn_id=str(primary_spawn_id),
