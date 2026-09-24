@@ -40,6 +40,22 @@ _TRANSCRIPT_TEXT_KEYS: tuple[str, ...] = (
 )
 _MAX_PREVIEW = 120
 
+# Native Pi journal records that this normalizer understands structurally.
+# Keep selection's completeness policy aligned with content normalization.
+PI_JOURNAL_ENTRY_TYPES = frozenset(
+    {
+        "message",
+        "compaction",
+        "branch_summary",
+        "custom_message",
+        "model_change",
+        "thinking_level_change",
+        "custom",
+        "label",
+        "session_info",
+    }
+)
+
 
 class ToolCall(NamedTuple):
     """Normalized tool invocation — harness-agnostic."""
@@ -774,23 +790,16 @@ class TranscriptNormalizer:
         native_entry = isinstance(entry_id, str) and "parentId" in event
         if not self.pi_session and not (
             native_entry
-            and event_type
-            in (
-                "message",
-                "compaction",
-                "branch_summary",
-                "custom_message",
-                "model_change",
-                "thinking_level_change",
-                "custom",
-                "label",
-                "session_info",
-            )
+            and isinstance(event_type, str)
+            and event_type in PI_JOURNAL_ENTRY_TYPES
             and (event_type != "message" or isinstance(event.get("message"), dict))
         ):
             return None
         if not native_entry and not isinstance(event_type, str):
-            return None
+            if not self.pi_session:
+                return None
+            self.rendering_reason = "Unsupported Pi journal entry; rendering is incomplete."
+            return NormalizedTranscriptEvent([])
         self.pi_session = True
         annotations: list[TranscriptMessage] = []
         if event_type == "message" and "message" not in event:
@@ -831,15 +840,7 @@ class TranscriptNormalizer:
             )
             if not isinstance(event.get("summary"), str):
                 self.rendering_reason = "Unsupported Pi branch summary; rendering is incomplete."
-        elif event_type not in (
-            "message",
-            "custom_message",
-            "model_change",
-            "thinking_level_change",
-            "custom",
-            "label",
-            "session_info",
-        ):
+        elif not isinstance(event_type, str) or event_type not in PI_JOURNAL_ENTRY_TYPES:
             self.rendering_reason = "Unsupported Pi journal entry; rendering is incomplete."
         return NormalizedTranscriptEvent([*annotations, *messages])
 

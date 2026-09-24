@@ -6,6 +6,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Added a standalone Pi native-journal reopen-default lineage projector with
+  qualified 0.87.1 legacy-v3 selection, shared entry-type recognition, and
+  explicit source completeness; exact native-source routing remains pending.
+
 - Added a process-scoped Pi session-boundary observer with bounded atomic state
   and digest-verified source-built bundle projection for identity-qualified RPC launches.
 - Added typed, strict native-session binding and attempt-boundary authority to
@@ -27,7 +31,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   locator states and one pure source decision; replay derives exact conflict rows
   from their triggering facts. Resolve entry and exit binding eligibility
   independently without enabling the v4 writer.
-
 - Gate tracked Pi managed-extension turn notifications until the first admitted agent
   run; revoke pending delivery across selection changes and close while preserving
   ordinary untracked notification behavior. Cancel pending bash pings on a
@@ -35,6 +38,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   selections preserve ordinary background-task reminders.
 - Bind managed-bash pings to their originating admission revision and drain them on
   replacement; repeat spawn-watch scans for the generation admitted during prior I/O.
+- Pi journal normalization validates event-type strings before set membership
+  and uses the canonical supported-type set after compaction/branch-summary
+  handling, avoiding malformed-value crashes and recognition-list drift. After
+  a Pi session header, malformed non-string types remain incomplete even when
+  entry identity fields are missing.
 
 - Pi RPC now owns one launch-time stdout dispatcher with bounded event buffering and
   correlated state queries. Added explicit deferred prompt delivery and serialized
