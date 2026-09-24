@@ -34,5 +34,8 @@ def test_pi_adapter_retains_only_bounded_primary_overrides(surface: NativeSessio
     assert normalized.selector is None
     assert normalized.remaining_args == args
 
-    with pytest.raises(ValueError, match="--profile"):
-        adapter.normalize_primary_session_args(("--profile", "private"), surface)
+    private_value = "SYNTHETIC_PRIVATE_PROFILE_VALUE"
+    with pytest.raises(ValueError, match="not in the bounded primary option set") as error:
+        adapter.normalize_primary_session_args(("--profile", private_value), surface)
+    assert "--profile" not in str(error.value)
+    assert private_value not in str(error.value)
