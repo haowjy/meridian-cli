@@ -76,8 +76,7 @@ function readInspectableLog(row: BashPanelRow, stream: BashLogStream = "combined
   return tailFile(filePath, 1024 * 1024).trimEnd() || "(no output yet)";
 }
 
-async function sendBackgroundPing(pi: ExtensionAPI, record: BashRecord, admission = notificationAdmission()): Promise<void> {
-  const revision = admission.revision;
+async function sendBackgroundPing(pi: ExtensionAPI, record: BashRecord, revision: number, admission = notificationAdmission()): Promise<void> {
   if (!admission.allows(revision)) return;
   await pi.sendMessage?.(
     {
@@ -209,7 +208,8 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
   const runtime = new BashRuntime({
     onForegroundStart: () => showForegroundHint(),
     onForegroundStop: () => clearForegroundHint(),
-    onBackgroundPing: (record) => sendBackgroundPing(pi, record, admission),
+    backgroundPingRevision: () => admission.revision,
+    onBackgroundPing: (record, revision) => sendBackgroundPing(pi, record, revision, admission),
   });
 
   // Capture setWidget from the first event context that provides UI.
@@ -220,7 +220,10 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
     }
   });
 
-  pi.on?.("session_before_switch", () => admission.suspend());
+  pi.on?.("session_before_switch", async () => {
+    admission.suspend();
+    await runtime.cancelBackgroundPings();
+  });
 
   pi.on?.("session_shutdown", async (event) => {
     const reason = (event as { reason?: string } | undefined)?.reason;

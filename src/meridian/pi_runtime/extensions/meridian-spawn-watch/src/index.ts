@@ -343,8 +343,11 @@ export class SpawnWatchRuntime {
     try {
       do {
         this.scanAgain = false;
+        // Each requested pass belongs to the generation current when that
+        // pass begins; a readmission during old I/O must not be consumed by it.
+        const revision = this.admission.revision;
+        if (!this.admission.allows(revision)) continue;
         await Promise.all([this.scanSpawns(revision), this.scanBashRecords(revision)]);
-        if (!this.admission.allows(revision)) this.suspendNotifications();
       } while (this.scanAgain);
     } finally {
       this.scanRunning = false;

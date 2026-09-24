@@ -28,6 +28,9 @@ not an event transport. It writes only `ready`, `quit_candidate`, or sticky
   source changes; launch projection may otherwise use an installed bundle.
 - Import Pi packages only from their package roots; extension-loader subpath
   imports are not reliable.
+- Tracked RPC notification sends require the shared admission gate; capture the
+  run revision before async work and revalidate at send. See [notification
+  admission](.context/CONTEXT.md#extension-responsibilities) for the contract.
 
 ## Depth
 

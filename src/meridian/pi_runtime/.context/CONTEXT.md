@@ -54,7 +54,9 @@ never a chat or admitted entry. The process-scoped gate starts closed, releases 
 first owner-initiated `agent_start`, and revokes queued/in-flight notification work on
 session replacement, reload, or close. B3c launch projection must require and pass this
 capability for every tracked RPC and reject a missing capability before child exec; do
-not infer tracked mode from cN or ambient environment inheritance. Unqualified native
+not infer tracked mode from cN or ambient environment inheritance. Generation-tagged
+notification work may finish persistence after replacement, but must not send across
+the replacement boundary. Unqualified native
 TUI/RPC continues with ordinary extension behavior. While tracked and closed, spawn-watch
 does not startup-scan; it resumes discovery after each admitted run. Every managed
 extension capable of `sendMessage({triggerTurn:true})` must share this same admission gate.
