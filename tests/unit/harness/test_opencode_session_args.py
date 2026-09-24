@@ -2,6 +2,8 @@
 
 import pytest
 
+from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
+from meridian.lib.harness.native_session_args import PrimaryArgControls
 from meridian.lib.harness.opencode import normalize_primary_session_args
 
 
@@ -64,6 +66,76 @@ def test_managed_accepts_only_global_logging_flags_and_session_selector() -> Non
     assert result.selector is not None
     assert result.selector.native_id == "ses_native"
     assert result.remaining_args == ("--print-logs", "--log-level", "WARN")
+
+
+@pytest.mark.parametrize("generated_model", ["openai/model-a", "openai/model-b"])
+@pytest.mark.parametrize(
+    "raw",
+    [
+        ("--model", "openai/model-a"),
+        ("--model=openai/model-b",),
+        ("-m", "openai/model-a"),
+        ("--agent", "generated-agent"),
+        ("--variant", "generated-variant"),
+    ],
+)
+def test_managed_serve_refuses_run_only_flags_even_with_generated_controls(
+    generated_model: str, raw: tuple[str, ...]
+) -> None:
+    controls = PrimaryArgControls(
+        model=generated_model,
+        model_controlled=True,
+        execution_policy=ResolvedExecutionPolicy(effort="high"),
+    )
+
+    with pytest.raises(ValueError, match="opencode serve") as error:
+        normalize_primary_session_args(raw, surface="managed", controls=controls)
+    assert "generated-agent" not in str(error.value)
+    assert "generated-variant" not in str(error.value)
+    assert generated_model not in str(error.value)
+
+
+def test_managed_logging_with_controls_preserves_exact_order_and_spelling() -> None:
+    controls = PrimaryArgControls(
+        model="openai/generated",
+        model_controlled=True,
+        execution_policy=ResolvedExecutionPolicy(effort="high"),
+    )
+    args = ("--log-level=INFO", "--print-logs", "--log-level", "WARN")
+
+    result = normalize_primary_session_args(args, surface="managed", controls=controls)
+
+    assert result.remaining_args == args
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("--continue",),
+        ("-c",),
+        ("--session", "PRIVATE_SESSION_SENTINEL"),
+        ("--PRIVATE_UNKNOWN_SENTINEL", "PRIVATE_VALUE_SENTINEL"),
+    ],
+)
+def test_managed_selector_and_unknown_refusals_do_not_disclose_values(
+    args: tuple[str, ...],
+) -> None:
+    controls = PrimaryArgControls(
+        model="openai/generated",
+        model_controlled=True,
+        execution_policy=ResolvedExecutionPolicy(),
+    )
+
+    with pytest.raises(ValueError) as error:
+        normalize_primary_session_args(args, surface="managed", controls=controls)
+
+    secrets = (
+        "PRIVATE_SESSION_SENTINEL",
+        "PRIVATE_UNKNOWN_SENTINEL",
+        "PRIVATE_VALUE_SENTINEL",
+    )
+    for secret in secrets:
+        assert secret not in str(error.value)
 
 
 def test_normalization_without_selector_preserves_supported_subprocess_options() -> None:

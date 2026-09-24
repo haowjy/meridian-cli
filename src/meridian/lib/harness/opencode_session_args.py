@@ -19,6 +19,7 @@ _LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARN", "ERROR"})
 _SUBPROCESS_VALUE_OPTIONS = frozenset(
     {"--model", "-m", "--agent", "--variant", "--log-level"}
 )
+_RUN_ONLY_OPTIONS = frozenset({"--model", "-m", "--agent", "--variant"})
 _MANAGED_VALUE_OPTIONS = frozenset({"--log-level"})
 _ENDPOINT_OPTIONS = frozenset(
     {
@@ -69,8 +70,9 @@ def normalize_primary_session_args(
 
     The managed surface starts ``opencode serve`` rather than ``opencode run``;
     it therefore admits only the global logging flags in its raw remainder.
+    Retained launch controls do not turn run-only options into serve options:
+    that surface has no owned consumer for them.
     """
-    _ = controls
     if surface not in ("subprocess", "managed"):
         raise ValueError(f"Unknown OpenCode primary surface: {surface!r}")
 
@@ -118,6 +120,18 @@ def normalize_primary_session_args(
             remaining.append(token)
             index += 1
             continue
+        if surface == "managed" and name in _RUN_ONLY_OPTIONS:
+            # Even a matching generated model/effort/permission field does not
+            # prove an OpenCode `serve` consumer. Never strip these spans or
+            # translate them into `run` arguments.
+            alternative = (
+                "Meridian's typed model setting"
+                if name in ("--model", "-m")
+                else "Meridian's typed agent setting"
+                if name == "--agent"
+                else "Meridian's typed variant setting"
+            )
+            _refuse(name, "run-only options cannot be forwarded to `opencode serve`", alternative)
         allowed_value_options = (
             _SUBPROCESS_VALUE_OPTIONS
             if surface == "subprocess"
@@ -133,14 +147,6 @@ def normalize_primary_session_args(
             index = next_index
             continue
 
-        if surface == "managed" and name in _SUBPROCESS_VALUE_OPTIONS:
-            alternative = {
-                "--model": "Meridian's typed model setting",
-                "-m": "Meridian's typed model setting",
-                "--agent": "Meridian's typed agent setting",
-                "--variant": "Meridian's typed variant setting",
-            }[name]
-            _refuse(name, "run-only options cannot be forwarded to `opencode serve`", alternative)
         _refuse("unknown option", "unsupported option or option arity")
 
     return NormalizedNativeSessionArgs(selector, tuple(remaining))

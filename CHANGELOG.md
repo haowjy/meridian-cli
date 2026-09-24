@@ -17,6 +17,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   refuse unproved scalar cells and mandatory sandbox/approval conflicts before preparation.
 - Reconcile Pi native-TUI raw model and thinking options against retained
   controls; share effort mapping with the projector and redact suppression warnings.
+- Keep OpenCode managed `serve` arguments limited to ordered global logging
+  flags; generated controls do not authorize run-only model, agent, or variant flags.
 - Preserve recognized, consistent intentional native-default selections in retained
   model controls; normalize fallback model identity in the shared projection.
 - Admit fresh primary raw arguments with the selected adapter's concrete initial
