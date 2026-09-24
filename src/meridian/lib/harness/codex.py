@@ -262,7 +262,17 @@ _CODEX_CONFIG_ENUMS: dict[str, frozenset[str]] = {
 
 def _validate_codex_config(raw: str) -> None:
     key, separator, value = raw.partition("=")
-    if not separator or not key or not value or "=" in value:
+    if (
+        not separator
+        or not key
+        or not value
+        or "=" in value
+        or "\n" in raw
+        or "\r" in raw
+        or "'" in value
+        or "[" in value
+        or "]" in value
+    ):
         raise ValueError("Codex --config requires one key=value scalar assignment")
     allowed = {
         "model",
@@ -272,7 +282,7 @@ def _validate_codex_config(raw: str) -> None:
         "tools.web_search",
     }
     if key not in allowed:
-        raise ValueError(f"unsupported Codex --config key '{key}'")
+        raise ValueError("unsupported Codex --config key")
     if key == "model":
         try:
             decoded = json.loads(value)
@@ -282,7 +292,12 @@ def _validate_codex_config(raw: str) -> None:
                 char in value for char in '\"[]{}'
             ):
                 raise ValueError("Codex model config must be one scalar string") from None
-        if not isinstance(decoded, str) or not decoded.strip():
+        if (
+            not isinstance(decoded, str)
+            or not decoded.strip()
+            or "\n" in decoded
+            or "\r" in decoded
+        ):
             raise ValueError("Codex model config must be a nonblank scalar string")
     else:
         if value.startswith('"'):
@@ -290,7 +305,7 @@ def _validate_codex_config(raw: str) -> None:
                 decoded = json.loads(value)
             except json.JSONDecodeError:
                 raise ValueError("invalid Codex --config scalar") from None
-            if not isinstance(decoded, str):
+            if not isinstance(decoded, str) or "\n" in decoded or "\r" in decoded:
                 raise ValueError("Codex --config value must be a scalar")
             value = decoded
         if value not in _CODEX_CONFIG_ENUMS[key]:
@@ -312,21 +327,43 @@ def _normalize_codex_primary_session_args(
 
     remaining: list[str] = []
     seen_config_keys: set[str] = set()
-    valued_options = {
-        "--model": "subprocess",
-        "-m": "subprocess",
-        "--sandbox": "subprocess",
-        "--ask-for-approval": "subprocess",
+    model_seen = False
+    refused_options = {
+        "--sandbox": (
+            "Codex raw --sandbox is unsupported on {surface}; "
+            "use Meridian --sandbox before the raw-tail delimiter."
+        ),
+        "--ask-for-approval": (
+            "Codex raw --ask-for-approval is unsupported on {surface}; "
+            "use Meridian --approval (auto, never, or confirm)."
+        ),
+        "--full-auto": (
+            "Codex raw --full-auto is unsupported on {surface}; "
+            "request sandbox and approval separately with Meridian options."
+        ),
+        "--search": (
+            "Codex raw --search is unsupported on {surface}; "
+            "use the profile/bundle web_search tool setting. "
+            "Effective search support requires consumer verification."
+        ),
     }
-    booleans = {
-        "--full-auto": "subprocess",
-        "--dangerously-bypass-approvals-and-sandbox": "subprocess",
-        "--search": "subprocess",
-    }
+
+    def refuse_known_option(name: str) -> None:
+        if name in refused_options:
+            surface_name = "subprocess" if surface == "subprocess" else "managed app-server"
+            raise ValueError(refused_options[name].format(surface=surface_name))
+
+    def safe_option_name(token: str) -> str | None:
+        name = token.partition("=")[0]
+        return name if re.fullmatch(r"--?[A-Za-z0-9][A-Za-z0-9-]*", name) else None
+
     while index < len(args):
         token = args[index]
         if token == "--" or token.startswith("@") or not token.startswith("-"):
             raise ValueError("Codex raw arguments cannot contain positional or indirection input")
+        option_name = safe_option_name(token)
+        if option_name is not None:
+            refuse_known_option(option_name)
         if token in {"-c", "--config"} or token.startswith("--config="):
             if token.startswith("--config="):
                 value = token.partition("=")[2]
@@ -344,53 +381,51 @@ def _normalize_codex_primary_session_args(
             remaining.extend(args[index : index + consumed])
             index += consumed
             continue
-        if token in valued_options:
-            if surface != valued_options[token]:
-                raise ValueError(f"Codex option '{token}' is not supported on {surface}")
-            if index + 1 >= len(args) or not args[index + 1].strip():
-                raise ValueError(f"Codex option '{token}' requires a value")
+        if token in {"--model", "-m"}:
+            if surface != "subprocess":
+                raise ValueError(
+                    "Codex raw model is unsupported on managed app-server; use Meridian --model."
+                )
+            if model_seen:
+                raise ValueError("duplicate Codex model option")
+            if (
+                index + 1 >= len(args)
+                or not args[index + 1].strip()
+                or args[index + 1].startswith("-")
+            ):
+                raise ValueError("Codex model option requires a value")
             value = args[index + 1]
-            if token == "--sandbox" and value not in {
-                "read-only", "workspace-write", "danger-full-access"
-            }:
-                raise ValueError("unsupported Codex sandbox value")
-            if token == "--ask-for-approval" and value not in {
-                "on-request", "untrusted", "never"
-            }:
-                raise ValueError("unsupported Codex approval value")
+            model_seen = True
             remaining.extend((token, value))
             index += 2
             continue
-        if (
-            token.startswith("--model=")
-            or token.startswith("--sandbox=")
-            or token.startswith("--ask-for-approval=")
-        ):
+        if token.startswith("--model="):
             if surface != "subprocess":
                 raise ValueError(
-                    f"Codex option '{token.partition('=')[0]}' is not supported on {surface}"
+                    "Codex raw model is unsupported on managed app-server; use Meridian --model."
                 )
-            name, _, value = token.partition("=")
+            if model_seen:
+                raise ValueError("duplicate Codex model option")
+            value = token.partition("=")[2]
             if not value.strip():
-                raise ValueError(f"Codex option '{name}' requires a value")
-            if name == "--sandbox" and value not in {
-                "read-only", "workspace-write", "danger-full-access"
-            }:
-                raise ValueError("unsupported Codex sandbox value")
-            if name == "--ask-for-approval" and value not in {
-                "on-request", "untrusted", "never"
-            }:
-                raise ValueError("unsupported Codex approval value")
+                raise ValueError("Codex model option requires a value")
+            model_seen = True
             remaining.append(token)
             index += 1
             continue
-        if token in booleans:
-            if surface != booleans[token]:
-                raise ValueError(f"Codex option '{token}' is not supported on {surface}")
+        if token == "--dangerously-bypass-approvals-and-sandbox":
+            if surface != "subprocess":
+                raise ValueError(
+                    "Codex raw bypass is unsupported on managed app-server; "
+                    "use Meridian --sandbox and --approval."
+                )
             remaining.append(token)
             index += 1
             continue
-        raise ValueError(f"unsupported Codex raw argument '{token}'")
+        option_name = safe_option_name(token)
+        if option_name is None:
+            raise ValueError("unsupported Codex raw argument")
+        raise ValueError(f"unsupported Codex raw option '{option_name}'")
     return NormalizedNativeSessionArgs(selector, tuple(remaining))
 
 
