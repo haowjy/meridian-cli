@@ -11,6 +11,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   allows that conflict with mandatory Agent denials.
 - Refuse Claude raw effort suppression when retained effort is outside the
   projector's supported vocabulary, using a fixed redacted diagnostic.
+- Return decoded Codex model config scalars while preserving their original raw
+  argument bytes, and redact unknown raw option tokens from diagnostics.
+- Classify Codex managed `--config` aliases in the existing grammar traversal;
+  refuse unproved scalar cells and mandatory sandbox/approval conflicts before preparation.
 - Preserve recognized, consistent intentional native-default selections in retained
   model controls; normalize fallback model identity in the shared projection.
 - Admit fresh primary raw arguments with the selected adapter's concrete initial
