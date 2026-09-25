@@ -8,7 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.types import HarnessId
-from meridian.lib.launch.request import SessionRequest, SpawnRequest
+from meridian.lib.launch.request import SessionRequest, SpawnRequest, is_exact_continue_session
 from meridian.lib.launch.session_scope import SessionAttempt, session_scope
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state.session_store import get_session_active_work_id, update_session_work_id
@@ -89,6 +89,7 @@ def _session_execution_context(
         metadata=metadata,
         request=request,
         harness_session_id=harness_session_id,
+        chat_id=request.continue_chat_id if is_exact_continue_session(request) else None,
         control_root=control_root,
         task_cwd=task_cwd,
         execution_cwd=execution_cwd,

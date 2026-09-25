@@ -41,6 +41,7 @@ HELP = (
 @pytest.fixture
 def pi_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "meridian-home"))
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
     monkeypatch.delenv("MERIDIAN_PI_BINARY", raising=False)
     configure_pi_extension_projection(monkeypatch, tmp_path)
@@ -106,6 +107,7 @@ def context(
     root: Path,
     *,
     primary: bool = True,
+    spawn_id: str = "p42",
     session: SessionRequest | None = None,
     extra_args: tuple[str, ...] = (),
 ):
@@ -120,7 +122,7 @@ def context(
         ),
     )
     return build_launch_context(
-        spawn_id="p42",
+        spawn_id=spawn_id,
         request=request,
         runtime=LaunchRuntime(
             argv_intent=LaunchArgvIntent.REQUIRED,
@@ -340,3 +342,69 @@ def test_collision_refuses_before_exec(
     with pytest.raises(ValueError, match="native_identity_collision"):
         context(pi_runtime, primary=primary)
     assert not (pi_runtime.parent / "argv").exists()
+
+
+@pytest.mark.asyncio
+async def test_spawn_continue_reuses_chat_and_fork_allocates_new_chat(pi_runtime: Path) -> None:
+    from meridian.lib.ops.spawn.execute_session import _session_execution_context
+
+    root = pi_runtime
+    install_shim(root)
+    source = None
+    for number, operation in enumerate(("create", "resume", "fork"), 42):
+        session = SessionRequest() if source is None else SessionRequest(
+            requested_harness_session_id=source.harness_session_id,
+            continue_chat_id=source.chat_id,
+            continue_source_ref=source.chat_id,
+            continue_source_tracked=True,
+            source_pi_session_dir=source.native_store,
+            continue_fork=operation == "fork",
+        )
+        ctx = context(root, primary=False, spawn_id=f"p{number}", session=session)
+        run = Spawn(
+            spawn_id=SpawnId(f"p{number}"), prompt="hello",
+            model=ModelId("pi-test"), status="queued",
+        )
+        spawn_store.start_spawn(
+            ctx.runtime_root, spawn_id=run.spawn_id, chat_id="", model="pi-test",
+            agent="", harness="pi", kind="streaming", prompt="hello", status="queued",
+        )
+        with _session_execution_context(
+            runtime_root=ctx.runtime_root,
+            metadata=PrimarySessionMetadata(
+                harness="pi", model="pi-test", agent="", agent_path="", skills=(), skill_paths=()
+            ),
+            request=session,
+            harness_session_id=(session.requested_harness_session_id or "")
+            if operation == "resume" else "",
+            run_agent_name=None,
+            spawn_id=str(run.spawn_id),
+        ) as managed:
+            code = await asyncio.wait_for(
+                execute_with_streaming(
+                    run, request=ctx.request, launch_context=ctx, project_root=root,
+                    runtime_root=ctx.runtime_root,
+                    artifacts=LocalStore(root_dir=ctx.runtime_root / "artifacts"),
+                    session_attempt=managed.attempt,
+                ),
+                20,
+            )
+            assert code == 0
+            record = session_store.get_session_record(ctx.runtime_root, managed.chat_id)
+            assert record is not None
+            if source is None:
+                source = record
+                assert source.chat_id == "c1"
+            elif operation == "resume":
+                assert record.chat_id == source.chat_id == "c1"
+                assert (record.harness_session_id, record.native_store) == (
+                    source.harness_session_id, source.native_store,
+                )
+            else:
+                assert record.chat_id == "c2"
+                assert record.harness_session_id != source.harness_session_id
+                unchanged = session_store.get_session_record(ctx.runtime_root, source.chat_id)
+                assert unchanged is not None
+                assert (unchanged.harness_session_id, unchanged.native_store) == (
+                    source.harness_session_id, source.native_store,
+                )

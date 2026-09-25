@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Spawned exact continue reuses its source chat; fresh and fork launches keep separate chats.
 - Test harness connections honor preassigned native IDs; Pi timeout scenarios reach the timeout instead of failing entry.
 - Tracked continue/fork refuses native IDs without a recorded harness; never infers identity from ambient stores.
 - Contradictory initial native identity fails the attempt as `entry_mismatch`; later switches never rebind entry.
