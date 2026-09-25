@@ -164,7 +164,7 @@ async def test_streaming_initial_identity(
         assert mismatch_facts[0]["expected"] == {
             "harness": "claude",
             "native_store": expected_store,
-            "session_id": "source-native" if operation == "fork" else expected_id,
+            "session_id": None if operation == "fork" else expected_id,
         }
         assert mismatch_facts[0]["observed"] == {
             "harness": "claude",
