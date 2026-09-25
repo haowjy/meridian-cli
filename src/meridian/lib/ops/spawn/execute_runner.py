@@ -12,6 +12,7 @@ from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.domain import Spawn
+from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import (
     ForkMaterializationMode,
@@ -81,7 +82,7 @@ def _log_launch_failure_without_traceback(
     spawn_id: SpawnId,
     exc: Exception,
 ) -> None:
-    if isinstance(exc, LaunchUserInputError):
+    if isinstance(exc, (LaunchUserInputError, NativeSessionUnavailable)):
         logger.warning(message, spawn_id=str(spawn_id), error=str(exc))
         return
     logger.exception(message, spawn_id=str(spawn_id))
@@ -144,7 +145,9 @@ async def _prepare_execution_handoff(
                     resolved_session.requested_harness_session_id
                     or (spawn_record.harness_session_id if spawn_record else "")
                     or ""
-                ) if not resolved_session.continue_fork else "",
+                )
+                if not resolved_session.continue_fork
+                else "",
                 run_agent_name=resolved_agent_name,
                 inherited_work_id=work_id,
                 control_root=runtime_request.resolved_control_root,
@@ -180,6 +183,8 @@ async def _prepare_execution_handoff(
                     runtime_root=runtime_root,
                     spawn_id=spawn.spawn_id,
                 )
+            except NativeSessionUnavailable:
+                raise
             except ValueError as exc:
                 raise LaunchUserInputError(str(exc)) from exc
             resolved_request = resolved_request.model_copy(
@@ -224,9 +229,8 @@ async def _prepare_execution_handoff(
             plan_overrides=dict(run_env_overrides),
             dry_run=False,
         )
-        needs_recompose = (
-            prepared is None
-            or _spawn_request_needs_recompose(request_before_session, final_request)
+        needs_recompose = prepared is None or _spawn_request_needs_recompose(
+            request_before_session, final_request
         )
         if needs_recompose:
             mars_cache = MarsResultCache()
@@ -365,11 +369,15 @@ async def launch_prepared_spawn(
             prepared=prepared,
         )
     except Exception as exc:
+        if isinstance(exc, NativeSessionUnavailable):
+            exc = NativeSessionUnavailable(
+                request.session.continue_source_ref or exc.ref, exc.reason
+            )
         await finalize_launch_failure(
             runtime_root,
             project_paths.project_root,
             spawn.spawn_id,
-            str(exc),
+            exc,
         )
         _log_launch_failure_without_traceback(
             message="Pre-launch setup failed.",
@@ -434,11 +442,15 @@ async def launch_prepared_spawn(
                     ),
                 )
         except Exception as exc:
+            if isinstance(exc, NativeSessionUnavailable):
+                exc = NativeSessionUnavailable(
+                    request.session.continue_source_ref or exc.ref, exc.reason
+                )
             await finalize_launch_failure(
                 runtime_root,
                 project_paths.project_root,
                 spawn.spawn_id,
-                str(exc),
+                exc,
             )
             _log_launch_failure_without_traceback(
                 message="Child harness pre-run setup failed.",

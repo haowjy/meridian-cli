@@ -327,42 +327,60 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if source:
             try:
                 from uuid import UUID
+
                 UUID(source)
             except ValueError as exc:
                 raise ValueError(
                     "Codex resume/fork requires a stored UUID native session ID"
                 ) from exc
             return NativeIdentityPlan(
-                None if run.continue_fork else source, None, None,
+                None if run.continue_fork else source,
+                None,
+                None,
                 "fork" if run.continue_fork else "resume",
             )
         return NativeIdentityPlan(None, None, None, "create")
 
     def finalize_native_identity(
-        self, plan: NativeIdentityPlan, *, child_env: dict[str, str], child_cwd: Path,
-        session: SessionRequest, spawn_id: SpawnId, interactive: bool,
+        self,
+        plan: NativeIdentityPlan,
+        *,
+        child_env: dict[str, str],
+        child_cwd: Path,
+        session: SessionRequest,
+        spawn_id: SpawnId,
+        interactive: bool,
     ) -> NativeIdentityPlan:
         store = session.source_native_store
         if plan.operation != "create" and store:
             child_env["CODEX_HOME"] = str(Path(store).parent)
         elif plan.operation != "create" and session.continue_source_tracked:
-            raise ValueError("native_transcript_missing: recorded source store is absent")
+            raise NativeSessionUnavailable(
+                session.continue_source_ref or session.requested_harness_session_id or "source",
+                "unbound",
+            )
         store = self.native_store_for_launch(child_env=child_env, child_cwd=child_cwd)
         locator = None
         if plan.operation != "create" and session.source_native_store:
             if store != session.source_native_store:
-                raise ValueError("native_transcript_missing: source namespace cannot be selected")
+                raise NativeSessionUnavailable(
+                    session.continue_source_ref or session.requested_harness_session_id or "source",
+                    "missing",
+                )
             source_id = session.requested_harness_session_id or plan.harness_session_id or ""
             source = self.resolve_session_file(
-                project_root=child_cwd, session_id=source_id, config_root_hint=Path(store),
+                project_root=child_cwd,
+                session_id=source_id,
+                config_root_hint=Path(store),
             )
             if source is None:
-                raise ValueError(f"native_transcript_missing: {source_id}")
+                raise NativeSessionUnavailable(session.continue_source_ref or source_id, "missing")
             locator = str(source)
         return replace(plan, native_store=store, locator=locator)
 
     def native_store_for_launch(self, *, child_env: dict[str, str], child_cwd: Path) -> str:
         from meridian.lib.harness.codex_rollout import resolve_codex_home
+
         home = resolve_codex_home(child_env)
         if not home.is_absolute():
             home = child_cwd / home

@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Preserve typed missing, ambiguous, and unbound native-session refusals in spawn failure reasons; name the tracked chat in launch diagnostics.
+
 - Resume and fork Pi through the shared recorded-native-store request field.
 
 - Seed Claude from the exact recorded file; refuse missing sources instead of copying ambient decoys.
