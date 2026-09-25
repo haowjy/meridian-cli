@@ -285,7 +285,7 @@ def test_large_loose_transcript_returns_early_matches_before_budget_exhaustion(
     assert "incomplete" in result.format_text()
 
 
-def test_browse_subset_search_matches_portable_loose_and_zip_history(tmp_path, monkeypatch):
+def test_browse_subset_search_keeps_unbound_legacy_history_loose(tmp_path, monkeypatch):
     from meridian.lib.ops.session_archive import archive_history
     from meridian.lib.ops.session_search import iter_session_subset_search
     from meridian.lib.state import spawn_store
@@ -333,7 +333,9 @@ def test_browse_subset_search_matches_portable_loose_and_zip_history(tmp_path, m
     assert len(loose) == 1 and not loose[0].matched
     assert loose[0].error == f"unbound: no verified native session for {chat}"
     archived = archive_history(root, destination=tmp_path / "zips", refs=(key,), apply=True)
-    assert archived.reclaimed
+    assert not archived.reclaimed
+    assert not archived.archives
+    assert any("no exact native source is bound" in error for error in archived.errors)
     steps = list(
         iter_session_subset_search(
             project_root=str(project),

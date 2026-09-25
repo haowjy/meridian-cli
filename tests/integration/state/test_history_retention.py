@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from pathlib import Path
@@ -18,24 +19,67 @@ from meridian.lib.state.retention_restore import restore_archive
 
 
 def _terminal(root: Path) -> str:
+    from meridian.lib.state.history_codec import transcript_header
+    from meridian.lib.state.native_snapshot import (
+        SnapshotHeader,
+        SnapshotObservation,
+        SnapshotRecord,
+        SourceRevision,
+        write_snapshot,
+    )
+
+    native_id = f"native-{root.name}"
     key = str(
         spawn_store.start_spawn(
-            root, chat_id="c1", model="test", agent="coder", harness="codex", prompt="hello"
+            root,
+            chat_id="c1",
+            model="test",
+            agent="coder",
+            harness="codex",
+            harness_session_id=native_id,
+            prompt="hello",
         )
     )
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
-    ingest_portable_history(
-        root,
-        key,
-        iter(
-            [
-                {
-                    "type": "assistant",
-                    "message": {"content": [{"type": "text", "text": "portable needle"}]},
-                }
-            ]
+    events = [
+        {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "portable needle"}]},
+        }
+    ]
+    ingest_portable_history(root, key, iter(events))
+    state = spawn_store.get_spawn(root, key)
+    assert state is not None
+    raw_records = [json.dumps(event, ensure_ascii=False) for event in events]
+    records = tuple(
+        SnapshotRecord(source="codex", ordinal=index, raw=raw)
+        for index, raw in enumerate(raw_records)
+    )
+    header = SnapshotHeader(
+        transcript=transcript_header(state, root.name),
+        session_instance_id=state.session_instance_id,
+        harness="codex",
+        native_session_id=native_id,
+        dialect="codex.rollout.v1",
+        scope="fixture",
+        observed_from=state.started_at or "2026-01-01T00:00:00+00:00",
+    )
+    observation = SnapshotObservation(
+        observed_until=(
+            state.terminal.finished_at if state.terminal else state.started_at
+        )
+        or "2026-01-01T00:00:01+00:00",
+        sources=(
+            SourceRevision(
+                source="codex",
+                sha256=hashlib.sha256("".join(raw_records).encode()).hexdigest(),
+                records=len(records),
+            ),
         ),
     )
+    snapshot = root / "spawns" / key / "native-transcript.jsonl"
+    with snapshot.open("wb") as handle:
+        write_snapshot(handle, header, records, lambda: observation)
     return key
 
 

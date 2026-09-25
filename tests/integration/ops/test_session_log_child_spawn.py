@@ -16,7 +16,6 @@ from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.ops.session_export import SessionExportInput, session_export_sync
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
-from meridian.lib.ops.session_target import spawn_output_path_for_target
 from meridian.lib.ops.spawn.query import detail_from_row
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.artifact_store import LocalStore, make_artifact_key
@@ -299,9 +298,7 @@ def test_legacy_runner_artifacts_do_not_authorize_transcript_reads(tmp_path: Pat
             file_path=str(runtime_root / "spawns/p42/history.jsonl"), query="canonical marker",
         ))
 
-    assert spawn_output_path_for_target(runtime_root, "p42") == (
-        runtime_root / "spawns" / "p42" / HISTORY_FILENAME
-    )
+    assert not (runtime_root / "spawns" / "p42" / "native-transcript.jsonl").exists()
     assert b"canonical marker" in artifacts.get(history_key)
     assert b"legacy marker" not in artifacts.get(history_key)
     assert artifacts.list_artifacts("p42").count(history_key) == 1

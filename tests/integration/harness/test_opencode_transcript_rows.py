@@ -15,7 +15,6 @@ from meridian.lib.ops.session_archive import archive_history
 from meridian.lib.state import spawn_store
 from meridian.lib.state.history import ingest_portable_history
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
-from meridian.lib.state.retention_archive import iter_archived_events
 from tests.support.history import written_events as iter_history_events
 from tests.support.opencode_db import write_opencode_db_session_with_parts
 
@@ -71,9 +70,9 @@ def test_raw_rows_preserve_unknown_material_columns_and_orphan_parts(
     record = spawn_store.get_spawn(root, key)
     assert record is not None and record.history_id is not None
     archived = archive_history(root, destination=tmp_path / "archives", refs=(key,), apply=True)
-    assert archived.reclaimed
-    exported = list(iter_archived_events(Path(archived.archives[0]), record.history_id))
-    assert [event["payload"] for event in exported] == events
+    assert not archived.reclaimed
+    assert not archived.archives
+    assert any("no exact native source is bound" in error for error in archived.errors)
 
 
 @pytest.mark.parametrize("failure", ["missing-file", "missing-session", "missing-table"])

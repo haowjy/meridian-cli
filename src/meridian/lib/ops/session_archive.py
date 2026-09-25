@@ -16,7 +16,7 @@ from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.history_codec import last_activity
-from meridian.lib.state.history_index import HistoryIndex, HistorySnapshot, transcript_activity
+from meridian.lib.state.history_index import HistoryIndex, HistorySnapshot
 from meridian.lib.state.process_scope_projection import read_scope_projection
 from meridian.lib.state.reaper import scope_liveness
 from meridian.lib.state.retention_archive import (
@@ -297,7 +297,6 @@ def archive_history(
             if len(selected) >= policy.max_records:
                 limited = True
                 break
-            path = root / "spawns" / candidate.id / "history.jsonl"
             try:
                 ready = _capture_ready(root, candidate, sessions.get(candidate.id))
             except ValueError as exc:
@@ -317,7 +316,7 @@ def archive_history(
                     state = witness.state
                     if state is None:
                         continue
-                    activity = last_activity(state, witness.session, transcript_activity(path, ""))
+                    activity = last_activity(state, witness.session, "")
                     if eligible and datetime.fromisoformat(activity) > cutoff:
                         continue
                     record = capture_record(directory, state, witness.session, activity)
@@ -508,11 +507,13 @@ def _capture_ready(root: Path, candidate: SpawnRecord, session: object) -> bool:
             return True
         raise ValueError("published native snapshot is corrupt")
     linked = session if isinstance(session, session_store.SessionRecord) else None
-    if candidate.kind == "primary":
-        harnesses, native_ids = native_identity_candidates(root, candidate, linked)
-        if harnesses and native_ids:
-            return False
-    return transcript is not None
+    harnesses, native_ids = native_identity_candidates(root, candidate, linked)
+    # A runner stream is neither proof of native binding nor an archive source.
+    # Native-bound records become eligible only after stop maintenance seals the
+    # exact source as a snapshot above.
+    if not harnesses or not native_ids:
+        raise ValueError("no exact native source is bound; record remains loose")
+    return False
 
 
 def _require_inactive_native_session(root: Path, harness: str | None, session_id: str) -> None:
@@ -566,10 +567,8 @@ def materialize_native_history(project_root: Path, root: Path, spawn_id: str) ->
     from meridian.lib.harness.transcript_capture import native_capture
     from meridian.lib.launch.constants import HISTORY_FILENAME
     from meridian.lib.ops.session_target import resolve_session_log_target
-    from meridian.lib.ops.session_transcript import iter_source_events
     from meridian.lib.platform.atomic import atomic_replace, iter_atomic_temp_paths
     from meridian.lib.state.event_store import utc_now_iso
-    from meridian.lib.state.history import write_retained_child_stream
     from meridian.lib.state.history_codec import transcript_header
     from meridian.lib.state.native_snapshot import (
         NATIVE_SNAPSHOT_FILENAME,
@@ -604,9 +603,6 @@ def materialize_native_history(project_root: Path, root: Path, spawn_id: str) ->
             purpose="capture",
         )
         source = target.sources[0]
-        if source.kind == "spawn_history":
-            write_retained_child_stream(root, spawn_id, iter_source_events(source))
-            return
         observation = native_capture(
             kind=source.kind,
             harness=source.harness,

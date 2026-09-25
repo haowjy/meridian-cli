@@ -557,6 +557,8 @@ def _bind_preview_native(root, key, events):
         native_store=str(store),
         chat_id="c1",
         model="test",
+        kind="primary",
+        spawn_id=key,
     )
     session_store.stop_session(root, "c1")
     return path
@@ -572,7 +574,7 @@ def test_native_preview_stays_bounded_and_cached_after_reclaim(tmp_path, monkeyp
     project, root = _project_roots(tmp_path)
     key = str(
         spawn_store.start_spawn(
-            root, chat_id="c1", model="test", agent="coder", harness="codex", prompt="hello"
+            root, chat_id="c1", model="test", agent="coder", harness="claude", prompt="hello"
         )
     )
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
@@ -597,6 +599,9 @@ def test_native_preview_stays_bounded_and_cached_after_reclaim(tmp_path, monkeyp
         patch.setattr(session_preview, "iter_source_events", forbid_body)
         assert reader.peek(identity) is not None
         assert reader.refresh(identity, lambda: True) == view
+    from meridian.lib.ops.session_archive import materialize_native_history
+
+    materialize_native_history(project, root, key)
     result = archive_history(root, destination=tmp_path / "zips", refs=(key,), apply=True)
     assert result.reclaimed
     archived = reader.refresh(identity, lambda: True)

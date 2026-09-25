@@ -25,7 +25,6 @@ from meridian.lib.ops.run_boundary import spawn_view_label
 from meridian.lib.ops.spawn.query import read_spawn_row_read_only
 from meridian.lib.state import session_identity, session_store
 from meridian.lib.state.history_index import ALIASES, RECORDS, HistoryIndex
-from meridian.lib.state.paths import resolve_spawn_output_path
 from meridian.lib.state.spawn.model import SpawnRecord
 
 _CODEX_FILENAME_RE = re.compile(
@@ -34,7 +33,7 @@ _CODEX_FILENAME_RE = re.compile(
 
 
 class TranscriptSource(NamedTuple):
-    kind: Literal["file", "native_file", "opencode_db", "spawn_history", "archive"]
+    kind: Literal["file", "native_file", "opencode_db", "archive"]
     session_id: str
     harness: str | None
     source_label: str
@@ -204,34 +203,6 @@ def _resolve_harness_transcript_target_or_none(
         return None
 
 
-def spawn_output_path_for_target(
-    runtime_root: Path,
-    spawn_id: str,
-) -> Path | None:
-    return resolve_spawn_output_path(runtime_root, spawn_id)
-
-
-def _target_from_spawn_output(
-    runtime_root: Path,
-    *,
-    display_id: str,
-    spawn_id: str,
-    source: str | None = None,
-) -> SessionLogTarget | None:
-    output_path = spawn_output_path_for_target(runtime_root, spawn_id)
-    if output_path is None:
-        return None
-    return _target_from_source(
-        TranscriptSource(
-            kind="spawn_history",
-            session_id=display_id,
-            harness=None,
-            path=output_path,
-            source_label=source or f"spawn {spawn_id} output",
-        )
-    )
-
-
 def _config_root_hint(value: str | None) -> Path | None:
     normalized = (value or "").strip()
     return Path(normalized).expanduser() if normalized else None
@@ -329,11 +300,6 @@ def _resolve_from_spawn_id(
             or row.history_id is None
         ):
             raise ValueError("Capture preparation requires an identified terminal record")
-        if row.kind != "primary":
-            stream = _target_from_spawn_output(runtime_root, display_id=spawn_id, spawn_id=spawn_id)
-            if stream is None:
-                raise FileNotFoundError(f"No retained child stream available for {spawn_id}")
-            return stream
         # Use only this aggregate and its exact session generation. A current chat,
         # inferred harness or post-launch file discovery cannot establish binding.
         session = session_identity.session_records_for_spawns(runtime_root, [row]).get(row.id)
@@ -471,5 +437,4 @@ __all__ = [
     "SessionLogTarget",
     "resolve_session_log_target",
     "resolve_transcript_source",
-    "spawn_output_path_for_target",
 ]

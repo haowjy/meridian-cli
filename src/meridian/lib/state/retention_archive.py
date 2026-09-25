@@ -787,6 +787,8 @@ def iter_archived_events(
     if record is None:
         raise ValueError(f"Archive has no transcript for {history_id}")
     member_name = canonical_transcript_member(m.name for m in record.files)
+    if member_name != NATIVE_SNAPSHOT_FILENAME:
+        raise ValueError("Legacy runner-history archive members are inert, not transcripts")
     name = f"{_PREFIX}records/{history_id}/aggregate/{member_name}"
     expected = next((member for member in manifest.members if member.name == name), None)
     if expected is None:
@@ -800,23 +802,13 @@ def iter_archived_events(
         ):
             raise ValueError("Archive manifest does not match published receipt")
         with archive.open(name) as handle:
-            if member_name == NATIVE_SNAPSHOT_FILENAME:
-                reader = _HashingMemberReader(handle)
-                validation = TranscriptValidation()
-                yield from read_snapshot(reader, validation=validation)
-                if validation.state != "complete":
-                    raise ValueError(validation.reason or "Archived native snapshot is incomplete")
-                checksum = reader.checksum
-                size = reader.size
-            else:
-                for line in handle:
-                    checksum.update(line)
-                    size += len(line)
-                    if not line.endswith(b"\n"):
-                        raise ValueError("Archived transcript has an incomplete tail")
-                    payload = json.loads(line)
-                    if isinstance(payload, dict) and payload.get("record") != "meridian.transcript":
-                        yield payload
+            reader = _HashingMemberReader(handle)
+            validation = TranscriptValidation()
+            yield from read_snapshot(reader, validation=validation)
+            if validation.state != "complete":
+                raise ValueError(validation.reason or "Archived native snapshot is incomplete")
+            checksum = reader.checksum
+            size = reader.size
         if size != expected.size or checksum.hexdigest() != expected.sha256:
             raise ValueError("Archived transcript checksum mismatch")
 
