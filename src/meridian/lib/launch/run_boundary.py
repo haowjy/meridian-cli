@@ -57,7 +57,6 @@ def finalize_run_boundary(
         def native_exists() -> bool:
             try:
                 source = adapter.resolve_native_session_file(
-                    project_root=Path(entry.control_root or entry.execution_cwd or "."),
                     session_id=exit_key.session_id,
                     native_store=Path(exit_key.native_store),
                 )

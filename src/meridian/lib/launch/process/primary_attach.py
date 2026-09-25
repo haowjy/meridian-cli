@@ -303,12 +303,12 @@ class PrimaryAttachLauncher:
                 self._metadata.backend_port = self._resolve_backend_port()
             self._write_metadata()
 
-            plan = spec.native_identity_plan
-            if (plan is not None and plan.harness_session_id and session_id
-                    and plan.harness_session_id != session_id):
+            plan = spec.native_identity
+            if (plan is not None and plan.session_id and session_id
+                    and plan.session_id != session_id):
                 raise NativeEntryMismatch(
                     NativeKeyFields(str(self._connection.harness_id),
-                        plan.native_store, plan.harness_session_id),
+                        plan.native_store, plan.session_id),
                     NativeKeyFields(str(self._connection.harness_id),
                         plan.native_store, session_id),
                 )

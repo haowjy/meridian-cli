@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 _PROJECTED_FIELDS: frozenset[str] = frozenset(
     {
-        "native_identity_plan",
+        "native_identity",
         "model",
         "effort",
         "permission_resolver",
@@ -33,7 +33,6 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
         "continue_session_id",
         "continue_fork",
-        "claude_session_seed_id",
         "harness",
         "agent_name",
         "agents_payload",
@@ -59,10 +58,7 @@ _MANAGED_FLAG_ALIASES: dict[str, tuple[str, ...]] = {
     "--model": ("--model", "-m"),
     "--thinking": ("--thinking",),
     "--append-system-prompt": ("--append-system-prompt",),
-    "--session": ("--session",),
-    "--fork": ("--fork",),
     "--mode": ("--mode",),
-    "--session-dir": ("--session-dir",),
     "--no-extensions": ("--no-extensions",),
     "-e": ("-e", "--extension"),
 }
@@ -110,26 +106,6 @@ def _reject_mode_collisions(passthrough_tail: tuple[str, ...]) -> None:
         raise ValueError(
             "Pi native primary launches cannot accept --mode from passthrough extra_args; "
             "remove --mode to keep native TUI mode"
-        )
-    if any(
-        _has_flag(passthrough_tail, alias) for alias in _MANAGED_FLAG_ALIASES["--session-dir"]
-    ):
-        raise ValueError(
-            "Pi native primary launches cannot accept --session-dir from passthrough extra_args; "
-            "Meridian owns --session-dir for managed session storage"
-        )
-
-
-def _reject_continue_collisions(passthrough_tail: tuple[str, ...]) -> None:
-    if any(_has_flag(passthrough_tail, alias) for alias in _MANAGED_FLAG_ALIASES["--session"]):
-        raise ValueError(
-            "Pi native primary launches cannot accept --session from passthrough extra_args; "
-            "Meridian owns continue-session selection"
-        )
-    if any(_has_flag(passthrough_tail, alias) for alias in _MANAGED_FLAG_ALIASES["--fork"]):
-        raise ValueError(
-            "Pi native primary launches cannot accept --fork from passthrough extra_args; "
-            "Meridian owns continue-fork session selection"
         )
 
 
@@ -187,7 +163,6 @@ def project_pi_native_tui_spec_to_cli_args(
         command.extend(("--append-system-prompt", spec.appended_system_prompt))
 
     _reject_mode_collisions(passthrough_tail)
-    _reject_continue_collisions(passthrough_tail)
     _reject_extension_collisions(passthrough_tail)
 
     _log_collision_if_needed(
@@ -211,7 +186,7 @@ def project_pi_native_tui_spec_to_cli_args(
         passthrough_tail=passthrough_tail,
     )
 
-    command.extend(project_identity(spec.native_identity_plan, passthrough_tail))
+    command.extend(project_identity(spec.native_identity))
 
     for extension_entrypoint in spec.pi_extension_entrypoints:
         command.extend(("-e", extension_entrypoint))

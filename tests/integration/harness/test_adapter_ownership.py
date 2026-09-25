@@ -1,8 +1,6 @@
-"""Harness adapter ownership tests for non-trivial session detection."""
+"""Harness-native ownership and exact source resolution."""
 
 import json
-import os
-import time
 from collections.abc import Mapping
 from pathlib import Path
 from uuid import uuid4
@@ -67,7 +65,7 @@ def _write_opencode_log(logs_dir: Path, project_root: Path, session_id: str, ts:
     return log_path
 
 
-def test_claude_adapter_detects_expected_project_session(
+def test_claude_adapter_owns_exact_project_session(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -76,36 +74,18 @@ def test_claude_adapter_detects_expected_project_session(
     fake_home = tmp_path / "home"
     monkeypatch.setenv("HOME", fake_home.as_posix())
 
-    old_session_id = str(uuid4())
     new_session_id = str(uuid4())
     project_dir = fake_home / ".claude" / "projects" / project_slug(project_root)
     project_dir.mkdir(parents=True)
 
-    old_path = project_dir / f"{old_session_id}.jsonl"
-    old_path.write_text(
-        json.dumps({"type": "agent-setting", "sessionId": old_session_id}) + "\n",
-        encoding="utf-8",
-    )
     new_path = project_dir / f"{new_session_id}.jsonl"
     new_path.write_text(
         json.dumps({"type": "agent-setting", "sessionId": new_session_id}) + "\n",
         encoding="utf-8",
     )
 
-    now = time.time()
-    os.utime(old_path, (now - 10, now - 10))
-    os.utime(new_path, (now, now))
 
     adapter = ClaudeAdapter()
-    assert (
-        adapter.detect_primary_session_id(
-            project_root=project_root,
-            started_at_epoch=now - 1,
-            started_at_local_iso=None,
-            expected_session_id=new_session_id,
-        )
-        == new_session_id
-    )
     assert (
         adapter.owns_untracked_session(project_root=project_root, session_ref=new_session_id)
         is True
@@ -225,20 +205,8 @@ def test_claude_adapter_uses_claude_config_dir_override(
         encoding="utf-8",
     )
 
-    now = time.time()
-    os.utime(default_path, (now, now))
-    os.utime(override_path, (now - 5, now - 5))
 
     adapter = ClaudeAdapter()
-    assert (
-        adapter.detect_primary_session_id(
-            project_root=project_root,
-            started_at_epoch=now - 10,
-            started_at_local_iso=None,
-            expected_session_id=override_session_id,
-        )
-        == override_session_id
-    )
     assert (
         adapter.resolve_session_file(project_root=project_root, session_id=override_session_id)
         == override_path
@@ -372,7 +340,7 @@ def test_pi_prepare_prelaunch_preserves_bound_agent_dir(
     assert state.metadata["pi_runtime_agent_dir"] == str(bound_agent_dir)
 
 
-def test_codex_adapter_owns_session_detection(
+def test_codex_adapter_owns_untracked_session(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -382,16 +350,9 @@ def test_codex_adapter_owns_session_detection(
     monkeypatch.setenv("HOME", fake_home.as_posix())
 
     session_id = str(uuid4())
-    rollout_path = _write_codex_rollout(fake_home / ".codex", project_root, session_id)
-    now = time.time()
-    os.utime(rollout_path, (now, now))
+    _write_codex_rollout(fake_home / ".codex", project_root, session_id)
 
     adapter = CodexAdapter()
-    assert adapter.detect_primary_session_id(
-        project_root=project_root,
-        started_at_epoch=now - 1,
-        started_at_local_iso=None,
-    ) is None
     assert adapter.owns_untracked_session(project_root=project_root, session_ref=session_id) is True
     assert infer_harness_from_untracked_session_ref(project_root, session_id) == "codex"
 
@@ -409,19 +370,11 @@ def test_codex_adapter_uses_codex_home_override(
 
     default_session_id = str(uuid4())
     override_session_id = str(uuid4())
-    default_rollout = _write_codex_rollout(fake_home / ".codex", project_root, default_session_id)
+    _write_codex_rollout(fake_home / ".codex", project_root, default_session_id)
     override_rollout = _write_codex_rollout(codex_home_override, project_root, override_session_id)
 
-    now = time.time()
-    os.utime(default_rollout, (now, now))
-    os.utime(override_rollout, (now - 5, now - 5))
 
     adapter = CodexAdapter()
-    assert adapter.detect_primary_session_id(
-        project_root=project_root,
-        started_at_epoch=now - 10,
-        started_at_local_iso=None,
-    ) is None
     assert (
         adapter.resolve_session_file(
             project_root=project_root,
@@ -441,7 +394,7 @@ def test_codex_adapter_uses_codex_home_override(
     assert infer_harness_from_untracked_session_ref(project_root, override_session_id) == "codex"
 
 
-def test_opencode_adapter_owns_session_detection(
+def test_opencode_adapter_owns_untracked_session(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -452,16 +405,9 @@ def test_opencode_adapter_owns_session_detection(
 
     session_id = "session-123456"
     logs_dir = fake_home / ".local" / "share" / "opencode" / "log"
-    log_path = _write_opencode_log(logs_dir, project_root, session_id, "2026-03-08T12:00:05")
-    now = time.time()
-    os.utime(log_path, (now, now))
+    _write_opencode_log(logs_dir, project_root, session_id, "2026-03-08T12:00:05")
 
     adapter = OpenCodeAdapter()
-    assert adapter.detect_primary_session_id(
-        project_root=project_root,
-        started_at_epoch=now - 1,
-        started_at_local_iso="2026-03-08T12:00:00",
-    ) is None
     assert adapter.owns_untracked_session(project_root=project_root, session_ref=session_id) is True
     assert infer_harness_from_untracked_session_ref(project_root, session_id) == "opencode"
 
@@ -479,29 +425,21 @@ def test_opencode_adapter_uses_xdg_data_home_override(
 
     default_session_id = "default-session-123456"
     override_session_id = "override-session-123456"
-    default_log = _write_opencode_log(
+    _write_opencode_log(
         fake_home / ".local" / "share" / "opencode" / "log",
         project_root,
         default_session_id,
         "2026-03-08T12:00:10",
     )
-    override_log = _write_opencode_log(
+    _write_opencode_log(
         xdg_data_home / "opencode" / "log",
         project_root,
         override_session_id,
         "2026-03-08T12:00:05",
     )
 
-    now = time.time()
-    os.utime(default_log, (now, now))
-    os.utime(override_log, (now - 5, now - 5))
 
     adapter = OpenCodeAdapter()
-    assert adapter.detect_primary_session_id(
-        project_root=project_root,
-        started_at_epoch=now - 10,
-        started_at_local_iso="2026-03-08T12:00:00",
-    ) is None
     assert (
         adapter.owns_untracked_session(project_root=project_root, session_ref=override_session_id)
         is True
@@ -569,7 +507,6 @@ def test_claude_transcript_resolution_is_pinned_to_recorded_project_store(
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "ambient"))
     adapter = ClaudeAdapter()
     assert adapter.resolve_native_session_file(
-        project_root=project_root,
         session_id=session_id,
         native_store=recorded_store,
     ) == recorded_store / f"{session_id}.jsonl"
@@ -579,7 +516,6 @@ def test_claude_transcript_resolution_is_pinned_to_recorded_project_store(
     decoy.mkdir(parents=True)
     (decoy / f"{session_id}.jsonl").write_text("{}\n")
     assert adapter.resolve_native_session_file(
-        project_root=project_root,
         session_id=session_id,
         native_store=recorded_store,
     ) is None

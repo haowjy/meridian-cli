@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 _PROJECTED_FIELDS: frozenset[str] = frozenset(
     {
-        "native_identity_plan",
+        "native_identity",
         "model",
         "effort",
         "permission_resolver",
@@ -35,7 +35,6 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
         "continue_session_id",
         "continue_fork",
-        "claude_session_seed_id",
         "harness",
         "agent_name",
         "agents_payload",
@@ -59,15 +58,12 @@ _MANAGED_FLAG_ALIASES: dict[str, tuple[str, ...]] = {
     "--model": ("--model", "-m"),
     "--thinking": ("--thinking",),
     "--append-system-prompt": ("--append-system-prompt",),
-    "--session": ("--session",),
-    "--fork": ("--fork",),
     "--no-extensions": ("--no-extensions",),
     "--mode": ("--mode",),
     "-e": ("-e", "--extension"),
     "--no-skills": ("--no-skills",),
     "--no-context-files": ("--no-context-files",),
     "--no-prompt-templates": ("--no-prompt-templates",),
-    "--session-dir": ("--session-dir",),
 }
 
 _EFFORT_TO_THINKING: dict[str, str] = {
@@ -132,17 +128,6 @@ def _reject_extension_collisions(passthrough_tail: tuple[str, ...]) -> None:
         )
 
 
-def _reject_session_dir_collisions(passthrough_tail: tuple[str, ...]) -> None:
-    if any(
-        _has_flag(passthrough_tail, alias)
-        for alias in _MANAGED_FLAG_ALIASES["--session-dir"]
-    ):
-        raise ValueError(
-            "Pi harness owns --session-dir for Meridian-managed session isolation; "
-            "remove --session-dir from passthrough extra_args"
-        )
-
-
 def _project_model_arg(spec: ResolvedLaunchSpec) -> str | None:
     model = (spec.model or "").strip()
     if not model:
@@ -182,7 +167,6 @@ def project_pi_spec_to_cli_args(
 
     _reject_mode_collisions(passthrough_tail)
     _reject_extension_collisions(passthrough_tail)
-    _reject_session_dir_collisions(passthrough_tail)
 
     _log_collision_if_needed(
         managed_flag="--model",
@@ -226,13 +210,8 @@ def project_pi_spec_to_cli_args(
         has_managed_value=True,
         passthrough_tail=passthrough_tail,
     )
-    _log_collision_if_needed(
-        managed_flag="--session-dir",
-        has_managed_value=True,
-        passthrough_tail=passthrough_tail,
-    )
 
-    command.extend(project_identity(spec.native_identity_plan, passthrough_tail))
+    command.extend(project_identity(spec.native_identity))
 
     if not spec.load_all_pi_extensions:
         command.append("--no-extensions")

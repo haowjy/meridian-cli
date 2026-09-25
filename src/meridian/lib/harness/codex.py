@@ -5,15 +5,14 @@ import logging
 import os
 import sqlite3
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
-from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar, cast
 from uuid import uuid4
 
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
-from meridian.lib.core.native_identity import NativeIdentityPlan, NativeSessionUnavailable
+from meridian.lib.core.native_identity import LaunchIntent, Operation
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     ApprovalContract,
@@ -39,7 +38,6 @@ from meridian.lib.harness.bundle import (
     HarnessBundle,
     HarnessProjectionPorts,
     ManagedPrimaryProjectionPorts,
-    project_subprocess_spec,
     register_harness_bundle,
 )
 from meridian.lib.harness.codex_rollout import (
@@ -89,7 +87,6 @@ from meridian.lib.launch.constants import (
     PRIMARY_BASE_COMMAND_CODEX,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
-from meridian.lib.launch.request import SessionRequest
 from meridian.lib.platform import get_home_path
 from meridian.lib.safety.permissions import PermissionConfig
 
@@ -216,6 +213,10 @@ def _owns_session(project_root: Path, session_ref: str) -> bool:
 class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """SubprocessHarness implementation for `codex`."""
 
+    native_identity = True
+    refused_identity_flags = frozenset(["--session-id", "--resume", "--fork"])
+    continues_in_source_store: ClassVar[frozenset[Operation]] = frozenset({"resume", "fork"})
+
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_CODEX_SUBPROCESS
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_CODEX
     _CONSUMED_FIELDS: ClassVar[frozenset[str]] = frozenset(
@@ -322,69 +323,45 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def run_prompt_policy(self) -> RunPromptPolicy:
         return RunPromptPolicy()
 
-    def plan_native_identity(self, run: SpawnParams) -> NativeIdentityPlan | None:
-        source = (run.continue_harness_session_id or "").strip()
+    def validate_intent(self, intent: LaunchIntent) -> None:
+        source = intent.source_session_id or intent.preforked_session_id
         if source:
-            try:
-                from uuid import UUID
+            from uuid import UUID
 
+            try:
                 UUID(source)
             except ValueError as exc:
                 raise ValueError(
                     "Codex resume/fork requires a stored UUID native session ID"
                 ) from exc
-            return NativeIdentityPlan(
-                None if run.continue_fork else source,
-                None,
-                None,
-                "fork" if run.continue_fork else "resume",
-            )
-        return NativeIdentityPlan(None, None, None, "create")
 
-    def finalize_native_identity(
+    def pin_native_store(self, child_env: dict[str, str], store: str) -> None:
+        child_env["CODEX_HOME"] = str(Path(store).parent)
+
+    def resolve_native_session_file(self, *, session_id: str, native_store: Path) -> Path | None:
+        from meridian.lib.harness.codex_rollout import resolve_exact_rollout
+
+        matches = [
+            candidate
+            for candidate in native_store.rglob(f"rollout-*-{session_id}.jsonl")
+            if CODEX_ROLLOUT_FILENAME_RE.match(candidate.name) is not None
+        ]
+        return resolve_exact_rollout(session_id, matches)
+
+    def native_store_for_launch(
         self,
-        plan: NativeIdentityPlan,
         *,
-        child_env: dict[str, str],
+        child_env: Mapping[str, str],
         child_cwd: Path,
-        session: SessionRequest,
         spawn_id: SpawnId,
+        operation: Operation,
         interactive: bool,
-    ) -> NativeIdentityPlan:
-        store = session.source_native_store
-        if plan.operation != "create" and store:
-            child_env["CODEX_HOME"] = str(Path(store).parent)
-        elif plan.operation != "create" and session.continue_source_tracked:
-            raise NativeSessionUnavailable(
-                session.continue_source_ref or session.requested_harness_session_id or "source",
-                "unbound",
-            )
-        store = self.native_store_for_launch(child_env=child_env, child_cwd=child_cwd)
-        locator = None
-        if plan.operation != "create" and session.source_native_store:
-            if store != session.source_native_store:
-                raise NativeSessionUnavailable(
-                    session.continue_source_ref or session.requested_harness_session_id or "source",
-                    "missing",
-                )
-            source_id = session.requested_harness_session_id or plan.harness_session_id or ""
-            source = self.resolve_session_file(
-                project_root=child_cwd,
-                session_id=source_id,
-                config_root_hint=Path(store),
-            )
-            if source is None:
-                raise NativeSessionUnavailable(session.continue_source_ref or source_id, "missing")
-            locator = str(source)
-        return replace(plan, native_store=store, locator=locator)
-
-    def native_store_for_launch(self, *, child_env: dict[str, str], child_cwd: Path) -> str:
+    ) -> str:
         from meridian.lib.harness.codex_rollout import resolve_codex_home
 
         home = resolve_codex_home(child_env)
         if not home.is_absolute():
             home = child_cwd / home
-        child_env["CODEX_HOME"] = str(home.resolve())
         # Keep the sessions entry under CODEX_HOME even when that entry is a symlink;
         # its parent is the namespace needed to reopen this store.
         return str(home.resolve() / "sessions")
@@ -397,14 +374,12 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         self, run: SpawnParams, perms: PermissionResolver
     ) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
-        identity_plan = self.plan_native_identity(run)
         return ResolvedLaunchSpec(
             harness=HarnessId.CODEX,
             model=str(run.model).strip() if run.model else None,
             effort=run.effort,
             prompt=run.user_turn_content or run.prompt,
             continue_session_id=continue_session_id,
-            native_identity_plan=identity_plan,
             continue_fork=run.continue_fork and continue_session_id is not None,
             permission_resolver=perms,
             extra_args=run.extra_args,
@@ -416,11 +391,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             developer_instructions=run.appended_system_prompt,
             user_turn_content=run.user_turn_content,
         )
-
-    def build_command(self, run: SpawnParams, perms: PermissionResolver) -> list[str]:
-        spec = self.resolve_launch_spec(run, perms)
-        base_command = self.PRIMARY_BASE_COMMAND if spec.interactive else self.BASE_COMMAND
-        return project_subprocess_spec(self.id, spec, base_command=base_command)
 
     def build_primary_runtime_request_handler(
         self,
@@ -484,14 +454,10 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if not sessions_root.is_dir():
             return None
 
-        from meridian.lib.harness.codex_rollout import resolve_exact_rollout
-
-        matches = [
-            candidate
-            for candidate in sessions_root.rglob(f"rollout-*-{normalized_session_id}.jsonl")
-            if CODEX_ROLLOUT_FILENAME_RE.match(candidate.name) is not None
-        ]
-        return resolve_exact_rollout(normalized_session_id, matches)
+        return self.resolve_native_session_file(
+            session_id=normalized_session_id,
+            native_store=sessions_root,
+        )
 
     def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
         return CODEX_EXTRACTOR.extract_session_id(artifacts, spawn_id)

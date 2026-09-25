@@ -18,10 +18,10 @@ from meridian.lib.core.native_identity import (
     NativeKeyFields,
     NativeSessionUnavailable,
 )
-from meridian.lib.harness.claude_sessions import project_slug
+from meridian.lib.harness.claude_sessions import project_slug, resolve_claude_config_root
 from meridian.lib.launch.launch_types import PreflightResult
 from meridian.lib.launch.text_utils import dedupe_nonempty
-from meridian.lib.platform import IS_WINDOWS, get_home_path
+from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.atomic import atomic_replace
 
 logger = structlog.get_logger(__name__)
@@ -30,20 +30,8 @@ logger = structlog.get_logger(__name__)
 CLAUDE_PARENT_ALLOWED_TOOLS_FLAG = "--meridian-parent-allowed-tools"
 
 
-def _default_canonical_claude_config_root() -> Path:
-    """Canonical Claude config root when no explicit config env is set."""
-
-    return get_home_path() / ".claude"
-
-
 def _claude_config_root() -> Path:
-    """Resolve the user's real Claude config root."""
-
-    configured = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
-    if configured:
-        return Path(configured).expanduser().resolve()
-    return _default_canonical_claude_config_root()
-
+    return resolve_claude_config_root(os.environ, Path.cwd())
 
 
 def validate_claude_session_file(path: Path, session_id: str) -> None:
@@ -71,8 +59,6 @@ def ensure_claude_session_accessible(
     target_config_root: Path | None = None,
 ) -> None:
     """Seed the child's project from exactly the recorded store/ID pair."""
-    if Path(source_session_id).name != source_session_id or ".." in source_session_id:
-        raise NativeSessionUnavailable(source_session_id, "missing")
     source_file = source_native_store / f"{source_session_id}.jsonl"
     validate_claude_session_file(source_file, source_session_id)
     target_root = target_config_root or _claude_config_root()

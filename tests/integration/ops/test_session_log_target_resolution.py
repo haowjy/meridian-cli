@@ -221,20 +221,13 @@ def test_resolve_target_chat_id_uses_read_only_lookup_without_reconciliation(
 def test_chat_target_never_detects_a_replacement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_id: str,
 ) -> None:
-    from meridian.lib.core.types import HarnessId
-    from meridian.lib.harness.registry import get_default_harness_registry
     from meridian.lib.ops.session_target import NativeSessionUnavailable
 
     root = tmp_path / "repo"
     root.mkdir()
     runtime_root = resolve_project_runtime_root_for_write(root)
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "empty-native-store"))
-    adapter = get_default_harness_registry().get_subprocess_harness(HarnessId.CLAUDE)
 
-    def forbidden_detection(**_kwargs: object) -> None:
-        pytest.fail("exact chat resolution must not call a detector")
-
-    monkeypatch.setattr(adapter, "detect_primary_session_id", forbidden_detection)
     chat_id = session_store.start_session(
         runtime_root, harness="claude", harness_session_id=native_id, model="test",
     )

@@ -257,7 +257,7 @@ def test_managed_passthrough_refuses_identity_flags(
     pi_runtime: Path, primary: bool, flag: str
 ) -> None:
     install_shim(pi_runtime)
-    with pytest.raises(ValueError, match="Pi"):
+    with pytest.raises(ValueError, match="managed identity refuses"):
         context(pi_runtime, primary=primary, extra_args=(flag,))
     assert not (pi_runtime.parent / "argv").exists()
 
@@ -325,7 +325,7 @@ def test_collision_refuses_before_exec(
     pi_runtime: Path, monkeypatch: pytest.MonkeyPatch, primary: bool,
 ) -> None:
     install_shim(pi_runtime)
-    planned = context(pi_runtime, primary=primary).binding.spec.native_identity_plan
+    planned = context(pi_runtime, primary=primary).binding.spec.native_identity
     assert planned is not None and planned.native_store is not None
     store = Path(planned.native_store)
     store.mkdir(parents=True, exist_ok=True)
@@ -407,7 +407,7 @@ def test_primary_create_with_unreadable_sibling_warns_and_executes(pi_runtime: P
     from structlog.testing import capture_logs
 
     install_shim(pi_runtime)
-    planned = context(pi_runtime).binding.spec.native_identity_plan
+    planned = context(pi_runtime).binding.spec.native_identity
     assert planned is not None and planned.native_store is not None
     store = Path(planned.native_store)
     store.mkdir(parents=True, exist_ok=True)

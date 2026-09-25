@@ -1037,9 +1037,9 @@ def _initial_identity_observer(
     spec: ResolvedLaunchSpec, harness: str, accept: Callable[[str], None],
 ) -> Callable[[str], None]:
     initial_observed = False
-    plan = spec.native_identity_plan
+    plan = spec.native_identity
     expected_id = (
-        plan.harness_session_id if plan is not None
+        plan.session_id if plan is not None
         else spec.continue_session_id if not spec.continue_fork else None
     )
     expected = NativeKeyFields(harness, plan.native_store if plan else None, expected_id)
@@ -1203,9 +1203,9 @@ async def execute_with_streaming(
                 echo_stderr=stream_stdout_to_terminal,
             )
 
-        if session_attempt is not None and spec.native_identity_plan is not None:
+        if session_attempt is not None and spec.native_identity is not None:
             session_attempt = replace(
-                session_attempt, native_store=spec.native_identity_plan.native_store,
+                session_attempt, native_store=spec.native_identity.native_store,
             )
         observed_harness_session_id: str | None = None
 
@@ -1272,12 +1272,12 @@ async def execute_with_streaming(
             else FOREGROUND_LAUNCH_MODE
         )
 
-        identity_plan = spec.native_identity_plan
-        if identity_plan is not None and identity_plan.harness_session_id:
+        identity_plan = spec.native_identity
+        if identity_plan is not None and identity_plan.session_id:
             result: NativeBindingResult | None = None
             if session_attempt is not None:
                 result = update_session_harness_id(
-                    runtime_root, session_attempt.chat_id, identity_plan.harness_session_id or "",
+                    runtime_root, session_attempt.chat_id, identity_plan.session_id or "",
                     native_store=identity_plan.native_store, source="assigned",
                     session_instance_id=session_attempt.session_instance_id,
                     startup_attempt_id=session_attempt.startup_attempt_id,
@@ -1287,12 +1287,12 @@ async def execute_with_streaming(
                         NativeKeyFields(str(resolved_harness_id),
                             result.native_store, result.harness_session_id),
                         NativeKeyFields(str(resolved_harness_id),
-                            identity_plan.native_store, identity_plan.harness_session_id),
+                            identity_plan.native_store, identity_plan.session_id),
                     )
             observed_harness_session_id = bind_harness_session_id(
                 runtime_root=runtime_root, spawn_id=run.spawn_id,
                 record_session_id=lambda _: result,
-                session_id=identity_plan.harness_session_id, source="assigned",
+                session_id=identity_plan.session_id, source="assigned",
             )
             if observed_harness_session_id and harness_session_id_observer is not None:
                 harness_session_id_observer(observed_harness_session_id)
@@ -1400,8 +1400,8 @@ async def execute_with_streaming(
                 runner_phase[0] = "processing_attempt"
                 conclusion.absorb_attempt(attempt)
                 identity_error = None
-                if spec.native_identity_plan is not None:
-                    identity_error = harness.verify_native_identity(spec.native_identity_plan)
+                if spec.native_identity is not None:
+                    identity_error = harness.verify_native_identity(spec.native_identity)
                     if identity_error:
                         logger.warning(
                             "Native identity verification conflict", error=identity_error
@@ -1409,7 +1409,7 @@ async def execute_with_streaming(
                         conclusion.exit_code = 1
                         conclusion.failure_reason = identity_error.failure_code
                 observation = harness.observe_primary_session_id(
-                    native_identity_plan=spec.native_identity_plan, command=(),
+                    native_identity=spec.native_identity, command=(),
                     child_env=child_env, launch_child_cwd=child_cwd,
                     started_at_epoch=started_at_epoch,
                     expected_session_id=observed_harness_session_id or "",

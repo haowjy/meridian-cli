@@ -39,6 +39,9 @@ async def test_streaming_initial_identity(
     mismatch: bool,
 ) -> None:
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "source-native.jsonl").write_text(json.dumps({"sessionId": "source-native"}) + "\n")
     expected_id = ""
     observed_id = ""
     expected_store = None
@@ -53,9 +56,9 @@ async def test_streaming_initial_identity(
             self._spawn_id = config.spawn_id
             self._project_root = config.control_root
             self.state = "connected"
-            assert spec.native_identity_plan is not None
-            expected_store = spec.native_identity_plan.native_store
-            expected_id = spec.native_identity_plan.harness_session_id or ""
+            assert spec.native_identity is not None
+            expected_store = spec.native_identity.native_store
+            expected_id = spec.native_identity.session_id or ""
             observed_id = (
                 "source-native"
                 if operation == "fork" and mismatch
@@ -85,7 +88,7 @@ async def test_streaming_initial_identity(
         prompt="hello",
         session=SessionRequest(
             requested_harness_session_id="source-native" if operation != "create" else None,
-            continue_fork=operation == "fork",
+            continue_fork=operation == "fork", source_native_store=str(source),
         ),
     )
     run = Spawn(
@@ -195,8 +198,8 @@ async def test_later_switch_does_not_rebind_or_fail_entry(
         async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
             nonlocal expected_id
             await super().start(config, spec)
-            assert spec.native_identity_plan is not None
-            expected_id = spec.native_identity_plan.harness_session_id or ""
+            assert spec.native_identity is not None
+            expected_id = spec.native_identity.session_id or ""
             self._native_id = expected_id
             self._config = config
             assert config.session_id_observer is not None

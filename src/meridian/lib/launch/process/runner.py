@@ -979,7 +979,7 @@ def run_harness_process(
                 )
                 lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
                 launch_spec = runtime_context.binding.spec
-                identity_plan = launch_spec.native_identity_plan
+                identity_plan = launch_spec.native_identity
                 if identity_plan is not None:
                     managed = replace(
                         managed, record_harness_session_id=partial(
@@ -987,9 +987,9 @@ def run_harness_process(
                             native_store=identity_plan.native_store,
                         ),
                     )
-                if identity_plan is not None and identity_plan.harness_session_id:
+                if identity_plan is not None and identity_plan.session_id:
                     result = update_session_harness_id(
-                        runtime_root, managed.chat_id, identity_plan.harness_session_id or "",
+                        runtime_root, managed.chat_id, identity_plan.session_id or "",
                         native_store=identity_plan.native_store, source="assigned",
                         session_instance_id=(
                             managed.attempt.session_instance_id if managed.attempt else None
@@ -1003,7 +1003,7 @@ def run_harness_process(
                             NativeKeyFields(str(harness_adapter.id),
                                 result.native_store, result.harness_session_id),
                             NativeKeyFields(str(harness_adapter.id), identity_plan.native_store,
-                                            identity_plan.harness_session_id),
+                                            identity_plan.session_id),
                         )
                     resolved_harness_session_id = bind_harness_session_id(
                         runtime_root=runtime_root, spawn_id=primary_spawn_id,
@@ -1171,7 +1171,7 @@ def run_harness_process(
                             and primary_started_epoch > 0):
                         boundary_error = harness_adapter.verify_native_identity(identity_plan)
                     observation = harness_adapter.observe_primary_session_id(
-                        native_identity_plan=identity_plan,
+                        native_identity=identity_plan,
                         command=command,
                         child_env=child_env,
                         launch_child_cwd=launch_child_cwd,

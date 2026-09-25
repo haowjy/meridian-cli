@@ -8,12 +8,11 @@ import logging
 import re
 import sqlite3
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar, Literal, cast
 
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
-from meridian.lib.core.native_identity import NativeIdentityPlan, NativeSessionUnavailable
+from meridian.lib.core.native_identity import NativeSessionUnavailable, Operation
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     ApprovalContract,
@@ -39,7 +38,6 @@ from meridian.lib.harness.bundle import (
     HarnessBundle,
     HarnessProjectionPorts,
     ManagedPrimaryProjectionPorts,
-    project_subprocess_spec,
     register_harness_bundle,
 )
 from meridian.lib.harness.connections.base import (
@@ -101,7 +99,6 @@ from meridian.lib.launch.constants import (
     PRIMARY_BASE_COMMAND_OPENCODE,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
-from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.permissions import PermissionConfig
 
 logger = logging.getLogger(__name__)
@@ -267,6 +264,12 @@ def _owns_session(project_root: Path, session_ref: str) -> bool:
 class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """SubprocessHarness implementation for `opencode`."""
 
+    native_identity = True
+    refused_identity_flags = frozenset(
+        ["--session", "--session-id", "-s", "--continue", "-c", "--fork"]
+    )
+    continues_in_source_store: ClassVar[frozenset[Operation]] = frozenset({"resume", "fork"})
+
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_OPENCODE_SUBPROCESS
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_OPENCODE
     _CONSUMED_FIELDS: ClassVar[frozenset[str]] = frozenset(
@@ -385,51 +388,23 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def run_prompt_policy(self) -> RunPromptPolicy:
         return RunPromptPolicy()
 
-    def plan_native_identity(self, run: SpawnParams) -> NativeIdentityPlan | None:
-        source = (run.continue_harness_session_id or "").strip()
-        if source:
-            return NativeIdentityPlan(source, None, None, "resume")
-        return NativeIdentityPlan(None, None, None, "create")
+    def pin_native_store(self, child_env: dict[str, str], store: str) -> None:
+        child_env["OPENCODE_DB"] = store
 
-    def finalize_native_identity(
+    def native_store_for_launch(
         self,
-        plan: NativeIdentityPlan,
         *,
-        child_env: dict[str, str],
+        child_env: Mapping[str, str],
         child_cwd: Path,
-        session: SessionRequest,
         spawn_id: SpawnId,
+        operation: Operation,
         interactive: bool,
-    ) -> NativeIdentityPlan:
-        store = session.source_native_store
-        if plan.operation != "create" and store:
-            child_env["OPENCODE_DB"] = store
-        elif plan.operation != "create" and session.continue_source_tracked:
-            raise NativeSessionUnavailable(
-                session.continue_source_ref or session.requested_harness_session_id or "source",
-                "unbound",
-            )
-        store = self.native_store_for_launch(child_env=child_env, child_cwd=child_cwd)
-        locator = None
-        if plan.operation != "create" and session.source_native_store:
-            source_id = session.requested_harness_session_id or plan.harness_session_id or ""
-            source = self.resolve_native_session_file(
-                project_root=child_cwd,
-                session_id=source_id,
-                native_store=Path(store),
-            )
-            if source is None:
-                raise NativeSessionUnavailable(session.continue_source_ref or source_id, "missing")
-            locator = str(source)
-        return replace(plan, native_store=store, locator=locator)
-
-    def native_store_for_launch(self, *, child_env: dict[str, str], child_cwd: Path) -> str:
+    ) -> str:
         database = resolve_opencode_db_path(child_env)
         if str(database) == ":memory:":
             raise NativeSessionUnavailable(":memory:", "unbound")
         if not database.is_absolute():
             database = child_cwd / database
-        child_env["OPENCODE_DB"] = str(database.resolve())
         return str(database.resolve())
 
     def resolve_launch_spec(
@@ -438,7 +413,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         perms: PermissionResolver,
     ) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
-        identity_plan = self.plan_native_identity(run)
         normalized_model: str | None = None
         if run.model:
             normalized_model = _normalize_opencode_model(str(run.model)) or None
@@ -462,7 +436,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             effort=run.effort,
             prompt=run.user_turn_content or run.prompt,
             continue_session_id=continue_session_id,
-            native_identity_plan=identity_plan,
             continue_fork=run.continue_fork and continue_session_id is not None,
             permission_resolver=perms,
             extra_args=run.extra_args,
@@ -475,11 +448,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             agent_name=None,
             skills=(),
         )
-
-    def build_command(self, run: SpawnParams, perms: PermissionResolver) -> list[str]:
-        spec = self.resolve_launch_spec(run, perms)
-        base_command = self.PRIMARY_BASE_COMMAND if spec.interactive else self.BASE_COMMAND
-        return project_subprocess_spec(self.id, spec, base_command=base_command)
 
     def build_primary_runtime_request_handler(
         self,
@@ -549,7 +517,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def resolve_native_session_file(
         self,
         *,
-        project_root: Path,
         session_id: str,
         native_store: Path,
     ) -> Path | None:

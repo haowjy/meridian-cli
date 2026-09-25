@@ -3,19 +3,21 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
-from dataclasses import replace
+from collections.abc import Awaitable, Callable, Mapping
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
+from typing import Any, ClassVar, Generic, Literal, Protocol, TypeVar, final, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.config.settings import PiHarnessProfileConfig
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.native_identity import (
+    LaunchIntent,
+    NativeIdentity,
     NativeIdentityError,
-    NativeIdentityPlan,
+    NativeSessionUnavailable,
+    Operation,
     RunBoundary,
 )
 from meridian.lib.core.types import ArtifactKey, HarnessId, ModelId, SpawnId, TransportId
@@ -399,25 +401,42 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
     @property
     def handled_fields(self) -> frozenset[str]: ...
 
-    def plan_native_identity(self, run: SpawnParams) -> NativeIdentityPlan | None: ...
+    def plan_native_identity(
+        self, run: SpawnParams, *, preforked_session_id: str | None = None
+    ) -> LaunchIntent | None: ...
 
     def native_store_for_launch(
-        self, *, child_env: dict[str, str], child_cwd: Path,
-    ) -> str | None: ...
+        self,
+        *,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+        spawn_id: SpawnId,
+        operation: Operation,
+        interactive: bool,
+    ) -> str: ...
 
     def finalize_native_identity(
-        self, plan: NativeIdentityPlan, *, child_env: dict[str, str], child_cwd: Path,
-        session: SessionRequest, spawn_id: SpawnId, interactive: bool,
-    ) -> NativeIdentityPlan: ...
+        self,
+        intent: LaunchIntent,
+        *,
+        child_env: dict[str, str],
+        child_cwd: Path,
+        session: SessionRequest,
+        spawn_id: SpawnId,
+        interactive: bool,
+    ) -> NativeIdentity: ...
 
     def verify_native_identity(
-        self, plan: NativeIdentityPlan,
+        self,
+        plan: NativeIdentity,
     ) -> NativeIdentityError | None: ...
 
     def observe_run_boundary(
-        self, *, child_env: dict[str, str], pid: int | None,
+        self,
+        *,
+        child_env: dict[str, str],
+        pid: int | None,
     ) -> RunBoundary | None: ...
-
 
     def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> AdapterSpecT: ...
 
@@ -440,8 +459,6 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
     def run_prompt_policy(self) -> RunPromptPolicy: ...
 
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str: ...
-
-    def build_command(self, run: SpawnParams, perms: PermissionResolver) -> list[str]: ...
 
     def mcp_config(self, run: SpawnParams) -> McpConfig | None: ...
 
@@ -497,7 +514,7 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
     def observe_primary_session_id(
         self,
         *,
-        native_identity_plan: NativeIdentityPlan | None,
+        native_identity: NativeIdentity | None,
         command: tuple[str, ...],
         child_env: dict[str, str],
         launch_child_cwd: Path,
@@ -528,7 +545,10 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
     def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]: ...
 
     def resolve_native_session_file(
-        self, *, project_root: Path, session_id: str, native_store: Path,
+        self,
+        *,
+        session_id: str,
+        native_store: Path,
     ) -> Path | None: ...
 
     def resolve_session_file(
@@ -554,15 +574,6 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         ProjectedContent with harness-specific channel routing decisions.
         """
         ...
-
-    def detect_primary_session_id(
-        self,
-        *,
-        project_root: Path,
-        started_at_epoch: float,
-        started_at_local_iso: str | None,
-        expected_session_id: str | None = None,
-    ) -> str | None: ...
 
     def observe_session_id(
         self,
@@ -632,32 +643,136 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     def handled_fields(self) -> frozenset[str]:
         return self.consumed_fields | self.explicitly_ignored_fields
 
-    def plan_native_identity(self, run: SpawnParams) -> NativeIdentityPlan | None:
-        """Return a preassigned exact identity, if this harness supports it."""
-        return None
+    native_identity: ClassVar[bool] = False
+    refused_identity_flags: ClassVar[frozenset[str]] = frozenset()
+    continues_in_source_store: ClassVar[frozenset[Operation]] = frozenset()
+    resolves_untracked_source: ClassVar[bool] = False
 
-    def native_store_for_launch(self, *, child_env: dict[str, str], child_cwd: Path) -> str | None:
-        """Resolve the store from the actual child environment, not parent defaults."""
-        return None
+    @final
+    def plan_native_identity(
+        self,
+        run: SpawnParams,
+        *,
+        preforked_session_id: str | None = None,
+    ) -> LaunchIntent | None:
+        if not self.native_identity:
+            return None
+        for token in run.extra_args:
+            if token.split("=", 1)[0] in self.refused_identity_flags:
+                raise ValueError(
+                    f"{self.id} managed identity refuses {token} in passthrough extra_args"
+                )
+        source = (run.continue_harness_session_id or "").strip() or None
+        if preforked_session_id:
+            intent = LaunchIntent("fork", preforked_session_id=preforked_session_id)
+        else:
+            intent = LaunchIntent(
+                "fork" if source and run.continue_fork else "resume" if source else "create", source
+            )
+        self.validate_intent(intent)
+        return intent
 
+    @final
     def finalize_native_identity(
-        self, plan: NativeIdentityPlan, *, child_env: dict[str, str], child_cwd: Path,
-        session: SessionRequest, spawn_id: SpawnId, interactive: bool,
-    ) -> NativeIdentityPlan:
-        """Pin identity to the final child store before projecting argv or binding."""
-        return replace(plan, native_store=(
-            self.native_store_for_launch(child_env=child_env, child_cwd=child_cwd)
-            or plan.native_store
-        ))
+        self,
+        intent: LaunchIntent,
+        *,
+        child_env: dict[str, str],
+        child_cwd: Path,
+        session: SessionRequest,
+        spawn_id: SpawnId,
+        interactive: bool,
+    ) -> NativeIdentity:
+        op, ref = intent.operation, session.source_ref
+        source: Path | None = None
+        if op != "create":
+            wanted = intent.source_session_id or intent.preforked_session_id
+            source_store = session.source_native_store
+            if source_store is None and session.continue_source_tracked:
+                raise NativeSessionUnavailable(ref, "unbound")
+            if source_store is not None and op in self.continues_in_source_store:
+                self.pin_native_store(child_env, source_store)
+                if self._store(child_env, child_cwd, spawn_id, op, interactive) != source_store:
+                    raise NativeSessionUnavailable(ref, "missing")
+            if source_store is not None or self.resolves_untracked_source:
+                lookup = source_store or self._store(
+                    child_env, child_cwd, spawn_id, "resume", interactive
+                )
+                source = self._require_source(wanted, Path(lookup), ref=ref)
+        store = self._store(child_env, child_cwd, spawn_id, op, interactive)
+        self.pin_native_store(child_env, store)
+        return NativeIdentity(
+            str(self.id),
+            op,
+            store,
+            self.assign_session_id(intent, store=Path(store)),
+            intent.source_session_id,
+            source,
+        )
+
+    def _store(
+        self,
+        env: Mapping[str, str],
+        cwd: Path,
+        spawn_id: SpawnId,
+        operation: Operation,
+        interactive: bool,
+    ) -> str:
+        return self.native_store_for_launch(
+            child_env=env,
+            child_cwd=cwd,
+            spawn_id=spawn_id,
+            operation=operation,
+            interactive=interactive,
+        )
+
+    def _require_source(self, session_id: str | None, store: Path, *, ref: str) -> Path:
+        if session_id is None:
+            raise NativeSessionUnavailable(ref, "unbound")
+        try:
+            source = self.resolve_native_session_file(session_id=session_id, native_store=store)
+        except NativeSessionUnavailable as exc:
+            raise exc.for_ref(ref) from exc
+        if source is None:
+            raise NativeSessionUnavailable(ref, "missing")
+        return source
+
+    def validate_intent(self, intent: LaunchIntent) -> None:
+        pass
+
+    def native_store_for_launch(
+        self,
+        *,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+        spawn_id: SpawnId,
+        operation: Operation,
+        interactive: bool,
+    ) -> str:
+        raise NotImplementedError
+
+    def pin_native_store(self, child_env: dict[str, str], store: str) -> None:
+        pass
+
+    def assign_session_id(self, intent: LaunchIntent, *, store: Path) -> str | None:
+        return (
+            intent.source_session_id
+            if intent.operation == "resume"
+            else intent.preforked_session_id
+        )
 
     def observe_run_boundary(
-        self, *, child_env: dict[str, str], pid: int | None,
+        self,
+        *,
+        child_env: dict[str, str],
+        pid: int | None,
     ) -> RunBoundary | None:
         """Return launch-owned boundary observations when supported."""
         return None
 
     def verify_native_identity(
-        self, plan: NativeIdentityPlan,
+        self,
+        plan: NativeIdentity,
     ) -> NativeIdentityError | None:
         """Return an exact native entry conflict after execution, if supported."""
         return None
@@ -755,7 +870,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     def observe_primary_session_id(
         self,
         *,
-        native_identity_plan: NativeIdentityPlan | None,
+        native_identity: NativeIdentity | None,
         command: tuple[str, ...],
         child_env: dict[str, str],
         launch_child_cwd: Path,
@@ -803,17 +918,6 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         harness-specific channel routing.
         """
         return project_inline_content(content)
-
-    def detect_primary_session_id(
-        self,
-        *,
-        project_root: Path,
-        started_at_epoch: float,
-        started_at_local_iso: str | None,
-        expected_session_id: str | None = None,
-    ) -> str | None:
-        _ = project_root, started_at_epoch, started_at_local_iso, expected_session_id
-        return None
 
     def observe_session_id(
         self,
@@ -877,12 +981,12 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         return "native_file"
 
     def resolve_native_session_file(
-        self, *, project_root: Path, session_id: str, native_store: Path,
+        self,
+        *,
+        session_id: str,
+        native_store: Path,
     ) -> Path | None:
-        """Read only the explicit recorded namespace, never a legacy root hint."""
-        return self.resolve_session_file(
-            project_root=project_root, session_id=session_id, config_root_hint=native_store,
-        )
+        return None
 
     def resolve_session_file(
         self,

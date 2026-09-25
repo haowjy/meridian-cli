@@ -116,9 +116,9 @@ class _ReportThenHangConnection:
         return self._resident_backend
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        plan = spec.native_identity_plan
-        if plan is not None and plan.harness_session_id is not None:
-            self._session_id = plan.harness_session_id
+        plan = spec.native_identity
+        if plan is not None and plan.session_id is not None:
+            self._session_id = plan.session_id
         self._spawn_id = config.spawn_id
         self._project_root = config.control_root
         self.state = "connected"
@@ -235,9 +235,9 @@ class _OpenCodeTerminalWithScopeConnection:
         return self._scope_snapshot
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        plan = spec.native_identity_plan
-        if plan is not None and plan.harness_session_id is not None:
-            self._session_id = plan.harness_session_id
+        plan = spec.native_identity
+        if plan is not None and plan.session_id is not None:
+            self._session_id = plan.session_id
         self._spawn_id = config.spawn_id
         self._project_root = config.control_root
         current_scope = self._scope_snapshot
@@ -355,9 +355,9 @@ class _ResidentDeadlineConnection:
         return self._resident_backend
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        plan = spec.native_identity_plan
-        if plan is not None and plan.harness_session_id is not None:
-            self._session_id = plan.harness_session_id
+        plan = spec.native_identity
+        if plan is not None and plan.session_id is not None:
+            self._session_id = plan.session_id
         type(self).starts += 1
         self._spawn_id = config.spawn_id
         self.state = "connected"
@@ -503,9 +503,9 @@ class _ScriptedRetryOpenCodeConnection:
         return self._resident_backend
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        plan = spec.native_identity_plan
-        if plan is not None and plan.harness_session_id is not None:
-            self._session_id = plan.harness_session_id
+        plan = spec.native_identity
+        if plan is not None and plan.session_id is not None:
+            self._session_id = plan.session_id
         type(self).starts += 1
         self._attempt_index = type(self).starts
         self._spawn_id = config.spawn_id

@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from pathlib import Path
-from typing import cast
 
 from meridian.lib.core.native_identity import NativeEntryMismatch, NativeSessionUnavailable
-from meridian.lib.core.types import HarnessId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.codex_rollout import CODEX_ROLLOUT_FILENAME_RE, resolve_exact_rollout
 from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.harness.registry import get_default_harness_registry
@@ -52,7 +51,15 @@ class LegacyNativeStores:
             if chat.claude_config_dir:
                 env["CLAUDE_CONFIG_DIR"] = chat.claude_config_dir
             return {
-                Path(cast("str", adapter.native_store_for_launch(child_env=env, child_cwd=cwd)))
+                Path(
+                    adapter.native_store_for_launch(
+                        child_env=env,
+                        child_cwd=cwd,
+                        spawn_id=SpawnId("legacy"),
+                        operation="resume",
+                        interactive=True,
+                    )
+                )
                 for cwd in cwds
             }
         if chat.harness == "pi":
@@ -65,12 +72,12 @@ class LegacyNativeStores:
             for cwd in cwds or {get_home_path()}:
                 stores.add(
                     Path(
-                        cast(
-                            "str",
-                            adapter.native_store_for_launch(
-                                child_env=recorded_env.copy(),
-                                child_cwd=cwd,
-                            ),
+                        adapter.native_store_for_launch(
+                            child_env=recorded_env.copy(),
+                            child_cwd=cwd,
+                            spawn_id=SpawnId("legacy"),
+                            operation="resume",
+                            interactive=True,
                         )
                     )
                 )
@@ -105,7 +112,6 @@ class LegacyNativeStores:
                     )
                 else:
                     source = adapter.resolve_native_session_file(
-                        project_root=Path(chat.control_root or chat.execution_cwd or "/"),
                         session_id=session_id,
                         native_store=store,
                     )

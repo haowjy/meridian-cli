@@ -98,9 +98,9 @@ class FakePiConnection(HarnessConnection[ResolvedLaunchSpec]):
         return 4242
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        plan = spec.native_identity_plan
-        if plan is not None and plan.harness_session_id is not None:
-            self._session_id = plan.harness_session_id
+        plan = spec.native_identity
+        if plan is not None and plan.session_id is not None:
+            self._session_id = plan.session_id
         self._spawn_id = config.spawn_id
         self._state = "connected"
 

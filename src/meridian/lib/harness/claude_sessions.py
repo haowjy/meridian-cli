@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import cast
@@ -19,11 +20,19 @@ def project_slug(project_root: Path) -> str:
     return re.sub(r"[^a-zA-Z0-9]", "-", str(project_root.resolve()))
 
 
+def resolve_claude_config_root(env: Mapping[str, str], cwd: Path) -> Path:
+    home = Path(env["HOME"]) if env.get("HOME") else get_home_path()
+    configured = env.get("CLAUDE_CONFIG_DIR", "").strip()
+    root = Path(configured) if configured else home / ".claude"
+    if configured == "~" or configured.startswith("~/"):
+        root = home / configured.removeprefix("~").lstrip("/")
+    if not root.is_absolute():
+        root = cwd / root
+    return root.resolve()
+
+
 def _claude_config_root() -> Path:
-    configured_root = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
-    if configured_root:
-        return Path(configured_root).expanduser().resolve()
-    return get_home_path() / ".claude"
+    return resolve_claude_config_root(os.environ, Path.cwd())
 
 
 def _claude_projects_root() -> Path:
@@ -197,8 +206,11 @@ def _find_tui_trampoline_successor_session_id(
     started_at_epoch: float | None,
     native_store: Path | None = None,
 ) -> str | None:
-    history_path = (native_store.parent.parent / "history.jsonl"
-                    if native_store is not None else _claude_history_path())
+    history_path = (
+        native_store.parent.parent / "history.jsonl"
+        if native_store is not None
+        else _claude_history_path()
+    )
     project_dir = native_store or _claude_project_dir(project_root)
     if not history_path.is_file() or not project_dir.is_dir():
         return None
@@ -283,54 +295,17 @@ def reconcile_tui_trampoline_session_id(
     trampoline_successor_id = _find_tui_trampoline_successor_session_id(
         project_root=project_root,
         recorded_session_id=normalized_session_id,
-        started_at_epoch=started_at_epoch, native_store=native_store,
+        started_at_epoch=started_at_epoch,
+        native_store=native_store,
     )
     if trampoline_successor_id and trampoline_successor_id != normalized_session_id:
-        logger.warning("native_binding_conflict", extra={
-            "kept": normalized_session_id,
-            "attempted": trampoline_successor_id,
-            "source": "trampoline",
-        })
+        logger.warning(
+            "claude_trampoline_successor",
+            extra={
+                "kept": normalized_session_id,
+                "attempted": trampoline_successor_id,
+                "source": "trampoline",
+            },
+        )
         return trampoline_successor_id
     return normalized_session_id
-
-
-def detect_primary_session_id(
-    project_root: Path,
-    started_at_epoch: float,
-    *,
-    expected_session_id: str | None = None,
-) -> str | None:
-    """Detect Claude primary session ID by verifying a known session file only."""
-    if not expected_session_id:
-        logger.debug("No expected session ID for primary detection; skipping heuristic scan")
-        return None
-
-    project_dir = _claude_project_dir(project_root)
-    if not project_dir.is_dir():
-        logger.warning(
-            "Expected Claude session directory not found",
-            extra={"session_id": expected_session_id, "project_dir": str(project_dir)},
-        )
-        return None
-
-    candidate = project_dir / f"{expected_session_id}.jsonl"
-    try:
-        if not candidate.is_file():
-            logger.warning(
-                "Expected Claude session file not found",
-                extra={"session_id": expected_session_id, "project_dir": str(project_dir)},
-            )
-            return None
-        if candidate.stat().st_mtime + 1 < started_at_epoch:
-            return None
-        resolved = _read_claude_session_id(candidate)
-        if resolved == expected_session_id:
-            return expected_session_id
-        logger.warning(
-            "Claude session file exists but embedded ID mismatches",
-            extra={"expected": expected_session_id, "found": resolved},
-        )
-    except OSError:
-        logger.debug("Failed to verify Claude session file", exc_info=True)
-    return None

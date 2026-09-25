@@ -152,16 +152,6 @@ class PostExit:
 
 
 @dataclass(frozen=True)
-class NativeIdentityPlan:
-    """Exact native identity selected before exec; forks may await an owned signal."""
-
-    harness_session_id: str | None
-    native_store: str | None
-    locator: str | None
-    operation: Operation
-
-
-@dataclass(frozen=True)
 class NativeSessionKey:
     native_store: str
     session_id: str

@@ -16,7 +16,7 @@ import structlog
 
 from meridian.lib.core.native_identity import (
     NativeEntryMismatch,
-    NativeIdentityPlan,
+    NativeIdentity,
     NativeKeyFields,
     NativeSessionUnavailable,
 )
@@ -85,56 +85,44 @@ def resolve_session_file(store: Path, session_id: str, *, pending: bool = False)
     return path
 
 
-def verify_identity(plan: NativeIdentityPlan) -> Literal["ok", "pending"]:
-    assert plan.native_store is not None and plan.harness_session_id is not None
+def verify_identity(plan: NativeIdentity) -> Literal["ok", "pending"]:
+    if plan.session_id is None:
+        raise NativeSessionUnavailable("pi", "unbound")
     path = resolve_session_file(
         Path(plan.native_store),
-        plan.harness_session_id,
+        plan.session_id,
         pending=plan.operation == "create",
     )
     if path is None:
         return "pending"
-    if plan.operation == "resume" and str(path) != plan.locator:
+    if plan.operation == "resume" and path != plan.source:
         raise NativeEntryMismatch(
-            NativeKeyFields("pi", plan.native_store, plan.harness_session_id),
-            NativeKeyFields("pi", str(path.parent), plan.harness_session_id),
+            NativeKeyFields("pi", plan.native_store, plan.session_id),
+            NativeKeyFields("pi", str(path.parent), plan.session_id),
             reason="source_changed",
-            detail=f"expected source {plan.locator!r}, observed {str(path)!r}",
+            detail=f"expected source {plan.source!r}, observed {str(path)!r}",
         )
-    if plan.operation == "fork" and read_header(path).get("parentSession") != plan.locator:
+    if plan.operation == "fork" and read_header(path).get("parentSession") != str(plan.source):
         raise NativeEntryMismatch(
-            NativeKeyFields("pi", plan.native_store, plan.harness_session_id),
-            NativeKeyFields("pi", str(path.parent), plan.harness_session_id),
+            NativeKeyFields("pi", plan.native_store, plan.session_id),
+            NativeKeyFields("pi", str(path.parent), plan.session_id),
             reason="fork_parent",
-            detail=(f"expected parent {plan.locator!r}, "
-                    f"observed {read_header(path).get('parentSession')!r}"),
+            detail=(
+                f"expected parent {plan.source!r}, "
+                f"observed {read_header(path).get('parentSession')!r}"
+            ),
         )
     return "ok"
 
 
-def project_identity(plan: NativeIdentityPlan | None, extra_args: tuple[str, ...]) -> list[str]:
-    refused = {
-        "--session",
-        "-c",
-        "--continue",
-        "-r",
-        "--resume",
-        "--session-dir",
-        "--session-id",
-        "--fork",
-        "--no-session",
-    }
-    for token in extra_args:
-        if token.split("=", 1)[0] in refused:
-            raise ValueError(f"Pi managed identity refuses {token} in passthrough extra_args")
+def project_identity(plan: NativeIdentity | None) -> list[str]:
     if plan is None:
         return []
-    assert plan.native_store is not None and plan.harness_session_id is not None
+    if plan.session_id is None:
+        raise NativeSessionUnavailable("pi", "unbound")
     args = ["--session-dir", plan.native_store]
     if plan.operation == "resume":
-        assert plan.locator is not None
-        return [*args, "--session", plan.locator]
+        return [*args, "--session", str(plan.source)]
     if plan.operation == "fork":
-        assert plan.locator is not None
-        args.extend(("--fork", plan.locator))
-    return [*args, "--session-id", plan.harness_session_id]
+        args.extend(("--fork", str(plan.source)))
+    return [*args, "--session-id", plan.session_id]

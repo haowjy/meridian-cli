@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import json
 import secrets
+from collections.abc import Mapping
 from pathlib import Path
 from typing import ClassVar, cast
 
 from meridian.lib.config.settings import resolve_pi_harness_profile
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.native_identity import (
+    LaunchIntent,
+    NativeIdentity,
     NativeIdentityError,
-    NativeIdentityPlan,
-    NativeSessionUnavailable,
+    Operation,
     RunBoundary,
 )
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
@@ -53,7 +55,6 @@ from meridian.lib.harness.pi_paths import (
     pi_meridian_state_dir_env_override,
     pi_spawn_session_root_env_override,
     resolve_pi_spawn_session_root,
-    scope_pi_session_dir_for_spawn,
 )
 from meridian.lib.harness.pi_runtime_resolver import (
     PiRuntimeResolutionError,
@@ -129,6 +130,23 @@ def _project_pi_subprocess_cli_args(
 
 class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """Pi harness implementation for native installed ``pi`` launches."""
+
+    native_identity = True
+    refused_identity_flags = frozenset(
+        [
+            "--session",
+            "-c",
+            "--continue",
+            "-r",
+            "--resume",
+            "--session-dir",
+            "--session-id",
+            "--fork",
+            "--no-session",
+        ]
+    )
+    continues_in_source_store: ClassVar[frozenset[Operation]] = frozenset({"resume"})
+    resolves_untracked_source = True
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_PI_SUBPROCESS
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_PI
@@ -217,57 +235,35 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             default_terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
         )
 
-    def plan_native_identity(self, run: SpawnParams) -> NativeIdentityPlan:
-        source_id = (run.continue_harness_session_id or "").strip() or None
-        operation = (
-            "fork" if source_id and run.continue_fork else "resume" if source_id else "create"
-        )
-        return NativeIdentityPlan(
-            source_id if operation == "resume" else None, None, source_id, operation
-        )
-
-    def finalize_native_identity(
+    def native_store_for_launch(
         self,
-        plan: NativeIdentityPlan,
         *,
-        child_env: dict[str, str],
+        child_env: Mapping[str, str],
         child_cwd: Path,
-        session: SessionRequest,
         spawn_id: SpawnId,
+        operation: Operation,
         interactive: bool,
-    ) -> NativeIdentityPlan:
-        store = resolve_pi_spawn_session_root(env=child_env)
-        if not store.is_absolute():
-            store = child_cwd / store
-        source_store = session.source_native_store
-        source_path = None
-        if plan.operation != "create":
-            if session.continue_source_tracked and not source_store:
-                raise NativeSessionUnavailable(
-                    session.continue_source_ref or session.requested_harness_session_id or "source",
-                    "unbound",
-                )
-            assert plan.locator is not None
-            source_path = resolve_session_file(
-                Path(source_store) if source_store else store, plan.locator
-            )
-        if plan.operation == "resume":
-            assert source_path is not None
-            store = source_path.parent
-        elif not interactive:
-            child_env["PI_CODING_AGENT_SESSION_DIR"] = str(store)
-            store = Path(scope_pi_session_dir_for_spawn(child_env=child_env, spawn_id=spawn_id))
-        store = store.resolve()
-        child_env["PI_CODING_AGENT_SESSION_DIR"] = str(store)
-        session_id = (
-            plan.harness_session_id if plan.operation == "resume" else mint_session_id(store)
-        )
-        return NativeIdentityPlan(
-            session_id, str(store), str(source_path) if source_path else None, plan.operation
-        )
+    ) -> str:
+        root = resolve_pi_spawn_session_root(env=child_env)
+        if not root.is_absolute():
+            root = child_cwd / root
+        root = root.resolve()
+        if operation != "resume" and not interactive and root.name != str(spawn_id):
+            root = root / str(spawn_id)
+        return str(root)
+
+    def pin_native_store(self, child_env: dict[str, str], store: str) -> None:
+        child_env["PI_CODING_AGENT_SESSION_DIR"] = store
+
+    def assign_session_id(self, intent: LaunchIntent, *, store: Path) -> str | None:
+        return intent.source_session_id if intent.operation == "resume" else mint_session_id(store)
+
+    def resolve_native_session_file(self, *, session_id: str, native_store: Path) -> Path | None:
+        return resolve_session_file(native_store, session_id, pending=True)
 
     def verify_native_identity(
-        self, plan: NativeIdentityPlan,
+        self,
+        plan: NativeIdentity,
     ) -> NativeIdentityError | None:
         try:
             verify_identity(plan)
@@ -306,7 +302,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         entrypoints = meridian_entrypoints + extra_entrypoints
         return ResolvedLaunchSpec(
             harness=HarnessId.PI,
-            native_identity_plan=self.plan_native_identity(run),
             model=str(run.model).strip() if run.model else None,
             effort=run.effort,
             prompt=run.user_turn_content or run.prompt,
@@ -323,11 +318,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             agent_name=None,
             skills=(),
         )
-
-    def build_command(self, run: SpawnParams, perms: PermissionResolver) -> list[str]:
-        spec = self.resolve_launch_spec(run, perms)
-        base_command = self.PRIMARY_BASE_COMMAND if spec.interactive else self.BASE_COMMAND
-        return _project_pi_subprocess_cli_args(spec, base_command=base_command)
 
     def prepare_prelaunch(
         self,
@@ -394,7 +384,10 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
 
     def observe_run_boundary(
-        self, *, child_env: dict[str, str], pid: int | None,
+        self,
+        *,
+        child_env: dict[str, str],
+        pid: int | None,
     ) -> RunBoundary:
         path = child_env.get("_MERIDIAN_PI_SESSION_BOUNDARY_PATH")
         nonce = child_env.get("_MERIDIAN_PI_SESSION_BOUNDARY_NONCE")
@@ -490,39 +483,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if config_root_hint is None:
             return None
         return resolve_session_file(config_root_hint, session_id, pending=True)
-
-    def observe_session_id(
-        self,
-        *,
-        artifacts: ArtifactStore,
-        spawn_id: SpawnId | None = None,
-        current_session_id: str | None = None,
-        connection_session_id: str | None = None,
-        project_root: Path | None = None,
-        started_at_epoch: float | None = None,
-        started_at_local_iso: str | None = None,
-        expected_session_id: str | None = None,
-    ) -> str | None:
-        def _norm(value: str | None) -> str | None:
-            if not value:
-                return None
-            stripped = value.strip()
-            return stripped or None
-
-        live = _norm(connection_session_id)
-        if live:
-            return live
-
-        if spawn_id is not None:
-            extracted = _norm(self.extract_session_id(artifacts, spawn_id))
-            if extracted:
-                return extracted
-
-        current = _norm(current_session_id)
-        if current:
-            return current
-
-        return None
 
 
 def _resolve_pi_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:

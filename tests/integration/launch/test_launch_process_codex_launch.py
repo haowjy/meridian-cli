@@ -357,7 +357,7 @@ def test_run_harness_process_codex_managed_attach_uses_control_root_with_distinc
         if callable(on_running):
             on_running(5152)
         return PrimaryAttachOutcome(
-            exit_code=0, session_id=spec.native_identity_plan.harness_session_id, tui_pid=5152,
+            exit_code=0, session_id=spec.native_identity.session_id, tui_pid=5152,
         )
 
     monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: None)
@@ -434,7 +434,7 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
         captured["status_seen_before_return"] = running_record.status
         captured["worker_pid_seen_before_return"] = running_record.worker_pid
         return PrimaryAttachOutcome(
-            exit_code=0, session_id=spec.native_identity_plan.harness_session_id, tui_pid=5151,
+            exit_code=0, session_id=spec.native_identity.session_id, tui_pid=5151,
         )
 
     def fail_black_box(

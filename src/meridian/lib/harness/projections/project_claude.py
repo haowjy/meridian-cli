@@ -40,7 +40,6 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "prompt",
         "prompt_file_path",
         "claude_native_agents_enabled",
-        "claude_session_seed_id",
         "user_turn_content",
         "disallowed_tools",
     }
@@ -48,7 +47,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
 
 _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
-        "native_identity_plan",
+        "native_identity",
         "base_instructions",
         "developer_instructions",
         "harness",
@@ -195,8 +194,12 @@ def project_claude_spec_to_cli_args(
         command.extend(("--effort", spec.effort))
     if spec.agent_name:
         command.extend(("--agent", str(spec.agent_name)))
-    if spec.claude_session_seed_id:
-        command.extend(("--session-id", spec.claude_session_seed_id))
+    if (
+        spec.native_identity
+        and spec.native_identity.operation == "create"
+        and spec.native_identity.session_id
+    ):
+        command.extend(("--session-id", spec.native_identity.session_id))
 
     passthrough_tail, parent_allowed_tools = _split_internal_parent_allowed_tools(spec.extra_args)
     projected_passthrough_tail, passthrough_allowed_tools, passthrough_disallowed_tools = (

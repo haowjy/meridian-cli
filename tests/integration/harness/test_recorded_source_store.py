@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.native_identity import NativeIdentityPlan
+from meridian.lib.core.native_identity import LaunchIntent
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.request import SessionRequest
@@ -32,7 +32,7 @@ def test_recorded_resume_store(tmp_path: Path, harness: HarnessId) -> None:
         source_native_store=str(store),
         continue_source_tracked=True,
     )
-    plan = NativeIdentityPlan(SID, None, None, "resume")
+    plan = LaunchIntent("resume", SID)
     finalized = adapter.finalize_native_identity(
         plan,
         child_env=env,
@@ -42,7 +42,7 @@ def test_recorded_resume_store(tmp_path: Path, harness: HarnessId) -> None:
         interactive=False,
     )
     assert finalized.native_store == str(store)
-    assert finalized.locator == str(native)
+    assert finalized.source == native
     assert env["CODEX_HOME" if harness == HarnessId.CODEX else "OPENCODE_DB"] == str(
         store.parent if harness == HarnessId.CODEX else store
     )
@@ -61,10 +61,11 @@ def test_recorded_resume_store(tmp_path: Path, harness: HarnessId) -> None:
 def test_relative_codex_home_uses_child_cwd(tmp_path: Path) -> None:
     adapter = HarnessRegistry.with_defaults().get(HarnessId.CODEX)
     env = {"CODEX_HOME": "relative-home"}
-    assert adapter.native_store_for_launch(child_env=env, child_cwd=tmp_path) == str(
+    assert adapter.native_store_for_launch(child_env=env, child_cwd=tmp_path,
+        spawn_id=SpawnId("p1"), operation="resume", interactive=False) == str(
         tmp_path / "relative-home" / "sessions"
     )
-    assert env["CODEX_HOME"] == str(tmp_path / "relative-home")
+    assert env["CODEX_HOME"] == "relative-home"
 
 
 @pytest.mark.parametrize("filename", ["selected.sqlite", "storage"])
@@ -75,11 +76,11 @@ def test_opencode_database_override_ignores_default_decoy(tmp_path: Path, filena
     for path in (selected, default):
         write_opencode_db_session(db_path=path, session_id=SID, messages=[])
     env = {"OPENCODE_HOME": str(default.parent), "OPENCODE_DB": str(selected)}
-    store = adapter.native_store_for_launch(child_env=env, child_cwd=tmp_path)
+    store = adapter.native_store_for_launch(child_env=env, child_cwd=tmp_path,
+        spawn_id=SpawnId("p1"), operation="resume", interactive=False)
     assert store == str(selected)
     assert (
         adapter.resolve_native_session_file(
-            project_root=tmp_path,
             session_id=SID,
             native_store=Path(store),
         )
@@ -89,7 +90,6 @@ def test_opencode_database_override_ignores_default_decoy(tmp_path: Path, filena
     selected.unlink()
     assert (
         adapter.resolve_native_session_file(
-            project_root=tmp_path,
             session_id=SID,
             native_store=Path(store),
         )
@@ -108,13 +108,14 @@ def test_codex_symlink_store_remains_reopenable(tmp_path: Path) -> None:
             json.dumps({"type": "session_meta", "payload": {"id": SID}}) + "\n",
         )
     env = {"CODEX_HOME": str(home)}
-    store = adapter.native_store_for_launch(child_env=env, child_cwd=tmp_path)
+    store = adapter.native_store_for_launch(child_env=env, child_cwd=tmp_path,
+        spawn_id=SpawnId("p1"), operation="resume", interactive=False)
     session = SessionRequest(
         requested_harness_session_id=SID, source_native_store=store, continue_source_tracked=True
     )
     env["CODEX_HOME"] = str(tmp_path / "wrong")
     result = adapter.finalize_native_identity(
-        NativeIdentityPlan(SID, None, None, "resume"),
+        LaunchIntent("resume", SID),
         child_env=env,
         child_cwd=tmp_path,
         session=session,
@@ -139,7 +140,7 @@ def test_codex_unselectable_store_cannot_fall_through_to_sibling(tmp_path: Path)
     )
     with pytest.raises(ValueError, match="native_transcript_missing"):
         adapter.finalize_native_identity(
-            NativeIdentityPlan(SID, None, None, "resume"),
+            LaunchIntent("resume", SID),
             child_env={},
             child_cwd=tmp_path,
             session=session,
@@ -175,7 +176,7 @@ def test_exact_sources_refuse_invalid_headers(
     error = NativeEntryMismatch if mismatch else NativeSessionUnavailable
     with pytest.raises(error):
         adapter.resolve_native_session_file(
-            project_root=tmp_path, session_id=SID, native_store=store,
+             session_id=SID, native_store=store,
         )
     with pytest.raises(error):
         if harness == HarnessId.CLAUDE:
@@ -185,7 +186,7 @@ def test_exact_sources_refuse_invalid_headers(
             )
         else:
             adapter.finalize_native_identity(
-                NativeIdentityPlan(SID, None, None, "resume"),
+                LaunchIntent("resume", SID),
                 child_env={}, child_cwd=tmp_path,
                 session=SessionRequest(
                     requested_harness_session_id=SID, source_native_store=str(store),

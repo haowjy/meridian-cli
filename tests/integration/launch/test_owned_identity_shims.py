@@ -130,7 +130,7 @@ def test_owned_event_pins_store(
     monkeypatch.setenv("OPENCODE_HOME", str(tmp_path / "elsewhere"))
     assert (
         registry.get(harness).resolve_native_session_file(
-            project_root=root, session_id=NATIVE_ID, native_store=store
+             session_id=NATIVE_ID, native_store=store
         )
         == native_file
     )

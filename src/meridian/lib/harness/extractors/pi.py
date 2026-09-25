@@ -120,7 +120,7 @@ class PiHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
         child_cwd: Path,
         runtime_root: Path,
     ) -> str | None:
-        return spec.native_identity_plan.harness_session_id if spec.native_identity_plan else None
+        return spec.native_identity.session_id if spec.native_identity else None
 
     def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
         payloads = _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME)

@@ -135,10 +135,10 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
         assert harness_id is HarnessId.CODEX
         captured["build_continue_session"] = spec.continue_session_id
         if captured.get("fork_source_session"):
-            assert spec.native_identity_plan is not None
-            assert spec.native_identity_plan.operation == "fork"
+            assert spec.native_identity is not None
+            assert spec.native_identity.operation == "fork"
             assert (
-                spec.native_identity_plan.harness_session_id
+                spec.native_identity.session_id
                 == captured["build_continue_session"]
             )
         return [*base_command, "resume", spec.continue_session_id or ""]
@@ -388,8 +388,8 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
     def attach(
         harness_id, spawn_id, log_dir, control_root, task_cwd, env, spec, launcher, on_running,
     ):
-        assert spec.native_identity_plan is not None
-        target_id = spec.native_identity_plan.harness_session_id
+        assert spec.native_identity is not None
+        target_id = spec.native_identity.session_id
         assert target_id and target_id != sid
         result = subprocess.run(
             ["sh", str(shim), target_id], env=env, cwd=control_root,
@@ -397,7 +397,7 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
         )
         assert result.stdout.splitlines() == [str(store.parent), target_id]
         target = registry.get(HarnessId.CODEX).resolve_native_session_file(
-            project_root=tmp_path, session_id=target_id, native_store=store,
+             session_id=target_id, native_store=store,
         )
         assert target is not None and target != source
         assert json.loads(target.read_text().splitlines()[0])["payload"]["id"] == target_id

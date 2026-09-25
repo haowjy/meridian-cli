@@ -30,7 +30,6 @@ from meridian.lib.harness.adapter import (
 from meridian.lib.harness.bundle import (
     HarnessBundle,
     HarnessProjectionPorts,
-    project_subprocess_spec,
     register_harness_bundle,
 )
 from meridian.lib.harness.connections.base import RawHarnessEvent
@@ -180,9 +179,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             )
         return PreflightResult.build(expanded_passthrough_args=passthrough_args)
 
-    def build_command(self, run: SpawnParams, perms: PermissionResolver) -> list[str]:
-        spec = self.resolve_launch_spec(run, perms)
-        return project_subprocess_spec(self.id, spec, base_command=self.BASE_COMMAND)
 
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:
         _ = run
