@@ -9,7 +9,11 @@ from typing import ClassVar, cast
 
 from meridian.lib.config.settings import resolve_pi_harness_profile
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
-from meridian.lib.core.native_identity import NativeIdentityPlan, RunBoundary
+from meridian.lib.core.native_identity import (
+    NativeIdentityPlan,
+    NativeSessionUnavailable,
+    RunBoundary,
+)
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     ApprovalContract,
@@ -239,7 +243,10 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         source_path = None
         if plan.operation != "create":
             if session.continue_source_tracked and not source_store:
-                raise ValueError("native_transcript_missing: tracked Pi source has no native store")
+                raise NativeSessionUnavailable(
+                    session.continue_source_ref or session.requested_harness_session_id or "source",
+                    "unbound",
+                )
             assert plan.locator is not None
             source_path = resolve_session_file(
                 Path(source_store) if source_store else store, plan.locator

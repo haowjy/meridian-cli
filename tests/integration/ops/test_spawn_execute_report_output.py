@@ -609,3 +609,43 @@ def test_deleted_tracked_native_file_preserves_launch_failure_reason(
     output = capsys.readouterr()
     assert chat in output.out + output.err
     assert "native_transcript_missing" in output.out + output.err
+
+
+def test_tracked_pi_without_store_preserves_unbound_launch_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    from meridian.lib.launch.request import SessionRequest
+    from meridian.lib.state import session_store
+
+    runtime = _build_test_runtime(tmp_path, monkeypatch)
+    assert runtime.authority.runtime_root is not None
+    prepend_fake_executables(monkeypatch, tmp_path, "pi")
+    stub_bundle_request_and_resolve(monkeypatch, model="gpt-5.4", harness=HarnessId.PI)
+    sid = "12345678-1234-4234-8234-123456789abc"
+    chat = session_store.start_session(
+        runtime.authority.runtime_root, harness="pi", harness_session_id=sid,
+        model="gpt-5.4",
+    )
+    session_store.stop_session(runtime.authority.runtime_root, chat)
+    result = execute_module.execute_spawn_blocking(
+        payload=SpawnCreateInput(prompt="continue"),
+        request=SpawnRequest(
+            prompt="continue", model="gpt-5.4", harness="pi",
+            session=SessionRequest(
+                requested_harness_session_id=sid, continue_chat_id=chat, continue_harness="pi",
+                continue_source_ref=chat, continue_source_tracked=True,
+            ),
+        ),
+        runtime=runtime,
+    )
+    row = spawn_store.get_spawn(runtime.authority.runtime_root, result.spawn_id)
+    assert row is not None and row.terminal is not None
+    assert row.terminal.error == "unbound"
+    assert result.status == "failed"
+    assert result.exit_code == 1
+    source = session_store.get_session_record(runtime.authority.runtime_root, chat)
+    assert source is not None and source.native_store is None
+    assert source.harness_session_id == sid
+    output = capsys.readouterr()
+    assert chat in output.out + output.err
+    assert "unbound" in output.out + output.err

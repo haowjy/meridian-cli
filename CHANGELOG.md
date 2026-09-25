@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Preserve `unbound` when tracked Pi continuation has no recorded native store.
+
 - Document real Pi RPC EOF/replacement ordering; distinguish an interrupted switch from a verified successor quit.
 
 - Exercise Pi runner invalidation, replacement/EOF races, abrupt exits, and quit/restart through the shipped bundle and Python reader.
