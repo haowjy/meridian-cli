@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import shutil
 from collections import defaultdict
-from contextlib import ExitStack
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import cast
 
 from meridian.lib.core.native_identity import NativeEntryMismatch, NativeSessionUnavailable
@@ -24,9 +21,7 @@ SUPPORTED = frozenset({"claude", "codex", "opencode", "pi"})
 class LegacyNativeStores:
     """One import's Codex inventory; other harness candidates are direct paths."""
 
-    def __init__(self, scratch: ExitStack) -> None:
-        self._scratch = scratch
-        self._opencode: dict[Path, Path] = {}
+    def __init__(self) -> None:
         self._codex: dict[Path, dict[str, list[Path]]] = {}
 
     def candidates(
@@ -108,35 +103,10 @@ class LegacyNativeStores:
                         session_id, self._codex[store].get(session_id, [])
                     )
                 else:
-                    exact_store = store
-                    if chat.harness == "opencode" and store.is_file():
-                        if store not in self._opencode:
-                            # SQLite mode=ro can still write WAL shared-memory read marks.
-                            # Copy DB + committed WAL bytes, never open the source via SQLite.
-                            directory = Path(
-                                self._scratch.enter_context(
-                                    TemporaryDirectory(
-                                        prefix="meridian-native-import-",
-                                    )
-                                )
-                            )
-                            copied = directory / store.name
-                            before = _opencode_signature(store)
-                            shutil.copyfile(store, copied)
-                            wal = store.with_name(store.name + "-wal")
-                            if before[1] is not None:
-                                shutil.copyfile(wal, copied.with_name(copied.name + "-wal"))
-                            if _opencode_signature(store) != before:
-                                raise OSError(
-                                    f"OpenCode store changed during legacy import: {store}; "
-                                    "retry when its writer is idle"
-                                )
-                            self._opencode[store] = copied
-                        exact_store = self._opencode[store]
                     source = adapter.resolve_native_session_file(
                         project_root=Path(chat.control_root or chat.execution_cwd or "/"),
                         session_id=session_id,
-                        native_store=exact_store,
+                        native_store=store,
                     )
                 if source is not None:
                     matches.add(store)
@@ -145,18 +115,3 @@ class LegacyNativeStores:
             except NativeSessionUnavailable as exc:
                 ambiguous |= exc.reason == "ambiguous_native_file"
         return matches, ambiguous
-
-
-def _opencode_signature(
-    store: Path,
-) -> tuple[tuple[int, int, int], tuple[int, int, int, bytes] | None]:
-    """Detect checkpoints/restarts while copying without opening SQLite on the source."""
-    db = store.stat()
-    wal_path = store.with_name(store.name + "-wal")
-    try:
-        with wal_path.open("rb") as handle:
-            wal = wal_path.stat()
-            wal_signature = (wal.st_ino, wal.st_size, wal.st_mtime_ns, handle.read(32))
-    except FileNotFoundError:
-        wal_signature = None
-    return (db.st_ino, db.st_size, db.st_mtime_ns), wal_signature

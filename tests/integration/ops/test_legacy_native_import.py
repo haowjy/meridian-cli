@@ -252,26 +252,6 @@ def test_null_old_id_array_and_crash_recovery_counts(homes: tuple[Path, Path]) -
     assert len((root / "sessions.jsonl").read_text().splitlines()) == 2
 
 
-def test_opencode_wal_source_bytes_and_metadata_untouched(homes: tuple[Path, Path]) -> None:
-    import sqlite3
-
-    home, root = homes
-    _chat(root, 1, "opencode", "ses_wal")
-    db = home / ".local/share/opencode/opencode.db"
-    db.parent.mkdir(parents=True)
-    with sqlite3.connect(db) as connection:
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.execute("CREATE TABLE session (id TEXT PRIMARY KEY)")
-        connection.execute("INSERT INTO session VALUES ('ses_wal')")
-        connection.commit()
-        files = list(db.parent.iterdir())
-        before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in files}
-        report = legacy.report_legacy_native_import(root)
-        assert report.bindings["c1"] == ("ses_wal", str(db))
-        assert {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in files} == before
-        assert set(db.parent.iterdir()) == set(files)
-
-
 @pytest.mark.parametrize("harness", ["claude", "codex", "pi", "opencode"])
 def test_imported_chat_native_log_and_continue_projection(
     homes: tuple[Path, Path],
@@ -383,38 +363,6 @@ def test_imported_chat_native_log_and_continue_projection(
     )
     assert output.exit_code == 0
     assert sid in output.format_text() or str(source) in output.format_text()
-
-
-def test_checkpoint_during_opencode_copy_defers_without_marker(
-    homes: tuple[Path, Path],
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    import shutil
-    import sqlite3
-
-    home, root = homes
-    _chat(root, 1, "opencode", "ses_wal")
-    db = home / ".local/share/opencode/opencode.db"
-    db.parent.mkdir(parents=True)
-    with sqlite3.connect(db) as connection:
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.execute("CREATE TABLE session (id TEXT PRIMARY KEY)")
-        connection.execute("INSERT INTO session VALUES ('ses_wal')")
-        connection.commit()
-        copy = shutil.copyfile
-
-        def checkpoint_after_db_copy(source: Path, destination: Path) -> Path:
-            result = copy(source, destination)
-            if source == db:
-                connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            return result
-
-        monkeypatch.setattr(shutil, "copyfile", checkpoint_after_db_copy)
-        legacy.maybe_import_legacy_native_sessions(root)
-    assert "OpenCode store changed" in capsys.readouterr().err
-    assert not (root / legacy.MARKER).exists()
-    assert len((root / "sessions.jsonl").read_text().splitlines()) == 1
 
 
 def test_unreadable_opencode_session_table_defers_without_marker(

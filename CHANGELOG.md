@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - Import legacy chat native keys once from exact, header-validated stores; keep unresolved chats listed in a durable report. Read-only dev report previews bindings.
+- Validate legacy OpenCode keys through the same in-place exact reader used by live reads.
 - Runs retain immutable entry chats; verified Pi exits resolve to their own chats. Missing or uncertain exits stay explicit; session logs label entry-based views.
 - Managed Pi launches load a bounded, atomic v2 session-boundary observer without writing native journals.
 
@@ -13,7 +14,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Exercise Pi CLI exit hints and continue/fork dry-runs against verified and unresolved exits.
 - Require tracked continue/fork references to include the full recorded native key.
 - Report native-binding conflicts on rejected writes, not during historical replay.
-- Refuse unstable OpenCode import snapshots instead of permanently marking valid sessions missing.
 - Batch legacy binding writes; damaged source state defers import without disabling runtime commands.
 - Continue hints and spawn refs target a verified run exit; chat refs remain immutable.
 - Do not allocate exit chats for native sessions absent from the exact store.

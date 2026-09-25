@@ -44,6 +44,8 @@ def resolve_opencode_db_path(launch_env: Mapping[str, str] | None = None) -> Pat
 
 
 def _connect_readonly(db_path: Path) -> sqlite3.Connection:
+    # SQLite may update WAL shared-memory read marks in mode=ro. This is the
+    # same normal read behavior used by live OpenCode session-log reads.
     return sqlite3.connect(
         db_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.1
     )

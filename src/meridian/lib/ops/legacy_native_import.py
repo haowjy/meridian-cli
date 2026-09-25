@@ -10,7 +10,6 @@ import json
 import sqlite3
 import sys
 from collections import defaultdict
-from contextlib import ExitStack
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -78,31 +77,30 @@ def report_legacy_native_import(
             spawns[spawn.chat_id].append(spawn)
             if spawn.harness_session_id:
                 ids[spawn.chat_id].add(spawn.harness_session_id.strip())
-    with ExitStack() as scratch:
-        stores = LegacyNativeStores(scratch)
-        for chat in chats:
-            if chat.native_store and chat.harness_session_id:
-                if chat.chat_id in previously_imported:
-                    report.record(chat, "imported")
-                continue
-            if chat.harness not in SUPPORTED or chat.record_mode == "historical":
-                report.record(chat, "unsupported")
-            elif len(ids[chat.chat_id]) > 1:
-                report.record(chat, "ambiguous_id")
-            elif not ids[chat.chat_id]:
-                report.record(chat, "no_session_id")
+    stores = LegacyNativeStores()
+    for chat in chats:
+        if chat.native_store and chat.harness_session_id:
+            if chat.chat_id in previously_imported:
+                report.record(chat, "imported")
+            continue
+        if chat.harness not in SUPPORTED or chat.record_mode == "historical":
+            report.record(chat, "unsupported")
+        elif len(ids[chat.chat_id]) > 1:
+            report.record(chat, "ambiguous_id")
+        elif not ids[chat.chat_id]:
+            report.record(chat, "no_session_id")
+        else:
+            session_id = next(iter(ids[chat.chat_id]))
+            matches, ambiguous = stores.matching_stores(
+                chat, spawns[chat.chat_id], session_id, cwds[chat.chat_id]
+            )
+            if ambiguous or len(matches) > 1:
+                report.record(chat, "ambiguous")
+            elif not matches:
+                report.record(chat, "missing")
             else:
-                session_id = next(iter(ids[chat.chat_id]))
-                matches, ambiguous = stores.matching_stores(
-                    chat, spawns[chat.chat_id], session_id, cwds[chat.chat_id]
-                )
-                if ambiguous or len(matches) > 1:
-                    report.record(chat, "ambiguous")
-                elif not matches:
-                    report.record(chat, "missing")
-                else:
-                    report.record(chat, "imported")
-                    report.bindings[chat.chat_id] = (session_id, str(next(iter(matches))))
+                report.record(chat, "imported")
+                report.bindings[chat.chat_id] = (session_id, str(next(iter(matches))))
     return report
 
 
