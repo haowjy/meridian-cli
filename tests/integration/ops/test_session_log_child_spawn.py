@@ -302,7 +302,8 @@ def test_legacy_runner_artifacts_do_not_authorize_transcript_reads(tmp_path: Pat
     assert b"canonical marker" in artifacts.get(history_key)
     assert b"legacy marker" not in artifacts.get(history_key)
     assert artifacts.list_artifacts("p42").count(history_key) == 1
-    assert detail.pi_lifecycle_phase == "canonical_phase"
+    # Pi phases come from the pi-lifecycle.json sidecar, never from runner history.
+    assert detail.pi_lifecycle_phase is None
 
 
 def test_session_log_chat_reads_file_authority_without_harness_session_id(
