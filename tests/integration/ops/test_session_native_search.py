@@ -190,3 +190,36 @@ def test_work_filter_keeps_only_in_scope_owners_without_pruning_other_keys(tmp_p
     )
     assert [hit.chat_id for hit in scoped.matches] == [chats[0]]
     assert len(NativeSearchIndex.for_runtime(root).inventory()) == 2
+
+
+def test_corpus_preserves_ref_search_readiness_when_renderer_warns(tmp_path, monkeypatch):
+    from tests.support.opencode_db import write_opencode_db_session_with_parts
+
+    project, root, store = corpus(tmp_path, monkeypatch)
+    db = store / "opencode.db"
+    write_opencode_db_session_with_parts(
+        db_path=db,
+        session_id="ses_one",
+        messages=[
+            (
+                "assistant",
+                {},
+                [
+                    {"type": "text", "text": "confirmed needle"},
+                    {"type": "tool", "tool": "future", "state": {"status": "future"}},
+                ],
+            )
+        ],
+    )
+    chat = session_store.start_session(
+        root, harness="opencode", harness_session_id="ses_one", native_store=str(db), model="test"
+    )
+    direct = session_search_sync(
+        SessionSearchInput(query="needle", ref=chat, project_root=str(project))
+    )
+    projected = session_search_sync(SessionSearchInput(query="needle", project_root=str(project)))
+    assert len(direct.matches) == 1 and direct.errors
+    assert len(projected.matches) == len(direct.matches)
+    assert projected.matches[0].entry_ordinal == direct.matches[0].entry_ordinal
+    assert projected.errors and not projected.complete
+    assert projected.sources_not_searched == 0

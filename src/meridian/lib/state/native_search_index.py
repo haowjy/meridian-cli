@@ -19,7 +19,7 @@ from typing import Literal
 from meridian.lib.core.native_identity import NativeKey
 
 SCHEMA_VERSION = 1
-PARSER_VERSION = 1
+PARSER_VERSION = 2
 INDEX_FILENAME = "native-search-v1.sqlite3"
 MINIMUM_SQLITE_VERSION = (3, 43, 0)
 

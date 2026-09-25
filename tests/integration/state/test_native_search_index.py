@@ -7,6 +7,7 @@ import pytest
 
 from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.state.native_search_index import (
+    PARSER_VERSION,
     FileWitness,
     NativeSearchIndex,
     NativeSearchUnavailable,
@@ -116,7 +117,7 @@ def test_witness_families_are_distinct_and_parser_version_invalidates(tmp_path: 
     )
     assert index.is_fresh(key, v1)
     assert not index.is_fresh(key, v2)
-    assert not index.is_fresh(key, v1, parser_version=2)
+    assert not index.is_fresh(key, v1, parser_version=PARSER_VERSION + 1)
 
 
 def test_old_sqlite_reports_index_unavailable_without_creating_projection(

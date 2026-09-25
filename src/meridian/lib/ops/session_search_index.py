@@ -103,6 +103,10 @@ class SearchProjection:
             try:
                 index = NativeSearchIndex(path, timeout=0)
                 stored = index.inventory()
+                cold = cold or (
+                    bool(stored)
+                    and all(row.parser_version != PARSER_VERSION for row in stored.values())
+                )
             except sqlite3.DatabaseError as exc:
                 if isinstance(exc, sqlite3.OperationalError) and "locked" in str(exc):
                     raise
@@ -159,7 +163,7 @@ class SearchProjection:
             ):
                 if stored.status == "complete":
                     self.fresh.add(key)
-                else:
+                if stored.reasons or stored.status != "complete":
                     self.errors[key] = "; ".join(stored.reasons) or stored.status
 
     def refresh(
@@ -243,7 +247,7 @@ class SearchProjection:
                     if budget and budget.exhausted:
                         continue
                     reasons = transcript.read_reasons
-                    complete = transcript.search_ready and not reasons
+                    complete = transcript.search_ready
                     if self.index:
                         self.index.timeout = min(2, max(0, deadline - time.monotonic()))
                         self.index.replace_source(
@@ -271,7 +275,7 @@ class SearchProjection:
                         self.parsed[key] = transcript
                     if complete:
                         self.fresh.add(key)
-                    else:
+                    if reasons or not complete:
                         self.errors[key] = "; ".join(reasons) or "partial"
                 except (OSError, ValueError, sqlite3.Error) as exc:
                     self.errors[key] = str(exc)

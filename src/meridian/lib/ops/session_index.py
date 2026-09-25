@@ -136,7 +136,7 @@ def _search_status(runtime_root: Path, project_root: Path, *, deadline: float) -
     return SearchStatus(
         search_fresh=len(current),
         search_stale=len(indexed - current),
-        search_unavailable=len(projection.errors),
+        search_unavailable=len(projection.errors.keys() - projection.fresh),
         search_unindexed=len(projection.bindings.keys() - indexed),
         search_bytes=projection.index.path.stat().st_size if projection.index else 0,
     )
