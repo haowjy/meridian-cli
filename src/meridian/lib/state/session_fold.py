@@ -411,26 +411,40 @@ def fold_session_generations(events: Iterable[SessionEvent]) -> tuple[SessionRec
     latest_blank: dict[str, str] = {}
     records: dict[str, SessionRecord] = {}
     for ordinal, event in enumerate(events):
-        chat_id = event.chat_id
-        applied = project_session_event(records, event)
-        if isinstance(event, SessionStartEvent):
-            if not applied:
-                continue
-            event = with_key(event, records[chat_id].key_fields())
-        elif isinstance(event, SessionUpdateEvent) and not applied:
-            existing = records.get(chat_id)
-            if existing is not None and isinstance(
-                bind(existing.key_fields(), event.key_fields()), Conflict
-            ):
-                continue
-        generation = event.session_instance_id
-        if not generation:
-            if isinstance(event, SessionStartEvent):
-                latest_blank[chat_id] = f"legacy:{ordinal}"
-            generation = latest_blank.get(chat_id, "")
-        rows = generations.setdefault((chat_id, generation), {})
-        project_session_event(rows, event)
+        project_session_generation(records, generations, latest_blank, event, ordinal=ordinal)
     return tuple(record for rows in generations.values() for record in rows.values())
+
+
+def project_session_generation(
+    records: dict[str, SessionRecord],
+    generations: dict[tuple[str, str], dict[str, SessionRecord]],
+    latest_blank: dict[str, str],
+    event: SessionEvent,
+    *,
+    ordinal: int,
+) -> tuple[str, str] | None:
+    """Advance replay working sets, returning the changed generation bucket, if any."""
+    chat_id = event.chat_id
+    applied = project_session_event(records, event)
+    if isinstance(event, SessionStartEvent):
+        if not applied:
+            return None
+        event = with_key(event, records[chat_id].key_fields())
+    elif isinstance(event, SessionUpdateEvent) and not applied:
+        existing = records.get(chat_id)
+        if existing is not None and isinstance(
+            bind(existing.key_fields(), event.key_fields()), Conflict
+        ):
+            return None
+    generation = event.session_instance_id
+    if not generation:
+        if isinstance(event, SessionStartEvent):
+            latest_blank[chat_id] = f"legacy:{ordinal}"
+        generation = latest_blank.get(chat_id, "")
+    rows = generations.setdefault((chat_id, generation), {})
+    if project_session_event(rows, event):
+        return (chat_id, generation)
+    return None
 
 
 def session_instance_for_event(
