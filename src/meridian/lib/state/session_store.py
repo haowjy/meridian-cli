@@ -753,55 +753,12 @@ def update_session_harness_id(
     startup_attempt_id: str | None = None,
 ) -> NativeBindingResult:
     """Atomically bind the first native key; conflicts never append a rebind."""
-    if startup_attempt_id is not None and session_instance_id is None:
-        raise ValueError("startup identity requires a captured session generation")
-    paths = RuntimePaths.from_root_dir(runtime_root)
-    with (
-        lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
-        lock_file(paths.sessions_flock),
-    ):
-        existing = get_session_record(runtime_root, chat_id)
-        if existing is None:
-            raise ValueError(f"Unknown chat: {chat_id}")
-        event = SessionUpdateEvent(
-            chat_id=ChatId(chat_id),
-            harness_session_id=HarnessSessionId(harness_session_id),
-            native_store=native_store,
-            source=source,
-            session_instance_id=(
-                session_instance_id
-                if session_instance_id is not None
-                else _session_instance_for_event(paths, runtime_root, chat_id)
-            ),
-            startup_attempt_id=startup_attempt_id,
-        )
-        if not _generation_matches(existing.session_instance_id, event.session_instance_id):
-            return NativeBindingResult(
-                "conflict", existing.harness_session_id, existing.native_store
-            )
-        if _binding_conflicts(existing, event):
-            return NativeBindingResult(
-                "conflict", existing.harness_session_id, existing.native_store
-            )
-        status = (
-            "already_bound"
-            if (
-                existing.harness_session_id == event.harness_session_id
-                and (not native_store or native_store == existing.native_store)
-            )
-            else "bound"
-        )
-        if startup_attempt_id is not None:
-            _validate_startup_identity(read_events(paths.sessions_jsonl, _parse_event), event)
-        # Startup identity updates also commit the attempt-to-conversation link.
-        if status == "bound" or startup_attempt_id is not None:
-            _append_session_event(
-                paths.sessions_jsonl, paths.sessions_flock, event, exclude_none=True
-            )
-        return NativeBindingResult(
-            status,
-            existing.harness_session_id or event.harness_session_id,
-            existing.native_store or native_store,
+    from meridian.lib.state.session_binding import session_bindings
+
+    with session_bindings(runtime_root) as bindings:
+        return bindings.bind(
+            chat_id, harness_session_id, native_store=native_store, source=source,
+            session_instance_id=session_instance_id, startup_attempt_id=startup_attempt_id,
         )
 
 

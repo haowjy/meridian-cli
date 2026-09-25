@@ -88,7 +88,6 @@ from meridian.lib.launch.constants import (
     BASE_COMMAND_CODEX_SUBPROCESS,
     PRIMARY_BASE_COMMAND_CODEX,
 )
-from meridian.lib.launch.errors import NativeEntryMismatch
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.platform import get_home_path
@@ -485,33 +484,14 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if not sessions_root.is_dir():
             return None
 
-        matches: list[Path] = []
-        for candidate in sessions_root.rglob(f"rollout-*-{normalized_session_id}.jsonl"):
-            if CODEX_ROLLOUT_FILENAME_RE.match(candidate.name) is None:
-                continue
-            matches.append(candidate)
+        from meridian.lib.harness.codex_rollout import resolve_exact_rollout
 
-        if not matches:
-            return None
-
-        if len(matches) > 1:
-            raise NativeSessionUnavailable(normalized_session_id, "ambiguous_native_file")
-        source = matches[0]
-        try:
-            with source.open(encoding="utf-8") as handle:
-                header = json.loads(handle.readline())
-        except (OSError, UnicodeError, ValueError) as exc:
-            raise NativeSessionUnavailable(normalized_session_id, "missing") from exc
-        payload = header.get("payload") if isinstance(header, dict) else None
-        observed = payload.get("id") if isinstance(payload, dict) else None
-        if (
-            not isinstance(header, dict) or header.get("type") != "session_meta"
-            or not isinstance(observed, str) or not observed
-        ):
-            raise NativeSessionUnavailable(normalized_session_id, "missing")
-        if observed != normalized_session_id:
-            raise NativeEntryMismatch(normalized_session_id, observed)
-        return source
+        matches = [
+            candidate
+            for candidate in sessions_root.rglob(f"rollout-*-{normalized_session_id}.jsonl")
+            if CODEX_ROLLOUT_FILENAME_RE.match(candidate.name) is not None
+        ]
+        return resolve_exact_rollout(normalized_session_id, matches)
 
     def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
         return CODEX_EXTRACTOR.extract_session_id(artifacts, spawn_id)

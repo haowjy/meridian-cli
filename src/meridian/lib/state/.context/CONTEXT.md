@@ -64,6 +64,20 @@ planned in 0.4.0 can reuse the same authority. Until that index becomes the shar
 state-layer read path, browse does not own a separate projection. See `.context/TODO` and
 [ops/.context/CONTEXT.md](../../ops/.context/CONTEXT.md).
 
+### One-time native identity import
+
+Runtime authority resolution invokes `ops/legacy_native_import.py` once for an
+existing sessions journal. Its atomic marker records unresolved chats; ordinary
+reads never repair missing keys afterward. Import binds through the same
+`session_binding.py` lock-scoped path as single-session updates. One replay per
+batch avoids quadratic work; the import lock precedes the history-mutation gate
+and sessions lock. Historical restored records stay inert.
+
+The dev report is `python -m meridian.lib.ops.legacy_native_import RUNTIME_ROOT`.
+It deliberately bypasses runtime resolution and telemetry. OpenCode validation
+uses a temporary DB/WAL copy because SQLite read-only connections can mutate
+source WAL shared memory; native source bytes are never written.
+
 ### Conversation model selections
 
 `session_store` projects `model_selection` events separately from session liveness

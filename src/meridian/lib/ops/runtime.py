@@ -198,6 +198,10 @@ def resolve_runtime_authority_for_read(
         runtime_source = "env"
     else:
         runtime_source = "user-home-project"
+    if runtime_root is not None:
+        from meridian.lib.ops.legacy_native_import import import_legacy_native_sessions
+
+        import_legacy_native_sessions(runtime_root)
     return authority.model_copy(
         update={
             "runtime_root": runtime_root,
@@ -231,6 +235,9 @@ def resolve_runtime_authority_for_write(
         and override == runtime_root
     ):
         runtime_source = "env"
+    from meridian.lib.ops.legacy_native_import import import_legacy_native_sessions
+
+    import_legacy_native_sessions(runtime_root)
     return authority.model_copy(
         update={
             "runtime_root": runtime_root,

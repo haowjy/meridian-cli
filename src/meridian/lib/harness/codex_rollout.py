@@ -33,9 +33,7 @@ def _rewritten_session_meta(line: bytes, new_session_id: str) -> bytes:
     return (json.dumps(payload_dict) + "\n").encode()
 
 
-def materialize_fork_rollout(
-    *, source_path: Path, target_path: Path, new_session_id: str
-) -> None:
+def materialize_fork_rollout(*, source_path: Path, target_path: Path, new_session_id: str) -> None:
     """Publish a line-valid snapshot of a possibly live Codex rollout."""
 
     with source_path.open("rb") as source_handle:
@@ -194,3 +192,32 @@ def find_attachable_rollout_session_id(
             continue
         return resolved
     return None
+
+
+def resolve_exact_rollout(session_id: str, matches: list[Path]) -> Path | None:
+    """Validate the unique exact-ID candidate, shared by live reads and import."""
+    from meridian.lib.core.native_identity import NativeEntryMismatch, NativeSessionUnavailable
+
+    if not matches:
+        return None
+
+    if len(matches) > 1:
+        raise NativeSessionUnavailable(session_id, "ambiguous_native_file")
+    source = matches[0]
+    try:
+        with source.open(encoding="utf-8") as handle:
+            header = json.loads(handle.readline())
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise NativeSessionUnavailable(session_id, "missing") from exc
+    payload = header.get("payload") if isinstance(header, dict) else None
+    observed = payload.get("id") if isinstance(payload, dict) else None
+    if (
+        not isinstance(header, dict)
+        or header.get("type") != "session_meta"
+        or not isinstance(observed, str)
+        or not observed
+    ):
+        raise NativeSessionUnavailable(session_id, "missing")
+    if observed != session_id:
+        raise NativeEntryMismatch(session_id, observed)
+    return source
