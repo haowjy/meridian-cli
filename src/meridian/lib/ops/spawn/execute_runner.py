@@ -176,6 +176,7 @@ async def _prepare_execution_handoff(
                 forked_session_id = materialize_fork(
                     adapter=harness_adapter,
                     source_session_id=resolved_session.requested_harness_session_id,
+                    native_store=resolved_session.source_native_store,
                     runtime_root=runtime_root,
                     spawn_id=spawn.spawn_id,
                 )

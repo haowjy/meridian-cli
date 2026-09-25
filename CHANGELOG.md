@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Carry recorded source stores through continuation and fork requests; pin Codex/OpenCode resume environments and refuse missing native sources.
+
 - Persist the finalized native store with the first owned session observation in both runners.
 
 ### Fixed

@@ -57,6 +57,7 @@ class ContinueReplaySource:
     source_pi_session_dir: str | None
     source_launch_policy_snapshot: LaunchPolicySnapshot | None
     tracked: bool
+    source_native_store: str | None = None
     source_history_id: UUID | None = None
     source_model: str | None = None
     source_agent: str | None = None
@@ -119,6 +120,8 @@ class ContinueReplayReference(Protocol):
 
     @property
     def source_pi_session_dir(self) -> str | None: ...
+    @property
+    def source_native_store(self) -> str | None: ...
 
     @property
     def source_launch_policy_snapshot(self) -> LaunchPolicySnapshot | None: ...
@@ -149,6 +152,7 @@ def continue_replay_source_from_reference(
         source_control_root=resolved_reference.source_control_root,
         source_claude_config_dir=resolved_reference.source_claude_config_dir,
         source_pi_session_dir=resolved_reference.source_pi_session_dir,
+        source_native_store=resolved_reference.source_native_store,
         source_launch_policy_snapshot=resolved_reference.source_launch_policy_snapshot,
         tracked=resolved_reference.tracked,
     )
@@ -437,6 +441,7 @@ def build_continue_replay_contract(
         source_execution_cwd=source.source_execution_cwd,
         source_claude_config_dir=source.source_claude_config_dir,
         source_pi_session_dir=source.source_pi_session_dir,
+        source_native_store=source.source_native_store,
     )
 
     return ContinueReplayContract(

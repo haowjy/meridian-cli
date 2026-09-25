@@ -11,6 +11,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import replace
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
@@ -882,6 +883,7 @@ def run_harness_process(
                     forked_session_id = materialize_fork(
                         adapter=harness_adapter,
                         source_session_id=source_session_id,
+                        native_store=preview_request.session.source_native_store,
                         runtime_root=runtime_root,
                         spawn_id=primary_spawn_id,
                     )
@@ -1003,11 +1005,12 @@ def run_harness_process(
                 lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
                 launch_spec = runtime_context.binding.spec
                 identity_plan = launch_spec.native_identity_plan
-                if identity_plan is not None and managed.attempt is not None:
-                    attempt = replace(managed.attempt, native_store=identity_plan.native_store)
+                if identity_plan is not None:
                     managed = replace(
-                        managed, attempt=attempt,
-                        record_harness_session_id=attempt.record_harness_session_id,
+                        managed, record_harness_session_id=partial(
+                            managed.record_harness_session_id,
+                            native_store=identity_plan.native_store,
+                        ),
                     )
                 if identity_plan is not None and identity_plan.harness_session_id:
                     result = update_session_harness_id(

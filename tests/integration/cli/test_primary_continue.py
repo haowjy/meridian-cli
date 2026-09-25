@@ -47,10 +47,14 @@ def _seed_primary_spawn(
     launch_policy_snapshot: LaunchPolicySnapshot | None = None,
 ) -> None:
     snapshot = launch_policy_snapshot
+    store = runtime_root / "native-codex" / "sessions"
+    store.mkdir(parents=True, exist_ok=True)
+    (store / f"rollout-2026-01-01T00-00-00-{harness_session_id}.jsonl").write_text("{}\n")
     session_store.start_session(
         runtime_root, chat_id="c-primary", spawn_id=spawn_id,
         harness=snapshot.harness if snapshot is not None else "codex",
         harness_session_id=harness_session_id or "",
+        native_store=str(store) if snapshot is None or snapshot.harness == "codex" else None,
         model=snapshot.model if snapshot is not None else "gpt-5.3-codex",
     )
     session_store.stop_session(runtime_root, "c-primary")

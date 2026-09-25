@@ -43,6 +43,7 @@ class ResolvedSessionReference:
     source_execution_cwd: str | None = None
     source_claude_config_dir: str | None = None
     source_pi_session_dir: str | None = None
+    source_native_store: str | None = None
     source_launch_policy_snapshot: LaunchPolicySnapshot | None = None
     warning: str | None = None
     recovery: RecoveryResult | None = None
@@ -186,6 +187,7 @@ def _build_tracked_reference(
     source_execution_cwd: str | None = None,
     source_claude_config_dir: str | None = None,
     source_pi_session_dir: str | None = None,
+    source_native_store: str | None = None,
     source_launch_policy_snapshot: LaunchPolicySnapshot | None = None,
 ) -> ResolvedSessionReference:
     return ResolvedSessionReference(
@@ -202,6 +204,7 @@ def _build_tracked_reference(
         source_execution_cwd=source_execution_cwd,
         source_claude_config_dir=source_claude_config_dir,
         source_pi_session_dir=source_pi_session_dir,
+        source_native_store=source_native_store,
         source_launch_policy_snapshot=source_launch_policy_snapshot,
         tracked=True,
     )
@@ -246,6 +249,7 @@ def _resolve_spawn_reference(
         source_execution_cwd=source_execution_cwd,
         source_claude_config_dir=_normalize_optional(row.claude_config_dir),
         source_pi_session_dir=bound_session.native_store if bound_session else None,
+        source_native_store=bound_session.native_store if bound_session else None,
         source_launch_policy_snapshot=row.launch_policy_snapshot,
     )
 
@@ -290,6 +294,7 @@ def _reference_from_session(
             session.native_store or session.claude_config_dir
         ),
         source_pi_session_dir=session.native_store,
+        source_native_store=session.native_store,
         source_launch_policy_snapshot=_launch_policy_snapshot_for_session(
             runtime_root,
             session,

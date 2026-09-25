@@ -134,7 +134,7 @@ class SessionAttempt:
 @dataclass(frozen=True)
 class ManagedSession:
     chat_id: str
-    record_harness_session_id: Callable[[str], NativeBindingResult | None]
+    record_harness_session_id: Callable[..., NativeBindingResult | None]
     attempt: SessionAttempt | None = None
 
 
@@ -191,12 +191,16 @@ def session_scope(
         if startup_attempt_id is not None else None
     )
 
-    def _record_harness_session_id(session_id: str) -> NativeBindingResult | None:
+    def _record_harness_session_id(
+        session_id: str, *, native_store: str | None = native_store,
+    ) -> NativeBindingResult | None:
         if startup_attempt_id is None:
-            return _update_session_harness_id(runtime_root, resolved_chat_id, session_id)
+            return _update_session_harness_id(
+                runtime_root, resolved_chat_id, session_id, native_store=native_store,
+            )
         else:
             return _update_session_harness_id(
-                runtime_root, resolved_chat_id, session_id,
+                runtime_root, resolved_chat_id, session_id, native_store=native_store,
                 session_instance_id=generation, startup_attempt_id=startup_attempt_id,
             )
 

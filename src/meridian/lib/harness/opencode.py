@@ -8,6 +8,7 @@ import logging
 import re
 import sqlite3
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar, cast
 
@@ -96,6 +97,7 @@ from meridian.lib.launch.constants import (
     PRIMARY_BASE_COMMAND_OPENCODE,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
+from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.permissions import PermissionConfig
 
 logger = logging.getLogger(__name__)
@@ -395,6 +397,28 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if source:
             return NativeIdentityPlan(source, None, None, "resume")
         return NativeIdentityPlan(None, None, None, "create")
+
+    def finalize_native_identity(
+        self, plan: NativeIdentityPlan, *, child_env: dict[str, str], child_cwd: Path,
+        session: SessionRequest, spawn_id: SpawnId, interactive: bool,
+    ) -> NativeIdentityPlan:
+        store = session.source_native_store
+        if plan.operation != "create" and store:
+            child_env["OPENCODE_HOME"] = str(Path(store).parent)
+            child_env["OPENCODE_DB"] = str(Path(store).parent / "opencode.db")
+        elif plan.operation != "create" and session.continue_source_tracked:
+            raise ValueError("native_transcript_missing: recorded source store is absent")
+        store = self.native_store_for_launch(child_env=child_env, child_cwd=child_cwd)
+        locator = None
+        if plan.operation != "create" and session.source_native_store:
+            source_id = session.requested_harness_session_id or plan.harness_session_id or ""
+            source = self.resolve_session_file(
+                project_root=child_cwd, session_id=source_id, config_root_hint=Path(store),
+            )
+            if source is None:
+                raise ValueError(f"native_transcript_missing: {source_id}")
+            locator = str(source)
+        return replace(plan, native_store=store, locator=locator)
 
     def native_store_for_launch(self, *, child_env: dict[str, str], child_cwd: Path) -> str:
         _ = child_cwd
