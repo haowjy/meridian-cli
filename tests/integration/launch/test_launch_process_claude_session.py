@@ -287,6 +287,7 @@ def test_run_harness_process_reconciles_claude_tui_trampoline_session_id(
     assert outcome.chat_id is not None
     spawns = list_spawns(launch_context.runtime_root)
     assert len(spawns.records) == 1
+    assert spawns.records[0].trampoline_successor_id == real_session_id
     assert spawns.records[0].harness_session_id == outcome.resolved_harness_session_id
     assert (
         session_store.get_session_harness_id(launch_context.runtime_root, outcome.chat_id)

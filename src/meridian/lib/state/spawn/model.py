@@ -106,6 +106,7 @@ class SpawnStateFields(BaseModel):
     goal: str | None = None
     display_label: str | None = None
     harness_session_id: OptionalPersistedHarnessSessionId = None
+    trampoline_successor_id: str | None = None
     control_root: str | None = None
     task_cwd: str | None = None
     execution_cwd: str | None = None

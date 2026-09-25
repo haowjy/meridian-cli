@@ -24,6 +24,7 @@ from meridian.lib.harness.adapter import (
     McpConfig,
     PermissionResolver,
     PrelaunchBootstrapMode,
+    PrimarySessionObservation,
     ProjectionContract,
     ProjectionMode,
     RecordConfigDirFn,
@@ -595,12 +596,24 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if project_root is None:
             return (current_session_id or "").strip() or None
 
-        reconciled = reconcile_tui_trampoline_session_id(
-            project_root=project_root,
-            recorded_session_id=normalized_current,
+        return normalized_current
+
+    def observe_primary_session_id(
+        self, *, native_identity_plan: NativeIdentityPlan | None,
+        command: tuple[str, ...], child_env: dict[str, str], launch_child_cwd: Path,
+        started_at_epoch: float | None, expected_session_id: str,
+        requested_session_id: str, resolved_session_id: str, exit_code: int,
+    ) -> PrimarySessionObservation:
+        entry = resolved_session_id or expected_session_id
+        successor = reconcile_tui_trampoline_session_id(
+            project_root=launch_child_cwd, recorded_session_id=entry,
             started_at_epoch=started_at_epoch,
+            native_store=(Path(native_identity_plan.native_store)
+                          if native_identity_plan and native_identity_plan.native_store else None),
         )
-        return reconciled or (current_session_id or "").strip() or None
+        return PrimarySessionObservation(
+            trampoline_successor_id=successor if successor != entry else None,
+        )
 
     def resolve_native_session_file(
         self, *, project_root: Path, session_id: str, native_store: Path,

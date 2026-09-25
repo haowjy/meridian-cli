@@ -1184,20 +1184,25 @@ def run_harness_process(
                         cancellation_observed=managed_cancelled,
                         native_identity_error=native_identity_error,
                     )
-                    if write_native_primary_metadata and primary_spawn_id is not None:
-                        observation = harness_adapter.observe_primary_session_id(
-                            native_identity_plan=identity_plan,
-                            command=command,
-                            child_env=child_env,
-                            launch_child_cwd=launch_child_cwd,
-                            started_at_epoch=(
-                                primary_started_epoch if primary_started_epoch > 0.0 else None
-                            ),
-                            expected_session_id=expected_harness_session_id,
-                            requested_session_id=requested_harness_session_id,
-                            resolved_session_id=resolved_harness_session_id,
-                            exit_code=exit_code,
+                    observation = harness_adapter.observe_primary_session_id(
+                        native_identity_plan=identity_plan,
+                        command=command,
+                        child_env=child_env,
+                        launch_child_cwd=launch_child_cwd,
+                        started_at_epoch=(
+                            primary_started_epoch if primary_started_epoch > 0.0 else None
+                        ),
+                        expected_session_id=expected_harness_session_id,
+                        requested_session_id=requested_harness_session_id,
+                        resolved_session_id=resolved_harness_session_id,
+                        exit_code=exit_code,
+                    )
+                    if observation.trampoline_successor_id:
+                        spawn_store.update_spawn(
+                            runtime_root, primary_spawn_id,
+                            trampoline_successor_id=observation.trampoline_successor_id,
                         )
+                    if write_native_primary_metadata and primary_spawn_id is not None:
                         if observation.session_id:
                             resolved_harness_session_id = bind_harness_session_id(
                                 runtime_root=runtime_root,

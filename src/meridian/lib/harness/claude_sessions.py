@@ -195,9 +195,11 @@ def _find_tui_trampoline_successor_session_id(
     project_root: Path,
     recorded_session_id: str,
     started_at_epoch: float | None,
+    native_store: Path | None = None,
 ) -> str | None:
-    history_path = _claude_history_path()
-    project_dir = _claude_project_dir(project_root)
+    history_path = (native_store.parent.parent / "history.jsonl"
+                    if native_store is not None else _claude_history_path())
+    project_dir = native_store or _claude_project_dir(project_root)
     if not history_path.is_file() or not project_dir.is_dir():
         return None
 
@@ -267,19 +269,21 @@ def reconcile_tui_trampoline_session_id(
     project_root: Path,
     recorded_session_id: str,
     started_at_epoch: float | None = None,
+    native_store: Path | None = None,
 ) -> str | None:
     """Diagnose a TUI trampoline successor without changing the recorded identity."""
 
     normalized_session_id = recorded_session_id.strip()
     if not normalized_session_id:
         return None
-    transcript_path = _claude_project_dir(project_root) / f"{normalized_session_id}.jsonl"
+    project_dir = native_store or _claude_project_dir(project_root)
+    transcript_path = project_dir / f"{normalized_session_id}.jsonl"
     if transcript_path.is_file():
         return normalized_session_id
     trampoline_successor_id = _find_tui_trampoline_successor_session_id(
         project_root=project_root,
         recorded_session_id=normalized_session_id,
-        started_at_epoch=started_at_epoch,
+        started_at_epoch=started_at_epoch, native_store=native_store,
     )
     if trampoline_successor_id and trampoline_successor_id != normalized_session_id:
         logger.warning("native_binding_conflict", extra={
@@ -287,7 +291,6 @@ def reconcile_tui_trampoline_session_id(
             "attempted": trampoline_successor_id,
             "source": "trampoline",
         })
-        # TODO(Phase D): allocate trampoline successor as a separate run-exit chat.
         return trampoline_successor_id
     return normalized_session_id
 

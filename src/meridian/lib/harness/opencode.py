@@ -10,7 +10,7 @@ import sqlite3
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import ClassVar, cast
+from typing import ClassVar, Literal, cast
 
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.native_identity import NativeIdentityPlan, NativeSessionUnavailable
@@ -545,7 +545,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         # Resume and fork both seed from an existing harness session id.
         return SessionSeed(session_id=normalized_harness_session_id)
 
-    def native_transcript_kind(self, path: Path) -> str:
+    def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]:
         return "opencode_db" if detect_opencode_db_schema(path) is not None else "native_file"
 
     def resolve_native_session_file(

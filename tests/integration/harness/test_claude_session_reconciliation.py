@@ -142,8 +142,16 @@ def test_claude_reconciliation_keeps_tui_trampoline_identity(
             project_root=project_root,
             started_at_epoch=now - 1,
         )
-        == real_session_id
+        == recorded_session_id
     )
+
+    observation = adapter.observe_primary_session_id(
+        native_identity_plan=None, command=(), child_env={}, launch_child_cwd=project_root,
+        started_at_epoch=now - 1, expected_session_id=recorded_session_id,
+        requested_session_id="", resolved_session_id=recorded_session_id, exit_code=0,
+    )
+    assert observation.session_id is None
+    assert observation.trampoline_successor_id == real_session_id
 
 
 def test_claude_reconciliation_preserves_recorded_id_without_trampoline_evidence(

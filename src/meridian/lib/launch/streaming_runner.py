@@ -1531,6 +1531,20 @@ async def execute_with_streaming(
                     )
                     or ""
                 )
+                observation = harness.observe_primary_session_id(
+                    native_identity_plan=spec.native_identity_plan, command=(),
+                    child_env=child_env, launch_child_cwd=child_cwd,
+                    started_at_epoch=started_at_epoch,
+                    expected_session_id=observed_harness_session_id or "",
+                    requested_session_id=spec.continue_session_id or "",
+                    resolved_session_id=observed_harness_session_id or "",
+                    exit_code=conclusion.exit_code,
+                )
+                if observation.trampoline_successor_id:
+                    spawn_store.update_spawn(
+                        runtime_root, run.spawn_id,
+                        trampoline_successor_id=observation.trampoline_successor_id,
+                    )
                 if extracted_harness_session_id:
                     _observe_id(extracted_harness_session_id, session_attempt)
 

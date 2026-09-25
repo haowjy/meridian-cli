@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Record Claude fullscreen trampoline successors separately on runs; keep the entry chat and native binding unchanged.
+
 - Record the effective OpenCode database namespace (including OPENCODE_DB); normalize relative Codex homes against the child cwd.
 
 - Separate recorded native stores from legacy Claude configuration hints; missing tracked stores never fall back to ambient namespaces.

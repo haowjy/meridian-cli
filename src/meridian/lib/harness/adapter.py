@@ -353,6 +353,7 @@ class PrimarySessionObservation(BaseModel):
 
     session_id: str | None = None
     discovery: HarnessSessionDiscovery | None = None
+    trampoline_successor_id: str | None = None
     detail: str | None = None
 
 
@@ -517,7 +518,7 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
 
     def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None: ...
 
-    def native_transcript_kind(self, path: Path) -> str: ...
+    def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]: ...
 
     def resolve_native_session_file(
         self, *, project_root: Path, session_id: str, native_store: Path,
@@ -857,7 +858,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         _ = artifacts, spawn_id
         return None
 
-    def native_transcript_kind(self, path: Path) -> str:
+    def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]:
         return "native_file"
 
     def resolve_native_session_file(
