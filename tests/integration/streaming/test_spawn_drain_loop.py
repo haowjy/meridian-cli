@@ -15,7 +15,7 @@ import pytest
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
-from meridian.lib.state.history import HarnessHistoryWriter, WriteResult, read_history_range
+from meridian.lib.state.history import HarnessHistoryWriter, WriteResult
 from meridian.lib.streaming import descendant_evidence as descendant_evidence_module
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
@@ -48,6 +48,7 @@ from meridian.lib.streaming.event_observers import EventObserverRegistry
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 from tests.support.fakes import FakeClock
+from tests.support.history import written_events as read_history_range
 from tests.support.pi import PiDrainScenario
 
 _SPAWN_ID = SpawnId("p-persist-order")

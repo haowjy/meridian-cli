@@ -14,15 +14,14 @@ from meridian.lib.harness.opencode_transcript import (
     OpenCodeV2StorageTranscriptProvider,
     interpret_opencode_record,
     interpret_opencode_v2_record,
-    iter_opencode_db_session_events,
 )
 from meridian.lib.harness.pi_journal import PI_JOURNAL_ENTRY_TYPES
 from meridian.lib.launch.constants import HISTORY_FILENAME
-from meridian.lib.state.history import iter_history_events
 from meridian.lib.state.native_snapshot import (
     HEADER_LIMIT,
     NATIVE_SNAPSHOT_FILENAME,
     SnapshotHeader,
+    SnapshotStream,
     TranscriptReadPaused,
     TranscriptValidation,
     is_snapshot_prefix,
@@ -122,10 +121,6 @@ def text_from_value(value: object) -> str:
         return "\n".join(parts).strip()
 
     return ""
-
-
-def _text_from_value(value: object) -> str:
-    return text_from_value(value)
 
 
 def _preview(value: str, *, limit: int = _MAX_PREVIEW) -> str:
@@ -575,15 +570,33 @@ class JsonlTranscriptProvider(TranscriptProvider):
         yield from _iter_json_events(path, current=current, validation=validation)
 
 
+class _CountedStream:
+    """Charge raw source bytes, including snapshot envelopes, without re-encoding events."""
+
+    def __init__(self, stream: SnapshotStream, consume: Callable[[int], None]) -> None:
+        self.stream = stream
+        self.consume = consume
+
+    def readline(self, size: int | None = -1, /) -> bytes:
+        raw = self.stream.readline(size)
+        self.consume(len(raw))
+        return raw
+
+    def tell(self) -> int:
+        return self.stream.tell()
+
+
 def _iter_json_events(
     path: Path,
     *,
     current: Callable[[], bool] | None = None,
     validation: TranscriptValidation | None = None,
+    consume: Callable[[int], None] | None = None,
 ) -> Iterator[dict[str, object]]:
     with path.open("rb") as handle:
+        stream = _CountedStream(handle, consume) if consume else handle
         while True:
-            raw = read_jsonl_frame(handle, current=current)
+            raw = read_jsonl_frame(stream, current=current)
             if not raw:
                 return
             stripped = raw.strip()
@@ -606,34 +619,12 @@ def _iter_json_events(
                         yield cast("dict[str, object]", item)
 
 
-class HistoryJsonlTranscriptProvider(TranscriptProvider):
-    """History-provider using crash-tolerant history iterators for canonicalized paths."""
-
-    def supports(self, path: Path) -> bool:
-        return path.name == HISTORY_FILENAME
-
-    def iter_events(
-        self,
-        path: Path,
-        *,
-        current: Callable[[], bool] | None = None,
-        validation: TranscriptValidation | None = None,
-    ) -> Iterator[dict[str, object]]:
-        for event in iter_history_events(
-            path,
-            current=current,
-            frame_guard=lambda raw: reject_unframed_storage_frame(raw, validation),
-        ):
-            yield cast("dict[str, object]", event)
-
-
 _OPENCODE_STORAGE_PROVIDER_TYPES = (
     OpenCodeStorageTranscriptProvider,
     OpenCodeV2StorageTranscriptProvider,
 )
 
 _TRANSCRIPT_PROVIDERS: tuple[TranscriptProvider, ...] = (
-    HistoryJsonlTranscriptProvider(),
     OpenCodeV2StorageTranscriptProvider(
         iter_json_events=_iter_json_events,
     ),
@@ -924,6 +915,20 @@ def parse_transcript_events_with_prologues(
     return _parse_events_with_prologues(events, parser=resolved_parser)
 
 
+def reject_runner_history(path: Path) -> None:
+    """Explicit file reads must not reinterpret retired runner event streams."""
+    if path.name == HISTORY_FILENAME:
+        raise ValueError("not a native transcript")
+    with path.open("rb") as handle:
+        first = handle.readline(HEADER_LIMIT + 1)
+    try:
+        header = json.loads(first)
+    except ValueError:
+        return
+    if isinstance(header, dict) and header.get("record") == "meridian.transcript":
+        raise ValueError("not a native transcript")
+
+
 def is_native_snapshot(path: Path) -> bool:
     """Bounded storage selection only; a true result is not a validated capture."""
     if path.name == NATIVE_SNAPSHOT_FILENAME:
@@ -938,6 +943,7 @@ def iter_transcript_events(
     validation: TranscriptValidation | None = None,
     current: Callable[[], bool] | None = None,
     check_header: Callable[[SnapshotHeader], None] | None = None,
+    consume: Callable[[int], None] | None = None,
 ) -> Iterator[dict[str, object]]:
     # A copied/renamed snapshot keeps its storage identity. Sniff only a bounded
     # header; body validation remains incremental and subject to the caller budget.
@@ -952,7 +958,7 @@ def iter_transcript_events(
             if path.name == NATIVE_SNAPSHOT_FILENAME or is_snapshot_prefix(first):
                 handle.seek(0)
                 yield from read_snapshot(
-                    handle,
+                    _CountedStream(handle, consume) if consume else handle,
                     validation=validation or TranscriptValidation(),
                     current=current,
                     check_header=check_header,
@@ -960,7 +966,12 @@ def iter_transcript_events(
                 return
     try:
         provider = _provider_for_path(path)
-        for event in provider.iter_events(path, current=current, validation=validation):
+        events = (
+            _iter_json_events(path, current=current, validation=validation, consume=consume)
+            if isinstance(provider, JsonlTranscriptProvider)
+            else provider.iter_events(path, current=current, validation=validation)
+        )
+        for event in events:
             reject_unframed_storage_record(event, validation)
             yield event
         if validation is not None:
@@ -995,21 +1006,8 @@ def parse_transcript_file_with_prologues(
     return _parse_events_with_prologues(iter_transcript_events(path), parser=resolved_parser)
 
 
-def parse_opencode_db_transcript_with_prologues(
-    session_id: str,
-    *,
-    parser: TranscriptEventParser | None = None,
-) -> TranscriptParseResult:
-    resolved_parser = parser or DefaultTranscriptEventParser()
-    return _parse_events_with_prologues(
-        iter_opencode_db_session_events(session_id=session_id),
-        parser=resolved_parser,
-    )
-
-
 __all__ = [
     "DefaultTranscriptEventParser",
-    "HistoryJsonlTranscriptProvider",
     "JsonlTranscriptProvider",
     "OpenCodeStorageTranscriptProvider",
     "OpenCodeV2StorageTranscriptProvider",
@@ -1018,9 +1016,7 @@ __all__ = [
     "TranscriptMessage",
     "TranscriptParseResult",
     "TranscriptProvider",
-    "_text_from_value",
     "iter_transcript_events",
-    "parse_opencode_db_transcript_with_prologues",
     "parse_transcript_events",
     "parse_transcript_events_with_prologues",
     "parse_transcript_file",
