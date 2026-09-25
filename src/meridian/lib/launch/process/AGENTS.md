@@ -42,8 +42,10 @@ arrive through `SubprocessHarness` hooks — never `HarnessId` branches:
   resolved runtime path) and secret redaction before metadata persistence.
 - `uses_native_primary_metadata` / `native_primary_runtime_metadata` — whether and
   which runtime fields populate `primary_meta.json`.
-- `observe_primary_session_id` — post-exit native session-file discovery. The runner
-  binds the result through `bind_harness_session_id(source="discovery")`.
+- `observe_primary_session_id` — post-exit check of the native identity plan (Pi
+  verifies its assigned file: ok/pending/conflict). It never selects a replacement;
+  any returned ID goes through `bind_harness_session_id(source="observed")`, which
+  cannot overwrite the pre-exec binding.
 - `build_primary_runtime_request_handler` — managed-primary runtime request handler
   (Codex/OpenCode permission broker).
 - `capabilities.captures_blackbox_output` and `bootstrap.primary_stderr_log` drive
@@ -58,10 +60,12 @@ and spawn paths share one writer; `runner.py` never names a harness id.
 in `_finalize_lifecycle_and_observe_session()`, after the process exits. Never call
 it during execution, and never call it twice.
 
-**Session seeds are hints.** Only exact resume and materialized fork IDs are known
-at startup. Fresh/native-fork selections remain pending until an authoritative
-identity observation binds the same startup attempt. Observation is best-effort;
-persisting an observed identity is not. Adapter cleanup still runs on binding errors.
+**Assigned identity binds before exec.** When the finalized
+`native_identity_plan` carries an ID (Meridian-minted create, verified resume, or
+fork target), the runner binds it as `source="assigned"` before starting the child;
+a conflict refuses the launch. Only plans without an ID (e.g. Claude fork) wait for
+the first owned observation. Observations bind once and never replace the key.
+Adapter cleanup still runs on binding errors.
 
 **Session scope wraps everything.** `session_scope()` opens before the spawn row is
 created and closes in the finally block. If `lifecycle_service.start()` fails, the

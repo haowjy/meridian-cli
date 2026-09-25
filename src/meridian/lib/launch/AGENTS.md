@@ -70,9 +70,9 @@ prepare/bind entry:
 3. **CLI streaming-serve** (`cli/streaming_serve.py`): resolve-before-persist via
    `SpawnApplicationService.prepare_spawn()`, then `run_streaming_spawn()`. Row
    created only on successful preparation. A captured session attempt records selection
-   immediately after managed startup returns, before output consumption. Native ID
-   callbacks or post-run artifact observation bind pending selection; row creation
-   alone is not model acceptance. An owned initial identity must match the assigned
+   immediately after managed startup returns, before output consumption. A plan-assigned
+   native ID binds before exec; otherwise native ID callbacks or post-run artifact
+   observation bind pending selection; row creation alone is not model acceptance. An owned initial identity must match the assigned
    or resume target before startup attribution; contradiction fails the attempt as
    `entry_mismatch`. Later identity switches and post-exit observations never
    rebind entry and are not startup confirmation.

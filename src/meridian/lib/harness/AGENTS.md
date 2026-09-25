@@ -89,13 +89,16 @@ without updating all adapters → startup failure.
 `_PROJECTED_FIELDS` and `_DELEGATED_FIELDS`. Missing a spec field from both →
 startup failure.
 
-**`observe_session_id()` called exactly once post-execution** (primary path only).
-Priority: connection session ID → artifact extraction → known ID → filesystem scan.
-Must not mutate adapter-instance state. Returned observations cannot overwrite a
-bound identity. `plan_native_identity()` provides pre-exec assignments where
-supported. `finalize_native_identity()` pins the plan against the final child
-environment before argv projection and pre-exec binding. Pi verifies only this
-assigned identity; it never scans for a replacement.
+**Native identity is planned, not discovered.** A chat binds one immutable
+`(harness, native_store, id)`. `plan_native_identity()` picks the operation and
+source; `finalize_native_identity()` pins store/ID against the final child env
+before argv projection, so the bound key, env and argv agree; the runner binds it
+before exec. `verify_native_identity()` checks that exact target after the attempt
+and never selects a replacement. Never add cwd/mtime/newest-file/prefix scans as
+identity evidence. `observe_session_id()` (once, post-execution, primary path)
+returns observations only; they bind once and cannot overwrite. Its filesystem leg
+still exists for Claude/Codex/OpenCode pending their exact-identity lane — see
+[.context/CONTEXT.md](.context/CONTEXT.md).
 
 **Terminal event classification is harness- and parent-scope-aware.** `event_type`
 is NOT globally unique — always check `event.harness_id`. `turn/completed` is Codex;

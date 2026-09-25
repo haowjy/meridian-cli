@@ -13,7 +13,8 @@ ran as a subprocess or a connection.
 
 Two extraction modes:
 - **Live event mode**: `detect_session_id_from_event(event)` — called per event
-  during the drain loop when a session ID is not yet known.
+  during the drain loop when a session ID is not yet known. Results are
+  observations: they confirm or conflict with an assigned ID, never replace it.
 - **Artifact mode**: `extract_session_id()`, `extract_usage()`, `extract_report()`
   — called post-exit on `history.jsonl` and output artifacts.
 

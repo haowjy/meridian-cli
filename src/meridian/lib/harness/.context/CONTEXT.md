@@ -131,9 +131,10 @@ conflict diagnostic; the recorded ID is still preserved.
 
 This is a Claude-specific concern. Claude's new TUI creates a transient session
 when entering `/tui fullscreen`, then writes the durable transcript under a
-different session ID. Meridian records the transient ID during launch; the
-override repairs it to the durable ID at finalization time. Codex, OpenCode,
-and Pi do not have this pattern and use the base implementation unchanged.
+different session ID. The chat keeps the ID bound at launch; the successor is
+logged as a conflict, not adopted, because a same-project prompt match is
+inference, not an owned signal. Pi overrides neither path for identity: its
+primary observation only verifies the assigned plan.
 
 ### `HarnessContract` as Inspectable Surface
 
