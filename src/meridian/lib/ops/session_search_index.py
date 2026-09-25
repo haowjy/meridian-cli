@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 import time
 from collections import defaultdict
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -165,110 +165,116 @@ class SearchProjection:
     def refresh(
         self, keys: dict[NativeKey, tuple[str, ...]], *, deadline: float, rebuild: bool = False
     ) -> None:
-        if self.index:
-            self.index.timeout = min(2, max(0, deadline - time.monotonic()))
-            removed = self.stored.keys() - self.bindings.keys()
-            removed |= {key for key, error in self.errors.items() if error == "missing"}
-            for key in removed:
+        with self.index.write_batch() if self.index else nullcontext():
+            if self.index:
+                self.index.timeout = min(2, max(0, deadline - time.monotonic()))
+                removed = self.stored.keys() - self.bindings.keys()
+                removed |= {key for key, error in self.errors.items() if error == "missing"}
+                for key in removed:
+                    if time.monotonic() >= deadline:
+                        break
+                    self.index.remove_source(key)
+            pending = [key for key in keys if key not in self.fresh and key not in self.errors]
+            # Until a locator exists, the authoritative chat order is the only
+            # available recency signal. Warm refresh uses exact native activity.
+            if not self.cold:
+                pending.sort(
+                    key=lambda key: (
+                        self.sources[key].activity if key in self.sources else 2**63 - 1
+                    ),
+                    reverse=True,
+                )
+            for key in pending:
                 if time.monotonic() >= deadline:
                     break
-                self.index.remove_source(key)
-        pending = [key for key in keys if key not in self.fresh and key not in self.errors]
-        # Until a locator exists, the authoritative chat order is the only
-        # available recency signal. Warm refresh uses exact native activity.
-        if not self.cold:
-            pending.sort(
-                key=lambda key: self.sources[key].activity if key in self.sources else 2**63 - 1,
-                reverse=True,
-            )
-        for key in pending:
-            if time.monotonic() >= deadline:
-                break
-            try:
-                source = self.sources.get(key)
-                if source is None:
-                    adapter = get_default_harness_registry().get_subprocess_harness(
-                        HarnessId(key.harness)
-                    )
-                    locator = adapter.resolve_native_session_file(
-                        session_id=key.session_id, native_store=Path(key.native_store)
-                    )
-                    if locator is None:
-                        self.errors[key] = "missing"
-                        if self.index:
-                            self.index.remove_source(key)
+                try:
+                    source = self.sources.get(key)
+                    if source is None:
+                        adapter = get_default_harness_registry().get_subprocess_harness(
+                            HarnessId(key.harness)
+                        )
+                        locator = adapter.resolve_native_session_file(
+                            session_id=key.session_id, native_store=Path(key.native_store)
+                        )
+                        if locator is None:
+                            self.errors[key] = "missing"
+                            if self.index:
+                                self.index.remove_source(key)
+                            continue
+                        source = NativeSource(locator, file_witness(locator))
+                        self.sources[key] = source
+                    if (
+                        not rebuild
+                        and isinstance(source.witness, FileWitness)
+                        and source.witness.size > LAZY_SOURCE_BYTES
+                    ):
                         continue
-                    source = NativeSource(locator, file_witness(locator))
-                    self.sources[key] = source
-                if (
-                    not rebuild
-                    and isinstance(source.witness, FileWitness)
-                    and source.witness.size > LAZY_SOURCE_BYTES
-                ):
-                    continue
-                budget = None if rebuild else TranscriptBudget(deadline, LAZY_SOURCE_BYTES)
-                target_source = TranscriptSource(
-                    "opencode_db" if key.harness == "opencode" else "native_file",
-                    key.session_id,
-                    key.harness,
-                    key.harness,
-                    source.locator,
-                )
-                target = SessionLogTarget(
-                    key.session_id, key.harness, source.locator, key.harness, (target_source,)
-                )
-                parse = partial(
-                    parse_session_target,
-                    project_root=self.project_root,
-                    runtime_root=self.runtime_root,
-                    target=target,
-                    route=SessionLogRoute("ref", keys[key][0]),
-                    budget=budget,
-                )
-                if key.harness == "opencode":
-                    with read_opencode_search_source(source.locator, key.session_id) as (w, events):
-                        transcript = parse(events=events)
-                    source = NativeSource(source.locator, w)
-                    self.sources[key] = source
-                else:
-                    transcript = parse()
-                    if file_witness(source.locator) != source.witness:
-                        continue
-                if budget and budget.exhausted:
-                    continue
-                reasons = transcript.read_reasons
-                complete = transcript.search_ready and not reasons
-                if self.index:
-                    self.index.timeout = min(2, max(0, deadline - time.monotonic()))
-                    self.index.replace_source(
-                        key,
-                        locator=source.locator,
-                        witness=source.witness,
-                        activity=source.activity,
-                        entries=(
-                            TranscriptEntry(
-                                e.ordinal,
-                                " ".join(e.content.split()),
-                                e.segment_index,
-                                e.start_segment_message_index,
-                                e.end_segment_message_index,
-                                e.role,
-                                e.kind,
-                                e.is_placeholder,
-                            )
-                            for e in transcript.all_entries
-                        ),
-                        status="complete" if complete else "partial",
-                        reasons=reasons,
+                    budget = None if rebuild else TranscriptBudget(deadline, LAZY_SOURCE_BYTES)
+                    target_source = TranscriptSource(
+                        "opencode_db" if key.harness == "opencode" else "native_file",
+                        key.session_id,
+                        key.harness,
+                        key.harness,
+                        source.locator,
                     )
-                else:
-                    self.parsed[key] = transcript
-                if complete:
-                    self.fresh.add(key)
-                else:
-                    self.errors[key] = "; ".join(reasons) or "partial"
-            except (OSError, ValueError, sqlite3.Error) as exc:
-                self.errors[key] = str(exc)
+                    target = SessionLogTarget(
+                        key.session_id, key.harness, source.locator, key.harness, (target_source,)
+                    )
+                    parse = partial(
+                        parse_session_target,
+                        project_root=self.project_root,
+                        runtime_root=self.runtime_root,
+                        target=target,
+                        route=SessionLogRoute("ref", keys[key][0]),
+                        budget=budget,
+                    )
+                    if key.harness == "opencode":
+                        with read_opencode_search_source(source.locator, key.session_id) as (
+                            w,
+                            events,
+                        ):
+                            transcript = parse(events=events)
+                        source = NativeSource(source.locator, w)
+                        self.sources[key] = source
+                    else:
+                        transcript = parse()
+                        if file_witness(source.locator) != source.witness:
+                            continue
+                    if budget and budget.exhausted:
+                        continue
+                    reasons = transcript.read_reasons
+                    complete = transcript.search_ready and not reasons
+                    if self.index:
+                        self.index.timeout = min(2, max(0, deadline - time.monotonic()))
+                        self.index.replace_source(
+                            key,
+                            locator=source.locator,
+                            witness=source.witness,
+                            activity=source.activity,
+                            entries=(
+                                TranscriptEntry(
+                                    e.ordinal,
+                                    " ".join(e.content.split()),
+                                    e.segment_index,
+                                    e.start_segment_message_index,
+                                    e.end_segment_message_index,
+                                    e.role,
+                                    e.kind,
+                                    e.is_placeholder,
+                                )
+                                for e in transcript.all_entries
+                            ),
+                            status="complete" if complete else "partial",
+                            reasons=reasons,
+                        )
+                    else:
+                        self.parsed[key] = transcript
+                    if complete:
+                        self.fresh.add(key)
+                    else:
+                        self.errors[key] = "; ".join(reasons) or "partial"
+                except (OSError, ValueError, sqlite3.Error) as exc:
+                    self.errors[key] = str(exc)
 
     def search(
         self, query: str, *, limit: int | None = 101, deadline: float | None = None

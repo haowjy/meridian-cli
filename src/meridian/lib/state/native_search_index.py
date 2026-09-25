@@ -10,8 +10,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-from collections.abc import Iterable
-from contextlib import closing
+from collections.abc import Generator, Iterable
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -176,6 +176,9 @@ class NativeSearchIndex:
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=self.timeout)
         db.execute("PRAGMA foreign_keys = ON")
+        # This WAL is a disposable projection. NORMAL keeps transactions atomic
+        # without forcing durable-media synchronization for every indexed source.
+        db.execute("PRAGMA synchronous = NORMAL")
         db.execute(f"PRAGMA busy_timeout = {max(0, int(self.timeout * 1000))}")
         return db
 
@@ -208,6 +211,17 @@ class NativeSearchIndex:
                 "INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version',?)",
                 (str(SCHEMA_VERSION),),
             )
+
+    @contextmanager
+    def write_batch(self) -> Generator[None]:
+        """Keep WAL attached across per-source commits, without holding a read transaction.
+
+        Closing the final connection checkpoints the WAL. Doing that per source
+        repeatedly rewrites the growing FTS index; one refresh needs one lifetime.
+        """
+        with closing(self._connect()) as keeper:
+            keeper.execute("SELECT value FROM meta").fetchall()
+            yield
 
     def inventory(self) -> dict[NativeKey, SourceRecord]:
         """Bulk metadata only; callers supply authoritative keys and current witnesses."""
