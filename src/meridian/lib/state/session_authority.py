@@ -26,6 +26,48 @@ from meridian.lib.core.types import (
 )
 
 
+@dataclass(frozen=True)
+class ExactModelObservation:
+    """Immutable evidence for an exact native model-setting observation."""
+
+    source: "RecordedNativeSource"
+    provider_contract: str
+    view_basis: Literal["reopen-default"]
+    selected_leaf_id: str | None
+    model_basis: Literal["selected_reopen_default"]
+    model_token: str
+    native_provider: str
+    evidence_entry_id: str
+    byte_length: int
+    content_sha256: str
+    file_object: "LocalObjectStamp"
+    store_object: "LocalObjectStamp"
+    observed_at: str
+    complete: Literal[True] = True
+
+
+@dataclass(frozen=True)
+class ModelEvidenceUnavailable:
+    reason: Literal[
+        "unsupported_provider",
+        "unsupported_view",
+        "missing",
+        "inaccessible",
+        "unsupported_dialect",
+        "incomplete",
+        "no_model",
+        "changed_during_read",
+    ]
+
+
+@dataclass(frozen=True)
+class ModelSourceConflict:
+    reason: Literal["source_mismatch", "store_changed", "file_changed", "identity_mismatch"]
+
+
+type ExactModelEvidence = ExactModelObservation | ModelEvidenceUnavailable | ModelSourceConflict
+
+
 class SessionRecord(BaseModel):
     model_config = ConfigDict(frozen=True)
 

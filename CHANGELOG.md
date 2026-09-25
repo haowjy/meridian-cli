@@ -4,12 +4,18 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Keep exact Pi source descriptors open through validation and final reobservation; reject changed files and malformed full journals, with guarded adversarial coverage.
+- Isolate guarded exact-provider acceptance in a child process, classify FIFO replacement as a source conflict, and share immutable evidence results in state.
+
 ### Fixed
 
 - Reject conflicting linked-spawn work/path metadata, detach checked policy
   snapshots from mutable rows, and quarantine invalid UTF-8 spawn state.
 
 - Retain admitted native source authority for exact linked-metadata reads; omit prompt bodies and fail closed on lifecycle or spawn mismatches.
+
+- Add bounded exact Pi reopen-setting evidence for recorded sources; preserve
+  lineage settings order and refuse incomplete, changed, or unsupported reads.
 
 - Reconcile Claude raw model and effort duplicates against retained emitted controls
   in its bounded argument traversal; refuse unowned permission scalars and tool
