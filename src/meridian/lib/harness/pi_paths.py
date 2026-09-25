@@ -122,3 +122,12 @@ __all__ = [
     "resolve_pi_extension_target_root",
     "resolve_pi_spawn_session_root",
 ]
+
+
+def scope_pi_session_dir_for_spawn(*, child_env: dict[str, str], spawn_id: str) -> str:
+    """Resolve one spawn's store before the native identity is planned."""
+    root = resolve_pi_spawn_session_root(env=child_env)
+    if root.name != str(spawn_id):
+        root = root / str(spawn_id)
+    child_env[_PI_SESSION_DIR_ENV] = str(root)
+    return str(root)

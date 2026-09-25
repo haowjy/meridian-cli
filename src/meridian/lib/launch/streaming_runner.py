@@ -55,7 +55,6 @@ from meridian.lib.launch.context import LaunchContext
 from meridian.lib.launch.env import (
     apply_pi_bind_time_env,
     resolve_pi_session_role,
-    scope_pi_session_dir_for_spawn,
 )
 from meridian.lib.launch.errors import ErrorCategory, classify_error, should_retry
 from meridian.lib.launch.extract import (
@@ -405,15 +404,6 @@ def _preserve_attempt_artifacts(
         if not result.success:
             raise OSError(result.error or "Failed to record attempt boundary")
 
-
-def _scope_pi_session_dir_for_spawn(
-    *,
-    child_env: dict[str, str],
-    spawn_id: SpawnId,
-) -> None:
-    """Scope Pi session storage to one launch to avoid stale fallback collisions."""
-
-    scope_pi_session_dir_for_spawn(child_env=child_env, spawn_id=spawn_id)
 
 
 def _persist_attempt_artifacts(
@@ -1172,11 +1162,6 @@ async def execute_with_streaming(
             if resolved_harness_id is HarnessId.PI
             else None
         )
-        if resolved_harness_id is HarnessId.PI and pi_session_role == "spawned":
-            _scope_pi_session_dir_for_spawn(
-                child_env=child_env,
-                spawn_id=run.spawn_id,
-            )
         if resolved_harness_id is HarnessId.PI:
             assert pi_session_role is not None
             apply_pi_bind_time_env(
@@ -1403,6 +1388,15 @@ async def execute_with_streaming(
                 )
                 runner_phase[0] = "processing_attempt"
                 conclusion.absorb_attempt(attempt)
+                identity_error = None
+                if spec.native_identity_plan is not None:
+                    identity_error = harness.verify_native_identity(spec.native_identity_plan)
+                    if identity_error:
+                        logger.warning(
+                            "Native identity verification conflict", error=identity_error
+                        )
+                        conclusion.exit_code = 1
+                        conclusion.failure_reason = identity_error
                 if attempt.start_error is not None:
                     logger.info(
                         "Failed to execute streaming spawn attempt.",
@@ -1461,6 +1455,11 @@ async def execute_with_streaming(
                     failure_reason=conclusion.failure_reason,
                 )
                 conclusion.extracted = extraction
+                if identity_error:
+                    conclusion.exit_code = 1
+                    conclusion.failure_reason = identity_error
+                    conclusion.authoritative_terminal_status = "failed"
+                    break
 
                 if (
                     _read_cancel_intent(runtime_root, run.spawn_id) is not None

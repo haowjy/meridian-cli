@@ -6,6 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Pi binds native IDs before TUI/RPC exec, resumes exact files, and refuses identity overrides; newest files never replace chats.
+
 - Pi native identity preflight verifies exact journal headers and rejects ID collisions.
 
 - Chat restarts and managed-primary metadata preserve the original native binding.

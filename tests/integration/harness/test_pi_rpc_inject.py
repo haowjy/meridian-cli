@@ -35,7 +35,7 @@ _PI_BUSY_REJECTION = (
     "to queue the message."
 )
 _PI_HELP_SURFACE = (
-    "--mode rpc --model --append-system-prompt --session --fork "
+    "--mode rpc --model --append-system-prompt --session --session-id --fork "
     "--session-dir --no-extensions --no-skills "
     "--no-context-files --no-prompt-templates -e --extension "
     "PI_CODING_AGENT_SESSION_DIR"

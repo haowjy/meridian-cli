@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.harness.pi import PiAdapter
 from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.ops.session_archive import materialize_native_history, session_stop_maintenance
 from meridian.lib.ops.session_target import resolve_session_log_target
@@ -74,6 +73,7 @@ def test_stop_maintenance_captures_completed_spawn_with_another_chat(
             chat_id=chat_id,
             kind="primary",
             spawn_id=key,
+            native_store=str(native_root),
         )
         session_store.stop_session(root, chat_id)
         spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
@@ -124,6 +124,12 @@ def _capture_fixture(tmp_path: Path, monkeypatch, *, native_id: str | None = "ex
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
     native_root = resolve_pi_spawn_session_root()
     native_root.mkdir(parents=True)
+    if native_id is not None:
+        session_store.start_session(
+            root, "pi", native_id, "test", chat_id="c1", kind="primary", spawn_id=key,
+            native_store=str(native_root),
+        )
+        session_store.stop_session(root, "c1")
     native = native_root / "timestamp_exact-native.jsonl"
     native.write_text(json.dumps({"type": "session", "version": 3, "id": "exact-native"}) + "\n")
     return project, root, key, native
@@ -131,7 +137,6 @@ def _capture_fixture(tmp_path: Path, monkeypatch, *, native_id: str | None = "ex
 
 def test_capture_does_not_discover_an_unrecorded_native_session(tmp_path: Path, monkeypatch):
     project, root, key, native = _capture_fixture(tmp_path, monkeypatch, native_id=None)
-    monkeypatch.setattr(PiAdapter, "detect_primary_session_id", lambda *a, **kw: "exact-native")
     with pytest.raises(ValueError, match="exact native identity"):
         materialize_native_history(project, root, key)
     assert native.exists()
@@ -140,7 +145,6 @@ def test_capture_does_not_discover_an_unrecorded_native_session(tmp_path: Path, 
 
 def test_capture_missing_exact_source_never_uses_newer_detection(tmp_path: Path, monkeypatch):
     project, root, key, _ = _capture_fixture(tmp_path, monkeypatch, native_id="missing-native")
-    monkeypatch.setattr(PiAdapter, "detect_primary_session_id", lambda *a, **kw: "exact-native")
     with pytest.raises(FileNotFoundError, match="missing-native"):
         materialize_native_history(project, root, key)
     _assert_not_captured(root, key)
@@ -224,6 +228,7 @@ def test_capture_exact_generation_supplies_identity_not_newer_chat(tmp_path: Pat
         chat_id="c1",
         kind="primary",
         spawn_id=key,
+        native_store=str(resolve_pi_spawn_session_root()),
     )
     session_store.stop_session(root, "c1")
     session_store.start_session(root, "pi", "", "test", chat_id="c1", kind="primary")

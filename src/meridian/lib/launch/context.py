@@ -34,7 +34,7 @@ from meridian.lib.core.child_env import validate_child_env_keys
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
-from meridian.lib.core.types import HarnessId, ModelId
+from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.diagnostics import capture_library_diagnostics
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.launch.launch_types import (
@@ -2058,15 +2058,6 @@ def bind_launch_context(
         )
     elif harness.id == HarnessId.CLAUDE:
         spec = spec.model_copy(update={"prompt_file_path": system_prompt_path.as_posix()})
-    argv: tuple[str, ...] = ()
-    if runtime.argv_intent != LaunchArgvIntent.SPEC_ONLY:
-        argv = build_launch_argv(
-            adapter=harness,
-            run_inputs=run_params,
-            perms=perms,
-            projected_spec=spec,
-        )
-
     launch_env_overrides: dict[str, str] = {}
     if opencode_version is not None:
         launch_env_overrides["MERIDIAN_HARNESS_OPENCODE_VERSION"] = opencode_version
@@ -2113,6 +2104,12 @@ def bind_launch_context(
         permission_config=permission_config,
         runtime_env_overrides=bind_env_overrides,
     )
+    if spec.native_identity_plan is not None:
+        spec = spec.model_copy(update={"native_identity_plan": harness.finalize_native_identity(
+            spec.native_identity_plan, child_env=env, child_cwd=child_cwd,
+            session=resolved_request.session, spawn_id=SpawnId(bindings.spawn_id),
+            interactive=run_params.interactive,
+        )})
     environment = ResolvedLaunchEnvironment.build(
         child_context_env=child_context_env,
         plan_env=dict(bindings.plan_overrides),
@@ -2123,14 +2120,15 @@ def bind_launch_context(
         runner_overlay_env={},
         final_env=env,
     )
-    if spec.native_identity_plan is not None:
-        spec = spec.model_copy(update={"native_identity_plan": replace(
-            spec.native_identity_plan,
-            native_store=(
-                harness.native_store_for_launch(child_env=env, child_cwd=child_cwd)
-                or spec.native_identity_plan.native_store
-            ),
-        )})
+    argv: tuple[str, ...] = ()
+    if runtime.argv_intent != LaunchArgvIntent.SPEC_ONLY:
+        argv = build_launch_argv(
+            adapter=harness,
+            run_inputs=run_params,
+            perms=perms,
+            projected_spec=spec,
+        )
+
     binding = ResolvedLaunchBinding(
         work_id=effective_work_id,
         child_cwd=child_cwd,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
@@ -403,6 +404,13 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
         self, *, child_env: dict[str, str], child_cwd: Path,
     ) -> str | None: ...
 
+    def finalize_native_identity(
+        self, plan: NativeIdentityPlan, *, child_env: dict[str, str], child_cwd: Path,
+        session: SessionRequest, spawn_id: SpawnId, interactive: bool,
+    ) -> NativeIdentityPlan: ...
+
+    def verify_native_identity(self, plan: NativeIdentityPlan) -> str | None: ...
+
     def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> AdapterSpecT: ...
 
     def preflight(
@@ -615,6 +623,20 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
 
     def native_store_for_launch(self, *, child_env: dict[str, str], child_cwd: Path) -> str | None:
         """Resolve the store from the actual child environment, not parent defaults."""
+        return None
+
+    def finalize_native_identity(
+        self, plan: NativeIdentityPlan, *, child_env: dict[str, str], child_cwd: Path,
+        session: SessionRequest, spawn_id: SpawnId, interactive: bool,
+    ) -> NativeIdentityPlan:
+        """Pin identity to the final child store before projecting argv or binding."""
+        return replace(plan, native_store=(
+            self.native_store_for_launch(child_env=child_env, child_cwd=child_cwd)
+            or plan.native_store
+        ))
+
+    def verify_native_identity(self, plan: NativeIdentityPlan) -> str | None:
+        """Return an exact native entry conflict after execution, if supported."""
         return None
 
     @abstractmethod

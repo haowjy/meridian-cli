@@ -436,13 +436,12 @@ the extensions write disk files, and the Python side watches them. If a lifecycl
 message appears on stdout (e.g., from a misconfigured extension), it is treated as
 diagnostic noise and does not become the source of truth.
 
-### Pi: Session Log Reads Spawn History
+### Pi: Exact Native Identity
 
-For Meridian-managed spawned Pi RPC sessions, `meridian session log <pi-spawn-id>`
-reads the spawn `history.jsonl` and translates Pi `message_end` events into readable
-transcript entries. It renders user prompts, assistant text, Pi tool calls/results,
-and custom follow-up pings. Native Pi session-file lookup may exist as metadata, but
-spawn history is the authoritative session-log source for Meridian-owned Pi spawns.
+Managed Pi reads use the chat's recorded native store and ID. Native entry
+verification and launch planning are described in [Pi integration](pi-integration.md).
+Runner history remains a capture source for child records, not a substitute for
+an unavailable tracked native transcript.
 
 ## Session Read Path
 

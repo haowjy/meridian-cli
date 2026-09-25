@@ -13,7 +13,7 @@ from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
 ActivityState = Literal["starting", "idle", "turn_active", "finalizing"]
-HarnessSessionDiscovery = Literal["ok", "never_created", "discovery_failed"]
+HarnessSessionDiscovery = Literal["ok", "pending", "conflict", "never_created", "discovery_failed"]
 
 
 @dataclass(frozen=True)
@@ -127,7 +127,7 @@ def _coerce_harness_session_discovery(value: object) -> HarnessSessionDiscovery 
     if not isinstance(value, str):
         return None
     normalized = value.strip().lower()
-    if normalized not in {"ok", "never_created", "discovery_failed"}:
+    if normalized not in {"ok", "pending", "conflict", "never_created", "discovery_failed"}:
         return None
     return cast("HarnessSessionDiscovery", normalized)
 

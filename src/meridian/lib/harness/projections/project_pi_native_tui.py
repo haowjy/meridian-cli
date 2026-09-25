@@ -6,6 +6,7 @@ import logging
 from collections.abc import Sequence
 
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.pi_identity import project_identity
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 _PROJECTED_FIELDS: frozenset[str] = frozenset(
     {
+        "native_identity_plan",
         "model",
         "effort",
         "continue_session_id",
@@ -31,7 +33,6 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
 
 _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
-        "native_identity_plan",
         "harness",
         "agent_name",
         "agents_payload",
@@ -184,9 +185,6 @@ def project_pi_native_tui_spec_to_cli_args(
     if spec.appended_system_prompt:
         command.extend(("--append-system-prompt", spec.appended_system_prompt))
 
-    continue_session_id = (spec.continue_session_id or "").strip()
-    has_continue_session = bool(continue_session_id)
-    has_continue_fork = has_continue_session and spec.continue_fork
     _reject_mode_collisions(passthrough_tail)
     _reject_continue_collisions(passthrough_tail)
     _reject_extension_collisions(passthrough_tail)
@@ -212,11 +210,7 @@ def project_pi_native_tui_spec_to_cli_args(
         passthrough_tail=passthrough_tail,
     )
 
-    if has_continue_session:
-        if has_continue_fork:
-            command.extend(("--fork", continue_session_id))
-        else:
-            command.extend(("--session", continue_session_id))
+    command.extend(project_identity(spec.native_identity_plan, passthrough_tail))
 
     for extension_entrypoint in spec.pi_extension_entrypoints:
         command.extend(("-e", extension_entrypoint))

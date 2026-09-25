@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.core.native_identity import NativeIdentityPlan
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections import pi_rpc as pi_rpc_module
 from meridian.lib.harness.connections.base import (
@@ -29,7 +30,7 @@ from meridian.lib.state.paths import (
 from meridian.lib.streaming.spawn_manager import SpawnManager
 
 _PI_HELP_SURFACE = (
-    "--mode rpc --model --append-system-prompt --session --fork "
+    "--mode rpc --model --append-system-prompt --session --session-id --fork "
     "--session-dir --no-extensions --no-skills "
     "--no-context-files --no-prompt-templates -e --extension "
     "PI_CODING_AGENT_SESSION_DIR"
@@ -260,6 +261,9 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
             pi_session_role="spawned",
         ),
         ResolvedLaunchSpec(
+            native_identity_plan=NativeIdentityPlan(
+                "planned-id", str(scoped_session_dir), None, "create",
+            ),
             harness=HarnessId.PI,
             prompt="hello",
             permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
@@ -319,6 +323,9 @@ async def test_pi_rpc_connection_redacts_secret_like_cli_args_in_process_spawned
             },
         ),
         ResolvedLaunchSpec(
+            native_identity_plan=NativeIdentityPlan(
+                "planned-id", str(scoped_session_dir), None, "create",
+            ),
             harness=HarnessId.PI,
             prompt="hello",
             extra_args=("--api-key", "secret-value", "--profile", "safe"),

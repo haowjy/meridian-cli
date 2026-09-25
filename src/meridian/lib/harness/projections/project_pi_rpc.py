@@ -6,7 +6,7 @@ import logging
 from collections.abc import Sequence
 
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
+from meridian.lib.harness.pi_identity import project_identity
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 _PROJECTED_FIELDS: frozenset[str] = frozenset(
     {
+        "native_identity_plan",
         "model",
         "effort",
         "continue_session_id",
@@ -34,7 +35,6 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
 
 _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
-        "native_identity_plan",
         "harness",
         "agent_name",
         "agents_payload",
@@ -154,10 +154,6 @@ def _project_thinking_level(spec: ResolvedLaunchSpec) -> str | None:
     return _EFFORT_TO_THINKING.get((spec.effort or "").strip().lower())
 
 
-def _default_pi_session_dir() -> str:
-    return str(resolve_pi_spawn_session_root())
-
-
 def project_pi_spec_to_cli_args(
     spec: ResolvedLaunchSpec,
     *,
@@ -183,9 +179,6 @@ def project_pi_spec_to_cli_args(
     if spec.appended_system_prompt:
         command.extend(("--append-system-prompt", spec.appended_system_prompt))
 
-    continue_session_id = (spec.continue_session_id or "").strip()
-    has_continue_session = bool(continue_session_id)
-    has_continue_fork = has_continue_session and spec.continue_fork
     _reject_mode_collisions(passthrough_tail)
     _reject_extension_collisions(passthrough_tail)
     _reject_session_dir_collisions(passthrough_tail)
@@ -205,16 +198,8 @@ def project_pi_spec_to_cli_args(
         has_managed_value=bool(spec.appended_system_prompt),
         passthrough_tail=passthrough_tail,
     )
-    _log_collision_if_needed(
-        managed_flag="--session",
-        has_managed_value=has_continue_session,
-        passthrough_tail=passthrough_tail,
-    )
-    _log_collision_if_needed(
-        managed_flag="--fork",
-        has_managed_value=has_continue_fork,
-        passthrough_tail=passthrough_tail,
-    )
+
+
     _log_collision_if_needed(
         managed_flag="--no-extensions",
         has_managed_value=not spec.load_all_pi_extensions,
@@ -246,13 +231,7 @@ def project_pi_spec_to_cli_args(
         passthrough_tail=passthrough_tail,
     )
 
-    if has_continue_session:
-        if has_continue_fork:
-            command.extend(("--fork", continue_session_id))
-        else:
-            command.extend(("--session", continue_session_id))
-
-    command.extend(("--session-dir", _default_pi_session_dir()))
+    command.extend(project_identity(spec.native_identity_plan, passthrough_tail))
 
     if not spec.load_all_pi_extensions:
         command.append("--no-extensions")

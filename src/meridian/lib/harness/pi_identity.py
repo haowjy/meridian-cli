@@ -3,13 +3,14 @@
 Meridian never writes a Pi journal. Filename suffixes locate an assigned ID;
 headers authorize opening it. Neither cwd nor mtime is identity evidence.
 """
+
 from __future__ import annotations
 
 import json
 import re
 import uuid
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from meridian.lib.core.native_identity import NativeIdentityPlan
 
@@ -53,10 +54,12 @@ def resolve_session_file(store: Path, session_id: str, *, pending: bool = False)
     return path
 
 
-def verify_identity(plan: NativeIdentityPlan) -> str:
+def verify_identity(plan: NativeIdentityPlan) -> Literal["ok", "pending"]:
     assert plan.native_store is not None and plan.harness_session_id is not None
     path = resolve_session_file(
-        Path(plan.native_store), plan.harness_session_id, pending=plan.operation == "create",
+        Path(plan.native_store),
+        plan.harness_session_id,
+        pending=plan.operation == "create",
     )
     if path is None:
         return "pending"
@@ -68,8 +71,17 @@ def verify_identity(plan: NativeIdentityPlan) -> str:
 
 
 def project_identity(plan: NativeIdentityPlan | None, extra_args: tuple[str, ...]) -> list[str]:
-    refused = {"--session", "-c", "--continue", "-r", "--resume", "--session-dir",
-               "--session-id", "--fork", "--no-session"}
+    refused = {
+        "--session",
+        "-c",
+        "--continue",
+        "-r",
+        "--resume",
+        "--session-dir",
+        "--session-id",
+        "--fork",
+        "--no-session",
+    }
     for token in extra_args:
         if token.split("=", 1)[0] in refused:
             raise ValueError(f"Pi managed identity refuses {token} in passthrough extra_args")

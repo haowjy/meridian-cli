@@ -7,7 +7,7 @@ import json
 import logging
 import time
 from asyncio.subprocess import PIPE
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Final, Literal, NamedTuple, cast
 
@@ -507,9 +507,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             base_command=BASE_COMMAND_PI_SUBPROCESS,
         )
         env = dict(config.child_env)
-        session_dir = env.get("PI_CODING_AGENT_SESSION_DIR", "").strip()
-        if session_dir:
-            command = self._apply_session_dir_arg(command, session_dir)
         launch_role = "spawned"
         if (self._launch_session_role or "").strip().lower() == "primary":
             launch_role = "primary"
@@ -553,28 +550,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             raise
         except Exception as exc:
             await queue.put((_STREAM_ERROR_KIND, exc))
-
-    def _apply_session_dir_arg(self, command: Sequence[str], session_dir: str) -> list[str]:
-        rewritten: list[str] = []
-        replaced = False
-        i = 0
-        while i < len(command):
-            token = command[i]
-            if token == _PI_SESSION_DIR_FLAG:
-                rewritten.extend((_PI_SESSION_DIR_FLAG, session_dir))
-                replaced = True
-                i += 2
-                continue
-            if token.startswith(f"{_PI_SESSION_DIR_FLAG}="):
-                rewritten.extend((_PI_SESSION_DIR_FLAG, session_dir))
-                replaced = True
-                i += 1
-                continue
-            rewritten.append(token)
-            i += 1
-        if not replaced:
-            rewritten.extend((_PI_SESSION_DIR_FLAG, session_dir))
-        return rewritten
 
     def _parse_stdout_line(self, line: str) -> ParsedStdoutLine:
         payload_text = line.strip()
