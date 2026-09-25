@@ -12,3 +12,21 @@ class NativeIdentityPlan:
     native_store: str | None
     locator: str | None
     operation: Literal["create", "resume", "fork"]
+
+
+class NativeSessionUnavailable(ValueError):
+    """A tracked reference has no exact readable native target."""
+
+    def __init__(
+        self, ref: str, reason: Literal["unbound", "missing", "ambiguous_native_file"]
+    ) -> None:
+        self.ref = ref
+        self.reason = reason
+        message = (
+            f"no verified native session for {ref}"
+            if reason == "unbound"
+            else f"ambiguous native transcript for {ref}"
+            if reason == "ambiguous_native_file"
+            else f"native transcript missing or pending for {ref}"
+        )
+        super().__init__(message)

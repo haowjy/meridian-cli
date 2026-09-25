@@ -2058,6 +2058,12 @@ def bind_launch_context(
         )
     elif harness.id == HarnessId.CLAUDE:
         spec = spec.model_copy(update={"prompt_file_path": system_prompt_path.as_posix()})
+    if spec.native_identity_plan is not None and bindings.forked_harness_session_id:
+        spec = spec.model_copy(update={"native_identity_plan": replace(
+            spec.native_identity_plan,
+            harness_session_id=bindings.forked_harness_session_id,
+            operation="fork",
+        )})
     argv: tuple[str, ...] = ()
     if runtime.argv_intent != LaunchArgvIntent.SPEC_ONLY:
         argv = build_launch_argv(
@@ -2173,6 +2179,7 @@ def _build_launch_context_impl(
     dry_run: bool = False,
     plan_overrides: Mapping[str, str] | None = None,
     runtime_work_id: str | None = None,
+    forked_harness_session_id: str | None = None,
     cache: MarsResultCache | None = None,
 ) -> LaunchContext:
     """Build deterministic launch context from raw request/runtime inputs."""
@@ -2218,6 +2225,7 @@ def _build_launch_context_impl(
     bindings = RuntimeBindings(
         spawn_id=spawn_id,
         runtime_work_id=runtime_work_id,
+        forked_harness_session_id=forked_harness_session_id,
         plan_overrides=dict(plan_overrides or {}),
         dry_run=dry_run,
     )
@@ -2240,6 +2248,7 @@ def build_launch_context(
     dry_run: bool = False,
     plan_overrides: Mapping[str, str] | None = None,
     runtime_work_id: str | None = None,
+    forked_harness_session_id: str | None = None,
     cache: MarsResultCache | None = None,
 ) -> LaunchContext:
     """Build deterministic launch context without leaking library warnings."""
@@ -2253,6 +2262,7 @@ def build_launch_context(
             dry_run=dry_run,
             plan_overrides=plan_overrides,
             runtime_work_id=runtime_work_id,
+            forked_harness_session_id=forked_harness_session_id,
             cache=cache,
         )
 

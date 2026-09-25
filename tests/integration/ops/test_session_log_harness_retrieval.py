@@ -111,6 +111,15 @@ def test_session_log_resolves_opencode_db_transcript_when_session_diff_is_empty(
         ],
     )
     monkeypatch.setenv("XDG_DATA_HOME", xdg_data_home.as_posix())
+    storage_root = xdg_data_home / "opencode" / "storage"
+    session_store.start_session(
+        runtime_root,
+        harness="opencode",
+        harness_session_id=session_id,
+        model="gpt-5.3-codex",
+        chat_id="c1",
+        native_store=storage_root.as_posix(),
+    )
 
     spawn_store.start_spawn(
         runtime_root,
@@ -172,6 +181,7 @@ def test_session_log_resolves_opencode_db_without_legacy_session_file(
         harness_session_id=session_id,
         model="gpt-5.3-codex",
         chat_id=chat_id,
+        native_store=(xdg_data_home / "opencode" / "storage").as_posix(),
     )
     spawn_store.start_spawn(
         runtime_root,

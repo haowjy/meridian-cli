@@ -12,6 +12,7 @@ from typing import NamedTuple
 from pydantic import BaseModel, ConfigDict, computed_field
 
 from meridian.lib.core.context import RuntimeContext
+from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.runtime import (
     async_from_sync,
@@ -154,6 +155,13 @@ def iter_session_subset_search(
             )
             if not transcript.search_ready:
                 matched = False
+        except NativeSessionUnavailable as exc:
+            yield SubsetSearchStep(
+                chat_id,
+                False,
+                str(exc) if exc.reason in {"unbound", "ambiguous_native_file"} else None,
+            )
+            continue
         except (
             ValueError,
             OSError,

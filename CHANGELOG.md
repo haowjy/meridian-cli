@@ -6,6 +6,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Claude, Codex, and OpenCode identity reads no longer discover sessions from filesystem recency; tracked reads use exact native stores.
+- Claude planned session IDs project through a typed launch field, and passthrough identity flags are refused for tracked launches.
+
 - Chat restarts and managed-primary metadata preserve the original native binding.
 
 - Continue and fork refuse unbound chats with a clear error; removed discovery-based recovery advice.

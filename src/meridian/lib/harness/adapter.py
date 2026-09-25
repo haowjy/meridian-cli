@@ -784,7 +784,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         """Return the best observed session ID after one execution.
 
         Default priority: connection_session_id > extract_session_id >
-        current_session_id > detect_primary_session_id.
+        current_session_id. Native identity is never discovered by filesystem scan.
 
         Concrete adapters may override for harness-specific extraction.
         """
@@ -807,18 +807,6 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         current = _norm(current_session_id)
         if current:
             return current
-
-        if project_root is not None and started_at_epoch is not None:
-            detected = _norm(
-                self.detect_primary_session_id(
-                    project_root=project_root,
-                    started_at_epoch=started_at_epoch,
-                    started_at_local_iso=started_at_local_iso,
-                    expected_session_id=expected_session_id,
-                )
-            )
-            if detected:
-                return detected
 
         return None
 

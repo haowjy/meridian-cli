@@ -295,15 +295,19 @@ def reconcile_tui_trampoline_session_id(
     transcript_path = _claude_project_dir(project_root) / f"{normalized_session_id}.jsonl"
     if transcript_path.is_file():
         return normalized_session_id
-    successor = _find_tui_trampoline_successor_session_id(
+    trampoline_successor_id = _find_tui_trampoline_successor_session_id(
         project_root=project_root,
         recorded_session_id=normalized_session_id,
         started_at_epoch=started_at_epoch,
     )
-    if successor and successor != normalized_session_id:
+    if trampoline_successor_id and trampoline_successor_id != normalized_session_id:
         logger.warning("native_binding_conflict", extra={
-            "kept": normalized_session_id, "attempted": successor, "source": "trampoline",
+            "kept": normalized_session_id,
+            "attempted": trampoline_successor_id,
+            "source": "trampoline",
         })
+        # TODO(Phase D): allocate trampoline successor as a separate run-exit chat.
+        return trampoline_successor_id
     return normalized_session_id
 
 

@@ -109,6 +109,7 @@ class ResolvedLaunchSpec(BaseModel):
     agents_payload: str | None = None
     prompt_file_path: str | None = None
     claude_native_agents_enabled: bool = False
+    claude_session_seed_id: str | None = None
     disallowed_tools: tuple[str, ...] = ()
 
     # Claude + Codex

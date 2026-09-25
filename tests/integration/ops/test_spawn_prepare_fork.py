@@ -279,7 +279,8 @@ def test_fork_prepare_preserves_continue_fork_and_defers_materialization(
     monkeypatch.setattr(
         codex_adapter,
         "fork_session",
-        lambda source_session_id: calls.append(source_session_id) or "forked-session",
+        lambda source_session_id: calls.append(source_session_id)
+        or "00000000-0000-4000-8000-000000000011",
     )
 
     prepared = build_create_payload(
@@ -288,7 +289,7 @@ def test_fork_prepare_preserves_continue_fork_and_defers_materialization(
             model="gpt-5.4-mini",
             project_root=tmp_path.as_posix(),
             session=SessionRequest(
-                requested_harness_session_id="source-session",
+                requested_harness_session_id="00000000-0000-4000-8000-000000000012",
                 continue_harness="codex",
                 continue_fork=True,
             ),
@@ -302,7 +303,7 @@ def test_fork_prepare_preserves_continue_fork_and_defers_materialization(
             model="gpt-5.4-mini",
             project_root=tmp_path.as_posix(),
             session=SessionRequest(
-                requested_harness_session_id="source-session",
+                requested_harness_session_id="00000000-0000-4000-8000-000000000012",
                 continue_harness="codex",
                 continue_fork=True,
             ),
@@ -314,10 +315,13 @@ def test_fork_prepare_preserves_continue_fork_and_defers_materialization(
     # I-10: fork_session must NOT be called in prepare — fork happens after the row exists.
     assert calls == []
     # The source session ID and continue_fork=True are preserved for the executor.
-    assert prepared.session.requested_harness_session_id == "source-session"
+    assert prepared.session.requested_harness_session_id == "00000000-0000-4000-8000-000000000012"
     assert prepared.session.continue_fork is True
     # dry_run also preserves the deferred state.
-    assert dry_run_prepared.session.requested_harness_session_id == "source-session"
+    assert (
+        dry_run_prepared.session.requested_harness_session_id
+        == "00000000-0000-4000-8000-000000000012"
+    )
     assert dry_run_prepared.session.continue_fork is True
 
     dry_run_command = " ".join(dry_run_prepared.cli_command)

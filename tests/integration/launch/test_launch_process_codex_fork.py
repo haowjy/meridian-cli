@@ -29,6 +29,7 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from meridian.lib.launch.types import SessionMode
+from meridian.lib.state import session_store
 from meridian.lib.state.spawn_store import list_spawns
 from tests.support.launch import stub_bundle_request_and_resolve
 
@@ -104,7 +105,7 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
             model="gpt-5.4",
             harness=HarnessId.CODEX.value,
             session=SessionRequest(
-                requested_harness_session_id="source-session",
+                requested_harness_session_id="00000000-0000-4000-8000-000000000001",
                 continue_chat_id="c7",
                 forked_from_chat_id="c7",
                 continue_fork=True,
@@ -133,11 +134,18 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
     ) -> list[str]:
         assert harness_id is HarnessId.CODEX
         captured["build_continue_session"] = spec.continue_session_id
+        if captured.get("fork_source_session"):
+            assert spec.native_identity_plan is not None
+            assert spec.native_identity_plan.operation == "fork"
+            assert (
+                spec.native_identity_plan.harness_session_id
+                == captured["build_continue_session"]
+            )
         return [*base_command, "resume", spec.continue_session_id or ""]
 
     def fake_fork_session(source_session_id: str) -> str:
         captured["fork_source_session"] = source_session_id
-        return "forked-session"
+        return "00000000-0000-4000-8000-000000000002"
 
     def fake_run_primary_attach(
         harness_id: Any,
@@ -163,7 +171,7 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
         captured["env_chat_id"] = dict(env).get("MERIDIAN_CHAT_ID")
         return PrimaryAttachOutcome(
             exit_code=0,
-            session_id="forked-session",
+            session_id="00000000-0000-4000-8000-000000000002",
             tui_pid=111,
         )
 
@@ -175,10 +183,18 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
         chat_id: str | None = None,
         **kwargs: Any,
     ) -> str:
-        _ = (runtime_root, harness, model)
+        _ = model
         captured["chat_id_arg"] = chat_id
         captured["start_harness_session_id"] = harness_session_id
         captured["forked_from_chat_id"] = kwargs.get("forked_from_chat_id")
+        session_store.start_session(
+            runtime_root,
+            harness=harness,
+            harness_session_id=harness_session_id or "",
+            model=model,
+            chat_id="c999",
+            kind="primary",
+        )
         return "c999"
 
     monkeypatch.setattr(
@@ -187,7 +203,8 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
         fake_project_subprocess_spec,
     )
     monkeypatch.setattr(codex_adapter, "fork_session", fake_fork_session)
-    monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: "forked-session")
+    forked_id = "00000000-0000-4000-8000-000000000002"
+    monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: forked_id)
 
     outcome = run_harness_process(
         launch_context,
@@ -198,8 +215,8 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
         start_session_fn=fake_start_session,
     )
 
-    assert captured["fork_source_session"] == "source-session"
-    assert captured["build_continue_session"] == "forked-session"
+    assert captured["fork_source_session"] == "00000000-0000-4000-8000-000000000001"
+    assert captured["build_continue_session"] == "00000000-0000-4000-8000-000000000002"
     assert captured["chat_id_arg"] is None
     # I-10: fork happens after the row exists; the parent is not the child identity.
     assert captured["start_harness_session_id"] == ""
@@ -242,7 +259,7 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
             model="gpt-5.4",
             harness=HarnessId.CODEX.value,
             session=SessionRequest(
-                requested_harness_session_id="source-session",
+                requested_harness_session_id="00000000-0000-4000-8000-000000000001",
                 continue_chat_id="c7",
                 forked_from_chat_id="c7",
                 continue_fork=True,
@@ -300,7 +317,7 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
         captured["env_chat_id"] = dict(env).get("MERIDIAN_CHAT_ID")
         return PrimaryAttachOutcome(
             exit_code=0,
-            session_id="source-session",
+            session_id="00000000-0000-4000-8000-000000000001",
             tui_pid=111,
         )
 
@@ -310,7 +327,8 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
         fake_project_subprocess_spec,
     )
     monkeypatch.setattr(codex_adapter, "fork_session", fail_if_forked)
-    monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: "source-session")
+    source_id = "00000000-0000-4000-8000-000000000001"
+    monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: source_id)
 
     outcome = run_harness_process(
         launch_context,
@@ -321,6 +339,6 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
         start_session_fn=lambda *args, **kwargs: "c999",
     )
 
-    assert captured["build_continue_session"] == "source-session"
+    assert captured["build_continue_session"] == "00000000-0000-4000-8000-000000000001"
     assert captured["env_chat_id"] == "c999"
     assert outcome.chat_id == "c999"

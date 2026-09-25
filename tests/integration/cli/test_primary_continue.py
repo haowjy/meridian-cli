@@ -226,7 +226,7 @@ def test_primary_continue_does_not_inherit_ambient_work(
     _seed_primary_spawn(
         runtime_root,
         spawn_id="p45",
-        harness_session_id="session-45",
+        harness_session_id="00000000-0000-4000-8000-000000000045",
         work_id=None,
         task_cwd=source_task_dir.as_posix(),
         launch_policy_snapshot=LaunchPolicySnapshot(model="gpt-5.3-codex", harness="codex"),
@@ -250,7 +250,7 @@ def test_primary_continue_does_not_inherit_ambient_work(
             primary_started=0.0,
             primary_started_epoch=0.0,
             primary_started_local_iso=None,
-            resolved_harness_session_id="session-45",
+            resolved_harness_session_id="00000000-0000-4000-8000-000000000045",
         )
 
     monkeypatch.setattr("meridian.lib.launch.process.run_harness_process", run_harness_process)
@@ -296,7 +296,7 @@ def test_primary_continue_with_stale_work_task_dir_falls_back_without_mutating_w
     _seed_primary_spawn(
         runtime_root,
         spawn_id="p46",
-        harness_session_id="session-46",
+        harness_session_id="00000000-0000-4000-8000-000000000046",
         work_id="source-work",
         task_cwd=source_task_dir.as_posix(),
         launch_policy_snapshot=LaunchPolicySnapshot(model="gpt-5.3-codex", harness="codex"),
@@ -350,7 +350,7 @@ def test_primary_continue_rejects_surface_overrides(
     _seed_primary_spawn(
         runtime_root,
         spawn_id="p52",
-        harness_session_id="session-52",
+        harness_session_id="00000000-0000-4000-8000-000000000052",
         launch_policy_snapshot=LaunchPolicySnapshot(model="gpt-5.3-codex", harness="codex"),
     )
 
@@ -374,7 +374,7 @@ def test_primary_continue_legacy_source_uses_persisted_context(
     _seed_primary_spawn(
         runtime_root,
         spawn_id="p42",
-        harness_session_id="session-42",
+        harness_session_id="00000000-0000-4000-8000-000000000042",
         work_id="legacy-work",
         task_cwd=source_task_dir.as_posix(),
         launch_policy_snapshot=None,
@@ -427,9 +427,9 @@ def test_primary_exact_continue_without_source_task_ignores_ambient_task_dir(
             session_mode=SessionMode.RESUME,
             dry_run=True,
             session=SessionRequest(
-                requested_harness_session_id="raw-session",
+                requested_harness_session_id="00000000-0000-4000-8000-000000000099",
                 continue_harness="codex",
-                continue_source_ref="raw-session",
+                continue_source_ref="00000000-0000-4000-8000-000000000099",
                 continue_source_tracked=False,
             ),
         ),
@@ -537,9 +537,9 @@ def _opencode_continue_spec_model(
             session_mode=SessionMode.RESUME,
             dry_run=True,
             session=SessionRequest(
-                requested_harness_session_id="raw-session",
+                requested_harness_session_id="00000000-0000-4000-8000-000000000098",
                 continue_harness="opencode",
-                continue_source_ref="raw-session",
+                continue_source_ref="00000000-0000-4000-8000-000000000098",
                 continue_source_tracked=False,
                 conversation_intent=ConversationModelSelection(
                     requested_token="deepseek/deepseek-flash",

@@ -26,6 +26,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
 _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
         "native_identity_plan",
+        "claude_session_seed_id",
         "harness",
         "continue_fork",
         "interactive",

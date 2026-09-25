@@ -10,6 +10,7 @@ import pytest
 
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
+from meridian.lib.harness.claude_sessions import project_slug
 from meridian.lib.harness.claude_utils import extract_session_id_from_args
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
@@ -574,7 +575,9 @@ async def test_streaming_claude_exec_receives_prebound_identity(
             record = session_store.get_session_record(runtime_root, managed.chat_id)
             assert record is not None
             assert record.harness_session_id == native_id
-            assert record.native_store == str(tmp_path / "home" / ".claude")
+            assert record.native_store == str(
+                tmp_path / "home" / ".claude" / "projects" / project_slug(tmp_path)
+            )
             await asyncio.wait_for(task, 15)
         finally:
             if not task.done():

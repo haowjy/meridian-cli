@@ -13,9 +13,9 @@ from pathlib import Path
 from typing import Literal, NamedTuple
 
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
+from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SubprocessHarness
-from meridian.lib.harness.opencode_transcript import opencode_db_any_session_exists
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
 from meridian.lib.ops.spawn.query import read_spawn_row_read_only
@@ -26,17 +26,6 @@ from meridian.lib.state.paths import resolve_spawn_output_path
 _CODEX_FILENAME_RE = re.compile(
     r"^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(?P<session_id>[0-9a-fA-F-]{36})\.jsonl$"
 )
-class NativeSessionUnavailable(ValueError):
-    """A tracked reference has no exact readable native target."""
-
-    def __init__(self, ref: str, reason: Literal["unbound", "missing"]) -> None:
-        self.ref = ref
-        self.reason = reason
-        message = (f"no verified native session for {ref}" if reason == "unbound"
-                   else f"native transcript missing or pending for {ref}")
-        super().__init__(message)
-
-
 class TranscriptSource(NamedTuple):
     kind: Literal["file", "native_file", "opencode_db", "spawn_history", "archive"]
     session_id: str
@@ -82,33 +71,6 @@ def _target_from_source(source: TranscriptSource) -> SessionLogTarget:
     )
 
 
-def _source_key(source: TranscriptSource) -> tuple[str, str, str | None, str]:
-    return (
-        source.kind,
-        source.session_id,
-        source.path.as_posix() if source.path is not None else None,
-        source.source_label,
-    )
-
-
-def _with_sources(
-    target: SessionLogTarget,
-    *additional_targets: SessionLogTarget | None,
-) -> SessionLogTarget:
-    sources = list(target.sources)
-    seen = {_source_key(source) for source in sources}
-    for additional_target in additional_targets:
-        if additional_target is None:
-            continue
-        for source in additional_target.sources:
-            key = _source_key(source)
-            if key in seen:
-                continue
-            sources.append(source)
-            seen.add(key)
-    return target._replace(sources=tuple(sources))
-
-
 def _resolve_file_target(file_path: str) -> SessionLogTarget:
     resolved = Path(file_path).expanduser().resolve()
     if not resolved.is_file():
@@ -149,22 +111,11 @@ def _resolve_adapter_file_target(
         return None
     return _target_from_source(
         TranscriptSource(
-            kind="native_file",
+            kind="opencode_db" if candidate.suffix == ".db" else "native_file",
             session_id=session_id,
             harness=str(harness_id),
             path=candidate,
             source_label=f"{harness_id} transcript",
-        )
-    )
-
-
-def _opencode_db_target(*, session_id: str) -> SessionLogTarget:
-    return _target_from_source(
-        TranscriptSource(
-            kind="opencode_db",
-            session_id=session_id,
-            harness=HarnessId.OPENCODE.value,
-            source_label="opencode transcript",
         )
     )
 
@@ -199,13 +150,6 @@ def _resolve_harness_session_file(
             adapter=adapter,
             config_root_hint=config_root_hint,
         )
-        if harness_id == HarnessId.OPENCODE and opencode_db_any_session_exists(
-            session_id=normalized_session_id
-        ):
-            return _with_sources(
-                _opencode_db_target(session_id=normalized_session_id),
-                file_target,
-            )
         if file_target is not None:
             return file_target
         raise FileNotFoundError(
@@ -350,7 +294,9 @@ def _resolve_from_spawn_id(
             session_id=next(iter(native_ids)),
             harness=next(iter(harnesses)),
             config_root_hint=_config_root_hint(
-                row.claude_config_dir or (session.claude_config_dir if session else None)
+                (session.native_store or session.claude_config_dir)
+                if session
+                else row.claude_config_dir
             ),
         )
         # The provider chooses one exact native source, including positive-empty DB

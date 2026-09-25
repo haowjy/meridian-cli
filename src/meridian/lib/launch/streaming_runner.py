@@ -1277,7 +1277,7 @@ async def execute_with_streaming(
         )
 
         identity_plan = spec.native_identity_plan
-        if identity_plan is not None:
+        if identity_plan is not None and identity_plan.harness_session_id:
             result: NativeBindingResult | None = None
             if session_attempt is not None:
                 result = update_session_harness_id(

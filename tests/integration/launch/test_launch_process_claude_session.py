@@ -356,7 +356,9 @@ def test_primary_claude_exec_receives_prebound_identity(
     record = session_store.get_session_record(context.runtime_root, outcome.chat_id)
     assert record is not None
     assert record.harness_session_id == native_id == outcome.resolved_harness_session_id
-    assert record.native_store == str(tmp_path / "home" / ".claude")
+    assert record.native_store == str(
+        tmp_path / "home" / ".claude" / "projects" / project_slug(root)
+    )
 
 
 def test_claude_fork_plan_waits_for_owned_new_identity(tmp_path: Path) -> None:
