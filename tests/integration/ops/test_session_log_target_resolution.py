@@ -243,8 +243,32 @@ def test_chat_target_never_detects_a_replacement(
             resolve_session_log_target(
                 ref=chat_id, file_path=None, project_root=root, runtime_root=runtime_root,
             )
-        assert caught.value.reason == ("missing" if native_id else "unbound")
+        assert caught.value.reason == "unbound"
         assert chat_id in str(caught.value)
         assert session_store.get_session_harness_id(runtime_root, chat_id) == (native_id or None)
     finally:
         session_store.stop_session(runtime_root, chat_id)
+
+
+def test_tracked_claude_hint_cannot_replace_missing_native_store(tmp_path: Path) -> None:
+    from meridian.lib.core.native_identity import NativeSessionUnavailable
+    from meridian.lib.harness.claude_sessions import project_slug
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    runtime = resolve_project_runtime_root_for_write(root)
+    config = tmp_path / "config"
+    native = config / "projects" / project_slug(root) / "native-id.jsonl"
+    native.parent.mkdir(parents=True)
+    native.write_text('{"sessionId":"native-id","type":"user"}\n')
+    chat = session_store.start_session(
+        runtime, harness="claude", harness_session_id="native-id",
+        model="test", claude_config_dir=str(config),
+    )
+    with pytest.raises(NativeSessionUnavailable) as caught:
+        resolve_session_log_target(
+            ref=chat, file_path=None, project_root=root, runtime_root=runtime,
+        )
+    assert caught.value.reason == "unbound"
+    record = session_store.get_session_record(runtime, chat)
+    assert record is not None and record.native_store is None

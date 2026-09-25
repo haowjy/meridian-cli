@@ -109,12 +109,12 @@ def _resolve_adapter_file_target(
         candidate = adapter.resolve_native_session_file(
             project_root=project_root, session_id=session_id, native_store=native_store,
         )
-    elif config_root_hint is not None or not tracked:
+    elif not tracked:
         candidate = adapter.resolve_session_file(
             project_root=project_root, session_id=session_id, config_root_hint=config_root_hint,
         )
     else:
-        return None
+        raise NativeSessionUnavailable(session_id, "unbound")
     if candidate is None or not candidate.is_file():
         return None
     return _target_from_source(
@@ -239,7 +239,7 @@ def _resolve_from_chat_id(
         raise ValueError(f"Chat '{chat_id}' not found")
     session_id = session_record.harness_session_id
     native_store = session_record.native_store
-    if not session_id or not session_record.harness:
+    if not session_id or not session_record.harness or not native_store:
         raise NativeSessionUnavailable(chat_id, "unbound")
     target = _resolve_harness_transcript_target_or_none(
         project_root=Path(session_record.execution_cwd or session_record.task_cwd or project_root),
@@ -337,7 +337,7 @@ def _resolve_from_spawn_id(
     )
     session_id = record.harness_session_id if record is not None else row.harness_session_id
     harness = record.harness if record is not None else row.harness
-    if not session_id or not harness:
+    if not session_id or not harness or record is None or not record.native_store:
         raise NativeSessionUnavailable(spawn_id, "unbound")
     target = _resolve_harness_transcript_target_or_none(
         project_root=Path(row.execution_cwd or row.task_cwd or project_root),
