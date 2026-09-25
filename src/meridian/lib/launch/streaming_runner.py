@@ -377,7 +377,6 @@ def _preserve_attempt_artifacts(
             raise OSError(result.error or "Failed to record attempt boundary")
 
 
-
 def _persist_attempt_artifacts(
     *,
     artifacts: ArtifactStore,
@@ -993,8 +992,9 @@ async def _run_streaming_attempt(
                 with suppress(asyncio.CancelledError):
                     await task
         if start_error is not None:
-            await manager.stop_spawn(run.spawn_id, status=SpawnStatus.FAILED,
-                                     exit_code=1, error=start_error)
+            await manager.stop_spawn(
+                run.spawn_id, status=SpawnStatus.FAILED, exit_code=1, error=start_error
+            )
         # Terminal publication hides the active connection while teardown can
         # still be publishing its native quit. Join that cleanup before reading
         # the run boundary. Joining does not publish a synthetic cancellation.
@@ -1022,7 +1022,8 @@ async def _run_streaming_attempt(
             or authoritative_terminal_status is not None
         ),
         authoritative_terminal_status=authoritative_terminal_status,
-        start_error=start_error, identity_error=identity_error,
+        start_error=start_error,
+        identity_error=identity_error,
     )
 
 
@@ -1073,19 +1074,28 @@ async def execute_with_streaming(
     received_signal: list[signal.Signals | None] = [None]
     runner_phase = ["setup"]
     lifecycle_path: Path | None = None
+    lifecycle: LifecycleLog | None = None
     lifecycle_active = [False]
     atexit_callback: Callable[[], None] | None = None
 
     try:
         log_dir = resolve_spawn_log_dir(project_root, run.spawn_id, runtime_root=runtime_root)
-        lifecycle_path = log_dir / RUNNER_LIFECYCLE_FILENAME
+        lifecycle = LifecycleLog.for_spawn(
+            runtime_root, project_root, run.spawn_id, clock=resolved_clock
+        )
+        lifecycle_path = lifecycle.path
         report_path = log_dir / REPORT_FILENAME
 
         def _record_lifecycle(event: str, **details: object) -> None:
             assert lifecycle_path is not None
             _append_runner_lifecycle_event(
-                runtime_root, run.spawn_id, lifecycle_path, clock=resolved_clock,
-                event=event, phase=runner_phase[0], **details,
+                runtime_root,
+                run.spawn_id,
+                lifecycle_path,
+                clock=resolved_clock,
+                event=event,
+                phase=runner_phase[0],
+                **details,
             )
 
         def _record_atexit() -> None:
@@ -1166,7 +1176,9 @@ async def execute_with_streaming(
             )
 
         native_run = bind_entry(
-            session_attempt, spec, harness=str(resolved_harness_id),
+            session_attempt,
+            spec,
+            harness=str(resolved_harness_id),
             on_accepted=harness_session_id_observer,
         )
         config = ConnectionConfig(
@@ -1252,7 +1264,8 @@ async def execute_with_streaming(
                 attempt_number = conclusion.retries_attempted + 1
                 if attempt_number > 1:
                     session_attempt = replace(
-                        session_attempt, startup_attempt_id=uuid.uuid4().hex,
+                        session_attempt,
+                        startup_attempt_id=uuid.uuid4().hex,
                     )
                     native_run = native_run.retry(session_attempt)
                     config = replace(config, session_id_observer=native_run.observe)
@@ -1349,14 +1362,22 @@ async def execute_with_streaming(
                     artifacts.put(make_artifact_key(run.spawn_id, REPORT_FILENAME), report_bytes)
 
                 outcome = conclude_native_run(
-                    native_run, harness, context=launch_context, spawn_id=run.spawn_id,
-                    child_env=child_env, child_cwd=child_cwd, pid=attempt_pid,
-                    started=attempt_pid is not None, started_at_epoch=started_at_epoch,
-                    prior_error=attempt.identity_error, artifacts=artifacts,
-                    connection_session_id=(attempt.connection.session_id
-                                           if attempt.connection is not None else None),
-                    lifecycle=LifecycleLog(
-                        runtime_root, run.spawn_id, lifecycle_path, resolved_clock),
+                    native_run,
+                    harness,
+                    context=launch_context,
+                    spawn_id=run.spawn_id,
+                    child_env=child_env,
+                    child_cwd=child_cwd,
+                    pid=attempt_pid,
+                    started=attempt_pid is not None,
+                    started_at_epoch=started_at_epoch,
+                    prior_error=attempt.identity_error,
+                    prior_error_phase="running",
+                    artifacts=artifacts,
+                    connection_session_id=(
+                        attempt.connection.session_id if attempt.connection is not None else None
+                    ),
+                    lifecycle=lifecycle,
                 )
                 streaming_extractor = StreamingExtractor(
                     connection=attempt.connection,
@@ -1580,10 +1601,8 @@ async def execute_with_streaming(
     except NativeIdentityError as exc:
         conclusion.exit_code = 1
         conclusion.failure_reason = exc.failure_code
-        if lifecycle_path is not None:
-            record_identity_failure(exc, lifecycle=LifecycleLog(
-                runtime_root, run.spawn_id, lifecycle_path, resolved_clock,
-            ), phase=runner_phase[0])
+        if lifecycle is not None:
+            record_identity_failure(exc, lifecycle=lifecycle, phase=runner_phase[0])
     except Exception as exc:
         if lifecycle_path is not None:
             _append_runner_lifecycle_event(

@@ -31,7 +31,7 @@ spawned roles) and returns a `PiRuntimeResolution`.
 The adapter resolves the child session directory during launch binding, not
 prelaunch or RPC startup. Primary creates use the flat Meridian Pi session root;
 spawn creates use its spawn-scoped child directory. Resume retains its recorded
-store. Both environment and explicit `--session-dir` come from that same plan.
+store. Both environment and explicit `--session-dir` come from that same `NativeIdentity`.
 
 Create and fork mint IDs only after the store is known, checking every local
 journal's first-line header for collisions. Resume/fork source selection requires

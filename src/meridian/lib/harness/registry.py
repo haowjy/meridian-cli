@@ -54,12 +54,7 @@ class HarnessRegistry(BaseModel):
         return self._adapters[harness_id]
 
     def get_subprocess_harness(self, harness_id: HarnessId) -> SubprocessHarness:
-        adapter = self.get(harness_id)
-        has_execute = callable(getattr(adapter, "execute", None))
-        has_build_command = callable(getattr(adapter, "build_command", None))
-        if has_execute and not has_build_command:
-            raise TypeError(f"Harness '{harness_id}' is not a subprocess harness.")
-        return adapter
+        return self.get(harness_id)
 
     def get_contract(self, harness_id: HarnessId) -> HarnessContract:
         return self.get(harness_id).contract

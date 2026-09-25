@@ -396,7 +396,9 @@ def _allocate_test_exit_chat(
     ],
 )
 async def test_rpc_post_attempt_boundary(
-    pi_runtime: Path, shape: str, monkeypatch: pytest.MonkeyPatch,  # noqa: F811
+    pi_runtime: Path,  # noqa: F811
+    shape: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import asyncio
     from dataclasses import replace
@@ -676,3 +678,56 @@ async def test_streaming_serve_concludes_native_identity(
     events = [json.loads(line) for line in (runtime / "sessions.jsonl").read_text().splitlines()]
     starts = [event for event in events if event.get("kind") == "invocation_started"]
     assert len(starts) == (0 if shape == "header-mismatch" else 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("conclusion_raises", [False, True])
+@pytest.mark.parametrize("run_fails", [False, True])
+async def test_serve_keeps_run_error_and_cleans_up_after_conclusion(
+    pi_runtime: Path,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+    conclusion_raises: bool,
+    run_fails: bool,
+) -> None:
+    from meridian.cli import streaming_serve as serve
+    from meridian.lib.core.native_identity import NativeEntryMismatch, NativeKeyFields
+    from meridian.lib.harness.pi import PiAdapter
+    from meridian.lib.launch.native_run import NativeRunOutcome
+    from meridian.lib.state.spawn.model import RunBoundaryOutcome
+
+    install_boundary_shim(pi_runtime, "same")
+    monkeypatch.setattr(serve, "require_established_project_root", lambda: pi_runtime)
+    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", str(pi_runtime))
+    run_error = RuntimeError("transport failed first")
+    identity_error = NativeEntryMismatch(
+        NativeKeyFields(session_id="a"), NativeKeyFields(session_id="b")
+    )
+    order = []
+
+    async def run(**kwargs):
+        order.append("run")
+        if run_fails:
+            raise run_error
+        from types import SimpleNamespace
+
+        return SimpleNamespace(status="succeeded", exit_code=0)
+
+    def conclude(*args, **kwargs):
+        order.append("conclude")
+        if conclusion_raises:
+            raise identity_error
+        return NativeRunOutcome(identity_error, RunBoundaryOutcome(status="mismatch"), None)
+
+    original_cleanup = PiAdapter.cleanup_prelaunch
+
+    def cleanup(self, **kwargs):
+        order.append("cleanup")
+        original_cleanup(self, **kwargs)
+
+    monkeypatch.setattr(serve, "run_streaming_spawn", run)
+    monkeypatch.setattr(serve, "conclude_native_run", conclude)
+    monkeypatch.setattr(PiAdapter, "cleanup_prelaunch", cleanup)
+    with pytest.raises(RuntimeError if run_fails else NativeEntryMismatch) as caught:
+        await serve.streaming_serve("pi", "hello", model="pi-test")
+    assert caught.value is (run_error if run_fails else identity_error)
+    assert order == ["run", "conclude", "cleanup"]

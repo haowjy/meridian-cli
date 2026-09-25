@@ -143,3 +143,27 @@ def test_equivalent_generation_spelling_keeps_chat_key_for_later_conflicts(tmp_p
     generations = store.list_session_generations(tmp_path)
     assert [r.harness_session_id for r in generations] == [None, "first"]
     assert generations[0].active_work_id == "accepted"
+
+
+def test_native_key_inversion_retains_aliases_and_omits_partial_bindings(tmp_path: Path) -> None:
+    from meridian.lib.state.session_fold import by_native_key
+
+    base = {
+        "event": "start",
+        "harness": "codex",
+        "model": "test",
+        "harness_session_id": "shared",
+        "native_store": "/native",
+        "started_at": "0",
+    }
+    events = [
+        {**base, "chat_id": "c1"},
+        {**base, "chat_id": "c2"},
+        {**base, "chat_id": "c3", "native_store": None},
+        {"event": "update", "chat_id": "c1", "harness_session_id": "rejected"},
+    ]
+    (tmp_path / "sessions.jsonl").write_text("".join(json.dumps(e) + "\n" for e in events))
+    records = {row.chat_id: row for row in store.list_all_session_records(tmp_path)}
+    assert by_native_key(records) == {
+        NativeKey("codex", "/native", "shared"): (records["c1"], records["c2"]),
+    }

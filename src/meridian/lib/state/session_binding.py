@@ -8,12 +8,13 @@ from pathlib import Path
 from meridian.lib.core.native_identity import BindSource, NativeKeyFields
 from meridian.lib.core.types import ChatId, HarnessSessionId
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state import session_store as sessions
+from meridian.lib.state import session_fold as sessions
 from meridian.lib.state.atomic import append_durable_jsonl_line
 from meridian.lib.state.event_store import read_events
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.native_binding import BindOutcome, Bound, Conflict, bind, report_conflict
 from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state.session_store import resolve_session_instance_id
 
 
 class SessionBindings:
@@ -22,7 +23,7 @@ class SessionBindings:
     def __init__(self, runtime_root: Path) -> None:
         self.runtime_root = runtime_root
         self.paths = RuntimePaths.from_root_dir(runtime_root)
-        self.events = read_events(self.paths.sessions_jsonl, sessions._parse_event)
+        self.events = read_events(self.paths.sessions_jsonl, sessions.parse_event)
         self._pending: list[sessions.SessionUpdateEvent] = []
         self.records: dict[str, sessions.SessionRecord] = {}
         self.historical: set[tuple[str, str]] = set()
@@ -55,20 +56,18 @@ class SessionBindings:
             session_instance_id=(
                 session_instance_id
                 if session_instance_id is not None
-                else sessions._session_instance_for_event(self.paths, self.runtime_root, chat_id)
+                else resolve_session_instance_id(self.paths, self.runtime_root, chat_id)
             ),
             startup_attempt_id=startup_attempt_id,
         )
-        if not sessions._generation_matches(
-            existing.session_instance_id, event.session_instance_id
-        ):
+        if not sessions.generation_matches(existing.session_instance_id, event.session_instance_id):
             return Conflict(existing.key_fields(), attempted, "generation")
         outcome = bind(existing.key_fields(), attempted)
         if isinstance(outcome, Conflict):
             report_conflict(chat_id, outcome, source)
             return outcome
         if startup_attempt_id is not None:
-            sessions._validate_startup_identity(self.events, event)
+            sessions.validate_startup_identity(self.events, event)
         if isinstance(outcome, Bound) or startup_attempt_id is not None:
             if (event.chat_id, event.session_instance_id) in self.historical:
                 raise ValueError("Historical sessions are inert and cannot be mutated")

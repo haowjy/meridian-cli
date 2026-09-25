@@ -8,9 +8,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Session log, export and previews read bound native chats; label spawn views. Reject legacy runner-history files.
 
-- Unify native identity checks across runners; reject reused fork IDs and verify streaming-serve exits.
-
-- Refuse passthrough identity flags and invalid Claude dry-run sources; await OpenCode fork IDs.
 - Keep live event hooks and subscriber delivery active without runner-history persistence.
 - Read Pi lifecycle telemetry from an atomic sidecar, drop history-based staleness checks, and expose guardrail report/chat paths.
 
@@ -22,6 +19,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Managed Pi launches load a bounded, atomic v2 session-boundary observer without writing native journals.
 
 ### Fixed
+- Unify native identity checks across runners; reject reused fork IDs and verify streaming-serve exits.
+- Refuse passthrough identity flags and invalid Claude dry-run sources; await OpenCode fork IDs.
+- Keep pre-exec refusal phases in lifecycle diagnostics; render reused-fork expectations without a source ID.
+- Preserve streaming-serve transport errors through identity conclusion; always run prelaunch cleanup.
+- Fail Claude streaming artifact contradictions as `entry_mismatch`; retain extracted reports and usage on identity failure.
+- Refuse non-canonical recorded OpenCode/Pi stores before exec.
 - Include complete native keys in rejected-binding diagnostics.
 - Report native identity refusals with consistent structured expected/observed keys.
 - Exercise Pi CLI exit hints and continue/fork dry-runs against verified and unresolved exits.
@@ -35,7 +38,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Keep malformed native Pi entry types visibly incomplete in preview normalization.
 - Join streaming teardown before reading native exit boundaries; a Pi quit published after turn completion now resolves its exit chat.
 - Chats bind one immutable `(harness, native_store, id)`; assigned keys bind before exec, and owned observations can confirm but never repoint them.
-- Rebuild old history-index projections for schema 3's serialized record shapes; refuse newer schemas without hydration.
+- Rebuild old history-index projections for schema 5's serialized record shapes; refuse newer schemas without hydration.
 - Claude, Codex, OpenCode, and Pi continue/fork use recorded native stores and exact targets. Tracked operations refuse incomplete, missing, ambiguous, or contradictory sources instead of discovering replacements.
 - Validate Claude first-line session IDs and Codex session-meta IDs before exact reads or source preparation; malformed and torn journals fail closed.
 - Fail contradictory initial owned identities and detected post-exit native contradictions as `entry_mismatch`, retaining expected/observed evidence. Unavailable sources retain separate typed refusal codes.
@@ -52,6 +55,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Remove obsolete discovery metadata and source carriers; document validation order and Pi's fail-closed stale-context error-prefix dependency.
 - Keep continuation and missing-source fixtures faithful to native keys; model terminal teardown as a join, not another cancellation.
 - Build locked Pi extension bundles before full preflight tests and packaging; missing pnpm fails loudly.
+
+### Changed
+- Rename diagnostic Claude successor events to `claude_trampoline_successor`; exit hints show verified chat IDs without repeating native IDs.
 
 ### Scope
 - Runner `history.jsonl` is still written and remains the source for pre-PR-1 run transcripts; its removal is deferred to the next PRs.
