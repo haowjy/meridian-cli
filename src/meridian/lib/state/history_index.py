@@ -58,12 +58,12 @@ from meridian.lib.state.history_changes import (
     HistorySource,
 )
 from meridian.lib.state.history_codec import canonical_time, last_activity
-from meridian.lib.state.session_store import (
+from meridian.lib.state.session_fold import (
     SessionHistoricalEvent,
     SessionRecord,
     SessionStartEvent,
     SessionUpdateEvent,
-    _parse_event,
+    parse_event,
     project_session_event,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
@@ -600,7 +600,7 @@ class HistoryIndex:
                     payload = json.loads(line)
                     # Match the authoritative event reader's tolerant line policy.
                     event = (
-                        _parse_event(cast("dict[str, Any]", payload))
+                        parse_event(cast("dict[str, Any]", payload))
                         if isinstance(payload, dict)
                         else None
                     )
