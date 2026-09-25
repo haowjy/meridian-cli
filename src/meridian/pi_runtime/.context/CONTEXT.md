@@ -63,8 +63,8 @@ Pi loads extensions via explicit `-e <path>` CLI flags. Meridian launches with
 `--no-extensions` and then adds only the selected Meridian bundles, so ambient user
 extensions do not change spawn behavior.
 
-- **spawned RPC mode**: `managed-bash` + `meridian-spawn-watch`
-- **primary native TUI mode**: `meridian-spawn-watch` only; no bash override and no spawned-session auto-stop
+- **spawned RPC mode**: `managed-bash` + `meridian-spawn-watch` + `session-boundary`
+- **primary native TUI mode**: `meridian-spawn-watch` + `session-boundary`; no bash override and no spawned-session auto-stop
 
 Role-specific behavior is gated by environment, including `_MERIDIAN_PI_SESSION_ROLE` and
 `_MERIDIAN_PI_STATE_DIR`.
@@ -161,3 +161,5 @@ subpath imports break under Pi's extension loader.
 - [../../lib/harness/projections/.context/CONTEXT.md](../../lib/harness/projections/.context/CONTEXT.md) — extension entrypoint projection
 - [../../lib/harness/connections/.context/CONTEXT.md](../../lib/harness/connections/.context/CONTEXT.md) — Pi RPC JSON-RPC transport
 - [../../lib/streaming/.context/CONTEXT.md](../../lib/streaming/.context/CONTEXT.md) — Pi drain/quiescence policy consumes disk-backed state
+
+Session boundary consumes launch path/nonce handles and atomically publishes a bounded record. Initial entry never changes on switches; only a final shutdown/quit supplies exit identity. No itinerary or native journal writes.

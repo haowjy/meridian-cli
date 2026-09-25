@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Managed Pi launches load a bounded, atomic session-boundary observer without writing to native journals.
+
 ### Fixed
 
 - Fresh Pi UUID launches warn and skip torn sibling headers; exact resume/fork sources still fail closed.
