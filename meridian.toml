@@ -27,7 +27,7 @@
 # Default model for Codex harness (str model id).
 # codex = ""  # empty = harness picks its own default model
 # Default model for OpenCode harness (str model id).
-opencode = "opencode-go/kimi-k2.6"  # default for OpenCode harness
+# opencode = "opencode-go/kimi-k2.6"  # default for OpenCode harness
 
 # [harness.pi]
 # Disable Meridian's Pi managed bash/background-tasks extension (bool).
