@@ -175,7 +175,7 @@ def resolve_runtime_authority_for_read(
     execution_cwd: Path | None = None,
     ignore_runtime_env: bool | None = None,
 ) -> RuntimeAuthoritySnapshot:
-    """Resolve project/runtime authority for read-only callers."""
+    """Resolve read authority, including the once-only legacy native-key import."""
 
     authority = resolve_project_authority(project_root, execution_cwd=execution_cwd)
     override_root = (
