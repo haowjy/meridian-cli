@@ -17,6 +17,7 @@ from meridian.lib.harness.claude_sessions import project_slug
 from meridian.lib.launch.launch_types import PreflightResult
 from meridian.lib.launch.text_utils import dedupe_nonempty
 from meridian.lib.platform import IS_WINDOWS, get_home_path
+from meridian.lib.platform.atomic import atomic_replace
 
 logger = structlog.get_logger(__name__)
 
@@ -57,11 +58,12 @@ def ensure_claude_session_accessible(
     if target_file.exists() and target_file.samefile(source_file):
         return
     target_file.parent.mkdir(parents=True, exist_ok=True)
-    if target_file.exists() or target_file.is_symlink():
-        target_file.unlink()
     if IS_WINDOWS or source_native_store.parent.parent.resolve() != target_root.resolve():
-        shutil.copy2(source_file, target_file)
+        with source_file.open("rb") as source, atomic_replace(target_file, mode="wb") as target:
+            shutil.copyfileobj(source, target)
     else:
+        if target_file.exists() or target_file.is_symlink():
+            target_file.unlink()
         target_file.symlink_to(source_file)
 
 

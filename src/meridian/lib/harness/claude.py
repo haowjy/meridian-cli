@@ -405,21 +405,11 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     ) -> HarnessPrelaunchState:
         _ = runtime_root, spawn_id
 
-        configured_root = child_env.get("CLAUDE_CONFIG_DIR", "").strip()
-        effective_config_root: Path | None = None
-        if configured_root:
-            config_path = Path(configured_root)
-            if configured_root == "~" or configured_root.startswith("~/"):
-                child_home = child_env.get("HOME", "").strip()
-                if child_home:
-                    config_path = Path(child_home) / configured_root.removeprefix("~/")
-            if not config_path.is_absolute():
-                config_path = child_cwd / config_path
-            effective_config_root = config_path.resolve()
-        if effective_config_root is not None:
-            effective_config_dir = str(effective_config_root)
-            if record_effective_config_dir is not None:
-                record_effective_config_dir(effective_config_dir)
+        effective_config_root = Path(
+            self.native_store_for_launch(child_env=child_env, child_cwd=child_cwd)
+        ).parent.parent
+        if record_effective_config_dir is not None:
+            record_effective_config_dir(str(effective_config_root))
 
         source_id = session.requested_harness_session_id
         if source_id:

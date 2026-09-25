@@ -7,3 +7,11 @@
   tracked report from an ambient database by native ID alone. Found during the
   native-harness-session-identity Lane C fix pass; code-path inspection, not a
   reproduced live-server failure.
+
+# Pi launch refusal typing
+
+- `pi.py:PiAdapter.finalize_native_identity()` still raises a string `ValueError`
+  for a tracked source with no recorded store. Change that no-store refusal to
+  `NativeSessionUnavailable(ref, "unbound")` in the Pi-owned lane. Lane C fix2
+  was explicitly limited to the source-field rename in this file; exact Pi file
+  missing/ambiguous refusals in `pi_identity.py` are already typed.

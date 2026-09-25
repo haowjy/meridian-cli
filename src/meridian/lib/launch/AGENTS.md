@@ -92,7 +92,8 @@ prepare/bind entry:
 
 Three concentric layers, each defined by function scope:
 1. **Runner** (`execute_with_streaming`): `finally` handles partial-setup failures.
-2. **Helper** (`launch_prepared_spawn`): `except` writes `launch_failure`; safe
+2. **Helper** (`launch_prepared_spawn`): `except` finalizes a launch failure, preserving
+   typed native-unavailable reasons in the terminal error; safe
    because `complete_spawn()` is idempotent.
 3. **Surface backstop**: last-resort around the entire post-row section.
 

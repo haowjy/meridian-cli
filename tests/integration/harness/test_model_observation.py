@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from meridian.lib.harness.claude_sessions import project_slug
 from meridian.lib.harness.model_observation import (
     NativeModelReadContext,
@@ -20,7 +22,7 @@ def test_opencode_reads_last_model(tmp_path: Path) -> None:
         session_id="ses-1",
         model={"id": "deepseek-flash", "providerID": "deepseek"},
     )
-    context = NativeModelReadContext(launch_env={"OPENCODE_DB": str(db)})
+    context = NativeModelReadContext(native_store=str(db))
 
     assert (
         read_last_executed_model("opencode", "ses-1", context=context)
@@ -57,7 +59,7 @@ def test_claude_reads_last_assistant_model(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     context = NativeModelReadContext(
-        project_root=str(project_root), claude_config_dir=str(config_root)
+        project_root=str(project_root), native_store=str(project_dir)
     )
 
     assert read_last_executed_model("claude", "ses-1", context=context) == "claude-fable-5"
@@ -86,7 +88,7 @@ def test_codex_reads_last_model(tmp_path: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
-    context = NativeModelReadContext(launch_env={"CODEX_HOME": str(codex_home)})
+    context = NativeModelReadContext(native_store=str(sessions_root))
 
     assert read_last_executed_model("codex", session_id, context=context) == "gpt-5.6-sol"
     assert (
@@ -127,27 +129,10 @@ def test_pi_reads_last_model_change(tmp_path: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
-    context = NativeModelReadContext(pi_session_dir=str(session_dir))
+    context = NativeModelReadContext(native_store=str(session_dir))
 
     assert read_last_executed_model("pi", session_id, context=context) == "deepseek-v4-pro"
     assert read_last_executed_model("pi", "missing-session", context=context) is None
-
-
-def test_pi_reads_from_agent_dir_when_session_dir_not_supplied(tmp_path: Path) -> None:
-    agent_dir = tmp_path / "pi-agent"
-    session_dir = agent_dir / "sessions"
-    session_dir.mkdir(parents=True)
-    session_id = "01a0aba2-1687-748e-95da-26d7c0906dfd"
-    (session_dir / f"2026-09-16T19-12-01-672Z_{session_id}.jsonl").write_text(
-        json.dumps(
-            {"type": "model_change", "provider": "deepseek", "modelId": "deepseek-v4-pro"}
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    context = NativeModelReadContext(launch_env={"PI_CODING_AGENT_DIR": str(agent_dir)})
-
-    assert read_last_executed_model("pi", session_id, context=context) == "deepseek-v4-pro"
 
 
 def test_unknown_harness_returns_none() -> None:
@@ -155,3 +140,41 @@ def test_unknown_harness_returns_none() -> None:
 
     assert read_last_executed_model("cursor", "ses-1", context=empty) is None
     assert read_last_executed_model("", "", context=empty) is None
+
+
+def test_recorded_model_read_does_not_fall_back_to_ambient(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    sid = "12345678-1234-4234-8234-123456789abc"
+    root = tmp_path / "repo"
+    for harness, env_key, suffix, filename, event in (
+        ("claude", "CLAUDE_CONFIG_DIR", Path("projects") / project_slug(root),
+         f"{sid}.jsonl", {"type": "assistant", "message": {"model": "wrong"}}),
+        ("codex", "CODEX_HOME", Path("sessions"),
+         f"rollout-2026-01-01T00-00-00-{sid}.jsonl",
+         {"type": "turn_context", "payload": {"model": "wrong"}}),
+        ("pi", "PI_CODING_AGENT_DIR", Path("sessions"),
+         f"2026-01-01T00-00-00_{sid}.jsonl", {"type": "model_change", "modelId": "wrong"}),
+    ):
+        home = tmp_path / harness
+        decoy = home / suffix / filename
+        decoy.parent.mkdir(parents=True)
+        decoy.write_text(json.dumps(event) + "\n")
+        monkeypatch.setenv(env_key, str(home))
+        assert read_last_executed_model(
+            harness, sid,
+            context=NativeModelReadContext(
+                project_root=str(root), native_store=str(tmp_path / "missing"),
+            ),
+        ) is None
+
+
+@pytest.mark.parametrize("header", ["{torn header", '{"type":"session","id":"different-id"}'])
+def test_unreadable_pi_header_model_observation_is_best_effort(
+    tmp_path: Path, header: str,
+) -> None:
+    sid = "12345678-1234-4234-8234-123456789abc"
+    (tmp_path / f"2026-01-01T00-00-00_{sid}.jsonl").write_text(header + "\n")
+    assert read_last_executed_model(
+        "pi", sid, context=NativeModelReadContext(native_store=str(tmp_path)),
+    ) is None

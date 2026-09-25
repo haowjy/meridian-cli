@@ -342,3 +342,72 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
     assert captured["build_continue_session"] == "00000000-0000-4000-8000-000000000001"
     assert captured["env_chat_id"] == "c999"
     assert outcome.chat_id == "c999"
+
+
+def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+    import sqlite3
+    import subprocess
+
+    from meridian.lib.ops.reference import ResolvedSessionReference
+    from meridian.lib.ops.spawn.api import _build_fork_create_input
+    from meridian.lib.ops.spawn.models import SpawnForkInput
+
+    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
+    monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "meridian-home"))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "ambient-decoy"))
+    sid = "12345678-1234-4234-8234-123456789abc"
+    store = tmp_path / "recorded" / "sessions"
+    store.mkdir(parents=True)
+    source = store / f"rollout-2026-01-01T00-00-00-{sid}.jsonl"
+    source.write_text(json.dumps({"type": "session_meta", "payload": {"id": sid}}) + "\n")
+    with sqlite3.connect(store.parent / "state_5.sqlite") as db:
+        db.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT)")
+        db.execute("INSERT INTO threads VALUES (?, ?)", (sid, str(source)))
+    reference = ResolvedSessionReference(
+        harness_session_id=sid, harness="codex", source_chat_id="c-source",
+        source_model="gpt-5.4", source_agent=None, source_skills=(), source_work_id=None,
+        tracked=True, source_native_store=str(store),
+    )
+    fork = _build_fork_create_input(
+        payload=SpawnForkInput(source_ref="c-source", prompt="fork"),
+        normalized_source_ref="c-source", resolved_reference=reference,
+        requested_model="gpt-5.4", requested_agent=None, inherited_skills=(),
+        requested_work="", requested_task_dir=None, requested_goal=None, harness="codex",
+    )
+    context, registry = _build_primary_launch_context(
+        project_root=tmp_path, harness_id=HarnessId.CODEX, model="gpt-5.4",
+        session=fork.session.model_copy(update={"primary_session_mode": "fork"}),
+    )
+    shim = tmp_path / "codex-shim"
+    shim.write_text('#!/bin/sh\nprintf "%s\\n%s\\n" "$CODEX_HOME" "$1"\n')
+    observed: list[str] = []
+
+    def attach(
+        harness_id, spawn_id, log_dir, control_root, task_cwd, env, spec, launcher, on_running,
+    ):
+        assert spec.native_identity_plan is not None
+        target_id = spec.native_identity_plan.harness_session_id
+        assert target_id and target_id != sid
+        result = subprocess.run(
+            ["sh", str(shim), target_id], env=env, cwd=control_root,
+            capture_output=True, text=True, check=True,
+        )
+        assert result.stdout.splitlines() == [str(store.parent), target_id]
+        target = registry.get(HarnessId.CODEX).resolve_native_session_file(
+            project_root=tmp_path, session_id=target_id, native_store=store,
+        )
+        assert target is not None and target != source
+        assert json.loads(target.read_text().splitlines()[0])["payload"]["id"] == target_id
+        observed.append(target_id)
+        return PrimaryAttachOutcome(exit_code=0, session_id=target_id, tui_pid=None)
+
+    outcome = run_harness_process(context, registry, run_primary_attach_fn=attach)
+    assert outcome.exit_code == 0
+    assert len(observed) == 1
+    chat = session_store.get_session_record(context.runtime_root, outcome.chat_id)
+    assert chat is not None and chat.harness_session_id == observed[0]
+    assert chat.native_store == str(store)
+    assert json.loads(source.read_text())["payload"]["id"] == sid

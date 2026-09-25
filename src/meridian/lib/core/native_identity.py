@@ -21,7 +21,7 @@ class NativeSessionUnavailable(ValueError):
         self, ref: str, reason: Literal["unbound", "missing", "ambiguous_native_file"]
     ) -> None:
         self.ref = ref
-        self.reason = reason
+        self.reason: Literal["unbound", "missing", "ambiguous_native_file"] = reason
         self.failure_code = "native_transcript_missing" if reason == "missing" else reason
         message = (
             f"no verified native session for {ref}"

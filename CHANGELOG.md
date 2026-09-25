@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Remove obsolete source carriers and ambient model readers; verify tracked fork launch and document exact-store preparation. Publish Claude transcript copies atomically.
+
 - Preserve typed missing, ambiguous, and unbound native-session refusals in spawn failure reasons; name the tracked chat in launch diagnostics.
 
 - Resume and fork Pi through the shared recorded-native-store request field.

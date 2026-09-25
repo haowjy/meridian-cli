@@ -91,7 +91,9 @@ startup failure.
 
 **Native identity is planned, not discovered.** A chat binds one immutable
 `(harness, native_store, id)`. `plan_native_identity()` picks the operation and
-source; `finalize_native_identity()` pins store/ID against the final child env
+source. `SessionRequest.source_native_store` is the sole source-namespace carrier
+for all harnesses; it always comes from the recorded chat, never config hints.
+`finalize_native_identity()` pins store/ID against the final child env
 before argv projection, so the bound key, env and argv agree. The runner binds
 nonempty plans as `assigned` before exec; `verify_native_identity()` checks that
 exact target after the attempt and never selects a replacement.
@@ -104,7 +106,10 @@ or prefix scans never establish tracked chat identity.
 ID; multiple matching files fail as `ambiguous_native_file`, rather than selecting
 a winner. `resolve_native_session_file()` takes an explicit native store;
 `resolve_session_file()` accepts legacy config hints or untracked raw references.
-Never reinterpret a recorded Claude project store as a config root. OpenCode's
+Never reinterpret a recorded Claude project store as a config root. Claude
+preparation seeds only `<source_native_store>/<id>.jsonl`; missing sources refuse
+before exec, including when an ambient same-ID file exists. Model reads use the
+same exact adapter resolver, with no ambient-store fallback. OpenCode's
 newly recorded store is its resolved database path, including `OPENCODE_DB`.
 Claude trampoline successors travel in `PrimarySessionObservation` and persist
 separately on the run, never through the entry-ID return or chat binding.
