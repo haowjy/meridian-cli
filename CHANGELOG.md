@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Keep Pi shutdowns with invalidated hook contexts unresolved, not poisoned; version boundary records as v2.
+
 - Track the remaining OpenCode ambient-database report fallback for the native-history read-path cleanup.
 
 - Preserve reopenable Codex namespaces through symlinked session directories and refuse stores that cannot be selected exactly.

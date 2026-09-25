@@ -9,13 +9,13 @@ export type BoundaryEvent = {
   identity?: BoundaryIdentity;
 };
 export type BoundaryRecord = {
-  v: 1; launch_nonce: string; pid: number; revision: number;
+  v: 2; launch_nonce: string; pid: number; revision: number;
   initial: BoundaryIdentity | null; current: BoundaryIdentity | null;
   last_event: { type: BoundaryEvent["type"]; reason: string } | null;
   quit: BoundaryIdentity | null; invalid_reason: string | null;
 };
 export type BoundaryCapability = { path: string; launch_nonce: string; pid: number };
-const scopeKey = Symbol.for("meridian.pi.session-boundary.v1");
+const scopeKey = Symbol.for("meridian.pi.session-boundary.v2");
 const scope = globalThis as typeof globalThis & {
   [scopeKey]?: { capability: BoundaryCapability; publisher: SessionBoundaryPublisher };
 };
@@ -37,8 +37,12 @@ export function reduceBoundary(record: BoundaryRecord, event: BoundaryEvent): Bo
       record.current?.session_file === event.identity.session_file) return record;
   const next = { ...record, revision: record.revision + 1,
     last_event: { type: event.type, reason: event.reason }, quit: null };
-  if (event.type === "session_before_switch") return next;
+  // A shutdown from a stale Pi runner carries no readable identity. It
+  // invalidates any earlier quit, but cannot verify an exit (including quit).
+  if (event.type === "session_shutdown" && event.identity === undefined) return next;
+  if (event.type === "session_before_switch" && event.identity === undefined) return next;
   if (!validIdentity(event.identity)) throw new Error("Invalid Pi native identity");
+  if (event.type === "session_before_switch") return next;
   if (event.type === "session_start") {
     return { ...next, initial: record.initial ?? event.identity, current: event.identity };
   }
@@ -72,7 +76,7 @@ export class SessionBoundaryPublisher {
   private poisoned = false;
   constructor(private readonly capability: BoundaryCapability,
     private readonly publish = writeBoundaryAtomic) {
-    this.record = { v: 1, launch_nonce: capability.launch_nonce, pid: capability.pid,
+    this.record = { v: 2, launch_nonce: capability.launch_nonce, pid: capability.pid,
       revision: 0, initial: null, current: null, last_event: null, quit: null, invalid_reason: null };
   }
   observe(event: BoundaryEvent): void {

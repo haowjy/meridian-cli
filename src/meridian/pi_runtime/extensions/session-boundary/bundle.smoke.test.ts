@@ -28,7 +28,7 @@ describe("session-boundary built bundle registration", () => {
     expect(child.stdout).toBe("");
     expect(child.status).toBe(0);
     expect(JSON.parse(readFileSync(recordPath, "utf8"))).toMatchObject({
-      v: 1, launch_nonce: "bundle-test-nonce", pid: child.pid,
+      v: 2, launch_nonce: "bundle-test-nonce", pid: child.pid,
       revision: shape === "quit" ? 5 : 6,
       initial: { session_id: "native-entry", session_file: "/native-store/1_native-entry.jsonl" },
       current: { session_id: "native-exit", session_file: "/native-store/2_native-exit.jsonl" },

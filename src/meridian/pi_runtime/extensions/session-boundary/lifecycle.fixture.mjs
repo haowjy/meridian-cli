@@ -31,7 +31,7 @@ identity = b;
 await emit("session_start", "resume");
 await emit("session_shutdown", "quit");
 const quit = {
-  v: 1, launch_nonce: nonce, pid: process.pid, revision: 5,
+  v: 2, launch_nonce: nonce, pid: process.pid, revision: 5,
   initial: a, current: b, quit: b, invalid_reason: null,
   last_event: { type: "session_shutdown", reason: "quit" },
 };

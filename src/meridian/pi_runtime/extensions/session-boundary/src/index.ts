@@ -9,15 +9,19 @@ export default function sessionBoundaryExtension(pi: ExtensionAPI): void {
     pi.on(type, (event, context) => {
       let identity: BoundaryIdentity | undefined;
       try {
-        if (type !== "session_before_switch") {
-          identity = {
-            session_id: context.sessionManager.getSessionId(),
-            session_file: context.sessionManager.getSessionFile(),
-          };
-        }
+        identity = {
+          session_id: context.sessionManager.getSessionId(),
+          session_file: context.sessionManager.getSessionFile(),
+        };
       } catch (error) {
-        publisher.poison("identity_read_fault");
-        throw error;
+        // Pi 0.87.1 can race RPC EOF against replacement and call even a
+        // fresh shutdown ctx on an invalidated runner. This is not evidence
+        // of an identity conflict; publish the shutdown without an identity.
+        if (type !== "session_shutdown" || !(error instanceof Error) ||
+            !error.message.startsWith("This extension ctx is stale after session replacement or reload.")) {
+          publisher.poison("identity_read_fault");
+          throw error;
+        }
       }
       publisher.observe({ type, reason: event.reason, identity });
     });

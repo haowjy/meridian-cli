@@ -27,7 +27,7 @@ def test_reader_final_quit_only(tmp_path: Path, shape: str) -> None:
     a = {"session_id": "entry", "session_file": "/store/1_entry.jsonl"}
     b = {"session_id": "exit", "session_file": "/store/2_exit.jsonl"}
     record = {
-        "v": 1, "launch_nonce": "nonce", "pid": 100, "revision": 3,
+        "v": 2, "launch_nonce": "nonce", "pid": 100, "revision": 3,
         "initial": a, "current": b if shape == "switch" else a,
         "quit": b if shape == "switch" else a, "invalid_reason": None,
         "last_event": {"type": "session_shutdown", "reason": "quit"},
@@ -97,7 +97,7 @@ def install_boundary_shim(root: Path, shape: str) -> None:
         '[ "$exit_id" = "$id" ] || printf \'{"type":"session","id":"%s"}\\n\' "$exit_id" '
         '> "$store/2_$exit_id.jsonl"\n'
         'cat > "$_MERIDIAN_PI_SESSION_BOUNDARY_PATH" <<EOF\n'
-        '{"v":1,"launch_nonce":"$_MERIDIAN_PI_SESSION_BOUNDARY_NONCE","pid":$$,"revision":5,'
+        '{"v":2,"launch_nonce":"$_MERIDIAN_PI_SESSION_BOUNDARY_NONCE","pid":$$,"revision":5,'
         f'"initial":{{"session_id":"{initial}","session_file":"$store/1_{initial}.jsonl"}},'
         '"current":{"session_id":"$exit_id","session_file":"$store/2_$exit_id.jsonl"},'
         f'"last_event":{{"type":"{event_type}","reason":"{reason}"}},'

@@ -48,7 +48,7 @@ def read_boundary(path: Path, *, nonce: str, pid: int | None) -> RunBoundary:
         if len(data) > 16 * 1024:
             return RunBoundary()
         record = _Record.model_validate(json.loads(data))
-        if (record.v != 1 or record.launch_nonce != nonce or record.pid != pid
+        if (record.v != 2 or record.launch_nonce != nonce or record.pid != pid
                 or record.invalid_reason is not None):
             return RunBoundary()
         entry = record.initial.key() if record.initial else None
