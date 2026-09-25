@@ -26,6 +26,21 @@ The runtime itself is resolved by `pi_runtime_resolver.py` — it probes the ins
 binary for compatibility (required `--help` surface tokens differ between primary and
 spawned roles) and returns a `PiRuntimeResolution`.
 
+## Native Identity
+
+The adapter resolves the child session directory during launch binding, not
+prelaunch or RPC startup. Primary creates use the flat Meridian Pi session root;
+spawn creates use its spawn-scoped child directory. Resume retains its recorded
+store. Both environment and explicit `--session-dir` come from that same plan.
+
+Create and fork mint IDs only after the store is known, checking every local
+journal's first-line header for collisions. Resume/fork source selection requires
+one exact filename suffix and a matching session header, and passes an absolute
+path to Pi. Missing/empty files cannot be resumed: Pi would silently create a new
+identity there. Post-exit verification checks only the assigned entry (including
+the fork parent); an unmaterialized create stays bound and pending. It never
+selects a newest/cwd-matching journal. Meridian writes no Pi native journal.
+
 ## Completion and Disk State
 
 Pi spawned sessions do not exit on task completion — they stay alive to track child

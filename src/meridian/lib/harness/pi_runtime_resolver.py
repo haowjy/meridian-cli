@@ -19,8 +19,9 @@ _REQUIRED_HELP_SURFACE_TOKEN_GROUPS_PRIMARY: Final[tuple[tuple[str, ...], ...]] 
     ("--model",),
     ("--append-system-prompt",),
     ("--session",),
+    ("--session-id",),
     ("--fork",),
-    ("--session-dir", "PI_CODING_AGENT_SESSION_DIR"),
+    ("--session-dir",),
 )
 _REQUIRED_HELP_SURFACE_TOKEN_GROUPS_SPAWNED: Final[tuple[tuple[str, ...], ...]] = (
     ("--mode",),
@@ -28,8 +29,9 @@ _REQUIRED_HELP_SURFACE_TOKEN_GROUPS_SPAWNED: Final[tuple[tuple[str, ...], ...]] 
     ("--model",),
     ("--append-system-prompt",),
     ("--session",),
+    ("--session-id",),
     ("--fork",),
-    ("--session-dir", "PI_CODING_AGENT_SESSION_DIR"),
+    ("--session-dir",),
     ("--no-extensions",),
     ("--no-skills",),
     ("--no-context-files",),

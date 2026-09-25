@@ -8,6 +8,7 @@ from typing import ClassVar, cast
 
 from meridian.lib.config.settings import resolve_pi_harness_profile
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
+from meridian.lib.core.native_identity import NativeIdentityPlan
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     ApprovalContract,
@@ -38,18 +39,15 @@ from meridian.lib.harness.bundle import (
 )
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
-from meridian.lib.harness.extractors.pi import (
-    PI_EXTRACTOR,
-    PiSessionDiscovery,
-    detect_pi_session_discovery_from_session_files,
-    detect_pi_session_id_from_session_files,
-)
+from meridian.lib.harness.extractors.pi import PI_EXTRACTOR
+from meridian.lib.harness.pi_identity import mint_session_id, resolve_session_file, verify_identity
 from meridian.lib.harness.pi_lifecycle_events import redact_pi_command_for_history
 from meridian.lib.harness.pi_paths import (
     pi_agent_dir_env_override,
     pi_meridian_state_dir_env_override,
     pi_spawn_session_root_env_override,
     resolve_pi_spawn_session_root,
+    scope_pi_session_dir_for_spawn,
 )
 from meridian.lib.harness.pi_runtime_resolver import (
     PiRuntimeResolutionError,
@@ -90,7 +88,6 @@ from meridian.lib.launch.constants import (
     PI_RUNTIME_META_FILENAME,
     PRIMARY_BASE_COMMAND_PI,
 )
-from meridian.lib.launch.env import scope_pi_session_dir_for_spawn
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.safety.permissions import PermissionConfig
 from meridian.lib.state.atomic import atomic_write_text
@@ -107,9 +104,7 @@ def _write_pi_runtime_metadata_sidecar(
 
     if payload.get("runtime_path") is None:
         return
-    metadata_path = (
-        runtime_root / spawn_log_subpath(spawn_id) / PI_RUNTIME_META_FILENAME
-    )
+    metadata_path = runtime_root / spawn_log_subpath(spawn_id) / PI_RUNTIME_META_FILENAME
     atomic_write_text(
         metadata_path,
         json.dumps({"schema_version": 1, **payload}, separators=(",", ":")) + "\n",
@@ -177,7 +172,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 mode=ProjectionMode.SYSTEM_FIELD_WITH_USER_TURN,
             ),
             extraction=ExtractionContract(
-                session_observation_order=("artifacts", "primary_detection", "current_session"),
+                session_observation_order=("connection_session", "artifacts", "current_session"),
             ),
             approval=ApprovalContract(
                 subprocess_permission_flags_projected_by_shared_policy=False,
@@ -216,6 +211,59 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             default_terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
         )
 
+    def plan_native_identity(self, run: SpawnParams) -> NativeIdentityPlan:
+        source_id = (run.continue_harness_session_id or "").strip() or None
+        operation = (
+            "fork" if source_id and run.continue_fork else "resume" if source_id else "create"
+        )
+        return NativeIdentityPlan(
+            source_id if operation == "resume" else None, None, source_id, operation
+        )
+
+    def finalize_native_identity(
+        self,
+        plan: NativeIdentityPlan,
+        *,
+        child_env: dict[str, str],
+        child_cwd: Path,
+        session: SessionRequest,
+        spawn_id: SpawnId,
+        interactive: bool,
+    ) -> NativeIdentityPlan:
+        store = resolve_pi_spawn_session_root(env=child_env)
+        if not store.is_absolute():
+            store = child_cwd / store
+        source_store = session.source_pi_session_dir
+        source_path = None
+        if plan.operation != "create":
+            if session.continue_source_tracked and not source_store:
+                raise ValueError("native_transcript_missing: tracked Pi source has no native store")
+            assert plan.locator is not None
+            source_path = resolve_session_file(
+                Path(source_store) if source_store else store, plan.locator
+            )
+        if plan.operation == "resume":
+            assert source_path is not None
+            store = source_path.parent
+        elif not interactive:
+            child_env["PI_CODING_AGENT_SESSION_DIR"] = str(store)
+            store = Path(scope_pi_session_dir_for_spawn(child_env=child_env, spawn_id=spawn_id))
+        store = store.resolve()
+        child_env["PI_CODING_AGENT_SESSION_DIR"] = str(store)
+        session_id = (
+            plan.harness_session_id if plan.operation == "resume" else mint_session_id(store)
+        )
+        return NativeIdentityPlan(
+            session_id, str(store), str(source_path) if source_path else None, plan.operation
+        )
+
+    def verify_native_identity(self, plan: NativeIdentityPlan) -> str | None:
+        try:
+            verify_identity(plan)
+        except ValueError as exc:
+            return str(exc)
+        return None
+
     def resolve_launch_spec(
         self,
         run: SpawnParams,
@@ -247,6 +295,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         entrypoints = meridian_entrypoints + extra_entrypoints
         return ResolvedLaunchSpec(
             harness=HarnessId.PI,
+            native_identity_plan=self.plan_native_identity(run),
             model=str(run.model).strip() if run.model else None,
             effort=run.effort,
             prompt=run.user_turn_content or run.prompt,
@@ -295,23 +344,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         except Exception as exc:
             raise PiRuntimeResolutionError(str(exc)) from exc
 
-        scoped_session_dir: str | None = None
-        if launch_role == "spawned":
-            scoped_session_dir = scope_pi_session_dir_for_spawn(
-                child_env=child_env,
-                spawn_id=spawn_id,
-            )
-        elif launch_role == "primary":
-            source_session_dir = (session.source_pi_session_dir or "").strip()
-            if source_session_dir:
-                child_env["PI_CODING_AGENT_SESSION_DIR"] = source_session_dir
-                scoped_session_dir = source_session_dir
-
-        session_dir = child_env.get("PI_CODING_AGENT_SESSION_DIR", "").strip() or str(
-            resolve_pi_spawn_session_root(env=child_env)
-        )
-        if scoped_session_dir is not None:
-            session_dir = scoped_session_dir
+        session_dir = child_env["PI_CODING_AGENT_SESSION_DIR"]
         agent_dir = child_env.get("PI_CODING_AGENT_DIR", "").strip()
         state_dir_overrides = pi_meridian_state_dir_env_override(
             env=child_env,
@@ -321,8 +354,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         env_overrides: dict[str, str] = {
             "MERIDIAN_PI_BINARY": resolved_runtime.binary_path,
         }
-        if scoped_session_dir is not None:
-            env_overrides["PI_CODING_AGENT_SESSION_DIR"] = scoped_session_dir
 
         _write_pi_runtime_metadata_sidecar(
             runtime_root=runtime_root,
@@ -387,6 +418,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def observe_primary_session_id(
         self,
         *,
+        native_identity_plan: NativeIdentityPlan | None,
         command: tuple[str, ...],
         child_env: dict[str, str],
         launch_child_cwd: Path,
@@ -396,30 +428,13 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         resolved_session_id: str,
         exit_code: int,
     ) -> PrimarySessionObservation:
-        outcome = detect_pi_session_discovery_from_session_files(
-            launch_env=child_env,
-            child_cwd=launch_child_cwd,
-            started_at_epoch=started_at_epoch,
-            expected_session_id=expected_session_id,
-        )
-        session_id = (outcome.session_id or "").strip() or None
-        if "--no-session" in command and outcome.session_id is None:
-            discovery: PiSessionDiscovery = "never_created"
-            detail: str | None = "ephemeral_session"
-        elif outcome.session_id is not None or (
-            bool(requested_session_id)
-            and exit_code == 0
-            and bool(resolved_session_id.strip())
-        ):
-            discovery = "ok"
-            detail = None
-        else:
-            discovery = outcome.discovery
-            detail = outcome.detail
+        assert native_identity_plan is not None
+        try:
+            status = verify_identity(native_identity_plan)
+        except ValueError as exc:
+            return PrimarySessionObservation(discovery="conflict", detail=str(exc))
         return PrimarySessionObservation(
-            session_id=session_id,
-            discovery=discovery,
-            detail=detail,
+            session_id=native_identity_plan.harness_session_id, discovery=status,
         )
 
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:
@@ -470,47 +485,9 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         session_id: str,
         config_root_hint: Path | None = None,
     ) -> Path | None:
-        _ = project_root, config_root_hint  # pi sessions are user-scoped
-        normalized = session_id.strip()
-        if not normalized:
+        if config_root_hint is None:
             return None
-        root = resolve_pi_spawn_session_root()
-        if not root.is_dir():
-            return None
-        # {timestamp}_{id}.jsonl in root, or {spawn_id}/{timestamp}_{id}.jsonl
-        for pattern in (f"*_{normalized}.jsonl", f"*/*_{normalized}.jsonl"):
-            for candidate in root.glob(pattern):
-                if candidate.is_file():
-                    return candidate
-        return None
-
-    def owns_untracked_session(self, *, project_root: Path, session_ref: str) -> bool:
-        normalized_session_ref = session_ref.strip()
-        if not normalized_session_ref:
-            return False
-        return (
-            self.resolve_session_file(
-                project_root=project_root,
-                session_id=normalized_session_ref,
-            )
-            is not None
-        )
-
-    def detect_primary_session_id(
-        self,
-        *,
-        project_root: Path,
-        started_at_epoch: float,
-        started_at_local_iso: str | None,
-        expected_session_id: str | None = None,
-    ) -> str | None:
-        _ = started_at_local_iso
-        return detect_pi_session_id_from_session_files(
-            launch_env=pi_spawn_session_root_env_override(),
-            child_cwd=project_root,
-            started_at_epoch=started_at_epoch,
-            expected_session_id=expected_session_id,
-        )
+        return resolve_session_file(config_root_hint, session_id, pending=True)
 
     def observe_session_id(
         self,
@@ -538,18 +515,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             extracted = _norm(self.extract_session_id(artifacts, spawn_id))
             if extracted:
                 return extracted
-
-        if project_root is not None and started_at_epoch is not None:
-            detected = _norm(
-                self.detect_primary_session_id(
-                    project_root=project_root,
-                    started_at_epoch=started_at_epoch,
-                    started_at_local_iso=started_at_local_iso,
-                    expected_session_id=expected_session_id,
-                )
-            )
-            if detected:
-                return detected
 
         current = _norm(current_session_id)
         if current:

@@ -493,6 +493,7 @@ def _finalize_lifecycle_and_observe_session(
     spawn_service: SpawnApplicationService,
     observe_adapter_session_id: bool = True,
     cancellation_observed: bool = False,
+    native_identity_error: str | None = None,
 ) -> tuple[int, str]:
     """Finalize lifecycle, discover identity, and durably bind accepted selections."""
 
@@ -520,9 +521,13 @@ def _finalize_lifecycle_and_observe_session(
                 primary_spawn_id,
                 ExecutionTerminalFacts(
                     exit_code=exit_code,
-                    failure_reason="cancelled" if cancellation_observed else None,
+                    failure_reason=(
+                        native_identity_error or ("cancelled" if cancellation_observed else None)
+                    ),
                     cancellation_observed=cancellation_observed,
-                    durable_report_completion=durable_report_completion,
+                    durable_report_completion=(
+                        durable_report_completion and native_identity_error is None
+                    ),
                 ),
                 origin="launcher",
                 duration_secs=duration,
@@ -794,6 +799,7 @@ def run_harness_process(
     primary_started_local_iso: str | None = None
     launch_child_cwd = control_root
     prelaunch_state = HarnessPrelaunchState()
+    identity_plan = None
     artifacts = LocalStore(root_dir=runtime_root / "artifacts")
     spawn_service = build_spawn_application_service_from_roots(config_root, runtime_root)
     lifecycle_service = spawn_service.lifecycle
@@ -1134,6 +1140,16 @@ def run_harness_process(
                     )
             finally:
                 try:
+                    native_identity_error = None
+                    if identity_plan is not None and primary_started_epoch > 0:
+                        native_identity_error = harness_adapter.verify_native_identity(
+                            identity_plan,
+                        )
+                        if native_identity_error:
+                            logger.warning(
+                                "Native identity verification conflict: %s", native_identity_error
+                            )
+                            exit_code = 1
                     (
                         exit_code,
                         resolved_harness_session_id,
@@ -1155,9 +1171,11 @@ def run_harness_process(
                         spawn_service=spawn_service,
                         observe_adapter_session_id=not write_native_primary_metadata,
                         cancellation_observed=managed_cancelled,
+                        native_identity_error=native_identity_error,
                     )
                     if write_native_primary_metadata and primary_spawn_id is not None:
                         observation = harness_adapter.observe_primary_session_id(
+                            native_identity_plan=identity_plan,
                             command=command,
                             child_env=child_env,
                             launch_child_cwd=launch_child_cwd,

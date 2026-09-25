@@ -350,7 +350,8 @@ def _resolve_from_spawn_id(
             session_id=next(iter(native_ids)),
             harness=next(iter(harnesses)),
             config_root_hint=_config_root_hint(
-                row.claude_config_dir or (session.claude_config_dir if session else None)
+                (session.native_store if session else None)
+                or row.claude_config_dir or (session.claude_config_dir if session else None)
             ),
         )
         # The provider chooses one exact native source, including positive-empty DB
