@@ -7,6 +7,7 @@ import uuid
 from dataclasses import replace
 from typing import Any
 
+import structlog
 from pydantic import TypeAdapter
 
 from meridian.cli.utils import require_established_project_root
@@ -250,24 +251,31 @@ async def streaming_serve(
         raise
     finally:
         with signal_coordinator().mask_sigterm():
-            extraction = enrich_finalize(
-                artifacts=LocalStore(root_dir=runtime_root / "artifacts"),
-                extractor=extractor,
-                facts=facts,
-                native_key=native_key,
-                spawn_id=spawn_id,
-                log_dir=runtime_root / "spawns" / str(spawn_id),
-                model_id=prepared.resolved_model,
-                harness_id=harness_id,
-                project_root=project_root,
-                failure_reason=failure_message,
-            )
+            usage = None
+            try:
+                extraction = enrich_finalize(
+                    artifacts=LocalStore(root_dir=runtime_root / "artifacts"),
+                    extractor=extractor,
+                    facts=facts,
+                    native_key=native_key,
+                    spawn_id=spawn_id,
+                    log_dir=runtime_root / "spawns" / str(spawn_id),
+                    model_id=prepared.resolved_model,
+                    harness_id=harness_id,
+                    project_root=project_root,
+                    failure_reason=failure_message,
+                )
+                usage = extraction.usage
+            except Exception:
+                structlog.get_logger(__name__).exception(
+                    "finalize_enrichment_failed", spawn_id=str(spawn_id)
+                )
             finalize_outcome = await spawn_service.complete_spawn(
                 spawn_id,
                 status=outcome_status,
                 exit_code=outcome_exit_code,
                 origin="launcher",
-                usage=extraction.usage,
+                usage=usage,
                 duration_secs=max(0.0, time.monotonic() - start_monotonic),
                 error=failure_message if outcome_status == "failed" else None,
             )

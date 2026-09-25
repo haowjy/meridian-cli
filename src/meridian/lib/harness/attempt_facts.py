@@ -8,11 +8,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+import structlog
+
 from meridian.lib.core.domain import TokenUsage
+from meridian.lib.harness.connections.base import RawHarnessEvent
 
 if TYPE_CHECKING:
     from meridian.lib.harness.adapter import SpawnExtractor
-    from meridian.lib.harness.connections.base import RawHarnessEvent
 
 _TEXT_LIMIT = 1024 * 1024
 
@@ -70,12 +72,27 @@ class AttemptFacts:
 
     def fold_stdout(self, extractor: SpawnExtractor, path: Path) -> None:
         """Claude --print is black-box capture, not a runner-history reader."""
-        with path.open(encoding="utf-8") as stream:
-            for line in stream:
+        with path.open("rb") as stream:
+            for raw_line in stream:
+                line = raw_line.decode("utf-8", errors="replace")
+                if "\ufffd" in line:
+                    self.incomplete = True
                 self.output_seen = self.output_seen or bool(line.strip())
                 try:
                     event: object = json.loads(line)
                 except ValueError:
+                    self.incomplete = True
                     continue
                 if isinstance(event, dict):
-                    extractor.fold(self, cast("Mapping[str, object]", event))
+                    payload = cast("Mapping[str, object]", event)
+                    try:
+                        self.hook(
+                            extractor,
+                            RawHarnessEvent(
+                                harness_id="claude",
+                                event_type=str(payload.get("type", "")),
+                                payload=payload,
+                            ),
+                        )
+                    except Exception:
+                        structlog.get_logger(__name__).exception("stdout_fold_failed")

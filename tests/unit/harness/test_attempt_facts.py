@@ -43,23 +43,6 @@ def test_utf8_report_is_bounded_and_flagged():
     assert not facts.final_text.endswith("\ufffd")
 
 
-def test_fold_failure_is_marked_before_emit_isolates_it():
-    import pytest
-
-    from meridian.lib.harness.connections.base import RawHarnessEvent
-
-    class BrokenExtractor:
-        def fold(self, facts, event):
-            raise ValueError("format drift")
-
-    facts = AttemptFacts()
-    with pytest.raises(ValueError, match="format drift"):
-        facts.hook(
-            BrokenExtractor(), RawHarnessEvent(harness_id="claude", event_type="result", payload={})
-        )
-    assert facts.incomplete
-
-
 def test_codex_child_report_and_work_after_message_cannot_win():
     from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 

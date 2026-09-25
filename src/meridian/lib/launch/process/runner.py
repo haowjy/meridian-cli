@@ -474,7 +474,7 @@ def _finalize_lifecycle(
         )
         duration = max(0.0, time.monotonic() - primary_started) if primary_started > 0.0 else None
         durable_report_completion = extraction.durable_report_completion
-        usage = extraction.usage if facts.usage is not None else None
+        usage = extraction.usage
         execution_outcome = asyncio.run(
             spawn_service.complete_execution(
                 primary_spawn_id,

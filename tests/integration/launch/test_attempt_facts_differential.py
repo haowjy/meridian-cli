@@ -200,6 +200,11 @@ async def test_live_fold_equals_same_run_artifact_oracle(
         spawn_id=spawn,
         log_dir=tmp_path / "new",
     )
+    # F11 gives the old all-unknown usage value its explicit None representation.
+    from meridian.lib.core.domain import TokenUsage
+
+    if expected.usage == TokenUsage():
+        expected = expected.model_copy(update={"usage": None})
     assert actual.model_dump(exclude={"report_path"}) == expected.model_dump(
         exclude={"report_path"}
     )
