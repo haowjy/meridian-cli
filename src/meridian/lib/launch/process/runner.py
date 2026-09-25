@@ -1175,6 +1175,7 @@ def run_harness_process(
                     )
                     if write_native_primary_metadata and primary_spawn_id is not None:
                         observation = harness_adapter.observe_primary_session_id(
+                            native_identity_plan=identity_plan,
                             command=command,
                             child_env=child_env,
                             launch_child_cwd=launch_child_cwd,

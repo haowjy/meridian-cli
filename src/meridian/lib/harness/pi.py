@@ -172,7 +172,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 mode=ProjectionMode.SYSTEM_FIELD_WITH_USER_TURN,
             ),
             extraction=ExtractionContract(
-                session_observation_order=("artifacts", "primary_detection", "current_session"),
+                session_observation_order=("connection_session", "artifacts", "current_session"),
             ),
             approval=ApprovalContract(
                 subprocess_permission_flags_projected_by_shared_policy=False,
@@ -418,6 +418,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def observe_primary_session_id(
         self,
         *,
+        native_identity_plan: NativeIdentityPlan | None,
         command: tuple[str, ...],
         child_env: dict[str, str],
         launch_child_cwd: Path,
@@ -427,19 +428,14 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         resolved_session_id: str,
         exit_code: int,
     ) -> PrimarySessionObservation:
-        operation = (
-            "fork" if "--fork" in command else "resume" if "--session" in command else "create"
-        )
-        source_flag = "--fork" if operation == "fork" else "--session"
-        locator = command[command.index(source_flag) + 1] if operation != "create" else None
-        plan = NativeIdentityPlan(
-            expected_session_id, child_env["PI_CODING_AGENT_SESSION_DIR"], locator, operation
-        )
+        assert native_identity_plan is not None
         try:
-            status = verify_identity(plan)
+            status = verify_identity(native_identity_plan)
         except ValueError as exc:
             return PrimarySessionObservation(discovery="conflict", detail=str(exc))
-        return PrimarySessionObservation(session_id=expected_session_id, discovery=status)
+        return PrimarySessionObservation(
+            session_id=native_identity_plan.harness_session_id, discovery=status,
+        )
 
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:
         _ = run
@@ -492,18 +488,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if config_root_hint is None:
             return None
         return resolve_session_file(config_root_hint, session_id, pending=True)
-
-    def owns_untracked_session(self, *, project_root: Path, session_ref: str) -> bool:
-        normalized_session_ref = session_ref.strip()
-        if not normalized_session_ref:
-            return False
-        return (
-            self.resolve_session_file(
-                project_root=project_root,
-                session_id=normalized_session_ref,
-            )
-            is not None
-        )
 
     def observe_session_id(
         self,

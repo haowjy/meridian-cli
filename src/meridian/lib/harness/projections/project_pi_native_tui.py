@@ -20,8 +20,6 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "native_identity_plan",
         "model",
         "effort",
-        "continue_session_id",
-        "continue_fork",
         "permission_resolver",
         "extra_args",
         "interactive",
@@ -33,6 +31,8 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
 
 _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
+        "continue_session_id",
+        "continue_fork",
         "harness",
         "agent_name",
         "agents_payload",

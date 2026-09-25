@@ -6,6 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Pi exit metadata verifies the original launch plan, without reconstructing identity from argv.
+
 - Pi continue reads the bound store, never a primary metadata hint; malformed collision headers fail closed.
 
 - Pi binds native IDs before TUI/RPC exec, resumes exact files, and refuses identity overrides; newest files never replace chats.

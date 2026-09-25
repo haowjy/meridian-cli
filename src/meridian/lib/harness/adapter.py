@@ -489,6 +489,7 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
     def observe_primary_session_id(
         self,
         *,
+        native_identity_plan: NativeIdentityPlan | None,
         command: tuple[str, ...],
         child_env: dict[str, str],
         launch_child_cwd: Path,
@@ -732,6 +733,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     def observe_primary_session_id(
         self,
         *,
+        native_identity_plan: NativeIdentityPlan | None,
         command: tuple[str, ...],
         child_env: dict[str, str],
         launch_child_cwd: Path,

@@ -7,9 +7,12 @@ import pytest
 from meridian.lib.harness.pi_identity import mint_session_id, resolve_session_file
 
 
-def test_header_collision_ignores_basename(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("basename", ["unrelated.jsonl", ".jsonl"])
+def test_header_collision_ignores_basename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, basename: str,
+) -> None:
     monkeypatch.setattr("meridian.lib.harness.pi_identity.uuid.uuid4", lambda: "chosen-id")
-    (tmp_path / "unrelated.jsonl").write_text('{"type":"session","id":"chosen-id"}\n')
+    (tmp_path / basename).write_text('{"type":"session","id":"chosen-id"}\n')
     with pytest.raises(ValueError, match="native_identity_collision"):
         mint_session_id(tmp_path)
 
