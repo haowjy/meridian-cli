@@ -829,7 +829,7 @@ def test_restart_cannot_rebind_chat(tmp_path: Path) -> None:
     chat_id = session_store.start_session(root, "claude", "first", "sonnet")
     session_store.stop_session(root, chat_id)
     before = session_store.get_session_record(root, chat_id)
-    with pytest.raises(ValueError, match="native binding conflict"):
+    with pytest.raises(ValueError, match="entry_mismatch"):
         session_store.start_session(root, "claude", "other", "sonnet", chat_id=chat_id)
     assert session_store.get_session_record(root, chat_id) == before
 

@@ -12,6 +12,7 @@ import psutil
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from meridian.lib.core.native_identity import NativeEntryMismatch
 from meridian.lib.core.types import (
     ChatId,
     HarnessSessionId,
@@ -630,7 +631,10 @@ def start_session(
         ):
             existing = get_session_record(runtime_root, resolved_chat_id)
             if existing is not None and _binding_conflicts(existing, event):
-                raise ValueError(f"{resolved_chat_id}: native binding conflict")
+                raise NativeEntryMismatch(
+                    f"({existing.harness}, {existing.native_store}, {existing.harness_session_id})",
+                    f"({event.harness}, {event.native_store}, {event.harness_session_id})",
+                )
             if existing is not None:
                 event = event.model_copy(update={
                     "harness": existing.harness or event.harness,

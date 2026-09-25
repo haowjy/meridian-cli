@@ -1093,3 +1093,29 @@ async def test_primary_attach_signal_during_failed_startup_returns_cancelled(
     assert outcome.cancelled is True
     assert outcome.exit_code == 130
     assert process_launcher.launch_commands == []
+
+
+@pytest.mark.asyncio
+async def test_primary_attach_initial_id_mismatch_is_typed(tmp_path: Path) -> None:
+    from meridian.lib.core.native_identity import NativeEntryMismatch, NativeIdentityPlan
+
+    spawn_id = SpawnId("p900-mismatch")
+    spawn_dir = tmp_path / "spawns" / spawn_id
+    connection = FakeManagedConnection(events=[], session_id="observed-other")
+    process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir)
+    launcher = PrimaryAttachLauncher(
+        spawn_id=spawn_id, spawn_dir=spawn_dir, connection=connection,
+        tui_command_builder=lambda sid: ("codex", "resume", sid),
+        process_launcher=process_launcher,
+    )
+    spec = _build_spec().model_copy(update={"native_identity_plan": NativeIdentityPlan(
+        "assigned-id", "/store", None, "resume",
+    )})
+    with pytest.raises(NativeEntryMismatch) as caught:
+        await launcher.run(
+            config=_build_config(spawn_id=spawn_id, control_root=tmp_path),
+            spec=spec, cwd=tmp_path, env={},
+        )
+    assert caught.value.expected == "assigned-id"
+    assert caught.value.observed == "observed-other"
+    assert process_launcher.output_log_paths == []

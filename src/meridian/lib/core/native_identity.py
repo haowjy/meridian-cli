@@ -33,6 +33,17 @@ class NativeSessionUnavailable(ValueError):
         super().__init__(f"{self.failure_code}: {message}")
 
 
+class NativeEntryMismatch(ValueError):
+    """An owned initial identity contradicts the exact launch target."""
+
+    failure_code = "entry_mismatch"
+
+    def __init__(self, expected: str, observed: str) -> None:
+        self.expected = expected
+        self.observed = observed
+        super().__init__(f"entry_mismatch: expected {expected!r}, observed {observed!r}")
+
+
 @dataclass(frozen=True)
 class NativeSessionKey:
     native_store: str

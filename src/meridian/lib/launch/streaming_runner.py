@@ -26,6 +26,7 @@ from meridian.lib.bootstrap.services import (
 from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.domain import Spawn, SpawnStatus, TerminalSpawnStatus
+from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
@@ -142,7 +143,7 @@ class _AttemptRuntime:
     terminal_observed: bool = False
     authoritative_terminal_status: TerminalSpawnStatus | None = None
     start_error: str | None = None
-    entry_mismatch: NativeEntryMismatch | None = None
+    identity_error: NativeEntryMismatch | NativeSessionUnavailable | None = None
 
 
 class StartupPhaseTimeout(TimeoutError):
@@ -988,7 +989,9 @@ async def _run_streaming_attempt(
             terminal_observed=False,
             authoritative_terminal_status=None,
             start_error=str(exc),
-            entry_mismatch=exc if isinstance(exc, NativeEntryMismatch) else None,
+            identity_error=(
+                exc if isinstance(exc, (NativeEntryMismatch, NativeSessionUnavailable)) else None
+            ),
         )
     finally:
         if subscriber is not None:
@@ -1275,8 +1278,9 @@ async def execute_with_streaming(
                     startup_attempt_id=session_attempt.startup_attempt_id,
                 )
                 if result.status == "conflict":
-                    raise ValueError(
-                        f"{session_attempt.chat_id}: native binding conflict before exec"
+                    raise NativeEntryMismatch(
+                        f"({result.native_store}, {result.harness_session_id})",
+                        f"({identity_plan.native_store}, {identity_plan.harness_session_id})",
                     )
             observed_harness_session_id = bind_harness_session_id(
                 runtime_root=runtime_root, spawn_id=run.spawn_id,
@@ -1359,7 +1363,6 @@ async def execute_with_streaming(
 
                 def record_started(
                     connection: HarnessConnection[Any],
-                    captured_attempt: SessionAttempt | None = session_attempt,
                     captured_observer: Callable[[str], None] = observe_attempt_id,
                 ) -> None:
                     nonlocal attempt_pid
@@ -1367,10 +1370,6 @@ async def execute_with_streaming(
                     native_id = connection.session_id
                     if native_id:
                         captured_observer(native_id)
-                    if captured_attempt is not None:
-                        captured_attempt.record_started(
-                            launch_context, str(run.spawn_id), observed_harness_session_id,
-                        )
 
                 attempt = await _run_streaming_attempt(
                     run=run,
@@ -1401,7 +1400,7 @@ async def execute_with_streaming(
                             "Native identity verification conflict", error=identity_error
                         )
                         conclusion.exit_code = 1
-                        conclusion.failure_reason = identity_error
+                        conclusion.failure_reason = identity_error.failure_code
                 observation = harness.observe_primary_session_id(
                     native_identity_plan=spec.native_identity_plan, command=(),
                     child_env=child_env, launch_child_cwd=child_cwd,
@@ -1419,7 +1418,7 @@ async def execute_with_streaming(
                 boundary_error = finalize_run_boundary(
                     adapter=harness, child_env=child_env, runtime_root=runtime_root,
                     spawn_id=str(run.spawn_id),
-                    pid=attempt_pid,
+                    pid=attempt_pid, identity_error=attempt.identity_error or identity_error,
                 )
                 if boundary_error:
                     conclusion.exit_code = 1
@@ -1463,7 +1462,9 @@ async def execute_with_streaming(
                     report_bytes = report_path.read_bytes()
                     artifacts.put(make_artifact_key(run.spawn_id, REPORT_FILENAME), report_bytes)
 
-                entry_mismatch = boundary_error or attempt.entry_mismatch
+                entry_mismatch = (
+                    boundary_error if isinstance(boundary_error, NativeEntryMismatch) else None
+                )
                 if entry_mismatch is not None:
                     conclusion.failure_reason = "entry_mismatch"
                     _record_lifecycle(
@@ -1492,11 +1493,16 @@ async def execute_with_streaming(
                     failure_reason=conclusion.failure_reason,
                 )
                 conclusion.extracted = extraction
-                if identity_error:
+                if boundary_error:
                     conclusion.exit_code = 1
-                    conclusion.failure_reason = identity_error
+                    conclusion.failure_reason = boundary_error.failure_code
                     conclusion.authoritative_terminal_status = "failed"
                     break
+
+                if session_attempt is not None and attempt_pid is not None:
+                    session_attempt.record_started(
+                        launch_context, str(run.spawn_id), observed_harness_session_id,
+                    )
 
                 if (
                     _read_cancel_intent(runtime_root, run.spawn_id) is not None
@@ -1743,8 +1749,15 @@ async def execute_with_streaming(
                 spawn_id=str(run.spawn_id),
                 harness_id=str(launch_context.harness.id),
             )
-            conclusion.exit_code = DEFAULT_INFRA_EXIT_CODE
-            conclusion.failure_reason = "infrastructure_error"
+            conclusion.exit_code = 1 if isinstance(
+                exc, (NativeEntryMismatch, NativeSessionUnavailable),
+            ) else DEFAULT_INFRA_EXIT_CODE
+            conclusion.failure_reason = (
+                exc.failure_code if isinstance(exc, (NativeEntryMismatch, NativeSessionUnavailable))
+                else "infrastructure_error"
+            )
+            if isinstance(exc, NativeEntryMismatch):
+                _record_lifecycle("entry_mismatch", expected=exc.expected, observed=exc.observed)
     except Exception as exc:
         if lifecycle_path is not None:
             _append_runner_lifecycle_event(
@@ -1757,8 +1770,19 @@ async def execute_with_streaming(
                 exception_type=type(exc).__name__,
                 exception=str(exc),
             )
-        conclusion.exit_code = DEFAULT_INFRA_EXIT_CODE
-        conclusion.failure_reason = "infrastructure_error"
+        conclusion.exit_code = 1 if isinstance(
+            exc, (NativeEntryMismatch, NativeSessionUnavailable),
+        ) else DEFAULT_INFRA_EXIT_CODE
+        conclusion.failure_reason = (
+            exc.failure_code if isinstance(exc, (NativeEntryMismatch, NativeSessionUnavailable))
+            else "infrastructure_error"
+        )
+        if isinstance(exc, NativeEntryMismatch) and lifecycle_path is not None:
+            _append_runner_lifecycle_event(
+                runtime_root, run.spawn_id, lifecycle_path, clock=resolved_clock,
+                event="entry_mismatch", phase=runner_phase[0],
+                expected=exc.expected, observed=exc.observed,
+            )
         logger.exception(
             "Streaming spawn setup failed.",
             spawn_id=str(run.spawn_id),

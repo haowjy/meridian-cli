@@ -20,6 +20,7 @@ from typing import Any
 import psutil
 import structlog
 
+from meridian.lib.core.native_identity import NativeEntryMismatch
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import (
     ConnectionConfig,
@@ -302,14 +303,17 @@ class PrimaryAttachLauncher:
                 self._metadata.backend_port = self._resolve_backend_port()
             self._write_metadata()
 
-            self._record_backend_scope_from_connection(session_id)
-
-            self._event_writer_task = asyncio.create_task(self._run_event_writer())
+            plan = spec.native_identity_plan
+            if (plan is not None and plan.harness_session_id and session_id
+                    and plan.harness_session_id != session_id):
+                raise NativeEntryMismatch(plan.harness_session_id, session_id)
             self._set_harness_session_id(session_id)
             if self._metadata.harness_session_id != session_id:
-                raise RuntimeError(
-                    "native binding conflict; refusing to attach another conversation"
+                raise NativeEntryMismatch(
+                    self._metadata.harness_session_id or "", session_id or "",
                 )
+            self._record_backend_scope_from_connection(session_id)
+            self._event_writer_task = asyncio.create_task(self._run_event_writer())
             self._set_activity("idle")
 
             if session_id is None or not session_id.strip():

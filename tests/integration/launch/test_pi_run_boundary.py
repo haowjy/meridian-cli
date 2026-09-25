@@ -177,7 +177,7 @@ def test_concurrent_exits_converge_on_one_stopped_chat(pi_runtime: Path) -> None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("shape", ["switch", "mismatch"])
+@pytest.mark.parametrize("shape", ["switch", "mismatch", "header-missing", "header-poisoned"])
 async def test_rpc_post_attempt_boundary(pi_runtime: Path, shape: str) -> None:  # noqa: F811
     import asyncio
     from dataclasses import replace
@@ -192,6 +192,18 @@ async def test_rpc_post_attempt_boundary(pi_runtime: Path, shape: str) -> None: 
 
     root = pi_runtime
     install_boundary_shim(root, shape)
+    if shape.startswith("header-"):
+        shim = root.parent / "fake-bin" / "pi"
+        text = shim.read_text().replace("header_id=$id", "header_id=wrong-entry")
+        if shape == "header-missing":
+            text = text.replace(
+                'if [ "$rpc" != "rpc" ]; then exit 0; fi',
+                'rm "$_MERIDIAN_PI_SESSION_BOUNDARY_PATH"\n'
+                'if [ "$rpc" != "rpc" ]; then exit 0; fi',
+            )
+        else:
+            text = text.replace('"invalid_reason":null', '"invalid_reason":"poison"')
+        shim.write_text(text)
     ctx = context(root, primary=False)
     run = Spawn(spawn_id=SpawnId("p42"), prompt="hello", model=ModelId("pi-test"), status="queued")
     spawn_store.start_spawn(
@@ -221,12 +233,52 @@ async def test_rpc_post_attempt_boundary(pi_runtime: Path, shape: str) -> None: 
             artifacts=LocalStore(root_dir=ctx.runtime_root / "artifacts"),
             session_attempt=managed.attempt,
         ), 20)
-        assert code == (1 if shape == "mismatch" else 0)
+        assert code == (0 if shape == "switch" else 1)
         entry = session_store.get_session_record(ctx.runtime_root, managed.chat_id)
         assert entry is not None and entry.harness_session_id not in {"wrong-entry", "switched-id"}
         if shape == "mismatch":
             assert_entry_mismatch(ctx.runtime_root, "p42", entry)
             return
+        if shape.startswith("header-"):
+            row = spawn_store.get_spawn(ctx.runtime_root, "p42")
+            assert row is not None and row.terminal is not None
+            assert row.terminal.error == "entry_mismatch"
+            assert row.exit_chat_id is None and row.exit_identity == "mismatch"
+            events = [json.loads(line) for line in (
+                ctx.runtime_root / "sessions.jsonl"
+            ).read_text().splitlines()]
+            assert not any(event.get("kind") == "invocation_started" for event in events)
+            return
         row = spawn_store.get_spawn(ctx.runtime_root, "p42")
         assert row is not None and row.exit_identity == "verified"
         assert row.entry_chat_id == managed.chat_id and row.exit_chat_id != managed.chat_id
+
+
+@pytest.mark.parametrize("boundary", ["missing", "poisoned", "valid"])
+def test_primary_header_mismatch_prevents_exit_attribution(
+    pi_runtime: Path, boundary: str,  # noqa: F811
+) -> None:
+    root = pi_runtime
+    if boundary == "missing":
+        install_shim(root, behavior="mismatch")
+    else:
+        install_boundary_shim(root, "switch")
+        shim = root.parent / "fake-bin" / "pi"
+        text = shim.read_text().replace("header_id=$id", "header_id=wrong-entry")
+        if boundary == "poisoned":
+            text = text.replace('"invalid_reason":null', '"invalid_reason":"poison"')
+        shim.write_text(text)
+    outcome = run_harness_process(context(root), HarnessRegistry.with_defaults())
+    runtime = root / ".meridian"
+    assert outcome.primary_spawn_id is not None
+    row = spawn_store.get_spawn(runtime, outcome.primary_spawn_id)
+    assert row is not None and row.terminal is not None
+    assert row.terminal.error == "entry_mismatch"
+    assert row.exit_chat_id is None
+    facts = [json.loads(line) for line in (
+        runtime / "spawns" / row.id / "runner-lifecycle.jsonl"
+    ).read_text().splitlines()]
+    assert any(fact["event"] == "entry_mismatch" and fact["expected"] != fact["observed"]
+               for fact in facts)
+    events = [json.loads(line) for line in (runtime / "sessions.jsonl").read_text().splitlines()]
+    assert not any(event.get("kind") == "invocation_started" for event in events)

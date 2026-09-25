@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from meridian.lib.core.native_identity import RunBoundary
+from meridian.lib.core.native_identity import NativeSessionUnavailable, RunBoundary
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.launch.errors import NativeEntryMismatch
 from meridian.lib.state import session_store, spawn_store
@@ -13,24 +13,34 @@ from meridian.lib.state import session_store, spawn_store
 def finalize_run_boundary(
     *, adapter: SubprocessHarness, child_env: dict[str, str], runtime_root: Path,
     spawn_id: str, pid: int | None,
-) -> NativeEntryMismatch | None:
+    identity_error: NativeEntryMismatch | NativeSessionUnavailable | None = None,
+) -> NativeEntryMismatch | NativeSessionUnavailable | None:
     """Return an entry conflict; exit uncertainty is not an execution failure."""
-    boundary = adapter.observe_run_boundary(child_env=child_env, pid=pid)
+    boundary = (
+        adapter.observe_run_boundary(child_env=child_env, pid=pid)
+        if identity_error is None else None
+    )
     if boundary is None:
         boundary = RunBoundary()
     row = spawn_store.get_spawn(runtime_root, spawn_id)
     if row is None or row.chat_id is None:
-        return None
+        return identity_error
     entry = session_store.get_session_record(runtime_root, row.chat_id)
     if entry is None:
-        return None
+        return identity_error
     observed = boundary.entry_observed
     mismatch = observed is not None and (
         observed.native_store != entry.native_store
         or observed.session_id != entry.harness_session_id
     )
+    if mismatch:
+        assert observed is not None
+        identity_error = NativeEntryMismatch(
+            f"({entry.native_store}, {entry.harness_session_id})",
+            f"({observed.native_store}, {observed.session_id})",
+        )
     exit_chat_id = None
-    if not mismatch and boundary.exit is not None:
+    if identity_error is None and boundary.exit is not None:
         exit_chat_id = session_store.get_or_create_exit_chat(
             runtime_root, entry.chat_id, str(adapter.id),
             boundary.exit.native_store, boundary.exit.session_id,
@@ -38,12 +48,7 @@ def finalize_run_boundary(
     spawn_store.update_spawn(
         runtime_root, spawn_id, entry_chat_id=entry.chat_id,
         exit_chat_id=exit_chat_id,
-        exit_identity="mismatch" if mismatch else "verified" if exit_chat_id else "unresolved",
+        exit_identity=("mismatch" if isinstance(identity_error, NativeEntryMismatch)
+                       else "verified" if exit_chat_id else "unresolved"),
     )
-    if mismatch:
-        assert observed is not None
-        return NativeEntryMismatch(
-            f"({entry.native_store}, {entry.harness_session_id})",
-            f"({observed.native_store}, {observed.session_id})",
-        )
-    return None
+    return identity_error

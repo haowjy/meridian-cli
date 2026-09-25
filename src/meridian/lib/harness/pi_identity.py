@@ -14,7 +14,11 @@ from typing import Literal, cast
 
 import structlog
 
-from meridian.lib.core.native_identity import NativeIdentityPlan, NativeSessionUnavailable
+from meridian.lib.core.native_identity import (
+    NativeEntryMismatch,
+    NativeIdentityPlan,
+    NativeSessionUnavailable,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -24,16 +28,16 @@ def read_header(path: Path) -> dict[str, object]:
         with path.open(encoding="utf-8") as handle:
             header: object = json.loads(handle.readline())
     except (OSError, UnicodeError, ValueError) as exc:
-        raise ValueError(f"entry_mismatch: unreadable Pi header: {path}") from exc
+        raise NativeSessionUnavailable(str(path), "missing") from exc
     if not isinstance(header, dict):
-        raise ValueError(f"entry_mismatch: invalid Pi session header: {path}")
+        raise NativeSessionUnavailable(str(path), "missing")
     payload = cast("dict[str, object]", header)
     if (
         payload.get("type") != "session"
         or not isinstance(payload.get("id"), str)
         or not payload["id"]
     ):
-        raise ValueError(f"entry_mismatch: invalid Pi session header: {path}")
+        raise NativeSessionUnavailable(str(path), "missing")
     return payload
 
 
@@ -62,7 +66,7 @@ def mint_session_id(store: Path) -> str:
 
 def resolve_session_file(store: Path, session_id: str, *, pending: bool = False) -> Path | None:
     if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9]", session_id) is None:
-        raise ValueError("entry_mismatch: invalid Pi session ID")
+        raise NativeSessionUnavailable(session_id, "missing")
     matches = list(store.glob(f"*_{session_id}.jsonl"))
     if len(matches) > 1:
         raise NativeSessionUnavailable(session_id, "ambiguous_native_file")
@@ -71,8 +75,9 @@ def resolve_session_file(store: Path, session_id: str, *, pending: bool = False)
             return None
         raise NativeSessionUnavailable(session_id, "missing")
     path = matches[0].absolute()
-    if read_header(path).get("id") != session_id:
-        raise ValueError(f"entry_mismatch: Pi header ID differs from {session_id}: {path}")
+    observed = read_header(path).get("id")
+    if observed != session_id:
+        raise NativeEntryMismatch(session_id, str(observed))
     return path
 
 
@@ -86,9 +91,9 @@ def verify_identity(plan: NativeIdentityPlan) -> Literal["ok", "pending"]:
     if path is None:
         return "pending"
     if plan.operation == "resume" and str(path) != plan.locator:
-        raise ValueError("entry_mismatch: Pi resume file changed")
+        raise NativeEntryMismatch(str(plan.locator), str(path))
     if plan.operation == "fork" and read_header(path).get("parentSession") != plan.locator:
-        raise ValueError("entry_mismatch: Pi fork parentSession differs from source path")
+        raise NativeEntryMismatch(str(plan.locator), str(read_header(path).get("parentSession")))
     return "ok"
 
 

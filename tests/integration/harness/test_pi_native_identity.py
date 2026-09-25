@@ -89,5 +89,5 @@ def test_mint_warns_and_skips_unreadable_sibling_but_exact_read_refuses(
         and event.get("log_level") == "warning"
         for event in logs
     )
-    with pytest.raises(ValueError, match="entry_mismatch"):
+    with pytest.raises(ValueError, match="native_transcript_missing"):
         resolve_session_file(tmp_path, "unreadable-id")
