@@ -35,7 +35,7 @@ class SessionIndexOutput(BaseModel):
     pending_sources: int = 0
     preview_cached: int = 0
     preview_unavailable: int | None = None
-    search_fresh: int = 0
+    search_fresh: int | None = None
     search_stale: int = 0
     search_unindexed: int = 0
     search_bytes: int = 0
@@ -48,11 +48,12 @@ class SessionIndexOutput(BaseModel):
         )
         if self.preview_unavailable is not None:
             text += f"; unavailable in warm pass: {self.preview_unavailable}"
-        text += (
-            f"\nNative search: {self.search_fresh} fresh, {self.search_stale} stale, "
-            f"{self.search_unindexed} unindexed; {self.search_unavailable} unavailable; "
-            f"{self.search_bytes} bytes"
-        )
+        if self.search_fresh is not None:
+            text += (
+                f"\nNative search: {self.search_fresh} fresh, {self.search_stale} stale, "
+                f"{self.search_unindexed} unindexed; {self.search_unavailable} unavailable; "
+                f"{self.search_bytes} bytes"
+            )
         if self.reason:
             text += f"\n{self.reason}"
         return text
@@ -121,7 +122,7 @@ class SearchStatus(TypedDict, total=False):
 
 def _search_status(runtime_root: Path, project_root: Path, *, deadline: float) -> SearchStatus:
     if not (runtime_root / "history-index" / INDEX_FILENAME).exists():
-        return SearchStatus(search_unindexed=len(native_bindings(runtime_root)))
+        return SearchStatus(search_fresh=0, search_unindexed=len(native_bindings(runtime_root)))
     projection = SearchProjection.open(runtime_root, project_root)
     projection.inspect(projection.bindings, deadline=deadline)
     indexed = projection.stored.keys() & projection.bindings.keys()

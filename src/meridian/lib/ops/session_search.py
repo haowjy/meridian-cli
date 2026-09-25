@@ -339,7 +339,7 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
                 scope.runtime_root, scope.project_root or scope.runtime_root
             )
             cold = cold or projection.cold
-            if payload.work_id:
+            if work_id := (payload.work_id or "").strip():
                 metadata = HistoryIndex(scope.runtime_root)
                 if metadata.classify(deadline=cold_deadline).baseline in {"absent", "outdated"}:
                     cold = True
@@ -347,7 +347,7 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
                 scope = scope._replace(
                     chat_filter=frozenset(
                         metadata.work_chat_ids(
-                            payload.work_id, deadline=cold_deadline if cold else deadline
+                            work_id, deadline=cold_deadline if cold else deadline
                         )
                     )
                 )

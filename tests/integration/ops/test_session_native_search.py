@@ -166,3 +166,27 @@ def test_corrupt_projection_rebuilds_and_old_sqlite_scans(tmp_path, monkeypatch)
     monkeypatch.setattr(native_search_index.sqlite3, "sqlite_version_info", (3, 42, 0))
     fallback = session_search_sync(payload)
     assert fallback.complete and len(fallback.matches) == 1
+
+
+def test_work_filter_keeps_only_in_scope_owners_without_pruning_other_keys(tmp_path, monkeypatch):
+    project, root, store = corpus(tmp_path, monkeypatch)
+    chats = []
+    for sid in ("one", "two"):
+        chats.append(
+            session_store.start_session(
+                root,
+                harness="claude",
+                harness_session_id=sid,
+                native_store=str(store),
+                model="test",
+            )
+        )
+        write_native(store / f"{sid}.jsonl", "needle")
+    session_store.update_session_work_id(root, chats[0], "work")
+    all_hits = session_search_sync(SessionSearchInput(query="needle", project_root=str(project)))
+    assert len(all_hits.matches) == 2
+    scoped = session_search_sync(
+        SessionSearchInput(query="needle", work_id=" work ", project_root=str(project))
+    )
+    assert [hit.chat_id for hit in scoped.matches] == [chats[0]]
+    assert len(NativeSearchIndex.for_runtime(root).inventory()) == 2
