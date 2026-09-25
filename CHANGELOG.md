@@ -11,6 +11,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Pi boundary verification drives the built extension in Node and reads its real records in Python.
+
 - Post-exit entry conflicts use stable `entry_mismatch` failures with expected/observed lifecycle evidence.
 
 - Fresh Pi UUID launches warn and skip torn sibling headers; exact resume/fork sources still fail closed.

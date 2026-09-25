@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -47,6 +49,40 @@ def test_reader_final_quit_only(tmp_path: Path, shape: str) -> None:
     if shape == "switch":
         assert result.entry_observed is not None and result.entry_observed.session_id == "entry"
         assert result.exit is not None and result.exit.session_id == "exit"
+
+
+@pytest.mark.parametrize("shape", ["quit", "restart"])
+def test_reader_consumes_built_bundle_record(tmp_path: Path, shape: str) -> None:
+    runtime = Path(__file__).resolve().parents[3] / "src/meridian/pi_runtime"
+    fixture = runtime / "extensions/session-boundary/lifecycle.fixture.mjs"
+    record = tmp_path / "boundary.json"
+    with subprocess.Popen(
+        ["node", str(fixture), shape],
+        env={
+            **os.environ,
+            "_MERIDIAN_PI_SESSION_BOUNDARY_PATH": str(record),
+            "_MERIDIAN_PI_SESSION_BOUNDARY_NONCE": "reader-test-nonce",
+        },
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    ) as child:
+        try:
+            stdout, stderr = child.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.communicate(timeout=5)
+            raise
+    assert child.returncode == 0, stderr.decode()
+    assert stdout == stderr == b""
+    boundary = read_boundary(record, nonce="reader-test-nonce", pid=child.pid)
+    assert boundary.entry_observed is not None
+    assert boundary.entry_observed.native_store == "/native-store"
+    assert boundary.entry_observed.session_id == "native-entry"
+    if shape == "quit":
+        assert boundary.exit is not None
+        assert boundary.exit.native_store == "/native-store"
+        assert boundary.exit.session_id == "native-exit"
+    else:
+        assert boundary.exit is None
 
 
 def install_boundary_shim(root: Path, shape: str) -> None:

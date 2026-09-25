@@ -26,6 +26,11 @@ npm run verify:extensions          # build + vitest + bundle smoke
 npm run verify:extensions:loop     # repeat on interval (local)
 ```
 
+The boundary bundle smoke runs the built extension in an isolated Node process,
+using Pi's lifecycle registration API. Python's
+`tests/integration/launch/test_pi_run_boundary.py` consumes those actual records;
+run `verify:extensions` before that test (or the full Python suite).
+
 Then delegate **smoke-tester** for runtime verification (`meridian pi`, spawn flows). UX reference: `~/gitrepos/ref/pi-processes`. Work-item map: `pi-generic-background-tasks/pi-processes-parity-map.md` in the meridian-cli work dir.
 
 **Pi extension imports:** only package-root `@earendil-works/pi-tui` / `pi-coding-agent` — subpaths break under Pi's extension loader.
