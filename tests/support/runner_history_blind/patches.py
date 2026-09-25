@@ -17,11 +17,14 @@ def _is_runner_history(path: object) -> bool:
     return (
         len(parts) >= 3
         and parts[-1] == "history.jsonl"
-        and parts[-3]
-        in {
-            "spawns",
-            "artifacts",
-        }
+        and (
+            parts[-3] in {"spawns", "artifacts"}
+            or (
+                len(parts) >= 4
+                and parts[-4] == "spawns"
+                and parts[-2].startswith("attempt-")
+            )
+        )
     )
 
 
@@ -47,7 +50,11 @@ def _patch_attr(target: object, name: str, value: object, monkeypatch: Any = Non
         monkeypatch.setattr(target, name, value)
 
 
-def install_runner_history_blind(monkeypatch: Any = None) -> None:
+def install_runner_history_blind(
+    monkeypatch: Any = None,
+    *,
+    patch_writers: bool = True,
+) -> None:
     """Disable writer construction and reject implicit history stream reads."""
     original_builtin_open = builtins.open
 
@@ -70,6 +77,9 @@ def install_runner_history_blind(monkeypatch: Any = None) -> None:
     _patch_attr(builtins, "open", guarded_open, monkeypatch)
     _patch_attr(io, "open", guarded_io_open, monkeypatch)
     _patch_attr(Path, "open", guarded_path_open, monkeypatch)
+
+    if not patch_writers:
+        return
 
     from meridian.lib.state import atomic, history
 

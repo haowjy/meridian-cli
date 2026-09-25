@@ -8,10 +8,12 @@ content. A bare JSONL file remains readable without the original harness.
 ## Index initialization and repair
 
 The first indexed operation builds a missing or older-schema index automatically,
-with a 15-second metadata budget and no progress bar. Normal warm queries keep
-their two-second budget; workspace/global search shares one initialization budget
-across its roots. These cooperative deadlines cannot interrupt a blocked filesystem
-call. Automatic initialization does not warm every preview or move history into SQLite.
+with a 15-second metadata budget and no progress bar. Workspace/global search shares
+one initialization budget across its roots. These cooperative deadlines cannot
+interrupt a blocked filesystem call. Search returns complete results rather than
+stopping at a query-time scan budget; common words can fill the 100-hit cap with
+the newest sessions. Automatic initialization does not warm previews or move history
+into SQLite.
 
 A genuine initialization failure is recorded outside the replaceable index directory.
 Later automatic requests report the failure instead of repeatedly starting over.
@@ -102,7 +104,7 @@ meridian session restore HISTORY_UUID --archive /mnt/history/meridian/meridian-h
 
 The browser always lists archived metadata and can preview a selected ZIP row.
 Its `/` content search excludes archived rows unless started with
-`--include-archives`. This adds their bound native transcripts, not ZIP content.
+`--include-archives`; the flag includes archived rows, not ZIP content.
 Corpus `session search` includes all bound chats by default and has no such flag.
 
 Import explicitly selects a verified ZIP snapshot for direct reads without extracting it.
@@ -119,11 +121,9 @@ conflicting changed content or session metadata is rejected rather than overwrit
 Unchanged restored records can be archived again without changing portable snapshot
 identity. Synthetic local session metadata is not promoted into portable facts.
 
-Content search excludes archives unless explicitly requested. Search budgets and
-unavailable-content errors are reported as incomplete results, not “no matches.”
-Matches already parsed from loose files survive budget exhaustion. A partial ZIP
-member has not completed its checksum, so its matches are withheld; confirmed
-matches from earlier complete records remain.
+Corpus content search includes bound archived chats by default. There is no
+ZIP-content search. Search coverage warnings and unavailable sources are reported
+alongside results; they do not turn confirmed matches into false negatives.
 The existing `spawn archive` visibility flag is separate from ZIP retention.
 
 ## Browser previews
