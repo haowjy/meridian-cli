@@ -11,13 +11,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Finalize reports, usage and identity from live attempt facts; read only event-named native replies.
 - Preserve accepted native bindings across resumes; metadata rebuilds ignore runner history.
 - Keep corpus and direct-search readiness aligned; renderer warnings remain visible without discarding confirmed text.
+- Search counts searchable renderer warnings separately; complete results no longer fail on warnings. Rebuild recreates the disposable search database.
 - Avoid per-source WAL checkpoints while rebuilding disposable search rows; concurrent refreshes skip duplicate writes.
 - Speed up spawn transcript availability checks; remove obsolete runner-history discovery paths.
 - Clarify native transcript sources and browse archived-row filtering; search includes bound archived chats by default, not ZIP content.
 - Archive capture requires an exact native transcript; legacy runner-history archive members stay inert.
 - Read Pi lifecycle telemetry from an atomic sidecar and drop history-based staleness checks.
-- Managed Pi launches load a bounded, atomic v2 session-boundary observer without writing native journals.
-- Runs retain immutable entry chats; verified Pi exits resolve to their own chats. Missing or uncertain exits stay explicit.
 - Rename diagnostic Claude successor events to `claude_trampoline_successor`; exit hints show verified chat IDs without repeating native IDs.
 
 ### Removed
@@ -33,6 +32,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Managed Pi launches load a bounded, atomic v2 session-boundary observer without writing native journals.
 
 ### Fixed
+- Preserve reports across malformed output; flag incomplete facts and truncated attempt text. Finalize streaming runs even when report extraction fails. Keep Pi cleanup diagnostics through shutdown.
 - Unify native identity checks across runners; reject reused fork IDs and verify streaming-serve exits.
 - Refuse passthrough identity flags and invalid Claude dry-run sources; await OpenCode fork IDs.
 - Keep pre-exec refusal phases in lifecycle diagnostics; render reused-fork expectations without a source ID.
