@@ -118,22 +118,11 @@ Callers pass observations through the immutable bind seam. A differing ID is a
 conflict, never a replacement for the chat key. There is no filesystem-discovery
 fallback; exact target verification cannot choose a replacement identity.
 
-**Claude override.** `ClaudeAdapter.observe_session_id()` replaces the base
-implementation's priority chain with a trampoline-aware path: after steps 1–2,
-it calls `reconcile_tui_trampoline_session_id()` before falling through to
-`current_session_id`. The reconciliation checks `~/.claude/history.jsonl` for
-`/tui fullscreen` evidence tied to the recorded session ID, finds the next
-same-project prompt with a different session ID, and verifies the successor has
-a transcript whose first user message matches. If the recorded ID already has a
-transcript, it is preserved. When missing, a discovered successor produces a
-conflict diagnostic; the recorded ID is still preserved.
-
-This is a Claude-specific concern. Claude's new TUI creates a transient session
-when entering `/tui fullscreen`, then writes the durable transcript under a
-different session ID. The chat keeps the ID bound at launch; the successor is
-logged as a conflict, not adopted, because a same-project prompt match is
-inference, not an owned signal. Pi overrides neither path for identity: its
-primary observation only verifies the assigned plan.
+**Claude trampoline diagnostic.** `observe_session_id()` returns only owned or
+already-known entry IDs. `observe_primary_session_id()` separately checks
+`/tui fullscreen` history and matching successor transcript evidence in the pinned
+store. Its `trampoline_successor_id` is recorded on the run; it cannot bind or
+replace the entry chat. Exit-chat mapping belongs to the exit-observation lane.
 
 ### `HarnessContract` as Inspectable Surface
 

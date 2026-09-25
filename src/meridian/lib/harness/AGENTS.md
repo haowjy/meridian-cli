@@ -102,8 +102,12 @@ or prefix scans never establish tracked chat identity.
 
 **Native transcript resolution is exact.** Use the recorded store and full native
 ID; multiple matching files fail as `ambiguous_native_file`, rather than selecting
-a winner. OpenCode database reads belong to the resolved store, not an ambient DB.
-Claude trampoline successors are diagnostic observations, never replacement keys.
+a winner. `resolve_native_session_file()` takes an explicit native store;
+`resolve_session_file()` accepts legacy config hints or untracked raw references.
+Never reinterpret a recorded Claude project store as a config root. OpenCode's
+newly recorded store is its resolved database path, including `OPENCODE_DB`.
+Claude trampoline successors travel in `PrimarySessionObservation` and persist
+separately on the run, never through the entry-ID return or chat binding.
 
 **Terminal event classification is harness- and parent-scope-aware.** `event_type`
 is NOT globally unique — always check `event.harness_id`. `turn/completed` is Codex;

@@ -55,7 +55,6 @@ from meridian.lib.harness.claude_utils import (
 )
 from meridian.lib.harness.common import (
     extract_claude_report,
-    extract_session_id_from_artifacts_with_patterns,
 )
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
@@ -454,7 +453,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return CLAUDE_EXTRACTOR.extract_usage(artifacts, spawn_id)
 
     def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return extract_session_id_from_artifacts_with_patterns(artifacts, spawn_id)
+        return CLAUDE_EXTRACTOR.extract_session_id(artifacts, spawn_id)
 
     def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
         return extract_claude_report(artifacts, spawn_id)

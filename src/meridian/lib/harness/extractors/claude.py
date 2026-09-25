@@ -15,23 +15,26 @@ from meridian.lib.harness.common import (
     _iter_json_lines_artifact,  # pyright: ignore[reportPrivateUsage]
     coerce_optional_float,
     extract_claude_report,
-    extract_session_id_from_artifacts_with_patterns,
     extract_usage_from_artifacts,
+    read_session_id_artifact,
 )
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
-from .base import HarnessExtractor, session_from_mapping_with_keys
+from .base import HarnessExtractor, normalize_harness_event_type
 
 
 class ClaudeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
     """Extractor implementation for Claude artifacts and events."""
 
     def detect_session_id_from_event(self, event: RawHarnessEvent) -> str | None:
-        return session_from_mapping_with_keys(
-            event.payload,
-            ("session_id", "sessionId", "sessionID"),
-        )
+        if event.event_type not in {"system", "result", "assistant", "user"}:
+            return None
+        for key in ("session_id", "sessionId", "sessionID"):
+            value = event.payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
 
     def detect_session_id_from_artifacts(
         self,
@@ -56,7 +59,17 @@ class ClaudeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
         return extract_usage_from_artifacts(artifacts, spawn_id)
 
     def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return extract_session_id_from_artifacts_with_patterns(artifacts, spawn_id)
+        recorded = read_session_id_artifact(artifacts, spawn_id)
+        if recorded:
+            return recorded
+        for payload in _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME):
+            session_id = self.detect_session_id_from_event(RawHarnessEvent(
+                event_type=normalize_harness_event_type(payload),
+                harness_id="claude", payload=payload,
+            ))
+            if session_id:
+                return session_id
+        return None
 
     def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
         return extract_claude_report(artifacts, spawn_id)

@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Keep Claude owned identity parsing at the event envelope, excluding nested assistant/tool content.
+
+- Remove stale extractor discovery guidance; document exact-store reads and separate trampoline diagnostics.
+
 - Exercise Codex/OpenCode owned-event, absent-event and prose-only shell launches; remove OpenCode recursive identity inference exposed by the new shim case. Claude seed startup must succeed.
 
 - Record Claude fullscreen trampoline successors separately on runs; keep the entry chat and native binding unchanged.

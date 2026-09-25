@@ -24,9 +24,9 @@ Two extraction modes:
 extractor in `HarnessBundle`. Access via `adapter.extractor` or `bundle.extractor`
 after `ensure_bootstrap()`.
 
-**Session ID key names differ per harness.** Claude writes `sessionId`; Codex uses
-`session_id`; OpenCode uses a different path. The `session_from_mapping_with_keys`
-helper in `base.py` handles the per-harness key lookup.
+**Identity needs protocol evidence.** Codex identity frames and OpenCode event
+envelopes have dedicated parsers. Never generalize them to recursive key matching
+or output-text searches: assistant and tool content can contain another session ID.
 
 **Protocol is runtime-checkable.** `HarnessExtractor` extends `SpawnExtractor` as a
 `Protocol` — runtime `isinstance()` checks work. Add new methods to the Protocol
