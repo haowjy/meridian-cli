@@ -90,7 +90,7 @@ from meridian.lib.launch.runner_helpers import (
 from meridian.lib.launch.runner_helpers import (
     write_structured_failure_artifact as _write_structured_failure_artifact,
 )
-from meridian.lib.launch.session_scope import SessionAttempt
+from meridian.lib.launch.session_scope import SessionAttempt, bind_harness_session_id
 from meridian.lib.launch.signals import signal_coordinator, signal_to_exit_code
 from meridian.lib.launch.streaming.heartbeat import FileHeartbeat, HeartbeatTouch
 from meridian.lib.launch.streaming.terminal_arbitrator import TriggerKind, arbitrate_terminal
@@ -1213,32 +1213,22 @@ async def execute_with_streaming(
 
         observed_harness_session_id: str | None = None
 
-        def _record_harness_session_id(session_id: str) -> None:
-            nonlocal observed_harness_session_id
-            normalized = session_id.strip()
-            if not normalized or normalized == observed_harness_session_id:
-                return
-            spawn_store.update_spawn(
-                runtime_root,
-                run.spawn_id,
-                harness_session_id=normalized,
-            )
-            observed_harness_session_id = normalized
-            if harness_session_id_observer is not None:
-                harness_session_id_observer(normalized)
-
         def _attempt_id_observer(attempt: SessionAttempt | None) -> Callable[[str], None]:
             def observe(session_id: str) -> None:
+                nonlocal observed_harness_session_id
                 if spec.continue_fork and session_id.strip() == spec.continue_session_id:
                     raise ValueError("fork returned its source conversation identity")
-                if (
-                    spec.continue_session_id and not spec.continue_fork
-                    and session_id.strip() != spec.continue_session_id
-                ):
-                    raise ValueError("startup attempt changed its native conversation identity")
-                if attempt is not None:
-                    attempt.record_harness_session_id(session_id)
-                _record_harness_session_id(session_id)
+                bound = bind_harness_session_id(
+                    runtime_root=runtime_root, spawn_id=run.spawn_id,
+                    record_session_id=(
+                        attempt.record_harness_session_id if attempt else lambda _: None
+                    ),
+                    session_id=session_id, source="observed",
+                    current_session_id=observed_harness_session_id or "",
+                )
+                observed_harness_session_id = bound or None
+                if bound and harness_session_id_observer is not None:
+                    harness_session_id_observer(bound)
             return observe
 
         observe_attempt_id = _attempt_id_observer(session_attempt)

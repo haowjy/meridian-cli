@@ -518,6 +518,13 @@ class PrimaryAttachLauncher:
             return
         should_write = False
         with self._metadata_lock:
+            if (self._metadata.harness_session_id
+                    and self._metadata.harness_session_id != session_id):
+                logger.warning(
+                    "native_binding_conflict", kept=self._metadata.harness_session_id,
+                    attempted=session_id, source="observed", spawn_id=str(self._spawn_id),
+                )
+                return
             if self._metadata.harness_session_id != session_id:
                 self._metadata.harness_session_id = session_id
                 should_write = True

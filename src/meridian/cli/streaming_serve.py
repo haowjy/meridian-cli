@@ -25,7 +25,7 @@ from meridian.lib.launch.resolve import (
     resolve_agent_launch_input,
     resolve_startup_timeout_seconds,
 )
-from meridian.lib.launch.session_scope import session_scope
+from meridian.lib.launch.session_scope import bind_harness_session_id, session_scope
 from meridian.lib.launch.streaming_runner import run_streaming_spawn, signal_coordinator
 from meridian.lib.ops.runtime import OperationRuntime
 from meridian.lib.ops.spawn.execute_init import build_spawn_mars_runtime
@@ -146,9 +146,12 @@ async def streaming_serve(
 
             def record_identity(session_id: str) -> None:
                 nonlocal observed_session_id
-                attempt.record_harness_session_id(session_id)
-                spawn_store.update_spawn(runtime_root, spawn_id, harness_session_id=session_id)
-                observed_session_id = session_id
+                observed_session_id = bind_harness_session_id(
+                    runtime_root=runtime_root, spawn_id=spawn_id,
+                    record_session_id=attempt.record_harness_session_id,
+                    session_id=session_id, source="observed",
+                    current_session_id=observed_session_id or "",
+                )
 
             def record_started(connection: HarnessConnection[Any]) -> None:
                 if connection.session_id:

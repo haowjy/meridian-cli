@@ -61,6 +61,7 @@ from meridian.lib.state.primary_meta import (
     write_primary_metadata,
 )
 from meridian.lib.state.session_store import (
+    NativeBindingResult,
     get_session_active_work_id,
     start_session,
     stop_session,
@@ -348,7 +349,7 @@ def _execute_via_managed_attach(
         spawn_id=primary_spawn_id,
         record_session_id=managed.record_harness_session_id,
         session_id=managed_outcome.session_id,
-        source="connection",
+        source="observed",
     )
     return (
         managed_outcome.exit_code,
@@ -554,7 +555,7 @@ def _finalize_lifecycle_and_observe_session(
         spawn_id=primary_spawn_id,
         record_session_id=managed.record_harness_session_id,
         session_id=observed_harness_session_id,
-        source="observation",
+        source="observed",
         current_session_id=resolved_harness_session_id,
     )
     return resolved_exit_code, resolved_harness_session_id
@@ -754,7 +755,9 @@ def run_harness_process(
     run_primary_attach_fn: RunPrimaryAttach = run_primary_attach,
     start_session_fn: Callable[..., str] = start_session,
     stop_session_fn: Callable[..., None] = stop_session,
-    update_session_harness_id_fn: Callable[..., None] = update_session_harness_id,
+    update_session_harness_id_fn: Callable[..., NativeBindingResult | None] = (
+        update_session_harness_id
+    ),
     update_session_spawn_id_fn: Callable[..., None] = update_session_spawn_id,
     update_session_work_id_fn: Callable[..., None] = update_session_work_id,
     get_session_active_work_id_fn: Callable[[Path, str], str | None] = get_session_active_work_id,
@@ -1163,7 +1166,7 @@ def run_harness_process(
                                 spawn_id=primary_spawn_id,
                                 record_session_id=managed.record_harness_session_id,
                                 session_id=observation.session_id,
-                                source="discovery",
+                                source="observed",
                                 current_session_id=resolved_harness_session_id,
                             )
                         _write_native_primary_metadata(

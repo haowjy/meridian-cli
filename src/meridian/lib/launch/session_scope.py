@@ -18,6 +18,7 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.session_store import (
     ConversationModelSelection,
+    NativeBindingResult,
     SessionModelSelectionEvent,
     get_session_record,
     record_model_selection,
@@ -31,66 +32,34 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-SessionIdSource = Literal["connection", "discovery", "observation"]
+SessionIdSource = Literal["assigned", "observed"]
 
 
 def bind_harness_session_id(
     *,
     runtime_root: Path,
     spawn_id: SpawnId | None,
-    record_session_id: Callable[[str], None],
+    record_session_id: Callable[[str], NativeBindingResult | None],
     session_id: str | None,
     source: SessionIdSource,
     current_session_id: str = "",
 ) -> str:
-    """Bind one native harness session id to the session and spawn stores.
-
-    Single owner of the two-store write. The source is chosen by the call site;
-    there is no persisted source rank. Each source applies its own rule:
-
-    - ``observation`` never clobbers a known id: it warns on a differing
-      observation and binds only when no id is known yet.
-    - ``discovery`` binds unless the candidate equals the known id, warning when
-      it overwrites a differing known id.
-    - ``connection`` is authoritative and binds unconditionally.
-
-    Blank candidates are a no-op that returns the already-resolved id.
-    """
-
+    """Bind once and mirror the accepted identity, never the attempted identity."""
     candidate = (session_id or "").strip()
     current = (current_session_id or "").strip()
-    if not candidate:
+    if not candidate or candidate == current:
         return current
-    if source == "observation":
-        if current:
-            if candidate != current:
-                logger.warning(
-                    "ignoring_discovered_harness_session_id",
-                    observed=candidate,
-                    spawn_id=str(spawn_id) if spawn_id is not None else None,
-                    kept=current,
-                )
-            return current
-    elif source == "discovery":
-        if candidate == current:
-            return current
-        if current:
-            logger.warning(
-                "harness_session_id_overwritten_by_discovery",
-                observed=current,
-                discovered=candidate,
-                spawn_id=str(spawn_id) if spawn_id is not None else None,
-            )
-        else:
-            logger.debug(
-                "harness_session_id_discovered_from_session_files",
-                session_id=candidate,
-                spawn_id=str(spawn_id) if spawn_id is not None else None,
-            )
-    record_session_id(candidate)
-    if spawn_id is not None:
-        spawn_store.update_spawn(runtime_root, spawn_id, harness_session_id=candidate)
-    return candidate
+    if current and candidate != current:
+        logger.warning(
+            "native_binding_conflict", kept=current, attempted=candidate, source=source,
+            spawn_id=str(spawn_id) if spawn_id is not None else None,
+        )
+        return current
+    result = record_session_id(candidate)
+    bound = result.harness_session_id if isinstance(result, NativeBindingResult) else candidate
+    if spawn_id is not None and bound:
+        spawn_store.update_spawn(runtime_root, spawn_id, harness_session_id=bound)
+    return bound or ""
 
 
 @dataclass(frozen=True)
@@ -102,8 +71,8 @@ class SessionAttempt:
     session_instance_id: str
     startup_attempt_id: str
 
-    def record_harness_session_id(self, session_id: str) -> None:
-        update_session_harness_id(
+    def record_harness_session_id(self, session_id: str) -> NativeBindingResult:
+        return update_session_harness_id(
             self.runtime_root, self.chat_id, session_id,
             session_instance_id=self.session_instance_id,
             startup_attempt_id=self.startup_attempt_id,
@@ -162,7 +131,7 @@ class SessionAttempt:
 @dataclass(frozen=True)
 class ManagedSession:
     chat_id: str
-    record_harness_session_id: Callable[[str], None]
+    record_harness_session_id: Callable[[str], NativeBindingResult | None]
     attempt: SessionAttempt | None = None
 
 
@@ -183,7 +152,9 @@ def session_scope(
     startup_attempt_id: str | None = None,
     _start_session: Callable[..., str] = start_session,
     _stop_session: Callable[[Path, str], None] = stop_session,
-    _update_session_harness_id: Callable[..., object] = update_session_harness_id,
+    _update_session_harness_id: Callable[..., NativeBindingResult | None] = (
+        update_session_harness_id
+    ),
     _reclaim_session_scopes: Callable[[Path, str], object] = reclaim_session_owned_scopes_for_chat,
 ) -> Generator[ManagedSession, None, None]:
     if request.initial_model_selection is not None:
@@ -215,11 +186,11 @@ def session_scope(
         if startup_attempt_id is not None else None
     )
 
-    def _record_harness_session_id(session_id: str) -> None:
+    def _record_harness_session_id(session_id: str) -> NativeBindingResult | None:
         if startup_attempt_id is None:
-            _update_session_harness_id(runtime_root, resolved_chat_id, session_id)
+            return _update_session_harness_id(runtime_root, resolved_chat_id, session_id)
         else:
-            _update_session_harness_id(
+            return _update_session_harness_id(
                 runtime_root, resolved_chat_id, session_id,
                 session_instance_id=generation, startup_attempt_id=startup_attempt_id,
             )
