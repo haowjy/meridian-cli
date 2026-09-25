@@ -1,6 +1,4 @@
-"""Conversation model selection is durable history, independent of session liveness."""
-
-from __future__ import annotations
+"""Legacy selection writer/reader compatibility and real lock concurrency."""
 
 from pathlib import Path
 

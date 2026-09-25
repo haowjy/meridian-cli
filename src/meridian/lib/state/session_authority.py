@@ -9,13 +9,13 @@ import json
 import re
 import unicodedata
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Set
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Annotated, Literal, NamedTuple, Self, assert_never, cast
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 from meridian.lib.core.types import (
     ChatId,
@@ -552,6 +552,66 @@ class RecordedNativeSource(BaseModel):
     locator: QualifiedLocalFile
 
 
+class StrictConversationModelSelection(ConversationModelSelection):
+    """The v2 event pins nested selection shape without changing v1 decoding."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class SourceModelSelectionEvent(BaseModel):
+    """V2 model intent correlated to one immutable native source reference."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    v: Literal[2] = 2
+    event: Literal["model_selection"] = "model_selection"
+    kind: Literal["initial_seed", "invocation_started"]
+    harness: str
+    harness_session_id: OptionalPersistedHarnessSessionId
+    chat_id: PersistedChatId
+    session_instance_id: str
+    spawn_id: str | None
+    startup_attempt_id: str | None
+    recorded_at: str
+    selection: StrictConversationModelSelection
+    source: RecordedNativeSource
+
+    @field_validator("selection", mode="before")
+    @classmethod
+    def strict_selection_input(cls, value: object) -> object:
+        return value.model_dump(mode="python") if isinstance(value, BaseModel) else value
+
+    @model_validator(mode="after")
+    def validate_source_identity(self) -> Self:
+        if not (
+            self.harness.strip() and self.session_instance_id.strip() and self.recorded_at.strip()
+        ):
+            raise ValueError("v2 selection requires harness, generation and recorded time")
+        if self.spawn_id is None or not self.spawn_id.strip():
+            raise ValueError("v2 selection requires its captured spawn identity")
+        if (
+            self.source.ref.chat_id != self.chat_id
+            or self.source.key.harness != self.harness
+            or (
+                self.harness_session_id is not None
+                and self.source.key.native_session_id != self.harness_session_id
+            )
+        ):
+            raise ValueError("model selection source duplicates disagree")
+        if self.kind == "invocation_started" and not (
+            self.spawn_id
+            and self.session_instance_id
+            and self.startup_attempt_id
+            and self.selection.model_mode is not None
+        ):
+            raise ValueError(
+                "started selection requires invocation identity and resolved model mode"
+            )
+        if self.kind == "initial_seed" and self.harness_session_id is None:
+            raise ValueError("initial seed requires a native conversation identity")
+        return self
+
+
 class AcquiredStoreGuard(NamedTuple):
     object: LocalObjectStamp
     store_event_id: str
@@ -812,6 +872,7 @@ type SessionEvent = (
     | SessionUpdateEvent
     | SessionHistoricalEvent
     | SessionModelSelectionEvent
+    | SourceModelSelectionEvent
 )
 
 
@@ -866,7 +927,7 @@ def project_session_event(
             raise ValueError("Historical imports must be inactive")
         records[event.chat_id] = event.record
         return
-    if isinstance(event, SessionModelSelectionEvent):
+    if isinstance(event, (SessionModelSelectionEvent, SourceModelSelectionEvent)):
         return
     if isinstance(event, SessionStartEvent):
         record = _record_from_start_event(event)
@@ -1041,6 +1102,7 @@ def plan_identity(
             | SessionStopEvent()
             | SessionUpdateEvent()
             | SessionModelSelectionEvent()
+            | SourceModelSelectionEvent()
         ):
             if isinstance(view.refs.get(claim.chat_id), Historical):
                 action = "started" if isinstance(claim, SessionStartEvent) else "mutated"
@@ -1637,6 +1699,147 @@ def plan_source(
 
 
 @dataclass(frozen=True)
+class ModelValue:
+    """Deeply immutable selection payload retained by the authority fold."""
+
+    requested_token: str | None
+    selected_token: str | None
+    canonical_model_id: str | None
+    harness_model_id: str | None
+    model_mode: Literal["named", "harness_default"] | None
+    provider_constraint: str | None
+    selection_source: Literal[
+        "explicit_override", "recorded_selection", "observed_last_used", "initial_launch", "unknown"
+    ]
+    provenance: frozenset[tuple[str, str]]
+
+
+@dataclass(frozen=True)
+class ModelIntentValue:
+    """Immutable original selection payload, independent of caller-owned models."""
+
+    version: Literal[1, 2]
+    kind: Literal["initial_seed", "invocation_started"]
+    harness: str
+    harness_session_id: str | None
+    chat_id: str
+    session_instance_id: str
+    spawn_id: str | None
+    startup_attempt_id: str | None
+    recorded_at: str
+    selection: ModelValue
+    source: RecordedNativeSource | None
+
+    @property
+    def event(self) -> SessionModelSelectionEvent | SourceModelSelectionEvent:
+        selection = ConversationModelSelection(
+            requested_token=self.selection.requested_token,
+            selected_token=self.selection.selected_token,
+            canonical_model_id=self.selection.canonical_model_id,
+            harness_model_id=self.selection.harness_model_id,
+            model_mode=self.selection.model_mode,
+            provider_constraint=self.selection.provider_constraint,
+            selection_source=self.selection.selection_source,
+            provenance=dict(self.selection.provenance),
+        )
+        fields = dict(
+            kind=self.kind,
+            harness=self.harness,
+            harness_session_id=self.harness_session_id,
+            chat_id=self.chat_id,
+            session_instance_id=self.session_instance_id,
+            spawn_id=self.spawn_id,
+            startup_attempt_id=self.startup_attempt_id,
+            recorded_at=self.recorded_at,
+            selection=selection,
+        )
+        if self.source is not None:
+            return SourceModelSelectionEvent.model_validate({**fields, "source": self.source})
+        return SessionModelSelectionEvent.model_validate(fields)
+
+
+def freeze_model_intent(
+    event: SessionModelSelectionEvent | SourceModelSelectionEvent,
+) -> ModelIntentValue:
+    selection = event.selection
+    source = event.source if isinstance(event, SourceModelSelectionEvent) else None
+    return ModelIntentValue(
+        version=2 if source is not None else 1,
+        kind=event.kind,
+        harness=event.harness,
+        harness_session_id=event.harness_session_id,
+        chat_id=event.chat_id,
+        session_instance_id=event.session_instance_id,
+        spawn_id=event.spawn_id,
+        startup_attempt_id=event.startup_attempt_id,
+        recorded_at=event.recorded_at,
+        selection=ModelValue(
+            selection.requested_token,
+            selection.selected_token,
+            selection.canonical_model_id,
+            selection.harness_model_id,
+            selection.model_mode,
+            selection.provider_constraint,
+            selection.selection_source,
+            frozenset(selection.provenance.items()),
+        ),
+        source=source,
+    )
+
+
+@dataclass(frozen=True)
+class BoundModelIntent:
+    """Immutable source-correlated model intent retained in journal append order."""
+
+    value: ModelIntentValue
+    journal_ordinal: int
+    effective_native_id: str | None
+    correlation: Literal["exact_source", "legacy_unscoped", "ambiguous"]
+
+    @property
+    def event(self) -> SessionModelSelectionEvent | SourceModelSelectionEvent:
+        return self.value.event
+
+
+@dataclass
+class _RetainedModelIntent:
+    slot: int
+    value: ModelIntentValue
+    journal_ordinal: int
+    effective_native_id: str | None
+    correlation: Literal["exact_source", "legacy_unscoped", "ambiguous"]
+
+    @property
+    def event(self) -> SessionModelSelectionEvent | SourceModelSelectionEvent:
+        return self.value.event
+
+    def freeze(self) -> BoundModelIntent:
+        return BoundModelIntent(
+            self.value,
+            self.journal_ordinal,
+            self.effective_native_id,
+            self.correlation,
+        )
+
+
+def startup_accepts_native(ids: Set[str], native_id: str) -> bool:
+    """Accept an empty assertion set or its sole matching native ID in O(1)."""
+    return not ids or (len(ids) == 1 and native_id in ids)
+
+
+@dataclass(frozen=True)
+class ReplayModelFacts:
+    latest_invocation: BoundModelIntent | None
+    first_committed_seed: BoundModelIntent | None
+    original_seed_recovery: Literal["origin_not_correlated"] = "origin_not_correlated"
+
+
+@dataclass(frozen=True)
+class FactsUnavailable:
+    reason: Literal["source_not_eligible", "source_conflict"]
+
+
+@dataclass(frozen=True)
 class MetadataProjection:
     starts: Mapping[tuple[str, str, str], SessionStartEvent]
     startup_ids: Mapping[StartupKey, frozenset[str]]
@@ -1645,19 +1848,26 @@ class MetadataProjection:
     invocations: frozenset[tuple[str, str, str | None]]
     startup_selections: frozenset[tuple[str, str | None, str, str, str | None]]
     observations: Mapping[tuple[str, str], str]
+    model_intents: tuple[BoundModelIntent, ...]
+    conflicting_start_keys: frozenset[tuple[str, str, str]]
+    exact_by_source: Mapping[NativeKeyTuple, "ExactIndex"]
 
-    def validate_startup(self, event: SessionUpdateEvent | SessionModelSelectionEvent) -> None:
-        if event.startup_attempt_id is None or event.harness_session_id is None:
+    def validate_startup(
+        self,
+        event: SessionUpdateEvent | SessionModelSelectionEvent | SourceModelSelectionEvent,
+    ) -> None:
+        if event.startup_attempt_id is None:
+            return
+        native_id = (
+            event.source.key.native_session_id
+            if isinstance(event, SourceModelSelectionEvent)
+            else event.harness_session_id
+        )
+        if native_id is None:
             return
         prior = self.startup_ids.get(startup_key(event), frozenset())
-        if prior - {event.harness_session_id}:
+        if not startup_accepts_native(prior, native_id):
             raise ValueError("startup attempt changed its native conversation identity")
-
-    def selection_native_id(self, event: SessionModelSelectionEvent) -> str | None:
-        if event.harness_session_id is not None:
-            return event.harness_session_id
-        ids = self.update_ids.get(startup_key(event), frozenset())
-        return next(iter(ids)) if len(ids) == 1 else None
 
 
 @dataclass(frozen=True)
@@ -1705,14 +1915,153 @@ class JournalSnapshot:
     attempts: AttemptProjection
 
 
-def startup_key(event: SessionUpdateEvent | SessionModelSelectionEvent) -> StartupKey:
+def startup_key(
+    event: SessionUpdateEvent | SessionModelSelectionEvent | SourceModelSelectionEvent,
+) -> StartupKey:
     return (event.chat_id, event.session_instance_id, event.startup_attempt_id)
 
 
 def selection_startup_key(
-    event: SessionModelSelectionEvent,
+    event: SessionModelSelectionEvent | SourceModelSelectionEvent,
 ) -> tuple[str, str | None, str, str, str | None]:
     return (event.harness, event.spawn_id, *startup_key(event))
+
+
+@dataclass(frozen=True)
+class SelectionAccept:
+    value: ModelIntentValue
+    effective_native_id: str | None
+    correlation: Literal["exact_source", "legacy_unscoped", "ambiguous"]
+
+
+@dataclass(frozen=True)
+class SelectionDuplicate:
+    legacy_update: SessionUpdateEvent | None = None
+
+
+@dataclass(frozen=True)
+class SelectionReject:
+    reason: str
+
+
+type SelectionDecision = SelectionAccept | SelectionDuplicate | SelectionReject
+
+
+@dataclass(frozen=True)
+class ExactIndex:
+    by_spawn: MappingProxyType[str, int]
+    seed: int | None
+    blocked_by: int | None
+
+
+@dataclass
+class _ExactIndex:
+    by_spawn: dict[str, int] = field(default_factory=dict)
+    seed: int | None = None
+    blocked_by: int | None = None
+
+
+@dataclass
+class _StartupWatch:
+    deferred: list[_RetainedModelIntent] = field(default_factory=list)
+    exact: list[_RetainedModelIntent] = field(default_factory=list)
+
+
+def plan_model_selection(
+    identity: IdentityProjection,
+    metadata: "_MetadataBuilder | MetadataProjection",
+    event: SessionModelSelectionEvent | SourceModelSelectionEvent,
+    *,
+    origin: Literal["proposal", "replay"],
+) -> SelectionDecision:
+    """Pure prefix decision; exact proposals and replay use identical policy."""
+    value = freeze_model_intent(event)
+    exact = value.source is not None
+    if exact or origin == "proposal":
+        # Historical mutation refusal also precedes duplicate handling.
+        plan_identity(identity, event)
+        start_key = (value.chat_id, value.session_instance_id, value.harness)
+        start = metadata.starts.get(start_key)
+        if start is None:
+            return SelectionReject("selection has no matching captured session generation")
+        if value.kind == "initial_seed" and start.model_selection_protocol is not None:
+            return SelectionReject("cannot seed a new-protocol session from prelaunch intent")
+        if exact:
+            assert value.source is not None
+            if value.startup_attempt_id is not None and not value.startup_attempt_id.strip():
+                return SelectionReject("startup attempt identity must be nonblank")
+            if start.spawn_id != value.spawn_id:
+                return SelectionReject("v2 selection spawn differs from captured start")
+            if start_key in metadata.conflicting_start_keys:
+                return SelectionReject("v2 selection captured start is contradictory")
+            if not requested_source_eligible(identity, value.source):
+                return SelectionReject("source_not_eligible")
+        native = value.source.key.native_session_id if value.source else value.harness_session_id
+        if (
+            native is not None
+            and value.startup_attempt_id is not None
+            and not startup_accepts_native(
+                metadata.startup_ids.get(startup_key(event), frozenset()), native
+            )
+        ):
+            return SelectionReject("startup attempt changed its native conversation identity")
+
+    if value.source is not None:
+        index = metadata.exact_by_source.get(native_key_tuple(value.source.key))
+        if index is not None:
+            if index.blocked_by is not None:
+                return SelectionReject("source_conflict")
+            slot = (
+                index.seed
+                if value.kind == "initial_seed"
+                else index.by_spawn.get(cast("str", value.spawn_id))
+            )
+            if slot is not None:
+                prior = metadata.model_intents[slot].value
+                if (prior.source, prior.session_instance_id, prior.selection) == (
+                    value.source,
+                    value.session_instance_id,
+                    value.selection,
+                ):
+                    return SelectionDuplicate()
+                return SelectionReject("conflicting_intent")
+            if value.kind == "initial_seed" and (index.seed is not None or index.by_spawn):
+                return SelectionReject("seed_after_intent")
+        return SelectionAccept(value, value.source.key.native_session_id, "exact_source")
+
+    native = value.harness_session_id
+    correlation: Literal["legacy_unscoped", "ambiguous"] = "legacy_unscoped"
+    if native is None and value.startup_attempt_id is not None:
+        ids = metadata.update_ids.get(startup_key(event), frozenset())
+        if len(ids) == 1:
+            native = next(iter(ids))
+        elif len(ids) > 1:
+            correlation = "ambiguous"
+    if origin == "proposal":
+        if native is not None and (
+            (value.kind == "initial_seed" and (value.harness, native) in metadata.selections)
+            or (
+                value.kind == "invocation_started"
+                and (value.harness, native, value.spawn_id) in metadata.invocations
+            )
+        ):
+            update = None
+            if value.kind == "invocation_started" and native not in metadata.startup_ids.get(
+                startup_key(event), frozenset()
+            ):
+                update = SessionUpdateEvent(
+                    chat_id=ChatId(value.chat_id),
+                    session_instance_id=value.session_instance_id,
+                    startup_attempt_id=value.startup_attempt_id,
+                    harness_session_id=HarnessSessionId(native),
+                )
+            return SelectionDuplicate(update)
+        if (
+            value.kind == "invocation_started"
+            and selection_startup_key(event) in metadata.startup_selections
+        ):
+            return SelectionDuplicate()
+    return SelectionAccept(value, native, correlation)
 
 
 @dataclass
@@ -1720,70 +2069,162 @@ class _MetadataBuilder:
     starts: dict[tuple[str, str, str], SessionStartEvent] = field(default_factory=dict)
     startup_ids: dict[StartupKey, set[str]] = field(default_factory=dict)
     update_ids: dict[StartupKey, set[str]] = field(default_factory=dict)
-    pending: dict[StartupKey, list[SessionModelSelectionEvent]] = field(default_factory=dict)
+    startup_watch: dict[StartupKey, _StartupWatch] = field(default_factory=dict)
     selections: dict[tuple[str, str], int] = field(default_factory=dict)
     invocations: dict[tuple[str, str, str | None], int] = field(default_factory=dict)
     startup_selections: set[tuple[str, str | None, str, str, str | None]] = field(
         default_factory=set
     )
     observations: dict[tuple[str, str], str] = field(default_factory=dict)
+    model_intents: list[_RetainedModelIntent] = field(default_factory=list)
+    exact_by_start: dict[tuple[str, str, str], list[_RetainedModelIntent]] = field(
+        default_factory=dict
+    )
+    conflicting_start_keys: set[tuple[str, str, str]] = field(default_factory=set)
+    exact_by_source: dict[NativeKeyTuple, _ExactIndex] = field(default_factory=dict)
 
-    def index_selection(self, event: SessionModelSelectionEvent, native: str, delta: int) -> None:
-        key = (event.harness, native)
-        self.selections[key] = self.selections.get(key, 0) + delta
-        if event.kind == "invocation_started":
-            invocation = (*key, event.spawn_id)
-            self.invocations[invocation] = self.invocations.get(invocation, 0) + delta
+    def set_binding(
+        self,
+        entry: _RetainedModelIntent,
+        native_id: str | None,
+        correlation: Literal["exact_source", "legacy_unscoped", "ambiguous"],
+    ) -> None:
+        """The only membership mutator, including initial binding and retraction."""
+        if entry.correlation == "ambiguous" or (
+            entry.effective_native_id == native_id and entry.correlation == correlation
+        ):
+            return
+        for native, status, delta in (
+            (entry.effective_native_id, entry.correlation, -1),
+            (native_id, correlation, 1),
+        ):
+            if native is None or status == "ambiguous":
+                continue
+            key = (entry.value.harness, native)
+            count = self.selections.get(key, 0) + delta
+            if count:
+                self.selections[key] = count
+            else:
+                self.selections.pop(key)
+            if entry.value.kind == "invocation_started":
+                invocation = (*key, entry.value.spawn_id)
+                count = self.invocations.get(invocation, 0) + delta
+                if count:
+                    self.invocations[invocation] = count
+                else:
+                    self.invocations.pop(invocation)
+        entry.effective_native_id, entry.correlation = native_id, correlation
+        if correlation == "ambiguous" and entry.value.source is not None:
+            index = self.exact_by_source[native_key_tuple(entry.value.source.key)]
+            if index.blocked_by is None:
+                index.blocked_by = entry.slot
 
-    def fold(self, event: JournalEvent) -> None:
+    def note_native_assertion(self, key: StartupKey, native: str, *, from_update: bool) -> None:
+        assertions = self.startup_ids.setdefault(key, set())
+        watch = self.startup_watch.get(key)
+        if native not in assertions:
+            was_consistent = startup_accepts_native(assertions, native)
+            assertions.add(native)
+            if not was_consistent and watch is not None:
+                exact, watch.exact = watch.exact, []
+                for entry in exact:
+                    self.set_binding(entry, None, "ambiguous")
+        # A repeated assertion may independently be the first update evidence.
+        if from_update:
+            ids = self.update_ids.setdefault(key, set())
+            if native not in ids:
+                ids.add(native)
+                if watch is not None and len(ids) <= 2:
+                    deferred = watch.deferred
+                    if len(ids) == 2:
+                        watch.deferred = []
+                    for entry in deferred:
+                        self.set_binding(
+                            entry,
+                            native if len(ids) == 1 else None,
+                            "legacy_unscoped" if len(ids) == 1 else "ambiguous",
+                        )
+
+    def fold(
+        self,
+        event: JournalEvent,
+        ordinal: int,
+        selection: SelectionAccept | None = None,
+    ) -> None:
         if isinstance(event, SessionStartEvent):
-            self.starts.setdefault((event.chat_id, event.session_instance_id, event.harness), event)
+            key = (event.chat_id, event.session_instance_id, event.harness)
+            prior = self.starts.setdefault(key, event)
+            if prior != event and key not in self.conflicting_start_keys:
+                self.conflicting_start_keys.add(key)
+                for entry in self.exact_by_start.pop(key, ()):
+                    self.set_binding(entry, None, "ambiguous")
         if isinstance(event, SessionModelObservationEvent):
             self.observations[(event.harness, event.harness_session_id)] = (
                 event.observed_model_token
             )
-        if isinstance(event, (SessionUpdateEvent, SessionModelSelectionEvent)):
-            key = startup_key(event)
-            native = event.harness_session_id
-            if native is not None and event.startup_attempt_id is not None:
-                self.startup_ids.setdefault(key, set()).add(native)
-            if isinstance(event, SessionUpdateEvent) and (
-                native is not None and event.startup_attempt_id is not None
+        if (
+            isinstance(event, SessionUpdateEvent)
+            and event.harness_session_id is not None
+            and event.startup_attempt_id is not None
+        ):
+            self.note_native_assertion(
+                startup_key(event), event.harness_session_id, from_update=True
+            )
+        if selection is None:
+            return
+        value = selection.value
+        key = (value.chat_id, value.session_instance_id, value.startup_attempt_id)
+        native = value.source.key.native_session_id if value.source else value.harness_session_id
+        if native is not None and value.startup_attempt_id is not None:
+            self.note_native_assertion(key, native, from_update=False)
+        entry = _RetainedModelIntent(
+            len(self.model_intents), value, ordinal, None, "legacy_unscoped"
+        )
+        self.model_intents.append(entry)
+        if value.source is not None:
+            index = self.exact_by_source.setdefault(
+                native_key_tuple(value.source.key), _ExactIndex()
+            )
+            if value.kind == "initial_seed":
+                index.seed = entry.slot
+            else:
+                assert value.spawn_id is not None
+                index.by_spawn[value.spawn_id] = entry.slot
+            self.exact_by_start.setdefault(
+                (value.chat_id, value.session_instance_id, value.harness), []
+            ).append(entry)
+            if value.startup_attempt_id is not None:
+                self.startup_watch.setdefault(key, _StartupWatch()).exact.append(entry)
+        else:
+            if value.kind == "invocation_started":
+                self.startup_selections.add((value.harness, value.spawn_id, *key))
+            if (
+                native is None
+                and value.startup_attempt_id is not None
+                and selection.correlation != "ambiguous"
             ):
-                ids = self.update_ids.setdefault(key, set())
-                # A deferred selection binds on the first update, unbinds on a
-                # contradictory second ID, and cannot bind again. Each pending
-                # selection is visited at most twice, regardless of journal size.
-                if native not in ids:
-                    if len(ids) == 1:
-                        old = next(iter(ids))
-                        for selection in self.pending.pop(key, ()):
-                            self.index_selection(selection, old, -1)
-                    elif not ids:
-                        for selection in self.pending.get(key, ()):
-                            self.index_selection(selection, native, 1)
-                    ids.add(native)
-            if isinstance(event, SessionModelSelectionEvent):
-                if event.kind == "invocation_started":
-                    self.startup_selections.add(selection_startup_key(event))
-                if native is None and event.startup_attempt_id is not None:
-                    ids = self.update_ids.get(key, set())
-                    if len(ids) <= 1:
-                        self.pending.setdefault(key, []).append(event)
-                    if len(ids) == 1:
-                        native = next(iter(ids))
-                if native is not None:
-                    self.index_selection(event, native, 1)
+                self.startup_watch.setdefault(key, _StartupWatch()).deferred.append(entry)
+        self.set_binding(entry, selection.effective_native_id, selection.correlation)
 
     def snapshot(self) -> MetadataProjection:
         return MetadataProjection(
-            MappingProxyType(self.starts),
+            MappingProxyType(self.starts.copy()),
             MappingProxyType({k: frozenset(v) for k, v in self.startup_ids.items()}),
             MappingProxyType({k: frozenset(v) for k, v in self.update_ids.items()}),
-            frozenset(k for k, count in self.selections.items() if count),
-            frozenset(k for k, count in self.invocations.items() if count),
+            frozenset(self.selections),
+            frozenset(self.invocations),
             frozenset(self.startup_selections),
-            MappingProxyType(self.observations),
+            MappingProxyType(self.observations.copy()),
+            tuple(entry.freeze() for entry in self.model_intents),
+            frozenset(self.conflicting_start_keys),
+            MappingProxyType(
+                {
+                    key: ExactIndex(
+                        MappingProxyType(index.by_spawn.copy()), index.seed, index.blocked_by
+                    )
+                    for key, index in self.exact_by_source.items()
+                }
+            ),
         )
 
 
@@ -1799,9 +2240,7 @@ class _JournalBuilder:
     lifecycle_claims: dict[tuple[str, str, str], _LifecycleClaimBuilder] = field(
         default_factory=dict
     )
-    lifecycle_states: dict[tuple[str, str], _LifecycleGenerationState] = field(
-        default_factory=dict
-    )
+    lifecycle_states: dict[tuple[str, str], _LifecycleGenerationState] = field(default_factory=dict)
     latest_blank_generation: dict[str, str] = field(default_factory=dict)
     event_ordinal: int = 0
     metadata: _MetadataBuilder = field(default_factory=_MetadataBuilder)
@@ -1877,10 +2316,7 @@ class _JournalBuilder:
                     state.session_instance_id, event.session_instance_id
                 ):
                     raise ValueError("Historical session authority contains a mutation")
-                if (
-                    isinstance(event, SessionUpdateEvent)
-                    and event.harness_session_id is not None
-                ):
+                if isinstance(event, SessionUpdateEvent) and event.harness_session_id is not None:
                     claim.aliases.setdefault(event.harness_session_id, None)
                 if event.session_instance_id.strip():
                     state.session_instance_id = event.session_instance_id
@@ -1937,6 +2373,20 @@ def boundary_digest(fact: BoundaryFact) -> str:
 
 
 def fold_row(builder: _JournalBuilder, event: JournalEvent) -> None:
+    builder.event_ordinal += 1
+    ordinal = builder.event_ordinal
+    selection = None
+    if isinstance(event, (SessionModelSelectionEvent, SourceModelSelectionEvent)):
+        decision = plan_model_selection(
+            builder.identity(), builder.metadata, event, origin="replay"
+        )
+        if not isinstance(decision, SelectionAccept):
+            raise ValueError(
+                decision.reason
+                if isinstance(decision, SelectionReject)
+                else "Noncanonical duplicate model selection row"
+            )
+        selection = decision
     if isinstance(
         event,
         (
@@ -1991,7 +2441,7 @@ def fold_row(builder: _JournalBuilder, event: JournalEvent) -> None:
             builder.fold_lifecycle(event)
     # Validate the whole row before applying its effect. No copy of prefix maps.
     builder.apply_identity(delta)
-    builder.metadata.fold(event)
+    builder.metadata.fold(event, ordinal, selection)
 
 
 _EVENT_SCHEMAS: dict[str, type[JournalEvent]] = {
@@ -2019,9 +2469,13 @@ def decode_row(payload: object) -> JournalEvent:
         return (_ATTEMPT_SCHEMA if version == 3 else _V4_ATTEMPT_SCHEMA).validate_python(payload)
     if not isinstance(kind, str) or kind not in _EVENT_SCHEMAS:
         raise ValueError("Unsupported sessions.jsonl event type")
-    if kind != "historical_import" and (
-        type(payload.get("v", 1)) is not int or payload.get("v", 1) != 1
-    ):
+    version = payload.get("v", 1)
+    if kind == "model_selection":
+        if type(version) is not int or version not in (1, 2):
+            raise ValueError("Unsupported model_selection sessions.jsonl version")
+        schema = SessionModelSelectionEvent if version == 1 else SourceModelSelectionEvent
+        return schema.model_validate(payload)
+    if kind != "historical_import" and (type(version) is not int or version != 1):
         raise ValueError(f"Unsupported {kind} sessions.jsonl version")
     return _EVENT_SCHEMAS[kind].model_validate(payload)
 

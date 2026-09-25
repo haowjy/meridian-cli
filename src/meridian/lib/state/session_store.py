@@ -4,6 +4,7 @@ import json
 import os
 import re
 import uuid
+from collections.abc import Reversible
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -39,6 +40,7 @@ from meridian.lib.state.session_authority import (
     BeginIntentV4,
     BoundaryFact,
     BoundaryFactV4,
+    FactsUnavailable,
     Historical,
     IdentityDelta,
     InvalidSessionJournal,
@@ -54,22 +56,28 @@ from meridian.lib.state.session_authority import (
     PendingSource,
     Pinned,
     PinnedSource,
+    RecordedNativeSource,
     ReferenceOnly,
     Refutation,
     RefutationV4,
+    ReplayModelFacts,
+    SelectionAccept,
+    SelectionDuplicate,
+    SelectionReject,
     UnavailableBinding,
     Unobserved,
     UnobservedSource,
     _generation_matches,
     canonical_chat_number,
+    decode_row,
     eligible_input_entry,
     native_key_tuple,
     plan_attempt,
     plan_identity,
+    plan_model_selection,
     read_journal,
+    requested_source_eligible,
     result_for_boundary,
-    selection_startup_key,
-    startup_key,
 )
 from meridian.lib.state.session_authority import (
     AttemptBoundaries as AttemptBoundaries,
@@ -106,6 +114,9 @@ from meridian.lib.state.session_authority import (
 )
 from meridian.lib.state.session_authority import (
     SessionUpdateEvent as SessionUpdateEvent,
+)
+from meridian.lib.state.session_authority import (
+    SourceModelSelectionEvent as SourceModelSelectionEvent,
 )
 from meridian.lib.state.session_authority import (
     UnresolvedBoundary as UnresolvedBoundary,
@@ -367,13 +378,33 @@ class NativeSourceUseSnapshot:
 
     journal: JournalSnapshot
 
+    def replay_model_facts(
+        self, source: RecordedNativeSource
+    ) -> ReplayModelFacts | FactsUnavailable:
+        """Project exact v2 intent from this retained fold; performs no reads."""
+        if not requested_source_eligible(self.journal.identity, source):
+            return FactsUnavailable("source_not_eligible")
+        metadata = self.journal.metadata
+        index = metadata.exact_by_source.get(native_key_tuple(source.key))
+        if index is None:
+            return ReplayModelFacts(None, None)
+        if index.blocked_by is not None:
+            return FactsUnavailable("source_conflict")
+        latest = (
+            metadata.model_intents[next(reversed(cast("Reversible[int]", index.by_spawn.values())))]
+            if index.by_spawn
+            else None
+        )
+        seed = metadata.model_intents[index.seed] if index.seed is not None else None
+        if any(fact is not None and fact.value.source != source for fact in (latest, seed)):
+            return FactsUnavailable("source_not_eligible")
+        return ReplayModelFacts(latest, seed)
+
     def binding(self, chat_id: str) -> NativeBindingStatus:
         return _native_binding_from_snapshot(self.journal, chat_id)
 
     def candidates(self, native_session_id: str, *, harness: str | None = None) -> NativeIdLookup:
-        return _native_id_candidates_from_snapshot(
-            self.journal, native_session_id, harness=harness
-        )
+        return _native_id_candidates_from_snapshot(self.journal, native_session_id, harness=harness)
 
     def selected_chat_candidates(
         self, chat_id: str, native_session_id: str, *, harness: str | None = None
@@ -626,6 +657,9 @@ def _parse_event(payload: dict[str, Any]) -> SessionEvent | None:
         if event_type == "update":
             return SessionUpdateEvent.model_validate(payload)
         if event_type == "model_selection":
+            version = payload.get("v", 1)
+            if type(version) is int and version == 2:
+                return SourceModelSelectionEvent.model_validate(payload)
             return SessionModelSelectionEvent.model_validate(payload)
     except ValidationError:
         return None
@@ -1212,52 +1246,39 @@ def get_model_selection(
     return current if current is not None else seed
 
 
-def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent) -> bool:
-    """Durably append once per invocation/conversation; false means already recorded."""
+def _append_accepted_model_selection(
+    path: Path,
+    transaction: _SessionTransaction,
+    decision: SelectionAccept,
+) -> None:
+    """Persist only the frozen admitted value, never the caller-owned event."""
+    transaction.prepare()
+    HistoryChanges(path.parent).mark(HistorySource(kind="sessions"))
+    _append_session_row(path, decision.value.event, exclude_none=False)
 
+
+def record_model_selection(
+    runtime_root: Path, event: SessionModelSelectionEvent | SourceModelSelectionEvent
+) -> bool:
+    """Append the canonical planned value; an identical live retry is a no-op."""
+    candidate = decode_row(event.model_dump(mode="python"))
+    if not isinstance(candidate, (SessionModelSelectionEvent, SourceModelSelectionEvent)):
+        raise ValueError("expected model selection row")
     paths = RuntimePaths.from_root_dir(runtime_root)
     with _sessions_transaction(paths, require_existing_root=True) as transaction:
         snapshot = transaction.snapshot
-        metadata = snapshot.metadata
-        source_start = metadata.starts.get(
-            (event.chat_id, event.session_instance_id, event.harness)
+        decision = plan_model_selection(
+            snapshot.identity, snapshot.metadata, candidate, origin="proposal"
         )
-        if source_start is None:
-            raise ValueError("selection has no matching captured session generation")
-        if event.kind == "initial_seed" and source_start.model_selection_protocol is not None:
-            raise ValueError("cannot seed a new-protocol session from prelaunch intent")
-        # Even a metadata no-op must not hide an attempted historical mutation.
-        plan_identity(snapshot.identity, event)
-        metadata.validate_startup(event)
-        native_id = metadata.selection_native_id(event)
-        if native_id is not None and (
-            (event.kind == "initial_seed" and (event.harness, native_id) in metadata.selections)
-            or (
-                event.kind == "invocation_started"
-                and (event.harness, native_id, event.spawn_id) in metadata.invocations
-            )
-        ):
-            if event.kind == "invocation_started" and native_id not in metadata.startup_ids.get(
-                startup_key(event), frozenset()
-            ):
+        if isinstance(decision, SelectionReject):
+            raise ValueError(decision.reason)
+        if isinstance(decision, SelectionDuplicate):
+            if decision.legacy_update is not None:
                 _append_proposed_row(
-                    paths.sessions_jsonl,
-                    transaction,
-                    SessionUpdateEvent(
-                        chat_id=event.chat_id,
-                        session_instance_id=event.session_instance_id,
-                        startup_attempt_id=event.startup_attempt_id,
-                        harness_session_id=HarnessSessionId(native_id),
-                    ),
-                    exclude_none=True,
+                    paths.sessions_jsonl, transaction, decision.legacy_update, exclude_none=True
                 )
             return False
-        if (
-            event.kind == "invocation_started"
-            and selection_startup_key(event) in metadata.startup_selections
-        ):
-            return False
-        _append_proposed_row(paths.sessions_jsonl, transaction, event)
+        _append_accepted_model_selection(paths.sessions_jsonl, transaction, decision)
         return True
 
 

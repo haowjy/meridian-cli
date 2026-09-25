@@ -4,10 +4,24 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
 - Keep exact Pi source descriptors open through validation and final reobservation; reject changed files and malformed full journals, with guarded adversarial coverage.
 - Isolate guarded exact-provider acceptance in a child process, classify FIFO replacement as a source conflict, and share immutable evidence results in state.
+- Isolate exact-intent acceptance from pytest workers; permanently deny external
+  effects and keep legacy concurrency coverage separate.
+- Share exact model-intent admission between live writes and replay; freeze accepted
+  payloads, index source facts, and bind/retract through bounded startup watches.
+- Retain immutable source-correlated model intent in the strict session fold;
+  add exact v2 selection replay without enabling tracked transport.
 
 ### Fixed
+
+- Preserve whitespace startup tokens for legacy v1 selections and session updates;
+  require nonblank startup identity only for exact v2 selections.
+
+- Keep exact model intent typed in the session fold, retract conflicting startup
+  facts with their membership, and refuse late or contradictory seed intent.
 
 - Reject conflicting linked-spawn work/path metadata, detach checked policy
   snapshots from mutable rows, and quarantine invalid UTF-8 spawn state.
