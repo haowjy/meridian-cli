@@ -13,6 +13,7 @@ import meridian.lib.ops.spawn.execute_runner as execute_runner_module
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.lifecycle import LifecycleEvent, SpawnLifecycleService
+from meridian.lib.core.native_identity import NativeKeyFields
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.request import SpawnRequest
@@ -22,7 +23,7 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_authority_for_write,
 )
 from meridian.lib.ops.spawn.models import SpawnCreateInput
-from meridian.lib.state import spawn_store, work_repository, work_store
+from meridian.lib.state import session_store, spawn_store, work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths
 from tests.support.executables import prepend_fake_executables
 from tests.support.launch import stub_bundle_request_and_resolve
@@ -114,6 +115,9 @@ def test_execute_spawn_blocking_reads_report_and_does_not_print_running_preamble
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     runtime = _build_test_runtime(tmp_path, monkeypatch)
+    runtime_root = runtime.authority.runtime_root
+    assert runtime_root is not None
+    native_store = runtime_root / "fake-native-store"
 
     async def _fake_launch_prepared_spawn(**kwargs: object) -> int:
         spawn = cast("Any", kwargs["spawn"])
@@ -122,8 +126,22 @@ def test_execute_spawn_blocking_reads_report_and_does_not_print_running_preamble
         report_path = runtime_root / "spawns" / spawn_id / "report.md"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text("fake report body\n", encoding="utf-8")
-        history_path = runtime_root / "spawns" / spawn_id / "history.jsonl"
-        history_path.write_text('{"event_type":"session.idle"}\n', encoding="utf-8")
+        chat_id = session_store.start_session(
+            runtime_root,
+            harness="codex",
+            harness_session_id="",
+            model="gpt-5.4",
+            native_store=str(native_store),
+            kind="spawn",
+            spawn_id=spawn_id,
+        )
+        session_store.update_session_harness_id(
+            runtime_root,
+            chat_id,
+            NativeKeyFields(session_id="fake-native-session"),
+            source="observed",
+        )
+        session_store.stop_session(runtime_root, chat_id)
         spawn_store.finalize_spawn(
             runtime_root,
             spawn_id,
@@ -157,6 +175,47 @@ def test_execute_spawn_blocking_reads_report_and_does_not_print_running_preamble
     assert result.format_text().endswith(
         "fake report body\n\nTranscript: meridian session log " + str(result.spawn_id)
     )
+
+
+def test_execute_spawn_blocking_without_native_key_omits_transcript_hint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _build_test_runtime(tmp_path, monkeypatch)
+
+    async def _fake_launch_prepared_spawn(**kwargs: object) -> int:
+        spawn = cast("Any", kwargs["spawn"])
+        runtime_root = Path(cast("Path", kwargs["runtime_root"]))
+        spawn_id = str(spawn.spawn_id)
+        report_path = runtime_root / "spawns" / spawn_id / "report.md"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text("fake report body\n", encoding="utf-8")
+        spawn_store.finalize_spawn(
+            runtime_root,
+            spawn_id,
+            "succeeded",
+            0,
+            origin="runner",
+            duration_secs=1.25,
+        )
+        return 0
+
+    monkeypatch.setattr(execute_module, "launch_prepared_spawn", _fake_launch_prepared_spawn)
+
+    result = execute_module.execute_spawn_blocking(
+        payload=SpawnCreateInput(prompt="run"),
+        request=SpawnRequest(
+            prompt="run",
+            model="gpt-5.4",
+            harness="codex",
+            agent="coder",
+        ),
+        runtime=runtime,
+    )
+
+    assert result.status == "succeeded"
+    assert result.report == "fake report body"
+    assert "Transcript: meridian session log" not in result.format_text()
 
 
 def test_execute_spawn_blocking_notifies_spawn_id_before_launch(
