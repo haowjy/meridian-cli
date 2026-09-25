@@ -1,0 +1,9 @@
+# Native report namespace
+
+- `opencode_report.py:_extract_opencode_report_from_db()` still defaults its DB
+  reads to the ambient namespace. This is the report fallback, not the exact
+  transcript resolver. The native-history/read-path lane must carry the recorded
+  database path into report extraction or delete that fallback; never resolve a
+  tracked report from an ambient database by native ID alone. Found during the
+  native-harness-session-identity Lane C fix pass; code-path inspection, not a
+  reproduced live-server failure.

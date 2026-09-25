@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Track the remaining OpenCode ambient-database report fallback for the native-history read-path cleanup.
+
 - Preserve reopenable Codex namespaces through symlinked session directories and refuse stores that cannot be selected exactly.
 
 - Treat every recorded OpenCode store as an exact database path, including databases named `storage`; remove basename-based namespace inference.
