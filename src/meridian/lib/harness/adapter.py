@@ -14,9 +14,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from meridian.lib.config.settings import PiHarnessProfileConfig
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.native_identity import (
-    NativeEntryMismatch,
+    NativeIdentityError,
     NativeIdentityPlan,
-    NativeSessionUnavailable,
     RunBoundary,
 )
 from meridian.lib.core.types import ArtifactKey, HarnessId, ModelId, SpawnId, TransportId
@@ -413,7 +412,7 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
 
     def verify_native_identity(
         self, plan: NativeIdentityPlan,
-    ) -> NativeEntryMismatch | NativeSessionUnavailable | None: ...
+    ) -> NativeIdentityError | None: ...
 
     def observe_run_boundary(
         self, *, child_env: dict[str, str], pid: int | None,
@@ -659,7 +658,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
 
     def verify_native_identity(
         self, plan: NativeIdentityPlan,
-    ) -> NativeEntryMismatch | NativeSessionUnavailable | None:
+    ) -> NativeIdentityError | None:
         """Return an exact native entry conflict after execution, if supported."""
         return None
 

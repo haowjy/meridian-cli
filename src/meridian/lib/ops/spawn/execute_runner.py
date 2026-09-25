@@ -12,7 +12,7 @@ from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.domain import Spawn
-from meridian.lib.core.native_identity import NativeSessionUnavailable
+from meridian.lib.core.native_identity import NativeIdentityError, NativeSessionUnavailable
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import (
     ForkMaterializationMode,
@@ -82,7 +82,7 @@ def _log_launch_failure_without_traceback(
     spawn_id: SpawnId,
     exc: Exception,
 ) -> None:
-    if isinstance(exc, (LaunchUserInputError, NativeSessionUnavailable)):
+    if isinstance(exc, (LaunchUserInputError, NativeIdentityError)):
         logger.warning(message, spawn_id=str(spawn_id), error=str(exc))
         return
     logger.exception(message, spawn_id=str(spawn_id))
@@ -370,9 +370,7 @@ async def launch_prepared_spawn(
         )
     except Exception as exc:
         if isinstance(exc, NativeSessionUnavailable):
-            exc = NativeSessionUnavailable(
-                request.session.continue_source_ref or exc.ref, exc.reason
-            )
+            exc = exc.for_ref(request.session.continue_source_ref or exc.ref)
         await finalize_launch_failure(
             runtime_root,
             project_paths.project_root,
@@ -443,9 +441,7 @@ async def launch_prepared_spawn(
                 )
         except Exception as exc:
             if isinstance(exc, NativeSessionUnavailable):
-                exc = NativeSessionUnavailable(
-                    request.session.continue_source_ref or exc.ref, exc.reason
-                )
+                exc = exc.for_ref(request.session.continue_source_ref or exc.ref)
             await finalize_launch_failure(
                 runtime_root,
                 project_paths.project_root,

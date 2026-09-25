@@ -274,8 +274,13 @@ def assert_entry_mismatch(runtime: Path, spawn_id: str, entry: session_store.Ses
     ).read_text().splitlines()]
     mismatch = [fact for fact in facts if fact["event"] == "entry_mismatch"]
     assert len(mismatch) == 1
-    assert mismatch[0]["expected"] == f"({entry.native_store}, {entry.harness_session_id})"
-    assert mismatch[0]["observed"] == f"({entry.native_store}, wrong-entry)"
+    assert mismatch[0]["expected"] == {
+        "harness": "pi", "native_store": entry.native_store,
+        "session_id": entry.harness_session_id,
+    }
+    assert mismatch[0]["observed"] == {
+        "harness": "pi", "native_store": entry.native_store, "session_id": "wrong-entry",
+    }
     assert all(record.harness_session_id not in {"wrong-entry", "switched-id"}
                for record in session_store.list_all_session_records(runtime))
 
@@ -408,3 +413,56 @@ def test_primary_header_mismatch_prevents_exit_attribution(
                for fact in facts)
     events = [json.loads(line) for line in (runtime / "sessions.jsonl").read_text().splitlines()]
     assert not any(event.get("kind") == "invocation_started" for event in events)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trigger", ["launch-failure", "streaming-except", "post-exit"])
+async def test_identity_failure_payload_is_identical_at_every_boundary(
+    pi_runtime: Path, monkeypatch: pytest.MonkeyPatch, trigger: str,  # noqa: F811
+) -> None:
+    from meridian.lib.core.domain import Spawn
+    from meridian.lib.core.native_identity import NativeEntryMismatch, NativeKeyFields
+    from meridian.lib.core.types import ModelId, SpawnId
+    from meridian.lib.launch import streaming_runner
+    from meridian.lib.ops.spawn.failure_policy import finalize_launch_failure
+    from meridian.lib.state.artifact_store import LocalStore
+
+    root = pi_runtime
+    install_shim(root)
+    ctx = context(root, primary=False)
+    run = Spawn(spawn_id=SpawnId("p42"), prompt="hello", model=ModelId("pi-test"), status="queued")
+    spawn_store.start_spawn(
+        ctx.runtime_root, spawn_id=run.spawn_id, chat_id="", model="pi-test", agent="",
+        harness="pi", kind="streaming", prompt="hello", status="queued",
+    )
+    expected = {"harness": "pi", "native_store": "/native/store", "session_id": "entry"}
+    observed = {**expected, "session_id": "wrong-entry"}
+    error = NativeEntryMismatch(NativeKeyFields(**expected), NativeKeyFields(**observed))
+    if trigger == "launch-failure":
+        await finalize_launch_failure(ctx.runtime_root, root, run.spawn_id, error)
+    else:
+        def verify(_plan: object) -> NativeEntryMismatch:
+            if trigger == "streaming-except":
+                raise error
+            return error
+
+        monkeypatch.setattr(ctx.harness, "verify_native_identity", verify)
+        code = await streaming_runner.execute_with_streaming(
+            run, request=ctx.request, launch_context=ctx, project_root=root,
+            runtime_root=ctx.runtime_root,
+            artifacts=LocalStore(root_dir=ctx.runtime_root / "artifacts"),
+        )
+        assert code == 1
+    facts = [json.loads(line) for line in (
+        ctx.runtime_root / "spawns" / "p42" / "runner-lifecycle.jsonl"
+    ).read_text().splitlines()]
+    payloads = [fact for fact in facts if fact["event"] == "entry_mismatch"]
+    assert len(payloads) == 1
+    payload = payloads[0]
+    assert {key: payload[key] for key in ("event", "expected", "observed", "reason", "detail")} == {
+        "event": "entry_mismatch", "expected": expected, "observed": observed,
+        "reason": "key", "detail": None,
+    }
+    row = spawn_store.get_spawn(ctx.runtime_root, "p42")
+    assert row is not None and row.status == "failed" and row.terminal is not None
+    assert row.terminal.error == "entry_mismatch"

@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import os
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import structlog
 
 from meridian.lib.core.clock import Clock
+from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId
 from meridian.lib.launch.composition import (
     ProjectionChannels,
@@ -59,6 +61,29 @@ def append_runner_lifecycle_event(
         )
     except Exception:
         logger.warning("Failed to append runner lifecycle evidence.", exc_info=True)
+
+
+@dataclass(frozen=True)
+class LifecycleLog:
+    """Destination and clock for runner-owned lifecycle evidence."""
+
+    runtime_root: Path
+    spawn_id: SpawnId
+    path: Path
+    clock: Clock
+
+    def __call__(self, *, event: str, phase: str, **details: object) -> None:
+        append_runner_lifecycle_event(
+            self.runtime_root, self.spawn_id, self.path, clock=self.clock,
+            event=event, phase=phase, **details,
+        )
+
+
+def record_identity_failure(
+    error: NativeIdentityError, *, lifecycle: LifecycleLog, phase: str,
+) -> None:
+    """Write the same typed refusal payload at every runner boundary."""
+    lifecycle(event=error.failure_code, phase=phase, **error.lifecycle_fields())
 
 
 ProjectionSurface = Literal["primary", "spawn"]

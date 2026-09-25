@@ -13,6 +13,7 @@ import uuid
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -26,7 +27,11 @@ from meridian.lib.bootstrap.services import (
 from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.domain import Spawn, SpawnStatus, TerminalSpawnStatus
-from meridian.lib.core.native_identity import NativeSessionUnavailable
+from meridian.lib.core.native_identity import (
+    NativeEntryMismatch,
+    NativeIdentityError,
+    NativeKeyFields,
+)
 from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
@@ -38,6 +43,7 @@ from meridian.lib.harness.semantics import (
     NormalizedHarnessEvent,
     TerminalEventOutcome,
 )
+from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
 from meridian.lib.launch.artifact_io import (
     append_runner_lifecycle_event as _append_runner_lifecycle_event,
 )
@@ -62,7 +68,6 @@ from meridian.lib.launch.env import (
 )
 from meridian.lib.launch.errors import (
     ErrorCategory,
-    NativeEntryMismatch,
     classify_error,
     should_retry,
 )
@@ -143,7 +148,7 @@ class _AttemptRuntime:
     terminal_observed: bool = False
     authoritative_terminal_status: TerminalSpawnStatus | None = None
     start_error: str | None = None
-    identity_error: NativeEntryMismatch | NativeSessionUnavailable | None = None
+    identity_error: NativeIdentityError | None = None
 
 
 class StartupPhaseTimeout(TimeoutError):
@@ -820,6 +825,8 @@ async def _run_streaming_attempt(
     terminal_outcome: TerminalEventOutcome | None = None
     authoritative_terminal_status: TerminalSpawnStatus | None = None
     recording_selection = False
+    start_error: str | None = None
+    identity_error: NativeIdentityError | None = None
     try:
         if runner_phase is not None:
             runner_phase[0] = "starting_harness"
@@ -973,26 +980,12 @@ async def _run_streaming_attempt(
                 str(run.spawn_id),
                 exit_code=drain_exit_code,
             )
+    except NativeIdentityError as exc:
+        start_error, identity_error = str(exc), exc
     except Exception as exc:
-        if recording_selection and not isinstance(exc, NativeEntryMismatch):
+        if recording_selection:
             raise
-        return _AttemptRuntime(
-            connection=connection,
-            drain_exit_code=DEFAULT_INFRA_EXIT_CODE,
-            drain_error=str(exc),
-            timed_out=False,
-            received_signal=received_signal[0],
-            budget_breach=budget_breach_holder[0],
-            terminated_by_report_watchdog=terminated_by_report_watchdog,
-            terminated_by_inactivity=terminated_by_inactivity,
-            cancelled_by_request=cancelled_by_request,
-            terminal_observed=False,
-            authoritative_terminal_status=None,
-            start_error=str(exc),
-            identity_error=(
-                exc if isinstance(exc, (NativeEntryMismatch, NativeSessionUnavailable)) else None
-            ),
-        )
+        start_error = str(exc)
     finally:
         if subscriber is not None:
             manager.unsubscribe(run.spawn_id)
@@ -1014,7 +1007,12 @@ async def _run_streaming_attempt(
         with suppress(Exception):
             await manager.stop_spawn(run.spawn_id)
 
-    pi_drain_terminal = config.harness_id == HarnessId.PI and drain_error is not None
+    if start_error is not None:
+        drain_exit_code, drain_error, timed_out = DEFAULT_INFRA_EXIT_CODE, start_error, False
+        terminal_outcome, authoritative_terminal_status = None, None
+    pi_drain_terminal = (
+        start_error is None and config.harness_id == HarnessId.PI and drain_error is not None
+    )
     return _AttemptRuntime(
         connection=connection,
         drain_exit_code=drain_exit_code,
@@ -1031,7 +1029,38 @@ async def _run_streaming_attempt(
             or authoritative_terminal_status is not None
         ),
         authoritative_terminal_status=authoritative_terminal_status,
+        start_error=start_error, identity_error=identity_error,
     )
+
+
+def _initial_identity_observer(
+    spec: ResolvedLaunchSpec, harness: str, accept: Callable[[str], None],
+) -> Callable[[str], None]:
+    initial_observed = False
+    plan = spec.native_identity_plan
+    expected_id = (
+        plan.harness_session_id if plan is not None
+        else spec.continue_session_id if not spec.continue_fork else None
+    )
+    expected = NativeKeyFields(harness, plan.native_store if plan else None, expected_id)
+
+    def observe(session_id: str) -> None:
+        nonlocal initial_observed
+        candidate = session_id.strip()
+        if not candidate:
+            return
+        if not initial_observed:
+            if expected_id and candidate != expected_id:
+                raise NativeEntryMismatch(expected, expected.with_session(candidate))
+            if spec.continue_fork and candidate == spec.continue_session_id:
+                raise NativeEntryMismatch(
+                    expected.with_session(candidate),
+                    expected.with_session(candidate), reason="fork_reused_source",
+                )
+            initial_observed = True
+        # Later switches diagnose conflicts but never confirm or replace entry.
+        accept(candidate)
+    return observe
 
 
 async def execute_with_streaming(
@@ -1093,13 +1122,8 @@ async def execute_with_streaming(
         def _record_lifecycle(event: str, **details: object) -> None:
             assert lifecycle_path is not None
             _append_runner_lifecycle_event(
-                runtime_root,
-                run.spawn_id,
-                lifecycle_path,
-                clock=resolved_clock,
-                event=event,
-                phase=runner_phase[0],
-                **details,
+                runtime_root, run.spawn_id, lifecycle_path, clock=resolved_clock,
+                event=event, phase=runner_phase[0], **details,
             )
 
         def _record_atexit() -> None:
@@ -1201,30 +1225,9 @@ async def execute_with_streaming(
                 harness_session_id_observer(bound)
 
         def _attempt_id_observer(attempt: SessionAttempt | None) -> Callable[[str], None]:
-            initial_observed = False
-            expected_id = (
-                spec.native_identity_plan.harness_session_id
-                if spec.native_identity_plan is not None
-                else spec.continue_session_id if not spec.continue_fork else None
+            return _initial_identity_observer(
+                spec, str(resolved_harness_id), partial(_observe_id, attempt=attempt),
             )
-
-            def observe(session_id: str) -> None:
-                nonlocal initial_observed
-                candidate = session_id.strip()
-                if not candidate:
-                    return
-                if not initial_observed:
-                    if expected_id and candidate != expected_id:
-                        raise NativeEntryMismatch(expected_id, candidate)
-                    if spec.continue_fork and candidate == spec.continue_session_id:
-                        raise NativeEntryMismatch(
-                            f"new fork target (not {spec.continue_session_id})", candidate,
-                        )
-                    initial_observed = True
-                # Subsequent owned signals can describe legitimate native switches.
-                # They diagnose conflicts, but never confirm or replace entry.
-                _observe_id(candidate, attempt)
-            return observe
 
         observe_attempt_id = _attempt_id_observer(session_attempt)
 
@@ -1281,8 +1284,10 @@ async def execute_with_streaming(
                 )
                 if result.status == "conflict":
                     raise NativeEntryMismatch(
-                        f"({result.native_store}, {result.harness_session_id})",
-                        f"({identity_plan.native_store}, {identity_plan.harness_session_id})",
+                        NativeKeyFields(str(resolved_harness_id),
+                            result.native_store, result.harness_session_id),
+                        NativeKeyFields(str(resolved_harness_id),
+                            identity_plan.native_store, identity_plan.harness_session_id),
                     )
             observed_harness_session_id = bind_harness_session_id(
                 runtime_root=runtime_root, spawn_id=run.spawn_id,
@@ -1469,10 +1474,10 @@ async def execute_with_streaming(
                 )
                 if entry_mismatch is not None:
                     conclusion.failure_reason = "entry_mismatch"
-                    _record_lifecycle(
-                        "entry_mismatch", attempt=attempt_number,
-                        expected=entry_mismatch.expected,
-                        observed=entry_mismatch.observed,
+                    record_identity_failure(
+                        entry_mismatch, lifecycle=LifecycleLog(
+                            runtime_root, run.spawn_id, lifecycle_path, resolved_clock,
+                        ), phase="post_exit",
                     )
                     break
 
@@ -1496,6 +1501,10 @@ async def execute_with_streaming(
                 )
                 conclusion.extracted = extraction
                 if boundary_error:
+                    record_identity_failure(boundary_error, phase="post_exit",
+                        lifecycle=LifecycleLog(
+                            runtime_root, run.spawn_id, lifecycle_path, resolved_clock,
+                        ))
                     conclusion.exit_code = 1
                     conclusion.failure_reason = boundary_error.failure_code
                     conclusion.authoritative_terminal_status = "failed"
@@ -1740,26 +1749,13 @@ async def execute_with_streaming(
             _record_lifecycle("task_cancelled")
             conclusion.exit_code = 130
             conclusion.failure_reason = "cancelled"
-        except Exception as exc:
-            _record_lifecycle(
-                "exception",
-                exception_type=type(exc).__name__,
-                exception=str(exc),
-            )
-            logger.exception(
-                "Streaming spawn execution failed with infrastructure error.",
-                spawn_id=str(run.spawn_id),
-                harness_id=str(launch_context.harness.id),
-            )
-            conclusion.exit_code = 1 if isinstance(
-                exc, (NativeEntryMismatch, NativeSessionUnavailable),
-            ) else DEFAULT_INFRA_EXIT_CODE
-            conclusion.failure_reason = (
-                exc.failure_code if isinstance(exc, (NativeEntryMismatch, NativeSessionUnavailable))
-                else "infrastructure_error"
-            )
-            if isinstance(exc, NativeEntryMismatch):
-                _record_lifecycle("entry_mismatch", expected=exc.expected, observed=exc.observed)
+    except NativeIdentityError as exc:
+        conclusion.exit_code = 1
+        conclusion.failure_reason = exc.failure_code
+        if lifecycle_path is not None:
+            record_identity_failure(exc, lifecycle=LifecycleLog(
+                runtime_root, run.spawn_id, lifecycle_path, resolved_clock,
+            ), phase=runner_phase[0])
     except Exception as exc:
         if lifecycle_path is not None:
             _append_runner_lifecycle_event(
@@ -1772,21 +1768,10 @@ async def execute_with_streaming(
                 exception_type=type(exc).__name__,
                 exception=str(exc),
             )
-        conclusion.exit_code = 1 if isinstance(
-            exc, (NativeEntryMismatch, NativeSessionUnavailable),
-        ) else DEFAULT_INFRA_EXIT_CODE
-        conclusion.failure_reason = (
-            exc.failure_code if isinstance(exc, (NativeEntryMismatch, NativeSessionUnavailable))
-            else "infrastructure_error"
-        )
-        if isinstance(exc, NativeEntryMismatch) and lifecycle_path is not None:
-            _append_runner_lifecycle_event(
-                runtime_root, run.spawn_id, lifecycle_path, clock=resolved_clock,
-                event="entry_mismatch", phase=runner_phase[0],
-                expected=exc.expected, observed=exc.observed,
-            )
+        conclusion.exit_code = DEFAULT_INFRA_EXIT_CODE
+        conclusion.failure_reason = "infrastructure_error"
         logger.exception(
-            "Streaming spawn setup failed.",
+            "Streaming spawn failed.",
             spawn_id=str(run.spawn_id),
             harness_id=str(launch_context.harness.id),
         )

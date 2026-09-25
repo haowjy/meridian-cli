@@ -13,9 +13,12 @@ from uuid import uuid4
 
 import structlog
 
-from meridian.lib.core.native_identity import NativeSessionUnavailable
+from meridian.lib.core.native_identity import (
+    NativeEntryMismatch,
+    NativeKeyFields,
+    NativeSessionUnavailable,
+)
 from meridian.lib.harness.claude_sessions import project_slug
-from meridian.lib.launch.errors import NativeEntryMismatch
 from meridian.lib.launch.launch_types import PreflightResult
 from meridian.lib.launch.text_utils import dedupe_nonempty
 from meridian.lib.platform import IS_WINDOWS, get_home_path
@@ -54,7 +57,10 @@ def validate_claude_session_file(path: Path, session_id: str) -> None:
     if not isinstance(observed, str) or not observed:
         raise NativeSessionUnavailable(session_id, "missing")
     if observed != session_id:
-        raise NativeEntryMismatch(session_id, observed)
+        raise NativeEntryMismatch(
+            NativeKeyFields("claude", str(path.parent), session_id),
+            NativeKeyFields("claude", str(path.parent), str(observed)),
+        )
 
 
 def ensure_claude_session_accessible(

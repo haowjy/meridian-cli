@@ -20,7 +20,7 @@ from typing import Any
 import psutil
 import structlog
 
-from meridian.lib.core.native_identity import NativeEntryMismatch
+from meridian.lib.core.native_identity import NativeEntryMismatch, NativeKeyFields
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import (
     ConnectionConfig,
@@ -306,11 +306,19 @@ class PrimaryAttachLauncher:
             plan = spec.native_identity_plan
             if (plan is not None and plan.harness_session_id and session_id
                     and plan.harness_session_id != session_id):
-                raise NativeEntryMismatch(plan.harness_session_id, session_id)
+                raise NativeEntryMismatch(
+                    NativeKeyFields(str(self._connection.harness_id),
+                        plan.native_store, plan.harness_session_id),
+                    NativeKeyFields(str(self._connection.harness_id),
+                        plan.native_store, session_id),
+                )
             self._set_harness_session_id(session_id)
             if self._metadata.harness_session_id != session_id:
                 raise NativeEntryMismatch(
-                    self._metadata.harness_session_id or "", session_id or "",
+                    NativeKeyFields(str(self._connection.harness_id),
+                        plan.native_store if plan else None, self._metadata.harness_session_id),
+                    NativeKeyFields(str(self._connection.harness_id),
+                        plan.native_store if plan else None, session_id),
                 )
             self._record_backend_scope_from_connection(session_id)
             self._event_writer_task = asyncio.create_task(self._run_event_writer())

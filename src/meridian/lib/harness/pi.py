@@ -10,7 +10,7 @@ from typing import ClassVar, cast
 from meridian.lib.config.settings import resolve_pi_harness_profile
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.native_identity import (
-    NativeEntryMismatch,
+    NativeIdentityError,
     NativeIdentityPlan,
     NativeSessionUnavailable,
     RunBoundary,
@@ -268,10 +268,10 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
     def verify_native_identity(
         self, plan: NativeIdentityPlan,
-    ) -> NativeEntryMismatch | NativeSessionUnavailable | None:
+    ) -> NativeIdentityError | None:
         try:
             verify_identity(plan)
-        except (NativeEntryMismatch, NativeSessionUnavailable) as exc:
+        except NativeIdentityError as exc:
             return exc
         return None
 

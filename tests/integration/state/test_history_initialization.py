@@ -194,11 +194,12 @@ def test_old_record_projection_schema_rebuilds_and_newer_schema_is_not_hydrated(
     status = index.inspect()
     assert status.baseline == "outdated" and status.upgrade == "reproject"
     assert [spawn.id for spawn in index.spawns()] == [key]
-    assert index.inspect().schema == 3
+    assert index.inspect().schema == history_index.SCHEMA_VERSION
     assert index.inspect().build != original_build
 
     with sqlite3.connect(index.path) as db:
-        db.execute("UPDATE meta SET version=999")
+        db.execute("UPDATE meta SET version=?", (history_index.SCHEMA_VERSION + 1,))
+        db.execute("UPDATE records SET record_json = 'not-json'")
     status = index.classify(deadline=time.monotonic() + 2)
     assert status.baseline == "incompatible"
     with pytest.raises(

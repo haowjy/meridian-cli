@@ -196,7 +196,11 @@ def find_attachable_rollout_session_id(
 
 def resolve_exact_rollout(session_id: str, matches: list[Path]) -> Path | None:
     """Validate the unique exact-ID candidate, shared by live reads and import."""
-    from meridian.lib.core.native_identity import NativeEntryMismatch, NativeSessionUnavailable
+    from meridian.lib.core.native_identity import (
+        NativeEntryMismatch,
+        NativeKeyFields,
+        NativeSessionUnavailable,
+    )
 
     if not matches:
         return None
@@ -219,5 +223,8 @@ def resolve_exact_rollout(session_id: str, matches: list[Path]) -> Path | None:
     ):
         raise NativeSessionUnavailable(session_id, "missing")
     if observed != session_id:
-        raise NativeEntryMismatch(session_id, observed)
+        raise NativeEntryMismatch(
+            NativeKeyFields("codex", None, session_id),
+            NativeKeyFields("codex", None, str(observed)),
+        )
     return source

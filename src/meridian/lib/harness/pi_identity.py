@@ -17,6 +17,7 @@ import structlog
 from meridian.lib.core.native_identity import (
     NativeEntryMismatch,
     NativeIdentityPlan,
+    NativeKeyFields,
     NativeSessionUnavailable,
 )
 
@@ -77,7 +78,10 @@ def resolve_session_file(store: Path, session_id: str, *, pending: bool = False)
     path = matches[0].absolute()
     observed = read_header(path).get("id")
     if observed != session_id:
-        raise NativeEntryMismatch(session_id, str(observed))
+        raise NativeEntryMismatch(
+            NativeKeyFields("pi", str(store), session_id),
+            NativeKeyFields("pi", str(store), str(observed)),
+        )
     return path
 
 
@@ -91,9 +95,20 @@ def verify_identity(plan: NativeIdentityPlan) -> Literal["ok", "pending"]:
     if path is None:
         return "pending"
     if plan.operation == "resume" and str(path) != plan.locator:
-        raise NativeEntryMismatch(str(plan.locator), str(path))
+        raise NativeEntryMismatch(
+            NativeKeyFields("pi", plan.native_store, plan.harness_session_id),
+            NativeKeyFields("pi", str(path.parent), plan.harness_session_id),
+            reason="source_changed",
+            detail=f"expected source {plan.locator!r}, observed {str(path)!r}",
+        )
     if plan.operation == "fork" and read_header(path).get("parentSession") != plan.locator:
-        raise NativeEntryMismatch(str(plan.locator), str(read_header(path).get("parentSession")))
+        raise NativeEntryMismatch(
+            NativeKeyFields("pi", plan.native_store, plan.harness_session_id),
+            NativeKeyFields("pi", str(path.parent), plan.harness_session_id),
+            reason="fork_parent",
+            detail=(f"expected parent {plan.locator!r}, "
+                    f"observed {read_header(path).get('parentSession')!r}"),
+        )
     return "ok"
 
 
