@@ -629,9 +629,7 @@ def _resolve_deny_headless_harnesses(
     if runtime.config_snapshot:
         try:
             return tuple(
-                MeridianConfig.model_validate(
-                    runtime.config_snapshot
-                ).deny_headless_harnesses
+                MeridianConfig.model_validate(runtime.config_snapshot).deny_headless_harnesses
             )
         except Exception:
             pass
@@ -656,8 +654,7 @@ def _enforce_headless_harness_policy(
     parent_harness = os.getenv("_MERIDIAN_HARNESS", "")
     if parent_harness == harness.id.value:
         agent_hint = (
-            f' Use your native Agent(subagent_type="{request.agent}") tool'
-            " to delegate instead."
+            f' Use your native Agent(subagent_type="{request.agent}") tool to delegate instead.'
             if request.agent
             else " Use your native Agent() tool to delegate instead."
         )
@@ -1089,7 +1086,6 @@ def compile_prepared_policy_surface(
     )
 
 
-
 @dataclass(frozen=True)
 class _SharedComposition:
     completion_contract: str
@@ -1103,10 +1099,13 @@ def _build_shared_composition(
     active_work_dir: Path | None,
     policy: ResolvedLaunchPolicy,
 ) -> _SharedComposition:
-    context_prompt = build_context_prompt(
-        project_root=project_paths.project_root,
-        active_work_dir=active_work_dir,
-    ) or ""
+    context_prompt = (
+        build_context_prompt(
+            project_root=project_paths.project_root,
+            active_work_dir=active_work_dir,
+        )
+        or ""
+    )
     spawn_usage_contract = build_spawn_usage_contract(
         policy.adapter.run_prompt_policy().spawn_usage_contract_variants
     )
@@ -1370,13 +1369,10 @@ def _prepare_spawn_surface(
         # channel instead.  When no projection produced system content, this is
         # the sole source of appended content.
         needs_skill_injection = (
-            existing_appended is None
-            or policy.adapter.capabilities.supports_native_skills
+            existing_appended is None or policy.adapter.capabilities.supports_native_skills
         )
         if needs_skill_injection:
-            skill_content = compose_skill_injections(
-                policy.resolved_skills.loaded_skills
-            )
+            skill_content = compose_skill_injections(policy.resolved_skills.loaded_skills)
             if existing_appended is None:
                 merged_appended = skill_content or None
             elif skill_content:
@@ -1605,9 +1601,7 @@ def prepare_launch_surface(
             # resolved grant — e.g. codex `web_search` — must still propagate). Falls back
             # to request.tools only when no resolved grant was produced.
             "tools": (
-                policies.resolved_tools
-                if policies.resolved_tools is not None
-                else request.tools
+                policies.resolved_tools if policies.resolved_tools is not None else request.tools
             ),
             "session": request.session.model_copy(
                 update={
@@ -1629,9 +1623,7 @@ def prepare_launch_surface(
     resolved_request = resolved_request.model_copy(
         update={
             "launch_policy_snapshot": (
-                None
-                if request.agent_opt_out
-                else request.launch_policy_snapshot
+                None if request.agent_opt_out else request.launch_policy_snapshot
             )
             or build_launch_policy_snapshot(
                 resolved_request,
@@ -1645,30 +1637,37 @@ def prepare_launch_surface(
     if is_exact_continue_session(request.session) and model_selection is not None:
         original = request.launch_policy_snapshot or resolved_request.launch_policy_snapshot
         assert original is not None
-        resolved_request = resolved_request.model_copy(update={
-            "launch_policy_snapshot": overlay_continue_model_selection(
-                original,
-                harness=str(policies.harness),
-                model_selection=model_selection,
-                selection_report=policies.selection_report,
-                field_provenance={
-                    **original.field_provenance,
-                    "model_source": policies.field_provenance.model_source.value,
-                    "harness_source": policies.field_provenance.harness_source.value,
-                },
-            ),
-        })
+        resolved_request = resolved_request.model_copy(
+            update={
+                "launch_policy_snapshot": overlay_continue_model_selection(
+                    original,
+                    harness=str(policies.harness),
+                    model_selection=model_selection,
+                    selection_report=policies.selection_report,
+                    field_provenance={
+                        **original.field_provenance,
+                        "model_source": policies.field_provenance.model_source.value,
+                        "harness_source": policies.field_provenance.harness_source.value,
+                    },
+                ),
+            }
+        )
     elif (
         resolved_request.launch_policy_snapshot is not None
         and request.launch_policy_snapshot is None
     ):
-        resolved_request = resolved_request.model_copy(update={
-            "launch_policy_snapshot": resolved_request.launch_policy_snapshot.model_copy(update={
-                "field_provenance": {
-                    key: value.value for key, value in asdict(policies.field_provenance).items()
-                },
-            }),
-        })
+        resolved_request = resolved_request.model_copy(
+            update={
+                "launch_policy_snapshot": resolved_request.launch_policy_snapshot.model_copy(
+                    update={
+                        "field_provenance": {
+                            key: value.value
+                            for key, value in asdict(policies.field_provenance).items()
+                        },
+                    }
+                ),
+            }
+        )
     _enforce_headless_harness_policy(
         request=resolved_request,
         harness=harness,
@@ -1833,13 +1832,10 @@ def bind_launch_context(
             *context_projection_roots,
         )
     )
-    if (
-        task_cwd is not None
-        and not _is_task_cwd_covered_by_projection(
-            task_cwd=task_cwd,
-            control_root=resolved_control_root,
-            projected_roots=workspace_authority_roots,
-        )
+    if task_cwd is not None and not _is_task_cwd_covered_by_projection(
+        task_cwd=task_cwd,
+        control_root=resolved_control_root,
+        projected_roots=workspace_authority_roots,
     ):
         workspace_authority_roots = _dedupe_roots_in_order(
             (
@@ -1915,9 +1911,8 @@ def bind_launch_context(
     if model_selection is not None and model_selection.harness_model_id is not None:
         effective_model = model_selection.harness_model_id
 
-    claude_native_agents_enabled = (
-        harness.id == HarnessId.CLAUDE
-        and project_has_claude_agent_copy(project_paths.project_root)
+    claude_native_agents_enabled = harness.id == HarnessId.CLAUDE and project_has_claude_agent_copy(
+        project_paths.project_root
     )
     claude_allow_builtin_agents = (
         resolve_claude_allow_builtin_agents_for_launch(
@@ -2005,8 +2000,7 @@ def bind_launch_context(
     )
     conversation_intent = resolved_request.session.conversation_intent
     model_override_explicit = (
-        conversation_intent is None
-        or conversation_intent.selection_source == "explicit_override"
+        conversation_intent is None or conversation_intent.selection_source == "explicit_override"
     )
     materialized = materialize_launch_artifacts(
         harness=harness,
@@ -2061,9 +2055,7 @@ def bind_launch_context(
         spec = spec.model_copy(
             update={
                 "report_output_path": (
-                    DRY_RUN_REPORT_PATH
-                    if bindings.dry_run
-                    else report_artifact_path.as_posix()
+                    DRY_RUN_REPORT_PATH if bindings.dry_run else report_artifact_path.as_posix()
                 )
             }
         )
