@@ -1,6 +1,6 @@
 """Session log target resolution — detection preference, non-mutation, read-only contracts.
 
-Tests that resolve_session_log_target reads state without reconciliation side-effects,
+Tests that resolve_transcript_source reads state without reconciliation side-effects,
 that detected transcripts take precedence without persisting the detected ID, and
 that missing-transcript detection failures are not persisted.
 
@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.ops.reference import resolve_session_reference
-from meridian.lib.ops.session_target import resolve_session_log_target
+from meridian.lib.ops.session_target import resolve_transcript_source
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
@@ -71,7 +71,7 @@ def test_identity_free_raw_harness_reference_resolves_without_runtime(
     )
 
     reference = resolve_session_reference(project_root, session_id)
-    log_target = resolve_session_log_target(
+    log_target = resolve_transcript_source(
         ref=session_id,
         file_path=None,
         project_root=project_root,
@@ -82,8 +82,8 @@ def test_identity_free_raw_harness_reference_resolves_without_runtime(
     assert reference.harness_session_id == session_id
     assert reference.harness == "codex"
     assert not reference.tracked
-    assert log_target.session_id == session_id
-    assert log_target.file_path == rollout
+    assert log_target.source.session_id == session_id
+    assert log_target.source.path == rollout
 
 
 def test_resolve_target_chat_not_found_preserves_missing_chat_error(tmp_path: Path) -> None:
@@ -93,7 +93,7 @@ def test_resolve_target_chat_not_found_preserves_missing_chat_error(tmp_path: Pa
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     with pytest.raises(ValueError) as exc:
-        resolve_session_log_target(
+        resolve_transcript_source(
             ref="c999",
             file_path=None,
             project_root=project_root,
@@ -122,8 +122,13 @@ def test_resolve_target_spawn_id_uses_read_only_lookup_without_reconciliation(
     )
 
     session_store.start_session(
-        runtime_root, harness="codex", harness_session_id=session_id, model="test",
-        chat_id="c1", spawn_id="p1", native_store=str(codex_home / "sessions"),
+        runtime_root,
+        harness="codex",
+        harness_session_id=session_id,
+        model="test",
+        chat_id="c1",
+        spawn_id="p1",
+        native_store=str(codex_home / "sessions"),
     )
     spawn_store.start_spawn(
         runtime_root,
@@ -145,15 +150,15 @@ def test_resolve_target_spawn_id_uses_read_only_lookup_without_reconciliation(
     monkeypatch.setattr("meridian.lib.state.reaper.reconcile_active_spawn", _unexpected)
     monkeypatch.setattr("meridian.lib.ops.spawn.query.read_spawn_row", _unexpected)
 
-    resolved = resolve_session_log_target(
+    resolved = resolve_transcript_source(
         ref="p1",
         file_path=None,
         project_root=project_root,
         runtime_root=runtime_root,
     )
 
-    assert resolved.session_id == session_id
-    assert resolved.source == "codex transcript"
+    assert resolved.source.session_id == session_id
+    assert resolved.source.source_label == "codex transcript"
     assert state_path.read_text(encoding="utf-8") == before_state
 
 
@@ -181,7 +186,9 @@ def test_resolve_target_chat_id_uses_read_only_lookup_without_reconciliation(
         harness="codex",
         harness_session_id=session_id,
         model="gpt-5.4",
-        chat_id="c1", spawn_id="p1", native_store=str(codex_home / "sessions"),
+        chat_id="c1",
+        spawn_id="p1",
+        native_store=str(codex_home / "sessions"),
     )
     spawn_store.start_spawn(
         runtime_root,
@@ -205,21 +212,23 @@ def test_resolve_target_chat_id_uses_read_only_lookup_without_reconciliation(
     monkeypatch.setattr("meridian.lib.state.reaper.reconcile_active_spawn", _unexpected)
     monkeypatch.setattr("meridian.lib.ops.spawn.query.read_spawn_row", _unexpected)
 
-    resolved = resolve_session_log_target(
+    resolved = resolve_transcript_source(
         ref="c1",
         file_path=None,
         project_root=project_root,
         runtime_root=runtime_root,
     )
 
-    assert resolved.session_id == session_id
-    assert resolved.source == "codex transcript"
+    assert resolved.source.session_id == session_id
+    assert resolved.source.source_label == "codex transcript"
     assert state_path.read_text(encoding="utf-8") == before_state
 
 
 @pytest.mark.parametrize("native_id", ["", "missing-native-id"])
 def test_chat_target_never_detects_a_replacement(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_id: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    native_id: str,
 ) -> None:
     from meridian.lib.ops.session_target import NativeSessionUnavailable
 
@@ -229,12 +238,18 @@ def test_chat_target_never_detects_a_replacement(
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "empty-native-store"))
 
     chat_id = session_store.start_session(
-        runtime_root, harness="claude", harness_session_id=native_id, model="test",
+        runtime_root,
+        harness="claude",
+        harness_session_id=native_id,
+        model="test",
     )
     try:
         with pytest.raises(NativeSessionUnavailable) as caught:
-            resolve_session_log_target(
-                ref=chat_id, file_path=None, project_root=root, runtime_root=runtime_root,
+            resolve_transcript_source(
+                ref=chat_id,
+                file_path=None,
+                project_root=root,
+                runtime_root=runtime_root,
             )
         assert caught.value.reason == "unbound"
         assert chat_id in str(caught.value)
@@ -255,12 +270,18 @@ def test_tracked_claude_hint_cannot_replace_missing_native_store(tmp_path: Path)
     native.parent.mkdir(parents=True)
     native.write_text('{"sessionId":"native-id","type":"user"}\n')
     chat = session_store.start_session(
-        runtime, harness="claude", harness_session_id="native-id",
-        model="test", claude_config_dir=str(config),
+        runtime,
+        harness="claude",
+        harness_session_id="native-id",
+        model="test",
+        claude_config_dir=str(config),
     )
     with pytest.raises(NativeSessionUnavailable) as caught:
-        resolve_session_log_target(
-            ref=chat, file_path=None, project_root=root, runtime_root=runtime,
+        resolve_transcript_source(
+            ref=chat,
+            file_path=None,
+            project_root=root,
+            runtime_root=runtime,
         )
     assert caught.value.reason == "unbound"
     record = session_store.get_session_record(runtime, chat)

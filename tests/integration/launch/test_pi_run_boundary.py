@@ -14,7 +14,7 @@ from meridian.lib.harness.pi_boundary import read_boundary
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.ops.reference import resolve_session_reference
-from meridian.lib.ops.session_target import resolve_session_log_target
+from meridian.lib.ops.session_target import resolve_transcript_source
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from tests.integration.launch.test_pi_identity_launch import (
@@ -209,14 +209,14 @@ def test_primary_post_exit_boundary(pi_runtime: Path, shape: str) -> None:  # no
             for record in session_store.list_all_session_records(runtime)
         )
     if shape != "mismatch":
-        target = resolve_session_log_target(
+        target = resolve_transcript_source(
             ref=row.id,
             file_path=None,
             project_root=root,
             runtime_root=runtime,
         )
         expected_id = "switched-id" if shape == "switch" else entry.harness_session_id
-        assert target.session_id == expected_id
+        assert target.source.session_id == expected_id
         assert ("entry-based view" in (target.view_label or "")) == (
             shape in {"restart", "truncated", "switch-missing"}
         )

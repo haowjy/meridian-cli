@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from collections import Counter
 from collections.abc import Iterator, Sequence
+from pathlib import Path
 from typing import NamedTuple
 
 from pydantic import BaseModel, ConfigDict, computed_field
@@ -79,6 +81,7 @@ class SessionSearchOutput(BaseModel):
     matches: tuple[SessionSearchMatch, ...]
     truncated: bool = False
     errors: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
     sources_total: int = 0
     sources_not_searched: int = 0
     sources_pending: int = 0
@@ -121,7 +124,17 @@ class SessionSearchOutput(BaseModel):
             lines.append(
                 f"{unavailable} of {self.sources_total} sources unavailable (see reasons)."
             )
-        lines.extend(self.errors)
+        if self.warnings:
+            lines.append(f"{len(self.warnings)} sources searched with warnings (see --json)")
+        if len(self.errors) <= 3:
+            lines.extend(self.errors)
+        else:
+            lines.extend(
+                f"{count} sources not searched: {reason} (see --json)"
+                for reason, count in Counter(
+                    error.partition(": ")[2] or error for error in self.errors
+                ).items()
+            )
         return "\n".join(lines)
 
 
@@ -152,10 +165,12 @@ def iter_session_subset_search(
         projection.refresh(keys, deadline=deadline)
         matched = {
             chat
-            for row in projection.search(normalized_query, limit=None)
+            for row in projection.search(
+                normalized_query, limit=None, deadline=time.monotonic() + QUERY_TIMEOUT
+            )
             for chat in keys[row.key]
         }
-    except (ValueError, OSError, sqlite3.Error) as exc:
+    except (ValueError, OSError, sqlite3.Error, TimeoutError) as exc:
         for chat_id in chat_ids:
             yield SubsetSearchStep(chat_id, False, str(exc))
         return
@@ -229,8 +244,8 @@ def _matches_for_transcript(
             SessionSearchMatch(
                 corpus=corpus,
                 chat_id=chat_id,
-                session_id=transcript.target.session_id,
-                source=transcript.target.source,
+                session_id=transcript.target.source.session_id,
+                source=transcript.target.source.source_label,
                 segment=entry.segment_index,
                 segment_start_message=entry.start_segment_message_index,
                 segment_end_message=entry.end_segment_message_index,
@@ -274,12 +289,84 @@ def _search_single_target(payload: SessionSearchInput, *, query: str) -> Session
         transcript=transcript,
         query=query,
         query_lower=query_lower,
-        corpus=transcript.target.source or "session",
-        chat_id=payload.ref.strip() or transcript.target.session_id,
+        corpus=transcript.target.source.source_label,
+        chat_id=payload.ref.strip() or transcript.target.source.session_id,
     )
     return SessionSearchOutput(
         matches=tuple(matches),
-        errors=transcript.read_reasons,
+        errors=() if transcript.search_ready else transcript.read_reasons,
+        warnings=("; ".join(transcript.read_reasons),)
+        if transcript.search_ready and transcript.read_reasons
+        else (),
+        sources_total=1,
+        sources_not_searched=int(not transcript.search_ready),
+    )
+
+
+def _collect_scope(
+    payload: SessionSearchInput,
+    scope: SessionCorpusScope,
+    *,
+    cold: bool,
+    deadline: float,
+    cold_deadline: float,
+) -> tuple[SessionCorpusScope, SearchProjection, bool]:
+    projection = SearchProjection.open(scope.runtime_root, scope.project_root or scope.runtime_root)
+    cold = cold or projection.cold
+    if work_id := (payload.work_id or "").strip():
+        metadata = HistoryIndex(scope.runtime_root)
+        if metadata.classify(deadline=cold_deadline).baseline in {"absent", "outdated"}:
+            cold = True
+            metadata.initialize(deadline=cold_deadline)
+        scope = scope._replace(
+            chat_filter=frozenset(
+                metadata.work_chat_ids(work_id, deadline=cold_deadline if cold else deadline)
+            )
+        )
+    keys = projection.scope(scope.chat_filter)
+    until = cold_deadline if cold else deadline
+    projection.inspect(keys, deadline=until)
+    projection.refresh(keys, deadline=until)
+    return scope, projection, cold
+
+
+def _render_match(
+    row: SearchRow,
+    scope: SessionCorpusScope,
+    projection: SearchProjection,
+    *,
+    query: str,
+    runtime_root: Path | None,
+) -> SessionSearchMatch:
+    chats = projection.scope(scope.chat_filter)[row.key]
+    command = build_session_log_command(
+        SessionLogRoute("ref", chats[0]),
+        segment_index=row.segment,
+        from_ordinal=0 if row.kind == "setup" else None,
+        limit=1 if row.kind == "setup" else None,
+        around_ordinal=row.ordinal if row.kind != "setup" else None,
+        context=_OPEN_CONTEXT if row.kind != "setup" else None,
+    )
+    if scope.runtime_root != runtime_root:
+        from shlex import quote
+
+        command = (
+            "env -u MERIDIAN_PROJECT_DIR -u _MERIDIAN_DEPTH "
+            f"_MERIDIAN_RUNTIME_DIR={quote(str(scope.runtime_root))} " + command
+        )
+    return SessionSearchMatch(
+        corpus=scope.label,
+        chat_id=chats[0],
+        chat_ids=chats,
+        session_id=row.key.session_id,
+        source=row.key.harness,
+        segment=row.segment or 0,
+        segment_start_message=row.seg_start or 0,
+        segment_end_message=row.seg_end or 0,
+        entry_ordinal=row.ordinal,
+        role=row.role or "",
+        content_preview=_build_preview(row.content, query=query),
+        open_command=command,
     )
 
 
@@ -310,6 +397,7 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
     projections: list[tuple[SessionCorpusScope, SearchProjection]] = []
     candidates: list[tuple[SearchRow, SessionCorpusScope, SearchProjection]] = []
     errors: list[str] = []
+    warnings: list[str] = []
     cold = False
     total = not_searched = pending = 0
 
@@ -335,32 +423,20 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
             )
             break
         try:
-            projection = SearchProjection.open(
-                scope.runtime_root, scope.project_root or scope.runtime_root
+            scope, projection, cold = _collect_scope(
+                payload, scope, cold=cold, deadline=deadline, cold_deadline=cold_deadline
             )
-            cold = cold or projection.cold
-            if work_id := (payload.work_id or "").strip():
-                metadata = HistoryIndex(scope.runtime_root)
-                if metadata.classify(deadline=cold_deadline).baseline in {"absent", "outdated"}:
-                    cold = True
-                    metadata.initialize(deadline=cold_deadline)
-                scope = scope._replace(
-                    chat_filter=frozenset(
-                        metadata.work_chat_ids(
-                            work_id, deadline=cold_deadline if cold else deadline
-                        )
-                    )
-                )
             keys = projection.scope(scope.chat_filter)
-            until = cold_deadline if cold else deadline
-            projection.inspect(keys, deadline=until)
-            projection.refresh(keys, deadline=until)
             total += len(keys)
             not_searched += len(keys) - len(projection.fresh)
             pending += len(keys.keys() - projection.fresh - projection.errors.keys())
             errors.extend(
                 f"{scope.label} {', '.join(keys[key])}: {error}"
                 for key, error in projection.errors.items()
+            )
+            warnings.extend(
+                f"{scope.label} {', '.join(keys[key])}: {warning}"
+                for key, warning in projection.warnings.items()
             )
             if cold:
                 projections.append((scope, projection))
@@ -373,44 +449,15 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
         for scope, projection in projections:
             query_scope(scope, projection, deadline)
     candidates.sort(key=lambda item: (-item[0].activity, item[0].segment or 0, item[0].ordinal))
-    matches = []
-    for row, scope, projection in candidates[:100]:
-        chats = projection.scope(scope.chat_filter)[row.key]
-        command = build_session_log_command(
-            SessionLogRoute("ref", chats[0]),
-            segment_index=row.segment,
-            from_ordinal=0 if row.kind == "setup" else None,
-            limit=1 if row.kind == "setup" else None,
-            around_ordinal=row.ordinal if row.kind != "setup" else None,
-            context=_OPEN_CONTEXT if row.kind != "setup" else None,
-        )
-        if scope.runtime_root != runtime_root:
-            from shlex import quote
-
-            command = (
-                "env -u MERIDIAN_PROJECT_DIR -u _MERIDIAN_DEPTH "
-                f"_MERIDIAN_RUNTIME_DIR={quote(str(scope.runtime_root))} " + command
-            )
-        matches.append(
-            SessionSearchMatch(
-                corpus=scope.label,
-                chat_id=chats[0],
-                chat_ids=chats,
-                session_id=row.key.session_id,
-                source=row.key.harness,
-                segment=row.segment or 0,
-                segment_start_message=row.seg_start or 0,
-                segment_end_message=row.seg_end or 0,
-                entry_ordinal=row.ordinal,
-                role=row.role or "",
-                content_preview=_build_preview(row.content, query=query),
-                open_command=command,
-            )
-        )
+    matches = tuple(
+        _render_match(row, scope, projection, query=query, runtime_root=runtime_root)
+        for row, scope, projection in candidates[:100]
+    )
     return SessionSearchOutput(
         matches=tuple(matches),
         truncated=len(candidates) > 100,
         errors=tuple(errors),
+        warnings=tuple(warnings),
         sources_total=total,
         sources_not_searched=not_searched,
         sources_pending=pending,

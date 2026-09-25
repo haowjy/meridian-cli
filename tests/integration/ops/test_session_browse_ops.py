@@ -596,7 +596,7 @@ def test_native_preview_stays_bounded_and_cached_after_reclaim(tmp_path, monkeyp
         raise AssertionError("warm previews must not replay transcript bodies")
 
     with monkeypatch.context() as patch:
-        patch.setattr(session_preview, "iter_source_events", forbid_body)
+        patch.setattr(session_preview, "read_native_source", forbid_body)
         assert reader.peek(identity) is not None
         assert reader.refresh(identity, lambda: True) == view
     from meridian.lib.ops.session_archive import materialize_native_history

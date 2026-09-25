@@ -10,27 +10,22 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
-from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from meridian.lib.harness.transcript import transcript_revision
+from meridian.lib.harness.native_witness import file_witness
 from meridian.lib.harness.transcript_preview import (
     TRANSCRIPT_PREVIEW_VERSION,
     PreviewAccumulator,
     TranscriptPreview,
 )
 from meridian.lib.ops.runtime import resolve_roots_for_read
-from meridian.lib.ops.session_target import TranscriptSource, resolve_session_log_target
-from meridian.lib.ops.session_transcript import iter_source_events
+from meridian.lib.ops.session_target import TranscriptSource, resolve_transcript_source
+from meridian.lib.ops.session_transcript import TranscriptBudget, read_native_source
 from meridian.lib.state import session_store
 from meridian.lib.state.history_changes import HistorySource
 from meridian.lib.state.history_index import HistoryIndex
-from meridian.lib.state.native_snapshot import (
-    TranscriptReadPaused,
-    TranscriptValidation,
-)
-from meridian.lib.state.retention_archive import catalog_heads, read_receipts, verify_archive
+from meridian.lib.state.retention_archive import catalog_heads, read_receipts
 
 
 @dataclass(frozen=True)
@@ -101,10 +96,11 @@ class _Snapshot(BaseModel):
 
 
 def _signature(source: TranscriptSource) -> str:
-    revision = transcript_revision(source.path)
-    if source.kind == "opencode_db" and source.path is not None:
-        revision += transcript_revision(Path(f"{source.path}-wal"))
-    return json.dumps((source, revision), default=str, separators=(",", ":"))
+    paths = [source.path]
+    if source.kind == "opencode_db":
+        paths.append(Path(f"{source.path}-wal"))
+    revisions = tuple(file_witness(path).encode() if path.exists() else None for path in paths)
+    return json.dumps((source, revisions), default=str, separators=(",", ":"))
 
 
 class SessionPreview:
@@ -159,7 +155,7 @@ class SessionPreview:
                     raise ValueError(
                         "Selected session generation changed; refresh the session list"
                     )
-                return resolve_session_log_target(
+                return resolve_transcript_source(
                     ref=identity.history_id or identity.ref,
                     file_path=None,
                     project_root=self.project_root,
@@ -170,67 +166,45 @@ class SessionPreview:
             # Resolution may have rebuilt the missing metadata database.
             cached = self._cached(identity)
             old = cached[2] if cached else None
-            signatures = tuple(_signature(source) for source in target.sources)
+            signatures = (_signature(target.source),)
             if old is not None and old.complete and old.signatures == signatures:
                 return old.view("current")
-            snapshot = None
-            archive_error: Exception | None = None
-            for position, source in enumerate(target.sources):
-                if not current():
-                    return None
-                accumulator = PreviewAccumulator()
-                validation = TranscriptValidation()
-                events = iter_source_events(source, validation=validation, current=current)
-                try:
-                    for event in events:
-                        if not current():
-                            return None
-                        accumulator.feed(event)
-                    if source.kind == "archive":
-                        assert source.path is not None and source.history_id is not None
-                        verify_archive(
-                            source.path,
-                            manifest_sha256=source.manifest_sha256,
-                            history_id=UUID(source.history_id),
-                            current=current,
-                        )
-                except TranscriptReadPaused:
-                    return None
-                except (ValueError, OSError, EOFError, zipfile.BadZipFile, zlib.error) as exc:
-                    if source.kind != "archive":
-                        raise
-                    archive_error = exc
-                    continue
-                finally:
-                    events.close()
-                if validation.state != "complete":
-                    return self.peek(identity) or PreviewView((), "updating")
-                archive_digest = (
-                    self.index.selected_archive_digest(identity.history_id)
-                    if self.index and identity.history_id
-                    else None
+            if not current():
+                return None
+            source = target.source
+            accumulator = PreviewAccumulator()
+            read = read_native_source(
+                source, budget=TranscriptBudget(float("inf"), 2**63, selected=current)
+            )
+            try:
+                for event in read.events:
+                    if not current():
+                        return None
+                    accumulator.feed(event)
+            finally:
+                read.events.close()
+            if read.reasons:
+                return PreviewView(
+                    tuple(f"partial: {reason}" for reason in read.reasons), "unavailable"
                 )
-                snapshot = _Snapshot(
-                    signatures=signatures,
-                    selected=position,
-                    preview=accumulator.preview,
-                    archive_digest=archive_digest,
-                    source=target.view_label or source.source_label,
-                )
-                if (
-                    validation.header is not None
-                    or accumulator.preview.has_interaction
-                    or accumulator.preview.rendering_reason
-                ):
-                    break
-            if snapshot is None:
-                if archive_error:
-                    raise archive_error
-                raise FileNotFoundError("Transcript not available")
+            if read.validation.state != "complete":
+                return self.peek(identity) or PreviewView((), "updating")
+            archive_digest = (
+                self.index.selected_archive_digest(identity.history_id)
+                if self.index and identity.history_id
+                else None
+            )
+            snapshot = _Snapshot(
+                signatures=signatures,
+                selected=0,
+                preview=accumulator.preview,
+                archive_digest=archive_digest,
+                source=target.view_label or source.source_label,
+            )
             if not current():
                 return None
             latest_target = resolve()
-            if latest_target.sources != target.sources:
+            if latest_target.source != target.source:
                 return self.peek(identity) or PreviewView((), "updating")
             published_snapshot: _Snapshot = snapshot
 
@@ -238,7 +212,7 @@ class SessionPreview:
                 nonlocal published_snapshot
                 if not current() or not generation_current():
                     return None
-                now = tuple(_signature(source) for source in target.sources)
+                now = (_signature(target.source),)
                 complete = now == signatures
                 if identity.history_id and self.roots:
                     selected = catalog_heads(read_receipts(self.roots.runtime_root))

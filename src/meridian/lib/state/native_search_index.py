@@ -14,7 +14,6 @@ from collections.abc import Generator, Iterable
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
 from meridian.lib.core.native_identity import NativeKey
 
@@ -28,9 +27,13 @@ class NativeSearchUnavailable(RuntimeError):
     """The local SQLite build cannot create the contentless FTS projection."""
 
 
+def native_search_index_path(runtime_root: Path) -> Path:
+    return runtime_root / "history-index" / INDEX_FILENAME
+
+
 def discard_native_search_index(runtime_root: Path) -> None:
     """Delete only the disposable projection and its SQLite sidecars."""
-    path = runtime_root / "history-index" / INDEX_FILENAME
+    path = native_search_index_path(runtime_root)
     for suffix in ("", "-wal", "-shm"):
         Path(str(path) + suffix).unlink(missing_ok=True)
 
@@ -75,65 +78,8 @@ class SourceRecord:
     status: str
     reasons: tuple[str, ...]
 
-
-@dataclass(frozen=True)
-class FileWitness:
-    device: int
-    inode: int
-    size: int
-    mtime_ns: int
-
-
-@dataclass(frozen=True)
-class OpenCodeV1Witness:
-    part_count: int
-    part_updated_ms: int | None
-    message_count: int
-    message_updated_ms: int | None
-    session_updated_ms: int
-
-
-@dataclass(frozen=True)
-class OpenCodeV2Witness:
-    message_count: int
-    max_seq: int | None
-    message_updated_ms: int | None
-    session_updated_ms: int
-
-
-Witness = FileWitness | OpenCodeV1Witness | OpenCodeV2Witness
-SearchMode = Literal["fts", "scan"]
-
-
-def file_witness(path: Path) -> FileWitness:
-    """Return the exact stat tuple used for file-backed freshness."""
-    stat = path.stat()
-    return FileWitness(stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
-
-
-def witness_json(witness: Witness) -> str:
-    """Serialize a typed witness deterministically for equality checks."""
-    if isinstance(witness, FileWitness):
-        family = "file"
-        values = (witness.device, witness.inode, witness.size, witness.mtime_ns)
-    elif isinstance(witness, OpenCodeV1Witness):
-        family = "opencode-v1"
-        values = (
-            witness.part_count,
-            witness.part_updated_ms,
-            witness.message_count,
-            witness.message_updated_ms,
-            witness.session_updated_ms,
-        )
-    else:
-        family = "opencode-v2"
-        values = (
-            witness.message_count,
-            witness.max_seq,
-            witness.message_updated_ms,
-            witness.session_updated_ms,
-        )
-    return json.dumps((family, values), separators=(",", ":"))
+    def is_current(self, witness: str) -> bool:
+        return (self.witness, self.parser_version) == (witness, PARSER_VERSION)
 
 
 def normalize_index_text(content: str) -> str:
@@ -171,7 +117,7 @@ class NativeSearchIndex:
 
     @classmethod
     def for_runtime(cls, runtime_root: Path, *, timeout: float = 2.0) -> NativeSearchIndex:
-        return cls(runtime_root / "history-index" / INDEX_FILENAME, timeout=timeout)
+        return cls(native_search_index_path(runtime_root), timeout=timeout)
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=self.timeout)
@@ -236,27 +182,12 @@ class NativeSearchIndex:
                 )
             }
 
-    def get_witness(self, key: NativeKey) -> tuple[str, int] | None:
-        with closing(self._connect()) as db, db:
-            row = db.execute(
-                "SELECT witness,parser_version FROM sources "
-                "WHERE harness=? AND native_store=? AND session_id=?",
-                (key.harness, key.native_store, key.session_id),
-            ).fetchone()
-        return (str(row[0]), int(row[1])) if row else None
-
-    def is_fresh(
-        self, key: NativeKey, witness: Witness, parser_version: int = PARSER_VERSION
-    ) -> bool:
-        stored = self.get_witness(key)
-        return stored == (witness_json(witness), parser_version)
-
     def replace_source(
         self,
         key: NativeKey,
         *,
         locator: Path | str,
-        witness: Witness,
+        witness: str,
         activity: int,
         entries: Iterable[TranscriptEntry],
         status: str = "complete",
@@ -264,7 +195,7 @@ class NativeSearchIndex:
         parser_version: int = PARSER_VERSION,
     ) -> None:
         """Atomically replace a source and its FTS rows; intended to be replayable."""
-        witness_value = witness_json(witness)
+        witness_value = witness
         with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             source = db.execute(
@@ -368,7 +299,7 @@ class NativeSearchIndex:
         keys: Iterable[NativeKey] | None = None,
         limit: int | None = None,
         deadline: float | None = None,
-    ) -> tuple[SearchMode, list[SearchRow]]:
+    ) -> list[SearchRow]:
         """Return exact substring hits; trigram FTS only nominates candidates."""
         match = _query_match(query)
         key_list = list(keys) if keys is not None else None
@@ -376,7 +307,7 @@ class NativeSearchIndex:
         params: list[object] = []
         if key_list is not None:
             if not key_list:
-                return ("fts" if match is not None else "scan", [])
+                return []
             where.append(
                 "s.source_id IN (SELECT s2.source_id FROM json_each(?) k JOIN sources s2 "
                 "ON s2.harness=json_extract(k.value,'$[0]') "
@@ -432,7 +363,7 @@ class NativeSearchIndex:
                 )
                 if limit is not None and len(hits) >= limit:
                     break
-        return ("fts" if match is not None else "scan", hits)
+        return hits
 
     def counts(self) -> tuple[int, int]:
         with closing(self._connect()) as db, db:
@@ -442,10 +373,7 @@ class NativeSearchIndex:
             )
 
     def rebuild(self) -> None:
-        """Clear this disposable projection; orchestration repopulates from native sources."""
-        with closing(self._connect()) as db, db:
-            db.execute("BEGIN IMMEDIATE")
-            db.execute("DELETE FROM entries_fts")
-            db.execute("DELETE FROM entries")
-            db.execute("DELETE FROM sources")
-            db.commit()
+        """Discard the file, including free pages, and create an empty projection."""
+        for suffix in ("", "-wal", "-shm"):
+            Path(str(self.path) + suffix).unlink(missing_ok=True)
+        self._initialize()

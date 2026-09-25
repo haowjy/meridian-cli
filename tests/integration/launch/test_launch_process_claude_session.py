@@ -431,7 +431,7 @@ def test_unrelated_claude_trampoline_candidate_is_diagnostic(
     import sys
     from dataclasses import replace
 
-    from meridian.lib.ops.session_target import resolve_session_log_target
+    from meridian.lib.ops.session_target import resolve_transcript_source
     from meridian.lib.state.paths import resolve_project_runtime_root_for_write
     from tests.support.executables import prepend_fake_executables
 
@@ -515,7 +515,7 @@ def test_unrelated_claude_trampoline_candidate_is_diagnostic(
     assert (row.run_boundary.status if row.run_boundary else None) == "unresolved"
     assert (row.run_boundary.exit_chat_id if row.run_boundary else None) is None
     with pytest.raises(NativeSessionUnavailable, match="native_transcript_missing"):
-        resolve_session_log_target(
+        resolve_transcript_source(
             ref=row.id,
             file_path=None,
             project_root=root,

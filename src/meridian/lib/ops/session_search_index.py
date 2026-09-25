@@ -7,15 +7,13 @@ import time
 from collections import defaultdict
 from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field
-from functools import partial
 from pathlib import Path
+from typing import TypedDict
 
 from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.opencode_transcript import (
-    opencode_session_witnesses,
-    read_opencode_search_source,
-)
+from meridian.lib.harness.native_witness import FileWitness, Witness, file_witness
+from meridian.lib.harness.opencode_search_source import opencode_session_witnesses
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.ops.session_target import SessionLogTarget, TranscriptSource
 from meridian.lib.ops.session_transcript import (
@@ -23,21 +21,18 @@ from meridian.lib.ops.session_transcript import (
     SessionLogRoute,
     TranscriptBudget,
     parse_session_target,
+    read_native_source,
 )
 from meridian.lib.state.native_search_index import (
-    INDEX_FILENAME,
     PARSER_VERSION,
-    FileWitness,
     NativeSearchIndex,
     NativeSearchUnavailable,
     SearchRow,
     SourceRecord,
     TranscriptEntry,
-    Witness,
     discard_native_search_index,
-    file_witness,
+    native_search_index_path,
     search_text,
-    witness_json,
 )
 from meridian.lib.state.session_fold import by_native_key
 from meridian.lib.state.session_store import list_all_session_records
@@ -63,20 +58,15 @@ class NativeSource:
 
     @property
     def activity(self) -> int:
-        if isinstance(self.witness, FileWitness):
-            return self.witness.mtime_ns
-        # OpenCode timestamps are milliseconds; file activity is nanoseconds.
-        return (
-            max(
-                value or 0
-                for value in (
-                    self.witness.session_updated_ms,
-                    self.witness.message_updated_ms,
-                    getattr(self.witness, "part_updated_ms", 0),
-                )
-            )
-            * 1_000_000
-        )
+        return self.witness.activity_ns
+
+
+class SearchStatus(TypedDict, total=False):
+    search_fresh: int
+    search_stale: int
+    search_unindexed: int
+    search_bytes: int
+    search_unavailable: int
 
 
 @dataclass
@@ -90,6 +80,7 @@ class SearchProjection:
     sources: dict[NativeKey, NativeSource] = field(default_factory=dict[NativeKey, NativeSource])
     fresh: set[NativeKey] = field(default_factory=set[NativeKey])
     errors: dict[NativeKey, str] = field(default_factory=dict[NativeKey, str])
+    warnings: dict[NativeKey, str] = field(default_factory=dict[NativeKey, str])
     parsed: dict[NativeKey, ParsedSessionTranscript] = field(
         default_factory=dict[NativeKey, ParsedSessionTranscript]
     )
@@ -97,11 +88,11 @@ class SearchProjection:
     @classmethod
     def open(cls, runtime_root: Path, project_root: Path) -> SearchProjection:
         bindings = native_bindings(runtime_root)
-        path = runtime_root / "history-index" / INDEX_FILENAME
+        path = native_search_index_path(runtime_root)
         cold = not path.exists()
         try:
             try:
-                index = NativeSearchIndex(path, timeout=0)
+                index = NativeSearchIndex.for_runtime(runtime_root, timeout=0)
                 stored = index.inventory()
                 cold = cold or (
                     bool(stored)
@@ -112,7 +103,7 @@ class SearchProjection:
                     raise
                 # No authoritative bytes live here. Recreate a damaged projection.
                 discard_native_search_index(runtime_root)
-                index = NativeSearchIndex(path, timeout=0)
+                index = NativeSearchIndex.for_runtime(runtime_root, timeout=0)
                 stored = {}
                 cold = True
         except NativeSearchUnavailable:
@@ -157,14 +148,13 @@ class SearchProjection:
                     self.errors[key] = str(exc)
         for key, source in self.sources.items():
             stored = self.stored.get(key)
-            if stored and (stored.witness, stored.parser_version) == (
-                witness_json(source.witness),
-                PARSER_VERSION,
-            ):
+            if stored and stored.is_current(source.witness.encode()):
                 if stored.status == "complete":
                     self.fresh.add(key)
                 if stored.reasons or stored.status != "complete":
-                    self.errors[key] = "; ".join(stored.reasons) or stored.status
+                    (self.warnings if key in self.fresh else self.errors)[key] = (
+                        "; ".join(stored.reasons) or stored.status
+                    )
 
     def refresh(
         self, keys: dict[NativeKey, tuple[str, ...]], *, deadline: float, rebuild: bool = False
@@ -207,45 +197,10 @@ class SearchProjection:
                             continue
                         source = NativeSource(locator, file_witness(locator))
                         self.sources[key] = source
-                    if (
-                        not rebuild
-                        and isinstance(source.witness, FileWitness)
-                        and source.witness.size > LAZY_SOURCE_BYTES
-                    ):
+                    transcript = self._read(key, source, deadline=deadline, rebuild=rebuild)
+                    if transcript is None:
                         continue
-                    budget = None if rebuild else TranscriptBudget(deadline, LAZY_SOURCE_BYTES)
-                    target_source = TranscriptSource(
-                        "opencode_db" if key.harness == "opencode" else "native_file",
-                        key.session_id,
-                        key.harness,
-                        key.harness,
-                        source.locator,
-                    )
-                    target = SessionLogTarget(
-                        key.session_id, key.harness, source.locator, key.harness, (target_source,)
-                    )
-                    parse = partial(
-                        parse_session_target,
-                        project_root=self.project_root,
-                        runtime_root=self.runtime_root,
-                        target=target,
-                        route=SessionLogRoute("ref", keys[key][0]),
-                        budget=budget,
-                    )
-                    if key.harness == "opencode":
-                        with read_opencode_search_source(source.locator, key.session_id) as (
-                            w,
-                            events,
-                        ):
-                            transcript = parse(events=events)
-                        source = NativeSource(source.locator, w)
-                        self.sources[key] = source
-                    else:
-                        transcript = parse()
-                        if file_witness(source.locator) != source.witness:
-                            continue
-                    if budget and budget.exhausted:
-                        continue
+                    source = self.sources[key]
                     reasons = transcript.read_reasons
                     complete = transcript.search_ready
                     if self.index:
@@ -253,7 +208,7 @@ class SearchProjection:
                         self.index.replace_source(
                             key,
                             locator=source.locator,
-                            witness=source.witness,
+                            witness=source.witness.encode(),
                             activity=source.activity,
                             entries=(
                                 TranscriptEntry(
@@ -276,15 +231,95 @@ class SearchProjection:
                     if complete:
                         self.fresh.add(key)
                     if reasons or not complete:
-                        self.errors[key] = "; ".join(reasons) or "partial"
+                        (self.warnings if complete else self.errors)[key] = (
+                            "; ".join(reasons) or "partial"
+                        )
                 except (OSError, ValueError, sqlite3.Error) as exc:
                     self.errors[key] = str(exc)
+
+    def _read(
+        self, key: NativeKey, source: NativeSource, *, deadline: float, rebuild: bool
+    ) -> ParsedSessionTranscript | None:
+        for _attempt in range(2):
+            if time.monotonic() >= deadline:
+                break
+            # inspect's witness orders work; this read takes its own immediate stat.
+            before = (
+                file_witness(source.locator) if isinstance(source.witness, FileWitness) else None
+            )
+            if before and not rebuild and before.size > LAZY_SOURCE_BYTES:
+                self.errors[key] = "over lazy source cap — run meridian session index rebuild"
+                return None
+            budget = None if rebuild else TranscriptBudget(deadline, LAZY_SOURCE_BYTES)
+            target = SessionLogTarget(TranscriptSource.native(key, source.locator))
+            read = read_native_source(target.source, budget=budget)
+            transcript = parse_session_target(
+                project_root=self.project_root,
+                runtime_root=self.runtime_root,
+                target=target,
+                route=SessionLogRoute("ref", self.bindings[key][0]),
+                native_read=read,
+            )
+            if budget and budget.exhausted:
+                return None
+            if (
+                isinstance(read.witness, FileWitness)
+                and file_witness(source.locator) != read.witness
+            ):
+                self.errors[key] = "changed during refresh"
+                continue
+            assert read.witness is not None
+            self.sources[key] = NativeSource(source.locator, read.witness)
+            self.errors.pop(key, None)
+            return transcript
+        return None
+
+    def rebuild(self) -> SearchStatus:
+        if self.index:
+            self.index.rebuild()
+        self.stored.clear()
+        self.sources.clear()
+        self.fresh.clear()
+        self.errors.clear()
+        self.warnings.clear()
+        self.parsed.clear()
+        self.inspect(self.bindings, deadline=float("inf"))
+        self.refresh(self.bindings, deadline=float("inf"), rebuild=True)
+        if self.index:
+            self.stored = self.index.inventory()
+        return self.status()
+
+    @classmethod
+    def read_status(
+        cls, runtime_root: Path, project_root: Path, *, deadline: float
+    ) -> SearchStatus:
+        if not native_search_index_path(runtime_root).exists():
+            return SearchStatus(search_fresh=0, search_unindexed=len(native_bindings(runtime_root)))
+        projection = cls.open(runtime_root, project_root)
+        projection.inspect(projection.bindings, deadline=deadline)
+        return projection.status()
+
+    def status(self) -> SearchStatus:
+        indexed = self.stored.keys() & self.bindings.keys()
+        current = {
+            key
+            for key in indexed
+            if key in self.sources
+            and self.stored[key].is_current(self.sources[key].witness.encode())
+        }
+        return SearchStatus(
+            search_fresh=len(current),
+            search_stale=len(indexed - current),
+            search_unavailable=len(self.errors),
+            search_unindexed=len(self.bindings.keys() - indexed),
+            search_bytes=self.index.path.stat().st_size if self.index else 0,
+        )
 
     def search(
         self, query: str, *, limit: int | None = 101, deadline: float | None = None
     ) -> list[SearchRow]:
         if self.index:
-            return self.index.search(query, keys=self.fresh, limit=limit, deadline=deadline)[1]
+            return self.index.search(query, keys=self.fresh, limit=limit, deadline=deadline)
         rows = [
             SearchRow(
                 key,

@@ -9,7 +9,7 @@ import pytest
 from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.launch.constants import HISTORY_FILENAME, PRIMARY_META_FILENAME
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
-from meridian.lib.ops.session_target import resolve_session_log_target
+from meridian.lib.ops.session_target import resolve_transcript_source
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
@@ -192,13 +192,13 @@ def test_session_log_active_chat_reads_exact_native_transcript(
             },
         )
 
-        chat_target = resolve_session_log_target(
+        chat_target = resolve_transcript_source(
             ref=chat_id,
             file_path=None,
             project_root=project_root,
             runtime_root=runtime_root,
         )
-        spawn_target = resolve_session_log_target(
+        spawn_target = resolve_transcript_source(
             ref="p42",
             file_path=None,
             project_root=project_root,
@@ -208,9 +208,9 @@ def test_session_log_active_chat_reads_exact_native_transcript(
             SessionLogInput(ref=chat_id, project_root=project_root.as_posix(), tail=5)
         )
 
-        assert chat_target.file_path == spawn_target.file_path
-        assert chat_target.source == "codex transcript"
-        assert spawn_target.source == "codex transcript"
+        assert chat_target.source.path == spawn_target.source.path
+        assert chat_target.source.source_label == "codex transcript"
+        assert spawn_target.source.source_label == "codex transcript"
         assert [(message.role, message.content) for message in chat_output.messages] == [
             ("assistant", "native chat transcript should wait")
         ]

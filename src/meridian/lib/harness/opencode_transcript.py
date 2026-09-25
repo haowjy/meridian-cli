@@ -8,14 +8,13 @@ import math
 import os
 import sqlite3
 from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
-from contextlib import closing, contextmanager
+from contextlib import closing
 from itertools import groupby
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
 from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.harness.opencode_storage import resolve_opencode_home_dir
-from meridian.lib.state.native_search_index import OpenCodeV1Witness, OpenCodeV2Witness
 from meridian.lib.state.native_snapshot import TranscriptValidation
 
 OpenCodeDbSchema = Literal["sqlite_v1", "sqlite_v2"]
@@ -46,8 +45,7 @@ def resolve_opencode_db_path(launch_env: Mapping[str, str] | None = None) -> Pat
 
 
 def _connect_readonly(db_path: Path) -> sqlite3.Connection:
-    # SQLite may update WAL shared-memory read marks in mode=ro. This is the
-    # same normal read behavior used by live OpenCode session-log reads.
+    # mode=ro allows normal WAL read marks, never native database writes.
     return sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.1)
 
 
@@ -58,24 +56,21 @@ def _table_names(connection: sqlite3.Connection) -> set[str]:
     }
 
 
-def detect_opencode_db_schema(db_path: Path | None = None) -> OpenCodeDbSchema | None:
-    """Detect an OpenCode database's schema family from its tables.
+def _schema(connection: sqlite3.Connection) -> OpenCodeDbSchema | None:
+    names = _table_names(connection)
+    if "session_v2" in names:
+        return "sqlite_v2"
+    return "sqlite_v1" if "session" in names else None
 
-    V2 is identified by the presence of ``session_v2``; V1 by ``session``. Returns
-    ``None`` when the database is absent or carries neither table. The installed
-    binary is never consulted.
-    """
+
+def detect_opencode_db_schema(db_path: Path | None = None) -> OpenCodeDbSchema | None:
+    """Detect table family in the recorded DB, never the installed binary."""
 
     resolved_db_path = db_path or resolve_opencode_db_path()
     if not resolved_db_path.is_file():
         return None
     with closing(_connect_readonly(resolved_db_path)) as connection:
-        names = _table_names(connection)
-    if "session_v2" in names:
-        return "sqlite_v2"
-    if "session" in names:
-        return "sqlite_v1"
-    return None
+        return _schema(connection)
 
 
 def opencode_db_session_exists(
@@ -514,14 +509,7 @@ def iter_opencode_v2_db_events(
     session_id: str,
     db_path: Path | None = None,
 ) -> Generator[dict[str, object]]:
-    """Read V2 ``session_v2``/``session_message`` rows in the V2 raw dialect.
-
-    The session header carries the authoritative ``session_v2`` row (id, model,
-    parent_id, idle_outcome, title, ...). Each ``session_message`` row follows in
-    ``seq`` order with its JSON payload preserved. A missing database, missing
-    table, or unknown session yields no events instead of raising: a fresh V2
-    database is a valid empty observation and must not look like corrupt data.
-    """
+    """Read a V2 session and its messages in sequence; absent sources yield nothing."""
 
     normalized_session_id = session_id.strip()
     if not normalized_session_id:
@@ -532,8 +520,7 @@ def iter_opencode_v2_db_events(
 
     with closing(_connect_readonly(resolved_db_path)) as connection:
         connection.row_factory = sqlite3.Row
-        names = _table_names(connection)
-        if "session_v2" not in names or "session_message" not in names:
+        if _schema(connection) != "sqlite_v2" or "session_message" not in _table_names(connection):
             return
         connection.execute("BEGIN")
         yield from _iter_v2_events(connection, normalized_session_id)
@@ -573,74 +560,12 @@ def iter_opencode_db_session_events(
     session_id: str,
     db_path: Path | None = None,
 ) -> Generator[dict[str, object]]:
-    """Dispatch to the V2 reader when ``session_v2`` is present, else V1.
-
-    Schema is decided by table presence. When neither table is readable the V1
-    reader runs, preserving its existing raise-on-unavailable behavior for
-    callers that already establish positive session identity.
-    """
+    """Select the V2 dialect by schema, otherwise use the V1 reader."""
 
     if detect_opencode_db_schema(db_path) == "sqlite_v2":
         yield from iter_opencode_v2_db_events(session_id=session_id, db_path=db_path)
         return
     yield from iter_opencode_db_events(session_id=session_id, db_path=db_path)
-
-
-OpenCodeWitness = OpenCodeV1Witness | OpenCodeV2Witness
-
-
-def _session_witnesses(
-    connection: sqlite3.Connection, session_ids: Iterable[str]
-) -> dict[str, OpenCodeWitness]:
-    ids = json.dumps(list(session_ids))
-    if "session_v2" in _table_names(connection):
-        rows = connection.execute(
-            "WITH wanted AS (SELECT value AS id FROM json_each(?)), "
-            "messages AS (SELECT session_id,count(*) AS n,max(seq) AS seq,"
-            "max(time_updated) AS updated FROM session_message "
-            "WHERE session_id IN (SELECT id FROM wanted) GROUP BY session_id) "
-            "SELECT s.id,coalesce(m.n,0),m.seq,m.updated,s.time_updated "
-            "FROM session_v2 s JOIN wanted w ON s.id=w.id "
-            "LEFT JOIN messages m ON m.session_id=s.id",
-            (ids,),
-        )
-        return {str(r[0]): OpenCodeV2Witness(*r[1:]) for r in rows}
-    rows = connection.execute(
-        "WITH wanted AS (SELECT value AS id FROM json_each(?)), "
-        "parts AS (SELECT session_id,count(*) AS n,max(time_updated) AS updated "
-        "FROM part WHERE session_id IN (SELECT id FROM wanted) GROUP BY session_id), "
-        "messages AS (SELECT session_id,count(*) AS n,max(time_updated) AS updated "
-        "FROM message WHERE session_id IN (SELECT id FROM wanted) GROUP BY session_id) "
-        "SELECT s.id,coalesce(p.n,0),p.updated,coalesce(m.n,0),m.updated,s.time_updated "
-        "FROM session s JOIN wanted w ON s.id=w.id "
-        "LEFT JOIN parts p ON p.session_id=s.id LEFT JOIN messages m ON m.session_id=s.id",
-        (ids,),
-    )
-    return {str(r[0]): OpenCodeV1Witness(*r[1:]) for r in rows}
-
-
-def opencode_session_witnesses(
-    db_path: Path, session_ids: Iterable[str]
-) -> dict[str, OpenCodeWitness]:
-    """Grouped existence and freshness check in the recorded DB, never ambient storage."""
-    with closing(_connect_readonly(db_path)) as connection:
-        connection.execute("BEGIN")
-        return _session_witnesses(connection, session_ids)
-
-
-@contextmanager
-def read_opencode_search_source(
-    db_path: Path, session_id: str
-) -> Generator[tuple[OpenCodeWitness, Iterator[dict[str, object]]]]:
-    """Witness and raw native events share one short read-only snapshot."""
-    with closing(_connect_readonly(db_path)) as connection:
-        connection.row_factory = sqlite3.Row
-        connection.execute("BEGIN")
-        witness = _session_witnesses(connection, (session_id,)).get(session_id)
-        if witness is None:
-            raise ValueError("OpenCode transcript session does not exist")
-        reader = _iter_v2_events if isinstance(witness, OpenCodeV2Witness) else _iter_v1_events
-        yield witness, reader(connection, session_id)
 
 
 def _model_ref_text(raw_model: object) -> str | None:
@@ -878,6 +803,13 @@ def extract_last_assistant_report_from_session_path(path: Path) -> str | None:
     return extract_last_assistant_report(provider.iter_events(path))
 
 
+def read_opencode_v2_turn(key: NativeKey, turn_ids: tuple[str, ...]) -> str | None:
+    """Stable fact-reader entrypoint; the snapshot helpers own the implementation."""
+    from meridian.lib.harness.opencode_search_source import read_opencode_v2_turn as read_turn
+
+    return read_turn(key, turn_ids)
+
+
 __all__ = [
     "OpenCodeDbSchema",
     "OpenCodeStorageTranscriptProvider",
@@ -893,36 +825,6 @@ __all__ = [
     "opencode_db_session_exists",
     "opencode_db_v2_session_exists",
     "read_last_model",
+    "read_opencode_v2_turn",
     "resolve_opencode_db_path",
 ]
-
-
-def read_opencode_v2_turn(key: NativeKey, turn_ids: tuple[str, ...]) -> str | None:
-    """Only event-named V2 replies in the recorded session/store can supply facts."""
-    if not turn_ids or not Path(key.native_store).is_file():
-        return None
-    with closing(_connect_readonly(Path(key.native_store))) as connection:
-        connection.row_factory = sqlite3.Row
-        if "session_message" not in _table_names(connection):
-            return None
-        for message_id in reversed(turn_ids):
-            row = connection.execute(
-                "SELECT type,seq,data FROM session_message WHERE session_id=? AND id=?",
-                (key.session_id, message_id),
-            ).fetchone()
-            if row is not None:
-                report = extract_last_assistant_report(
-                    [
-                        {
-                            "record": _V2_RECORD,
-                            "version": _V2_VERSION,
-                            "type": row["type"],
-                            "seq": row["seq"],
-                            "session_id": key.session_id,
-                            "data": _load_json_object(row["data"]) or {},
-                        }
-                    ]
-                )
-                if report:
-                    return report
-    return None

@@ -116,6 +116,11 @@ def test_pi_native_readback_survives_reclaim(tmp_path: Path, monkeypatch) -> Non
         assert ("kept handoff" in log.format_text()) == ("file_path" in kwargs)
         exported = session_export_sync(SessionExportInput(project_root=str(project), **kwargs))
         assert all(text in exported.markdown for text in ("second answer", "branchneedle"))
+        if "file_path" in kwargs:
+            assert all(
+                text in exported.markdown
+                for text in ("first question", "first answer", "kept handoff")
+            )
         search = session_search_sync(
             SessionSearchInput(project_root=str(project), query="branchneedle", **kwargs)
         )
@@ -185,7 +190,7 @@ def test_unsupported_pi_material_surfaces_incomplete_rendering(tmp_path: Path) -
     log = session_log_sync(SessionLogInput(file_path=str(path), full=True))
     assert "rendering is incomplete" in log.format_text()
     search = session_search_sync(SessionSearchInput(file_path=str(path), query="unrendered"))
-    assert not search.complete and search.errors
+    assert search.complete and search.warnings
     export = session_export_sync(SessionExportInput(file_path=str(path)))
     assert "rendering is incomplete" in export.markdown
 

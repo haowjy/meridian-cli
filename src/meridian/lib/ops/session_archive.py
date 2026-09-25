@@ -566,7 +566,7 @@ def _require_inactive_native_session(root: Path, harness: str | None, session_id
 def materialize_native_history(project_root: Path, root: Path, spawn_id: str) -> None:
     from meridian.lib.harness.transcript_capture import native_capture
     from meridian.lib.launch.constants import HISTORY_FILENAME
-    from meridian.lib.ops.session_target import resolve_session_log_target
+    from meridian.lib.ops.session_target import resolve_transcript_source
     from meridian.lib.platform.atomic import atomic_replace, iter_atomic_temp_paths
     from meridian.lib.state.event_store import utc_now_iso
     from meridian.lib.state.history_codec import transcript_header
@@ -595,14 +595,14 @@ def materialize_native_history(project_root: Path, root: Path, spawn_id: str) ->
             for stale in iter_atomic_temp_paths(spawn_dir, reserved):
                 stale.unlink(missing_ok=True)
         # Deferred until the published-aggregate guard: select from current authority.
-        target = resolve_session_log_target(
+        target = resolve_transcript_source(
             ref=spawn_id,
             file_path=None,
             project_root=project_root,
             runtime_root=root,
             purpose="capture",
         )
-        source = target.sources[0]
+        source = target.source
         observation = native_capture(
             kind=source.kind,
             harness=source.harness,

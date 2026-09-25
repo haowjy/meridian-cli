@@ -38,7 +38,7 @@ def test_events_split_claude_boundary_and_preserve_prologues() -> None:
         [("assistant", "before boundary")],
         [("assistant", "after boundary")],
     ]
-    assert parsed.segment_prologues == ("initial prompt", "handoff")
+    assert parsed.segment_setups == ("initial prompt", "handoff")
 
 
 def test_boundary_without_summary_allocates_empty_next_setup_slot() -> None:

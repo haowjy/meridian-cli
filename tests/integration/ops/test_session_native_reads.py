@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.native_identity import NativeSessionUnavailable
-from meridian.lib.ops.session_target import resolve_session_log_target
+from meridian.lib.ops.session_target import resolve_transcript_source
 from meridian.lib.state import session_store, spawn_store
 
 
@@ -56,18 +56,18 @@ def seed(tmp_path: Path) -> tuple[Path, Path, str]:
 @pytest.mark.parametrize("ref", ["p1", "raw"])
 def test_old_spawn_and_raw_id_choose_native(tmp_path: Path, ref: str) -> None:
     root, native, sid = seed(tmp_path)
-    target = resolve_session_log_target(
+    target = resolve_transcript_source(
         ref=sid if ref == "raw" else ref, file_path=None, project_root=tmp_path, runtime_root=root
     )
-    assert target.file_path == native
-    assert target.sources[0].kind == "native_file"
+    assert target.source.path == native
+    assert target.source.kind == "native_file"
 
 
 def test_bound_missing_never_falls_back(tmp_path: Path) -> None:
     root, native, _ = seed(tmp_path)
     native.unlink()
     with pytest.raises(NativeSessionUnavailable) as exc:
-        resolve_session_log_target(
+        resolve_transcript_source(
             ref="p1", file_path=None, project_root=tmp_path, runtime_root=root
         )
     assert exc.value.reason == "missing"
@@ -83,10 +83,10 @@ def test_shared_native_id_lists_other_chats(tmp_path: Path) -> None:
         model="test",
         chat_id="c2",
     )
-    target = resolve_session_log_target(
+    target = resolve_transcript_source(
         ref=sid, file_path=None, project_root=tmp_path, runtime_root=root
     )
-    assert target.file_path == native
+    assert target.source.path == native
     assert target.view_label == "also bound to c2"
 
 
@@ -128,8 +128,8 @@ def test_spawn_view_matrix(tmp_path, status, boundary, exit_chat, label, selecte
         )
     if status == "succeeded":
         spawn_store.finalize_spawn(root, "p1", "succeeded", 0, origin="runner")
-    target = resolve_session_log_target(ref="p1", project_root=tmp_path, runtime_root=root)
-    assert target.file_path == (native if selected == "entry" else exit_file)
+    target = resolve_transcript_source(ref="p1", project_root=tmp_path, runtime_root=root)
+    assert target.source.path == (native if selected == "entry" else exit_file)
     assert target.view_label == label
 
 
@@ -147,7 +147,7 @@ def test_raw_id_in_two_stores_is_ambiguous(tmp_path):
         chat_id="c2",
     )
     with pytest.raises(NativeSessionUnavailable) as exc:
-        resolve_session_log_target(ref=sid, project_root=tmp_path, runtime_root=root)
+        resolve_transcript_source(ref=sid, project_root=tmp_path, runtime_root=root)
     assert exc.value.reason == "ambiguous_native_file"
 
 
@@ -180,7 +180,7 @@ def test_unbound_chat_never_reads_legacy_bytes(tmp_path):
     )
     (root / "spawns/p1/history.jsonl").write_text("{}\n")
     with pytest.raises(NativeSessionUnavailable) as exc:
-        resolve_session_log_target(ref="p1", project_root=tmp_path, runtime_root=root)
+        resolve_transcript_source(ref="p1", project_root=tmp_path, runtime_root=root)
     assert exc.value.reason == "unbound"
 
 
@@ -196,7 +196,7 @@ def test_native_read_is_runner_history_blind(tmp_path, monkeypatch, ref):
         return original(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "open", open_without_history)
-    target = resolve_session_log_target(
+    target = resolve_transcript_source(
         ref=sid if ref == "raw" else ref, project_root=tmp_path, runtime_root=root
     )
     parsed = parse_session_target(
@@ -217,7 +217,7 @@ def test_spawn_without_chat_is_unbound(tmp_path):
         prompt="test",
     )
     with pytest.raises(NativeSessionUnavailable) as exc:
-        resolve_session_log_target("p1", project_root=tmp_path, runtime_root=root)
+        resolve_transcript_source("p1", project_root=tmp_path, runtime_root=root)
     assert exc.value.reason == "unbound"
 
 
@@ -264,3 +264,27 @@ def test_opencode_preview_refreshes_recorded_database_wal(tmp_path):
         assert database.stat().st_mtime_ns == stamp
         after = reader.refresh(identity, lambda: True)
         assert after is not None and "after WAL update" in after.lines
+
+
+def test_reclaimed_spawn_resolves_by_local_alias(tmp_path):
+    from meridian.lib.ops.session_archive import archive_history, materialize_native_history
+
+    root, native, _ = seed(tmp_path)
+    spawn_store.finalize_spawn(root, "p1", "succeeded", 0, origin="runner")
+    session_store.stop_session(root, "c1")
+    session_store.start_session(
+        root,
+        harness="claude",
+        harness_session_id=native.stem,
+        native_store=str(native.parent),
+        model="test",
+        chat_id="c1",
+        spawn_id="p1",
+    )
+    session_store.stop_session(root, "c1")
+    materialize_native_history(tmp_path, root, "p1")
+    result = archive_history(root, destination=tmp_path / "archives", refs=("p1",), apply=True)
+    assert result.reclaimed
+    assert not (root / "spawns/p1").exists()
+    target = resolve_transcript_source(ref="p1", project_root=tmp_path, runtime_root=root)
+    assert target.source.path == native

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, NamedTuple, Protocol, cast
@@ -62,13 +62,6 @@ class TranscriptParseResult(NamedTuple):
     segment_setups: tuple[str | None, ...]
     consumed_setup_event_indexes: tuple[int, ...] = ()
     rendering_reason: str | None = None
-    view_basis: Literal["reopen-default"] | None = None
-    completeness_reasons: tuple[str, ...] = ()
-
-    @property
-    def segment_prologues(self) -> tuple[str | None, ...]:
-        """Backward-compatible alias for session setup slots."""
-        return self.segment_setups
 
 
 class NormalizedTranscriptEvent(NamedTuple):
@@ -131,27 +124,13 @@ def _preview(value: str, *, limit: int = _MAX_PREVIEW) -> str:
 
 
 # Harness tool names that map to shell execution.
-_EXEC_TOOL_NAMES: frozenset[str] = frozenset(
-    {
-        "exec_command",
-        "shell",
-        "terminal",
-        "run_command",
-    }
-)
+_EXEC_TOOL_NAMES = frozenset({"exec_command", "shell", "terminal", "run_command"})
 
 # Harness tool names for stdin interaction.
 _STDIN_TOOL_NAMES: frozenset[str] = frozenset({"write_stdin"})
 
 # Keys that carry the "interesting" payload in a Claude-style tool input dict.
-_TOOL_BODY_KEYS: tuple[str, ...] = (
-    "file_path",
-    "path",
-    "command",
-    "pattern",
-    "description",
-    "skill",
-)
+_TOOL_BODY_KEYS = ("file_path", "path", "command", "pattern", "description", "skill")
 
 
 def _normalize_tool(name: str, body: str) -> ToolCall:
@@ -619,11 +598,6 @@ def _iter_json_events(
                         yield cast("dict[str, object]", item)
 
 
-_OPENCODE_STORAGE_PROVIDER_TYPES = (
-    OpenCodeStorageTranscriptProvider,
-    OpenCodeV2StorageTranscriptProvider,
-)
-
 _TRANSCRIPT_PROVIDERS: tuple[TranscriptProvider, ...] = (
     OpenCodeV2StorageTranscriptProvider(
         iter_json_events=_iter_json_events,
@@ -639,7 +613,7 @@ def _provider_for_path(path: Path) -> TranscriptProvider:
     for provider in _TRANSCRIPT_PROVIDERS:
         if provider.supports(path):
             return provider
-    return JsonlTranscriptProvider()
+    raise ValueError("not a native transcript")
 
 
 def _unwrap_seq_envelope(event: dict[str, object]) -> dict[str, object]:
@@ -917,8 +891,7 @@ def parse_transcript_events_with_prologues(
 
 def reject_runner_history(path: Path) -> None:
     """Explicit file reads must not reinterpret retired runner event streams."""
-    if path.name == HISTORY_FILENAME:
-        raise ValueError("not a native transcript")
+    _provider_for_path(path)
     with path.open("rb") as handle:
         first = handle.readline(HEADER_LIMIT + 1)
     try:
@@ -944,7 +917,7 @@ def iter_transcript_events(
     current: Callable[[], bool] | None = None,
     check_header: Callable[[SnapshotHeader], None] | None = None,
     consume: Callable[[int], None] | None = None,
-) -> Iterator[dict[str, object]]:
+) -> Generator[dict[str, object]]:
     # A copied/renamed snapshot keeps its storage identity. Sniff only a bounded
     # header; body validation remains incremental and subject to the caller budget.
     if path.is_file():
@@ -1023,28 +996,3 @@ __all__ = [
     "parse_transcript_file_with_prologues",
     "text_from_value",
 ]
-
-
-def transcript_revision(path: Path | None) -> tuple[tuple[int, ...] | None, ...]:
-    """Cheap provider freshness witness; OpenCode storage may be backed by a mutable DB."""
-    from meridian.lib.harness.opencode_transcript import (
-        opencode_db_for_session_file,
-        resolve_opencode_db_path,
-    )
-
-    paths = [] if path is None else [path]
-    if path is None or isinstance(_provider_for_path(path), _OPENCODE_STORAGE_PROVIDER_TYPES):
-        database = opencode_db_for_session_file(path) if path else resolve_opencode_db_path()
-        assert database is not None
-        paths.extend((database, Path(str(database) + "-wal")))
-    revisions: list[tuple[int, ...] | None] = []
-    for source in paths:
-        try:
-            info = source.stat()
-        except FileNotFoundError:
-            revisions.append(None)
-        else:
-            revisions.append(
-                (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
-            )
-    return tuple(revisions)
