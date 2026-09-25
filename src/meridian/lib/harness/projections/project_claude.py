@@ -47,6 +47,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
 
 _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
+        "native_identity_plan",
         "base_instructions",
         "developer_instructions",
         "harness",

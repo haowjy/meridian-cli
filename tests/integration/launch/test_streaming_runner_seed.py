@@ -154,7 +154,6 @@ class _OpenCodeSeedPortConnection:
         row = spawn_store.get_spawn(runtime_root, config.spawn_id)
         assert row is not None
         self.__class__.observed_start_session_id = row.harness_session_id
-        assert row.harness_session_id == "seeded-codex-session"
         self.state = "connected"
 
     async def stop(self) -> None:
@@ -319,7 +318,7 @@ async def test_execute_with_streaming_persists_claude_seed_before_start(
 
 
 @pytest.mark.asyncio
-async def test_execute_with_streaming_uses_adapter_seed_port_not_harness_id(
+async def test_execute_with_streaming_does_not_bind_unverified_adapter_seed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -384,7 +383,7 @@ async def test_execute_with_streaming_uses_adapter_seed_port_not_harness_id(
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
     assert exit_code in (0, 1, 2)
     assert row is not None
-    assert row.harness_session_id == "seeded-opencode-session"
+    assert row.harness_session_id is None
     assert row.harness_session_id == _OpenCodeSeedPortConnection.observed_start_session_id
 
 

@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.config.settings import PiHarnessProfileConfig
 from meridian.lib.core.domain import TokenUsage
+from meridian.lib.core.native_identity import NativeIdentityPlan
 from meridian.lib.core.types import ArtifactKey, HarnessId, ModelId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
@@ -405,6 +406,12 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
     @property
     def handled_fields(self) -> frozenset[str]: ...
 
+    def plan_native_identity(self, run: SpawnParams) -> NativeIdentityPlan | None: ...
+
+    def native_store_for_launch(
+        self, *, child_env: dict[str, str], child_cwd: Path,
+    ) -> str | None: ...
+
     def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> AdapterSpecT: ...
 
     def preflight(
@@ -623,6 +630,14 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     @property
     def handled_fields(self) -> frozenset[str]:
         return self.consumed_fields | self.explicitly_ignored_fields
+
+    def plan_native_identity(self, run: SpawnParams) -> NativeIdentityPlan | None:
+        """Return a preassigned exact identity, if this harness supports it."""
+        return None
+
+    def native_store_for_launch(self, *, child_env: dict[str, str], child_cwd: Path) -> str | None:
+        """Resolve the store from the actual child environment, not parent defaults."""
+        return None
 
     @abstractmethod
     def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> SpecT:

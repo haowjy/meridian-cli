@@ -6,6 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Claude fresh launches bind the exact planned `--session-id` before exec, including the child native store.
+
 - Assigned and observed session identities bind once; connection and post-exit signals cannot overwrite.
 
 - Chats keep their first native session ID and store; conflicting updates no longer rebind history.

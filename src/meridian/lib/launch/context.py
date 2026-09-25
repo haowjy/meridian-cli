@@ -2126,6 +2126,11 @@ def bind_launch_context(
         runner_overlay_env={},
         final_env=env,
     )
+    if spec.native_identity_plan is not None:
+        spec = spec.model_copy(update={"native_identity_plan": replace(
+            spec.native_identity_plan,
+            native_store=harness.native_store_for_launch(child_env=env, child_cwd=child_cwd),
+        )})
     binding = ResolvedLaunchBinding(
         work_id=effective_work_id,
         child_cwd=child_cwd,

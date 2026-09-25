@@ -993,19 +993,21 @@ def run_harness_process(
                 )
                 lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
                 launch_spec = runtime_context.binding.spec
-                if not expected_harness_session_id and session_mode != SessionMode.FORK:
-                    generated_session_id = harness_adapter.derive_primary_seeded_session_id(
-                        spec=launch_spec,
-                        command=command,
+                identity_plan = launch_spec.native_identity_plan
+                if identity_plan is not None and identity_plan.harness_session_id:
+                    result = update_session_harness_id(
+                        runtime_root, managed.chat_id, identity_plan.harness_session_id,
+                        native_store=identity_plan.native_store, source="assigned",
                     )
-                    if generated_session_id:
-                        expected_harness_session_id = generated_session_id
-                        spawn_store.update_spawn(
-                            runtime_root,
-                            primary_spawn_id,
-                            harness_session_id=generated_session_id,
-                        )
-                        lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
+                    if result.status == "conflict":
+                        raise ValueError(f"{managed.chat_id}: native binding conflict before exec")
+                    resolved_harness_session_id = bind_harness_session_id(
+                        runtime_root=runtime_root, spawn_id=primary_spawn_id,
+                        record_session_id=managed.record_harness_session_id,
+                        session_id=result.harness_session_id, source="assigned",
+                    )
+                    expected_harness_session_id = resolved_harness_session_id
+                    lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
 
                 def _record_effective_config_dir(config_dir: str) -> None:
                     spawn_store.update_spawn(

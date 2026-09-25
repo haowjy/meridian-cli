@@ -133,7 +133,12 @@ async def streaming_serve(
             runtime_root=runtime_root,
             metadata=build_session_metadata(launch_ctx.resolved_request),
             request=launch_ctx.resolved_request.session,
-            harness_session_id="",
+            harness_session_id=(
+                launch_ctx.binding.spec.native_identity_plan.harness_session_id or ""
+                if launch_ctx.binding.spec.native_identity_plan else ""
+            ),
+            native_store=(launch_ctx.binding.spec.native_identity_plan.native_store
+                          if launch_ctx.binding.spec.native_identity_plan else None),
             control_root=str(launch_ctx.control_root),
             execution_cwd=str(launch_ctx.binding.child_cwd),
             spawn_id=str(spawn_id),
@@ -142,7 +147,10 @@ async def streaming_serve(
             attempt = managed.attempt
             assert attempt is not None
             spawn_store.update_spawn(runtime_root, spawn_id, chat_id=managed.chat_id)
-            observed_session_id: str | None = None
+            observed_session_id = (
+                launch_ctx.binding.spec.native_identity_plan.harness_session_id
+                if launch_ctx.binding.spec.native_identity_plan else None
+            )
 
             def record_identity(session_id: str) -> None:
                 nonlocal observed_session_id

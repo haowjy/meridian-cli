@@ -101,6 +101,7 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import ArtifactStore, make_artifact_key
 from meridian.lib.state.atomic import append_text_line
 from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.session_store import update_session_harness_id
 from meridian.lib.state.spawn.model import (
     BACKGROUND_LAUNCH_MODE,
     FOREGROUND_LAUNCH_MODE,
@@ -1274,19 +1275,30 @@ async def execute_with_streaming(
             else FOREGROUND_LAUNCH_MODE
         )
 
-        materialized_session_id = (spec.continue_session_id or "").strip()
-        if not materialized_session_id:
-            seeded_session_id = harness.derive_streaming_seeded_session_id(spec=spec)
-            if seeded_session_id:
-                # A launch hint is not an observed native identity. Keep it out of
-                # same-attempt binding and the adapter's post-run current-ID input.
-                spawn_store.update_spawn(
-                    runtime_root, run.spawn_id, harness_session_id=seeded_session_id,
+        identity_plan = spec.native_identity_plan
+        if identity_plan is not None and identity_plan.harness_session_id:
+            if session_attempt is not None:
+                result = update_session_harness_id(
+                    runtime_root, session_attempt.chat_id, identity_plan.harness_session_id,
+                    native_store=identity_plan.native_store, source="assigned",
+                    session_instance_id=session_attempt.session_instance_id,
+                    startup_attempt_id=session_attempt.startup_attempt_id,
                 )
-        if materialized_session_id and materialized_session_id != (
-            request.session.requested_harness_session_id or ""
-        ):
-            observe_attempt_id(materialized_session_id)
+                if result.status == "conflict":
+                    raise ValueError(
+                        f"{session_attempt.chat_id}: native binding conflict before exec"
+                    )
+            observed_harness_session_id = bind_harness_session_id(
+                runtime_root=runtime_root, spawn_id=run.spawn_id,
+                record_session_id=(
+                    session_attempt.record_harness_session_id if session_attempt else lambda _: None
+                ),
+                session_id=identity_plan.harness_session_id, source="assigned",
+            )
+            if harness_session_id_observer is not None:
+                harness_session_id_observer(observed_harness_session_id)
+        elif spec.continue_session_id and not spec.continue_fork:
+            observe_attempt_id(spec.continue_session_id)
 
         budget_tracker = (
             LiveBudgetTracker(budget=budget, space_spent_usd=space_spent_usd)

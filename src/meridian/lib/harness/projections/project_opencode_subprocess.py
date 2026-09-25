@@ -42,6 +42,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
 
 _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
+        "native_identity_plan",
         "agents_payload",
         "claude_native_agents_enabled",
         "base_instructions",

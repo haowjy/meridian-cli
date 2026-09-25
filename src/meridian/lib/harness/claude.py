@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from meridian.lib.core.conversation import Conversation, ConversationTurn, ToolCall
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
+from meridian.lib.core.native_identity import NativeIdentityPlan
 from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     CLAUDE_SPAWN_USAGE_VARIANTS,
@@ -91,6 +92,7 @@ from meridian.lib.launch.launch_types import (
     TerminalSurfaceMode,
 )
 from meridian.lib.launch.request import SessionRequest
+from meridian.lib.platform import get_home_path
 from meridian.lib.safety.permissions import PermissionConfig
 
 
@@ -276,6 +278,28 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str:
         return build_claude_adhoc_agent_json(name=name, description=description, prompt=prompt)
 
+    def plan_native_identity(self, run: SpawnParams) -> NativeIdentityPlan | None:
+        source = (run.continue_harness_session_id or "").strip()
+        if source:
+            return NativeIdentityPlan(
+                None if run.continue_fork else source, None, None,
+                "fork" if run.continue_fork else "resume",
+            )
+        explicit_id = extract_session_id_from_args(run.extra_args)
+        if has_session_identity_in_args(run.extra_args) and not explicit_id:
+            return None
+        return NativeIdentityPlan(explicit_id or str(uuid4()), None, None, "create")
+
+    def native_store_for_launch(self, *, child_env: dict[str, str], child_cwd: Path) -> str:
+        home = Path(child_env["HOME"]) if child_env.get("HOME") else get_home_path()
+        configured = child_env.get("CLAUDE_CONFIG_DIR", "").strip()
+        root = Path(configured) if configured else home / ".claude"
+        if configured == "~" or configured.startswith("~/"):
+            root = home / configured.removeprefix("~").lstrip("/")
+        if not root.is_absolute():
+            root = child_cwd / root
+        return str(root.resolve())
+
     def resolve_launch_spec(
         self, run: SpawnParams, perms: PermissionResolver
     ) -> ResolvedLaunchSpec:
@@ -291,9 +315,15 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 "max": "max",
             }.get(normalized_value, normalized_value)
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
+        identity_plan = self.plan_native_identity(run)
         effective_extra_args = run.extra_args
-        if continue_session_id is None and not has_session_identity_in_args(run.extra_args):
-            effective_extra_args = (*run.extra_args, "--session-id", str(uuid4()))
+        if identity_plan and identity_plan.operation == "create" and not (
+            has_session_identity_in_args(run.extra_args)
+        ):
+            assert identity_plan.harness_session_id is not None
+            effective_extra_args = (
+                *run.extra_args, "--session-id", identity_plan.harness_session_id
+            )
 
         # prompt_file_path is owned by bind_launch_context, which sets it to
         # <spawn-log-dir>/system-prompt.md (the single artifact-dir authority).
@@ -311,6 +341,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             effort=normalized_effort,
             prompt=run.prompt,
             continue_session_id=continue_session_id,
+            native_identity_plan=identity_plan,
             continue_fork=run.continue_fork and continue_session_id is not None,
             permission_resolver=perms,
             extra_args=effective_extra_args,

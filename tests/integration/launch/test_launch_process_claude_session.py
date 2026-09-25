@@ -2,8 +2,8 @@
 """Claude session seeding, repair, and resume tests.
 
 Verifies that fresh Claude primary launches seed a --session-id, that
-command-generated session IDs remain provisional, that observation
-binds the actual conversation, and that resume launches do not inject seed args.
+planned session IDs bind before exec and conflicting observations
+never change the conversation, and that resume launches do not inject seed args.
 """
 
 from __future__ import annotations
@@ -142,23 +142,22 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
     assert launch_context.seed_harness_session_id in (None, "")
     assert "command_session_id" in captured
     seeded_id = captured["command_session_id"]
-    # Command seeds remain hints until the harness actually observes the conversation.
-    assert outcome.resolved_harness_session_id == ""
+    assert outcome.resolved_harness_session_id == seeded_id
     spawns = list_spawns(launch_context.runtime_root)
     assert len(spawns.records) == 1
     assert spawns.records[0].harness_session_id == seeded_id
     session = session_store.get_session_record(launch_context.runtime_root, outcome.chat_id)
     assert session is not None
     assert session.spawn_id == spawns.records[0].id
-    assert not session.harness_session_id
+    assert session.harness_session_id == seeded_id
 
 
 @pytest.mark.slow
-def test_run_harness_process_repairs_state_when_observed_session_differs(
+def test_run_harness_process_keeps_binding_when_observed_session_differs(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Observation repairs state when harness uses a different session than persisted."""
+    """A differing post-exit observation cannot repoint the entry chat."""
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
     project_root = tmp_path / "seed-repair"
     project_root.mkdir()
@@ -195,11 +194,12 @@ def test_run_harness_process_repairs_state_when_observed_session_differs(
         update_session_harness_id_fn=lambda *args, **kwargs: None,
     )
 
-    # State should be repaired to the observed session ID
-    assert outcome.resolved_harness_session_id == observed_id
-    # Spawn record should have the observed ID
+    assert outcome.resolved_harness_session_id != observed_id
+    assert outcome.resolved_harness_session_id
     spawns = list_spawns(launch_context.runtime_root)
-    assert any(spawn.harness_session_id == observed_id for spawn in spawns.records)
+    assert all(
+        spawn.harness_session_id == outcome.resolved_harness_session_id for spawn in spawns.records
+    )
 
 
 @pytest.mark.slow
