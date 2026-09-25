@@ -98,8 +98,9 @@ def _resolve_file_target(file_path: str) -> SessionLogTarget:
             harness=harness,
             path=resolved,
             source_label="file",
-        )
-    )._replace(view_label="file")
+        ),
+        view_label="file",
+    )
 
 
 def _native_target(key: NativeKey, record: session_store.SessionRecord) -> SessionLogTarget:
@@ -155,7 +156,7 @@ def _indexed_spawn(
     return SpawnRecord.model_validate_json(records[0]) if records else None
 
 
-def _spawn_target(*, row: SpawnRecord, project_root: Path, runtime_root: Path) -> SessionLogTarget:
+def _spawn_target(*, row: SpawnRecord, runtime_root: Path) -> SessionLogTarget:
     if row.chat_id is None:
         raise NativeSessionUnavailable(row.id, "unbound")
     chat_id = row.continue_chat_id
@@ -195,7 +196,7 @@ def _resolve_from_spawn_id(
             raise NativeSessionUnavailable(row.id, "unbound")
         return _native_target(key, session)
 
-    return _spawn_target(row=row, project_root=project_root, runtime_root=runtime_root)
+    return _spawn_target(row=row, runtime_root=runtime_root)
 
 
 def _resolve_from_session_ref(
@@ -229,7 +230,7 @@ def _resolve_from_session_ref(
         )
     row = _indexed_spawn(runtime_root, session_ref, deadline=deadline)
     if row is not None:
-        return _spawn_target(row=row, project_root=project_root, runtime_root=runtime_root)
+        return _spawn_target(row=row, runtime_root=runtime_root)
     return _untracked_target(project_root=project_root, session_ref=session_ref)
 
 

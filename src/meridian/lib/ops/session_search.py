@@ -7,6 +7,7 @@ import time
 from collections import Counter
 from collections.abc import Iterator, Sequence
 from pathlib import Path
+from shlex import quote
 from typing import NamedTuple
 
 from pydantic import BaseModel, ConfigDict, computed_field
@@ -349,8 +350,6 @@ def _render_match(
         context=_OPEN_CONTEXT if row.kind != "setup" else None,
     )
     if scope.runtime_root != runtime_root:
-        from shlex import quote
-
         command = (
             "env -u MERIDIAN_PROJECT_DIR -u _MERIDIAN_DEPTH "
             f"_MERIDIAN_RUNTIME_DIR={quote(str(scope.runtime_root))} " + command
