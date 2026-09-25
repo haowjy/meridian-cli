@@ -66,8 +66,11 @@ def test_refresh_rebuild_unbind_and_browse(tmp_path, monkeypatch):
     assert next(
         iter_session_subset_search(project_root=str(project), chat_ids=[chat], query="third")
     ).matched
+    queries = ("first", "second", "third")
+    before = {query: search(query).matches for query in queries}
+    index_path.unlink()
     session_index_sync(SessionIndexInput(project_root=str(project), action="rebuild"))
-    assert search("third").matches == third.matches
+    assert {query: search(query).matches for query in queries} == before
     # Authoritative deletion must remove cached rows; cache cannot keep ownership alive.
     (root / "sessions.jsonl").write_text("")
     assert search("third").matches == ()
@@ -218,8 +221,12 @@ def test_corpus_preserves_ref_search_readiness_when_renderer_warns(tmp_path, mon
         SessionSearchInput(query="needle", ref=chat, project_root=str(project))
     )
     projected = session_search_sync(SessionSearchInput(query="needle", project_root=str(project)))
-    assert len(direct.matches) == 1 and direct.errors
+    assert len(direct.matches) == 1 and direct.complete
     assert len(projected.matches) == len(direct.matches)
     assert projected.matches[0].entry_ordinal == direct.matches[0].entry_ordinal
-    assert projected.errors and not projected.complete
+    assert projected.complete
+    assert projected.warnings and not projected.errors
+    assert projected.model_dump()["warnings"]
+    assert "1 sources searched with warnings (see --json)" in projected.format_text()
+    assert "future" not in projected.format_text().split("Open:")[-1]
     assert projected.sources_not_searched == 0

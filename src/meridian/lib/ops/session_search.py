@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from collections import Counter
 from collections.abc import Iterator, Sequence
 from typing import NamedTuple
 
@@ -79,6 +80,7 @@ class SessionSearchOutput(BaseModel):
     matches: tuple[SessionSearchMatch, ...]
     truncated: bool = False
     errors: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
     sources_total: int = 0
     sources_not_searched: int = 0
     sources_pending: int = 0
@@ -121,7 +123,17 @@ class SessionSearchOutput(BaseModel):
             lines.append(
                 f"{unavailable} of {self.sources_total} sources unavailable (see reasons)."
             )
-        lines.extend(self.errors)
+        if self.warnings:
+            lines.append(f"{len(self.warnings)} sources searched with warnings (see --json)")
+        if len(self.errors) <= 3:
+            lines.extend(self.errors)
+        else:
+            lines.extend(
+                f"{count} sources not searched: {reason} (see --json)"
+                for reason, count in Counter(
+                    error.partition(": ")[2] or error for error in self.errors
+                ).items()
+            )
         return "\n".join(lines)
 
 
@@ -152,10 +164,12 @@ def iter_session_subset_search(
         projection.refresh(keys, deadline=deadline)
         matched = {
             chat
-            for row in projection.search(normalized_query, limit=None)
+            for row in projection.search(
+                normalized_query, limit=None, deadline=time.monotonic() + QUERY_TIMEOUT
+            )
             for chat in keys[row.key]
         }
-    except (ValueError, OSError, sqlite3.Error) as exc:
+    except (ValueError, OSError, sqlite3.Error, TimeoutError) as exc:
         for chat_id in chat_ids:
             yield SubsetSearchStep(chat_id, False, str(exc))
         return
@@ -279,7 +293,10 @@ def _search_single_target(payload: SessionSearchInput, *, query: str) -> Session
     )
     return SessionSearchOutput(
         matches=tuple(matches),
-        errors=transcript.read_reasons,
+        errors=() if transcript.search_ready else transcript.read_reasons,
+        warnings=transcript.read_reasons if transcript.search_ready else (),
+        sources_total=1,
+        sources_not_searched=int(not transcript.search_ready),
     )
 
 
@@ -310,6 +327,7 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
     projections: list[tuple[SessionCorpusScope, SearchProjection]] = []
     candidates: list[tuple[SearchRow, SessionCorpusScope, SearchProjection]] = []
     errors: list[str] = []
+    warnings: list[str] = []
     cold = False
     total = not_searched = pending = 0
 
@@ -362,6 +380,10 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
                 f"{scope.label} {', '.join(keys[key])}: {error}"
                 for key, error in projection.errors.items()
             )
+            warnings.extend(
+                f"{scope.label} {', '.join(keys[key])}: {warning}"
+                for key, warning in projection.warnings.items()
+            )
             if cold:
                 projections.append((scope, projection))
             else:
@@ -411,6 +433,7 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
         matches=tuple(matches),
         truncated=len(candidates) > 100,
         errors=tuple(errors),
+        warnings=tuple(warnings),
         sources_total=total,
         sources_not_searched=not_searched,
         sources_pending=pending,

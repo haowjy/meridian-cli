@@ -90,6 +90,7 @@ class SearchProjection:
     sources: dict[NativeKey, NativeSource] = field(default_factory=dict[NativeKey, NativeSource])
     fresh: set[NativeKey] = field(default_factory=set[NativeKey])
     errors: dict[NativeKey, str] = field(default_factory=dict[NativeKey, str])
+    warnings: dict[NativeKey, str] = field(default_factory=dict[NativeKey, str])
     parsed: dict[NativeKey, ParsedSessionTranscript] = field(
         default_factory=dict[NativeKey, ParsedSessionTranscript]
     )
@@ -164,7 +165,9 @@ class SearchProjection:
                 if stored.status == "complete":
                     self.fresh.add(key)
                 if stored.reasons or stored.status != "complete":
-                    self.errors[key] = "; ".join(stored.reasons) or stored.status
+                    (self.warnings if key in self.fresh else self.errors)[key] = (
+                        "; ".join(stored.reasons) or stored.status
+                    )
 
     def refresh(
         self, keys: dict[NativeKey, tuple[str, ...]], *, deadline: float, rebuild: bool = False
@@ -276,7 +279,9 @@ class SearchProjection:
                     if complete:
                         self.fresh.add(key)
                     if reasons or not complete:
-                        self.errors[key] = "; ".join(reasons) or "partial"
+                        (self.warnings if complete else self.errors)[key] = (
+                            "; ".join(reasons) or "partial"
+                        )
                 except (OSError, ValueError, sqlite3.Error) as exc:
                     self.errors[key] = str(exc)
 
