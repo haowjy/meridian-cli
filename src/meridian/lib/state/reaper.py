@@ -23,9 +23,7 @@ from meridian.lib.core.spawn_lifecycle import (
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.constants import (
     FINALIZE_EVIDENCE_FILENAME,
-    HISTORY_FILENAME,
     LAST_OBSERVED_EVENT_FILENAME,
-    OUTPUT_FILENAME,
 )
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope import is_pgid_reachable
@@ -74,8 +72,6 @@ SPAWN_HEARTBEAT_WINDOW_SECS = 120
 SPAWN_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS = 5
 _ACTIVITY_ARTIFACTS: tuple[str, ...] = (
     "heartbeat",
-    HISTORY_FILENAME,
-    OUTPUT_FILENAME,
     "bash-records.json",
     "stderr.log",
     "report.md",

@@ -198,8 +198,8 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _internal_handle("_MERIDIAN_RUNTIME_DIR", "Resolved per-project runtime directory."),
     _internal_handle("_MERIDIAN_HARNESS", "Harness identity propagated one level."),
     _internal_handle("_MERIDIAN_GUARDRAIL_RUN_ID", "Guardrail run identifier."),
-    _internal_handle("_MERIDIAN_GUARDRAIL_OUTPUT_LOG", "Guardrail output log path."),
-    _internal_handle("_MERIDIAN_GUARDRAIL_REPORT_PATH", "Guardrail report path."),
+    _internal_handle("_MERIDIAN_GUARDRAIL_CHAT_ID", "Chat id for `meridian session log`."),
+    _internal_handle("_MERIDIAN_GUARDRAIL_REPORT", "Guardrail report path."),
     _internal_handle(
         "_MERIDIAN_PRIMARY_STDERR_LOG_PATH", "Primary subprocess stderr path.", child=False
     ),

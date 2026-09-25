@@ -62,7 +62,7 @@ def run_guardrails(
     cwd: Path,
     env: Mapping[str, str] | None,
     report_path: Path | None,
-    output_log_path: Path,
+    chat_id: str | None = None,
     timeout_seconds: float = DEFAULT_GUARDRAIL_TIMEOUT_SECONDS,
 ) -> GuardrailResult:
     """Execute post-run guardrail scripts and collect failures."""
@@ -79,9 +79,10 @@ def run_guardrails(
             child_env.pop(key, None)
 
     child_env["_MERIDIAN_GUARDRAIL_RUN_ID"] = str(spawn_id)
-    child_env["_MERIDIAN_GUARDRAIL_OUTPUT_LOG"] = output_log_path.as_posix()
+    if chat_id:
+        child_env["_MERIDIAN_GUARDRAIL_CHAT_ID"] = chat_id
     if report_path is not None:
-        child_env["_MERIDIAN_GUARDRAIL_REPORT_PATH"] = report_path.as_posix()
+        child_env["_MERIDIAN_GUARDRAIL_REPORT"] = report_path.as_posix()
 
     failures: list[GuardrailFailure] = []
     for script in guardrails:

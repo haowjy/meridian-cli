@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
@@ -90,6 +91,36 @@ def test_spawn_manager_selects_complete_drain_plan_by_connection_capability(
     assert pi.handle_aux_wake == pi.coordinator.handle_aux_wake
     assert pi.finalizer is pi.coordinator
     assert isinstance(pi.teardown, PiDrainSessionTeardown)
+
+
+def test_pi_phase_events_update_sidecar_without_history(tmp_path: Path) -> None:
+    manager = SpawnManager(runtime_root=tmp_path, project_root=tmp_path)
+    plan = _select_plan(manager, harness_id=HarnessId.PI)
+    assert isinstance(plan.coordinator, PiDrainCoordinator)
+
+    for phase, status in (
+        ("initial_prompt_sent", None),
+        ("cleanup_escalated", "escalated"),
+        ("cleanup_completed", "completed"),
+    ):
+        payload: dict[str, object] = {"phase": phase}
+        if status:
+            payload["cleanup_status"] = status
+        manager.emit_event(
+            SpawnId("p-pi"),
+            RawHarnessEvent(
+                event_type="meridian.pi.lifecycle.phase",
+                harness_id="pi",
+                payload=payload,
+                raw_text=None,
+            ),
+        )
+
+    sidecar = tmp_path / "spawns" / "p-pi" / "pi-lifecycle.json"
+    recorded = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert recorded["phase"] == "cleanup_completed"
+    assert recorded["cleanup_status"] == "escalated"
+    assert not (tmp_path / "spawns" / "p-pi" / "history.jsonl").exists()
 
 
 def test_spawn_manager_authored_event_emission_order(
