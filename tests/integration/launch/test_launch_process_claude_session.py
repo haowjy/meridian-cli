@@ -307,6 +307,11 @@ def test_run_harness_process_resume_does_not_inject_seed_args(
 ) -> None:
     """Resume launches must not inject seed session args into passthrough."""
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "existing-session-id.jsonl").write_text(
+        json.dumps({"sessionId": "existing-session-id"}) + "\n"
+    )
     project_root = tmp_path / "seed-resume"
     project_root.mkdir()
     launch_context, _harness_registry = _build_primary_launch_context(
@@ -314,7 +319,7 @@ def test_run_harness_process_resume_does_not_inject_seed_args(
         harness_id=HarnessId.CLAUDE,
         model="claude-sonnet-4-5",
         session=SessionRequest(
-            requested_harness_session_id="existing-session-id",
+            requested_harness_session_id="existing-session-id", source_native_store=str(source),
             continue_chat_id="c42",
             primary_session_mode=SessionMode.RESUME.value,
         ),
@@ -322,9 +327,9 @@ def test_run_harness_process_resume_does_not_inject_seed_args(
     # Resume path: adapter returns the existing session ID, no session_args injection
     assert launch_context.seed_harness_session_args == ()
     assert launch_context.seed_harness_session_id == "existing-session-id"
-    plan = launch_context.binding.spec.native_identity_plan
+    plan = launch_context.binding.spec.native_identity
     assert plan.operation == "resume"
-    assert plan.harness_session_id == "existing-session-id"
+    assert plan.session_id == "existing-session-id"
 
 
 @pytest.mark.parametrize("signal", ["silent", "match", "mismatch", "switch"])
@@ -390,16 +395,20 @@ def test_primary_claude_exec_receives_prebound_identity(
 
 
 def test_claude_fork_plan_waits_for_owned_new_identity(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "source-native.jsonl").write_text(json.dumps({"sessionId": "source-native"}) + "\n")
     context, _ = _build_primary_launch_context(
         project_root=tmp_path, harness_id=HarnessId.CLAUDE, model="claude-sonnet-4-5",
         session=SessionRequest(
             requested_harness_session_id="source-native", continue_fork=True,
+            source_native_store=str(source),
             primary_session_mode=SessionMode.FORK.value,
         ),
     )
-    plan = context.binding.spec.native_identity_plan
+    plan = context.binding.spec.native_identity
     assert plan.operation == "fork"
-    assert plan.harness_session_id is None
+    assert plan.session_id is None
     assert plan.native_store
     assert "--session-id" not in context.binding.argv
     assert "--fork-session" in context.binding.argv

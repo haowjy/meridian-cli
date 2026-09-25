@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.native_identity import NativeIdentityPlan
+from meridian.lib.core.native_identity import NativeIdentity
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections import pi_rpc as pi_rpc_module
 from meridian.lib.harness.connections.base import (
@@ -261,8 +261,8 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
             pi_session_role="spawned",
         ),
         ResolvedLaunchSpec(
-            native_identity_plan=NativeIdentityPlan(
-                "planned-id", str(scoped_session_dir), None, "create",
+            native_identity=NativeIdentity(
+                "pi", "create", str(scoped_session_dir), "planned-id", None, None,
             ),
             harness=HarnessId.PI,
             prompt="hello",
@@ -323,8 +323,8 @@ async def test_pi_rpc_connection_redacts_secret_like_cli_args_in_process_spawned
             },
         ),
         ResolvedLaunchSpec(
-            native_identity_plan=NativeIdentityPlan(
-                "planned-id", str(scoped_session_dir), None, "create",
+            native_identity=NativeIdentity(
+                "pi", "create", str(scoped_session_dir), "planned-id", None, None,
             ),
             harness=HarnessId.PI,
             prompt="hello",

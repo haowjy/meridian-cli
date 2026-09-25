@@ -84,7 +84,7 @@ class _ClaudeSeedPersistenceConnection:
         row = spawn_store.get_spawn(runtime_root, config.spawn_id)
         assert row is not None
         self.__class__.observed_start_session_id = row.harness_session_id
-        assert row.harness_session_id == spec.claude_session_seed_id
+        assert row.harness_session_id == spec.native_identity.session_id
         self.state = "connected"
 
     async def stop(self) -> None:
@@ -226,9 +226,9 @@ class _OpenCodeConnectSessionConnection:
         return None
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        plan = spec.native_identity_plan
-        if plan is not None and plan.harness_session_id is not None:
-            self._session_id = plan.harness_session_id
+        plan = spec.native_identity
+        if plan is not None and plan.session_id is not None:
+            self._session_id = plan.session_id
         self._spawn_id = config.spawn_id
         if config.session_id_observer is not None:
             config.session_id_observer(self._session_id)

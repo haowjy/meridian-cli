@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Refuse passthrough identity flags and invalid Claude dry-run sources; await OpenCode fork IDs.
+
 ### Added
 - Import legacy chat native keys once from exact, header-validated stores; keep unresolved chats listed in a durable report. Read-only dev report previews bindings.
 - Include Meridian's unscoped interactive Pi sessions root in exact legacy binding candidates.

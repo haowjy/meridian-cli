@@ -1099,7 +1099,7 @@ async def test_primary_attach_signal_during_failed_startup_returns_cancelled(
 async def test_primary_attach_initial_id_mismatch_is_typed(tmp_path: Path) -> None:
     from meridian.lib.core.native_identity import (
         NativeEntryMismatch,
-        NativeIdentityPlan,
+        NativeIdentity,
         NativeKeyFields,
     )
 
@@ -1112,8 +1112,8 @@ async def test_primary_attach_initial_id_mismatch_is_typed(tmp_path: Path) -> No
         tui_command_builder=lambda sid: ("codex", "resume", sid),
         process_launcher=process_launcher,
     )
-    spec = _build_spec().model_copy(update={"native_identity_plan": NativeIdentityPlan(
-        "assigned-id", "/store", None, "resume",
+    spec = _build_spec().model_copy(update={"native_identity": NativeIdentity(
+        "codex", "resume", "/store", "assigned-id", "assigned-id", None,
     )})
     with pytest.raises(NativeEntryMismatch) as caught:
         await launcher.run(

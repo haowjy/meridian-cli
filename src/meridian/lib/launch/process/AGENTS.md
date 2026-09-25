@@ -64,7 +64,7 @@ in the runner finalization block, before lifecycle completion. Never call
 it during execution, and never call it twice.
 
 **Assigned identity binds before exec.** When the finalized
-`native_identity_plan` carries an ID (Meridian-minted create, verified resume, or
+`native_identity` carries an ID (Meridian-minted create, verified resume, or
 fork target), the runner binds it as `source="assigned"` before starting the child;
 a conflict refuses the launch. Only plans without an ID (e.g. Claude fork) wait for
 the first owned observation. Observations bind once and never replace the key.

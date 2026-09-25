@@ -1,13 +1,19 @@
 """Claude CLI harness adapter."""
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, ClassVar, cast
 from uuid import uuid4
 
 from meridian.lib.core.conversation import Conversation, ConversationTurn, ToolCall
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
-from meridian.lib.core.native_identity import NativeIdentityPlan, NativeSessionUnavailable
+from meridian.lib.core.native_identity import (
+    LaunchIntent,
+    NativeIdentity,
+    NativeSessionUnavailable,
+    Operation,
+)
 from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     CLAUDE_SPAWN_USAGE_VARIANTS,
@@ -35,7 +41,6 @@ from meridian.lib.harness.adapter import (
 from meridian.lib.harness.bundle import (
     HarnessBundle,
     HarnessProjectionPorts,
-    project_subprocess_spec,
     register_harness_bundle,
 )
 from meridian.lib.harness.claude_preflight import (
@@ -45,14 +50,11 @@ from meridian.lib.harness.claude_preflight import (
 )
 from meridian.lib.harness.claude_sessions import (
     candidate_claude_project_dirs,
-    detect_primary_session_id,
     reconcile_tui_trampoline_session_id,
+    resolve_claude_config_root,
 )
 from meridian.lib.harness.claude_sessions import (
     project_slug as project_slug,
-)
-from meridian.lib.harness.claude_utils import (
-    has_session_identity_in_args,
 )
 from meridian.lib.harness.common import (
     extract_claude_report,
@@ -90,7 +92,6 @@ from meridian.lib.launch.launch_types import (
     TerminalSurfaceMode,
 )
 from meridian.lib.launch.request import SessionRequest
-from meridian.lib.platform import get_home_path
 from meridian.lib.safety.permissions import PermissionConfig
 
 
@@ -126,15 +127,6 @@ def _extract_passthrough_session_id(args: tuple[str, ...]) -> str:
         if token.startswith("--session-id="):
             return token.partition("=")[2].strip()
     return ""
-
-
-def _session_identity_flag(args: tuple[str, ...]) -> str:
-    for token in args:
-        if token in {"--session-id", "--resume", "--continue", "--fork-session", "-r", "-c"}:
-            return token
-        if token.startswith(("--session-id=", "--resume=", "--continue=")):
-            return token.partition("=")[0]
-    return "session identity flag"
 
 
 def _read_artifact_text(artifacts: ArtifactStore, spawn_id: SpawnId, name: str) -> str:
@@ -182,6 +174,12 @@ def _tool_call_from_payload(payload: dict[str, object]) -> ToolCall | None:
 
 class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """SubprocessHarness implementation for `claude`."""
+
+    native_identity = True
+    refused_identity_flags = frozenset(
+        ["--session-id", "--resume", "--continue", "--fork-session", "-r", "-c"]
+    )
+    resolves_untracked_source = True
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_CLAUDE_SUBPROCESS
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_CLAUDE
@@ -283,30 +281,29 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str:
         return build_claude_adhoc_agent_json(name=name, description=description, prompt=prompt)
 
-    def plan_native_identity(self, run: SpawnParams) -> NativeIdentityPlan | None:
-        source = (run.continue_harness_session_id or "").strip()
-        if source:
-            if has_session_identity_in_args(run.extra_args):
-                flag = _session_identity_flag(run.extra_args)
-                raise ValueError(f"Tracked Claude launch does not allow passthrough {flag}")
-            return NativeIdentityPlan(
-                None if run.continue_fork else source, None, None,
-                "fork" if run.continue_fork else "resume",
-            )
-        if has_session_identity_in_args(run.extra_args):
-            flag = _session_identity_flag(run.extra_args)
-            raise ValueError(f"Tracked Claude launch does not allow passthrough {flag}")
-        return NativeIdentityPlan(str(uuid4()), None, None, "create")
+    def native_store_for_launch(
+        self,
+        *,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+        spawn_id: SpawnId,
+        operation: Operation,
+        interactive: bool,
+    ) -> str:
+        return str(
+            (
+                resolve_claude_config_root(child_env, child_cwd)
+                / "projects"
+                / project_slug(child_cwd)
+            ).resolve()
+        )
 
-    def native_store_for_launch(self, *, child_env: dict[str, str], child_cwd: Path) -> str:
-        home = Path(child_env["HOME"]) if child_env.get("HOME") else get_home_path()
-        configured = child_env.get("CLAUDE_CONFIG_DIR", "").strip()
-        root = Path(configured) if configured else home / ".claude"
-        if configured == "~" or configured.startswith("~/"):
-            root = home / configured.removeprefix("~").lstrip("/")
-        if not root.is_absolute():
-            root = child_cwd / root
-        return str((root / "projects" / project_slug(child_cwd)).resolve())
+    def assign_session_id(self, intent: LaunchIntent, *, store: Path) -> str | None:
+        return (
+            str(uuid4())
+            if intent.operation == "create"
+            else super().assign_session_id(intent, store=store)
+        )
 
     def resolve_launch_spec(
         self, run: SpawnParams, perms: PermissionResolver
@@ -323,7 +320,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 "max": "max",
             }.get(normalized_value, normalized_value)
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
-        identity_plan = self.plan_native_identity(run)
 
         # prompt_file_path is owned by bind_launch_context, which sets it to
         # <spawn-log-dir>/system-prompt.md (the single artifact-dir authority).
@@ -341,15 +337,9 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             effort=normalized_effort,
             prompt=run.prompt,
             continue_session_id=continue_session_id,
-            native_identity_plan=identity_plan,
             continue_fork=run.continue_fork and continue_session_id is not None,
             permission_resolver=perms,
             extra_args=run.extra_args,
-            claude_session_seed_id=(
-                identity_plan.harness_session_id
-                if identity_plan and identity_plan.operation == "create"
-                else None
-            ),
             interactive=run.interactive,
             mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
@@ -373,11 +363,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             child_cwd=child_cwd,
             passthrough_args=passthrough_args,
         )
-
-    def build_command(self, run: SpawnParams, perms: PermissionResolver) -> list[str]:
-        spec = self.resolve_launch_spec(run, perms)
-        base_command = self.PRIMARY_BASE_COMMAND if spec.interactive else self.BASE_COMMAND
-        return project_subprocess_spec(self.id, spec, base_command=base_command)
 
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:
         # MCP injection is off by default — agents use the CLI instead.
@@ -406,23 +391,19 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     ) -> HarnessPrelaunchState:
         _ = runtime_root, spawn_id
 
-        effective_config_root = Path(
-            self.native_store_for_launch(child_env=child_env, child_cwd=child_cwd)
-        ).parent.parent
+        effective_config_root = resolve_claude_config_root(child_env, child_cwd)
         if record_effective_config_dir is not None:
             record_effective_config_dir(str(effective_config_root))
 
         source_id = session.requested_harness_session_id
         if source_id:
             source_store = session.source_native_store
-            if session.continue_source_tracked and not source_store:
-                raise NativeSessionUnavailable(session.continue_source_ref or source_id, "unbound")
             ensure_claude_session_accessible(
                 source_session_id=source_id,
                 child_cwd=child_cwd,
-                source_native_store=Path(source_store) if source_store else Path(
-                    self.native_store_for_launch(child_env=child_env, child_cwd=child_cwd)
-                ),
+                source_native_store=Path(source_store)
+                if source_store
+                else (effective_config_root / "projects" / project_slug(child_cwd)),
                 target_config_root=effective_config_root,
             )
 
@@ -540,21 +521,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             ),
         )
 
-    def detect_primary_session_id(
-        self,
-        *,
-        project_root: Path,
-        started_at_epoch: float,
-        started_at_local_iso: str | None,
-        expected_session_id: str | None = None,
-    ) -> str | None:
-        _ = started_at_local_iso
-        return detect_primary_session_id(
-            project_root,
-            started_at_epoch,
-            expected_session_id=expected_session_id,
-        )
-
     def observe_session_id(
         self,
         *,
@@ -587,25 +553,41 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return normalized_current
 
     def observe_primary_session_id(
-        self, *, native_identity_plan: NativeIdentityPlan | None,
-        command: tuple[str, ...], child_env: dict[str, str], launch_child_cwd: Path,
-        started_at_epoch: float | None, expected_session_id: str,
-        requested_session_id: str, resolved_session_id: str, exit_code: int,
+        self,
+        *,
+        native_identity: NativeIdentity | None,
+        command: tuple[str, ...],
+        child_env: dict[str, str],
+        launch_child_cwd: Path,
+        started_at_epoch: float | None,
+        expected_session_id: str,
+        requested_session_id: str,
+        resolved_session_id: str,
+        exit_code: int,
     ) -> PrimarySessionObservation:
         entry = resolved_session_id or expected_session_id
         successor = reconcile_tui_trampoline_session_id(
-            project_root=launch_child_cwd, recorded_session_id=entry,
+            project_root=launch_child_cwd,
+            recorded_session_id=entry,
             started_at_epoch=started_at_epoch,
-            native_store=(Path(native_identity_plan.native_store)
-                          if native_identity_plan and native_identity_plan.native_store else None),
+            native_store=(
+                Path(native_identity.native_store)
+                if native_identity and native_identity.native_store
+                else None
+            ),
         )
         return PrimarySessionObservation(
             trampoline_successor_id=successor if successor != entry else None,
         )
 
     def resolve_native_session_file(
-        self, *, project_root: Path, session_id: str, native_store: Path,
+        self,
+        *,
+        session_id: str,
+        native_store: Path,
     ) -> Path | None:
+        if Path(session_id).name != session_id or ".." in session_id:
+            raise NativeSessionUnavailable(session_id, "missing")
         candidate = native_store / f"{session_id}.jsonl"
         if not candidate.is_file():
             return None

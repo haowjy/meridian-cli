@@ -2058,12 +2058,6 @@ def bind_launch_context(
         )
     elif harness.id == HarnessId.CLAUDE:
         spec = spec.model_copy(update={"prompt_file_path": system_prompt_path.as_posix()})
-    if spec.native_identity_plan is not None and bindings.forked_harness_session_id:
-        spec = spec.model_copy(update={"native_identity_plan": replace(
-            spec.native_identity_plan,
-            harness_session_id=bindings.forked_harness_session_id,
-            operation="fork",
-        )})
     launch_env_overrides: dict[str, str] = {}
     if opencode_version is not None:
         launch_env_overrides["MERIDIAN_HARNESS_OPENCODE_VERSION"] = opencode_version
@@ -2110,9 +2104,11 @@ def bind_launch_context(
         permission_config=permission_config,
         runtime_env_overrides=bind_env_overrides,
     )
-    if spec.native_identity_plan is not None:
-        spec = spec.model_copy(update={"native_identity_plan": harness.finalize_native_identity(
-            spec.native_identity_plan, child_env=env, child_cwd=child_cwd,
+    intent = harness.plan_native_identity(
+        run_params, preforked_session_id=bindings.forked_harness_session_id)
+    if intent is not None:
+        spec = spec.model_copy(update={"native_identity": harness.finalize_native_identity(
+            intent, child_env=env, child_cwd=child_cwd,
             session=resolved_request.session, spawn_id=SpawnId(bindings.spawn_id),
             interactive=run_params.interactive,
         )})

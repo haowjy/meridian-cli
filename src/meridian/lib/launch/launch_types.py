@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast, runtime_checkabl
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy as ResolvedExecutionPolicy
-from meridian.lib.core.native_identity import NativeIdentityPlan
+from meridian.lib.core.native_identity import NativeIdentity
 
 if TYPE_CHECKING:
     from meridian.lib.core.types import HarnessId
@@ -80,7 +80,7 @@ class ResolvedLaunchSpec(BaseModel):
     # Session continuity
     continue_session_id: str | None = None
     continue_fork: bool = False
-    native_identity_plan: NativeIdentityPlan | None = None
+    native_identity: NativeIdentity | None = None
 
     # Permissions
     permission_resolver: PermissionResolver
@@ -109,7 +109,6 @@ class ResolvedLaunchSpec(BaseModel):
     agents_payload: str | None = None
     prompt_file_path: str | None = None
     claude_native_agents_enabled: bool = False
-    claude_session_seed_id: str | None = None
     disallowed_tools: tuple[str, ...] = ()
 
     # Claude + Codex

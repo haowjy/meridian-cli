@@ -119,7 +119,7 @@ a winner. `resolve_native_session_file()` takes an explicit native store;
 `resolve_session_file()` accepts legacy config hints or untracked raw references.
 Never reinterpret a recorded Claude project store as a config root. Claude
 store derives from the final child environment without a Meridian
-`CLAUDE_CONFIG_DIR` override. Preparation validates the exact native header and
+`CLAUDE_CONFIG_DIR` override. Finalization validates the exact native header (including dry-run); preparation
 seeds `<store>/<id>.jsonl` from `<source_native_store>/<id>.jsonl`: atomic symlink
 replacement within the same config root, otherwise atomic copy. Missing sources refuse
 before exec, including when an ambient same-ID file exists. Model reads use the

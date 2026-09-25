@@ -134,11 +134,11 @@ async def streaming_serve(
             metadata=build_session_metadata(launch_ctx.resolved_request),
             request=launch_ctx.resolved_request.session,
             harness_session_id=(
-                launch_ctx.binding.spec.native_identity_plan.harness_session_id or ""
-                if launch_ctx.binding.spec.native_identity_plan else ""
+                launch_ctx.binding.spec.native_identity.session_id or ""
+                if launch_ctx.binding.spec.native_identity else ""
             ),
-            native_store=(launch_ctx.binding.spec.native_identity_plan.native_store
-                          if launch_ctx.binding.spec.native_identity_plan else None),
+            native_store=(launch_ctx.binding.spec.native_identity.native_store
+                          if launch_ctx.binding.spec.native_identity else None),
             control_root=str(launch_ctx.control_root),
             execution_cwd=str(launch_ctx.binding.child_cwd),
             spawn_id=str(spawn_id),
@@ -148,8 +148,8 @@ async def streaming_serve(
             assert attempt is not None
             spawn_store.update_spawn(runtime_root, spawn_id, chat_id=managed.chat_id)
             observed_session_id = (
-                launch_ctx.binding.spec.native_identity_plan.harness_session_id
-                if launch_ctx.binding.spec.native_identity_plan else None
+                launch_ctx.binding.spec.native_identity.session_id
+                if launch_ctx.binding.spec.native_identity else None
             )
 
             def record_identity(session_id: str) -> None:

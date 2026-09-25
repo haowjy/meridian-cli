@@ -108,7 +108,7 @@ def _resolve_adapter_file_target(
 ) -> SessionLogTarget | None:
     if native_store is not None:
         candidate = adapter.resolve_native_session_file(
-            project_root=project_root, session_id=session_id, native_store=native_store,
+            session_id=session_id, native_store=native_store,
         )
     elif not tracked:
         candidate = adapter.resolve_session_file(

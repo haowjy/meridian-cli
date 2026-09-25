@@ -146,7 +146,7 @@ def test_claude_reconciliation_keeps_tui_trampoline_identity(
     )
 
     observation = adapter.observe_primary_session_id(
-        native_identity_plan=None, command=(), child_env={}, launch_child_cwd=project_root,
+        native_identity=None, command=(), child_env={}, launch_child_cwd=project_root,
         started_at_epoch=now - 1, expected_session_id=recorded_session_id,
         requested_session_id="", resolved_session_id=recorded_session_id, exit_code=0,
     )

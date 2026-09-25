@@ -47,10 +47,7 @@ class ClaudeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
         _ = runtime_root, launch_env, child_cwd
         if spec.continue_session_id and spec.continue_session_id.strip():
             return spec.continue_session_id.strip()
-        seeded_session_id = spec.claude_session_seed_id
-        if seeded_session_id:
-            return seeded_session_id
-        return None
+        return spec.native_identity.session_id if spec.native_identity else None
 
     def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
         specific = _extract_claude_usage(artifacts, spawn_id)

@@ -78,7 +78,6 @@ def read_last_executed_model(
 
             adapter = get_default_harness_registry().get(HarnessId(harness))
             native = adapter.resolve_native_session_file(
-                project_root=Path(context.project_root or "."),
                 session_id=normalized_session_id,
                 native_store=Path(context.native_store),
             )

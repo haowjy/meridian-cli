@@ -55,6 +55,10 @@ class SessionRequest(BaseModel):
     primary_session_mode: str | None = None
     conversation_intent: ConversationModelSelection | None = None
 
+    @property
+    def source_ref(self) -> str:
+        return self.continue_source_ref or self.requested_harness_session_id or "source"
+
 
 def is_exact_continue_session(session: SessionRequest) -> bool:
     """True when a session request represents exact continuation, not fork/fresh."""
