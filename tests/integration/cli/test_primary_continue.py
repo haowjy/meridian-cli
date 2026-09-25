@@ -597,3 +597,45 @@ def test_primary_continue_unbound_chat_refuses_to_guess(tmp_path: Path) -> None:
         ValueError, match=f"{chat_id} has no verified native session; cannot continue",
     ):
         _run_primary_continue(tmp_path, chat_id)
+
+
+@pytest.mark.parametrize("operation", ["continue", "fork"])
+def test_tracked_native_id_without_harness_never_infers_from_ambient_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str,
+) -> None:
+    from meridian.lib.harness.claude_sessions import project_slug
+    from meridian.lib.ops import reference
+
+    runtime_root = _state_root(tmp_path)
+    native_store = tmp_path / "ambient-claude"
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(native_store))
+    native_project = native_store / "projects" / project_slug(tmp_path)
+    native_project.mkdir(parents=True)
+    (native_project / "native-known.jsonl").write_text(
+        '{"type":"agent-setting","sessionId":"native-known"}\n', encoding="utf-8",
+    )
+    chat_id = session_store.start_session(
+        runtime_root, harness="", harness_session_id="native-known", model="sonnet",
+    )
+    session_store.stop_session(runtime_root, chat_id)
+
+    resolved = reference.resolve_session_reference(tmp_path, chat_id)
+    assert resolved.harness is None
+    assert resolved.missing_harness_session_id
+    assert resolved.authoritative_harness_session_id is None
+
+    def forbid_adapter_inference(*args: object, **kwargs: object) -> None:
+        pytest.fail("tracked references must not query adapters")
+
+    monkeypatch.setattr(
+        reference, "infer_harness_from_untracked_session_ref", forbid_adapter_inference,
+    )
+    assert reference.resolve_session_reference(tmp_path, chat_id) == resolved
+    with pytest.raises(
+        ValueError, match=f"{chat_id} has no verified native session; cannot continue/fork",
+    ):
+        _run_primary_continue(
+            tmp_path, chat_id if operation == "continue" else "",
+            fork_ref=chat_id if operation == "fork" else None,
+        )

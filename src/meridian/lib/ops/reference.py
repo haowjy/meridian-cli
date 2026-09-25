@@ -49,7 +49,7 @@ class ResolvedSessionReference:
 
     @property
     def missing_harness_session_id(self) -> bool:
-        """True when a tracked reference has no exact recorded native ID."""
+        """True when a tracked reference lacks a complete recorded native key."""
 
         return self.tracked and self.authoritative_harness_session_id is None
 
@@ -63,7 +63,9 @@ class ResolvedSessionReference:
 
     @property
     def authoritative_harness_session_id(self) -> str | None:
-        """Both direct and recovered IDs now come only from recorded state."""
+        """A tracked ID is authoritative only in its recorded harness namespace."""
+        if self.tracked and not self.harness:
+            return None
         return self.effective_harness_session_id
 
 
@@ -192,18 +194,10 @@ def _build_tracked_reference(
     source_claude_config_dir: str | None = None,
     source_pi_session_dir: str | None = None,
     source_launch_policy_snapshot: LaunchPolicySnapshot | None = None,
-    project_root: Path,
 ) -> ResolvedSessionReference:
-    resolved_harness = stored_harness
-    if resolved_harness is None and harness_session_id is not None:
-        inferred = infer_harness_from_untracked_session_ref(
-            project_root,
-            harness_session_id,
-        )
-        resolved_harness = str(inferred) if inferred is not None else None
     return ResolvedSessionReference(
         harness_session_id=harness_session_id,
-        harness=resolved_harness,
+        harness=stored_harness,
         source_chat_id=source_chat_id,
         source_model=source_model,
         source_agent=source_agent,
@@ -268,7 +262,6 @@ def _resolve_spawn_reference(
         source_claude_config_dir=_normalize_optional(row.claude_config_dir),
         source_pi_session_dir=source_pi_session_dir,
         source_launch_policy_snapshot=row.launch_policy_snapshot,
-        project_root=project_root,
     )
 
 
@@ -325,7 +318,6 @@ def _reference_from_session(
             runtime_root,
             session,
         ),
-        project_root=project_root,
     )
 
 
