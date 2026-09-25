@@ -17,6 +17,7 @@ import meridian.cli.primary_launch as primary_launch_module
 import meridian.lib.launch.context as launch_context
 from meridian.cli.primary_launch import PrimaryLaunchOutput, run_primary_launch
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import LaunchRequest, LaunchResult, launch_primary
@@ -50,14 +51,19 @@ def _seed_primary_spawn(
     snapshot = launch_policy_snapshot
     store = runtime_root / "native-codex" / "sessions"
     store.mkdir(parents=True, exist_ok=True)
+    native_header = (
+        {"type": "agent-setting", "sessionId": harness_session_id}
+        if snapshot is not None and snapshot.harness == "claude"
+        else {"type": "session_meta", "payload": {"id": harness_session_id}}
+    )
     (store / f"rollout-2026-01-01T00-00-00-{harness_session_id}.jsonl").write_text(
-        json.dumps({"type": "session_meta", "payload": {"id": harness_session_id}}) + "\n",
+        json.dumps(native_header) + "\n",
     )
     session_store.start_session(
         runtime_root, chat_id="c-primary", spawn_id=spawn_id,
         harness=snapshot.harness if snapshot is not None else "codex",
         harness_session_id=harness_session_id or "",
-        native_store=str(store) if snapshot is None or snapshot.harness == "codex" else None,
+        native_store=str(store),
         model=snapshot.model if snapshot is not None else "gpt-5.3-codex",
     )
     session_store.stop_session(runtime_root, "c-primary")
@@ -196,10 +202,16 @@ def test_primary_continue_spawn_session_ref_uses_linked_spawn_snapshot(
         harness_session_id="session-spawn",
         launch_policy_snapshot=snapshot,
     )
+    native_store = runtime_root / "native-claude" / "projects"
+    native_store.mkdir(parents=True, exist_ok=True)
+    (native_store / "session-spawn.jsonl").write_text(
+        json.dumps({"type": "agent-setting", "sessionId": "session-spawn"}) + "\n",
+    )
     spawn_chat_id = session_store.start_session(
         runtime_root,
         harness="claude",
         harness_session_id="session-spawn",
+        native_store=str(native_store),
         model=snapshot.model,
         chat_id="c-spawn",
         agent=snapshot.agent or "agent-spawn",
@@ -452,10 +464,16 @@ def test_fork_old_harness_generation_preserves_selected_history(
     project_root = tmp_path / "repo"
     project_root.mkdir()
     root = _state_root(project_root)
+    native_store = root / "native-codex" / "sessions"
+    native_store.mkdir(parents=True, exist_ok=True)
+    (native_store / "rollout-2026-01-01T00-00-00-older-native.jsonl").write_text(
+        json.dumps({"type": "session_meta", "payload": {"id": "older-native"}}) + "\n",
+    )
     source = session_store.start_session(
         root,
         harness="codex",
         harness_session_id="older-native",
+        native_store=str(native_store),
         model="gpt-5.3-codex",
         kind="primary",
     )
@@ -601,9 +619,53 @@ def test_primary_continue_unbound_chat_refuses_to_guess(tmp_path: Path) -> None:
     )
     session_store.stop_session(runtime_root, chat_id)
     with pytest.raises(
-        ValueError, match=f"{chat_id} has no verified native session; cannot continue",
+        NativeSessionUnavailable,
+        match=f"unbound: no verified native session for {chat_id}",
     ):
         _run_primary_continue(tmp_path, chat_id)
+
+
+@pytest.mark.parametrize("harness", ["claude", "codex", "opencode", "pi"])
+@pytest.mark.parametrize("operation", ["continue", "fork"])
+def test_tracked_chat_without_native_store_refuses_continue_and_fork(
+    tmp_path: Path, harness: str, operation: str,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    chat_id = session_store.start_session(
+        runtime_root, harness=harness, harness_session_id="native-id", model="test",
+    )
+    session_store.stop_session(runtime_root, chat_id)
+    with pytest.raises(NativeSessionUnavailable) as exc:
+        _run_primary_continue(
+            tmp_path,
+            continue_ref=chat_id if operation == "continue" else None,
+            fork_ref=chat_id if operation == "fork" else None,
+            dry_run=True,
+        )
+    assert (exc.value.ref, exc.value.reason) == (chat_id, "unbound")
+
+
+def test_complete_claude_key_projects_exact_resume_command(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    native_store = runtime_root / "native-claude" / "projects"
+    native_store.mkdir(parents=True, exist_ok=True)
+    native_id = "claude-session-42"
+    (native_store / f"{native_id}.jsonl").write_text(
+        json.dumps({"type": "agent-setting", "sessionId": native_id}) + "\n",
+    )
+    chat_id = session_store.start_session(
+        runtime_root,
+        harness="claude",
+        harness_session_id=native_id,
+        native_store=str(native_store),
+        model="sonnet",
+    )
+    session_store.stop_session(runtime_root, chat_id)
+
+    output = _run_primary_continue(tmp_path, chat_id, dry_run=True)
+
+    assert "--resume" in output.command
+    assert native_id in output.command
 
 
 @pytest.mark.parametrize("operation", ["continue", "fork"])
@@ -640,7 +702,8 @@ def test_tracked_native_id_without_harness_never_infers_from_ambient_store(
     )
     assert reference.resolve_session_reference(tmp_path, chat_id) == resolved
     with pytest.raises(
-        ValueError, match=f"{chat_id} has no verified native session; cannot continue/fork",
+        NativeSessionUnavailable,
+        match=f"unbound: no verified native session for {chat_id}",
     ):
         _run_primary_continue(
             tmp_path, chat_id if operation == "continue" else "",

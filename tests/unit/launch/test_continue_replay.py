@@ -65,7 +65,7 @@ def test_build_continue_replay_contract_from_snapshot() -> None:
     assert contract.session.source_execution_cwd == "/tmp/source"
 
 
-def test_continue_replay_source_from_reference_uses_authoritative_session_id() -> None:
+def test_continue_replay_source_from_reference_ignores_recovered_tracked_id() -> None:
     resolved = ResolvedSessionReference(
         harness_session_id=None,
         harness="claude",
@@ -91,7 +91,7 @@ def test_continue_replay_source_from_reference_uses_authoritative_session_id() -
         ),
     )
 
-    assert contract.session.requested_harness_session_id == "recovered-session"
+    assert contract.session.requested_harness_session_id is None
     assert contract.work_id == "source-work"
     assert contract.task_dir == "/tmp/source"
     assert contract.model == "claude-sonnet-4-6"

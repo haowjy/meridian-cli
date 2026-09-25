@@ -63,10 +63,14 @@ class ResolvedSessionReference:
 
     @property
     def authoritative_harness_session_id(self) -> str | None:
-        """A tracked ID is authoritative only in its recorded harness namespace."""
-        if self.tracked and not self.harness:
+        """A tracked ID is usable only as part of its complete recorded native key."""
+        if self.tracked and not (
+            _normalize_optional(self.harness)
+            and _normalize_optional(self.source_native_store)
+            and _normalize_optional(self.harness_session_id)
+        ):
             return None
-        return self.effective_harness_session_id
+        return self.harness_session_id if self.tracked else self.effective_harness_session_id
 
 
 def _normalize_optional(value: str | None) -> str | None:

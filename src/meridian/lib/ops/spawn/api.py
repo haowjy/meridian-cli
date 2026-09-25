@@ -18,6 +18,7 @@ from meridian.lib.bootstrap.services import (
 from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import max_depth_reached
+from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.core.spawn_lifecycle import (
     ACTIVE_SPAWN_STATUSES,
@@ -225,11 +226,6 @@ def _forked_from_output(payload: SpawnCreateInput) -> str | None:
     if source_ref:
         return source_ref
     return None
-
-
-def _missing_follow_up_session_error(source_ref: str) -> str:
-    normalized = source_ref.strip()
-    return f"{normalized} has no verified native session; cannot continue/fork."
 
 
 def _validate_exact_work_id(work_id: str) -> str:
@@ -2193,7 +2189,7 @@ def spawn_fork_sync(
         runtime_root=runtime_root,
     )
     if resolved_reference.missing_harness_session_id:
-        raise ValueError(_missing_follow_up_session_error(normalized_source_ref))
+        raise NativeSessionUnavailable(normalized_source_ref, "unbound")
 
     requested_model = payload.model.strip()
     requested_agent = payload.agent
@@ -2286,9 +2282,7 @@ def spawn_continue_sync(
         harness_hint=payload.harness,
     )
     if resolved_reference.missing_harness_session_id:
-        raise ValueError(
-            f"Spawn '{resolved_spawn_id}' has no recorded session — cannot continue/fork."
-        )
+        raise NativeSessionUnavailable(resolved_spawn_id, "unbound")
 
     _reject_continue_policy_overrides(payload)
     create_input = _build_continue_create_input(

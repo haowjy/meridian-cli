@@ -11,9 +11,9 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 from meridian.cli.argv_normalization import validate_fork_mode
-from meridian.cli.utils import missing_fork_session_error
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.registry import get_default_harness_registry
@@ -232,9 +232,7 @@ def run_primary_launch(
             project_root=project_root, continue_ref=resume_target, harness_hint=harness,
         )
         if resolved_continue.missing_harness_session_id:
-            raise ValueError(
-                missing_fork_session_error(resume_target)
-            )
+            raise NativeSessionUnavailable(resume_target, "unbound")
         continue_contract = build_continue_replay_contract(
             source=continue_replay_source_from_reference(
                 source_ref=resume_target,
@@ -280,9 +278,7 @@ def run_primary_launch(
             project_root=project_root, continue_ref=selected_fork_target
         )
         if resolved_fork.missing_harness_session_id:
-            raise ValueError(
-                missing_fork_session_error(selected_fork_target)
-            )
+            raise NativeSessionUnavailable(selected_fork_target, "unbound")
 
         source_harness = (
             resolved_fork.harness.strip()
