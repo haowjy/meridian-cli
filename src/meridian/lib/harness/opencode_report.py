@@ -7,18 +7,11 @@ from typing import cast
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import ArtifactStore
 from meridian.lib.harness.common import (
-    extract_session_id_from_artifacts_with_patterns,
     extract_text,
     iter_json_lines_artifact,
     read_session_id_artifact,
 )
 from meridian.lib.launch.constants import OUTPUT_FILENAME
-
-# Explicit session keys only. The bare ``"id"`` key is deliberately excluded:
-# every OpenCode event envelope carries ``payload.id`` as an *event* id
-# (``evt_…``), so matching ``"id"`` makes the artifact fallback return an event
-# id as if it were a conversation id.
-_OPENCODE_SESSION_ID_JSON_KEYS = ("session_id", "sessionId", "sessionID")
 
 # OpenCode conversation ids are ``ses_…``; event ids are ``evt_…``. The artifact
 # fallback must never report a non-session value as the native identity.
@@ -255,11 +248,8 @@ def extract_opencode_session_id_from_artifacts(
         read_session_id_artifact(artifacts, spawn_id)
         or _resolve_opencode_terminal_session_id(payloads)
         or _resolve_opencode_primary_session_id(payloads)
-        or extract_session_id_from_artifacts_with_patterns(
-            artifacts,
-            spawn_id,
-            json_keys=_OPENCODE_SESSION_ID_JSON_KEYS,
-        )
+        or next((session_id for payload in payloads
+                 if (session_id := extract_opencode_session_id(payload))), None)
     )
     return resolved if _is_opencode_session_id(resolved) else None
 

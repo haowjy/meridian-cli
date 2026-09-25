@@ -1197,7 +1197,7 @@ def run_harness_process(
                         resolved_session_id=resolved_harness_session_id,
                         exit_code=exit_code,
                     )
-                    if observation.trampoline_successor_id:
+                    if primary_spawn_id is not None and observation.trampoline_successor_id:
                         spawn_store.update_spawn(
                             runtime_root, primary_spawn_id,
                             trampoline_successor_id=observation.trampoline_successor_id,

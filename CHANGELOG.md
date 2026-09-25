@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Exercise Codex/OpenCode owned-event, absent-event and prose-only shell launches; remove OpenCode recursive identity inference exposed by the new shim case. Claude seed startup must succeed.
+
 - Record Claude fullscreen trampoline successors separately on runs; keep the entry chat and native binding unchanged.
 
 - Record the effective OpenCode database namespace (including OPENCODE_DB); normalize relative Codex homes against the child cwd.

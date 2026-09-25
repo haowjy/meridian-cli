@@ -26,9 +26,10 @@ from tests.support.launch import stub_bundle_request_and_resolve
 NATIVE_ID = "12345678-1234-4234-8234-123456789abc"
 
 
+@pytest.mark.parametrize("signal", ["owned", "prose", "nested", "none"])
 @pytest.mark.parametrize("harness", [HarnessId.CODEX, HarnessId.OPENCODE])
 def test_owned_event_pins_store(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, harness: HarnessId
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, harness: HarnessId, signal: str
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "meridian-home"))
@@ -42,6 +43,12 @@ def test_owned_event_pins_store(
         if harness == HarnessId.CODEX
         else {"type": "text", "sessionID": NATIVE_ID, "part": {"text": "done"}}
     )
+    if signal != "owned":
+        event = {"type": "item.completed", "item": {"type": "agent_message"}}
+        if signal == "prose":
+            event["item"]["text"] = f"Example: codex resume {NATIVE_ID}"
+        elif signal == "nested":
+            event["item"]["session_id"] = NATIVE_ID
     (tmp_path / "fake-bin" / str(harness)).write_text(
         "#!/bin/sh\n"
         'if [ "$1" = "--version" ]; then echo "1.0.0"; exit 0; fi\n'
@@ -72,15 +79,20 @@ def test_owned_event_pins_store(
         harness_id, spawn_id, log_dir, control_root, task_cwd, env, spec, launcher, on_running
     ):
         # Replace the external backend/TUI transport, not identity parsing or persistence.
-        completed = subprocess.run(
+        process = subprocess.Popen(
             [str(tmp_path / "fake-bin" / str(harness_id))],
             env=env,
             cwd=task_cwd or control_root,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            check=True,
         )
-        payload = json.loads(completed.stdout)
+        on_running(process.pid)
+        stdout, _stderr = process.communicate(timeout=5)
+        assert process.returncode == 0
+        log_dir.mkdir(parents=True, exist_ok=True)
+        (log_dir / "output.jsonl").write_text(stdout)
+        payload = json.loads(stdout)
         native_id = get_harness_bundle(harness_id).extractor.detect_session_id_from_event(
             RawHarnessEvent(event_type=payload["type"], harness_id=str(harness_id), payload=payload)
         )
@@ -90,7 +102,12 @@ def test_owned_event_pins_store(
     assert outcome.exit_code == 0
     assert outcome.chat_id
     record = session_store.get_session_record(root / ".meridian", outcome.chat_id)
-    assert record and record.harness_session_id == NATIVE_ID
+    assert record
+    if signal != "owned":
+        assert not record.harness_session_id
+        assert record.native_store is None
+        return
+    assert record.harness_session_id == NATIVE_ID
     assert record.native_store == str(
         tmp_path / ("codex/sessions" if harness == HarnessId.CODEX else "opencode/opencode.db")
     )
@@ -105,6 +122,7 @@ def test_owned_event_pins_store(
         native_file.write_text("{}\n")
     else:
         from tests.support.opencode_db import write_opencode_db_session
+
         write_opencode_db_session(db_path=store, session_id=NATIVE_ID, messages=[])
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "elsewhere"))
     monkeypatch.setenv("OPENCODE_HOME", str(tmp_path / "elsewhere"))

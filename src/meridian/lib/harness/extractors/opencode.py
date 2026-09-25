@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
@@ -20,28 +19,19 @@ from meridian.lib.harness.common import (
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.opencode_report import (
     extract_opencode_report,
+    extract_opencode_session_id,
     extract_opencode_session_id_from_artifacts,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
-from .base import HarnessExtractor, session_from_mapping_with_keys
-
-_SESSION_ID_TEXT_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(
-        r"\bopencode\b[^\n]*?--session(?:=|\s+)([A-Za-z0-9][A-Za-z0-9._:-]{5,})\b",
-        re.IGNORECASE,
-    ),
-)
+from .base import HarnessExtractor
 
 
 class OpenCodeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
     """Extractor implementation for OpenCode artifacts and events."""
 
     def detect_session_id_from_event(self, event: RawHarnessEvent) -> str | None:
-        return session_from_mapping_with_keys(
-            event.payload,
-            ("session_id", "sessionId", "sessionID", "id"),
-        )
+        return extract_opencode_session_id(dict(event.payload))
 
     def detect_session_id_from_artifacts(
         self,
