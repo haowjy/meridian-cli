@@ -109,6 +109,10 @@ already-known ID, as `observed`; observations bind once and cannot overwrite.
 It must not mutate adapter-instance state. Cwd, timestamps, logs, and newest-file
 or prefix scans never establish tracked chat identity.
 
+`legacy_native_stores.py` derives one-time import candidates from recorded facts,
+using these same store formats and exact validators. Store or header-contract
+changes must preserve that import seam; it is not a runtime repair fallback.
+
 **Native transcript resolution is exact.** Use the recorded store and full native
 ID; multiple matching files fail as `ambiguous_native_file`, rather than selecting
 a winner. `resolve_native_session_file()` takes an explicit native store;

@@ -16,6 +16,13 @@ ops/          ← policy: access control, input validation, lifecycle sequencing
       └──→ harness/     ← process adapters (indirectly through launch/)
 ```
 
+### Runtime authority and legacy import
+
+Both runtime-authority resolvers in `runtime.py` trigger the once-only legacy
+native-key import. Even a read command can append bindings on its first run;
+strictly read-only audits use the standalone `legacy_native_import` dev module,
+not runtime resolution. See [state context](../../state/.context/CONTEXT.md).
+
 ### ops/spawn/ — The Spawn Policy Layer
 
 The spawn subprocess is the second of three driving adapters into `lib/launch/`.
