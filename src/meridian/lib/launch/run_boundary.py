@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import structlog
 
@@ -12,8 +13,10 @@ from meridian.lib.core.native_identity import (
     NativeKeyFields,
     RunBoundary,
 )
+from meridian.lib.core.types import OptionalPersistedChatId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.spawn.model import RunBoundaryOutcome
 
 logger = structlog.get_logger()
 
@@ -78,9 +81,11 @@ def finalize_run_boundary(
                 session_id=exit_key.session_id,
             )
     spawn_store.update_spawn(
-        runtime_root, spawn_id, entry_chat_id=entry.chat_id,
-        exit_chat_id=exit_chat_id,
-        exit_identity=("mismatch" if isinstance(identity_error, NativeEntryMismatch)
-                       else "verified" if exit_chat_id else "unresolved"),
+        runtime_root, spawn_id,
+        run_boundary=RunBoundaryOutcome(
+            status=("mismatch" if isinstance(identity_error, NativeEntryMismatch)
+                    else "verified" if exit_chat_id else "unresolved"),
+            exit_chat_id=cast("OptionalPersistedChatId | None", exit_chat_id),
+        ),
     )
     return identity_error

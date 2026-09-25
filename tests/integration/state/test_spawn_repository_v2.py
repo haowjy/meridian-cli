@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.state.spawn.model import SpawnRecord, TerminalFacts
+from meridian.lib.state.spawn.model import RunBoundaryOutcome, SpawnRecord, TerminalFacts
 from meridian.lib.state.spawn.repository import (
     Applied,
     Decline,
@@ -71,6 +71,30 @@ def _seed_state(spawns_dir: Path, record: SpawnRecord) -> None:
         stored.model_dump_json(indent=2) + "\n",
         encoding="utf-8",
     )
+
+
+def test_dogfood_boundary_state_loads_and_continues_at_verified_exit(tmp_path: Path) -> None:
+    spawns_dir = tmp_path / "spawns"
+    _seed_state(spawns_dir, _record(status="succeeded"))
+    state_path = spawns_dir / "p1" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["entry_chat_id"] = "c-entry"
+    state["exit_chat_id"] = "c-exit"
+    state["exit_identity"] = "verified"
+    state.pop("run_boundary", None)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    loaded = read_state(spawns_dir, "p1", include_prompt=False)
+
+    assert loaded is not None
+    assert loaded.chat_id == "c1"
+    assert loaded.run_boundary == RunBoundaryOutcome(status="verified", exit_chat_id="c-exit")
+    assert loaded.continue_chat_id == "c-exit"
+
+
+def test_run_boundary_rejects_exit_without_verified_status() -> None:
+    with pytest.raises(ValueError, match="set exactly when status is verified"):
+        RunBoundaryOutcome(status="unresolved", exit_chat_id="c-exit")
 
 
 def test_v3_state_round_trips_without_prompt_body(tmp_path: Path) -> None:
@@ -145,9 +169,7 @@ def test_mutating_legacy_row_rewrites_it_as_v3(tmp_path: Path) -> None:
         "owner_history_id",
         "forked_from_history_id",
         "retained_history_ids",
-        "entry_chat_id",
-        "exit_chat_id",
-        "exit_identity",
+        "run_boundary",
     ):
         legacy.pop(key)
     state_path.write_text(json.dumps(legacy), encoding="utf-8")

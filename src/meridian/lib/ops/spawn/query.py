@@ -632,8 +632,7 @@ def detail_from_row(
 
     terminal = row.terminal
     return SpawnDetailOutput(
-        boundary_summary=(run_boundary_summary(resolved_runtime_root, row.id)
-                          if resolved_runtime_root else None),
+        boundary_summary=run_boundary_summary(row),
         spawn_id=row.id,
         status=row.status,
         model=row.model or "",

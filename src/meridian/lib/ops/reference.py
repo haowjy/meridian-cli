@@ -15,7 +15,6 @@ from meridian.lib.ops.reference_recovery import (
     RecoveryResult,
     recover_harness_session_id,
 )
-from meridian.lib.ops.run_boundary import post_run_continue_chat_id
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.history_index import indexed_spawn_scan
@@ -234,15 +233,10 @@ def _resolve_spawn_reference(
     bound_session = session_identity.get_session_record_for_spawn(
         runtime_root, row.id, require_harness_session_id=False,
     )
-    target_chat_id = post_run_continue_chat_id(
-        entry_chat_id=row.entry_chat_id or row.chat_id,
-        exit_identity=row.exit_identity,
-        exit_chat_id=row.exit_chat_id,
-        status=row.status,
-    )
+    target_chat_id = row.continue_chat_id
     target_session = (
         session_store.get_session_record(runtime_root, target_chat_id)
-        if target_chat_id and target_chat_id != (row.entry_chat_id or row.chat_id)
+        if target_chat_id and target_chat_id != row.chat_id
         else None
     )
     return _build_tracked_reference(

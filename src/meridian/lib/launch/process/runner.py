@@ -152,13 +152,9 @@ def _write_native_primary_metadata(
     """Best-effort metadata projection for native/black-box primary launches."""
 
     try:
-        boundary_row = spawn_store.get_spawn(runtime_root, spawn_id)
         write_primary_metadata(
             spawn_dir,
             PrimaryMetadata(
-                entry_chat_id=boundary_row.entry_chat_id if boundary_row else None,
-                exit_chat_id=boundary_row.exit_chat_id if boundary_row else None,
-                exit_identity=boundary_row.exit_identity if boundary_row else None,
                 managed_backend=False,
                 launcher_pid=launcher_pid,
                 backend_pid=None,
