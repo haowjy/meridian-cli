@@ -175,7 +175,7 @@ def test_primary_assigns_before_exec_and_verifies_exact_entry(
             root / ".meridian" / "spawns" / str(outcome.primary_spawn_id) / "primary_meta.json"
         ).read_text()
     )
-    assert meta["exit_identity"] == ("mismatch" if behavior == "mismatch" else "unresolved")
+    assert "exit_identity" not in meta
     if behavior == "fail":
         with pytest.raises(ValueError, match="native_transcript_missing"):
             context(
