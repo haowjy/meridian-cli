@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
 from meridian.lib.catalog.model_aliases import MarsResultCache
+from meridian.lib.core.clock import RealClock
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
@@ -44,11 +45,15 @@ from meridian.lib.harness.cost import estimate_usage_cost
 from meridian.lib.harness.passthrough import get_passthrough
 from meridian.lib.harness.passthrough.base import PassthroughError
 from meridian.lib.harness.registry import HarnessRegistry
-from meridian.lib.launch.artifact_io import write_projection_artifacts
+from meridian.lib.launch.artifact_io import (
+    append_runner_lifecycle_event,
+    write_projection_artifacts,
+)
 from meridian.lib.launch.constants import (
     HISTORY_FILENAME,
     OUTPUT_FILENAME,
     PRIMARY_META_FILENAME,
+    RUNNER_LIFECYCLE_FILENAME,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.run_boundary import finalize_run_boundary
@@ -1162,7 +1167,17 @@ def run_harness_process(
                                 "Native identity verification conflict: %s", native_identity_error
                             )
                             exit_code = 1
-                    native_identity_error = boundary_error or native_identity_error
+                    if boundary_error is not None:
+                        assert primary_spawn_id is not None
+                        native_identity_error = "entry_mismatch"
+                        append_runner_lifecycle_event(
+                            runtime_root, primary_spawn_id,
+                            resolve_spawn_log_dir(
+                                config_root, primary_spawn_id, runtime_root=runtime_root,
+                            ) / RUNNER_LIFECYCLE_FILENAME,
+                            clock=RealClock(), event="entry_mismatch", phase="post_exit",
+                            expected=boundary_error.expected, observed=boundary_error.observed,
+                        )
                     if native_identity_error:
                         exit_code = 1
                     (

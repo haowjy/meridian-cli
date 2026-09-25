@@ -37,6 +37,9 @@ from meridian.lib.harness.semantics import (
     NormalizedHarnessEvent,
     TerminalEventOutcome,
 )
+from meridian.lib.launch.artifact_io import (
+    append_runner_lifecycle_event as _append_runner_lifecycle_event,
+)
 from meridian.lib.launch.constants import (
     CURSOR_INACTIVITY_TIMEOUT_SECONDS,
     DEFAULT_INFRA_EXIT_CODE,
@@ -104,7 +107,6 @@ from meridian.lib.safety.guardrails import run_guardrails
 from meridian.lib.state import paths as state_paths
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import ArtifactStore, make_artifact_key
-from meridian.lib.state.atomic import append_text_line
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.session_store import NativeBindingResult, update_session_harness_id
 from meridian.lib.state.spawn.model import (
@@ -112,7 +114,6 @@ from meridian.lib.state.spawn.model import (
     FOREGROUND_LAUNCH_MODE,
     LaunchMode,
 )
-from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 from meridian.lib.streaming.spawn_manager import DrainOutcome, SpawnManager
 from meridian.lib.utils.time import minutes_to_seconds
 
@@ -263,38 +264,6 @@ def _install_signal_handlers(
                 signal.signal(signal.Signals(signum_int), prev)
 
     return _cleanup
-
-
-def _append_runner_lifecycle_event(
-    runtime_root: Path,
-    spawn_id: SpawnId,
-    path: Path,
-    *,
-    clock: Clock,
-    event: str,
-    phase: str,
-    **details: object,
-) -> None:
-    """Best-effort append of runner-owned crash diagnostics."""
-
-    payload = {
-        "event": event,
-        "timestamp": clock.utc_now_iso(),
-        "pid": os.getpid(),
-        "phase": phase,
-        **details,
-    }
-    try:
-        mutate_published_spawn_artifact(
-            runtime_root,
-            spawn_id,
-            lambda: append_text_line(
-                path,
-                json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n",
-            ),
-        )
-    except Exception:
-        logger.warning("Failed to append runner lifecycle evidence.", exc_info=True)
 
 
 _ATTEMPT_STORE_ARTIFACTS = (
@@ -1435,9 +1404,8 @@ async def execute_with_streaming(
                         conclusion.exit_code = 1
                         conclusion.failure_reason = identity_error
                 if boundary_error:
-                    identity_error = boundary_error
                     conclusion.exit_code = 1
-                    conclusion.failure_reason = boundary_error
+                    conclusion.authoritative_terminal_status = "failed"
                 if attempt.start_error is not None:
                     logger.info(
                         "Failed to execute streaming spawn attempt.",
@@ -1477,12 +1445,13 @@ async def execute_with_streaming(
                     report_bytes = report_path.read_bytes()
                     artifacts.put(make_artifact_key(run.spawn_id, REPORT_FILENAME), report_bytes)
 
-                if attempt.entry_mismatch is not None:
+                entry_mismatch = boundary_error or attempt.entry_mismatch
+                if entry_mismatch is not None:
                     conclusion.failure_reason = "entry_mismatch"
                     _record_lifecycle(
                         "entry_mismatch", attempt=attempt_number,
-                        expected=attempt.entry_mismatch.expected,
-                        observed=attempt.entry_mismatch.observed,
+                        expected=entry_mismatch.expected,
+                        observed=entry_mismatch.observed,
                     )
                     break
 

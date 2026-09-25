@@ -5,13 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from meridian.lib.harness.adapter import SubprocessHarness
+from meridian.lib.launch.errors import NativeEntryMismatch
 from meridian.lib.state import session_store, spawn_store
 
 
 def finalize_run_boundary(
     *, adapter: SubprocessHarness, child_env: dict[str, str], runtime_root: Path,
     spawn_id: str, pid: int | None,
-) -> str | None:
+) -> NativeEntryMismatch | None:
     """Return an entry conflict; exit uncertainty is not an execution failure."""
     boundary = adapter.observe_run_boundary(child_env=child_env, pid=pid)
     if boundary is None:
@@ -42,8 +43,8 @@ def finalize_run_boundary(
     )
     if mismatch:
         assert observed is not None
-        return (
-            f"entry_mismatch: assigned ({entry.native_store}, {entry.harness_session_id}), "
-            f"observed ({observed.native_store}, {observed.session_id})"
+        return NativeEntryMismatch(
+            f"({entry.native_store}, {entry.harness_session_id})",
+            f"({observed.native_store}, {observed.session_id})",
         )
     return None

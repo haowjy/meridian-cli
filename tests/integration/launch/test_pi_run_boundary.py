@@ -95,6 +95,8 @@ def test_primary_post_exit_boundary(pi_runtime: Path, shape: str) -> None:  # no
     assert row.exit_identity == expected
     meta = json.loads((runtime / "spawns" / row.id / "primary_meta.json").read_text())
     assert meta["exit_identity"] == expected
+    if shape == "mismatch":
+        assert_entry_mismatch(runtime, row.id, entry)
     if shape == "same":
         assert row.exit_chat_id == row.entry_chat_id
     if shape == "switch":
@@ -110,6 +112,22 @@ def test_primary_post_exit_boundary(pi_runtime: Path, shape: str) -> None:  # no
         assert ("entry-based view" in target.source) == (shape in {"restart", "truncated"})
 
 
+def assert_entry_mismatch(runtime: Path, spawn_id: str, entry: session_store.SessionRecord) -> None:
+    row = spawn_store.get_spawn(runtime, spawn_id)
+    assert row is not None and row.status == "failed"
+    assert row.terminal is not None and row.terminal.error == "entry_mismatch"
+    assert row.exit_identity == "mismatch" and row.exit_chat_id is None
+    facts = [json.loads(line) for line in (
+        runtime / "spawns" / spawn_id / "runner-lifecycle.jsonl"
+    ).read_text().splitlines()]
+    mismatch = [fact for fact in facts if fact["event"] == "entry_mismatch"]
+    assert len(mismatch) == 1
+    assert mismatch[0]["expected"] == f"({entry.native_store}, {entry.harness_session_id})"
+    assert mismatch[0]["observed"] == f"({entry.native_store}, wrong-entry)"
+    assert all(record.harness_session_id not in {"wrong-entry", "switched-id"}
+               for record in session_store.list_all_session_records(runtime))
+
+
 def test_concurrent_exits_converge_on_one_stopped_chat(pi_runtime: Path) -> None:  # noqa: F811
     root = pi_runtime
     install_shim(root)
@@ -123,7 +141,8 @@ def test_concurrent_exits_converge_on_one_stopped_chat(pi_runtime: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_rpc_post_attempt_boundary(pi_runtime: Path) -> None:  # noqa: F811
+@pytest.mark.parametrize("shape", ["switch", "mismatch"])
+async def test_rpc_post_attempt_boundary(pi_runtime: Path, shape: str) -> None:  # noqa: F811
     import asyncio
     from dataclasses import replace
     from types import MappingProxyType
@@ -136,7 +155,7 @@ async def test_rpc_post_attempt_boundary(pi_runtime: Path) -> None:  # noqa: F81
     from meridian.lib.state.artifact_store import LocalStore
 
     root = pi_runtime
-    install_boundary_shim(root, "switch")
+    install_boundary_shim(root, shape)
     ctx = context(root, primary=False)
     run = Spawn(spawn_id=SpawnId("p42"), prompt="hello", model=ModelId("pi-test"), status="queued")
     spawn_store.start_spawn(
@@ -166,7 +185,12 @@ async def test_rpc_post_attempt_boundary(pi_runtime: Path) -> None:  # noqa: F81
             artifacts=LocalStore(root_dir=ctx.runtime_root / "artifacts"),
             session_attempt=managed.attempt,
         ), 20)
-        assert code == 0
+        assert code == (1 if shape == "mismatch" else 0)
+        entry = session_store.get_session_record(ctx.runtime_root, managed.chat_id)
+        assert entry is not None and entry.harness_session_id not in {"wrong-entry", "switched-id"}
+        if shape == "mismatch":
+            assert_entry_mismatch(ctx.runtime_root, "p42", entry)
+            return
         row = spawn_store.get_spawn(ctx.runtime_root, "p42")
         assert row is not None and row.exit_identity == "verified"
         assert row.entry_chat_id == managed.chat_id and row.exit_chat_id != managed.chat_id

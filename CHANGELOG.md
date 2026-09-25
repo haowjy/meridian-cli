@@ -11,6 +11,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Post-exit entry conflicts use stable `entry_mismatch` failures with expected/observed lifecycle evidence.
+
 - Fresh Pi UUID launches warn and skip torn sibling headers; exact resume/fork sources still fail closed.
 - Spawned exact continue reuses its source chat; fresh and fork launches keep separate chats.
 - Test harness connections honor preassigned native IDs; Pi timeout scenarios reach the timeout instead of failing entry.
