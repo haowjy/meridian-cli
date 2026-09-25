@@ -15,12 +15,14 @@ from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.native_identity import (
     LaunchIntent,
     NativeIdentity,
+    NativeKey,
     NativeKeyFields,
     NativeSessionUnavailable,
     Operation,
     PostExit,
 )
-from meridian.lib.core.types import ArtifactKey, HarnessId, ModelId, SpawnId, TransportId
+from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
+from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
     PrimaryRuntimeRequestPolicy,
@@ -351,29 +353,18 @@ class NativePrimaryRuntimeMetadata(BaseModel):
     auth_policy: str | None = None
 
 
-
-
 RecordConfigDirFn = Callable[[str], None]
 
 
-@runtime_checkable
-class ArtifactStore(Protocol):
-    """Artifact access used for usage/session extraction."""
-
-    def get(self, key: ArtifactKey) -> bytes: ...
-
-    def exists(self, key: ArtifactKey) -> bool: ...
 
 
 @runtime_checkable
 class SpawnExtractor(Protocol):
-    """Artifact extraction interface for spawn finalization."""
+    """Attempt-local extraction interface for spawn finalization."""
 
-    def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage: ...
+    def fold(self, facts: AttemptFacts, event: Mapping[str, object]) -> None: ...
 
-    def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None: ...
-
-    def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None: ...
+    def read_native_turn(self, key: NativeKey, turn_ids: tuple[str, ...]) -> str | None: ...
 
 
 @runtime_checkable
@@ -420,11 +411,14 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
         interactive: bool,
     ) -> NativeIdentity: ...
 
-
-
     def observe_after_exit(
-        self, identity: NativeIdentity, entry: NativeKeyFields, *,
-        child_env: Mapping[str, str], child_cwd: Path, pid: int | None,
+        self,
+        identity: NativeIdentity,
+        entry: NativeKeyFields,
+        *,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+        pid: int | None,
         started_at_epoch: float | None,
     ) -> PostExit: ...
 
@@ -501,7 +495,6 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         """Project prelaunch state into primary_meta.json runtime fields."""
         ...
 
-
     def build_primary_runtime_request_handler(
         self,
         *,
@@ -510,12 +503,6 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
     ) -> ServerRequestHandler | None:
         """Build a managed-primary runtime request handler for this harness."""
         ...
-
-    def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage: ...
-
-    def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None: ...
-
-    def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None: ...
 
     def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]: ...
 
@@ -549,7 +536,6 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         ProjectedContent with harness-specific channel routing decisions.
         """
         ...
-
 
     def fork_session(self, source_session_id: str, *, native_store: str | None = None) -> str: ...
 
@@ -707,11 +693,14 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
             else intent.preforked_session_id
         )
 
-
-
     def observe_after_exit(
-        self, identity: NativeIdentity, entry: NativeKeyFields, *,
-        child_env: Mapping[str, str], child_cwd: Path, pid: int | None,
+        self,
+        identity: NativeIdentity,
+        entry: NativeKeyFields,
+        *,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+        pid: int | None,
         started_at_epoch: float | None,
     ) -> PostExit:
         return PostExit()
@@ -806,7 +795,6 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         _ = state
         return NativePrimaryRuntimeMetadata()
 
-
     def build_primary_runtime_request_handler(
         self,
         *,
@@ -834,22 +822,8 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         """
         return project_inline_content(content)
 
-
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:
         _ = run
-        return None
-
-    def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        """Return the harness session ID from spawn artifacts, if available.
-
-        Default returns None; concrete adapters that support session extraction override this.
-        """
-
-        _ = artifacts, spawn_id
-        return None
-
-    def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        _ = artifacts, spawn_id
         return None
 
     def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]:

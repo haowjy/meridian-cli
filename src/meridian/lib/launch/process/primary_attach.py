@@ -21,6 +21,7 @@ import psutil
 import structlog
 
 from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.connections.base import (
     ConnectionConfig,
     HarnessConnection,
@@ -39,6 +40,7 @@ from meridian.lib.platform.process_scope.base import (
 from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.state.primary_meta import ActivityState, PrimaryMetadata, write_primary_metadata
 from meridian.lib.state.process_scope_projection import record_scope
+from meridian.lib.streaming.drain_plan_factory import record_pi_lifecycle_event
 from meridian.lib.streaming.heartbeat import heartbeat_loop
 
 from .ports import LaunchedProcess, ProcessLauncher, RunningProcess
@@ -176,6 +178,7 @@ class PrimaryAttachOutcome:
     session_id: str | None
     tui_pid: int | None
     cancelled: bool = False
+    facts: AttemptFacts = field(default_factory=AttemptFacts)
 
 
 class _StartupTelemetry:
@@ -229,6 +232,7 @@ class PrimaryAttachLauncher:
         runtime_root: Path | None = None,
         on_running: Callable[[int], None] | None = None,
         event_hook: Callable[[RawHarnessEvent], None] | None = None,
+        facts: AttemptFacts | None = None,
         session_id_observer: Callable[[str], None] | None = None,
     ) -> None:
         self._spawn_id = spawn_id
@@ -238,7 +242,14 @@ class PrimaryAttachLauncher:
         self._process_launcher = process_launcher
         self._runtime_root = runtime_root
         self._on_running = on_running
-        self._event_hook = event_hook
+        self._event_hooks = (event_hook,) if event_hook is not None else ()
+        if connection.harness_id is HarnessId.PI and runtime_root is not None:
+
+            def phase_sink(event: RawHarnessEvent) -> None:
+                record_pi_lifecycle_event(runtime_root=runtime_root, spawn_id=spawn_id, event=event)
+
+            self._event_hooks += (phase_sink,)
+        self._facts = facts if facts is not None else AttemptFacts()
         self._session_id_observer = session_id_observer
         self._metadata = _LauncherMetadata()
         self._metadata_lock = Lock()
@@ -368,6 +379,7 @@ class PrimaryAttachLauncher:
                     launched = await asyncio.shield(launch_task)
                     tui_lifecycle_finished = True
                     return PrimaryAttachOutcome(
+                        facts=self._facts,
                         exit_code=launched.exit_code,
                         session_id=session_id,
                         tui_pid=launched.pid,
@@ -380,6 +392,7 @@ class PrimaryAttachLauncher:
                 )
                 tui_lifecycle_finished = True
                 return PrimaryAttachOutcome(
+                    facts=self._facts,
                     exit_code=1,
                     session_id=session_id,
                     tui_pid=running_process.pid,
@@ -401,6 +414,7 @@ class PrimaryAttachLauncher:
             tui_lifecycle_finished = True
 
             return PrimaryAttachOutcome(
+                facts=self._facts,
                 exit_code=launched.exit_code,
                 session_id=session_id,
                 tui_pid=launched.pid,
@@ -417,6 +431,7 @@ class PrimaryAttachLauncher:
                     spawn_id=str(self._spawn_id),
                 )
                 return PrimaryAttachOutcome(
+                    facts=self._facts,
                     exit_code=130,
                     session_id=session_id,
                     tui_pid=None,
@@ -499,9 +514,9 @@ class PrimaryAttachLauncher:
         try:
             async for event in self._connection.events():
                 self._update_activity_from_event(event)
-                if self._event_hook is not None:
+                for hook in self._event_hooks:
                     try:
-                        self._event_hook(event)
+                        hook(event)
                     except Exception:
                         logger.exception("Primary attach event hook failed")
                 if writer is not None:
@@ -539,8 +554,10 @@ class PrimaryAttachLauncher:
             self._session_id_observer(session_id)
         should_write = False
         with self._metadata_lock:
-            if (self._metadata.harness_session_id
-                    and self._metadata.harness_session_id != session_id):
+            if (
+                self._metadata.harness_session_id
+                and self._metadata.harness_session_id != session_id
+            ):
                 return
             if self._metadata.harness_session_id != session_id:
                 self._metadata.harness_session_id = session_id

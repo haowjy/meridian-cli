@@ -299,8 +299,8 @@ def test_legacy_runner_artifacts_do_not_authorize_transcript_reads(tmp_path: Pat
         ))
 
     assert not (runtime_root / "spawns" / "p42" / "native-transcript.jsonl").exists()
-    assert b"canonical marker" in artifacts.get(history_key)
-    assert b"legacy marker" not in artifacts.get(history_key)
+    assert b"canonical marker" not in artifacts.get(history_key)
+    assert b"legacy marker" in artifacts.get(history_key)
     assert artifacts.list_artifacts("p42").count(history_key) == 1
     # Pi phases come from the pi-lifecycle.json sidecar, never from runner history.
     assert detail.pi_lifecycle_phase is None

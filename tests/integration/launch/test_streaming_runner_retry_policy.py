@@ -432,10 +432,12 @@ async def test_execute_with_streaming_does_not_retry_authoritative_terminal_fail
     assert row.terminal.error == "connection reset by peer"
 
 
+@pytest.mark.parametrize("first_attempt_has_facts", [False, True])
 @pytest.mark.asyncio
 async def test_execute_with_streaming_retries_single_turn_close_without_terminal_frame(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    first_attempt_has_facts: bool,
 ) -> None:
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
@@ -444,8 +446,27 @@ async def test_execute_with_streaming_retries_single_turn_close_without_terminal
     fake_heartbeat = FakeHeartbeat()
     fake_heartbeat.set_clock(fake_clock)
     _ScriptedRetryOpenCodeConnection.reset(
-        first_attempt_events=(),
-        session_id="session-close-without-terminal-opencode",
+        first_attempt_events=(
+            RawHarnessEvent(
+                event_type="message.updated",
+                harness_id="opencode",
+                payload={
+                    "type": "message.updated",
+                    "properties": {
+                        "info": {
+                            "sessionID": "ses_retry",
+                            "id": "old-message",
+                            "role": "assistant",
+                            "tokens": {"input": 456, "output": 42},
+                            "parts": [{"type": "text", "text": "old attempt report"}],
+                        }
+                    },
+                },
+            ),
+        )
+        if first_attempt_has_facts
+        else (),
+        session_id="ses_retry",
         subprocess_pid=8484,
     )
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
@@ -497,3 +518,7 @@ async def test_execute_with_streaming_retries_single_turn_close_without_terminal
     assert row is not None
     assert row.status == "succeeded"
     assert row.terminal.exit_code == 0
+
+    assert row.terminal.input_tokens is None
+    assert row.terminal.output_tokens is None
+    assert not (runtime_root / "spawns" / run.spawn_id / "report.md").exists()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 from uuid import UUID
@@ -83,3 +84,22 @@ def transcript_header(state: SpawnRecord, project_id: str) -> TranscriptHeader:
             forked_from_history_id=state.forked_from_history_id,
         ),
     )
+
+
+def current_attempt_lines(raw: str) -> list[str]:
+    """Lifecycle-only view; transcript rendering must retain earlier attempts."""
+    lines: list[str] = []
+    # A missing final newline is an uncommitted append, even if it parses as JSON.
+    committed = raw[: raw.rfind("\n") + 1]
+    for line in reversed(committed.splitlines()):
+        try:
+            event = json.loads(line)
+        except ValueError:
+            event = None
+        if isinstance(event, dict):
+            if event.get("event_type") == "meridian.attempt.completed":
+                break
+            if event.get("record") == "meridian.transcript":
+                continue
+        lines.append(line)
+    return list(reversed(lines))

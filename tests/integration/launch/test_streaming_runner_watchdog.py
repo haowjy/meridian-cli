@@ -12,9 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.domain import Spawn, TokenUsage
+from meridian.lib.core.domain import Spawn
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
+from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent
+from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 from meridian.lib.harness.launch_spec import ResolvedLaunchSpec
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.harness.semantics import EventSemantics, NormalizedHarnessEvent
@@ -55,20 +57,6 @@ _DISK_ATTEMPT_FILES = (
 )
 
 
-class _NoReportExtractor:
-    def extract_usage(self, artifacts: object, spawn_id: SpawnId) -> TokenUsage:
-        _ = artifacts, spawn_id
-        return TokenUsage()
-
-    def extract_session_id(self, artifacts: object, spawn_id: SpawnId) -> str | None:
-        _ = artifacts, spawn_id
-        return None
-
-    def extract_report(self, artifacts: object, spawn_id: SpawnId) -> str | None:
-        _ = artifacts, spawn_id
-        return None
-
-
 @dataclass
 class _LifecycleRecorder:
     calls: list[str] = field(default_factory=list)
@@ -100,6 +88,8 @@ async def test_streaming_attempt_bounds_backend_startup_with_no_events(
             self,
             _config: ConnectionConfig,
             _spec: ResolvedLaunchSpec,
+            *,
+            event_hook=None,
         ) -> object:
             try:
                 await asyncio.Event().wait()
@@ -168,6 +158,8 @@ async def test_streaming_attempt_fresh_events_keep_slow_cursor_backend_alive(
             self,
             _config: ConnectionConfig,
             _spec: ResolvedLaunchSpec,
+            *,
+            event_hook=None,
         ) -> object:
             async def produce_events() -> None:
                 for index in range(15):
@@ -341,7 +333,8 @@ def test_preserve_keeps_history_but_clears_current_attempt_extraction(tmp_path: 
 
     extraction = enrich_finalize(
         artifacts=artifacts,
-        extractor=_NoReportExtractor(),
+        extractor=CODEX_EXTRACTOR,
+        facts=AttemptFacts(),
         spawn_id=spawn_id,
         log_dir=log_dir,
         failure_reason="adapter startup failed",

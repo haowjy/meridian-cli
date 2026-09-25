@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import ClassVar, cast
 
 from meridian.lib.config.settings import resolve_pi_harness_profile
-from meridian.lib.core.domain import SpawnStatus, TokenUsage
+from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import (
     LaunchIntent,
     NativeIdentity,
@@ -21,7 +21,6 @@ from meridian.lib.core.native_identity import (
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     ApprovalContract,
-    ArtifactStore,
     BaseHarnessAdapter,
     BootstrapContract,
     BootstrapMode,
@@ -375,8 +374,13 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
 
     def observe_after_exit(
-        self, identity: NativeIdentity, entry: NativeKeyFields, *,
-        child_env: Mapping[str, str], child_cwd: Path, pid: int | None,
+        self,
+        identity: NativeIdentity,
+        entry: NativeKeyFields,
+        *,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+        pid: int | None,
         started_at_epoch: float | None,
     ) -> PostExit:
         try:
@@ -455,15 +459,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             **pi_agent_dir_env_override(),
             **pi_spawn_session_root_env_override(),
         }
-
-    def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
-        return PI_EXTRACTOR.extract_usage(artifacts, spawn_id)
-
-    def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return PI_EXTRACTOR.extract_session_id(artifacts, spawn_id)
-
-    def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return PI_EXTRACTOR.extract_report(artifacts, spawn_id)
 
     def resolve_session_file(
         self,

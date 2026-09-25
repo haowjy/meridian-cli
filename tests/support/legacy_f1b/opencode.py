@@ -2,20 +2,29 @@
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Mapping
+from pathlib import Path
 from typing import cast
 
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.native_identity import NativeKey
-from meridian.lib.harness.attempt_facts import AttemptFacts
-from meridian.lib.harness.common import _coerce_optional_int, coerce_optional_float
+from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import RawHarnessEvent
-from meridian.lib.harness.opencode_report import extract_opencode_session_id
-from meridian.lib.harness.opencode_transcript import read_opencode_v2_turn
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.state.artifact_store import ArtifactStore
+from tests.support.legacy_f1b.common import (
+    OUTPUT_FILENAME,
+    _coerce_optional_int,  # pyright: ignore[reportPrivateUsage]
+    _iter_json_lines_artifact,  # pyright: ignore[reportPrivateUsage]
+    coerce_optional_float,
+    extract_usage_from_artifacts,
+)
+from tests.support.legacy_f1b.opencode_report import (
+    extract_opencode_report,
+    extract_opencode_session_id,
+    extract_opencode_session_id_from_artifacts,
+)
 
-from .base import HarnessExtractor, fold_usage_fallback
+from .base import HarnessExtractor
 
 
 class OpenCodeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
@@ -24,69 +33,30 @@ class OpenCodeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
     def detect_session_id_from_event(self, event: RawHarnessEvent) -> str | None:
         return extract_opencode_session_id(dict(event.payload))
 
-    def fold(self, facts: AttemptFacts, event: Mapping[str, object]) -> None:
-        payload = dict(event)
-        kind = str(payload.get("event_type", payload.get("type", "")))
-        facts.output_seen = facts.output_seen or not kind.startswith("meridian.")
-        session_id = extract_opencode_session_id(payload)
-        if facts.scope_session_id and session_id != facts.scope_session_id:
-            return
-        if session_id and session_id.startswith("ses_"):
-            facts.observe(session_id)
-        if facts.first_session_id and session_id != facts.first_session_id:
-            return
-        fold_usage_fallback(facts, payload)
-        if kind in {"session.idle", "message.updated"}:
-            usage = _try_parse_opencode_usage(payload)
-            if usage is not None:
-                facts.usage_is_specific = True
-                facts.usage = usage
-        if kind == "session.text.ended":
-            message_id = payload.get("assistantMessageID")
-            if isinstance(message_id, str) and message_id:
-                facts.native_turn_ids = (message_id,)
-            text = payload.get("text")
-            if isinstance(text, str) and text:
-                facts.set_text(text, "opencode_v2_text")
-            return
-        properties = payload.get("properties")
-        if not isinstance(properties, dict):
-            return
-        info = properties.get("info")
-        if kind == "message.updated" and isinstance(info, dict) and info.get("role") == "assistant":
-            message_id = info.get("id")
-            if isinstance(message_id, str) and message_id != facts.message_id:
-                facts.message_id = message_id
-                facts.final_text = None
-                facts.final_text_source = None
-            parts = info.get("parts")
-            if isinstance(parts, list):
-                text = "".join(
-                    str(part.get("text", ""))
-                    for part in parts
-                    if isinstance(part, dict) and part.get("type") == "text"
-                )
-                if text.strip() and facts.final_text_source != "opencode_v1_parts":
-                    facts.set_text(text.strip(), "opencode_v1_embedded")
-        part = properties.get("part")
-        if (
-            kind == "message.part.updated"
-            and isinstance(part, dict)
-            and part.get("type") == "text"
-            and facts.message_id
-            and part.get("messageID", part.get("message_id")) == facts.message_id
-        ):
-            text = part.get("text")
-            if isinstance(text, str) and text.strip():
-                prior = facts.final_text if facts.final_text_source == "opencode_v1_parts" else None
-                facts.set_text((prior or "") + text.strip(), "opencode_v1_parts")
+    def detect_session_id_from_artifacts(
+        self,
+        *,
+        spec: ResolvedLaunchSpec,
+        launch_env: Mapping[str, str],
+        child_cwd: Path,
+        runtime_root: Path,
+    ) -> str | None:
+        if spec.continue_session_id and spec.continue_session_id.strip():
+            return spec.continue_session_id.strip()
+        _ = launch_env, child_cwd, runtime_root
+        return None
 
-    def read_native_turn(self, key: NativeKey, turn_ids: tuple[str, ...]) -> str | None:
-        try:
-            return read_opencode_v2_turn(key, turn_ids)
-        except sqlite3.Error:
-            # A missing, busy or corrupt native store cannot invalidate live evidence.
-            return None
+    def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
+        specific = _extract_opencode_usage(artifacts, spawn_id)
+        if specific != TokenUsage():
+            return specific
+        return extract_usage_from_artifacts(artifacts, spawn_id)
+
+    def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
+        return extract_opencode_session_id_from_artifacts(artifacts, spawn_id)
+
+    def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
+        return extract_opencode_report(artifacts, spawn_id)
 
 
 OPENCODE_EXTRACTOR = OpenCodeHarnessExtractor()
@@ -171,3 +141,19 @@ def _try_parse_opencode_usage(payload: dict[str, object]) -> TokenUsage | None:
     ):
         return legacy_usage
     return None
+
+
+def _extract_opencode_usage(artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
+    last: TokenUsage | None = None
+    for payload in _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME):
+        event_type = (
+            str(payload.get("event", payload.get("type", payload.get("event_type", ""))))
+            .strip()
+            .lower()
+        )
+        if event_type not in {"session.idle", "message.updated"}:
+            continue
+        usage = _try_parse_opencode_usage(payload)
+        if usage is not None:
+            last = usage
+    return last or TokenUsage()

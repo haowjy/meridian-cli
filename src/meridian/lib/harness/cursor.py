@@ -6,11 +6,10 @@ import shutil
 from pathlib import Path
 from typing import ClassVar
 
-from meridian.lib.core.domain import SpawnStatus, TokenUsage
-from meridian.lib.core.types import HarnessId, SpawnId, TransportId
+from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.types import HarnessId, TransportId
 from meridian.lib.harness.adapter import (
     ApprovalContract,
-    ArtifactStore,
     BaseHarnessAdapter,
     BootstrapContract,
     BootstrapMode,
@@ -179,7 +178,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             )
         return PreflightResult.build(expanded_passthrough_args=passthrough_args)
 
-
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:
         _ = run
         return None
@@ -187,15 +185,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def env_overrides(self, config: PermissionConfig) -> dict[str, str]:
         _ = config
         return {}
-
-    def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
-        return CURSOR_EXTRACTOR.extract_usage(artifacts, spawn_id)
-
-    def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return CURSOR_EXTRACTOR.extract_session_id(artifacts, spawn_id)
-
-    def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return CURSOR_EXTRACTOR.extract_report(artifacts, spawn_id)
 
 
 def _resolve_cursor_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:

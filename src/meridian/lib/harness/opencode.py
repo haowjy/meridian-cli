@@ -11,12 +11,11 @@ from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import ClassVar, Literal, cast
 
-from meridian.lib.core.domain import SpawnStatus, TokenUsage
+from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import NativeSessionUnavailable, Operation
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     ApprovalContract,
-    ArtifactStore,
     BaseHarnessAdapter,
     BootstrapContract,
     BootstrapMode,
@@ -50,11 +49,7 @@ from meridian.lib.harness.connections.opencode_connection import OpenCodeConnect
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview, SessionSeed
 from meridian.lib.harness.opencode_backend import resolve_opencode_version
-from meridian.lib.harness.opencode_report import (
-    extract_opencode_report,
-    extract_opencode_session_id,
-    extract_opencode_session_id_from_artifacts,
-)
+from meridian.lib.harness.opencode_report import extract_opencode_session_id
 from meridian.lib.harness.opencode_storage import (
     resolve_opencode_home_dir,
     resolve_opencode_storage_root,
@@ -494,9 +489,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             overrides["OPENCODE_PERMISSION"] = config.opencode_permission_override
         return overrides
 
-    def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
-        return OPENCODE_EXTRACTOR.extract_usage(artifacts, spawn_id)
-
     def seed_session(
         self,
         *,
@@ -559,15 +551,8 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             return None
         return matches[0]
 
-    def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        _ = self
-        return extract_opencode_session_id_from_artifacts(artifacts, spawn_id)
-
     def owns_untracked_session(self, *, project_root: Path, session_ref: str) -> bool:
         return _owns_session(project_root, session_ref)
-
-    def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return extract_opencode_report(artifacts, spawn_id)
 
 
 def _resolve_opencode_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:

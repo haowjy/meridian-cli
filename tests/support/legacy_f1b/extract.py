@@ -1,30 +1,30 @@
 """Post-execution extraction pipeline used during run finalization."""
 
 from enum import StrEnum
-from functools import partial
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.core.spawn_lifecycle import (
     DurableReportEvidence,
     classify_durable_report_text,
 )
 from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId
-from meridian.lib.harness.adapter import SpawnExtractor
-from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.cost import estimate_usage_cost
+from meridian.lib.launch.artifact_io import read_artifact_text
 from meridian.lib.launch.constants import (
+    HISTORY_FILENAME,
     OUTPUT_FILENAME,
     REPORT_FILENAME,
     STDERR_FILENAME,
     TOKENS_FILENAME,
 )
-from meridian.lib.launch.report import ExtractedReport, extract_or_fallback_report
 from meridian.lib.state.artifact_store import ArtifactStore
 from meridian.lib.state.atomic import atomic_write_text
+from tests.support.legacy_f1b.history_codec import current_attempt_lines
+from tests.support.legacy_f1b.protocol import SpawnExtractor
+from tests.support.legacy_f1b.report import ExtractedReport, extract_or_fallback_report
 
 # ---------------------------------------------------------------------------
 # Finalization pipeline
@@ -119,12 +119,25 @@ def classify_finalize_report(extracted: ExtractedReport) -> FinalizeReportKind:
     return FinalizeReportKind.ABSENT
 
 
+def _is_empty_output(
+    *,
+    artifacts: ArtifactStore,
+    spawn_id: SpawnId,
+    extracted_report: ExtractedReport,
+) -> bool:
+    if extracted_report.content and extracted_report.content.strip():
+        return False
+    history_text = read_artifact_text(artifacts, spawn_id, HISTORY_FILENAME)
+    if any(line.strip() for line in current_attempt_lines(history_text)):
+        return False
+    output_text = read_artifact_text(artifacts, spawn_id, OUTPUT_FILENAME)
+    return not output_text.strip()
+
+
 def enrich_finalize(
     *,
     artifacts: ArtifactStore,
     extractor: SpawnExtractor,
-    facts: AttemptFacts,
-    native_key: NativeKey | None = None,
     spawn_id: SpawnId,
     log_dir: Path,
     model_id: str | None = None,
@@ -134,24 +147,17 @@ def enrich_finalize(
 ) -> FinalizeExtraction:
     """Spawn all extraction steps and return one enriched finalization payload."""
 
-    explicit_report = log_dir / REPORT_FILENAME
-    if explicit_report.is_file():
-        artifacts.put(ArtifactKey(f"{spawn_id}/{REPORT_FILENAME}"), explicit_report.read_bytes())
-
     usage = estimate_usage_cost(
         model_id=(model_id or "").strip() or None,
-        usage=facts.usage or TokenUsage(),
+        usage=extractor.extract_usage(artifacts, spawn_id),
         project_root=project_root,
         harness_id=str(harness_id) if harness_id is not None else None,
     )
-    harness_session_id = facts.first_session_id
+    harness_session_id = extractor.extract_session_id(artifacts, spawn_id)
     report = extract_or_fallback_report(
         artifacts,
         spawn_id,
-        facts=facts,
-        load_native_text=partial(extractor.read_native_turn, native_key, facts.native_turn_ids)
-        if native_key is not None and facts.native_turn_ids
-        else None,
+        extractor=extractor,
         failure_reason=failure_reason,
     )
     report_path = _persist_report(
@@ -166,6 +172,10 @@ def enrich_finalize(
         harness_session_id=harness_session_id,
         report_path=report_path,
         report=report,
-        output_is_empty=not (facts.output_seen or (report.content and report.content.strip())),
+        output_is_empty=_is_empty_output(
+            artifacts=artifacts,
+            spawn_id=spawn_id,
+            extracted_report=report,
+        ),
         report_kind=classify_finalize_report(report),
     )

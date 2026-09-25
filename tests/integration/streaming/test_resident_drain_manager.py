@@ -9,10 +9,10 @@ import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.common import extract_codex_report
+from meridian.lib.harness.attempt_facts import AttemptFacts
+from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 from meridian.lib.ops.spawn.models import SpawnSignalInput
 from meridian.lib.state import spawn_store
-from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.streaming.drain_policy import (
     PersistentDrainPolicy,
 )
@@ -105,6 +105,7 @@ async def test_codex_backend_death_with_pending_success_preserves_resident_reaso
     finally:
         await manager.stop_spawn(spawn_id)
 
+
 @pytest.mark.asyncio
 async def test_opencode_process_death_with_pending_success_preserves_exit_diagnostics(
     tmp_path: Path,
@@ -135,6 +136,7 @@ async def test_opencode_process_death_with_pending_success_preserves_exit_diagno
     finally:
         await manager.stop_spawn(spawn_id)
 
+
 @pytest.mark.asyncio
 async def test_opencode_terminal_success_without_live_children_finalizes_immediately(
     tmp_path: Path,
@@ -153,6 +155,7 @@ async def test_opencode_terminal_success_without_live_children_finalizes_immedia
         assert connection.fake_resident_backend.awaiting_done_values[-1] is False
     finally:
         await manager.stop_spawn(spawn_id)
+
 
 @pytest.mark.asyncio
 async def test_opencode_child_session_idle_does_not_finalize_parent(
@@ -196,6 +199,7 @@ async def test_opencode_child_session_idle_does_not_finalize_parent(
     finally:
         await manager.stop_spawn(spawn_id)
 
+
 @pytest.mark.asyncio
 async def test_opencode_child_session_error_does_not_fail_parent(
     tmp_path: Path,
@@ -232,6 +236,7 @@ async def test_opencode_child_session_error_does_not_fail_parent(
         assert outcome.status == "succeeded"
     finally:
         await manager.stop_spawn(spawn_id)
+
 
 @pytest.mark.parametrize(
     "harness_id,event_type",
@@ -272,6 +277,7 @@ async def test_resident_persistent_policy_emits_boundary_and_stays_alive(
     finally:
         await manager.stop_spawn(spawn_id)
 
+
 @pytest.mark.asyncio
 async def test_opencode_terminal_success_resides_until_child_finishes(
     tmp_path: Path,
@@ -308,6 +314,7 @@ async def test_opencode_terminal_success_resides_until_child_finishes(
     finally:
         await manager.stop_spawn(spawn_id)
 
+
 @pytest.mark.asyncio
 async def test_resident_reconciles_finalizing_child_with_durable_report_as_done(
     tmp_path: Path,
@@ -334,6 +341,7 @@ async def test_resident_reconciles_finalizing_child_with_durable_report_as_done(
     finally:
         await manager.stop_spawn(spawn_id)
 
+
 @pytest.mark.asyncio
 async def test_resident_still_waits_on_genuinely_active_finalizing_child(
     tmp_path: Path,
@@ -359,6 +367,7 @@ async def test_resident_still_waits_on_genuinely_active_finalizing_child(
     finally:
         await manager.stop_spawn(spawn_id)
 
+
 @pytest.mark.asyncio
 async def test_done_signal_at_terminalresident_event_wins_over_outstanding_child(
     tmp_path: Path,
@@ -382,6 +391,7 @@ async def test_done_signal_at_terminalresident_event_wins_over_outstanding_child
         assert connection.fake_resident_backend.awaiting_done_values[-1] is False
     finally:
         await manager.stop_spawn(spawn_id)
+
 
 @pytest.mark.asyncio
 async def test_spawn_done_op_releases_resident_wait_via_environment_default(
@@ -419,6 +429,7 @@ async def test_spawn_done_op_releases_resident_wait_via_environment_default(
         assert outcome.status == "succeeded"
     finally:
         await manager.stop_spawn(spawn_id)
+
 
 @pytest.mark.asyncio
 async def test_spawn_rearm_op_extends_resident_deadline(
@@ -513,6 +524,7 @@ async def test_spawn_rearm_op_extends_resident_deadline(
     finally:
         await manager.stop_spawn(spawn_id)
 
+
 @pytest.mark.asyncio
 async def test_resident_wait_fans_out_turn_boundary_to_subscriber(tmp_path: Path) -> None:
     spawn_id = SpawnId("p1")
@@ -535,6 +547,7 @@ async def test_resident_wait_fans_out_turn_boundary_to_subscriber(tmp_path: Path
             )
     finally:
         await manager.stop_spawn(spawn_id)
+
 
 @pytest.mark.asyncio
 async def test_child_written_before_terminalresident_event_is_processed_prevents_early_finalize(
@@ -561,6 +574,7 @@ async def test_child_written_before_terminalresident_event_is_processed_prevents
         assert outcome.status == "succeeded"
     finally:
         await manager.stop_spawn(spawn_id)
+
 
 @pytest.mark.asyncio
 async def test_resident_stream_close_with_dead_backend_fails_while_child_running(
@@ -596,6 +610,7 @@ async def test_resident_stream_close_with_dead_backend_fails_while_child_running
     finally:
         await manager.stop_spawn(spawn_id)
 
+
 @pytest.mark.asyncio
 async def test_resident_stream_close_with_stalled_backend_is_not_dead_outcome(
     tmp_path: Path,
@@ -629,6 +644,7 @@ async def test_resident_stream_close_with_stalled_backend_is_not_dead_outcome(
         assert outcome.error == "stream_closed_while_awaiting_done"
     finally:
         await manager.stop_spawn(spawn_id)
+
 
 @pytest.mark.asyncio
 async def test_codex_resident_deadline_waits_then_reaps_live_child(
@@ -701,6 +717,7 @@ async def test_codex_resident_deadline_waits_then_reaps_live_child(
     finally:
         await manager.stop_spawn(spawn_id)
 
+
 @pytest.mark.asyncio
 async def test_codex_resident_finalization_preserves_artifact_report(tmp_path: Path) -> None:
     spawn_id = SpawnId("p1")
@@ -709,6 +726,9 @@ async def test_codex_resident_finalization_preserves_artifact_report(tmp_path: P
     start_row(tmp_path, str(child_id), HarnessId.OPENCODE, str(spawn_id))
     connection = FakeResidentConnection(HarnessId.CODEX)
     manager = await start_manager(tmp_path, connection, spawn_id=spawn_id)
+
+    subscriber = manager.subscribe(spawn_id)
+    assert subscriber is not None
 
     connection.emit(
         resident_event(
@@ -735,8 +755,11 @@ async def test_codex_resident_finalization_preserves_artifact_report(tmp_path: P
         outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "succeeded"
-        assert extract_codex_report(LocalStore(root_dir=tmp_path / "spawns"), spawn_id) == (
-            "Resident report."
-        )
+        facts = AttemptFacts()
+        while not subscriber.empty():
+            event = subscriber.get_nowait()
+            if event is not None:
+                facts.hook(CODEX_EXTRACTOR, event.raw)
+        assert facts.final_text == "Resident report."
     finally:
         await manager.stop_spawn(spawn_id)

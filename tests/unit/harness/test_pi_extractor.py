@@ -2,26 +2,16 @@
 
 from __future__ import annotations
 
-import json
-
-from meridian.lib.core.types import ArtifactKey, SpawnId
+from meridian.lib.core.types import SpawnId
+from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.extractors.pi import PI_EXTRACTOR
 
 
-class _MemoryArtifactStore:
-    def __init__(self, payloads: dict[str, bytes]) -> None:
-        self._payloads = payloads
-
-    def get(self, key: ArtifactKey) -> bytes:
-        return self._payloads[str(key)]
-
-    def exists(self, key: ArtifactKey) -> bool:
-        return str(key) in self._payloads
-
-
-def _output_store(spawn_id: SpawnId, events: list[dict[str, object]]) -> _MemoryArtifactStore:
-    output = ("\n".join(json.dumps(event) for event in events) + "\n").encode()
-    return _MemoryArtifactStore({f"{spawn_id}/output.jsonl": output})
+def _output_store(spawn_id: SpawnId, lines: list[dict[str, object]]) -> AttemptFacts:
+    facts = AttemptFacts()
+    for event in lines:
+        PI_EXTRACTOR.fold(facts, event)
+    return facts
 
 
 def test_pi_extractor_reads_usage_from_latest_assistant_message_end() -> None:
@@ -46,7 +36,8 @@ def test_pi_extractor_reads_usage_from_latest_assistant_message_end() -> None:
         ],
     )
 
-    usage = PI_EXTRACTOR.extract_usage(store, spawn_id)
+    usage = store.usage
+    assert usage is not None
 
     assert usage.input_tokens == 123
     assert usage.output_tokens == 45
@@ -78,4 +69,4 @@ def test_pi_extractor_reads_report_from_last_assistant_agent_end_message() -> No
         ],
     )
 
-    assert PI_EXTRACTOR.extract_report(store, spawn_id) == "final\nreport"
+    assert store.final_text == "final\nreport"
