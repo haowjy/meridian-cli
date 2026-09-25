@@ -667,7 +667,8 @@ Pi runtime.
 Every spawn writes `history.jsonl` in the spawn log directory. This is the
 generic event persistence layer — raw JSONL events from the harness, one
 per line, with Meridian-added metadata. This works automatically for any
-harness that uses the streaming runner drain loop.
+harness that uses the streaming runner drain loop. It is not the transcript
+authority for tracked chats or spawns with a recorded run boundary.
 
 ### 3.2 Native Session File Resolution
 
@@ -685,29 +686,24 @@ This is harness-specific and must be implemented in the extractor's
 
 ### 3.3 Readable `meridian session log` Translation
 
-`meridian session log` renders a human-readable transcript from `history.jsonl`.
-This works through the `TranscriptProvider`/`TranscriptEventParser` system in
+For a tracked `cN`, and a `pN` with a recorded run boundary, `meridian session
+log` reads the transcript for the bound native key (harness, native store, and
+session ID) through the exact reader. Pi transcripts are projected onto the
+session's reopen lineage. Incomplete, missing, or ambiguous native identities
+are refused with a typed reason; resolution does not discover a replacement
+transcript.
+
+Runner `history.jsonl` is still written. At this revision it is read only for
+pre-PR-1 `pN` references and untracked targets; PR 2 removes those reads.
+
+Harness-specific transcript providers and parsers live in
 `src/meridian/lib/harness/transcript.py`.
-
-Each harness needs:
-1. A `TranscriptProvider` that knows how to iterate events from its native
-   session files (or falls back to `history.jsonl`)
-2. A `TranscriptEventParser` that extracts `TranscriptMessage(role, content)`
-   from harness-specific event schemas
-
-**Pi current status**: Spawned Pi RPC runs persist canonical `history.jsonl`, and
-`meridian session log <pi-spawn-id>` renders readable transcript entries from Pi
-`message_end` events: user prompts, assistant text, tool calls/results, and custom
-follow-up pings. Native Pi session-file lookup remains best-effort metadata; the
-spawn history is the session-log authority for Meridian-managed Pi RPC spawns.
 
 ### 3.4 Export/Search Implications
 
-Session-log parity means the same transcript parser feeds log, export, and search
-surfaces. For Pi RPC, keep `history.jsonl` event persistence and `message_end`
-translation in sync; if Pi changes its event schema, update
-`src/meridian/lib/harness/transcript.py` and the Pi transcript parser tests before
-trusting search/export output.
+Session log, export, and search use native transcript reads. If a harness changes
+its native transcript schema, update `src/meridian/lib/harness/transcript.py` and
+the corresponding parser checks.
 
 ## Phase 4: Model, Catalog, and Mars Integration
 
@@ -818,9 +814,9 @@ expensive models for reasoning-heavy tasks.
 - [ ] Native session files are discoverable from spawn metadata
 - [ ] Export formats include Pi session content
 
-**Pi status**: Spawned Pi RPC history renders readable transcript entries from
-`message_end` events. Native session files may still exist, but Meridian-managed
-spawn history is the authority for `session log`.
+**Pi status**: `session log` reads the bound native Pi transcript and projects it
+onto the session's reopen lineage. Runner `history.jsonl` is not its source for a
+spawn with a recorded run boundary.
 
 ### Packaging / Wheel Smoke
 
@@ -865,7 +861,7 @@ All must pass. The pre-push hook enforces this automatically.
 
 | Gap | Severity | What's needed |
 |---|---|---|
-| **Native Pi session-file transcript provider** | Low | Spawned Pi RPC `history.jsonl` now renders readable `session log` output from `message_end` events. A native Pi session-file provider may still be useful for non-Meridian Pi sessions, but it is no longer required for Meridian-managed spawn observability. |
+| **Native Pi session-file transcript provider** | Done | Tracked Pi sessions read the bound native transcript, projected onto its reopen lineage. |
 | **Mars model aliases/catalog** | Medium | Mars does not yet include Pi-compatible model paths in its alias resolution. Users must pass explicit `provider/model-id` strings. Need: `harness_candidates` / `runnable_paths` entries in Mars model definitions, provider discovery, and agent profile resolution for `harness: pi`. |
 | **Web extensions/tools** | Deferred | Built-in `web_search` and `web_fetch` extensions. These are Pi-native extensions that need authoring and bundling. |
 | **Notifications** | Done | `meridian-spawn-watch` surfaces spawn completion notifications in Pi and flushes pending notices before shutdown. |
