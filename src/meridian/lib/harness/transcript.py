@@ -802,6 +802,8 @@ class TranscriptNormalizer:
             if type(version) is not int or version not in (1, 2, 3):
                 self.rendering_reason = "Unsupported Pi session version; rendering is incomplete."
             return NormalizedTranscriptEvent([])
+        if self.pi_session and not isinstance(event_type, str):
+            self.rendering_reason = "Unsupported Pi journal entry; rendering is incomplete."
         entry_id = normalized_event.get("id")
         pi_entry = self.pi_session and isinstance(event_type, str)
         native_pi_entry = (
@@ -822,9 +824,10 @@ class TranscriptNormalizer:
                 and len(entry_id) <= 128
                 and "parentId" in normalized_event
             ):
-                if self.pi_previous_entry_id is not None and normalized_event.get(
-                    "parentId"
-                ) != self.pi_previous_entry_id:
+                if (
+                    self.pi_previous_entry_id is not None
+                    and normalized_event.get("parentId") != self.pi_previous_entry_id
+                ):
                     annotations.append(
                         TranscriptMessage(
                             "annotation",
@@ -1034,9 +1037,7 @@ def transcript_revision(path: Path | None) -> tuple[tuple[int, ...] | None, ...]
     )
 
     paths = [] if path is None else [path]
-    if path is None or isinstance(
-        _provider_for_path(path), _OPENCODE_STORAGE_PROVIDER_TYPES
-    ):
+    if path is None or isinstance(_provider_for_path(path), _OPENCODE_STORAGE_PROVIDER_TYPES):
         database = opencode_db_for_session_file(path) if path else resolve_opencode_db_path()
         assert database is not None
         paths.extend((database, Path(str(database) + "-wal")))
