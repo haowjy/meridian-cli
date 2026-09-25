@@ -382,6 +382,44 @@ def test_unreadable_opencode_session_table_defers_without_marker(
     assert not (root / legacy.MARKER).exists()
 
 
+def test_deferred_import_backs_off_then_retries_and_clears_note(
+    homes: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home, root = homes
+    _chat(root, 1, "claude", "native-id")
+    _claude(home, root, "native-id")
+    now = [1_000.0]
+    monkeypatch.setattr(legacy.time, "time", lambda: now[0])
+    original = legacy.LegacyNativeStores.matching_stores
+    calls = [0]
+
+    def fail_once(self, *args: object, **kwargs: object) -> tuple[set[Path], bool]:
+        calls[0] += 1
+        raise OSError("native source unavailable")
+
+    monkeypatch.setattr(legacy.LegacyNativeStores, "matching_stores", fail_once)
+    legacy.maybe_import_legacy_native_sessions(root)
+    note_path = root / legacy.DEFERRAL_NOTE
+    note = json.loads(note_path.read_text())
+    assert note["error"] == "native source unavailable"
+    assert note["retry_after"] == now[0] + legacy.RETRY_DELAY_SECONDS
+    assert calls == [1]
+    assert "deferred" in capsys.readouterr().err
+
+    legacy.maybe_import_legacy_native_sessions(root)
+    assert calls == [1]
+    assert capsys.readouterr().err == ""
+
+    now[0] += legacy.RETRY_DELAY_SECONDS + 1
+    monkeypatch.setattr(legacy.LegacyNativeStores, "matching_stores", original)
+    legacy.maybe_import_legacy_native_sessions(root)
+    assert calls == [1]
+    assert (root / legacy.MARKER).exists()
+    assert not note_path.exists()
+
+
 def test_shape_invalid_legacy_rows_do_not_break_import(homes: tuple[Path, Path]) -> None:
     home, root = homes
     _chat(root, 1, "claude", "native-id", task_cwd=5)

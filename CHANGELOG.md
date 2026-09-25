@@ -15,6 +15,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Require tracked continue/fork references to include the full recorded native key.
 - Report native-binding conflicts on rejected writes, not during historical replay.
 - Batch legacy binding writes; damaged source state defers import without disabling runtime commands.
+- Back off deferred legacy imports for 15 minutes before retrying unavailable sources.
 - Continue hints and spawn refs target a verified run exit; chat refs remain immutable.
 - Do not allocate exit chats for native sessions absent from the exact store.
 - Project Pi session-log reads onto the reopen-default parent lineage; partial journals expose their completeness reasons.

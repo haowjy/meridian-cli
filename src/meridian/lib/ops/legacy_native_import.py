@@ -9,7 +9,9 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
+import time
 from collections import defaultdict
+from contextlib import suppress
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -22,6 +24,8 @@ from meridian.lib.state.session_store import SessionRecord, list_all_session_rec
 from meridian.lib.state.spawn.repository import SpawnStateQuarantined, read_state, scan_spawn_ids
 
 MARKER = "legacy-native-import-v1.json"
+DEFERRAL_NOTE = "legacy-native-import-deferral.json"
+RETRY_DELAY_SECONDS = 15 * 60
 REASONS = ("imported", "missing", "ambiguous", "ambiguous_id", "no_session_id", "unsupported")
 
 
@@ -107,13 +111,18 @@ def report_legacy_native_import(
 def import_legacy_native_sessions(runtime_root: Path) -> ImportReport | None:
     """Once per runtime root; interrupted appends are skipped on the next run."""
     marker = runtime_root / MARKER
+    deferral = runtime_root / DEFERRAL_NOTE
     if marker.exists():
         return None
     # Do not create runtime state for an untouched project.
     if not (runtime_root / "sessions.jsonl").exists():
         return None
+    if _deferral_is_active(deferral):
+        return None
     with lock_file(runtime_root / "locks" / "legacy-native-import.lock"):
         if marker.exists():
+            return None
+        if _deferral_is_active(deferral):
             return None
         records: dict[str, SessionRecord] = {
             chat.chat_id: chat for chat in list_all_session_records(runtime_root)
@@ -156,6 +165,7 @@ def import_legacy_native_sessions(runtime_root: Path) -> ImportReport | None:
                     report.counts[original.harness]["imported"] -= 1
                     report.record(original, "ambiguous_id")
         atomic_write_text(marker, report.json())
+        deferral.unlink(missing_ok=True)
         imported = sum(counts["imported"] for counts in report.counts.values())
         total = sum(sum(counts.values()) for counts in report.counts.values())
         print(
@@ -172,8 +182,27 @@ def maybe_import_legacy_native_sessions(runtime_root: Path) -> None:
         import_legacy_native_sessions(runtime_root)
     except (SpawnStateQuarantined, OSError, sqlite3.Error) as exc:
         # Do not skip quarantined spawn rows: they might carry a conflicting ID.
-        # No completion marker means repair can be followed by a safe retry.
+        # A short backoff avoids repeating an expensive source scan on every command.
+        with suppress(OSError):
+            atomic_write_text(
+                runtime_root / DEFERRAL_NOTE,
+                json.dumps(
+                    {"error": str(exc), "retry_after": time.time() + RETRY_DELAY_SECONDS},
+                    sort_keys=True,
+                )
+                + "\n",
+            )
         print(f"Native session import deferred for {runtime_root}: {exc}", file=sys.stderr)
+
+
+def _deferral_is_active(path: Path) -> bool:
+    """Read the tiny retry note once; malformed notes safely permit a retry."""
+    try:
+        note = json.loads(path.read_text(encoding="utf-8"))
+        retry_after = note.get("retry_after") if isinstance(note, dict) else None
+        return isinstance(retry_after, (int, float)) and retry_after > time.time()
+    except (OSError, ValueError):
+        return False
 
 
 if __name__ == "__main__":
