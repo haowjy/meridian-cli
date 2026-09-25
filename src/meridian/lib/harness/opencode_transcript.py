@@ -142,12 +142,21 @@ def opencode_db_any_session_exists(
     evidence; a corrupt database still surfaces its read error.
     """
 
-    schema = detect_opencode_db_schema(db_path)
-    if schema == "sqlite_v2":
-        return opencode_db_v2_session_exists(session_id=session_id, db_path=db_path)
-    if schema == "sqlite_v1":
-        return opencode_db_session_exists(session_id=session_id, db_path=db_path)
-    return False
+    if not session_id.strip():
+        return False
+    resolved_db_path = db_path or resolve_opencode_db_path()
+    if not resolved_db_path.is_file():
+        return False
+    with closing(_connect_readonly(resolved_db_path)) as connection:
+        names = _table_names(connection)
+        table = "session_v2" if "session_v2" in names else "session" if "session" in names else None
+        if table is None:
+            return False
+        # Exact identity checks must distinguish unreadable authority from absent IDs.
+        # In particular, a torn import snapshot must defer, never persist "missing".
+        return connection.execute(
+            f"SELECT 1 FROM {table} WHERE id = ?", (session_id.strip(),)
+        ).fetchone() is not None
 
 
 class _JsonlEventReader(Protocol):

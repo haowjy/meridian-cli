@@ -76,7 +76,10 @@ and sessions lock. Historical restored records stay inert.
 The dev report is `python -m meridian.lib.ops.legacy_native_import RUNTIME_ROOT`.
 It deliberately bypasses runtime resolution and telemetry. OpenCode validation
 uses a temporary DB/WAL copy because SQLite read-only connections can mutate
-source WAL shared memory; native source bytes are never written.
+source WAL shared memory; native source bytes are never written. A changing
+DB/WAL fingerprint or a strict row-query failure defers the import without a
+marker. Native validation happens before taking the sessions lock; identity is
+rechecked inside it and all accepted update lines share one durable append.
 
 ### Conversation model selections
 

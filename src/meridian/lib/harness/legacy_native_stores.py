@@ -121,10 +121,16 @@ class LegacyNativeStores:
                                 )
                             )
                             copied = directory / store.name
+                            before = _opencode_signature(store)
                             shutil.copyfile(store, copied)
                             wal = store.with_name(store.name + "-wal")
-                            if wal.is_file():
+                            if before[1] is not None:
                                 shutil.copyfile(wal, copied.with_name(copied.name + "-wal"))
+                            if _opencode_signature(store) != before:
+                                raise OSError(
+                                    f"OpenCode store changed during legacy import: {store}; "
+                                    "retry when its writer is idle"
+                                )
                             self._opencode[store] = copied
                         exact_store = self._opencode[store]
                     source = adapter.resolve_native_session_file(
@@ -139,3 +145,18 @@ class LegacyNativeStores:
             except NativeSessionUnavailable as exc:
                 ambiguous |= exc.reason == "ambiguous_native_file"
         return matches, ambiguous
+
+
+def _opencode_signature(
+    store: Path,
+) -> tuple[tuple[int, int, int], tuple[int, int, int, bytes] | None]:
+    """Detect checkpoints/restarts while copying without opening SQLite on the source."""
+    db = store.stat()
+    wal_path = store.with_name(store.name + "-wal")
+    try:
+        with wal_path.open("rb") as handle:
+            wal = wal_path.stat()
+            wal_signature = (wal.st_ino, wal.st_size, wal.st_mtime_ns, handle.read(32))
+    except FileNotFoundError:
+        wal_signature = None
+    return (db.st_ino, db.st_size, db.st_mtime_ns), wal_signature

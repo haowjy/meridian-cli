@@ -192,9 +192,11 @@ def test_concurrent_import_waits_and_rechecks_marker(homes: tuple[Path, Path]) -
     assert len((root / "sessions.jsonl").read_text().splitlines()) == 2
 
 
+@pytest.mark.parametrize("flag", ["--help", "--version"])
 def test_help_does_not_import_and_runtime_read_does(
     homes: tuple[Path, Path],
     monkeypatch: pytest.MonkeyPatch,
+    flag: str,
 ) -> None:
     from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
 
@@ -205,7 +207,7 @@ def test_help_does_not_import_and_runtime_read_does(
     monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
     monkeypatch.delenv("_MERIDIAN_DEPTH", raising=False)
     result = subprocess.run(
-        [sys.executable, "-m", "meridian", "--help"],
+        [sys.executable, "-m", "meridian", flag],
         env=os.environ.copy(),
         capture_output=True,
         text=True,
@@ -381,3 +383,95 @@ def test_imported_chat_native_log_and_continue_projection(
     )
     assert output.exit_code == 0
     assert sid in output.format_text() or str(source) in output.format_text()
+
+
+def test_checkpoint_during_opencode_copy_defers_without_marker(
+    homes: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import shutil
+    import sqlite3
+
+    home, root = homes
+    _chat(root, 1, "opencode", "ses_wal")
+    db = home / ".local/share/opencode/opencode.db"
+    db.parent.mkdir(parents=True)
+    with sqlite3.connect(db) as connection:
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("CREATE TABLE session (id TEXT PRIMARY KEY)")
+        connection.execute("INSERT INTO session VALUES ('ses_wal')")
+        connection.commit()
+        copy = shutil.copyfile
+
+        def checkpoint_after_db_copy(source: Path, destination: Path) -> Path:
+            result = copy(source, destination)
+            if source == db:
+                connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            return result
+
+        monkeypatch.setattr(shutil, "copyfile", checkpoint_after_db_copy)
+        legacy.maybe_import_legacy_native_sessions(root)
+    assert "OpenCode store changed" in capsys.readouterr().err
+    assert not (root / legacy.MARKER).exists()
+    assert len((root / "sessions.jsonl").read_text().splitlines()) == 1
+
+
+def test_unreadable_opencode_session_table_defers_without_marker(
+    homes: tuple[Path, Path],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import sqlite3
+
+    home, root = homes
+    _chat(root, 1, "opencode", "ses_corrupt")
+    db = home / ".local/share/opencode/opencode.db"
+    db.parent.mkdir(parents=True)
+    with sqlite3.connect(db) as connection:
+        connection.execute("CREATE TABLE session_v2 (not_an_id TEXT)")
+    legacy.maybe_import_legacy_native_sessions(root)
+    assert "no such column: id" in capsys.readouterr().err
+    assert not (root / legacy.MARKER).exists()
+
+
+def test_shape_invalid_legacy_rows_do_not_break_import(homes: tuple[Path, Path]) -> None:
+    home, root = homes
+    _chat(root, 1, "claude", "native-id", task_cwd=5)
+    _claude(home, root, "native-id")
+    with (root / "sessions.jsonl").open("a") as handle:
+        handle.write('{"event":"historical_import","record":null}\n')
+    # Normal replay drops the invalid start, so this journal has no eligible chats.
+    report = legacy.import_legacy_native_sessions(root)
+    assert report is not None and not report.bindings
+
+
+def test_torn_batch_recovers_only_uncommitted_bindings(
+    homes: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.lib.state import session_binding
+
+    home, root = homes
+    for number in (1, 2):
+        _chat(root, number, "claude", f"native-{number}")
+        _claude(home, root, f"native-{number}")
+    append = session_binding.append_durable_jsonl_line
+
+    def torn_append(path: Path, lines: str) -> None:
+        first, second = lines.splitlines(keepends=True)
+        with path.open("ab") as handle:
+            handle.write((first + second[: len(second) // 2]).encode())
+        raise OSError("interrupted append")
+
+    monkeypatch.setattr(session_binding, "append_durable_jsonl_line", torn_append)
+    with pytest.raises(OSError, match="interrupted"):
+        legacy.import_legacy_native_sessions(root)
+    assert not (root / legacy.MARKER).exists()
+    monkeypatch.setattr(session_binding, "append_durable_jsonl_line", append)
+    report = legacy.import_legacy_native_sessions(root)
+    assert report is not None and report.counts["claude"]["imported"] == 2
+    events = [json.loads(line) for line in (root / "sessions.jsonl").read_text().splitlines()]
+    assert [event["chat_id"] for event in events if event.get("source") == "legacy_import"] == [
+        "c1",
+        "c2",
+    ]

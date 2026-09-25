@@ -13,7 +13,6 @@ from collections import defaultdict
 from contextlib import ExitStack
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
 
 from meridian.lib.harness.legacy_native_stores import SUPPORTED, LegacyNativeStores
 from meridian.lib.platform.locking import lock_file
@@ -57,13 +56,16 @@ def report_legacy_native_import(
     previously_imported: set[str] = set()
     # Raw historical arrays matter here even though normal replay ignores them.
     for event in read_events(runtime_root / "sessions.jsonl", lambda row: row):
-        fact: dict[str, Any] = event.get("record", event)
+        fact = event.get("record", event)
+        if not isinstance(fact, dict):
+            continue
         chat_id = fact.get("chat_id")
         if not chat_id:
             continue
         for key in ("execution_cwd", "task_cwd", "control_root"):
-            if fact.get(key):
-                cwds[chat_id].add(Path(fact[key]))
+            value = fact.get(key)
+            if isinstance(value, str) and value:
+                cwds[chat_id].add(Path(value))
         if event.get("source") == "legacy_import":
             previously_imported.add(chat_id)
         for value in [fact.get("harness_session_id"), *(fact.get("harness_session_ids") or [])]:
@@ -115,7 +117,9 @@ def import_legacy_native_sessions(runtime_root: Path) -> ImportReport | None:
     with lock_file(runtime_root / "locks" / "legacy-native-import.lock"):
         if marker.exists():
             return None
-        records = {chat.chat_id: chat for chat in list_all_session_records(runtime_root)}
+        records: dict[str, SessionRecord] = {
+            chat.chat_id: chat for chat in list_all_session_records(runtime_root)
+        }
         report = report_legacy_native_import(runtime_root, records=list(records.values()))
         with session_bindings(runtime_root) as bindings:
             # Native validation can be slow. Recheck identity under the sessions lock
