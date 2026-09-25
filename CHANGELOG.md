@@ -4,98 +4,30 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-- Delete dead session-discovery metadata and prose-ID vocabulary; document runner validation order and Pi v2 fail-closed boundary dependencies.
-
-- Publish Claude seed symlinks by atomic replacement; failed publication leaves the previous target intact.
-
-- Refuse tracked reads and native capture without a complete recorded key; legacy Claude hints remain raw-reference-only.
-
-- Normalize native contradictions to typed entry-mismatch failures with expected/observed evidence; keep unavailable sources separate and suppress exit allocation and model attribution on refusal.
-
-- Verify Claude and Codex native headers at exact source resolution and preparation; refuse torn or wrong-identity journals.
-
-- Keep Claude fullscreen successor correlation diagnostic only; exit identity remains unresolved without launch-owned evidence.
-
-- Fail primary launches on contradictory initial owned identity before completion or model attribution; retain structured entry-mismatch evidence.
-
-- Build locked Pi extension bundles before full preflight tests and packaging; missing pnpm fails the gate.
-
-- Preserve `unbound` when tracked Pi continuation has no recorded native store.
-
-- Document real Pi RPC EOF/replacement ordering; distinguish an interrupted switch from a verified successor quit.
-
-- Exercise Pi runner invalidation, replacement/EOF races, abrupt exits, and quit/restart through the shipped bundle and Python reader.
-
-- Keep Pi shutdowns with invalidated hook contexts unresolved, not poisoned; version boundary records as v2.
-
-- Remove obsolete source carriers and ambient model readers; verify tracked fork launch and document exact-store preparation. Publish Claude transcript copies atomically.
-
-- Preserve typed missing, ambiguous, and unbound native-session refusals in spawn failure reasons; name the tracked chat in launch diagnostics.
-
-- Resume and fork Pi through the shared recorded-native-store request field.
-
-- Seed Claude from the exact recorded file; refuse missing sources instead of copying ambient decoys.
-
-- Carry one recorded native store through reference, continue, fork, and model reads; preserve Codex fork namespaces.
-
-- Track the remaining OpenCode ambient-database report fallback for the native-history read-path cleanup.
-
-- Preserve reopenable Codex namespaces through symlinked session directories and refuse stores that cannot be selected exactly.
-
-- Treat every recorded OpenCode store as an exact database path, including databases named `storage`; remove basename-based namespace inference.
-
-- Align repair, search, and continuation fixtures with recorded native stores; reject ambient Claude repair fallback.
-
-- Keep Claude owned identity parsing at the event envelope, excluding nested assistant/tool content.
-
-- Remove stale extractor discovery guidance; document exact-store reads and separate trampoline diagnostics.
-
-- Exercise Codex/OpenCode owned-event, absent-event and prose-only shell launches; remove OpenCode recursive identity inference exposed by the new shim case. Claude seed startup must succeed.
-
-- Record Claude fullscreen trampoline successors separately on runs; keep the entry chat and native binding unchanged.
-
-- Record the effective OpenCode database namespace (including OPENCODE_DB); normalize relative Codex homes against the child cwd.
-
-- Separate recorded native stores from legacy Claude configuration hints; missing tracked stores never fall back to ambient namespaces.
-
-- Bind Codex identities only from owned identity event envelopes, never assistant prose or nested identity-shaped content.
-
-- Carry recorded source stores through continuation and fork requests; pin Codex/OpenCode resume environments and refuse missing native sources.
-
-- Persist the finalized native store with the first owned session observation in both runners.
-
 ### Added
-- Session logs label unresolved exits as entry-based views.
-- Runs retain immutable entry chats and resolve verified native exits to their own chats; missing exits stay explicit.
-- Managed Pi launches load a bounded, atomic session-boundary observer without writing to native journals.
+- Runs retain immutable entry chats; verified Pi exits resolve to their own chats. Missing or uncertain exits stay explicit; session logs label entry-based views.
+- Managed Pi launches load a bounded, atomic v2 session-boundary observer without writing native journals.
 
 ### Fixed
+- Chats bind one immutable `(harness, native_store, id)`; assigned keys bind before exec, and owned observations can confirm but never repoint them.
+- Claude, Codex, OpenCode, and Pi continue/fork use recorded native stores and exact targets. Tracked operations refuse incomplete, missing, ambiguous, or contradictory sources instead of discovering replacements.
+- Validate Claude first-line session IDs and Codex session-meta IDs before exact reads or source preparation; malformed and torn journals fail closed.
+- Fail contradictory initial owned identities and detected post-exit native contradictions as `entry_mismatch`, retaining expected/observed evidence. Unavailable sources retain separate typed refusal codes.
+- Validate managed-primary startup identities before attach; withhold invocation attribution and exit-chat allocation on native refusal.
+- Keep Claude fullscreen successor correlation diagnostic only. Claude exits stay unresolved without launch-correlated evidence; unrelated concurrent chats never become verified exits.
+- Derive Claude stores from the child environment. Seed only the recorded native file: atomically replace same-config-root symlinks or publish cross-root copies.
+- Keep Pi invalidated-context shutdowns unresolved. Poison unexpected identity-read failures; v2 boundary verification requires a correlated final quit.
+- Pi creates bind UUIDs before TUI/RPC exec; resume/fork use verified exact files and reject native selector overrides. Torn sibling headers warn and skip only during fresh-ID collision checks.
+- Spawned exact continue reuses the source chat; fresh and fork launches keep distinct chats.
+- Preserve Codex fork namespaces and reopenable symlinked session directories. Pin relative Codex homes against the child cwd.
+- Record the effective OpenCode database, including `OPENCODE_DB`; never infer its kind from a basename.
+- Carry one recorded source store through references, continuation, forks, and model reads. Missing tracked stores never fall back to Claude config hints or ambient namespaces.
+- Accept IDs only from owned event envelopes, never assistant prose or nested tool/assistant content.
+- Remove obsolete discovery metadata and source carriers; document validation order and Pi's fail-closed stale-context error-prefix dependency.
+- Build locked Pi extension bundles before full preflight tests and packaging; missing pnpm fails loudly.
 
-- Resolve Claude trampoline successors to separate exit chats in both runners; preserve entry bindings.
-
-- Pi boundary verification drives the built extension in Node and reads its real records in Python.
-
-- Post-exit entry conflicts use stable `entry_mismatch` failures with expected/observed lifecycle evidence.
-
-- Fresh Pi UUID launches warn and skip torn sibling headers; exact resume/fork sources still fail closed.
-- Spawned exact continue reuses its source chat; fresh and fork launches keep separate chats.
-- Test harness connections honor preassigned native IDs; Pi timeout scenarios reach the timeout instead of failing entry.
-- Tracked continue/fork refuses native IDs without a recorded harness; never infers identity from ambient stores.
-- Contradictory initial native identity fails the attempt as `entry_mismatch`; later switches never rebind entry.
-- Pi exit metadata verifies the original launch plan, without reconstructing identity from argv.
-- Pi continue reads the bound store, never a primary metadata hint.
-- Pi binds native IDs before TUI/RPC exec, resumes exact files, and refuses identity overrides; newest files never replace chats.
-- Pi native identity preflight verifies exact journal headers and rejects ID collisions.
-- Claude, Codex, and OpenCode identity reads no longer discover sessions from filesystem recency; tracked reads use exact native stores.
-- Claude planned session IDs project through a typed launch field, and passthrough identity flags are refused for tracked launches.
-- Claude seed smoke fixture checks the typed ID and requires successful startup instead of accepting a failed attempt.
-- Chat restarts and managed-primary metadata preserve the original native binding.
-- Continue and fork refuse unbound chats with a clear error; removed discovery-based recovery advice.
-- Chat transcript and repair reads use only recorded identity; missing native sessions report unavailable instead of scanning.
-- Claude trampoline reconciliation diagnoses successors without replacing the recorded chat identity.
-- Claude fresh launches bind the exact planned `--session-id` before exec, including the child native store.
-- Assigned and observed session identities bind once; connection and post-exit signals cannot overwrite.
-- Chats keep their first native session ID and store; conflicting updates no longer rebind history.
+### Scope
+- OpenCode's ambient report fallback remains tracked for the native-history read-path lane. Native-reader/lineage expansion and runner-history deletion are not part of this wrapper change.
 
 ## [0.6.7] - 2026-09-25
 
