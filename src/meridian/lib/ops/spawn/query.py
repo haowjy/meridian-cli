@@ -12,6 +12,7 @@ from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.harness.pi_lifecycle_events import PI_PHASE_EVENT_TYPE as _PI_PHASE_EVENT_TYPE
 from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
 from meridian.lib.ops.reference import resolve_spawn_ref
+from meridian.lib.ops.run_boundary import run_boundary_summary
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_identity, spawn_store
 from meridian.lib.state.history_index import indexed_spawn_scan
@@ -631,6 +632,8 @@ def detail_from_row(
 
     terminal = row.terminal
     return SpawnDetailOutput(
+        boundary_summary=(run_boundary_summary(resolved_runtime_root, row.id)
+                          if resolved_runtime_root else None),
         spawn_id=row.id,
         status=row.status,
         model=row.model or "",

@@ -13,6 +13,8 @@ transport or make command-line parsing the source of spawn authority.
 `managed-bash` owns shell-task execution and task records.
 `meridian-spawn-watch` owns child-spawn observation and follow-up notifications.
 Keep that mechanism/policy boundary intact.
+`session-boundary` owns bounded native lifecycle observations; only a final
+shutdown/quit qualifies the run exit, never the entry or last-seen session.
 
 ## Key Rules
 

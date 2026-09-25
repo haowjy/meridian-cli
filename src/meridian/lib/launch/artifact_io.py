@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+import structlog
+
+from meridian.lib.core.clock import Clock
 from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId
 from meridian.lib.launch.composition import (
     ProjectionChannels,
@@ -15,10 +19,46 @@ from meridian.lib.launch.composition import (
     build_reference_routing,
 )
 from meridian.lib.state.artifact_store import ArtifactStore
-from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.atomic import append_text_line, atomic_write_text
+from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
 if TYPE_CHECKING:
     from meridian.lib.launch.context import LaunchContext
+
+
+logger = structlog.get_logger(__name__)
+
+
+def append_runner_lifecycle_event(
+    runtime_root: Path,
+    spawn_id: SpawnId,
+    path: Path,
+    *,
+    clock: Clock,
+    event: str,
+    phase: str,
+    **details: object,
+) -> None:
+    """Best-effort append of runner-owned crash diagnostics."""
+
+    payload = {
+        "event": event,
+        "timestamp": clock.utc_now_iso(),
+        "pid": os.getpid(),
+        "phase": phase,
+        **details,
+    }
+    try:
+        mutate_published_spawn_artifact(
+            runtime_root,
+            spawn_id,
+            lambda: append_text_line(
+                path,
+                json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n",
+            ),
+        )
+    except Exception:
+        logger.warning("Failed to append runner lifecycle evidence.", exc_info=True)
 
 
 ProjectionSurface = Literal["primary", "spawn"]

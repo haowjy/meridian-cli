@@ -21,17 +21,24 @@ pi_runtime/
 ├── dist/                     # build output: splatted entrypoints
 │   └── extensions/
 │       ├── managed-bash/index.js
-│       └── meridian-spawn-watch/index.js
+│       ├── meridian-spawn-watch/index.js
+│       └── session-boundary/index.js
 └── extensions/
     ├── types.ts              # shared TS types (ExtensionAPI, ToolRegistration)
     ├── shared/               # ids, json files, panels, pi state paths, meridian CLI helpers
     ├── managed-bash/
     │   └── src/index.ts      # bash/bash_manage override, b-* records, /ps* UI
-    └── meridian-spawn-watch/
-        └── src/index.ts      # spawn disk watcher, implicit-wait notifications, /spawn* UI
+    ├── meridian-spawn-watch/
+    │   └── src/index.ts      # spawn disk watcher, implicit-wait notifications, /spawn* UI
+    └── session-boundary/
+        └── src/index.ts      # native lifecycle observations, no journal writes
 ```
 
 ### Extension Responsibilities
+
+`session-boundary` consumes launch path/nonce handles, writes at most 16 KiB to
+`spawns/<run>/pi-session-boundary.json`, and emits nothing on stdout. Python reads
+once after process exit, validating nonce and actual child PID.
 
 | Extension | Owns | Writes / observes |
 |---|---|---|
@@ -44,11 +51,12 @@ child-spawn observation and notification behavior belong in spawn-watch.
 
 ### Build Pipeline
 
-`npm run build:extensions` runs three scripts in sequence:
+`npm run build:extensions` runs four scripts in sequence:
 
 1. `build:extensions:clean` — removes `./dist/extensions`
 2. `build:extensions:managed-bash` — `tsup` bundles `managed-bash/src/index.ts` → ESM, Node 20, single-file output
 3. `build:extensions:meridian-spawn-watch` — bundles `meridian-spawn-watch/src/index.ts` the same way
+4. `build:extensions:session-boundary` — bundles the native session observer
 
 `npm run verify:extensions` rebuilds and runs Vitest coverage for the extension sources.
 
@@ -63,8 +71,8 @@ Pi loads extensions via explicit `-e <path>` CLI flags. Meridian launches with
 `--no-extensions` and then adds only the selected Meridian bundles, so ambient user
 extensions do not change spawn behavior.
 
-- **spawned RPC mode**: `managed-bash` + `meridian-spawn-watch`
-- **primary native TUI mode**: `meridian-spawn-watch` only; no bash override and no spawned-session auto-stop
+- **spawned RPC mode**: `managed-bash` + `meridian-spawn-watch` + `session-boundary`
+- **primary native TUI mode**: `meridian-spawn-watch` + `session-boundary`; no bash override and no spawned-session auto-stop
 
 Role-specific behavior is gated by environment, including `_MERIDIAN_PI_SESSION_ROLE` and
 `_MERIDIAN_PI_STATE_DIR`.
@@ -161,3 +169,5 @@ subpath imports break under Pi's extension loader.
 - [../../lib/harness/projections/.context/CONTEXT.md](../../lib/harness/projections/.context/CONTEXT.md) — extension entrypoint projection
 - [../../lib/harness/connections/.context/CONTEXT.md](../../lib/harness/connections/.context/CONTEXT.md) — Pi RPC JSON-RPC transport
 - [../../lib/streaming/.context/CONTEXT.md](../../lib/streaming/.context/CONTEXT.md) — Pi drain/quiescence policy consumes disk-backed state
+
+Session boundary consumes launch path/nonce handles and atomically publishes a bounded record. Initial entry never changes on switches; only a final shutdown/quit supplies exit identity. No itinerary or native journal writes.

@@ -145,6 +145,9 @@ def test_mutating_legacy_row_rewrites_it_as_v3(tmp_path: Path) -> None:
         "owner_history_id",
         "forked_from_history_id",
         "retained_history_ids",
+        "entry_chat_id",
+        "exit_chat_id",
+        "exit_identity",
     ):
         legacy.pop(key)
     state_path.write_text(json.dumps(legacy), encoding="utf-8")

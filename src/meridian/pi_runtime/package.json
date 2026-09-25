@@ -6,12 +6,13 @@
     "build:extensions:clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('./dist/extensions', { recursive: true, force: true });\"",
     "build:extensions:managed-bash": "tsup ./extensions/managed-bash/src/index.ts --format esm --target node20 --splitting false --out-dir ./dist/extensions/managed-bash --clean --external @earendil-works/pi-coding-agent --external @earendil-works/pi-tui",
     "build:extensions:meridian-spawn-watch": "tsup ./extensions/meridian-spawn-watch/src/index.ts --format esm --target node20 --splitting false --out-dir ./dist/extensions/meridian-spawn-watch --clean --external @earendil-works/pi-coding-agent --external @earendil-works/pi-tui",
-    "build:extensions": "npm run build:extensions:clean && npm run build:extensions:managed-bash && npm run build:extensions:meridian-spawn-watch",
+    "build:extensions": "npm run build:extensions:clean && npm run build:extensions:managed-bash && npm run build:extensions:meridian-spawn-watch && npm run build:extensions:session-boundary",
     "test": "vitest run",
     "test:watch": "vitest",
     "verify:extensions": "npm run build:extensions && npm test",
     "verify:extensions:watch": "npm run build:extensions && vitest",
-    "verify:extensions:loop": "node scripts/verify-extensions-loop.mjs"
+    "verify:extensions:loop": "node scripts/verify-extensions-loop.mjs",
+    "build:extensions:session-boundary": "tsup ./extensions/session-boundary/src/index.ts --format esm --target node20 --splitting false --out-dir ./dist/extensions/session-boundary --clean --external @earendil-works/pi-coding-agent --external @earendil-works/pi-tui"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.75.3",
@@ -26,13 +27,19 @@
     "@earendil-works/pi-tui": ">0.70.0 <1"
   },
   "peerDependenciesMeta": {
-    "@earendil-works/pi-coding-agent": { "optional": true },
-    "@earendil-works/pi-tui": { "optional": true }
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    }
   },
   "dependencies": {
     "typebox": "^1.1.38"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }

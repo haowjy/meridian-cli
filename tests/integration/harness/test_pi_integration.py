@@ -49,7 +49,7 @@ async def _next_non_phase_event(event_iter):  # type: ignore[no-untyped-def]
 
 def _configure_extension_projection(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
     source_root = root / "dist" / "extensions"
-    for extension_name in ("managed-bash", "meridian-spawn-watch"):
+    for extension_name in ("managed-bash", "meridian-spawn-watch", "session-boundary"):
         (source_root / extension_name).mkdir(parents=True, exist_ok=True)
         (source_root / extension_name / "index.js").write_text(
             "export default {}\\n",

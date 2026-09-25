@@ -30,7 +30,16 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Persist the finalized native store with the first owned session observation in both runners.
 
+### Added
+- Session logs label unresolved exits as entry-based views.
+- Runs retain immutable entry chats and resolve verified native exits to their own chats; missing exits stay explicit.
+- Managed Pi launches load a bounded, atomic session-boundary observer without writing to native journals.
+
 ### Fixed
+
+- Pi boundary verification drives the built extension in Node and reads its real records in Python.
+
+- Post-exit entry conflicts use stable `entry_mismatch` failures with expected/observed lifecycle evidence.
 
 - Fresh Pi UUID launches warn and skip torn sibling headers; exact resume/fork sources still fail closed.
 - Spawned exact continue reuses its source chat; fresh and fork launches keep separate chats.

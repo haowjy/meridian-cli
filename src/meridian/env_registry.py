@@ -203,6 +203,8 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _internal_handle(
         "_MERIDIAN_PRIMARY_STDERR_LOG_PATH", "Primary subprocess stderr path.", child=False
     ),
+    _internal_handle("_MERIDIAN_PI_SESSION_BOUNDARY_PATH", "Pi boundary observation path."),
+    _internal_handle("_MERIDIAN_PI_SESSION_BOUNDARY_NONCE", "Pi boundary launch nonce."),
     _internal_handle("_MERIDIAN_PI_STATE_DIR", "Pi extension runtime-state root."),
     _internal_handle("_MERIDIAN_PI_SESSION_ROLE", "Pi primary or spawned session role."),
     _internal_handle("_MERIDIAN_PI_BASH_ID", "Originating managed-bash task identifier."),

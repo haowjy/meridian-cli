@@ -20,6 +20,9 @@ HarnessSessionDiscovery = Literal["ok", "pending", "conflict", "never_created", 
 class PrimaryMetadata:
     """Canonical schema for primary_meta.json."""
 
+    entry_chat_id: str | None = None
+    exit_chat_id: str | None = None
+    exit_identity: str | None = None
     managed_backend: bool = True
     launcher_pid: int | None = None
     launcher_birth_epoch: float | None = None
@@ -177,6 +180,9 @@ def read_primary_metadata(runtime_root: Path, spawn_id: str) -> PrimaryMetadata 
         return None
 
     return PrimaryMetadata(
+        entry_chat_id=_coerce_optional_text(payload.get("entry_chat_id")),
+        exit_chat_id=_coerce_optional_text(payload.get("exit_chat_id")),
+        exit_identity=_coerce_optional_text(payload.get("exit_identity")),
         managed_backend=managed_backend,
         launcher_pid=_coerce_positive_int(payload.get("launcher_pid")),
         launcher_birth_epoch=_coerce_nonnegative_float(payload.get("launcher_birth_epoch")),
@@ -219,6 +225,9 @@ def write_primary_metadata(
         raise ValueError("runtime_root and spawn_id must be provided together")
 
     payload = {
+        "entry_chat_id": metadata.entry_chat_id,
+        "exit_chat_id": metadata.exit_chat_id,
+        "exit_identity": metadata.exit_identity,
         "managed_backend": metadata.managed_backend,
         "launcher_pid": metadata.launcher_pid,
         "launcher_birth_epoch": metadata.launcher_birth_epoch,

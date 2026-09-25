@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+import secrets
 from pathlib import Path
 from typing import ClassVar, cast
 
 from meridian.lib.config.settings import resolve_pi_harness_profile
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
-from meridian.lib.core.native_identity import NativeIdentityPlan
+from meridian.lib.core.native_identity import NativeIdentityPlan, RunBoundary
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     ApprovalContract,
@@ -40,6 +41,7 @@ from meridian.lib.harness.bundle import (
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.harness.extractors.pi import PI_EXTRACTOR
+from meridian.lib.harness.pi_boundary import read_boundary
 from meridian.lib.harness.pi_identity import mint_session_id, resolve_session_file, verify_identity
 from meridian.lib.harness.pi_lifecycle_events import redact_pi_command_for_history
 from meridian.lib.harness.pi_paths import (
@@ -353,6 +355,10 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         child_env.update(state_dir_overrides)
         env_overrides: dict[str, str] = {
             "MERIDIAN_PI_BINARY": resolved_runtime.binary_path,
+            "_MERIDIAN_PI_SESSION_BOUNDARY_PATH": str(
+                (runtime_root / spawn_log_subpath(spawn_id) / "pi-session-boundary.json").resolve()
+            ),
+            "_MERIDIAN_PI_SESSION_BOUNDARY_NONCE": secrets.token_hex(32),
         }
 
         _write_pi_runtime_metadata_sidecar(
@@ -377,6 +383,15 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 "pi_runtime_auth_policy": "shared-pi-agent-dir",
             },
         )
+
+    def observe_run_boundary(
+        self, *, child_env: dict[str, str], pid: int | None,
+    ) -> RunBoundary:
+        path = child_env.get("_MERIDIAN_PI_SESSION_BOUNDARY_PATH")
+        nonce = child_env.get("_MERIDIAN_PI_SESSION_BOUNDARY_NONCE")
+        if not path or not nonce:
+            return RunBoundary()
+        return read_boundary(Path(path), nonce=nonce, pid=pid)
 
     def uses_native_primary_metadata(self) -> bool:
         return self.contract.bootstrap.mode is BootstrapMode.SUBPROCESS_ONLY
