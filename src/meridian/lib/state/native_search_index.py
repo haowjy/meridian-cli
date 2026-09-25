@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from collections.abc import Iterable
 from contextlib import closing
 from dataclasses import dataclass
@@ -25,6 +26,13 @@ MINIMUM_SQLITE_VERSION = (3, 43, 0)
 
 class NativeSearchUnavailable(RuntimeError):
     """The local SQLite build cannot create the contentless FTS projection."""
+
+
+def discard_native_search_index(runtime_root: Path) -> None:
+    """Delete only the disposable projection and its SQLite sidecars."""
+    path = runtime_root / "history-index" / INDEX_FILENAME
+    for suffix in ("", "-wal", "-shm"):
+        Path(str(path) + suffix).unlink(missing_ok=True)
 
 
 def sqlite_search_supported() -> bool:
@@ -173,9 +181,12 @@ class NativeSearchIndex:
 
     def _initialize(self) -> None:
         with closing(self._connect()) as db, db:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='meta'").fetchone():
+                return
             db.execute("PRAGMA journal_mode = WAL")
             db.executescript(
                 """
+                BEGIN IMMEDIATE;
                 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS sources(
                   source_id INTEGER PRIMARY KEY,
@@ -337,7 +348,12 @@ class NativeSearchIndex:
                 db.execute("DELETE FROM sources WHERE source_id=?", (source_id,))
 
     def search(
-        self, query: str, *, keys: Iterable[NativeKey] | None = None, limit: int | None = None
+        self,
+        query: str,
+        *,
+        keys: Iterable[NativeKey] | None = None,
+        limit: int | None = None,
+        deadline: float | None = None,
     ) -> tuple[SearchMode, list[SearchRow]]:
         """Return exact substring hits; trigram FTS only nominates candidates."""
         match = _query_match(query)
@@ -362,7 +378,7 @@ class NativeSearchIndex:
             params.append(match)
         sql = (
             "SELECT s.harness,s.native_store,s.session_id,s.locator,s.activity,e.ordinal,e.segment,"
-            "e.seg_start,e.seg_end,e.role,e.kind,e.content "
+            "e.seg_start,e.seg_end,e.role,e.kind,e.rowid "
             "FROM entries e JOIN sources s ON s.source_id=e.source_id "
             + join
             + "WHERE "
@@ -372,8 +388,18 @@ class NativeSearchIndex:
         hits: list[SearchRow] = []
         needle = query.lower()
         with closing(self._connect()) as db, db:
+            if deadline is not None:
+                db.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
             for row in db.execute(sql, params):
-                content = str(row[11])
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError("Native search query deadline exceeded")
+                # Sort/navigate only small candidate metadata. Fetch large display
+                # text after nomination, stopping as soon as the verified limit is met.
+                content = str(
+                    db.execute("SELECT content FROM entries WHERE rowid=?", (row[11],)).fetchone()[
+                        0
+                    ]
+                )
                 if needle not in search_text(content):
                     continue
                 hits.append(

@@ -347,7 +347,6 @@ def _session_search(
         bool,
         Parameter(name="--workspace", help="Search current project plus workspace roots."),
     ] = False,
-    include_archives: Annotated[bool, Parameter(name="--include-archives")] = False,
     global_scope: Annotated[
         bool,
         Parameter(name="--global", help="Search all local Meridian runtime roots."),
@@ -357,7 +356,6 @@ def _session_search(
         session_search_sync(
             SessionSearchInput(
                 query=query,
-                include_archives=include_archives,
                 ref=ref,
                 file_path=file_path,
                 work_id=work_id,

@@ -331,5 +331,7 @@ def test_rebuild_warms_archived_children_and_counts_unsupported(
     )
     assert metadata.preview_cached == 0
     warmed = session_index_sync(SessionIndexInput(project_root=str(project), action="rebuild"))
-    assert warmed.preview_cached == 1
-    assert warmed.preview_unavailable == 1
+    assert warmed.preview_cached == 0  # Rebuild now warms native search, not previews.
+    assert warmed.search_fresh == 2
+    assert warmed.search_stale == 0
+    assert warmed.search_unavailable == 1
