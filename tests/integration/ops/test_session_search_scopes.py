@@ -225,7 +225,6 @@ def test_session_search_corpus_resolves_tracked_claude_canonical_transcript(
 
 def test_large_native_transcript_is_rebuild_only(tmp_path: Path, monkeypatch) -> None:
     from meridian.lib.state import spawn_store
-    from meridian.lib.state.history import ingest_portable_history
     from meridian.lib.state.history_index import HistoryIndex
 
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
@@ -237,17 +236,8 @@ def test_large_native_transcript_is_rebuild_only(tmp_path: Path, monkeypatch) ->
         root, chat_id="c1", harness="codex", model="test", agent="", prompt="query"
     )
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
-    ingest_portable_history(
-        root,
-        key,
-        iter(
-            [
-                {
-                    "type": "assistant",
-                    "message": {"content": [{"type": "text", "text": "early needle"}]},
-                }
-            ]
-        ),
+    (root / "spawns" / key / "history.jsonl").write_text(
+        json.dumps({"payload": {"text": "early needle"}}) + "\n"
     )
     store = tmp_path / "native"
     store.mkdir()
@@ -289,7 +279,6 @@ def test_browse_subset_search_keeps_unbound_legacy_history_loose(tmp_path, monke
     from meridian.lib.ops.session_archive import archive_history
     from meridian.lib.ops.session_search import iter_session_subset_search
     from meridian.lib.state import spawn_store
-    from meridian.lib.state.history import ingest_portable_history
 
     monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "home"))
     project = tmp_path / "project"
@@ -312,17 +301,8 @@ def test_browse_subset_search_keeps_unbound_legacy_history_loose(tmp_path, monke
     )
     session_store.update_session_spawn_id(root, chat, key)
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
-    ingest_portable_history(
-        root,
-        key,
-        iter(
-            [
-                {
-                    "type": "assistant",
-                    "message": {"content": [{"type": "text", "text": "portable needle"}]},
-                },
-            ]
-        ),
+    (root / "spawns" / key / "history.jsonl").write_text(
+        json.dumps({"payload": {"text": "portable needle"}}) + "\n"
     )
     session_store.stop_session(root, chat)
     row = spawn_store.get_spawn(root, key)

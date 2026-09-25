@@ -11,11 +11,6 @@ import pytest
 from meridian.lib.harness.opencode_transcript import iter_opencode_db_events
 from meridian.lib.harness.transcript import parse_transcript_events_with_prologues
 from meridian.lib.harness.transcript_preview import PreviewAccumulator
-from meridian.lib.ops.session_archive import archive_history
-from meridian.lib.state import spawn_store
-from meridian.lib.state.history import ingest_portable_history
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write
-from tests.support.history import written_events as iter_history_events
 from tests.support.opencode_db import write_opencode_db_session_with_parts
 
 
@@ -56,33 +51,6 @@ def test_raw_rows_preserve_unknown_material_columns_and_orphan_parts(
     # The same raw dialect remains interpretable after JSON serialization/retention.
     parsed = parse_transcript_events_with_prologues(json.loads(json.dumps(events)))
     assert parsed.rendering_reason
-
-
-def test_portable_history_writer_preserves_opencode_rows(tmp_path: Path, monkeypatch) -> None:
-    path = tmp_path / "opencode.db"
-    write_opencode_db_session_with_parts(
-        db_path=path,
-        session_id="s",
-        messages=[("assistant", {}, [{"type": "text", "text": "retained response"}])],
-    )
-    events = list(iter_opencode_db_events(session_id="s", db_path=path))
-    monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "home"))
-    project = tmp_path / "repo"
-    project.mkdir()
-    root = resolve_project_runtime_root_for_write(project)
-    key = spawn_store.start_spawn(
-        root, chat_id="c1", prompt="question", harness="opencode", model="test", agent="coder"
-    )
-    spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
-    ingest_portable_history(root, key, iter(events))
-    retained = list(iter_history_events(root / "spawns" / key / "history.jsonl"))
-    assert [event["payload"] for event in retained] == events
-    record = spawn_store.get_spawn(root, key)
-    assert record is not None and record.history_id is not None
-    archived = archive_history(root, destination=tmp_path / "archives", refs=(key,), apply=True)
-    assert not archived.reclaimed
-    assert not archived.archives
-    assert any("no exact native source is bound" in error for error in archived.errors)
 
 
 @pytest.mark.parametrize("failure", ["missing-file", "missing-session", "missing-table"])

@@ -18,7 +18,6 @@ import pytest
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
-from meridian.lib.state.history import HarnessHistoryWriter, WriteResult
 from meridian.lib.streaming import descendant_evidence as descendant_evidence_module
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
@@ -47,23 +46,17 @@ from meridian.lib.streaming.drain_wait import (
     DrainTimeoutWake,
     _cancel_task,
 )
-from meridian.lib.streaming.spawn_drain_loop import (
-    EmitOutcome,
-    SpawnDrainLoop,
-    WriteFailed,
-    Written,
-)
+from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 from tests.support.fakes import FakeClock
-from tests.support.history import written_events as read_history_range
 from tests.support.pi import PiDrainScenario
 
 _SPAWN_ID = SpawnId("p-persist-order")
 Call = tuple[str, RawHarnessEvent]
 
 
-def test_manager_hooks_and_subscribers_run_without_history_writer(tmp_path: Path) -> None:
+def test_manager_emit_runs_hooks_then_fan_out(tmp_path: Path) -> None:
     manager = SpawnManager(tmp_path / "runtime", tmp_path)
     event = RawHarnessEvent(event_type="message", harness_id="fake", payload={})
     calls: list[str] = []
@@ -105,26 +98,6 @@ def test_history_blind_mode_traps_reads_in_cli_subprocesses(
 
     assert result.returncode != 0
     assert "runner history read is disabled" in result.stderr
-
-
-def test_history_writer_stamps_lifecycle_rows_with_subsecond_wall_clock(tmp_path: Path) -> None:
-    class _SubsecondClock(FakeClock):
-        def utc_now_iso(self) -> str:
-            return "2026-07-17T13:14:15.123Z"
-
-    history_path = tmp_path / "history.jsonl"
-    writer = HarnessHistoryWriter(history_path, clock=_SubsecondClock())
-
-    result = writer.write(
-        RawHarnessEvent(
-            event_type="meridian.pi.lifecycle.phase",
-            harness_id="pi",
-            payload={"phase": "finalized"},
-        )
-    )
-
-    assert result.success is True
-    assert read_history_range(history_path)[0]["timestamp"] == "2026-07-17T13:14:15.123Z"
 
 
 @pytest.mark.asyncio
@@ -193,16 +166,6 @@ class _Receiver:
 
     def observe_event_semantics(self, semantics: object) -> None:
         _ = semantics
-
-
-class _HistoryWriter:
-    def __init__(self, results: list[WriteResult], calls: list[Call]) -> None:
-        self._results = iter(results)
-        self._calls = calls
-
-    def write(self, event: RawHarnessEvent) -> WriteResult:
-        self._calls.append(("persist", event))
-        return next(self._results)
 
 
 class _Coordinator:
@@ -384,24 +347,13 @@ class _NoopCompletionCleanup:
 
 async def _run_drain(
     events: list[RawHarnessEvent],
-    results: list[WriteResult],
     *,
     outcomes: list[DrainOutcome] | None = None,
-    tracer=None,
 ) -> list[Call]:
     calls: list[Call] = []
 
-    def record_observer_dispatch(_spawn_id: SpawnId, event: RawHarnessEvent) -> None:
-        calls.append(("observe", event))
-
-    writer = cast("HarnessHistoryWriter", _HistoryWriter(results, calls))
-
-    def emit_event(_spawn_id: SpawnId, event: RawHarnessEvent) -> EmitOutcome:
-        result = writer.write(event)
-        if not result.success:
-            return WriteFailed(result.error or "history write failed")
-        record_observer_dispatch(_spawn_id, event)
-        return Written()
+    def emit_event(_spawn_id: SpawnId, event: RawHarnessEvent) -> None:
+        calls.append(("hooks", event))
 
     sessions: dict[SpawnId, SpawnSession] = {}
     if outcomes is not None:
@@ -438,36 +390,29 @@ async def _run_drain(
         spawn_id=_SPAWN_ID,
         receiver=cast("HarnessConnection[Any]", _Receiver(events)),
         drain_plan=DrainPlan(coordinator=coordinator),
-        tracer=tracer,
+        tracer=None,
     )
     return calls
 
 
 @pytest.mark.asyncio
-async def test_failed_history_write_blocks_post_persist_delivery() -> None:
-    failed_event = RawHarnessEvent(event_type="message", harness_id="test", payload={"id": 1})
-    persisted_event = RawHarnessEvent(
-        event_type="message",
-        harness_id="test",
-        payload={"id": 2},
-    )
+async def test_each_event_runs_hooks_then_fan_out_then_coordinator_note() -> None:
+    events = [
+        RawHarnessEvent(event_type="message", harness_id="test", payload={"id": index})
+        for index in range(2)
+    ]
 
-    calls = await _run_drain(
-        [failed_event, persisted_event],
-        [
-            WriteResult(success=False, error="transient write failure"),
-            WriteResult(success=True, seq=0),
-        ],
-    )
+    calls = await _run_drain(events)
 
     assert calls == [
-        ("pre_persist", failed_event),
-        ("persist", failed_event),
-        ("pre_persist", persisted_event),
-        ("persist", persisted_event),
-        ("observe", persisted_event),
-        ("fan_out", persisted_event),
-        ("noted", persisted_event),
+        call
+        for event in events
+        for call in (
+            ("pre_persist", event),
+            ("hooks", event),
+            ("fan_out", event),
+            ("noted", event),
+        )
     ]
 
 
@@ -498,13 +443,8 @@ async def test_held_descendant_refresh_does_not_block_ordered_event_delivery(
     )
     started = await PiDrainScenario.start(tmp_path, monkeypatch, spawn_id=_SPAWN_ID)
 
-    history_writer = _HistoryWriter([WriteResult(success=True, seq=i) for i in range(3)], calls)
-
-    def emit_event(_spawn_id: SpawnId, event: RawHarnessEvent) -> EmitOutcome:
-        result = history_writer.write(event)
-        if result.success:
-            calls.append(("observe", event))
-        return Written() if result.success else WriteFailed(result.error or "history write failed")
+    def emit_event(_spawn_id: SpawnId, event: RawHarnessEvent) -> None:
+        calls.append(("hooks", event))
 
     loop = SpawnDrainLoop(
         sessions={},
@@ -528,32 +468,8 @@ async def test_held_descendant_refresh_does_not_block_ordered_event_delivery(
         release.set()
         await started.stop()
 
-    assert [call[0] for call in calls].count("persist") == len(events)
-    assert [call[0] for call in calls].count("observe") == len(events)
+    assert [call[0] for call in calls].count("hooks") == len(events)
     assert [call[0] for call in calls].count("fan_out") == len(events)
-
-
-@pytest.mark.asyncio
-async def test_tenth_history_write_failure_aborts_without_delivery() -> None:
-    events = [
-        RawHarnessEvent(event_type="message", harness_id="test", payload={"id": index})
-        for index in range(11)
-    ]
-
-    outcomes: list[DrainOutcome] = []
-    calls = await _run_drain(
-        events,
-        [WriteResult(success=False, error="write failure") for _ in events],
-        outcomes=outcomes,
-    )
-
-    assert calls == [
-        call for event in events[:10] for call in (("pre_persist", event), ("persist", event))
-    ]
-    assert len(outcomes) == 1
-    assert outcomes[0].status == "failed"
-    assert outcomes[0].exit_code == 1
-    assert outcomes[0].error == ("Aborted drain loop after repeated output persistence failures")
 
 
 @pytest.mark.asyncio
@@ -565,48 +481,12 @@ async def test_codex_interrupted_turn_publishes_cancelled_drain_outcome() -> Non
     )
     outcomes: list[DrainOutcome] = []
 
-    await _run_drain(
-        [interrupted],
-        [WriteResult(success=True, seq=0)],
-        outcomes=outcomes,
-    )
+    await _run_drain([interrupted], outcomes=outcomes)
 
     assert len(outcomes) == 1
     assert outcomes[0].status == "cancelled"
     assert outcomes[0].exit_code == 130
     assert outcomes[0].error == "interrupted"
-
-
-@pytest.mark.asyncio
-async def test_terminal_frame_history_write_failure_is_not_delivered_or_terminal() -> None:
-    failed_terminal = RawHarnessEvent(
-        event_type="agent_end",
-        harness_id="pi",
-        payload={"messages": [{"role": "assistant", "stopReason": "stop"}]},
-    )
-    persisted_after_terminal = RawHarnessEvent(
-        event_type="message",
-        harness_id="pi",
-        payload={"id": "after-failed-terminal"},
-    )
-
-    calls = await _run_drain(
-        [failed_terminal, persisted_after_terminal],
-        [
-            WriteResult(success=False, error="terminal write failure"),
-            WriteResult(success=True, seq=0),
-        ],
-    )
-
-    assert calls == [
-        ("pre_persist", failed_terminal),
-        ("persist", failed_terminal),
-        ("pre_persist", persisted_after_terminal),
-        ("persist", persisted_after_terminal),
-        ("observe", persisted_after_terminal),
-        ("fan_out", persisted_after_terminal),
-        ("noted", persisted_after_terminal),
-    ]
 
 
 @pytest.mark.asyncio
@@ -624,7 +504,7 @@ async def test_persisted_activity_restarts_elapsed_stabilization_before_concurre
     )
     loop = SpawnDrainLoop(
         sessions={},
-        emit_event=lambda _spawn_id, event: Written(),
+        emit_event=lambda _spawn_id, event: None,
         publish_terminal=Mock(),
         fan_out_event=Mock(),
         fan_out_turn_boundary=AsyncMock(),
@@ -656,20 +536,3 @@ async def test_persisted_activity_restarts_elapsed_stabilization_before_concurre
     assert after_event_evaluation.trigger == "event"
     assert after_event_evaluation.stabilization_elapsed is False
     assert after_event_evaluation.state.stabilization_at == 4.0
-
-
-@pytest.mark.asyncio
-async def test_drain_trace_retains_the_writer_failure_reason():
-    event = RawHarnessEvent(event_type="message", harness_id="test", payload={})
-    tracer = Mock()
-    await _run_drain(
-        [event], [WriteResult(success=False, error="disk full: ENOSPC")], tracer=tracer
-    )
-    errors = [
-        call.kwargs["data"]
-        for call in tracer.emit.call_args_list
-        if call.args == ("drain", "persist_error")
-    ]
-    assert errors == [
-        {"event_type": "message", "error": "disk full: ENOSPC", "consecutive_failures": 1}
-    ]

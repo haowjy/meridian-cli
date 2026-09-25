@@ -15,9 +15,7 @@ from tests.support.resident_drain import FakeResidentConnection
 
 @pytest.mark.asyncio
 async def test_delivered_sequence_is_identical_with_and_without_fold(tmp_path, monkeypatch):
-    from meridian.lib.streaming import spawn_manager as manager_module
 
-    monkeypatch.setattr(manager_module, "HarnessHistoryWriter", lambda *a, **kw: None)
     delivered = []
     frames = [
         RawHarnessEvent(event_type=p["type"], harness_id="claude", payload=p)

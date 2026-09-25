@@ -38,7 +38,7 @@ _BACKEND_SCOPE_EPOCH = 12_345.0
 
 
 @pytest.mark.asyncio
-async def test_primary_attach_event_stream_runs_without_history_writer(tmp_path: Path) -> None:
+async def test_primary_attach_live_consumer_runs_hooks(tmp_path: Path) -> None:
     event = RawHarnessEvent(event_type="test.noop", harness_id="codex", payload={})
 
     class FiniteConnection:
@@ -59,11 +59,10 @@ async def test_primary_attach_event_stream_runs_without_history_writer(tmp_path:
         process_launcher=cast("ProcessLauncher", object()),
     )
     seen: list[RawHarnessEvent] = []
-    launcher._history_writer = None
     launcher._event_hooks = (seen.append,)
     launcher._update_activity_from_event = lambda _event: None  # type: ignore[method-assign]
 
-    await launcher._run_event_writer()
+    await launcher._consume_live_events()
 
     assert seen == [event]
 
@@ -369,11 +368,6 @@ def _read_metadata(spawn_dir: Path) -> dict[str, object]:
     )
 
 
-def _read_history_lines(spawn_dir: Path) -> list[dict[str, object]]:
-    lines = (spawn_dir / HISTORY_FILENAME).read_text(encoding="utf-8").splitlines()
-    return [cast("dict[str, object]", json.loads(line)) for line in lines if line.strip()]
-
-
 def test_primary_attach_scope_snapshot_records_unknown_birth_sentinel_when_create_time_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -650,7 +644,7 @@ def test_primary_attach_cancellation_after_codex_observer_displacement_cleans_tu
         )
         await stream_closed.wait()
         async with asyncio.timeout(1.0):
-            while launcher._event_writer_task is not None:
+            while launcher._event_consumer_task is not None:
                 await asyncio.sleep(0)
         run_task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -850,10 +844,7 @@ async def test_primary_attach_upgrades_provisional_backend_scope_without_duplica
 
 
 @pytest.mark.asyncio
-async def test_primary_attach_writes_valid_jsonl_events(
-    tmp_path: Path,
-    request: pytest.FixtureRequest,
-) -> None:
+async def test_primary_attach_writes_no_runner_history(tmp_path: Path) -> None:
     spawn_dir = tmp_path / "spawns" / "p902"
     connection = FakeManagedConnection(
         events=[
@@ -885,19 +876,7 @@ async def test_primary_attach_writes_valid_jsonl_events(
         env={},
     )
 
-    if request.config.getoption("--runner-history") != "off":
-        rows = _read_history_lines(spawn_dir)
-        assert [row["event_type"] for row in rows] == ["turn/started", "turn/completed"]
-        assert [row["turn_id"] for row in rows] == ["t1", "t1"]
-        for row in rows:
-            assert isinstance(row["payload"], dict)
-            assert row["harness_id"] == "codex"
-            assert isinstance(row["seq"], int)
-            assert isinstance(row["byte_offset"], int)
-            assert "item_id" not in row
-            assert "request_id" not in row
-            assert row["interrupt_epoch"] == 0
-            assert "stale_after_interrupt" not in row
+    assert not (spawn_dir / HISTORY_FILENAME).exists()
 
 
 @pytest.mark.asyncio
@@ -1253,7 +1232,7 @@ async def test_pi_primary_folds_and_persists_phase_without_history(tmp_path: Pat
         runtime_root=tmp_path,
         fold=fold,
     )
-    await launcher._run_event_writer()
+    await launcher._consume_live_events()
     assert facts.final_text == "primary report"
     assert facts.usage.input_tokens == 7
     phase = json.loads((tmp_path / "spawns" / spawn_id / "pi-lifecycle.json").read_text())

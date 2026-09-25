@@ -26,6 +26,7 @@ from meridian.lib.ops.runtime import resolve_project_authority, resolve_runtime_
 from meridian.lib.state import spawn_store, work_repository, work_store
 from meridian.lib.state.lock_gc import LockGcStats, gc_orphaned_locks
 from meridian.lib.state.session_store import cleanup_stale_sessions
+from meridian.lib.state.spawn.dogfood_migration import migrate_dogfood_spawn_rows
 from meridian.lib.state.user_paths import get_user_home
 from meridian.lib.telemetry.retention import (
     DEFAULT_MAX_TOTAL_BYTES,
@@ -236,6 +237,8 @@ def schedule_background_repairs(project_root: Path) -> None:
         from contextlib import suppress
 
         with suppress(Exception):
+            migrate_dogfood_spawn_rows(runtime_root)
+        with suppress(Exception):
             _repair_stale_session_locks(project_root, runtime_root=runtime_root)
             gc_orphaned_locks(runtime_root)
             _repair_orphan_runs(project_root, runtime_root=runtime_root)
@@ -261,6 +264,8 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
 
     repaired: list[str] = []
     killed_orphan_spawns: tuple[str, ...] = ()
+    if migrate_dogfood_spawn_rows(runtime_root):
+        repaired.append("dogfood_spawn_rows")
     stale_locks = _repair_stale_session_locks(project_root)
     if stale_locks > 0:
         repaired.append("stale_session_locks")

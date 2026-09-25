@@ -25,11 +25,9 @@ from meridian.lib.harness.control_action import (
 )
 from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.harness.semantics import NormalizedHarnessEvent, normalize_event
-from meridian.lib.launch.constants import LAST_OBSERVED_EVENT_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import append_text_line
-from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 from meridian.lib.state.spawn_tree import terminate_recorded_spawn_scope
 from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
@@ -43,11 +41,7 @@ from meridian.lib.streaming.drain_policy import (
 from meridian.lib.streaming.heartbeat import heartbeat_loop
 from meridian.lib.streaming.spawn_dispatch import dispatch_start
 from meridian.lib.streaming.spawn_drain_loop import (
-    EmitOutcome,
-    NoWriter,
     SpawnDrainLoop,
-    WriteFailed,
-    Written,
     resolve_terminal_outcome,
 )
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
@@ -120,7 +114,6 @@ class SpawnManager:
         self._completion_futures: dict[SpawnId, asyncio.Future[DrainOutcome]] = {}
         self._cleanup_tasks: dict[SpawnId, asyncio.Task[None]] = {}
         self._heartbeat_tasks: dict[SpawnId, asyncio.Task[None]] = {}
-        self._history_writers: dict[SpawnId, HarnessHistoryWriter] = {}
         self._event_hooks: dict[SpawnId, list[EventHook]] = {}
 
     @property
@@ -222,7 +215,6 @@ class SpawnManager:
             if tracer is not None:
                 tracer.close()
             self._event_hooks.pop(spawn_id, None)
-            self._history_writers.pop(spawn_id, None)
             if drain_task is not None and not drain_task.done():
                 drain_task.cancel()
                 with suppress(asyncio.CancelledError, Exception):
@@ -238,12 +230,6 @@ class SpawnManager:
         try:
             connection = await self._start_connection(config, spec)
             resolved_policy = drain_policy
-            self._history_writers[spawn_id] = HarnessHistoryWriter(
-                self._history_path(spawn_id),
-                last_observed_event_path=(self._spawn_dir(spawn_id) / LAST_OBSERVED_EVENT_FILENAME),
-                runtime_root=self._runtime_root,
-                spawn_id=str(spawn_id),
-            )
             control_server = self._control_server_factory(
                 spawn_id,
                 socket_path,
@@ -599,14 +585,6 @@ class SpawnManager:
         session = self._sessions.get(spawn_id)
         return session.debug_tracer if session is not None else None
 
-    def get_history_seq(self, spawn_id: SpawnId) -> int:
-        """Return the last-written history seq for one spawn, or -1 if none."""
-
-        writer = self._history_writers.get(spawn_id)
-        if writer is None:
-            return -1
-        return writer.last_seq
-
     async def join_teardown(self, spawn_id: SpawnId) -> None:
         """Wait for post-publication cleanup without changing terminal intent."""
         cleanup_task = self._cleanup_tasks.get(spawn_id)
@@ -704,7 +682,6 @@ class SpawnManager:
         self._fan_out_event(spawn_id, None)
         self._sessions.pop(spawn_id, None)
         self._completion_futures.pop(spawn_id, None)
-        self._history_writers.pop(spawn_id, None)
         return outcome
 
     def _publish_terminal(
@@ -833,10 +810,8 @@ class SpawnManager:
         self.emit_event(spawn_id, synthetic)
 
     def emit_event(self, spawn_id: SpawnId, event: RawHarnessEvent) -> None:
-        """Persist and publish one manager-authored harness event."""
-        outcome = self._emit(spawn_id, event)
-        if isinstance(outcome, WriteFailed):
-            logger.warning("Failed to persist event for spawn %s: %s", spawn_id, outcome.error)
+        """Run hooks for and publish one manager-authored harness event."""
+        self._emit(spawn_id, event)
         session = self._sessions.get(spawn_id)
         scope = session.connection.primary_event_scope if session is not None else None
         self._fan_out_event(spawn_id, normalize_event(event, primary_event_scope=scope))
@@ -849,17 +824,9 @@ class SpawnManager:
                 data=event.payload,
             )
 
-    def _emit(self, spawn_id: SpawnId, event: RawHarnessEvent) -> EmitOutcome:
-        """Hooks precede optional persistence; callers own their delivery policy."""
+    def _emit(self, spawn_id: SpawnId, event: RawHarnessEvent) -> None:
+        """Run inline hooks; callers own fan-out and delivery policy."""
         run_event_hooks(tuple(self._event_hooks.get(spawn_id, ())), event)
-        writer = self._history_writers.get(spawn_id)
-        if writer is None:
-            return NoWriter()
-        try:
-            result = writer.write(event)
-        except Exception as exc:
-            return WriteFailed(str(exc))
-        return Written() if result.success else WriteFailed(result.error or "history write failed")
 
     async def shutdown(
         self,
@@ -891,7 +858,6 @@ class SpawnManager:
             )
         self._event_hooks.clear()
         self._completion_futures.clear()
-        self._history_writers.clear()
 
     def list_spawns(self) -> list[SpawnId]:
         """List active spawn IDs."""
@@ -975,9 +941,6 @@ class SpawnManager:
     def _spawn_dir(self, spawn_id: SpawnId) -> Path:
         return self._runtime_root / "spawns" / str(spawn_id)
 
-    def _history_path(self, spawn_id: SpawnId) -> Path:
-        return self._spawn_dir(spawn_id) / "history.jsonl"
-
     def _inbound_log_path(self, spawn_id: SpawnId) -> Path:
         return self._spawn_dir(spawn_id) / "inbound.jsonl"
 
@@ -1003,7 +966,6 @@ class SpawnManager:
         with suppress(Exception):
             await session.control_server.stop()
         self._event_hooks.pop(spawn_id, None)
-        self._history_writers.pop(spawn_id, None)
         if self._sessions.get(spawn_id) is session:
             self._sessions.pop(spawn_id, None)
 

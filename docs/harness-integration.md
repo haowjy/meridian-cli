@@ -647,13 +647,12 @@ Pi runtime.
 
 ## Phase 3: Session and History Parity
 
-### 3.1 Generic `history.jsonl` Event Persistence
+### 3.1 Live Events, Not a Runner Stream
 
-Every spawn writes `history.jsonl` in the spawn log directory. This is the
-generic event persistence layer — raw JSONL events from the harness, one
-per line, with Meridian-added metadata. This works automatically for any
-harness that uses the streaming runner drain loop. It is never a transcript read source. Event delivery and attempt facts must also
-work without a writer.
+Meridian does not persist harness events. The drain loop and primary attach run
+inline hooks (the attempt-facts fold, Pi lifecycle sink) on each live event, then
+fan out to subscribers. Transcripts come from the harness's native store. Spawn
+directories from older builds may still hold a `history.jsonl`; nothing reads it.
 
 ### 3.2 Native Session File Resolution
 

@@ -24,7 +24,6 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "slow: takes >1s")
     if config.getoption("--runner-history") == "off":
         blind_dir = PACKAGE_ROOT / "tests" / "support" / "runner_history_blind"
-        os.environ["MERIDIAN_TEST_RUNNER_HISTORY"] = "off"
         existing = os.environ.get("PYTHONPATH")
         os.environ["PYTHONPATH"] = str(blind_dir) + (os.pathsep + existing if existing else "")
 
@@ -34,7 +33,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--runner-history",
         choices=("on", "off"),
         default="on",
-        help="Disable runner-history writers and trap reads (PR 2 deletion gate)",
+        help="Trap implicit reads of runner history.jsonl, in-process and in subprocesses",
     )
 
 

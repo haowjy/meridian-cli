@@ -11,7 +11,6 @@ import pytest
 
 from meridian.lib.ops.session_archive import archive_history
 from meridian.lib.state import spawn_store
-from meridian.lib.state.history import ingest_portable_history
 from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.retention_archive import archive_locations, read_receipts, verify_archive
@@ -60,7 +59,6 @@ def _terminal(root: Path) -> str:
             "message": {"content": [{"type": "text", "text": "portable needle"}]},
         }
     ]
-    ingest_portable_history(root, key, iter(events))
     state = spawn_store.get_spawn(root, key)
     assert state is not None
     raw_records = [json.dumps(event, ensure_ascii=False) for event in events]

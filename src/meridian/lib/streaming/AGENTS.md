@@ -76,10 +76,9 @@ time, including after awaited dispatches. Never append directly after an async b
 classification, but `stop_spawn()` must still publish the finalized lifecycle row,
 resolve completion, and start that spawn's cleanup when a bounded drain is cancelled.
 
-**Drain loop ordering is not negotiable: persist → observe → fan-out.** A failed
-write — including the tenth consecutive failure that aborts the loop with a
-`failed` outcome — is never delivered to the coordinator, observers, or the
-subscriber. If you add a new stage, it goes after successful persistence.
+**Drain loop ordering is not negotiable: inline hooks → fan-out → coordinator note.**
+Hooks (attempt fold, Pi lifecycle sink) see each event before any subscriber does.
+Meridian persists no runner event stream; do not reintroduce one.
 
 **Capture `subprocess_pid` and `scope_snapshot` before `connection.stop()`.** Both
 are cleared inside `stop()`. The safety pass that force-kills surviving processes
@@ -162,6 +161,5 @@ freshness check is not an atomic child-admission barrier.
 
 ## Related
 
-- `../state/history.py` — `HarnessHistoryWriter` (persistence target for drain loop)
 - `../harness/connections/` — `HarnessConnection` protocol (event source)
 - `../state/reaper.py` — uses heartbeat sentinel to detect orphaned spawns

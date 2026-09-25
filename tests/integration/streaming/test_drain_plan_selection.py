@@ -11,7 +11,6 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent
 from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.harness.semantics import NormalizedHarnessEvent
-from meridian.lib.state.history import WriteResult
 from meridian.lib.streaming.drain_coordinator import DrainPlan
 from meridian.lib.streaming.drain_policy import (
     PiRpcQuiescenceDrainPolicy,
@@ -138,11 +137,6 @@ def test_spawn_manager_authored_event_emission_order(
     spawn_id = SpawnId("p-pi-phase")
     manager = SpawnManager(runtime_root=tmp_path, project_root=tmp_path)
 
-    class _Writer:
-        def write(self, event: RawHarnessEvent) -> WriteResult:
-            calls.append(("persist", event))
-            return WriteResult(success=True, seq=0)
-
     class _Tracer:
         def emit(
             self,
@@ -160,8 +154,6 @@ def test_spawn_manager_authored_event_emission_order(
                 raw_text=None,
             )
             calls.append(("trace", event))
-
-    manager._history_writers[spawn_id] = cast("Any", _Writer())
 
     def _hook(event: RawHarnessEvent) -> None:
         calls.append(("hook", event))
@@ -190,7 +182,6 @@ def test_spawn_manager_authored_event_emission_order(
 
     assert [stage for stage, _event in calls] == [
         "hook",
-        "persist",
         "fan_out",
         "trace",
     ]

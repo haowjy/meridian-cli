@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, Self, cast
+from typing import Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -141,30 +141,6 @@ class SpawnStateFields(BaseModel):
     terminal: TerminalFacts | None = None
     launch_policy_snapshot: LaunchPolicySnapshot | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def _translate_dogfood_boundary(cls, value: object) -> object:
-        """Read PR-1 dogfood rows while keeping the current schema canonical."""
-        if not isinstance(value, dict):
-            return value
-        data = dict(cast("dict[str, object]", value))
-        entry_chat_id = data.pop("entry_chat_id", None)
-        exit_chat_id = data.pop("exit_chat_id", None)
-        exit_identity = data.pop("exit_identity", None)
-        trampoline = data.pop("trampoline_successor_id", None)
-        if data.get("chat_id") is None and entry_chat_id is not None:
-            data["chat_id"] = entry_chat_id
-        if data.get("run_boundary") is None and exit_identity is not None:
-            data["run_boundary"] = {
-                "status": exit_identity,
-                "exit_chat_id": exit_chat_id,
-            }
-        if trampoline is not None:
-            boundary = RunBoundaryOutcome.model_validate(
-                data.get("run_boundary") or {"status": "unresolved"}
-            ).model_dump()
-            data["run_boundary"] = {**boundary, "trampoline_successor_id": trampoline}
-        return data
 
 class SpawnRecord(SpawnStateFields):
     """Prompt-bearing state projection assembled from persisted spawn state."""

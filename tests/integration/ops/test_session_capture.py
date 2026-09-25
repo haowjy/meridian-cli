@@ -464,7 +464,7 @@ def test_archive_refuses_legacy_runner_history_as_transcript(tmp_path: Path, mon
     assert legacy_state is not None and legacy_state.history_id is not None
     events = [
         {"type": "message", "message": {"role": "assistant", "content": "first attempt"}},
-        {"event_type": "meridian.attempt.completed", "attempt": 1},
+        {"event_type": "legacy.runner.boundary", "attempt": 1},
         {"type": "message", "message": {"role": "assistant", "content": "retry answer"}},
     ]
     legacy = root / "spawns" / legacy_key / "history.jsonl"

@@ -145,7 +145,7 @@ recorded worst case was a spawn that wedged for 2h18m before any liveness signal
 
 On retry, `_preserve_attempt_artifacts()` in `streaming_runner.py` moves completed
 attempt diagnostics (`stderr.log`, `report.md`, `runner-lifecycle.jsonl`,
-`last-observed-event.json`) into `attempt-N/` under the spawn log directory.
+`tokens.json`) into `attempt-N/` under the spawn log directory.
 Attempt reports, usage and identity come from `AttemptFacts` folded on live events.
 Each retry gets fresh facts; runner history is not read during finalization.
 Diagnostic rotation commits with `os.replace(staging_dir, attempt_dir)` before

@@ -20,6 +20,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Rename diagnostic Claude successor events to `claude_trampoline_successor`; exit hints show verified chat IDs without repeating native IDs.
 
 ### Removed
+- Stop writing runner `history.jsonl` and `last-observed-event.json`; drop the drain loop's write-failure abort and the retry `meridian.attempt.completed` marker. Orphan evidence no longer carries `last_observed_event`.
 - Reject legacy runner-history files as transcripts; archive ZIP history members restore as inert bytes.
 - Remove search `--include-archives`; `session index rebuild` no longer warms previews.
 - Remove `_MERIDIAN_GUARDRAIL_OUTPUT_LOG`; guardrail scripts receive `_MERIDIAN_GUARDRAIL_REPORT` and `_MERIDIAN_GUARDRAIL_CHAT_ID` instead.
@@ -32,6 +33,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Managed Pi launches load a bounded, atomic v2 session-boundary observer without writing native journals.
 
 ### Fixed
+- Rewrite spawn rows from the PR-1 dogfood build (`entry_chat_id`/`exit_identity` fields) once, at startup repairs or `meridian doctor`; they no longer load through a read-time translator.
 - Keep harness-reported cost when unrelated output lines are malformed.
 - Preserve reports across malformed output; flag incomplete facts and truncated attempt text. Finalize streaming runs even when report extraction fails. Keep Pi cleanup diagnostics through shutdown.
 - Unify native identity checks across runners; reject reused fork IDs and verify streaming-serve exits.

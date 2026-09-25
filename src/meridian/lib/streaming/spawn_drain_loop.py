@@ -1,4 +1,4 @@
-"""Durable event drain loop for one streaming spawn."""
+"""Live event drain loop for one streaming spawn."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from meridian.lib.core.domain import SpawnStatus
@@ -41,25 +40,7 @@ PublishTerminal = Callable[
 ]
 FanOutEvent = Callable[[SpawnId, "NormalizedHarnessEvent"], None]
 FanOutTurnBoundary = Callable[[SpawnId, "TerminalEventOutcome"], Awaitable[None]]
-
-
-@dataclass(frozen=True)
-class NoWriter:
-    pass
-
-
-@dataclass(frozen=True)
-class Written:
-    pass
-
-
-@dataclass(frozen=True)
-class WriteFailed:
-    error: str
-
-
-EmitOutcome = NoWriter | Written | WriteFailed
-EmitEvent = Callable[[SpawnId, RawHarnessEvent], EmitOutcome]
+EmitEvent = Callable[[SpawnId, RawHarnessEvent], None]
 
 
 class SpawnDrainLoop:
@@ -88,13 +69,11 @@ class SpawnDrainLoop:
         drain_plan: DrainPlan,
         tracer: DebugTracer | None,
     ) -> None:
-        """Durably append each harness event and fan out to the active subscriber."""
+        """Run inline hooks for each harness event and fan out to the active subscriber."""
 
         # Import at runtime to avoid circular import during module initialization.
         from meridian.lib.harness.semantics import normalize_event
 
-        consecutive_write_failures = 0
-        max_consecutive_failures = 10
         drain_cancelled = False
         drain_error: Exception | None = None
         recorded_terminal_outcome: TerminalEventOutcome | None = None
@@ -184,43 +163,7 @@ class SpawnDrainLoop:
                         direction="inbound",
                         data={"event_type": event.event_type, "harness_id": event.harness_id},
                     )
-                emit_outcome = self._emit_event(spawn_id, event)
-                match emit_outcome:
-                    case WriteFailed(error):
-                        consecutive_write_failures += 1
-                        if tracer is not None:
-                            tracer.emit(
-                                "drain",
-                                "persist_error",
-                                data={
-                                    "event_type": event.event_type,
-                                    "error": error,
-                                    "consecutive_failures": consecutive_write_failures,
-                                },
-                            )
-                        logger.warning(
-                            "Failed to persist event for spawn %s (%d/%d consecutive failures): %s",
-                            spawn_id,
-                            consecutive_write_failures,
-                            max_consecutive_failures,
-                            error,
-                        )
-                        if consecutive_write_failures >= max_consecutive_failures:
-                            drain_error = RuntimeError(
-                                "Aborted drain loop after repeated output persistence failures"
-                            )
-                            break
-                        continue
-                    case Written():
-                        consecutive_write_failures = 0
-                        if tracer is not None:
-                            tracer.emit(
-                                "drain",
-                                "event_persisted",
-                                data={"event_type": event.event_type},
-                            )
-                    case NoWriter():
-                        consecutive_write_failures = 0
+                self._emit_event(spawn_id, event)
 
                 event_outcome = normalized_event.semantics.terminal
                 self._fan_out_event(spawn_id, normalized_event)
@@ -230,7 +173,7 @@ class SpawnDrainLoop:
                     break
                 if disk_change_ready_after_event:
                     # Disk change arrived concurrently with this event; reevaluate now
-                    # that the event has been persisted and observers notified.
+                    # that hooks have run and observers were notified.
                     aux_wake_outcome = await _handle_aux_wake(drain_plan)
                     if aux_wake_outcome.recorded_outcome is not None:
                         recorded_terminal_outcome = aux_wake_outcome.recorded_outcome

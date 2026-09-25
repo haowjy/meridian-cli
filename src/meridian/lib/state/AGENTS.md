@@ -28,9 +28,8 @@ meridian.toml
   spawns/.staging/<unique>/         — unpublished builds and verified-archive retirement buffers
   spawns/<spawn_id>/
     state.json                      — authoritative spawn state (schema v3)
-    history.jsonl                   — redundant runner event stream, never a transcript source
+    history.jsonl                   — legacy runner event stream (no longer written), never read
     attempt-N/                      — preserved retry evidence from prior attempts
-    last-observed-event.json        — diagnostic marker for last harness event + counters
     runner-lifecycle.jsonl          — runner breadcrumb journal (signals, phases, atexit)
     finalize-evidence.json          — orphan-time liveness snapshot before reaper cleanup
     process_scopes.json             — durable process identities + release markers

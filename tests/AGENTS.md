@@ -12,11 +12,10 @@ uv run pytest-llm              # Unit tests (token-efficient output)
 uv run meridian                # Smoke test the CLI directly
 ```
 
-Use `uv run pytest --runner-history=off <tests>` to exercise the PR 2 history-blind
-contract. It constructs no streaming-manager or primary-attach writers, disables
-the remaining direct writer calls, and traps reads of spawn/artifact runner
-history. The trap is inherited by CLI subprocesses through a test-only
-`sitecustomize`; native Claude history is not included in the trap.
+Use `uv run pytest --runner-history=off <tests>` to trap implicit reads of legacy
+spawn/artifact runner `history.jsonl` (Meridian no longer writes it). The trap is
+inherited by CLI subprocesses through a test-only `sitecustomize`; legacy archive
+inventory may still hash the bytes, and native Claude history is not trapped.
 
 ## Where Tests Go
 

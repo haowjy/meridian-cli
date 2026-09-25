@@ -49,7 +49,6 @@ _STORE_ATTEMPT_FILES = (
     launch_constants.REPORT_FILENAME,
 )
 _DISK_ATTEMPT_FILES = (
-    launch_constants.LAST_OBSERVED_EVENT_FILENAME,
     launch_constants.RUNNER_LIFECYCLE_FILENAME,
     launch_constants.STDERR_FILENAME,
     launch_constants.TOKENS_FILENAME,
@@ -288,15 +287,12 @@ def test_retry_preserves_completed_attempt_artifacts(tmp_path: Path) -> None:
         assert artifacts.get(make_artifact_key(spawn_id, f"attempt-1/{name}")) == (
             b"persisted attempt data\n"
         )
-    assert not (log_dir / "attempt-1/history.jsonl").exists()
-    history = (log_dir / "history.jsonl").read_text().splitlines()
-    assert json.loads(history[0])["record"] == "meridian.transcript"
-    assert json.loads(history[-1])["event_type"] == "meridian.attempt.completed"
+    assert not (log_dir / launch_constants.HISTORY_FILENAME).exists()
     assert durable_path.exists()
     assert not (log_dir / "attempt-1.tmp").exists()
 
 
-def test_preserve_keeps_history_but_clears_current_attempt_extraction(tmp_path: Path) -> None:
+def test_preserve_clears_current_attempt_extraction(tmp_path: Path) -> None:
     from meridian.lib.state import spawn_store
 
     spawn_id = spawn_store.start_spawn(
@@ -304,15 +300,9 @@ def test_preserve_keeps_history_but_clears_current_attempt_extraction(tmp_path: 
     )
     log_dir = tmp_path / "spawns" / spawn_id
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
-    attempt_one_history = (
-        b'{"role":"assistant","content":"attempt 1 durable completion report text"}\n'
-    )
     attempt_one_report = b"# Report\n\nattempt 1 durable completion\n"
-    history_key = make_artifact_key(spawn_id, launch_constants.HISTORY_FILENAME)
     report_key = make_artifact_key(spawn_id, launch_constants.REPORT_FILENAME)
-    artifacts.put(history_key, attempt_one_history)
     artifacts.put(report_key, attempt_one_report)
-    (log_dir / launch_constants.HISTORY_FILENAME).write_bytes(attempt_one_history)
     (log_dir / launch_constants.REPORT_FILENAME).write_bytes(attempt_one_report)
 
     streaming_runner_module._preserve_attempt_artifacts(
@@ -322,8 +312,7 @@ def test_preserve_keeps_history_but_clears_current_attempt_extraction(tmp_path: 
         completed_attempt=1,
     )
 
-    assert artifacts.get(history_key).startswith(attempt_one_history)
-    assert not (log_dir / "attempt-1/history.jsonl").exists()
+    assert not artifacts.exists(report_key)
 
     reset_finalize_attempt_artifacts(
         artifacts=artifacts,
@@ -343,7 +332,6 @@ def test_preserve_keeps_history_but_clears_current_attempt_extraction(tmp_path: 
     assert extraction.durable_report_completion is False
     assert extraction.report.content == "adapter startup failed"
     assert extraction.report.source == "failure_reason"
-    assert artifacts.exists(history_key)
 
 
 def test_preserve_recovers_interrupted_rotation(tmp_path: Path) -> None:
@@ -364,11 +352,6 @@ def test_preserve_recovers_interrupted_rotation(tmp_path: Path) -> None:
         "late stderr\n",
         encoding="utf-8",
     )
-    artifacts.put(
-        make_artifact_key(spawn_id, launch_constants.HISTORY_FILENAME),
-        b"active history\n",
-    )
-
     streaming_runner_module._preserve_attempt_artifacts(
         artifacts=artifacts,
         spawn_id=spawn_id,
@@ -383,9 +366,6 @@ def test_preserve_recovers_interrupted_rotation(tmp_path: Path) -> None:
     assert (log_dir / "attempt-1" / launch_constants.STDERR_FILENAME).read_text(
         encoding="utf-8",
     ) == "late stderr\n"
-    history_key = make_artifact_key(spawn_id, launch_constants.HISTORY_FILENAME)
-    assert artifacts.exists(history_key)
-    assert not (log_dir / "attempt-1/history.jsonl").exists()
 
 
 def test_preserve_discards_stale_staging_when_attempt_dir_exists(tmp_path: Path) -> None:
@@ -398,8 +378,8 @@ def test_preserve_discards_stale_staging_when_attempt_dir_exists(tmp_path: Path)
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     attempt_dir = log_dir / "attempt-1"
     attempt_dir.mkdir(parents=True)
-    (attempt_dir / launch_constants.HISTORY_FILENAME).write_text(
-        "committed history\n",
+    (attempt_dir / launch_constants.RUNNER_LIFECYCLE_FILENAME).write_text(
+        "committed lifecycle\n",
         encoding="utf-8",
     )
     staging_dir = log_dir / "attempt-1.tmp"
@@ -421,9 +401,9 @@ def test_preserve_discards_stale_staging_when_attempt_dir_exists(tmp_path: Path)
     )
 
     assert not staging_dir.exists()
-    assert (attempt_dir / launch_constants.HISTORY_FILENAME).read_text(
+    assert (attempt_dir / launch_constants.RUNNER_LIFECYCLE_FILENAME).read_text(
         encoding="utf-8",
-    ) == "committed history\n"
+    ) == "committed lifecycle\n"
     assert (attempt_dir / launch_constants.STDERR_FILENAME).read_text(
         encoding="utf-8",
     ) == "live stderr\n"

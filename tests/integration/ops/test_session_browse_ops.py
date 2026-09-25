@@ -568,7 +568,6 @@ def test_native_preview_stays_bounded_and_cached_after_reclaim(tmp_path, monkeyp
     from meridian.lib.ops import session_preview
     from meridian.lib.ops.session_archive import archive_history
     from meridian.lib.ops.session_preview import PreviewIdentity, SessionPreview
-    from meridian.lib.state.history import ingest_portable_history
     from meridian.lib.state.history_index import HistoryIndex
 
     project, root = _project_roots(tmp_path)
@@ -578,9 +577,6 @@ def test_native_preview_stays_bounded_and_cached_after_reclaim(tmp_path, monkeyp
         )
     )
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
-    ingest_portable_history(
-        root, key, iter({"role": "assistant", "content": f"message {i}"} for i in range(100))
-    )
     _bind_preview_native(
         root, key, ({"role": "assistant", "content": f"message {i}"} for i in range(100))
     )

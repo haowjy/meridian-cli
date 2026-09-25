@@ -47,8 +47,6 @@ from meridian.lib.launch.artifact_io import (
 from meridian.lib.launch.constants import (
     CURSOR_INACTIVITY_TIMEOUT_SECONDS,
     DEFAULT_INFRA_EXIT_CODE,
-    HISTORY_FILENAME,
-    LAST_OBSERVED_EVENT_FILENAME,
     OUTPUT_FILENAME,
     REPORT_FILENAME,
     REPORT_WATCHDOG_GRACE_SECONDS,
@@ -270,7 +268,6 @@ _ATTEMPT_STORE_ARTIFACTS = (
     REPORT_FILENAME,
 )
 _ATTEMPT_DISK_ARTIFACTS = (
-    LAST_OBSERVED_EVENT_FILENAME,
     RUNNER_LIFECYCLE_FILENAME,
     STDERR_FILENAME,
     TOKENS_FILENAME,
@@ -354,28 +351,6 @@ def _preserve_attempt_artifacts(
             artifacts.delete(make_artifact_key(spawn_id, name))
         fsync_directory(attempt_dir)
         fsync_directory(log_dir)
-        from meridian.lib.harness.connections.base import RawHarnessEvent
-        from meridian.lib.state.atomic import atomic_write_text
-        from meridian.lib.state.history import HarnessHistoryWriter
-        from meridian.lib.state.history_codec import transcript_header
-
-        history_path = log_dir / HISTORY_FILENAME
-        if not history_path.exists() or history_path.stat().st_size == 0:
-            atomic_write_text(
-                history_path, transcript_header(state, changes.root.name).model_dump_json() + "\n"
-            )
-        # This operation already owns root/source locks and published-row validation.
-        # Do not recursively enter the non-reentrant aggregate mutation guard.
-        writer = HarnessHistoryWriter(history_path)
-        result = writer.write(
-            RawHarnessEvent(
-                event_type="meridian.attempt.completed",
-                harness_id=state.harness or "",
-                payload={"completed_attempt": completed_attempt},
-            )
-        )
-        if not result.success:
-            raise OSError(result.error or "Failed to record attempt boundary")
 
 
 def _persist_attempt_artifacts(

@@ -3,11 +3,13 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.state.spawn.dogfood_migration import migrate_dogfood_spawn_rows
 from meridian.lib.state.spawn.model import RunBoundaryOutcome, SpawnRecord, TerminalFacts
 from meridian.lib.state.spawn.repository import (
     Applied,
     Decline,
     Declined,
+    SpawnStateQuarantined,
     read_prompt,
     read_state,
     record_to_stored_state,
@@ -73,9 +75,10 @@ def _seed_state(spawns_dir: Path, record: SpawnRecord) -> None:
     )
 
 
-def test_dogfood_boundary_state_loads_and_continues_at_verified_exit(tmp_path: Path) -> None:
+def test_dogfood_boundary_rows_quarantine_until_migrated_once(tmp_path: Path) -> None:
     spawns_dir = tmp_path / "spawns"
     _seed_state(spawns_dir, _record(status="succeeded"))
+    _seed_state(spawns_dir, _record("p2", status="succeeded"))
     state_path = spawns_dir / "p1" / "state.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))
     state["entry_chat_id"] = "c-entry"
@@ -84,14 +87,19 @@ def test_dogfood_boundary_state_loads_and_continues_at_verified_exit(tmp_path: P
     state.pop("run_boundary", None)
     state["trampoline_successor_id"] = "diagnostic-only"
     state_path.write_text(json.dumps(state), encoding="utf-8")
+    with pytest.raises(SpawnStateQuarantined):
+        read_state(spawns_dir, "p1", include_prompt=False)
+
+    assert migrate_dogfood_spawn_rows(tmp_path) == ("p1",)
+    assert migrate_dogfood_spawn_rows(tmp_path) == ()
 
     loaded = read_state(spawns_dir, "p1", include_prompt=False)
-
     assert loaded is not None
     assert loaded.chat_id == "c1"
     assert loaded.run_boundary == RunBoundaryOutcome(
         status="verified", exit_chat_id="c-exit", trampoline_successor_id="diagnostic-only")
     assert loaded.continue_chat_id == "c-exit"
+    assert "exit_identity" not in state_path.read_text(encoding="utf-8")
 
 
 def test_run_boundary_rejects_exit_without_verified_status() -> None:

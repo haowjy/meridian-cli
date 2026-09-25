@@ -439,10 +439,7 @@ async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_withou
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from meridian.lib.state import pi_lifecycle
-    from meridian.lib.streaming import spawn_manager as manager_module
 
-    # Exercise the actual RPC stream, drain plan and teardown with no writer at all.
-    monkeypatch.setattr(manager_module, "HarnessHistoryWriter", lambda *a, **kw: None)
     persisted = []
     record = pi_lifecycle.record
 

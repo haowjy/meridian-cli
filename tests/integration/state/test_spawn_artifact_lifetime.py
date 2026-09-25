@@ -15,16 +15,14 @@ from meridian.lib.core.clock import RealClock
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections import managed_backend as managed_backend_module
-from meridian.lib.harness.connections.base import HarnessConnection, HarnessRequest, RawHarnessEvent
+from meridian.lib.harness.connections.base import HarnessConnection, HarnessRequest
 from meridian.lib.harness.connections.managed_backend import register_spawn_owned_process
 from meridian.lib.harness.control_action import ControlActionCoordinator, ControlActionType
 from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.launch.process.runner import _write_native_primary_metadata
 from meridian.lib.launch.streaming.heartbeat import FileHeartbeat
 from meridian.lib.launch.streaming_runner import _append_runner_lifecycle_event
-from meridian.lib.state import history as history_module
 from meridian.lib.state.failure_sentinel import write_failure_sentinel
-from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.reaper import (
     _collect_artifact_snapshot,
@@ -293,97 +291,6 @@ async def test_late_inbound_append_does_not_recreate_deleted_spawn(
     finish_count.set()
 
     assert await record == 0
-    assert not spawn_dir.exists()
-
-
-def test_late_history_and_marker_write_does_not_recreate_deleted_spawn(
-    tmp_path: Path,
-) -> None:
-    runtime_root = tmp_path / "runtime"
-    spawn_id = "p1"
-    spawn_dir = runtime_root / "spawns" / spawn_id
-    history_path = spawn_dir / "history.jsonl"
-    marker_path = spawn_dir / "last-observed-event.json"
-    _start_test_spawn(runtime_root, spawn_id, status="running")
-    writer = HarnessHistoryWriter(
-        history_path,
-        last_observed_event_path=marker_path,
-        runtime_root=runtime_root,
-        spawn_id=spawn_id,
-    )
-    event = RawHarnessEvent(
-        event_type="turn/started",
-        payload={},
-        harness_id="codex",
-        raw_text=None,
-    )
-    assert writer.write(event).success is True
-    assert history_path.is_file()
-    assert marker_path.is_file()
-    assert delete_published_spawn(
-        runtime_root,
-        spawn_id,
-        can_delete=lambda row: row is not None,
-    )
-
-    result = writer.write(event)
-
-    assert result.success is False
-    assert not spawn_dir.exists()
-
-
-@pytest.mark.asyncio
-async def test_history_and_marker_write_are_one_lifetime_mutation(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root = tmp_path / "runtime"
-    spawn_id = "p1"
-    spawn_dir = runtime_root / "spawns" / spawn_id
-    marker_path = spawn_dir / "last-observed-event.json"
-    _start_test_spawn(runtime_root, spawn_id, status="running")
-    writer = HarnessHistoryWriter(
-        spawn_dir / "history.jsonl",
-        last_observed_event_path=marker_path,
-        runtime_root=runtime_root,
-        spawn_id=spawn_id,
-    )
-    marker_started = threading.Event()
-    finish_marker = threading.Event()
-    original_atomic_write_text = history_module.atomic_write_text
-
-    def _paused_marker_write(path: Path, content: str) -> None:
-        marker_started.set()
-        assert finish_marker.wait(timeout=5)
-        original_atomic_write_text(path, content)
-
-    monkeypatch.setattr(history_module, "atomic_write_text", _paused_marker_write)
-    write = asyncio.create_task(
-        asyncio.to_thread(
-            writer.write,
-            RawHarnessEvent(
-                event_type="turn/started",
-                payload={},
-                harness_id="codex",
-                raw_text=None,
-            ),
-        )
-    )
-    assert await asyncio.to_thread(marker_started.wait, 5)
-    deletion = asyncio.create_task(
-        asyncio.to_thread(
-            delete_published_spawn,
-            runtime_root,
-            spawn_id,
-            can_delete=lambda row: row is not None,
-        )
-    )
-    await asyncio.sleep(0.05)
-    assert deletion.done() is False
-    finish_marker.set()
-
-    assert (await write).success is True
-    assert await deletion is True
     assert not spawn_dir.exists()
 
 

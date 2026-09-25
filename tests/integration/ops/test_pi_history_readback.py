@@ -6,7 +6,6 @@ import json
 import sqlite3
 from pathlib import Path
 
-from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.transcript_preview import TRANSCRIPT_PREVIEW_VERSION
 from meridian.lib.ops.session_archive import archive_history, materialize_native_history
 from meridian.lib.ops.session_export import SessionExportInput, session_export_sync
@@ -15,12 +14,11 @@ from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.ops.session_preview import PreviewIdentity, SessionPreview
 from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.history import HarnessHistoryWriter, ingest_portable_history
 from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
 
-def _retain_bound_native(root, key, events, *, retain=True):
+def _retain_bound_native(root, key, events):
     events = list(events)
     sid = f"native-{key}"
     if not events or events[0].get("type") != "session":
@@ -53,8 +51,6 @@ def _retain_bound_native(root, key, events, *, retain=True):
         spawn_id=row.id,
     )
     session_store.stop_session(root, row.chat_id)
-    if retain:
-        ingest_portable_history(root, key, iter(events))
     return path
 
 
@@ -237,9 +233,6 @@ def test_pi_preview_preserves_branch_context_after_append(tmp_path: Path, monkey
     key = spawn_store.start_spawn(
         root, chat_id="c1", prompt="question", harness="pi", model="test", agent="coder"
     )
-    writer = HarnessHistoryWriter(
-        root / "spawns" / key / "history.jsonl", runtime_root=root, spawn_id=key
-    )
     payloads = [
         {"type": "session", "version": 3, "id": "s", "cwd": str(project)},
         {
@@ -250,26 +243,12 @@ def test_pi_preview_preserves_branch_context_after_append(tmp_path: Path, monkey
         },
         {"type": "model_change", "id": "b", "parentId": "a", "modelId": "test"},
     ]
-    for payload in payloads:
-        assert writer.write(RawHarnessEvent("retained/native", payload, "pi")).success
-    native = _retain_bound_native(root, key, payloads, retain=False)
+    native = _retain_bound_native(root, key, payloads)
     record = spawn_store.get_spawn(root, key)
     assert record is not None
     identity = PreviewIdentity(key, str(record.history_id))
     first = SessionPreview(str(project)).refresh(identity, lambda: True)
     assert first is not None and first.state == "current"
-    assert writer.write(
-        RawHarnessEvent(
-            "retained/native",
-            {
-                "type": "message",
-                "id": "c",
-                "parentId": "a",
-                "message": {"role": "assistant", "content": "branch answer"},
-            },
-            "pi",
-        )
-    ).success
     with native.open("a") as handle:
         handle.write(
             json.dumps(

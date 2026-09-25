@@ -40,7 +40,6 @@ from meridian.lib.platform.process_scope.base import (
     PROCESS_BIRTH_UNKNOWN_EPOCH,
     ProcessScopeSnapshot,
 )
-from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.state.primary_meta import ActivityState, PrimaryMetadata, write_primary_metadata
 from meridian.lib.state.process_scope_projection import record_scope
 from meridian.lib.streaming.heartbeat import heartbeat_loop
@@ -253,8 +252,7 @@ class PrimaryAttachLauncher:
         self._session_id_observer = session_id_observer
         self._metadata = _LauncherMetadata()
         self._metadata_lock = Lock()
-        self._history_writer: HarnessHistoryWriter | None = None
-        self._event_writer_task: asyncio.Task[None] | None = None
+        self._event_consumer_task: asyncio.Task[None] | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._tui_scope_snapshot: ProcessScopeSnapshot | None = None
         self._running_process: RunningProcess | None = None
@@ -280,11 +278,6 @@ class PrimaryAttachLauncher:
 
         if self._runtime_root is None:
             self._spawn_dir.mkdir(parents=True, exist_ok=True)
-        self._history_writer = HarnessHistoryWriter(
-            self._spawn_dir / "history.jsonl",
-            runtime_root=self._runtime_root,
-            spawn_id=str(self._spawn_id) if self._runtime_root is not None else None,
-        )
         if self._runtime_root is not None:
             self._heartbeat_task = asyncio.create_task(
                 heartbeat_loop(self._runtime_root, self._spawn_id)
@@ -326,7 +319,7 @@ class PrimaryAttachLauncher:
             self._fold.bind_scope(session_id)
             self._set_harness_session_id(session_id)
             self._record_backend_scope_from_connection(session_id)
-            self._event_writer_task = asyncio.create_task(self._run_event_writer())
+            self._event_consumer_task = asyncio.create_task(self._consume_live_events())
             self._set_activity("idle")
 
             if session_id is None or not session_id.strip():
@@ -365,15 +358,15 @@ class PrimaryAttachLauncher:
             launch_task = _start_process_wait(running_process)
             telemetry.clear()
 
-            writer_task = self._event_writer_task
+            consumer_task = self._event_consumer_task
             done, _pending = await asyncio.wait(
-                {launch_task, writer_task},
+                {launch_task, consumer_task},
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            if writer_task in done and not launch_task.done():
+            if consumer_task in done and not launch_task.done():
                 with suppress(asyncio.CancelledError, Exception):
-                    writer_task.result()
-                self._event_writer_task = None
+                    consumer_task.result()
+                self._event_consumer_task = None
                 if self._connection.harness_id is HarnessId.CODEX:
                     # Codex TUI takes over the observer endpoint after attach;
                     # the displaced observer stream closing is normal.
@@ -444,11 +437,11 @@ class PrimaryAttachLauncher:
             self._running_process = None
             if connection_started:
                 self._set_activity("finalizing")
-            writer_task = self._event_writer_task
-            if writer_task is not None:
-                writer_task.cancel()
+            consumer_task = self._event_consumer_task
+            if consumer_task is not None:
+                consumer_task.cancel()
                 with suppress(asyncio.CancelledError):
-                    await writer_task
+                    await consumer_task
             heartbeat_task = self._heartbeat_task
             if heartbeat_task is not None:
                 heartbeat_task.cancel()
@@ -508,18 +501,12 @@ class PrimaryAttachLauncher:
             spawn_id=str(self._spawn_id) if self._runtime_root is not None else None,
         )
 
-    async def _run_event_writer(self) -> None:
-        """Observe live events and persist them when a history writer exists."""
+    async def _consume_live_events(self) -> None:
+        """Update activity and run inline hooks (fold, sinks) for each live event."""
 
-        writer = self._history_writer
-        try:
-            async for event in self._connection.events():
-                self._update_activity_from_event(event)
-                run_event_hooks(self._event_hooks, event)
-                if writer is not None:
-                    writer.write(event)
-        finally:
-            self._history_writer = None
+        async for event in self._connection.events():
+            self._update_activity_from_event(event)
+            run_event_hooks(self._event_hooks, event)
 
     def _update_activity_from_event(self, event: RawHarnessEvent) -> None:
         """Update activity state based on connection events."""

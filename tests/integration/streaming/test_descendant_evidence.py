@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.ops.session_archive import archive_history
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.history import ingest_portable_history
 from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.streaming import descendant_evidence as descendant_evidence_module
 from meridian.lib.streaming.descendant_evidence import ReconciledDescendantEvidence
@@ -119,11 +118,6 @@ def test_archived_intermediate_preserves_live_grandchild_membership(tmp_path: Pa
     start_row(tmp_path, "p2", HarnessId.CODEX, "p1")
     descendant_evidence_module.spawn_store.finalize_spawn(
         tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner"
-    )
-    ingest_portable_history(
-        tmp_path,
-        "p2",
-        iter([{"type": "assistant", "message": {"content": [{"type": "text", "text": "p2"}]}}]),
     )
     descendant_evidence_module.spawn_store.finalize_spawn(
         tmp_path, SpawnId("p1"), "succeeded", 0, origin="runner"
