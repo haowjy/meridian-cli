@@ -34,12 +34,14 @@ read/decode/fold work separately; it makes no wall-time performance claim.
 ## Continue replay acceptance
 
 `run_continue_replay.py` uses the same isolated-interpreter command and permanent
-effect/data guards, with a separate fixed manifest permitting launch/harness
-imports. It runs C1 alongside C2's settings fold on fake exact content, the private
-C3 collector, and real primary/spawn legacy callers with fake native/Mars/state
-effects. No installed harness or catalog process runs. C1's standalone layer-import
-guard is unchanged. Run `tests/integration/launch/test_continue_replay_isolated.py`
-for the pytest bridge.
+effect/data guard from `acceptance_bootstrap.py`; the two thin entrypoints select
+their fixed workload explicitly. C1's stricter layer-import restriction remains
+active before dependencies or acceptance cases load. C3 permits launch/harness
+imports within its separate fixed manifest. It runs C1 alongside C2's settings fold
+on fake exact content, the private C3 collector, and real primary/spawn legacy
+callers with fake native/Mars/state effects. No installed harness or catalog process
+runs. Run `tests/integration/launch/test_continue_replay_isolated.py` for the pytest
+bridge.
 
 The admitted-source DTOs are synthetic downstream values, not transport proof.
 The public tracked gates are verified separately by the primary/spawn suites.

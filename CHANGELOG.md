@@ -6,6 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Share the isolated C1/C3 acceptance safety bootstrap while keeping fixed runner
+  entrypoints and C1's stricter import guard.
 - Separate pure continue replay from legacy model effects; retain exact source
   identity without enabling tracked transport.
 - Keep selected Pi provider/model pairs ineligible for managed replay; use accepted
