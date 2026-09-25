@@ -13,8 +13,10 @@ import pytest
 from pytest import MonkeyPatch
 
 from meridian.lib.harness.claude import project_slug
+from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
+from meridian.lib.ops.session_transcript import read_session_transcript
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from tests.support.opencode_db import (
@@ -147,6 +149,65 @@ def test_session_log_resolves_opencode_db_transcript_when_session_diff_is_empty(
         ("user", "show transcript please"),
         ("assistant", "here is your transcript"),
     ]
+
+
+def test_pi_session_log_uses_reopen_default_lineage_and_labels_partial_parent(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "home").as_posix())
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    native_root = resolve_pi_spawn_session_root()
+    native_root.mkdir(parents=True)
+    native_id = "lineage-fixture"
+    path = native_root / f"2026-01-01T00-00-00_{native_id}.jsonl"
+    rows = [
+        {"type": "session", "version": 3, "id": native_id, "cwd": project_root.as_posix()},
+        {"type": "message", "id": "root", "parentId": None,
+         "message": {"role": "user", "content": "root prompt"}},
+        {"type": "message", "id": "abandoned", "parentId": "root",
+         "message": {"role": "assistant", "provider": "p", "model": "m",
+                     "content": "abandoned sibling"}},
+        {"type": "message", "id": "bad-branch", "parentId": "missing-parent",
+         "message": {"role": "assistant", "provider": "p", "model": "m",
+                     "content": "broken sibling"}},
+        {"type": "message", "id": "selected", "parentId": "root",
+         "message": {"role": "assistant", "provider": "p", "model": "m",
+                     "content": "selected lineage"}},
+    ]
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    spawn_store.start_spawn(
+        runtime_root,
+        chat_id="c1",
+        prompt="question",
+        harness="pi",
+        model="test",
+        agent="coder",
+        kind="primary",
+        harness_session_id=native_id,
+    )
+    session_store.start_session(
+        runtime_root, "pi", native_id, "test", chat_id="c1", kind="primary",
+        native_store=native_root.as_posix(),
+    )
+
+    output = session_log_sync(
+        SessionLogInput(ref="c1", project_root=project_root.as_posix(), full=True)
+    )
+    parsed = read_session_transcript(
+        ref="c1", file_path=None, project_root=project_root.as_posix()
+    )
+
+    rendered = output.format_text()
+    assert parsed.view_basis == "reopen-default"
+    assert parsed.completeness_reasons == ("missing_parent",)
+    assert "selected lineage" in rendered
+    assert "abandoned sibling" not in rendered
+    assert "broken sibling" not in rendered
+    assert "partial: missing_parent" in rendered
 
 
 def test_session_log_resolves_opencode_db_without_legacy_session_file(

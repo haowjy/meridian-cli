@@ -12,10 +12,12 @@ from pathlib import Path
 from typing import Literal, NamedTuple
 
 from meridian.lib.core.command_strings import format_command_for_display
+from meridian.lib.harness.pi_journal import project_pi_reopen_default
 from meridian.lib.harness.transcript import (
     ToolCall,
     TranscriptMessage,
     TranscriptParseResult,
+    is_native_snapshot,
     iter_transcript_events,
     parse_transcript_events_with_prologues,
 )
@@ -74,6 +76,8 @@ class ParsedSessionTranscript(NamedTuple):
     segment_entries: tuple[tuple[AbsoluteTranscriptEntry, ...], ...]
     rendering_reason: str | None = None
     storage_validation: TranscriptValidation | None = None
+    view_basis: Literal["reopen-default"] | None = None
+    completeness_reasons: tuple[str, ...] = ()
 
     @property
     def read_reasons(self) -> tuple[str, ...]:
@@ -83,6 +87,7 @@ class ParsedSessionTranscript(NamedTuple):
             for reason in (
                 storage.reason if storage is not None and storage.state != "complete" else None,
                 self.rendering_reason,
+                *(f"partial: {reason}" for reason in self.completeness_reasons),
             )
             if reason
         )
@@ -99,7 +104,7 @@ class ParsedSessionTranscript(NamedTuple):
                 validation.header is None
                 and not any(source.kind == "archive" for source in self.target.sources)
             )
-        )
+        ) and not self.completeness_reasons
 
 
 def flatten_transcript_segments(
@@ -383,6 +388,33 @@ def _parse_transcript_source(
     source: TranscriptSource, budget: TranscriptBudget | None = None
 ) -> tuple[TranscriptParseResult, TranscriptValidation]:
     validation = TranscriptValidation()
+    if source.kind == "native_file" and source.harness == "pi" and source.path is not None:
+        if budget is not None and not budget.current():
+            validation.state = "partial"
+            validation.reason = "Transcript read paused before complete EOF"
+            return parse_transcript_events_with_prologues(()), validation
+        if is_native_snapshot(source.path):
+            events = list(
+                iter_source_events(
+                    source,
+                    validation=validation,
+                    current=budget.current if budget else None,
+                )
+            )
+            if budget is not None:
+                events = list(budget.events(iter(events)))
+            source_text = "".join(json.dumps(event) + "\n" for event in events)
+        else:
+            source_text = source.path.read_text(encoding="utf-8")
+        projection = project_pi_reopen_default(source_text)
+        if not is_native_snapshot(source.path):
+            validation.state = "complete"
+            validation.reason = None
+        parsed = parse_transcript_events_with_prologues(projection.events)._replace(
+            view_basis=projection.view_basis,
+            completeness_reasons=tuple(projection.reasons),
+        )
+        return parsed, validation
     events = iter_source_events(
         source, validation=validation, current=budget.current if budget else None
     )
@@ -474,6 +506,8 @@ def parse_session_target(
         segment_entries=segment_entries,
         rendering_reason=parsed.rendering_reason,
         storage_validation=validation,
+        view_basis=parsed.view_basis,
+        completeness_reasons=parsed.completeness_reasons,
     )
 
 
