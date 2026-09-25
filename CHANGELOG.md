@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Align repair, search, and continuation fixtures with recorded native stores; reject ambient Claude repair fallback.
+
 - Keep Claude owned identity parsing at the event envelope, excluding nested assistant/tool content.
 
 - Remove stale extractor discovery guidance; document exact-store reads and separate trampoline diagnostics.

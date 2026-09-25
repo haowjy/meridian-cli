@@ -444,8 +444,11 @@ def test_resolved_native_source_checks_snapshot_binding(tmp_path: Path) -> None:
         project_root=tmp_path,
         session_id="selected-native",
         harness_id=HarnessId.PI,
-        adapter=SimpleNamespace(resolve_session_file=lambda **_: path),
-        config_root_hint=None,
+        adapter=SimpleNamespace(
+            resolve_native_session_file=lambda **_: path,
+            native_transcript_kind=lambda _: "native_file",
+        ),
+        config_root_hint=None, native_store=tmp_path,
     )
     assert target is not None
     with pytest.raises(ValueError, match="binding"):

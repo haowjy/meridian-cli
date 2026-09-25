@@ -140,6 +140,7 @@ def test_mutating_legacy_row_rewrites_it_as_v3(tmp_path: Path) -> None:
     legacy.pop("record_mode")
     for key in (
         "session_instance_id",
+        "trampoline_successor_id",
         "parent_history_id",
         "owner_history_id",
         "forked_from_history_id",

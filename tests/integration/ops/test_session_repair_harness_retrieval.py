@@ -45,7 +45,7 @@ def _write_claude_session(
 
 
 @pytest.mark.parametrize("ref", ["c1", "p1"])
-def test_session_repair_resolves_tracked_claude_session_from_canonical_root(
+def test_session_repair_refuses_ambient_claude_fallback(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
     ref: str,
@@ -92,6 +92,6 @@ def test_session_repair_resolves_tracked_claude_session_from_canonical_root(
         SessionRepairInput(ref=ref, project_root=project_root.as_posix())
     )
 
-    assert output.detected_harness_session_id == session_id
-    assert output.source == "claude transcript"
-    assert output.reason is None
+    assert output.detected_harness_session_id is None
+    assert output.source is None
+    assert output.reason and "native transcript missing" in output.reason

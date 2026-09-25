@@ -205,6 +205,7 @@ def test_session_search_corpus_resolves_tracked_claude_canonical_transcript(
         harness_session_id=session_id,
         model="claude-opus",
         claude_config_dir=(tmp_path / "recorded-overlay").as_posix(),
+        native_store=str(project_dir),
     )
     try:
         output = session_search_sync(
