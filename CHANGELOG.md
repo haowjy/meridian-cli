@@ -37,6 +37,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Resolve Claude trampoline successors to separate exit chats in both runners; preserve entry bindings.
+
 - Pi boundary verification drives the built extension in Node and reads its real records in Python.
 
 - Post-exit entry conflicts use stable `entry_mismatch` failures with expected/observed lifecycle evidence.

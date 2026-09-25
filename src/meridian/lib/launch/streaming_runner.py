@@ -26,6 +26,7 @@ from meridian.lib.bootstrap.services import (
 from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.domain import Spawn, SpawnStatus, TerminalSpawnStatus
+from meridian.lib.core.native_identity import NativeSessionKey
 from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
@@ -1393,11 +1394,6 @@ async def execute_with_streaming(
                 )
                 runner_phase[0] = "processing_attempt"
                 conclusion.absorb_attempt(attempt)
-                boundary_error = finalize_run_boundary(
-                    adapter=harness, child_env=child_env, runtime_root=runtime_root,
-                    spawn_id=str(run.spawn_id),
-                    pid=attempt_pid,
-                )
                 identity_error = None
                 if spec.native_identity_plan is not None:
                     identity_error = harness.verify_native_identity(spec.native_identity_plan)
@@ -1407,6 +1403,32 @@ async def execute_with_streaming(
                         )
                         conclusion.exit_code = 1
                         conclusion.failure_reason = identity_error
+                observation = harness.observe_primary_session_id(
+                    native_identity_plan=spec.native_identity_plan, command=(),
+                    child_env=child_env, launch_child_cwd=child_cwd,
+                    started_at_epoch=started_at_epoch,
+                    expected_session_id=observed_harness_session_id or "",
+                    requested_session_id=spec.continue_session_id or "",
+                    resolved_session_id=observed_harness_session_id or "",
+                    exit_code=conclusion.exit_code,
+                )
+                if observation.trampoline_successor_id:
+                    spawn_store.update_spawn(
+                        runtime_root, run.spawn_id,
+                        trampoline_successor_id=observation.trampoline_successor_id,
+                    )
+                exit_key = (
+                    NativeSessionKey(
+                        identity_plan.native_store, observation.trampoline_successor_id,
+                    )
+                    if identity_plan is not None and identity_plan.native_store
+                    and observation.trampoline_successor_id else None
+                )
+                boundary_error = finalize_run_boundary(
+                    adapter=harness, child_env=child_env, runtime_root=runtime_root,
+                    spawn_id=str(run.spawn_id),
+                    pid=attempt_pid, exit_key=exit_key,
+                )
                 if boundary_error:
                     conclusion.exit_code = 1
                     conclusion.authoritative_terminal_status = "failed"
@@ -1514,20 +1536,6 @@ async def execute_with_streaming(
                     )
                     or ""
                 )
-                observation = harness.observe_primary_session_id(
-                    native_identity_plan=spec.native_identity_plan, command=(),
-                    child_env=child_env, launch_child_cwd=child_cwd,
-                    started_at_epoch=started_at_epoch,
-                    expected_session_id=observed_harness_session_id or "",
-                    requested_session_id=spec.continue_session_id or "",
-                    resolved_session_id=observed_harness_session_id or "",
-                    exit_code=conclusion.exit_code,
-                )
-                if observation.trampoline_successor_id:
-                    spawn_store.update_spawn(
-                        runtime_root, run.spawn_id,
-                        trampoline_successor_id=observation.trampoline_successor_id,
-                    )
                 if extracted_harness_session_id:
                     _observe_id(extracted_harness_session_id, session_attempt)
 

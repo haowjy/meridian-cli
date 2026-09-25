@@ -21,6 +21,7 @@ from meridian.lib.bootstrap.services import build_spawn_application_service_from
 from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.core.clock import RealClock
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
+from meridian.lib.core.native_identity import NativeSessionKey
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     SpawnReservation,
@@ -1161,13 +1162,6 @@ def run_harness_process(
                     )
             finally:
                 try:
-                    boundary_error = (
-                        finalize_run_boundary(
-                            adapter=harness_adapter, child_env=child_env,
-                            runtime_root=runtime_root, spawn_id=primary_spawn_id,
-                            pid=native_primary_tui_pid,
-                        ) if primary_spawn_id is not None else None
-                    )
                     native_identity_error = None
                     if identity_plan is not None and primary_started_epoch > 0:
                         native_identity_error = harness_adapter.verify_native_identity(
@@ -1178,6 +1172,38 @@ def run_harness_process(
                                 "Native identity verification conflict: %s", native_identity_error
                             )
                             exit_code = 1
+                    observation = harness_adapter.observe_primary_session_id(
+                        native_identity_plan=identity_plan,
+                        command=command,
+                        child_env=child_env,
+                        launch_child_cwd=launch_child_cwd,
+                        started_at_epoch=(
+                            primary_started_epoch if primary_started_epoch > 0.0 else None
+                        ),
+                        expected_session_id=expected_harness_session_id,
+                        requested_session_id=requested_harness_session_id,
+                        resolved_session_id=resolved_harness_session_id,
+                        exit_code=exit_code,
+                    )
+                    if primary_spawn_id is not None and observation.trampoline_successor_id:
+                        spawn_store.update_spawn(
+                            runtime_root, primary_spawn_id,
+                            trampoline_successor_id=observation.trampoline_successor_id,
+                        )
+                    exit_key = (
+                        NativeSessionKey(
+                            identity_plan.native_store, observation.trampoline_successor_id,
+                        )
+                        if identity_plan is not None and identity_plan.native_store
+                        and observation.trampoline_successor_id else None
+                    )
+                    boundary_error = (
+                        finalize_run_boundary(
+                            adapter=harness_adapter, child_env=child_env,
+                            runtime_root=runtime_root, spawn_id=primary_spawn_id,
+                            pid=native_primary_tui_pid, exit_key=exit_key,
+                        ) if primary_spawn_id is not None else None
+                    )
                     if boundary_error is not None:
                         assert primary_spawn_id is not None
                         native_identity_error = "entry_mismatch"
@@ -1214,24 +1240,6 @@ def run_harness_process(
                         cancellation_observed=managed_cancelled,
                         native_identity_error=native_identity_error,
                     )
-                    observation = harness_adapter.observe_primary_session_id(
-                        native_identity_plan=identity_plan,
-                        command=command,
-                        child_env=child_env,
-                        launch_child_cwd=launch_child_cwd,
-                        started_at_epoch=(
-                            primary_started_epoch if primary_started_epoch > 0.0 else None
-                        ),
-                        expected_session_id=expected_harness_session_id,
-                        requested_session_id=requested_harness_session_id,
-                        resolved_session_id=resolved_harness_session_id,
-                        exit_code=exit_code,
-                    )
-                    if primary_spawn_id is not None and observation.trampoline_successor_id:
-                        spawn_store.update_spawn(
-                            runtime_root, primary_spawn_id,
-                            trampoline_successor_id=observation.trampoline_successor_id,
-                        )
                     if write_native_primary_metadata and primary_spawn_id is not None:
                         if observation.session_id:
                             resolved_harness_session_id = bind_harness_session_id(

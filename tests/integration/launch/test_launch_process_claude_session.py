@@ -377,3 +377,87 @@ def test_claude_fork_plan_waits_for_owned_new_identity(tmp_path: Path) -> None:
     assert "--session-id" not in context.binding.argv
     assert "--fork-session" in context.binding.argv
     assert context.binding.argv[context.binding.argv.index("--resume") + 1] == "source-native"
+
+
+@pytest.mark.parametrize("existing_exit", [False, True])
+def test_claude_trampoline_exit_uses_own_chat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing_exit: bool,
+) -> None:
+    import shlex
+    import subprocess
+    import sys
+    from dataclasses import replace
+
+    from meridian.lib.ops.session_target import resolve_session_log_target
+    from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+    from tests.support.executables import prepend_fake_executables
+
+    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "meridian-home"))
+    prepend_fake_executables(monkeypatch, tmp_path, "claude")
+    root = tmp_path / "repo"
+    root.mkdir()
+    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", str(root))
+    monkeypatch.setenv("MERIDIAN_TASK_DIR", str(root))
+    context, registry = _build_primary_launch_context(
+        project_root=root, harness_id=HarnessId.CLAUDE, model="claude-sonnet-4-5",
+    )
+    context = replace(context, runtime_root=resolve_project_runtime_root_for_write(root))
+    store = tmp_path / "home" / ".claude" / "projects" / project_slug(root)
+    store.mkdir(parents=True)
+    successor = "9a4846b0-5380-461d-98cb-304e7cee6e64"
+    existing_chat = None
+    if existing_exit:
+        existing_chat = session_store.start_session(
+            context.runtime_root, "claude", successor, "claude-sonnet-4-5",
+            native_store=str(store),
+        )
+        session_store.stop_session(context.runtime_root, existing_chat)
+    # Match Claude's native history shape; the actual child supplies the assigned entry ID.
+    history = "\n".join(json.dumps(row) for row in (
+        {"display": "/tui fullscreen", "project": str(root), "sessionId": "%s",
+         "timestamp": 1781827479996},
+        {"display": "TRAMPOLINE-EXIT", "project": str(root), "sessionId": successor,
+         "timestamp": 1781827539538},
+    )) + "\n"
+    transcript = json.dumps({
+        "type": "user", "sessionId": successor, "timestamp": 1781827539538,
+        "message": {"role": "user", "content": "TRAMPOLINE-EXIT"},
+    }) + "\n"
+    shim = tmp_path / "fake-bin" / "claude"
+    shim.write_text(
+        '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do\n'
+        ' if [ "$1" = "--session-id" ]; then shift; entry=$1; fi\n shift\ndone\n'
+        f"printf {shlex.quote(history)} \"$entry\" > "
+        f"{shlex.quote(str(store.parent.parent / 'history.jsonl'))}\n"
+        f"printf '%s' {shlex.quote(transcript)} > "
+        f"{shlex.quote(str(store / f'{successor}.jsonl'))}\n"
+    )
+    outcome = run_harness_process(context, registry)
+    assert outcome.exit_code == 0
+    row = list_spawns(context.runtime_root).records[0]
+    entry = session_store.get_session_record(context.runtime_root, outcome.chat_id)
+    assert entry is not None and entry.harness_session_id != successor
+    assert row.harness_session_id == entry.harness_session_id == outcome.resolved_harness_session_id
+    assert row.trampoline_successor_id == successor
+    assert row.entry_chat_id == entry.chat_id
+    assert row.exit_identity == "verified"
+    assert row.exit_chat_id and row.exit_chat_id != entry.chat_id
+    exit_chat = session_store.get_session_record(context.runtime_root, row.exit_chat_id)
+    assert exit_chat is not None and exit_chat.harness_session_id == successor
+    assert exit_chat.native_store == entry.native_store == str(store)
+    if existing_exit:
+        assert row.exit_chat_id == existing_chat
+    target = resolve_session_log_target(
+        ref=row.id, file_path=None, project_root=root, runtime_root=context.runtime_root,
+    )
+    assert target.session_id == successor
+    shown = subprocess.run(
+        [sys.executable, "-m", "meridian", "spawn", "show", row.id],
+        cwd=root, text=True, capture_output=True, timeout=15,
+    )
+    assert shown.returncode == 0, shown.stderr
+    assert f"entry {entry.chat_id} ({entry.harness_session_id})" in shown.stdout
+    assert f"→ exit {exit_chat.chat_id} ({successor})" in shown.stdout

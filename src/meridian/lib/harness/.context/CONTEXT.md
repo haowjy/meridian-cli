@@ -122,7 +122,9 @@ fallback; exact target verification cannot choose a replacement identity.
 already-known entry IDs. `observe_primary_session_id()` separately checks
 `/tui fullscreen` history and matching successor transcript evidence in the pinned
 store. Its `trampoline_successor_id` is recorded on the run; it cannot bind or
-replace the entry chat. Exit-chat mapping belongs to the exit-observation lane.
+replace the entry chat. Both runners pass this successor with the planned store
+to `finalize_run_boundary()` as an exit-only fallback when the adapter returns no
+boundary. The shared exit allocator reuses or creates the successor's own chat.
 
 ### `HarnessContract` as Inspectable Surface
 
