@@ -708,6 +708,7 @@ def test_session_log_resolves_tracked_claude_session_refuses_ambient_fallback(
         model="claude-opus",
         chat_id="c1",
         claude_config_dir=recorded_config_root.as_posix(),
+        native_store=str(recorded_config_root / "projects" / project_slug(project_root)),
         spawn_id="p1",
     )
     spawn_store.start_spawn(
