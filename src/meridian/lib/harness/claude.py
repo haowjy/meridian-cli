@@ -69,7 +69,6 @@ from meridian.lib.harness.semantics import (
     connection_closed_outcome,
     stringify_terminal_error,
 )
-from meridian.lib.launch.claude_session_access import resolve_claude_session_access_source
 from meridian.lib.launch.composition import (
     ComposedLaunchContent,
     ProjectedContent,
@@ -422,19 +421,18 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             if record_effective_config_dir is not None:
                 record_effective_config_dir(effective_config_dir)
 
-        session_access = resolve_claude_session_access_source(
-            session,
-            control_root=child_cwd,
-            materialization_root=effective_config_root,
-            target_config_root=effective_config_root,
-        )
-        if session_access.should_seed:
+        source_id = session.requested_harness_session_id
+        if source_id:
+            source_store = session.source_native_store
+            if session.continue_source_tracked and not source_store:
+                raise NativeSessionUnavailable(session.continue_source_ref or source_id, "unbound")
             ensure_claude_session_accessible(
-                source_session_id=session_access.source_session_id or resolved_harness_session_id,
-                source_cwd=session_access.source_control_root,
-                child_cwd=session_access.target_control_root or child_cwd,
-                source_config_root=session_access.source_config_root,
-                target_config_root=session_access.target_config_root,
+                source_session_id=source_id,
+                child_cwd=child_cwd,
+                source_native_store=Path(source_store) if source_store else Path(
+                    self.native_store_for_launch(child_env=child_env, child_cwd=child_cwd)
+                ),
+                target_config_root=effective_config_root,
             )
 
         return HarnessPrelaunchState()

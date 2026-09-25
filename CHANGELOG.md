@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Seed Claude from the exact recorded file; refuse missing sources instead of copying ambient decoys.
+
 - Carry one recorded native store through reference, continue, fork, and model reads; preserve Codex fork namespaces.
 
 - Track the remaining OpenCode ambient-database report fallback for the native-history read-path cleanup.
