@@ -23,6 +23,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Keep malformed native Pi entry types visibly incomplete in preview normalization.
 - Join streaming teardown before reading native exit boundaries; a Pi quit published after turn completion now resolves its exit chat.
 - Chats bind one immutable `(harness, native_store, id)`; assigned keys bind before exec, and owned observations can confirm but never repoint them.
+- Rebuild old history-index projections for schema 3's serialized record shapes; refuse newer schemas without hydration.
 - Claude, Codex, OpenCode, and Pi continue/fork use recorded native stores and exact targets. Tracked operations refuse incomplete, missing, ambiguous, or contradictory sources instead of discovering replacements.
 - Validate Claude first-line session IDs and Codex session-meta IDs before exact reads or source preparation; malformed and torn journals fail closed.
 - Fail contradictory initial owned identities and detected post-exit native contradictions as `entry_mismatch`, retaining expected/observed evidence. Unavailable sources retain separate typed refusal codes.
@@ -41,7 +42,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Build locked Pi extension bundles before full preflight tests and packaging; missing pnpm fails loudly.
 
 ### Scope
-- OpenCode's ambient report fallback remains tracked for the native-history read-path lane. Native-reader/lineage expansion and runner-history deletion are not part of this wrapper change.
+- Runner `history.jsonl` is still written and remains the source for pre-PR-1 run transcripts; its removal is deferred to the next PRs.
 
 ## [0.6.7] - 2026-09-25
 
