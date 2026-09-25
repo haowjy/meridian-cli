@@ -18,7 +18,6 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
 from meridian.lib.catalog.model_aliases import MarsResultCache
-from meridian.lib.core.clock import RealClock
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.native_identity import (
     NativeIdentityError,
@@ -58,7 +57,6 @@ from meridian.lib.launch.constants import (
     HISTORY_FILENAME,
     OUTPUT_FILENAME,
     PRIMARY_META_FILENAME,
-    RUNNER_LIFECYCLE_FILENAME,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.native_run import NativeRun, bind_entry, conclude_native_run
@@ -443,10 +441,7 @@ def _execute_primary_process(
 
     output_log_path = (
         log_dir / OUTPUT_FILENAME
-        if (
-            harness_contract.capabilities.captures_blackbox_output
-            and "--print" in command
-        )
+        if (harness_contract.capabilities.captures_blackbox_output and "--print" in command)
         else None
     )
     blackbox_env = dict(child_env)
@@ -483,9 +478,7 @@ def _finalize_lifecycle(
 
     resolved_exit_code = exit_code
     if primary_spawn_id is not None:
-        log_dir = resolve_spawn_log_dir(
-            project_root, primary_spawn_id, runtime_root=runtime_root
-        )
+        log_dir = resolve_spawn_log_dir(project_root, primary_spawn_id, runtime_root=runtime_root)
         report_path = log_dir / "report.md"
         try:
             report_text = report_path.read_text(encoding="utf-8") if report_path.is_file() else None
@@ -743,8 +736,10 @@ def run_harness_process(
     session_mode = resolve_primary_session_mode(preview_context)
     session_metadata = build_session_metadata(preview_request)
     expected_harness_session_id = (
-        preview_context.binding.effective_harness_session_id or ""
-    ) if session_mode != SessionMode.FORK else ""
+        (preview_context.binding.effective_harness_session_id or "")
+        if session_mode != SessionMode.FORK
+        else ""
+    )
     resolved_harness_session_id = (
         expected_harness_session_id if session_mode == SessionMode.RESUME else ""
     )
@@ -794,7 +789,9 @@ def run_harness_process(
                 get_session_active_work_id_fn=get_session_active_work_id_fn,
                 update_session_work_id_fn=update_session_work_id_fn,
             )
-            startup_identity_error: NativeIdentityError | None = None
+            identity_error: NativeIdentityError | None = None
+            identity_error_phase = "pre_exec"
+            lifecycle: LifecycleLog | None = None
             try:
                 write_native_primary_metadata = False
                 should_fork = (
@@ -828,6 +825,7 @@ def run_harness_process(
                     chat_id,
                     str(primary_spawn_id),
                 )
+                lifecycle = LifecycleLog.for_spawn(runtime_root, config_root, primary_spawn_id)
                 forked_session_id: str | None = None
                 if should_fork:
                     source_session_id = (
@@ -924,8 +922,10 @@ def run_harness_process(
                 )
                 command = runtime_context.binding.argv
                 resolved_harness_session_id = (
-                    runtime_context.binding.effective_harness_session_id or ""
-                ) if session_mode == SessionMode.RESUME or forked_session_id else ""
+                    (runtime_context.binding.effective_harness_session_id or "")
+                    if session_mode == SessionMode.RESUME or forked_session_id
+                    else ""
+                )
                 persisted_launch_policy_snapshot = (
                     runtime_context.resolved_request.launch_policy_snapshot
                 )
@@ -991,8 +991,8 @@ def run_harness_process(
                     state=prelaunch_state,
                 )
                 write_native_primary_metadata = harness_adapter.uses_native_primary_metadata()
-                native_primary_runtime_metadata = (
-                    harness_adapter.native_primary_runtime_metadata(prelaunch_state)
+                native_primary_runtime_metadata = harness_adapter.native_primary_runtime_metadata(
+                    prelaunch_state
                 )
                 native_primary_metadata_command = (
                     harness_adapter.redact_primary_command(command)
@@ -1041,6 +1041,7 @@ def run_harness_process(
                             runtime_metadata=native_primary_runtime_metadata,
                         )
 
+                identity_error_phase = "running"
                 (
                     exit_code,
                     managed_session_id,
@@ -1074,38 +1075,42 @@ def run_harness_process(
                         exit_code=exit_code,
                     )
             except NativeIdentityError as exc:
-                startup_identity_error = exc
+                identity_error = exc
                 exit_code = 1
             finally:
                 try:
-                    boundary_error = startup_identity_error
-                    if native_run is not None and primary_spawn_id is not None:
+                    if (
+                        native_run is not None
+                        and primary_spawn_id is not None
+                        and lifecycle is not None
+                    ):
                         outcome = conclude_native_run(
-                            native_run, harness_adapter, context=runtime_context,
-                            spawn_id=primary_spawn_id, child_env=child_env,
-                            child_cwd=launch_child_cwd, pid=native_primary_tui_pid,
+                            native_run,
+                            harness_adapter,
+                            context=runtime_context,
+                            spawn_id=primary_spawn_id,
+                            child_env=child_env,
+                            child_cwd=launch_child_cwd,
+                            pid=native_primary_tui_pid,
                             started=native_primary_tui_pid is not None,
                             started_at_epoch=primary_started_epoch or None,
-                            prior_error=startup_identity_error,
-                            artifacts=(artifacts if not write_native_primary_metadata
-                                       and primary_started_epoch > 0 else None),
+                            prior_error=identity_error,
+                            prior_error_phase=identity_error_phase,
+                            artifacts=(
+                                artifacts
+                                if not write_native_primary_metadata and primary_started_epoch > 0
+                                else None
+                            ),
                             connection_session_id=None,
-                            lifecycle=LifecycleLog(runtime_root, primary_spawn_id,
-                                resolve_spawn_log_dir(config_root, primary_spawn_id,
-                                    runtime_root=runtime_root) / RUNNER_LIFECYCLE_FILENAME,
-                                RealClock()),
+                            lifecycle=lifecycle,
                         )
-                        boundary_error = outcome.error
+                        identity_error = outcome.error
                         resolved_harness_session_id = outcome.harness_session_id or ""
-                    elif boundary_error is not None and primary_spawn_id is not None:
-                        record_identity_failure(boundary_error, phase="pre_exec",
-                            lifecycle=LifecycleLog(runtime_root, primary_spawn_id,
-                                resolve_spawn_log_dir(config_root, primary_spawn_id,
-                                    runtime_root=runtime_root) / RUNNER_LIFECYCLE_FILENAME,
-                                RealClock()),
+                    elif identity_error is not None and lifecycle is not None:
+                        record_identity_failure(
+                            identity_error, phase="pre_exec", lifecycle=lifecycle
                         )
-                    native_identity_error = boundary_error.failure_code if boundary_error else None
-                    if boundary_error is not None:
+                    if identity_error is not None:
                         exit_code = 1
                     exit_code = _finalize_lifecycle(
                         primary_spawn_id=primary_spawn_id,
@@ -1117,7 +1122,9 @@ def run_harness_process(
                         primary_started=primary_started,
                         spawn_service=spawn_service,
                         cancellation_observed=managed_cancelled,
-                        native_identity_error=native_identity_error,
+                        native_identity_error=identity_error.failure_code
+                        if identity_error
+                        else None,
                     )
                     if write_native_primary_metadata and primary_spawn_id is not None:
                         _write_native_primary_metadata(

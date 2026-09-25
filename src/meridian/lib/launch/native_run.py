@@ -53,7 +53,7 @@ class NativeRun:
                 raise NativeEntryMismatch(self.entry, self.entry.with_session(candidate))
             if self.fork_source_id and candidate == self.fork_source_id:
                 raise NativeEntryMismatch(
-                    self.entry.with_session(self.fork_source_id),
+                    NativeKeyFields(self.entry.harness, self.entry.native_store),
                     self.entry.with_session(candidate),
                     reason="fork_reused_source",
                 )
@@ -88,17 +88,16 @@ def bind_entry(
     on_accepted: Callable[[str], None] | None = None,
 ) -> NativeRun:
     identity = spec.native_identity
-    assigned = (
-        identity.session_id
-        if identity
-        else (spec.continue_session_id if not spec.continue_fork else None)
-    )
-    fork_source = (
-        (identity.source_session_id if identity.operation == "fork" and assigned is None else None)
-        if identity
-        else (spec.continue_session_id if spec.continue_fork else None)
-    )
-    entry = identity.entry_fields() if identity else NativeKeyFields(harness, session_id=assigned)
+    if identity is None:
+        assigned = spec.continue_session_id if not spec.continue_fork else None
+        fork_source = spec.continue_session_id if spec.continue_fork else None
+        entry = NativeKeyFields(harness, session_id=assigned)
+    else:
+        assigned = identity.session_id
+        fork_source = None
+        if identity.operation == "fork" and assigned is None:
+            fork_source = identity.source_session_id
+        entry = identity.entry_fields()
     if assigned:
         outcome = attempt.bind(entry, "assigned")
         if isinstance(outcome, Conflict):
@@ -131,6 +130,7 @@ def conclude_native_run(
     artifacts: ArtifactStore | None,
     connection_session_id: str | None,
     lifecycle: LifecycleLog,
+    prior_error_phase: str = "post_exit",
 ) -> NativeRunOutcome:
     """Conclude once per attempt, after its child exited and teardown joined."""
     error = prior_error
@@ -187,20 +187,24 @@ def conclude_native_run(
             exit_key.session_id,
             native_exists=native_exists,
         )
+    if isinstance(error, NativeEntryMismatch):
+        status = "mismatch"
+    elif exit_chat_id:
+        status = "verified"
+    else:
+        status = "unresolved"
     boundary = RunBoundaryOutcome(
-        status=(
-            "mismatch"
-            if isinstance(error, NativeEntryMismatch)
-            else "verified"
-            if exit_chat_id
-            else "unresolved"
-        ),
+        status=status,
         exit_chat_id=ChatId(exit_chat_id) if exit_chat_id else None,
         trampoline_successor_id=post.trampoline_successor_id,
     )
     spawn_store.update_spawn(run.attempt.runtime_root, spawn_id, run_boundary=boundary)
     if error is not None:
-        record_identity_failure(error, lifecycle=lifecycle, phase="post_exit")
+        record_identity_failure(
+            error,
+            lifecycle=lifecycle,
+            phase=prior_error_phase if prior_error is not None else "post_exit",
+        )
     elif started:
         run.attempt.record_started(context, run.entry.session_id)
     return NativeRunOutcome(error, boundary, run.entry.session_id)

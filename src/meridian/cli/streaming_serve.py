@@ -15,14 +15,12 @@ from meridian.lib.bootstrap.services import (
     build_spawn_lifecycle_service_from_roots,
     prepare_for_runtime_write,
 )
-from meridian.lib.core.clock import RealClock
 from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
-from meridian.lib.launch.constants import RUNNER_LIFECYCLE_FILENAME
 from meridian.lib.launch.native_run import bind_entry, conclude_native_run
 from meridian.lib.launch.process.session import build_session_metadata
 from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
@@ -144,9 +142,7 @@ async def streaming_serve(
             startup_attempt_id=uuid.uuid4().hex,
         ) as managed:
             spawn_store.update_spawn(runtime_root, spawn_id, chat_id=managed.chat_id)
-            lifecycle = LifecycleLog(
-                runtime_root, spawn_id, output_path.parent / RUNNER_LIFECYCLE_FILENAME, RealClock()
-            )
+            lifecycle = LifecycleLog.for_spawn(runtime_root, project_root, spawn_id)
             try:
                 native_run = bind_entry(
                     managed, launch_ctx.binding.spec, harness=str(launch_ctx.harness.id)
@@ -182,6 +178,7 @@ async def streaming_serve(
             )
             child_env.update(prelaunch.env_overrides)
             connection_config = replace(connection_config, child_env=child_env)
+            run_error: BaseException | None = None
             try:
                 outcome = await run_streaming_spawn(
                     config=connection_config,
@@ -196,10 +193,16 @@ async def streaming_serve(
                     on_control_endpoint_ready=_report_control_endpoint,
                     on_running=record_started,
                 )
+                outcome_status = TypeAdapter(TerminalSpawnStatus).validate_python(outcome.status)
+                outcome_exit_code = outcome.exit_code
+                if outcome_status == "failed":
+                    failure_message = outcome.error
             except NativeIdentityError as exc:
                 identity_error = exc
-                raise
-            finally:
+                run_error = exc
+            except BaseException as exc:
+                run_error = exc
+            try:
                 native_outcome = conclude_native_run(
                     native_run,
                     launch_ctx.harness,
@@ -211,23 +214,32 @@ async def streaming_serve(
                     started=connection is not None,
                     started_at_epoch=started_at_epoch,
                     prior_error=identity_error,
+                    prior_error_phase="running",
                     artifacts=LocalStore(root_dir=runtime_root / "artifacts"),
                     connection_session_id=connection.session_id if connection is not None else None,
                     lifecycle=lifecycle,
                 )
-                launch_ctx.harness.cleanup_prelaunch(
-                    runtime_root=runtime_root,
-                    spawn_id=spawn_id,
-                    chat_id=managed.chat_id,
-                    state=prelaunch,
-                )
-                if native_outcome.error is not None:
-                    raise native_outcome.error
-            outcome_status = TypeAdapter(TerminalSpawnStatus).validate_python(outcome.status)
-            outcome_exit_code = outcome.exit_code
-            if outcome_status == "failed":
-                failure_message = outcome.error
-    except Exception as exc:
+                if run_error is None:
+                    run_error = native_outcome.error
+            except Exception as exc:
+                if run_error is None:
+                    run_error = exc
+            finally:
+                try:
+                    launch_ctx.harness.cleanup_prelaunch(
+                        runtime_root=runtime_root,
+                        spawn_id=spawn_id,
+                        chat_id=managed.chat_id,
+                        state=prelaunch,
+                    )
+                except Exception as exc:
+                    if run_error is None:
+                        run_error = exc
+            if run_error is not None:
+                raise run_error
+    except BaseException as exc:
+        outcome_status = "failed"
+        outcome_exit_code = 1
         failure_message = str(exc)
         raise
     finally:

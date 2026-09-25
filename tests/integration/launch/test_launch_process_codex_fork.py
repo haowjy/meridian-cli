@@ -7,6 +7,7 @@ and that the native-continue-fork contract skips the fork call.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -193,7 +194,16 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
     assert captured["build_continue_session"] == "00000000-0000-4000-8000-000000000002"
     # I-10: fork happens after the row exists; the parent is not the child identity.
     assert captured["env_chat_id"] == outcome.chat_id
-    assert outcome.chat_id is not None
+    assert outcome.chat_id is not None and outcome.chat_id != "c7"
+    chat = session_store.get_session_record(launch_context.runtime_root, outcome.chat_id)
+    assert chat is not None and chat.forked_from_chat_id == "c7"
+    starts = [
+        json.loads(line)
+        for line in (launch_context.runtime_root / "sessions.jsonl").read_text().splitlines()
+        if json.loads(line).get("event") == "start"
+    ]
+    assert len(starts) == 1
+    assert starts[0]["harness_session_id"] is None
     spawns = list_spawns(launch_context.runtime_root)
     assert len(spawns.records) == 1
     assert spawns.records[0].terminal.origin == "launcher"
@@ -317,6 +327,15 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
     row = list_spawns(launch_context.runtime_root).records[0]
     assert row.terminal.error == "entry_mismatch"
     assert row.run_boundary.status == "mismatch"
+    facts = [
+        json.loads(line)
+        for line in (launch_context.runtime_root / "spawns" / row.id / "runner-lifecycle.jsonl")
+        .read_text()
+        .splitlines()
+    ]
+    mismatch = [fact for fact in facts if fact["event"] == "entry_mismatch"]
+    assert len(mismatch) == 1 and mismatch[0]["reason"] == "fork_reused_source"
+    assert mismatch[0]["expected"]["session_id"] is None
 
 
 def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
@@ -416,3 +435,33 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
     assert chat is not None and chat.harness_session_id == observed[0]
     assert chat.native_store == str(store)
     assert json.loads(source.read_text())["payload"]["id"] == sid
+
+
+def test_prelaunch_identity_refusal_keeps_pre_exec_phase(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from meridian.lib.core.native_identity import NativeEntryMismatch, NativeKeyFields
+
+    ctx, registry = _build_primary_launch_context(
+        project_root=tmp_path,
+        harness_id=HarnessId.CODEX,
+        model="gpt-5.4",
+    )
+    error = NativeEntryMismatch(NativeKeyFields(session_id="a"), NativeKeyFields(session_id="b"))
+
+    def refuse(**kwargs):
+        raise error
+
+    monkeypatch.setattr(registry.get(HarnessId.CODEX), "prepare_prelaunch", refuse)
+    outcome = run_harness_process(ctx, registry)
+    assert outcome.exit_code == 1
+    row = list_spawns(ctx.runtime_root).records[0]
+    facts = [
+        json.loads(line)
+        for line in (ctx.runtime_root / "spawns" / row.id / "runner-lifecycle.jsonl")
+        .read_text()
+        .splitlines()
+    ]
+    mismatch = [fact for fact in facts if fact["event"] == "entry_mismatch"]
+    assert len(mismatch) == 1 and mismatch[0]["phase"] == "pre_exec"
