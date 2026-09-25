@@ -10,6 +10,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Continue hints and spawn refs target a verified run exit; chat refs remain immutable.
+- Do not allocate exit chats for native sessions absent from the exact store.
 - Join streaming teardown before reading native exit boundaries; a Pi quit published after turn completion now resolves its exit chat.
 - Chats bind one immutable `(harness, native_store, id)`; assigned keys bind before exec, and owned observations can confirm but never repoint them.
 - Claude, Codex, OpenCode, and Pi continue/fork use recorded native stores and exact targets. Tracked operations refuse incomplete, missing, ambiguous, or contradictory sources instead of discovering replacements.

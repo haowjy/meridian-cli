@@ -102,7 +102,8 @@ assigned bind → initial owned `NativeEntryMismatch` check →
 `finalize_run_boundary`. Typed contradictions carry expected/observed evidence;
 `NativeSessionUnavailable` preserves unbound/missing/ambiguous refusal codes.
 Launch refusals reach `ops/spawn/failure_policy`; neither kind permits exit
-allocation or invocation attribution.
+allocation or invocation attribution. Exit allocation also requires the exact native
+resolver to find a valid source; unresolved exits do not fail the completed run.
 `observe_session_id()` returns owned connection/process signals, then an
 already-known ID, as `observed`; observations bind once and cannot overwrite.
 It must not mutate adapter-instance state. Cwd, timestamps, logs, and newest-file

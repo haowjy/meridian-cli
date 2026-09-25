@@ -65,6 +65,10 @@ stable `entry_mismatch`; unavailable sources retain `NativeSessionUnavailable`
 codes. The shared exit allocator refuses either error and runs only on owned
 boundary evidence. Streaming attempts join post-publication teardown before
 reading that boundary: terminal publication alone does not mean Pi quit is on disk.
+New exit chats are allocated only when the exact native resolver finds a valid
+session; an already-bound exact chat still wins, including the entry chat. A verified
+exit chat is the post-run target for spawn references and resume hints; chat references
+remain immutable, and unresolved or mismatched runs target their entry chat.
 Invocation attribution waits for validation. Startup refusals
 outside runner finalization flow through `ops/spawn/failure_policy`.
 

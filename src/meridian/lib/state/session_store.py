@@ -3,6 +3,7 @@
 import json
 import os
 import uuid
+from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
@@ -1461,7 +1462,8 @@ def list_session_generations(runtime_root: Path) -> tuple[SessionRecord, ...]:
 
 def get_or_create_exit_chat(
     runtime_root: Path, entry_chat_id: str, harness: str, native_store: str, session_id: str,
-) -> str:
+    *, native_exists: Callable[[], bool],
+) -> str | None:
     """Resolve an exact exit key under the session lock, including stopped chats."""
     paths = RuntimePaths.from_root_dir(runtime_root)
     with (
@@ -1475,6 +1477,8 @@ def get_or_create_exit_chat(
                 harness, native_store, session_id,
             ):
                 return record.chat_id
+        if not native_exists():
+            return None
         chat_id = reserve_chat_id(runtime_root)
         generation = uuid.uuid4().hex
         now = utc_now_iso()

@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import structlog
+
 from meridian.lib.core.native_identity import NativeSessionUnavailable, RunBoundary
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.launch.errors import NativeEntryMismatch
 from meridian.lib.state import session_store, spawn_store
+
+logger = structlog.get_logger()
 
 
 def finalize_run_boundary(
@@ -41,10 +45,34 @@ def finalize_run_boundary(
         )
     exit_chat_id = None
     if identity_error is None and boundary.exit is not None:
+        exit_key = boundary.exit
+
+        def native_exists() -> bool:
+            try:
+                source = adapter.resolve_native_session_file(
+                    project_root=Path(entry.control_root or entry.execution_cwd or "."),
+                    session_id=exit_key.session_id,
+                    native_store=Path(exit_key.native_store),
+                )
+                return source is not None and source.is_file()
+            except Exception:
+                logger.info(
+                    "skipping exit chat allocation: exact native session resolution failed",
+                    harness=str(adapter.id), native_store=exit_key.native_store,
+                    session_id=exit_key.session_id,
+                )
+                return False
+
         exit_chat_id = session_store.get_or_create_exit_chat(
-            runtime_root, entry.chat_id, str(adapter.id),
-            boundary.exit.native_store, boundary.exit.session_id,
+            runtime_root, entry.chat_id, str(adapter.id), exit_key.native_store,
+            exit_key.session_id, native_exists=native_exists,
         )
+        if exit_chat_id is None:
+            logger.info(
+                "skipping exit chat allocation: native session does not exist",
+                harness=str(adapter.id), native_store=exit_key.native_store,
+                session_id=exit_key.session_id,
+            )
     spawn_store.update_spawn(
         runtime_root, spawn_id, entry_chat_id=entry.chat_id,
         exit_chat_id=exit_chat_id,

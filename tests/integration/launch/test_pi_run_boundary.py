@@ -11,6 +11,7 @@ import pytest
 from meridian.lib.harness.pi_boundary import read_boundary
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.process.runner import run_harness_process
+from meridian.lib.ops.reference import resolve_session_reference
 from meridian.lib.ops.session_target import resolve_session_log_target
 from meridian.lib.state import session_store, spawn_store
 from tests.integration.launch.test_pi_identity_launch import (
@@ -92,10 +93,14 @@ def install_boundary_shim(root: Path, shape: str) -> None:
     exit_id = "$id" if shape == "same" else "switched-id"
     event_type = "session_start" if shape == "restart" else "session_shutdown"
     reason = "new" if shape == "restart" else "quit"
+    write_exit = ":\n" if shape == "switch-missing" else (
+        'printf \'{"type":"session","id":"%s"}\\n\' "$exit_id" '
+        '> "$store/2_$exit_id.jsonl"\n'
+    )
     publication = (
         f'exit_id="{exit_id}"\n'
-        '[ "$exit_id" = "$id" ] || printf \'{"type":"session","id":"%s"}\\n\' "$exit_id" '
-        '> "$store/2_$exit_id.jsonl"\n'
+        'if [ "$exit_id" != "$id" ]; then\n'
+        + write_exit + 'fi\n'
         'cat > "$_MERIDIAN_PI_SESSION_BOUNDARY_PATH" <<EOF\n'
         '{"v":2,"launch_nonce":"$_MERIDIAN_PI_SESSION_BOUNDARY_NONCE","pid":$$,"revision":5,'
         f'"initial":{{"session_id":"{initial}","session_file":"$store/1_{initial}.jsonl"}},'
@@ -124,7 +129,9 @@ def install_boundary_shim(root: Path, shape: str) -> None:
         ))
 
 
-@pytest.mark.parametrize("shape", ["same", "switch", "restart", "mismatch", "truncated"])
+@pytest.mark.parametrize(
+    "shape", ["same", "switch", "switch-missing", "restart", "mismatch", "truncated"],
+)
 def test_primary_post_exit_boundary(pi_runtime: Path, shape: str) -> None:  # noqa: F811
     root = pi_runtime
     install_boundary_shim(root, shape)
@@ -151,13 +158,28 @@ def test_primary_post_exit_boundary(pi_runtime: Path, shape: str) -> None:  # no
         assert row.exit_chat_id != row.entry_chat_id
         exit_chat = session_store.get_session_record(runtime, row.exit_chat_id)
         assert exit_chat is not None and exit_chat.harness_session_id == "switched-id"
+        spawn_reference = resolve_session_reference(
+            root, row.id, runtime_root=runtime,
+        )
+        chat_reference = resolve_session_reference(
+            root, entry.chat_id, runtime_root=runtime,
+        )
+        assert spawn_reference.authoritative_harness_session_id == "switched-id"
+        assert chat_reference.authoritative_harness_session_id == entry.harness_session_id
+    if shape == "switch-missing":
+        assert row.exit_chat_id is None and row.entry_chat_id == outcome.chat_id
+        assert row.status == "succeeded"
+        assert all(record.harness_session_id != "switched-id"
+                   for record in session_store.list_all_session_records(runtime))
     if shape != "mismatch":
         target = resolve_session_log_target(
             ref=row.id, file_path=None, project_root=root, runtime_root=runtime,
         )
         expected_id = "switched-id" if shape == "switch" else entry.harness_session_id
         assert target.session_id == expected_id
-        assert ("entry-based view" in target.source) == (shape in {"restart", "truncated"})
+        assert ("entry-based view" in target.source) == (
+            shape in {"restart", "truncated", "switch-missing"}
+        )
 
 
 def assert_entry_mismatch(runtime: Path, spawn_id: str, entry: session_store.SessionRecord) -> None:
@@ -182,10 +204,18 @@ def test_concurrent_exits_converge_on_one_stopped_chat(pi_runtime: Path) -> None
     outcome = run_harness_process(context(root), HarnessRegistry.with_defaults())
     assert outcome.chat_id is not None
     args = (root / ".meridian", outcome.chat_id, "pi", "/exit-store", "exit-id")
-    ids = run_spawn_race_or_skip(session_store.get_or_create_exit_chat, [args, args])
+    ids = run_spawn_race_or_skip(_allocate_test_exit_chat, [args, args])
     assert ids[0] == ids[1] != outcome.chat_id
     record = session_store.get_session_record(root / ".meridian", ids[0])
     assert record is not None and record.stopped_at is not None
+
+
+def _allocate_test_exit_chat(
+    runtime: Path, entry: str, harness: str, native_store: str, session_id: str,
+) -> str | None:
+    return session_store.get_or_create_exit_chat(
+        runtime, entry, harness, native_store, session_id, native_exists=lambda: True,
+    )
 
 
 @pytest.mark.asyncio
