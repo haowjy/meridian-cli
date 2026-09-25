@@ -106,6 +106,38 @@ def startup_and_duplicate(root):
     refused(lambda: a.read_journal((path / "sessions.jsonl").read_bytes()), "duplicate")
 
 
+def v1_whitespace_startup(root):
+    # V1 selection and public lifecycle updates preserve the pre-v2 token contract.
+    selection_path = root / "selection"
+    _, _, exact = pinned(selection_path)
+    event = legacy(exact, startup_attempt_id="   ")
+    assert s.record_model_selection(selection_path, event)
+    rows = (selection_path / "sessions.jsonl").read_bytes()
+    assert (
+        a.read_journal(rows).snapshot.metadata.model_intents[-1].value.startup_attempt_id
+        == "   "
+    )
+
+    update_path = root / "public-update"
+    _, _, exact = pinned(update_path)
+    s.update_session_harness_id(
+        update_path,
+        exact.chat_id,
+        "conversation",
+        session_instance_id=exact.session_instance_id,
+        startup_attempt_id="   ",
+    )
+    rows = (update_path / "sessions.jsonl").read_bytes()
+    assert a.read_journal(rows).snapshot.metadata.update_ids[
+        (exact.chat_id, exact.session_instance_id, "   ")
+    ] == frozenset({"conversation"})
+
+    # Exact v2 remains stricter, and its complete persisted row is refused too.
+    v2_path = root / "v2-whitespace"
+    _, _, exact = pinned(v2_path)
+    parity_refusal(v2_path, changed(exact, startup_attempt_id="   "))
+
+
 def prefix_and_wire(root):
     for field, value in (
         ("v", True),
@@ -497,6 +529,7 @@ def run(root: Path) -> None:
     manifest = (
         late_seed,
         startup_and_duplicate,
+        v1_whitespace_startup,
         prefix_and_wire,
         mixed_assertions,
         full_source_and_order,

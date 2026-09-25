@@ -17,6 +17,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Preserve whitespace startup tokens for legacy v1 selections and session updates;
+  require nonblank startup identity only for exact v2 selections.
+
 - Keep exact model intent typed in the session fold, retract conflicting startup
   facts with their membership, and refuse late or contradictory seed intent.
 

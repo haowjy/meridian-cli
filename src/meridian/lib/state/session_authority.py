@@ -1816,8 +1816,6 @@ class MetadataProjection:
     ) -> None:
         if event.startup_attempt_id is None:
             return
-        if not event.startup_attempt_id.strip():
-            raise ValueError("startup attempt identity must be nonblank")
         native_id = (
             event.source.key.native_session_id
             if isinstance(event, SourceModelSelectionEvent)
@@ -1946,10 +1944,10 @@ def plan_model_selection(
             return SelectionReject("selection has no matching captured session generation")
         if value.kind == "initial_seed" and start.model_selection_protocol is not None:
             return SelectionReject("cannot seed a new-protocol session from prelaunch intent")
-        if value.startup_attempt_id is not None and not value.startup_attempt_id.strip():
-            return SelectionReject("startup attempt identity must be nonblank")
         if exact:
             assert value.source is not None
+            if value.startup_attempt_id is not None and not value.startup_attempt_id.strip():
+                return SelectionReject("startup attempt identity must be nonblank")
             if start.spawn_id != value.spawn_id:
                 return SelectionReject("v2 selection spawn differs from captured start")
             if start_key in metadata.conflicting_start_keys:
