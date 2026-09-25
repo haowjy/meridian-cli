@@ -31,6 +31,7 @@ from meridian.lib.core.spawn_service import CancelOutcome
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
+from meridian.lib.launch.continue_model_intent import collect_untracked_legacy_continue_intent
 from meridian.lib.launch.continue_replay import (
     build_continue_replay_contract,
     continue_replay_source_from_reference,
@@ -2090,18 +2091,24 @@ def _build_continue_create_input(
     resolved_reference: ResolvedSessionReference,
     runtime_root: Path,
 ) -> SpawnCreateInput:
-    continue_contract = build_continue_replay_contract(
-        source=continue_replay_source_from_reference(
-            source_spawn_id,
-            resolved_reference,
-            harness_session_id=resolved_reference.authoritative_harness_session_id,
-        ),
+    source = continue_replay_source_from_reference(
+        source_spawn_id,
+        resolved_reference,
+        harness_session_id=resolved_reference.authoritative_harness_session_id,
+    )
+    intent = collect_untracked_legacy_continue_intent(
+        source=source,
         explicit_harness=(payload.harness or "").strip() or None,
         requested_agent=payload.agent,
         agent_opt_out=payload.agent_opt_out,
         fork=payload.fork,
         requested_model_override=payload.model,
         runtime_root=runtime_root,
+    )
+    continue_contract = build_continue_replay_contract(
+        source=source, intent=intent,
+        explicit_harness=(payload.harness or "").strip() or None,
+        requested_agent=payload.agent, agent_opt_out=payload.agent_opt_out, fork=payload.fork,
     )
     launch_options = payload.launch_option_updates()
     launch_options.update(

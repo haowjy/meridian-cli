@@ -418,6 +418,7 @@ def _resolve_primary_source_request(
     authorized_source: UntrackedSourceUse | None = None,
 ) -> LaunchRequest:
     """Resolve native source details only after launch_primary's authority gate."""
+    from meridian.lib.launch.continue_model_intent import collect_untracked_legacy_continue_intent
     from meridian.lib.launch.continue_replay import (
         build_continue_replay_contract,
         continue_replay_source_from_reference,
@@ -491,17 +492,22 @@ def _resolve_primary_source_request(
         )
     session = request.session
     if operation == "resume":
-        contract = build_continue_replay_contract(
-            source=continue_replay_source_from_reference(
-                source_ref=source_ref,
-                resolved_reference=resolved,
-                harness_session_id=checked_native_id,
-            ),
+        source = continue_replay_source_from_reference(
+            source_ref=source_ref,
+            resolved_reference=resolved,
+            harness_session_id=checked_native_id,
+        )
+        intent = collect_untracked_legacy_continue_intent(
+            source=source,
             explicit_harness=request.harness,
             requested_agent=request.agent,
             agent_opt_out=request.agent_opt_out,
             requested_model_override=(request.model or "").strip() or None,
             runtime_root=runtime_root,
+        )
+        contract = build_continue_replay_contract(
+            source=source, intent=intent, explicit_harness=request.harness,
+            requested_agent=request.agent, agent_opt_out=request.agent_opt_out,
         )
         reconcile_primary_source_selection(
             PrimarySourceSelection(

@@ -1,31 +1,19 @@
-"""Canonical exact-continue replay contract for primary and spawn paths."""
+"""Pure continue intent selection and launch-contract assembly."""
 
 from __future__ import annotations
 
-import contextlib
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Protocol, cast
+from typing import Literal, Protocol
 from uuid import UUID
 
-from meridian.lib.catalog.model_aliases import run_mars_models_resolve
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
-from meridian.lib.core.types import HarnessSessionId
-from meridian.lib.harness.model_observation import (
-    NativeModelReadContext,
-    read_last_executed_model,
-)
-from meridian.lib.launch.policy_snapshot import managed_model_override_from_persisted_model
 from meridian.lib.launch.request import SessionRequest
-from meridian.lib.state.event_store import utc_now_iso
-from meridian.lib.state.session_store import (
+from meridian.lib.state.session_authority import (
     ConversationModelSelection,
-    SessionModelObservationEvent,
+    ExactModelObservation,
+    RecordedNativeSource,
+    ReplayModelFacts,
     SessionModelSelectionEvent,
-    get_initial_model_selection,
-    get_last_executed_model,
-    get_model_selection,
-    record_model_observation,
 )
 
 MODEL_OVERRIDE_WARNING = (
@@ -57,6 +45,7 @@ class ContinueReplaySource:
     source_pi_session_dir: str | None
     source_launch_policy_snapshot: LaunchPolicySnapshot | None
     tracked: bool
+    recorded_native_source: RecordedNativeSource | None = None
     source_history_id: UUID | None = None
     source_model: str | None = None
     source_agent: str | None = None
@@ -132,11 +121,13 @@ def continue_replay_source_from_reference(
     resolved_reference: ContinueReplayReference,
     *,
     harness_session_id: str | None,
+    recorded_native_source: RecordedNativeSource | None = None,
 ) -> ContinueReplaySource:
     """Build continue replay source inputs from a resolved session reference."""
 
     return ContinueReplaySource(
         source_ref=source_ref,
+        recorded_native_source=recorded_native_source,
         harness_session_id=harness_session_id,
         harness=resolved_reference.harness,
         source_chat_id=resolved_reference.source_chat_id,
@@ -209,184 +200,185 @@ def _reject_exact_continue_agent_override(
         )
 
 
-def _fallback_conversation_intent(
-    *,
-    source: ContinueReplaySource,
-    snapshot_model: str | None,
-) -> ConversationModelSelection:
-    snapshot = source.source_launch_policy_snapshot
-    if snapshot is None:
-        return ConversationModelSelection(
-            requested_token=snapshot_model,
-            selection_source="initial_launch",
-        )
-    canonical = snapshot.model_selection_canonical_id
-    model = canonical or snapshot_model
-    if model is None:
-        return ConversationModelSelection(
-            requested_token=None,
-            selected_token=snapshot.model_selection_selected_token,
-            model_mode="harness_default",
-            selection_source="initial_launch",
-        )
-    return ConversationModelSelection(
-        requested_token=model,
-        selected_token=snapshot.model_selection_selected_token,
-        canonical_model_id=canonical,
-        provider_constraint=snapshot.model_selection_provider_constraint,
-        selection_source="initial_launch",
-    )
+@dataclass(frozen=True, init=False)
+class ContinueReplayIntent:
+    """Detached value views: the selection's mutable provenance never escapes."""
 
+    _selection: ConversationModelSelection
+    _initial_model_selection: SessionModelSelectionEvent | None
+    recorded_native_source: RecordedNativeSource | None
 
-def _payload_harness(value: object) -> str | None:
-    if not isinstance(value, dict):
-        return None
-    harness = cast("dict[str, object]", value).get("harness")
-    return harness if isinstance(harness, str) else None
-
-
-def _observed_model_routes_to_harness(token: str, harness: str) -> bool:
-    """Best-effort check that an observed token can launch on the replay harness.
-
-    ``mars models resolve`` can return a payload for a token that does not route
-    to the harness being continued — for example an OpenCode session on an
-    unconfigured provider (``opencode/deepseek-v4-flash-free``), or a token whose
-    only candidates lack a runnable harness (``claude-fable-5``). Launch pins
-    ``--harness`` to the source session's harness, so a token must route to that
-    same harness; otherwise preferring it would make ``--continue`` fail where
-    the recorded startup selection worked.
-    """
-
-    resolved: dict[str, object] | None = None
-    with contextlib.suppress(Exception):
-        resolved = run_mars_models_resolve(token)
-    if resolved is None or resolved.get("error"):
-        return False
-    if _payload_harness(resolved.get("route")) == harness or resolved.get("harness") == harness:
-        return True
-    runnable_paths = resolved.get("runnable_paths")
-    if not isinstance(runnable_paths, list):
-        return False
-    return any(
-        _payload_harness(path) == harness for path in cast("list[object]", runnable_paths)
-    )
-
-
-def _observed_last_executed_model(
-    *,
-    source: ContinueReplaySource,
-    replay_harness: str,
-    runtime_root: Path,
-) -> str | None:
-    """Resolve the last-executed model, live-read first with stored observation fallback.
-
-    Live-read hits are best-effort persisted as an observation; a persistence
-    failure must never break continue, so it is swallowed here. Unroutable
-    observations are discarded so the caller falls back to the recorded selection.
-    """
-
-    harness_session_id = source.harness_session_id
-    if harness_session_id is None:
-        return None
-    live = read_last_executed_model(
-        replay_harness,
-        harness_session_id,
-        context=NativeModelReadContext(
-            project_root=source.source_control_root,
-            claude_config_dir=source.source_claude_config_dir,
-            pi_session_dir=source.source_pi_session_dir,
-        ),
-    )
-    token = live if live is not None else get_last_executed_model(
-        runtime_root, replay_harness, harness_session_id
-    )
-    if token is None or not _observed_model_routes_to_harness(token, replay_harness):
-        return None
-    if live is not None:
-        with contextlib.suppress(Exception):
-            record_model_observation(
-                runtime_root,
-                SessionModelObservationEvent(
-                    harness=replay_harness,
-                    harness_session_id=HarnessSessionId(harness_session_id),
-                    observed_model_token=live,
-                    recorded_at=utc_now_iso(),
-                ),
-            )
-    return token
-
-
-def _resolve_continue_conversation_intent(
-    *,
-    source: ContinueReplaySource,
-    replay_harness: str,
-    fork: bool,
-    requested_model_override: str | None,
-    runtime_root: Path | None,
-    snapshot_model: str | None,
-) -> tuple[ConversationModelSelection, SessionModelSelectionEvent | None]:
-    recorded = (
-        get_model_selection(runtime_root, replay_harness, source.harness_session_id)
-        if runtime_root is not None and source.harness_session_id is not None and not fork
-        else None
-    )
-    seed_event = (
-        get_initial_model_selection(
-            runtime_root, replay_harness, source.harness_session_id,
-            source_chat_id=source.source_chat_id,
-        )
-        if recorded is None and runtime_root is not None
-        and source.harness_session_id is not None and not fork
-        else None
-    )
-    if requested_model_override is not None:
-        return (
-            ConversationModelSelection(
-                requested_token=requested_model_override,
-                selection_source="explicit_override",
+    def __init__(
+        self,
+        selection: ConversationModelSelection,
+        initial_model_selection: SessionModelSelectionEvent | None = None,
+        recorded_native_source: RecordedNativeSource | None = None,
+    ) -> None:
+        object.__setattr__(self, "_selection", selection.model_copy(deep=True))
+        object.__setattr__(
+            self,
+            "_initial_model_selection",
+            (
+                initial_model_selection.model_copy(deep=True)
+                if initial_model_selection is not None
+                else None
             ),
-            seed_event,
         )
-    if not fork and runtime_root is not None and source.harness_session_id is not None:
-        observed_token = _observed_last_executed_model(
-            source=source,
-            replay_harness=replay_harness,
-            runtime_root=runtime_root,
-        )
-        if observed_token is not None:
-            return (
-                ConversationModelSelection(
-                    requested_token=observed_token,
-                    selection_source="observed_last_used",
-                ),
-                seed_event,
-            )
-    if recorded is not None:
-        return recorded.model_copy(update={"selection_source": "recorded_selection"}), None
-    if seed_event is not None:
-        selection = seed_event.selection
-        routing = selection.canonical_model_id or selection.selected_token
+        object.__setattr__(self, "recorded_native_source", recorded_native_source)
+
+    @property
+    def selection(self) -> ConversationModelSelection:
+        return self._selection.model_copy(deep=True)
+
+    @property
+    def initial_model_selection(self) -> SessionModelSelectionEvent | None:
         return (
-            selection.model_copy(update={"requested_token": routing or selection.requested_token}),
-            seed_event,
+            self._initial_model_selection.model_copy(deep=True)
+            if self._initial_model_selection is not None
+            else None
         )
-    if source.tracked and runtime_root is not None and not fork:
-        raise ValueError(
+
+
+@dataclass(frozen=True)
+class ContinueReplayRefused:
+    reason: Literal[
+        "missing_intent",
+        "mixed_evidence",
+        "source_conflict",
+        "metadata_mismatch",
+        "unsupported_view",
+        "unsupported_provider",
+        "evidence_mismatch",
+    ]
+    message: str
+
+
+@dataclass(frozen=True)
+class EligibleContinueObservation:
+    """Value-only policy input; no managed Pi producer qualifies this slot yet."""
+
+    selection: ConversationModelSelection
+    evidence: ExactModelObservation
+
+
+def _accepted_selection(
+    selection: ConversationModelSelection, *, invocation: bool, exact: bool
+) -> ConversationModelSelection:
+    selection = selection.model_copy(deep=True)
+    if invocation:
+        selection = selection.model_copy(update={"selection_source": "recorded_selection"})
+    if exact and selection.model_mode == "harness_default":
+        return selection.model_copy(update={"requested_token": None, "selected_token": None})
+    if not invocation:
+        return selection.model_copy(
+            update={
+                "requested_token": selection.canonical_model_id
+                or selection.selected_token
+                or selection.requested_token
+            }
+        )
+    return selection
+
+
+def select_continue_replay_intent(
+    *,
+    operation: Literal["resume", "fork"],
+    requested_model_override: str | None = None,
+    exact_facts: ReplayModelFacts | None = None,
+    recorded_native_source: RecordedNativeSource | None = None,
+    eligible_observation: EligibleContinueObservation | None = None,
+    legacy_invocation: ConversationModelSelection | None = None,
+    legacy_observation: ConversationModelSelection | None = None,
+    recovered_seed: SessionModelSelectionEvent | None = None,
+    fallback: ConversationModelSelection | None = None,
+) -> ContinueReplayIntent | ContinueReplayRefused:
+    """Select from collected values, never look up a source or resolve a token."""
+    if (exact_facts is None) != (recorded_native_source is None):
+        return ContinueReplayRefused(
+            "source_conflict", "Exact replay requires retained facts and their recorded source."
+        )
+    if exact_facts is not None and (
+        legacy_invocation is not None
+        or legacy_observation is not None
+        or recovered_seed is not None
+        or fallback is not None
+    ):
+        return ContinueReplayRefused(
+            "mixed_evidence", "Exact replay cannot consume legacy fallback values."
+        )
+    if exact_facts is not None:
+        for fact in (exact_facts.latest_invocation, exact_facts.first_committed_seed):
+            if fact is not None and (
+                fact.correlation != "exact_source" or fact.value.source != recorded_native_source
+            ):
+                return ContinueReplayRefused(
+                    "source_conflict", "Accepted intent belongs to a different source."
+                )
+    seed = recovered_seed if operation == "resume" else None
+    if requested_model_override is not None:
+        selection = ConversationModelSelection(
+            requested_token=requested_model_override, selection_source="explicit_override"
+        )
+    elif operation == "fork":
+        if fallback is None:
+            return ContinueReplayRefused(
+                "missing_intent", "Fork inheritance intent is unavailable."
+            )
+        selection = fallback
+    elif eligible_observation is not None:
+        evidence = eligible_observation.evidence
+        if evidence.source != recorded_native_source:
+            return ContinueReplayRefused(
+                "source_conflict", "Observed intent belongs to a different source."
+            )
+        selection = eligible_observation.selection.model_copy(
+            deep=True,
+            update={
+                "selection_source": "observed_last_used",
+                "provenance": {
+                    **eligible_observation.selection.provenance,
+                    "model_basis": evidence.model_basis,
+                    "provider_contract": evidence.provider_contract,
+                    "view_basis": evidence.view_basis,
+                    "native_provider": evidence.native_provider,
+                    "native_model": evidence.model_token,
+                },
+            },
+        )
+    elif legacy_observation is not None:
+        selection = legacy_observation
+    elif exact_facts is not None and exact_facts.latest_invocation is not None:
+        selection = _accepted_selection(
+            exact_facts.latest_invocation.event.selection, invocation=True, exact=True
+        )
+    elif legacy_invocation is not None:
+        selection = _accepted_selection(legacy_invocation, invocation=True, exact=False)
+        seed = None
+    elif exact_facts is not None and exact_facts.first_committed_seed is not None:
+        selection = _accepted_selection(
+            exact_facts.first_committed_seed.event.selection, invocation=False, exact=True
+        )
+    elif seed is not None:
+        selection = _accepted_selection(seed.selection, invocation=False, exact=False)
+    elif fallback is not None:
+        selection = fallback
+    else:
+        return ContinueReplayRefused(
+            "missing_intent",
             "No accepted model selection or original session history is recorded. "
-            "Continue with an explicit --model."
+            "Continue with an explicit --model.",
         )
-    return _fallback_conversation_intent(source=source, snapshot_model=snapshot_model), None
+    return ContinueReplayIntent(selection, seed, recorded_native_source)
 
 
 def build_continue_replay_contract(
     *,
     source: ContinueReplaySource,
+    intent: ContinueReplayIntent,
     explicit_harness: str | None = None,
     requested_agent: str | None = None,
     agent_opt_out: bool = False,
     fork: bool = False,
-    requested_model_override: str | None = None,
-    runtime_root: Path | None = None,
 ) -> ContinueReplayContract:
     """Build the normalized exact-continue contract from a resolved source."""
 
@@ -401,31 +393,34 @@ def build_continue_replay_contract(
 
     snapshot = source.source_launch_policy_snapshot
     if snapshot is not None:
-        snapshot_model = managed_model_override_from_persisted_model(snapshot.model)
+        snapshot = snapshot.model_copy(deep=True)
         agent = _present(snapshot.agent)
         replay_agent_opt_out = snapshot.agent_opt_out
         skills = snapshot.skills
         passthrough_args = snapshot.extra_args
     else:
-        snapshot_model = _present(source.source_model)
         agent = None
         replay_agent_opt_out = False
         skills = ()
         passthrough_args = ()
 
-    intent, seed_event = _resolve_continue_conversation_intent(
-        source=source,
-        replay_harness=replay_harness,
-        fork=fork,
-        requested_model_override=requested_model_override,
-        runtime_root=runtime_root,
-        snapshot_model=snapshot_model,
-    )
+    recorded_source = source.recorded_native_source
+    if intent.recorded_native_source != recorded_source:
+        raise ValueError("Continue intent and replay source identities differ")
+    if recorded_source is not None and (
+        recorded_source.key.harness != replay_harness
+        or recorded_source.key.native_session_id != source.harness_session_id
+        or recorded_source.ref.chat_id != source.source_chat_id
+        or source.source_ref.strip()
+        not in {recorded_source.ref.chat_id, recorded_source.key.native_session_id}
+    ):
+        raise ValueError("Continue replay identity differs from recorded native source")
 
     session = SessionRequest(
         requested_harness_session_id=source.harness_session_id,
-        initial_model_selection=seed_event,
-        conversation_intent=intent,
+        initial_model_selection=intent.initial_model_selection,
+        conversation_intent=intent.selection,
+        recorded_native_source=recorded_source,
         continue_harness=replay_harness,
         continue_source_tracked=source.tracked,
         continue_source_ref=source.source_ref,
@@ -440,7 +435,7 @@ def build_continue_replay_contract(
     )
 
     return ContinueReplayContract(
-        model=intent.routing_token,
+        model=intent.selection.routing_token,
         agent=agent,
         agent_opt_out=replay_agent_opt_out,
         skills=skills,
@@ -455,7 +450,10 @@ def build_continue_replay_contract(
 
 __all__ = [
     "ContinueReplayContract",
+    "ContinueReplayIntent",
+    "ContinueReplayRefused",
     "ContinueReplaySource",
     "build_continue_replay_contract",
     "continue_replay_source_from_reference",
+    "select_continue_replay_intent",
 ]

@@ -6,6 +6,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Separate pure continue replay from legacy model effects; retain exact source
+  identity without enabling tracked transport.
+- Keep selected Pi provider/model pairs ineligible for managed replay; use accepted
+  exact intent with a fidelity warning, or require an explicit model choice.
+
 - Keep exact Pi source descriptors open through validation and final reobservation; reject changed files and malformed full journals, with guarded adversarial coverage.
 - Isolate guarded exact-provider acceptance in a child process, classify FIFO replacement as a source conflict, and share immutable evidence results in state.
 - Isolate exact-intent acceptance from pytest workers; permanently deny external

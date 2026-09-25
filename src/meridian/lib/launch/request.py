@@ -54,8 +54,8 @@ class SessionRequest(BaseModel):
     continue_harness: str | None = None
     continue_source_tracked: bool = False
     continue_source_ref: str | None = None
-    # Purpose-authorized exact native source; set only by primary cN resume.
-    # Spawn pN replay deliberately does not inherit this credential.
+    # Exact recorded identity, not an entry/transport authorization credential.
+    # Tracked production entry and pN replay remain independently gated.
     recorded_native_source: RecordedNativeSource | None = None
     primary_session_mode: str | None = None
     conversation_intent: ConversationModelSelection | None = None

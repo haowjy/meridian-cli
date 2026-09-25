@@ -30,3 +30,18 @@ This is a Python API safety boundary for trusted test/application code, not an O
 sandbox against malicious extensions. Guards remain active through cleanup.
 The manifest reports exact binding/invalidation/freeze visits and journal
 read/decode/fold work separately; it makes no wall-time performance claim.
+
+## Continue replay acceptance
+
+`run_continue_replay.py` uses the same isolated-interpreter command and permanent
+effect/data guards, with a separate fixed manifest permitting launch/harness
+imports. It runs C1 alongside C2's settings fold on fake exact content, the private
+C3 collector, and real primary/spawn legacy callers with fake native/Mars/state
+effects. No installed harness or catalog process runs. C1's standalone layer-import
+guard is unchanged. Run `tests/integration/launch/test_continue_replay_isolated.py`
+for the pytest bridge.
+
+The admitted-source DTOs are synthetic downstream values, not transport proof.
+The public tracked gates are verified separately by the primary/spawn suites.
+The new pure APIs have no pre-fix failing implementation; this manifest establishes
+their contract rather than claiming pre-fix regression evidence.

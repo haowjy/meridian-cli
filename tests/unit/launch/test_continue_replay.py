@@ -1,358 +1,94 @@
-"""Unit tests for exact-continue replay contract builders."""
+"""Value-only intent selection and assembly; no legacy effect collection here."""
 
-from __future__ import annotations
-
-from pathlib import Path
+from dataclasses import replace
 
 import pytest
 
-import meridian.lib.launch.continue_replay as continue_replay_module
-from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
-from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.launch.continue_replay import (
+    ContinueReplayIntent,
+    ContinueReplayRefused,
     ContinueReplaySource,
-    ConversationModelSelection,
     build_continue_replay_contract,
-    continue_replay_source_from_reference,
+    select_continue_replay_intent,
 )
-from meridian.lib.ops.reference import ResolvedSessionReference
-from meridian.lib.ops.reference_recovery import RecoveryProvenance, RecoveryResult
+from meridian.lib.state.session_authority import ConversationModelSelection
 
 
-def _snapshot() -> LaunchPolicySnapshot:
-    return LaunchPolicySnapshot(
-        model="claude-sonnet-4-6",
-        harness="claude",
-        agent="agent-a",
-        skills=("skill-a",),
-        execution_policy=ResolvedExecutionPolicy(approval="auto"),
-        extra_args=("--permission-mode", "acceptEdits"),
-    )
-
-
-def test_build_continue_replay_contract_from_snapshot() -> None:
-    snapshot = _snapshot()
-    source = ContinueReplaySource(
-        source_ref="p41",
-        harness_session_id="session-41",
-        harness="claude",
-        source_chat_id="c41",
-        source_work_id="source-work",
-        source_execution_cwd="/tmp/source",
-        source_control_root="/tmp/repo",
-        source_claude_config_dir=None,
-        source_pi_session_dir=None,
-        source_launch_policy_snapshot=snapshot,
-        tracked=True,
-        source_model="ignored-live-model",
-        source_agent="ignored-agent",
-        source_skills=("ignored-skill",),
-    )
-
-    contract = build_continue_replay_contract(source=source)
-
-    assert contract.launch_policy_snapshot == snapshot
-    assert contract.work_id == "source-work"
-    assert contract.task_dir == "/tmp/source"
-    assert contract.harness == "claude"
-    assert contract.model == "claude-sonnet-4-6"
-    assert contract.agent == "agent-a"
-    assert contract.agent_opt_out is False
-    assert contract.skills == ("skill-a",)
-    assert contract.passthrough_args == snapshot.extra_args
-    assert contract.session.requested_harness_session_id == "session-41"
-    assert contract.session.continue_source_ref == "p41"
-    assert contract.session.continue_chat_id == "c41"
-    assert contract.session.source_execution_cwd == "/tmp/source"
-
-
-def test_continue_replay_source_from_reference_uses_authoritative_session_id() -> None:
-    resolved = ResolvedSessionReference(
-        harness_session_id=None,
-        harness="claude",
-        source_chat_id="c41",
-        source_model="claude-sonnet-4-6",
-        source_agent="agent-a",
-        source_skills=("skill-a",),
-        source_work_id="source-work",
-        tracked=True,
-        source_execution_cwd="/tmp/source",
-        source_launch_policy_snapshot=None,
-        recovery=RecoveryResult(
-            harness_session_id="recovered-session",
-            provenance=RecoveryProvenance.SESSION_STORE,
-        ),
-    )
-
-    contract = build_continue_replay_contract(
-        source=continue_replay_source_from_reference(
-            "p41",
-            resolved,
-            harness_session_id=resolved.authoritative_harness_session_id,
-        ),
-    )
-
-    assert contract.session.requested_harness_session_id == "recovered-session"
-    assert contract.work_id == "source-work"
-    assert contract.task_dir == "/tmp/source"
-    assert contract.model == "claude-sonnet-4-6"
-    assert contract.agent is None
-    assert contract.skills == ()
-
-
-def test_build_continue_replay_contract_legacy_empty_model_override() -> None:
-    snapshot = LaunchPolicySnapshot(model="", harness="codex", agent="tech-lead")
-    source = ContinueReplaySource(
-        source_ref="p44",
-        harness_session_id="session-44",
-        harness="codex",
-        source_chat_id="c44",
-        source_work_id=None,
-        source_execution_cwd=None,
-        source_control_root=None,
-        source_claude_config_dir=None,
-        source_pi_session_dir=None,
-        source_launch_policy_snapshot=snapshot,
-        tracked=True,
-    )
-
-    contract = build_continue_replay_contract(source=source)
-
-    assert contract.model is None
-    assert contract.launch_policy_snapshot == snapshot
-
-
-def test_build_continue_replay_contract_uses_snapshot_harness_when_reference_has_none() -> None:
-    snapshot = LaunchPolicySnapshot(model="", harness="codex", agent="tech-lead")
-    source = ContinueReplaySource(
-        source_ref="p44",
-        harness_session_id="session-44",
-        harness=None,
-        source_chat_id="c44",
-        source_work_id=None,
-        source_execution_cwd=None,
-        source_control_root=None,
-        source_claude_config_dir=None,
-        source_pi_session_dir=None,
-        source_launch_policy_snapshot=snapshot,
-        tracked=True,
-    )
-
-    contract = build_continue_replay_contract(source=source)
-
-    assert contract.harness == "codex"
-
-
-def test_build_continue_replay_contract_rejects_harness_conflict() -> None:
-    snapshot = LaunchPolicySnapshot(model="", harness="codex")
-    source = ContinueReplaySource(
-        source_ref="p44",
-        harness_session_id="session-44",
-        harness="claude",
-        source_chat_id="c44",
-        source_work_id=None,
-        source_execution_cwd=None,
-        source_control_root=None,
-        source_claude_config_dir=None,
-        source_pi_session_dir=None,
-        source_launch_policy_snapshot=snapshot,
-        tracked=True,
-    )
-
-    with pytest.raises(ValueError, match="Cannot continue across harnesses"):
-        build_continue_replay_contract(source=source)
-
-
-def test_build_continue_replay_contract_rejects_agent_opt_out() -> None:
-    source = ContinueReplaySource(
-        source_ref="p44",
-        harness_session_id="session-44",
-        harness="codex",
-        source_chat_id="c44",
-        source_work_id=None,
-        source_execution_cwd=None,
-        source_control_root=None,
-        source_claude_config_dir=None,
-        source_pi_session_dir=None,
-        source_launch_policy_snapshot=None,
-        tracked=True,
-    )
-
-    with pytest.raises(ValueError, match="agent opt-out"):
-        build_continue_replay_contract(source=source, agent_opt_out=True)
-
-
-def _continue_source() -> ContinueReplaySource:
+def source() -> ContinueReplaySource:
     return ContinueReplaySource(
-        source_ref="p41",
-        harness_session_id="session-41",
-        harness="claude",
-        source_chat_id="c41",
+        source_ref="native",
+        harness_session_id="native",
+        harness="pi",
+        source_chat_id=None,
         source_work_id=None,
-        source_execution_cwd="/tmp/source",
-        source_control_root="/tmp/repo",
+        source_execution_cwd=None,
+        source_control_root=None,
         source_claude_config_dir=None,
         source_pi_session_dir=None,
-        source_launch_policy_snapshot=_snapshot(),
-        tracked=True,
+        source_launch_policy_snapshot=None,
+        tracked=False,
     )
 
 
-def _recorded_selection(token: str) -> ConversationModelSelection:
-    return ConversationModelSelection(
-        requested_token=token,
-        selected_token=token,
-        canonical_model_id=token,
-        harness_model_id=token,
-        model_mode="named",
-        selection_source="recorded_selection",
+@pytest.mark.parametrize("override", ["model", "", "  "])
+def test_explicit_presence_not_truthiness(override: str) -> None:
+    result = select_continue_replay_intent(operation="resume", requested_model_override=override)
+    assert isinstance(result, ContinueReplayIntent)
+    assert result.selection.requested_token == override
+    assert result.selection.selection_source == "explicit_override"
+    assert build_continue_replay_contract(source=source(), intent=result).model == override
+
+
+def test_fork_ignores_resume_observation_and_invocation() -> None:
+    initial = ConversationModelSelection(
+        requested_token="initial", selection_source="initial_launch"
     )
-
-
-def _patch_intent_seams(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    recorded: ConversationModelSelection | None,
-    live: str | None,
-    stored: str | None,
-) -> None:
-    monkeypatch.setattr(
-        continue_replay_module, "get_model_selection", lambda *a, **k: recorded
+    result = select_continue_replay_intent(
+        operation="fork",
+        fallback=initial,
+        legacy_observation=ConversationModelSelection(
+            requested_token="observed",
+            selection_source="observed_last_used",
+        ),
+        legacy_invocation=initial,
     )
-    monkeypatch.setattr(
-        continue_replay_module, "get_initial_model_selection", lambda *a, **k: None
+    assert isinstance(result, ContinueReplayIntent)
+    assert result.selection == initial
+    assert result.initial_model_selection is None
+
+
+def test_no_intent_is_not_default_and_snapshot_is_not_selection() -> None:
+    assert isinstance(select_continue_replay_intent(operation="resume"), ContinueReplayRefused)
+
+
+def test_intent_and_builder_return_detached_provenance() -> None:
+    selection = ConversationModelSelection(
+        requested_token="value",
+        selection_source="initial_launch",
+        provenance={"source": "original"},
     )
-    monkeypatch.setattr(
-        continue_replay_module, "read_last_executed_model", lambda *a, **k: live
+    intent = ContinueReplayIntent(selection)
+    selection.provenance["source"] = "input-mutated"
+    intent.selection.provenance["source"] = "output-mutated"
+    first = build_continue_replay_contract(source=source(), intent=intent)
+    assert first.session.conversation_intent is not None
+    first.session.conversation_intent.provenance["source"] = "contract-mutated"
+    second = build_continue_replay_contract(source=source(), intent=intent)
+    assert second.session.conversation_intent is not None
+    assert second.session.conversation_intent.provenance == {"source": "original"}
+
+
+def test_harness_and_agent_prohibitions_remain_in_pure_builder() -> None:
+    intent = ContinueReplayIntent(ConversationModelSelection(selection_source="unknown"))
+    with pytest.raises(ValueError, match="across harnesses"):
+        build_continue_replay_contract(source=source(), intent=intent, explicit_harness="codex")
+    with pytest.raises(ValueError, match="agent opt-out"):
+        build_continue_replay_contract(source=source(), intent=intent, agent_opt_out=True)
+    with pytest.raises(ValueError, match="--agent"):
+        build_continue_replay_contract(source=source(), intent=intent, requested_agent="other")
+    fork = build_continue_replay_contract(
+        source=replace(source(), source_chat_id="c1"),
+        intent=intent,
+        fork=True,
     )
-    monkeypatch.setattr(
-        continue_replay_module, "get_last_executed_model", lambda *a, **k: stored
-    )
-    monkeypatch.setattr(
-        continue_replay_module, "record_model_observation", lambda *a, **k: True
-    )
-    monkeypatch.setattr(
-        continue_replay_module, "run_mars_models_resolve", lambda *a, **k: {"harness": "claude"}
-    )
-
-
-def test_explicit_override_beats_observed(monkeypatch: pytest.MonkeyPatch) -> None:
-    source = _continue_source()
-    _patch_intent_seams(
-        monkeypatch,
-        recorded=_recorded_selection("recorded-token"),
-        live="observed-token",
-        stored=None,
-    )
-    live_calls: list[str] = []
-    monkeypatch.setattr(
-        continue_replay_module,
-        "read_last_executed_model",
-        lambda *a, **k: live_calls.append("live") or "observed-token",
-    )
-
-    contract = build_continue_replay_contract(
-        source=source, requested_model_override="explicit-token", runtime_root=Path("/tmp/x")
-    )
-
-    assert live_calls == []
-    assert contract.model == "explicit-token"
-    assert contract.session.conversation_intent.selection_source == "explicit_override"
-
-
-def test_observed_beats_recorded(monkeypatch: pytest.MonkeyPatch) -> None:
-    source = _continue_source()
-    _patch_intent_seams(
-        monkeypatch,
-        recorded=_recorded_selection("recorded-token"),
-        live="observed-token",
-        stored=None,
-    )
-
-    contract = build_continue_replay_contract(source=source, runtime_root=Path("/tmp/x"))
-
-    assert contract.model == "observed-token"
-    assert contract.session.conversation_intent.selection_source == "observed_last_used"
-
-
-def test_stored_observation_beats_recorded_when_live_read_misses(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source = _continue_source()
-    _patch_intent_seams(
-        monkeypatch,
-        recorded=_recorded_selection("recorded-token"),
-        live=None,
-        stored="stored-token",
-    )
-
-    contract = build_continue_replay_contract(source=source, runtime_root=Path("/tmp/x"))
-
-    assert contract.model == "stored-token"
-    assert contract.session.conversation_intent.selection_source == "observed_last_used"
-
-
-def test_unroutable_observed_falls_back_to_recorded(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source = _continue_source()
-    _patch_intent_seams(
-        monkeypatch,
-        recorded=_recorded_selection("recorded-token"),
-        live="opencode/deepseek-v4-flash-free",
-        stored=None,
-    )
-    monkeypatch.setattr(
-        continue_replay_module, "run_mars_models_resolve", lambda *a, **k: None
-    )
-
-    contract = build_continue_replay_contract(source=source, runtime_root=Path("/tmp/x"))
-
-    assert contract.model == "recorded-token"
-    assert contract.session.conversation_intent.selection_source == "recorded_selection"
-
-
-def test_observed_routing_to_other_harness_falls_back_to_recorded(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source = _continue_source()
-    _patch_intent_seams(
-        monkeypatch,
-        recorded=_recorded_selection("recorded-token"),
-        live="observed-token",
-        stored=None,
-    )
-    monkeypatch.setattr(
-        continue_replay_module,
-        "run_mars_models_resolve",
-        lambda *a, **k: {"route": {"harness": "opencode"}},
-    )
-
-    contract = build_continue_replay_contract(source=source, runtime_root=Path("/tmp/x"))
-
-    assert contract.model == "recorded-token"
-    assert contract.session.conversation_intent.selection_source == "recorded_selection"
-
-
-def test_fork_ignores_observed(monkeypatch: pytest.MonkeyPatch) -> None:
-    source = _continue_source()
-    live_calls: list[str] = []
-    monkeypatch.setattr(
-        continue_replay_module,
-        "read_last_executed_model",
-        lambda *a, **k: live_calls.append("live") or "observed-token",
-    )
-    monkeypatch.setattr(
-        continue_replay_module,
-        "get_model_selection",
-        lambda *a, **k: _recorded_selection("recorded-token"),
-    )
-    monkeypatch.setattr(
-        continue_replay_module, "get_initial_model_selection", lambda *a, **k: None
-    )
-
-    contract = build_continue_replay_contract(source=source, fork=True, runtime_root=Path("/tmp/x"))
-
-    assert live_calls == []
-    assert contract.model == "claude-sonnet-4-6"
-    assert contract.session.conversation_intent.selection_source == "initial_launch"
+    assert fork.session.continue_fork and fork.session.forked_from_chat_id == "c1"

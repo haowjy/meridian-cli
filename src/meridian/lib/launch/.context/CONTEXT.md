@@ -70,28 +70,39 @@ CWD/config/env. The absence of source work is a preserved value: exact continue
 suppresses inherited `MERIDIAN_ACTIVE_WORK_*` and inherited task-dir state when the
 source had none, instead of attaching the caller's ambient work/task context.
 
-Continuation revalidates its model and pinned harness through Mars under current
-target/caller restrictions. Explicit model input resolves normally; otherwise the
-recorded selection wins. Recorded canonical IDs are literal pins, including deliberate
-harness-default mode. A new invocation snapshot updates routing fields without
-rewriting the source snapshot.
+`select_continue_replay_intent()` chooses only among supplied values;
+`build_continue_replay_contract(source, intent, ...)` performs no collection.
+The builder preserves the complete `recorded_native_source` into `SessionRequest`
+and rejects conflicting intent/source identities. Neither function authorizes
+a native entry. Primary fork retains its separate inheritance path.
+
+Existing primary/spawn callers use the separately named untracked/legacy effect
+collector after their existing admission gates. Legacy observation, seed recovery,
+persistence and compatibility behavior is unchanged, including primary's blank
+model normalization versus spawn's present-empty explicit override.
+
+The private exact collector is a downstream synthetic seam, not a production
+owner. It consumes the retained R2a authority and matching checked metadata, then
+C1 facts and at most one C2 persisted-reopen read. A future owner must independently
+admit original/saved raw vectors and qualify the native entry before this seam.
+Active cursors and conflicting source/view evidence refuse; explicit model skips
+only the model read. No legacy ID-only or persisted-observation fallback is allowed.
+
+A selected Pi provider/model pair is currently `pair_projection_unproven`: ordinary
+managed routing can remap either identity. The collector does not call Mars to
+resolve that structural limitation. Accepted exact invocation, then committed seed,
+may win with a composition warning of possible model fidelity loss; otherwise it
+returns an explicit-model remedy. Accepted harness-default intent drops historical
+request/selected labels from routing. A committed seed is never republished.
 
 Replay preserves non-routing policy: agent/profile, skills and loaded content,
 execution policy, tool/MCP grants, terminal surface, inventory prompt, env and
 passthrough args. Exact continue permits an explicit model override with a cache/cost
 warning; it still rejects agent, skills, execution-policy, passthrough, env, work and
-task-dir mutations. Agent opt-out is also a mutation.
+task-dir mutations. Agent opt-out is also a mutation. The existing continuation
+policy branch consumes the complete typed selection, not just its CLI model carrier.
+Production tracked transport and pN source use remain refused.
 
-Primary and spawn accepted-running callbacks append selection intent through
-`SessionAttempt`. Its captured generation/startup attempt also binds native-ID
-observations. Each streaming retry gets a distinct attempt; a recording failure is
-a coordination error, not a model retry. The record means accepted selection, not
-model execution. Legacy baseline lookup reads the original session generation;
-the session scope seeds that value under the existing store lock before startup.
-Previews do not seed. Missing snapshots retain partial historical values; a
-tracked conversation with neither accepted selection nor original legacy history
-requires an explicit model rather than adopting a failed attempt's snapshot.
-Streaming-serve recording remains unimplemented.
 
 Primary adapters declare named-model resume support. Unsupported named resumes fail
 before native startup; a named selection never falls back to an empty model.

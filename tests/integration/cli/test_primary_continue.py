@@ -264,7 +264,7 @@ def test_primary_source_use_aliases_refuse_before_launch(
 def test_direct_launch_revalidates_source_before_native_resolution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import meridian.lib.launch.continue_replay as continue_replay
+    import meridian.lib.launch.continue_model_intent as continue_model_intent
     import meridian.lib.ops.reference as reference
 
     project_root = tmp_path / "repo"
@@ -282,12 +282,12 @@ def test_direct_launch_revalidates_source_before_native_resolution(
     observations: list[object] = []
     detections: list[object] = []
     monkeypatch.setattr(
-        continue_replay,
+        continue_model_intent,
         "read_last_executed_model",
         lambda *args, **kwargs: native_reads.append(args),
     )
     monkeypatch.setattr(
-        continue_replay,
+        continue_model_intent,
         "record_model_observation",
         lambda *args, **kwargs: observations.append(args),
     )
@@ -364,6 +364,7 @@ def test_primary_resolver_conflict_stops_before_replay_and_work(
     project_root = tmp_path / "repo"
     project_root.mkdir()
     runtime_root = _state_root(project_root)
+    import meridian.lib.launch.continue_model_intent as continue_model_intent
     import meridian.lib.launch.continue_replay as continue_replay
     import meridian.lib.launch.source_selection as source_selection
     import meridian.lib.ops.reference as reference
@@ -398,12 +399,12 @@ def test_primary_resolver_conflict_stops_before_replay_and_work(
         lambda **kwargs: replay_calls.append("contract"),
     )
     monkeypatch.setattr(
-        continue_replay,
+        continue_model_intent,
         "read_last_executed_model",
         lambda *args, **kwargs: model_reads.append("read"),
     )
     monkeypatch.setattr(
-        continue_replay,
+        continue_model_intent,
         "record_model_observation",
         lambda *args, **kwargs: observations.append("write"),
     )
@@ -1436,7 +1437,7 @@ def test_primary_handler_preserves_observed_model_provenance_through_bind(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import meridian.lib.launch.continue_replay as continue_replay
+    import meridian.lib.launch.continue_model_intent as continue_model_intent
 
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -1449,10 +1450,10 @@ def test_primary_handler_preserves_observed_model_provenance_through_bind(
         harness_model="deepseek/deepseek-flash",
     )
     monkeypatch.setattr(
-        continue_replay, "read_last_executed_model", lambda *args, **kwargs: "deepseek-flash"
+        continue_model_intent, "read_last_executed_model", lambda *args, **kwargs: "deepseek-flash"
     )
     monkeypatch.setattr(
-        continue_replay, "_observed_model_routes_to_harness", lambda *args: True
+        continue_model_intent, "_observed_model_routes_to_harness", lambda *args: True
     )
     bound_contexts: list[Any] = []
     real_bind = launch_context._bind_launch_context_impl

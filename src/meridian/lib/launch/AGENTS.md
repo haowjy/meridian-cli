@@ -51,6 +51,12 @@ snapshot, work, and task directory. Persisted `LaunchPolicySnapshot.model == ""`
 is legacy JSON for harness-default model; replay normalizes it to in-memory
 `None` in `policy_snapshot.py`, not in continue-specific callers.
 
+Replay selection and contract assembly are pure. Existing callers collect effects
+through the explicitly untracked/legacy collector in `continue_model_intent.py`.
+Its private exact collector consumes retained authority and checked metadata only;
+it is not owner-wired and grants no tracked launch permission. Pi selected pairs
+remain ineligible until managed routing can preserve both provider and model.
+
 **Why the split?** `launch_primary()` owns one source-use authorization before
 native source resolution, replay/model reads, and work materialization. It then
 prepares once and uses private binding assembly for preview; execution performs
