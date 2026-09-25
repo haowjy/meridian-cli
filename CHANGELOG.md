@@ -3,21 +3,27 @@
 Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/). Versions `0.0.6` through `0.0.25` in git history only — changelog fell stale, resumed at `[Unreleased]`.
 
 ## [Unreleased]
-- Clarify native transcript sources and browse archived-chat search; no ZIP-content search.
-- Speed up spawn transcript availability checks; remove obsolete runner-history discovery paths.
-- Session discovery preserves accepted native bindings across resumes; metadata rebuilds ignore runner history.
+
+### Changed
+- Session logs read native chats: raw IDs resolve directly, and old `pN` refs show the whole chat with a view label.
+- Search bound native chats with a rebuildable index and exact substring verification; common words fill the 100-hit cap with newest sessions. Rebuild search rows; previews stay lazy.
+- Keep live event hooks and subscriber delivery active without runner-history persistence. `streaming serve` prints `Transcript: meridian session log pN`.
 - Finalize reports, usage and identity from live attempt facts; read only event-named native replies.
-- Archive capture requires an exact native transcript; legacy runner-history archive members stay inert.
+- Preserve accepted native bindings across resumes; metadata rebuilds ignore runner history.
 - Keep corpus and direct-search readiness aligned; renderer warnings remain visible without discarding confirmed text.
-- Avoid per-source WAL checkpoints while rebuilding disposable search rows.
-- Search bound native chats with a rebuildable index; show coverage gaps and chat-based open commands. Rebuild warms search, not previews; remove search `--include-archives`.
-- Native search scopes handle thousands of bound sessions; concurrent refreshes skip duplicate writes.
-- Add a disposable native-keyed transcript search projection with exact substring verification.
+- Avoid per-source WAL checkpoints while rebuilding disposable search rows; concurrent refreshes skip duplicate writes.
+- Speed up spawn transcript availability checks; remove obsolete runner-history discovery paths.
+- Clarify native transcript sources and browse archived-row filtering; search includes bound archived chats by default, not ZIP content.
+- Archive capture requires an exact native transcript; legacy runner-history archive members stay inert.
+- Read Pi lifecycle telemetry from an atomic sidecar and drop history-based staleness checks.
+- Managed Pi launches load a bounded, atomic v2 session-boundary observer without writing native journals.
+- Runs retain immutable entry chats; verified Pi exits resolve to their own chats. Missing or uncertain exits stay explicit.
+- Rename diagnostic Claude successor events to `claude_trampoline_successor`; exit hints show verified chat IDs without repeating native IDs.
 
-- Session log, export and previews read bound native chats; label spawn views. Reject legacy runner-history files.
-
-- Keep live event hooks and subscriber delivery active without runner-history persistence.
-- Read Pi lifecycle telemetry from an atomic sidecar, drop history-based staleness checks, and expose guardrail report/chat paths.
+### Removed
+- Reject legacy runner-history files as transcripts; archive ZIP history members restore as inert bytes.
+- Remove search `--include-archives`; `session index rebuild` no longer warms previews.
+- Remove `_MERIDIAN_GUARDRAIL_OUTPUT_LOG`; guardrail scripts receive `_MERIDIAN_GUARDRAIL_REPORT` and `_MERIDIAN_GUARDRAIL_CHAT_ID` instead.
 
 ### Added
 - Import legacy chat native keys once from exact, header-validated stores; keep unresolved chats listed in a durable report. Read-only dev report previews bindings.
@@ -63,12 +69,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Remove obsolete discovery metadata and source carriers; document validation order and Pi's fail-closed stale-context error-prefix dependency.
 - Keep continuation and missing-source fixtures faithful to native keys; model terminal teardown as a join, not another cancellation.
 - Build locked Pi extension bundles before full preflight tests and packaging; missing pnpm fails loudly.
-
-### Changed
-- Rename diagnostic Claude successor events to `claude_trampoline_successor`; exit hints show verified chat IDs without repeating native IDs.
-
-### Scope
-- Runner `history.jsonl` is still written and remains the source for pre-PR-1 run transcripts; its removal is deferred to the next PRs.
 
 ## [0.6.7] - 2026-09-25
 
