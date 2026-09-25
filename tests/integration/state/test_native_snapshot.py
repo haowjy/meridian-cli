@@ -419,8 +419,8 @@ def test_snapshot_preview_bypasses_stream_append_checkpoint(tmp_path: Path, monk
 
     path = tmp_path / "history.jsonl"  # Renamed storage still must not become an append stream.
     _snapshot(path, ('{"type":"assistant","message":{"content":"retained needle"}}',))
-    source = TranscriptSource("spawn_history", "p1", "claude", "snapshot", path)
-    target = SessionLogTarget("p1", "claude", path, "snapshot", (source,))
+    source = TranscriptSource("native_file", "native-1", "pi", "snapshot", path)
+    target = SessionLogTarget("native-1", "pi", path, "snapshot", (source,))
     monkeypatch.setattr(session_preview, "resolve_roots_for_read", lambda _: None)
     monkeypatch.setattr(session_preview, "resolve_session_log_target", lambda **_: target)
     view = session_preview.SessionPreview(str(tmp_path)).refresh(
@@ -516,7 +516,7 @@ def test_managed_preview_rejects_later_reserved_markers(
 
     path = tmp_path / "history.jsonl"
     path.write_bytes(payload)
-    source = TranscriptSource("spawn_history", "p1", "pi", "owned", path)
+    source = TranscriptSource("native_file", "p1", "pi", "owned", path)
     target = SessionLogTarget("p1", "pi", path, "owned", (source,))
     monkeypatch.setattr(session_preview, "resolve_roots_for_read", lambda _: None)
     monkeypatch.setattr(session_preview, "resolve_session_log_target", lambda **_: target)

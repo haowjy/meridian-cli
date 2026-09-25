@@ -8,7 +8,7 @@ from pathlib import Path
 
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.transcript_preview import TRANSCRIPT_PREVIEW_VERSION
-from meridian.lib.ops.session_archive import archive_history
+from meridian.lib.ops.session_archive import archive_history, materialize_native_history
 from meridian.lib.ops.session_export import SessionExportInput, session_export_sync
 from meridian.lib.ops.session_index import SessionIndexInput, session_index_sync
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
@@ -49,6 +49,8 @@ def _retain_bound_native(root, key, events, *, retain=True):
         native_store=str(store),
         model="test",
         chat_id=row.chat_id,
+        kind="primary" if row.kind == "primary" else "spawn",
+        spawn_id=row.id,
     )
     session_store.stop_session(root, row.chat_id)
     if retain:
@@ -121,6 +123,7 @@ def test_pi_native_readback_survives_reclaim(tmp_path: Path, monkeypatch) -> Non
         assert search.matches[0].role == "annotation"
     record = spawn_store.get_spawn(root, key)
     assert record is not None
+    materialize_native_history(project, root, key)
     archived = archive_history(root, destination=tmp_path / "archives", refs=(key,), apply=True)
     assert archived.reclaimed
     log = session_log_sync(
@@ -212,6 +215,7 @@ def test_unsupported_rendering_stays_visible_after_archiving(tmp_path: Path, mon
     reader = SessionPreview(str(project))
     loose = reader.refresh(identity, lambda: True)
     assert loose is not None and loose.state == "unavailable"
+    materialize_native_history(project, root, key)
     result = archive_history(root, destination=tmp_path / "archives", refs=(key,), apply=True)
     assert result.reclaimed
     archived = reader.refresh(identity, lambda: True)
@@ -318,8 +322,13 @@ def test_rebuild_warms_archived_children_and_counts_unsupported(
                 ]
             ),
         )
+    for key in keys:
+        materialize_native_history(project, root, key)
     archived = archive_history(
-        root, destination=tmp_path / "archives", refs=tuple(keys), apply=True
+        root,
+        destination=tmp_path / "archives",
+        refs=tuple(keys),
+        apply=True,
     )
     assert len(archived.reclaimed) == 2
     metadata = session_index_sync(

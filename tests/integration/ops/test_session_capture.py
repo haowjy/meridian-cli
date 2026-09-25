@@ -371,32 +371,54 @@ def test_capture_joins_native_identity_to_exact_linked_live_lease(
         session_store.stop_session(root, "c2")
 
 
-def test_archive_packs_existing_child_stream_without_native_capture(
-    tmp_path: Path, monkeypatch
-):
+def test_child_archive_uses_native_snapshot_not_runner_history(tmp_path: Path, monkeypatch):
     from meridian.lib.ops.session_archive import archive_history
     from meridian.lib.state.retention_archive import iter_archived_events
 
     project, root, _, _ = _capture_fixture(tmp_path, monkeypatch)
+    native_root = resolve_pi_spawn_session_root()
+    child_native_id = "child-native"
+    child = native_root / f"timestamp_{child_native_id}.jsonl"
+    child.write_text(
+        json.dumps({"type": "session", "version": 3, "id": child_native_id}) + "\n"
+        + json.dumps(
+            {
+                "type": "message",
+                "id": "native-child-turn",
+                "parentId": None,
+                "message": {"role": "assistant", "content": "native child answer"},
+            }
+        )
+        + "\n"
+    )
     key = spawn_store.start_spawn(
         root,
         chat_id="c2",
         harness="pi",
+        harness_session_id=child_native_id,
         kind="child",
         prompt="child",
         model="test",
         agent="coder",
     )
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
+    session_store.start_session(
+        root,
+        "pi",
+        child_native_id,
+        "test",
+        chat_id="c2",
+        kind="spawn",
+        spawn_id=key,
+        native_store=str(native_root),
+    )
+    session_store.stop_session(root, "c2")
     state = spawn_store.get_spawn(root, key)
     assert state is not None and state.history_id is not None
     stream = root / "spawns" / key / "history.jsonl"
-    events = [
-        {"type": "message", "message": {"role": "assistant", "content": "first attempt"}},
-        {"event_type": "meridian.attempt.completed", "attempt": 1},
-        {"type": "message", "message": {"role": "assistant", "content": "retry answer"}},
-    ]
-    stream.write_text("".join(json.dumps(event) + "\n" for event in events))
+    stream.write_text(json.dumps({"type": "runner-only"}) + "\n")
+    materialize_native_history(project, root, key)
+    _assert_sealed_snapshot(_snapshot_path(root, key), contains="native child answer")
     result = archive_history(
         root,
         destination=tmp_path / "archives",
@@ -407,22 +429,23 @@ def test_archive_packs_existing_child_stream_without_native_capture(
     assert not result.errors
     assert result.reclaimed == (str(state.history_id),)
     retained = list(iter_archived_events(Path(result.archives[0]), state.history_id))
-    assert retained == events
-    assert not (root / "spawns" / key / "native-transcript.jsonl").exists()
+    assert any(event.get("id") == "native-child-turn" for event in retained)
+    assert all(event.get("type") != "runner-only" for event in retained)
 
 
-def test_mixed_archive_reads_native_snapshot_and_legacy_history(tmp_path: Path, monkeypatch):
+def test_archive_refuses_legacy_runner_history_as_transcript(tmp_path: Path, monkeypatch):
     from meridian.lib.ops.session_archive import archive_history
-    from meridian.lib.state.retention_archive import iter_archived_events
+    from meridian.lib.state.retention_archive import (
+        capture_record,
+        iter_archived_events,
+        publish_archive,
+    )
+    from meridian.lib.state.retention_restore import restore_archive
 
-    project, root, native_key, _ = _capture_fixture(tmp_path, monkeypatch)
-    materialize_native_history(project, root, native_key)
-    native_state = spawn_store.get_spawn(root, native_key)
-    assert native_state is not None and native_state.history_id is not None
-    _assert_sealed_snapshot(_snapshot_path(root, native_key), contains="exact-native")
+    _, root, _, _ = _capture_fixture(tmp_path, monkeypatch)
     legacy_key = spawn_store.start_spawn(
         root,
-        chat_id="c2",
+        chat_id=None,
         harness="pi",
         kind="child",
         prompt="child",
@@ -442,19 +465,37 @@ def test_mixed_archive_reads_native_snapshot_and_legacy_history(tmp_path: Path, 
     result = archive_history(
         root,
         destination=tmp_path / "archives",
-        refs=(native_key, legacy_key),
+        refs=(legacy_key,),
         apply=True,
-        project_root=project,
     )
-    assert not result.errors
-    assert set(result.reclaimed) == {str(native_state.history_id), str(legacy_state.history_id)}
-    assert len(result.archives) == 1
-    archive = Path(result.archives[0])
-    native_events = list(iter_archived_events(archive, native_state.history_id))
-    assert native_events
-    assert any(row.get("id") == "exact-native" for row in native_events)
-    retained = list(iter_archived_events(archive, legacy_state.history_id))
-    assert retained == events
+    assert not result.reclaimed
+    assert not result.archives
+    assert any("no exact native source is bound" in error for error in result.errors)
+    legacy_record = capture_record(
+        root / "spawns" / legacy_key,
+        legacy_state,
+        None,
+        "2025-01-01T00:00:00+00:00",
+    )
+    old_archive = publish_archive(
+        root,
+        tmp_path / "old-archive",
+        (legacy_record,),
+    )
+    archive_path = Path(old_archive.destination) / old_archive.zip_name
+    restored_ids = restore_archive(
+        tmp_path / "restored-runtime", archive_path, (str(legacy_state.history_id),)
+    )
+    restored_history = (
+        tmp_path / "restored-runtime" / "spawns" / restored_ids[0] / "history.jsonl"
+    )
+    assert restored_history.read_bytes() == legacy.read_bytes()
+    with pytest.raises(ValueError, match="members are inert"):
+        list(
+            iter_archived_events(
+                archive_path, legacy_state.history_id
+            )
+        )
 
 
 @pytest.mark.parametrize("owner_harness", ["pi", " PI "])
