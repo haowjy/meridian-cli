@@ -174,7 +174,7 @@ def test_session_log_chat_prefers_detected_transcript_without_mutating_tracked_i
             ("assistant", "detected chat transcript")
         ]
         assert session_store.get_session_harness_id(runtime_root, chat_id) == tracked_session_id
-        assert session_store.get_session_harness_ids(runtime_root, chat_id) == (tracked_session_id,)
+        assert session_store.get_session_harness_id(runtime_root, chat_id) == tracked_session_id
         primary_spawn = spawn_store.get_spawn(runtime_root, "p42")
         assert primary_spawn is not None
         assert primary_spawn.harness_session_id == tracked_session_id
@@ -239,7 +239,7 @@ def test_session_log_spawn_prefers_detected_transcript_without_mutating_tracked_
             ("assistant", "detected spawn transcript")
         ]
         assert session_store.get_session_harness_id(runtime_root, chat_id) is None
-        assert session_store.get_session_harness_ids(runtime_root, chat_id) == ()
+        assert session_store.get_session_harness_id(runtime_root, chat_id) is None
         primary_spawn = spawn_store.get_spawn(runtime_root, "p42")
         assert primary_spawn is not None
         assert primary_spawn.harness_session_id is None

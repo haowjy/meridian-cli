@@ -453,7 +453,6 @@ class HistoryIndex:
             names.add((session.chat_id, "chat"))
             if session.spawn_id:
                 names.add((session.spawn_id, "spawn"))
-            names.update((name, "harness") for name in session.harness_session_ids)
             if session.harness_session_id:
                 names.add((session.harness_session_id, "harness"))
         return [(source_id, name, kind, history_id) for name, kind in names]

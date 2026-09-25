@@ -532,7 +532,6 @@ def test_empty_harness_session_id_normalizes_to_none_before_update(tmp_path: Pat
         record = session_store.get_session_record(runtime_root, chat_id)
         assert record is not None
         assert record.harness_session_id == "resolved-thread"
-        assert record.harness_session_ids == ("resolved-thread",)
 
         rows = [
             json.loads(line)
@@ -742,9 +741,8 @@ def test_records_by_session_ignores_mismatched_generation_stop_and_update(tmp_pa
         )
 
     record = session_store._records_by_session(runtime_root)["c10"]
-    assert record.harness_session_id == "thread-2"
-    assert record.harness_session_ids == ("thread-1", "thread-2")
-    assert record.active_work_id == "work-1"
+    assert record.harness_session_id == "thread-1"
+    assert record.active_work_id is None
     assert record.forked_from_chat_id is None
     assert record.stopped_at is None
 
@@ -776,3 +774,46 @@ def test_work_attachment_history_ignores_malformed_session_update(tmp_path: Path
     attached = HistoryIndex(runtime_root).work_chat_ids("work-1")
 
     assert attached == set()
+
+
+def test_native_binding_is_immutable(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    chat_id = session_store.start_session(
+        runtime_root, harness="claude", harness_session_id="", model="test",
+    )
+    try:
+        first = session_store.update_session_harness_id(
+            runtime_root, chat_id, "first", native_store="/native", source="assigned",
+        )
+        assert first.status == "bound"
+        assert session_store.update_session_harness_id(
+            runtime_root, chat_id, "first", native_store="/native",
+        ).status == "already_bound"
+        before = session_store.get_session_record(runtime_root, chat_id)
+        conflict = session_store.update_session_harness_id(
+            runtime_root, chat_id, "other", native_store="/other",
+        )
+        assert conflict.status == "conflict"
+        assert conflict.harness_session_id == "first"
+        assert session_store.get_session_record(runtime_root, chat_id) == before
+    finally:
+        session_store.stop_session(runtime_root, chat_id)
+
+
+def test_legacy_binding_rows_ignore_identity_list(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    _write_session_start(runtime_root=runtime_root, chat_id="c1", harness="claude",
+                         session_instance_id="gen")
+    path = runtime_root / "sessions.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    rows[0]["harness_session_ids"] = ["other", "first"]
+    path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+    record = session_store.get_session_record(runtime_root, "c1")
+    assert record is not None
+    records = {"c1": record}
+    session_store.project_session_event(records, session_store.SessionUpdateEvent.model_validate({
+        "chat_id": "c1", "harness_session_id": "other", "native_store": "/other",
+        "session_instance_id": record.session_instance_id,
+    }))
+    assert records["c1"] == record
+    assert "harness_session_ids" not in record.model_dump()

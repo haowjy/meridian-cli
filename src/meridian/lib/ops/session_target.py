@@ -365,10 +365,6 @@ def _legacy_spawns_for_chats(
 
 
 def _latest_harness_session_id(record: session_store.SessionRecord) -> str | None:
-    for candidate in reversed(record.harness_session_ids):
-        normalized = candidate.strip()
-        if normalized:
-            return normalized
     normalized = (record.harness_session_id or "").strip()
     return normalized or None
 

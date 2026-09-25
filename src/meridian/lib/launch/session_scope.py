@@ -183,7 +183,7 @@ def session_scope(
     startup_attempt_id: str | None = None,
     _start_session: Callable[..., str] = start_session,
     _stop_session: Callable[[Path, str], None] = stop_session,
-    _update_session_harness_id: Callable[..., None] = update_session_harness_id,
+    _update_session_harness_id: Callable[..., object] = update_session_harness_id,
     _reclaim_session_scopes: Callable[[Path, str], object] = reclaim_session_owned_scopes_for_chat,
 ) -> Generator[ManagedSession, None, None]:
     if request.initial_model_selection is not None:

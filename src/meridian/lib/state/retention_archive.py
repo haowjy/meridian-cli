@@ -306,7 +306,6 @@ def portable_digest(
                         "forked_from_chat_id",
                         "record_mode",
                         "harness_session_id",
-                        "harness_session_ids",
                         "control_root",
                         "task_cwd",
                         "execution_cwd",

@@ -47,10 +47,6 @@ def _normalize(value: str | None) -> str | None:
 
 
 def _latest_harness_session_id(record: session_store.SessionRecord) -> str | None:
-    for candidate in reversed(record.harness_session_ids):
-        normalized = candidate.strip()
-        if normalized:
-            return normalized
     return _normalize(record.harness_session_id)
 
 

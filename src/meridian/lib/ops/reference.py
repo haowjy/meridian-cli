@@ -109,10 +109,6 @@ def resolve_spawn_ref(runtime_root: Path, ref: str) -> SpawnId | None:
 
 
 def _latest_harness_session_id(record: session_store.SessionRecord) -> str | None:
-    for candidate in reversed(record.harness_session_ids):
-        normalized = candidate.strip()
-        if normalized:
-            return normalized
     return _normalize_optional(record.harness_session_id)
 
 

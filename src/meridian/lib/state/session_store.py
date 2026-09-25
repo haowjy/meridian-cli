@@ -4,10 +4,12 @@ import json
 import os
 import uuid
 from contextlib import ExitStack
+from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any, Literal, NamedTuple, Self, cast
 
 import psutil
+import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from meridian.lib.core.types import (
@@ -72,8 +74,8 @@ class SessionRecord(BaseModel):
     control_root: str | None = None
     task_cwd: str | None = None
     execution_cwd: str | None = None
+    native_store: str | None = None
     claude_config_dir: str | None = None
-    harness_session_ids: tuple[HarnessSessionId, ...]
     model: str
     agent: str
     agent_path: str
@@ -102,6 +104,7 @@ class SessionStartEvent(BaseModel):
     control_root: str | None = None
     task_cwd: str | None = None
     execution_cwd: str | None = None
+    native_store: str | None = None
     claude_config_dir: str | None = None
     model: str
     agent: str = ""
@@ -135,11 +138,13 @@ class SessionUpdateEvent(BaseModel):
     chat_id: PersistedChatId
     harness_session_id: OptionalPersistedHarnessSessionId = None
     session_instance_id: str = ""
+    native_store: str | None = None
     claude_config_dir: str | None = None
     active_work_id: str | None = None
     spawn_id: str | None = None
     history_id: uuid.UUID | None = None
     startup_attempt_id: str | None = None
+    source: str = "observed"
 
 
 class SessionHistoricalEvent(BaseModel):
@@ -313,9 +318,7 @@ def _record_from_start_event(event: SessionStartEvent) -> SessionRecord:
         task_cwd=event.task_cwd,
         execution_cwd=event.execution_cwd,
         claude_config_dir=event.claude_config_dir,
-        harness_session_ids=(
-            (event.harness_session_id,) if event.harness_session_id is not None else ()
-        ),
+        native_store=event.native_store,
         model=event.model,
         agent=event.agent,
         agent_path=event.agent_path,
@@ -445,6 +448,16 @@ def project_session_event(records: dict[str, SessionRecord], event: SessionEvent
         return
     if isinstance(event, SessionStartEvent):
         record = _record_from_start_event(event)
+        existing = records.get(event.chat_id)
+        if existing is not None and _binding_conflicts(existing, event):
+            return
+        if existing is not None:
+            record = record.model_copy(
+                update={
+                    "harness_session_id": existing.harness_session_id or record.harness_session_id,
+                    "native_store": existing.native_store or record.native_store,
+                }
+            )
         records[record.chat_id] = record
         return
     existing = records.get(event.chat_id)
@@ -474,15 +487,14 @@ def project_session_event(records: dict[str, SessionRecord], event: SessionEvent
         return
     if not _generation_matches(existing.session_instance_id, event.session_instance_id):
         return
-    session_ids = existing.harness_session_ids
+    if _binding_conflicts(existing, event):
+        return
     harness_session_id = existing.harness_session_id
     updated_work_id = existing.active_work_id
     claude_config_dir = existing.claude_config_dir
     spawn_id = existing.spawn_id
     session_instance_id = existing.session_instance_id
     if event.harness_session_id is not None:
-        if event.harness_session_id not in session_ids:
-            session_ids = (*session_ids, event.harness_session_id)
         harness_session_id = event.harness_session_id
     if event.session_instance_id.strip():
         session_instance_id = event.session_instance_id
@@ -498,7 +510,7 @@ def project_session_event(records: dict[str, SessionRecord], event: SessionEvent
     records[event.chat_id] = existing.model_copy(
         update={
             "harness_session_id": harness_session_id,
-            "harness_session_ids": session_ids,
+            "native_store": existing.native_store or event.native_store,
             "session_instance_id": session_instance_id,
             "active_work_id": updated_work_id,
             "claude_config_dir": claude_config_dir,
@@ -567,6 +579,7 @@ def start_session(
     control_root: str | None = None,
     task_cwd: str | None = None,
     execution_cwd: str | None = None,
+    native_store: str | None = None,
     claude_config_dir: str | None = None,
     kind: Literal["primary", "spawn"] = "spawn",
     spawn_id: str | None = None,
@@ -594,6 +607,7 @@ def start_session(
             task_cwd=normalize_path_for_write(task_cwd),
             execution_cwd=normalize_path_for_write(execution_cwd),
             claude_config_dir=claude_config_dir,
+            native_store=native_store,
             model=model,
             agent=agent,
             agent_path=agent_path,
@@ -681,37 +695,94 @@ def stop_session(runtime_root: Path, chat_id: str) -> None:
     _release_session_lock(runtime_root, chat_id)
 
 
+@dataclass(frozen=True)
+class NativeBindingResult:
+    status: Literal["bound", "already_bound", "conflict"]
+    harness_session_id: str | None
+    native_store: str | None
+
+
+def _binding_conflicts(
+    existing: SessionRecord,
+    event: SessionStartEvent | SessionUpdateEvent,
+) -> bool:
+    for field in ("harness_session_id", "native_store", "harness"):
+        kept = getattr(existing, field)
+        attempted = getattr(event, field, None)
+        if kept and attempted and kept != attempted:
+            structlog.get_logger(__name__).warning(
+                "native_binding_conflict",
+                chat_id=event.chat_id,
+                kept=kept,
+                attempted=attempted,
+                field=field,
+                source=getattr(event, "source", "start"),
+            )
+            return True
+    return False
+
+
 def update_session_harness_id(
     runtime_root: Path,
     chat_id: str,
     harness_session_id: str,
     *,
+    native_store: str | None = None,
+    source: str = "observed",
     session_instance_id: str | None = None,
     startup_attempt_id: str | None = None,
-) -> None:
-    """Append a session update event carrying the resolved harness session ID."""
-
+) -> NativeBindingResult:
+    """Atomically bind the first native key; conflicts never append a rebind."""
     if startup_attempt_id is not None and session_instance_id is None:
         raise ValueError("startup identity requires a captured session generation")
     paths = RuntimePaths.from_root_dir(runtime_root)
-    event = SessionUpdateEvent(
-        chat_id=ChatId(chat_id),
-        harness_session_id=HarnessSessionId(harness_session_id),
-        session_instance_id=(
-            session_instance_id
-            if session_instance_id is not None
-            else _session_instance_for_event(paths, runtime_root, chat_id)
-        ),
-        startup_attempt_id=startup_attempt_id,
-    )
-    if startup_attempt_id is not None:
-        _validate_startup_identity(read_events(paths.sessions_jsonl, _parse_event), event)
-    _append_session_event(
-        paths.sessions_jsonl,
-        paths.sessions_flock,
-        event,
-        exclude_none=True,
-    )
+    with (
+        lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
+        lock_file(paths.sessions_flock),
+    ):
+        existing = get_session_record(runtime_root, chat_id)
+        if existing is None:
+            raise ValueError(f"Unknown chat: {chat_id}")
+        event = SessionUpdateEvent(
+            chat_id=ChatId(chat_id),
+            harness_session_id=HarnessSessionId(harness_session_id),
+            native_store=native_store,
+            source=source,
+            session_instance_id=(
+                session_instance_id
+                if session_instance_id is not None
+                else _session_instance_for_event(paths, runtime_root, chat_id)
+            ),
+            startup_attempt_id=startup_attempt_id,
+        )
+        if not _generation_matches(existing.session_instance_id, event.session_instance_id):
+            return NativeBindingResult(
+                "conflict", existing.harness_session_id, existing.native_store
+            )
+        if _binding_conflicts(existing, event):
+            return NativeBindingResult(
+                "conflict", existing.harness_session_id, existing.native_store
+            )
+        status = (
+            "already_bound"
+            if (
+                existing.harness_session_id == event.harness_session_id
+                and (not native_store or native_store == existing.native_store)
+            )
+            else "bound"
+        )
+        if startup_attempt_id is not None:
+            _validate_startup_identity(read_events(paths.sessions_jsonl, _parse_event), event)
+        # Startup identity updates also commit the attempt-to-conversation link.
+        if status == "bound" or startup_attempt_id is not None:
+            _append_session_event(
+                paths.sessions_jsonl, paths.sessions_flock, event, exclude_none=True
+            )
+        return NativeBindingResult(
+            status,
+            existing.harness_session_id or event.harness_session_id,
+            existing.native_store or native_store,
+        )
 
 
 def update_session_work_id(runtime_root: Path, chat_id: str, work_id: str | None) -> None:
@@ -869,7 +940,8 @@ def _bound_model_selections(
 
 
 def _validate_startup_identity(
-    events: list[SessionEvent], event: SessionUpdateEvent | SessionModelSelectionEvent,
+    events: list[SessionEvent],
+    event: SessionUpdateEvent | SessionModelSelectionEvent,
 ) -> None:
     if event.startup_attempt_id is None or event.harness_session_id is None:
         return
@@ -885,8 +957,11 @@ def _validate_startup_identity(
 
 
 def get_initial_model_selection(
-    runtime_root: Path, harness: str, harness_session_id: str,
-    *, source_chat_id: str | None = None,
+    runtime_root: Path,
+    harness: str,
+    harness_session_id: str,
+    *,
+    source_chat_id: str | None = None,
 ) -> SessionModelSelectionEvent | None:
     """Read a legacy conversation's original value without seeding or replaying attempts."""
     from meridian.lib.state.spawn_store import get_spawn
@@ -898,16 +973,22 @@ def get_initial_model_selection(
         if isinstance(event, SessionUpdateEvent):
             updates.setdefault((event.chat_id, event.session_instance_id), []).append(event)
     starts = [
-        event for event in events
+        event
+        for event in events
         if isinstance(event, SessionStartEvent) and event.harness == harness
     ]
-    start = next((
-        event for event in starts
-        if event.harness_session_id == harness_session_id or any(
-            update.harness_session_id == harness_session_id
-            for update in updates.get((event.chat_id, event.session_instance_id), [])
-        )
-    ), None)
+    start = next(
+        (
+            event
+            for event in starts
+            if event.harness_session_id == harness_session_id
+            or any(
+                update.harness_session_id == harness_session_id
+                for update in updates.get((event.chat_id, event.session_instance_id), [])
+            )
+        ),
+        None,
+    )
     origin_chat_id = start.chat_id if start is not None else source_chat_id
     if origin_chat_id is not None:
         start = next((event for event in starts if event.chat_id == origin_chat_id), None)
@@ -915,7 +996,8 @@ def get_initial_model_selection(
         return None
     generation_updates = updates.get((start.chat_id, start.session_instance_id), [])
     spawn_id = start.spawn_id or next(
-        (update.spawn_id for update in generation_updates if update.spawn_id), None,
+        (update.spawn_id for update in generation_updates if update.spawn_id),
+        None,
     )
     spawn = get_spawn(runtime_root, spawn_id) if spawn_id else None
     snapshot = spawn.launch_policy_snapshot if spawn is not None else None
@@ -936,21 +1018,26 @@ def get_initial_model_selection(
             canonical_model_id=canonical if named else None,
             harness_model_id=executable if named else None,
             model_mode=(
-                "named" if named else
-                "harness_default" if not snapshot.model and not canonical else None
+                "named"
+                if named
+                else "harness_default"
+                if not snapshot.model and not canonical
+                else None
             ),
-            provider_constraint=(
-                snapshot.model_selection_provider_constraint if named else None
-            ),
+            provider_constraint=(snapshot.model_selection_provider_constraint if named else None),
             selection_source="initial_launch",
             provenance=snapshot.field_provenance,
         )
     return SessionModelSelectionEvent(
-        kind="initial_seed", harness=harness,
+        kind="initial_seed",
+        harness=harness,
         harness_session_id=HarnessSessionId(harness_session_id),
-        chat_id=start.chat_id, session_instance_id=start.session_instance_id,
-        spawn_id=spawn_id, startup_attempt_id=None,
-        recorded_at=utc_now_iso(), selection=selection,
+        chat_id=start.chat_id,
+        session_instance_id=start.session_instance_id,
+        spawn_id=spawn_id,
+        startup_attempt_id=None,
+        recorded_at=utc_now_iso(),
+        selection=selection,
     )
 
 
@@ -988,13 +1075,17 @@ def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent
             raise FileNotFoundError(runtime_root)
         with lock_file(paths.sessions_flock):
             events = read_events(paths.sessions_jsonl, _parse_event)
-            source_start = next((
-                start for start in events
-                if isinstance(start, SessionStartEvent)
-                and start.chat_id == event.chat_id
-                and start.session_instance_id == event.session_instance_id
-                and start.harness == event.harness
-            ), None)
+            source_start = next(
+                (
+                    start
+                    for start in events
+                    if isinstance(start, SessionStartEvent)
+                    and start.chat_id == event.chat_id
+                    and start.session_instance_id == event.session_instance_id
+                    and start.harness == event.harness
+                ),
+                None,
+            )
             if source_start is None:
                 raise ValueError("selection has no matching captured session generation")
             if event.kind == "initial_seed" and source_start.model_selection_protocol is not None:
@@ -1005,9 +1096,12 @@ def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent
             for prior, prior_id in bound[:-1]:
                 if prior.harness != event.harness:
                     continue
-                if native_id is not None and prior_id == native_id and (
-                    event.kind == "initial_seed" or (
-                        prior.kind == "invocation_started" and prior.spawn_id == event.spawn_id
+                if (
+                    native_id is not None
+                    and prior_id == native_id
+                    and (
+                        event.kind == "initial_seed"
+                        or (prior.kind == "invocation_started" and prior.spawn_id == event.spawn_id)
                     )
                 ):
                     if event.kind == "invocation_started" and not any(
@@ -1018,12 +1112,17 @@ def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent
                         and identity.harness_session_id == native_id
                         for identity in events
                     ):
-                        append_event(paths.sessions_jsonl, paths.sessions_flock, SessionUpdateEvent(
-                            chat_id=event.chat_id,
-                            session_instance_id=event.session_instance_id,
-                            startup_attempt_id=event.startup_attempt_id,
-                            harness_session_id=HarnessSessionId(native_id),
-                        ), exclude_none=True)
+                        append_event(
+                            paths.sessions_jsonl,
+                            paths.sessions_flock,
+                            SessionUpdateEvent(
+                                chat_id=event.chat_id,
+                                session_instance_id=event.session_instance_id,
+                                startup_attempt_id=event.startup_attempt_id,
+                                harness_session_id=HarnessSessionId(native_id),
+                            ),
+                            exclude_none=True,
+                        )
                     return False
                 if event.kind == "invocation_started" and (
                     prior.kind == event.kind
@@ -1063,7 +1162,9 @@ def record_model_observation(runtime_root: Path, event: SessionModelObservationE
 
 
 def get_last_executed_model(
-    runtime_root: Path, harness: str, harness_session_id: str,
+    runtime_root: Path,
+    harness: str,
+    harness_session_id: str,
 ) -> str | None:
     """Return the latest observed executed model token for a native session, or None."""
 
@@ -1120,7 +1221,10 @@ def get_last_session(runtime_root: Path) -> SessionRecord | None:
 
 
 def resolve_session_ref(
-    runtime_root: Path, ref: str, *, harness: str | None = None,
+    runtime_root: Path,
+    ref: str,
+    *,
+    harness: str | None = None,
 ) -> SessionRecord | None:
     """Resolve a native ID in its harness namespace; reject ambiguous ownership."""
 
@@ -1131,7 +1235,7 @@ def resolve_session_ref(
     matches = [
         record
         for record in list_session_generations(runtime_root)
-        if normalized in record.harness_session_ids
+        if normalized == record.harness_session_id
         and (harness is None or record.harness == harness)
     ]
     if not matches:
@@ -1160,15 +1264,6 @@ def get_session_harness_id(runtime_root: Path, chat_id: str) -> str | None:
     if record is None:
         return None
     return record.harness_session_id
-
-
-def get_session_harness_ids(runtime_root: Path, chat_id: str) -> tuple[str, ...]:
-    """Return all harness session IDs observed for a Meridian session ID."""
-
-    record = _records_by_session(runtime_root).get(chat_id)
-    if record is None:
-        return ()
-    return record.harness_session_ids
 
 
 def collect_active_chat_ids(project_root: Path) -> frozenset[str] | None:
