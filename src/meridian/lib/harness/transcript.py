@@ -16,6 +16,7 @@ from meridian.lib.harness.opencode_transcript import (
     interpret_opencode_v2_record,
     iter_opencode_db_session_events,
 )
+from meridian.lib.harness.pi_journal import PI_JOURNAL_ENTRY_TYPES
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.state.history import iter_history_events
 from meridian.lib.state.native_snapshot import (
@@ -62,6 +63,8 @@ class TranscriptParseResult(NamedTuple):
     segment_setups: tuple[str | None, ...]
     consumed_setup_event_indexes: tuple[int, ...] = ()
     rendering_reason: str | None = None
+    view_basis: Literal["reopen-default"] | None = None
+    completeness_reasons: tuple[str, ...] = ()
 
     @property
     def segment_prologues(self) -> tuple[str | None, ...]:
@@ -759,90 +762,6 @@ class TranscriptNormalizer:
     rendering_reason: str | None = None
     opencode_user_seen: bool = False
 
-    def _pi_journal(
-        self, event: dict[str, object], messages: list[TranscriptMessage]
-    ) -> NormalizedTranscriptEvent | None:
-        event_type = event.get("type")
-        if event_type == "session" and isinstance(event.get("id"), str) and "cwd" in event:
-            self.pi_session = True
-            self.pi_previous_entry_id = None
-            version = event.get("version", 1)
-            if type(version) is not int or version not in (1, 2, 3):
-                self.rendering_reason = "Unsupported Pi session version; rendering is incomplete."
-            return NormalizedTranscriptEvent([])
-        entry_id = event.get("id")
-        native_entry = isinstance(entry_id, str) and "parentId" in event
-        if not self.pi_session and not (
-            native_entry
-            and event_type
-            in (
-                "message",
-                "compaction",
-                "branch_summary",
-                "custom_message",
-                "model_change",
-                "thinking_level_change",
-                "custom",
-                "label",
-                "session_info",
-            )
-            and (event_type != "message" or isinstance(event.get("message"), dict))
-        ):
-            return None
-        if not native_entry and not isinstance(event_type, str):
-            return None
-        self.pi_session = True
-        annotations: list[TranscriptMessage] = []
-        if event_type == "message" and "message" not in event:
-            self.rendering_reason = "Malformed Pi message; rendering is incomplete."
-        if isinstance(entry_id, str) and len(entry_id) > 128:
-            self.pi_previous_entry_id = None
-            self.rendering_reason = "Unsupported Pi entry identity; rendering is incomplete."
-            native_entry = False
-        if native_entry:
-            if (
-                self.pi_previous_entry_id is not None
-                and event.get("parentId") != self.pi_previous_entry_id
-            ):
-                annotations.append(
-                    TranscriptMessage(
-                        "annotation",
-                        "Pi journal parent changed; continuing a different branch.",
-                        kind="annotation",
-                    )
-                )
-            self.pi_previous_entry_id = cast("str", entry_id)
-        if event_type == "compaction":
-            self.setup = text_from_value(event.get("summary")) or None
-            self.pending_summary = None
-            if not isinstance(event.get("summary"), str):
-                self.rendering_reason = (
-                    "Unsupported Pi compaction summary; rendering is incomplete."
-                )
-            return NormalizedTranscriptEvent(annotations, boundary=True)
-        if event_type == "branch_summary":
-            summary = text_from_value(event.get("summary"))
-            annotations.append(
-                TranscriptMessage(
-                    "annotation",
-                    f"Pi branch summary:\n{summary}",
-                    kind="annotation",
-                )
-            )
-            if not isinstance(event.get("summary"), str):
-                self.rendering_reason = "Unsupported Pi branch summary; rendering is incomplete."
-        elif event_type not in (
-            "message",
-            "custom_message",
-            "model_change",
-            "thinking_level_change",
-            "custom",
-            "label",
-            "session_info",
-        ):
-            self.rendering_reason = "Unsupported Pi journal entry; rendering is incomplete."
-        return NormalizedTranscriptEvent([*annotations, *messages])
-
     def feed(
         self, event: dict[str, object], parser: TranscriptEventParser
     ) -> NormalizedTranscriptEvent:
@@ -871,9 +790,63 @@ class TranscriptNormalizer:
         extracted = parser.parse(event)
         messages, parser_boundary = extracted.messages, extracted.boundary
         self.rendering_reason = extracted.rendering_reason or self.rendering_reason
-        pi_event = self._pi_journal(normalized_event, messages)
-        if pi_event is not None:
-            return pi_event
+        event_type = normalized_event.get("type")
+        if (
+            event_type == "session"
+            and isinstance(normalized_event.get("id"), str)
+            and "cwd" in normalized_event
+        ):
+            self.pi_session = True
+            self.pi_previous_entry_id = None
+            version = normalized_event.get("version", 1)
+            if type(version) is not int or version not in (1, 2, 3):
+                self.rendering_reason = "Unsupported Pi session version; rendering is incomplete."
+            return NormalizedTranscriptEvent([])
+        if self.pi_session and not isinstance(event_type, str):
+            self.rendering_reason = "Unsupported Pi journal entry; rendering is incomplete."
+        entry_id = normalized_event.get("id")
+        pi_entry = self.pi_session and isinstance(event_type, str)
+        native_pi_entry = (
+            isinstance(event_type, str)
+            and event_type in PI_JOURNAL_ENTRY_TYPES
+            and isinstance(entry_id, str)
+            and "parentId" in normalized_event
+        )
+        if native_pi_entry and len(cast("str", entry_id)) > 128:
+            self.pi_previous_entry_id = None
+            self.rendering_reason = "Unsupported Pi entry identity; rendering is incomplete."
+        annotations: list[TranscriptMessage] = []
+        if pi_entry:
+            if event_type not in PI_JOURNAL_ENTRY_TYPES:
+                self.rendering_reason = "Unsupported Pi journal entry; rendering is incomplete."
+            if (
+                isinstance(entry_id, str)
+                and len(entry_id) <= 128
+                and "parentId" in normalized_event
+            ):
+                if (
+                    self.pi_previous_entry_id is not None
+                    and normalized_event.get("parentId") != self.pi_previous_entry_id
+                ):
+                    annotations.append(
+                        TranscriptMessage(
+                            "annotation",
+                            "Pi journal parent changed; continuing a different branch.",
+                            kind="annotation",
+                        )
+                    )
+                self.pi_previous_entry_id = entry_id
+        if pi_entry and event_type == "compaction":
+            self.setup = text_from_value(normalized_event.get("summary")) or None
+            self.pending_summary = None
+            return NormalizedTranscriptEvent([], boundary=True)
+        if pi_entry and event_type == "branch_summary":
+            summary = text_from_value(normalized_event.get("summary"))
+            annotations.append(
+                TranscriptMessage("annotation", f"Pi branch summary:\n{summary}", kind="annotation")
+            )
+        if annotations:
+            messages = [*annotations, *messages]
         opencode_boundary = _is_opencode_compaction_boundary(normalized_event)
         claude_boundary = _is_claude_compaction_boundary(normalized_event)
         if parser_boundary or opencode_boundary:
@@ -1064,9 +1037,7 @@ def transcript_revision(path: Path | None) -> tuple[tuple[int, ...] | None, ...]
     )
 
     paths = [] if path is None else [path]
-    if path is None or isinstance(
-        _provider_for_path(path), _OPENCODE_STORAGE_PROVIDER_TYPES
-    ):
+    if path is None or isinstance(_provider_for_path(path), _OPENCODE_STORAGE_PROVIDER_TYPES):
         database = opencode_db_for_session_file(path) if path else resolve_opencode_db_path()
         assert database is not None
         paths.extend((database, Path(str(database) + "-wal")))
