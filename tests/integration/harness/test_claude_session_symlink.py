@@ -33,3 +33,33 @@ def test_source_id_cannot_escape_store(tmp_path: Path, session_id: str) -> None:
         ensure_claude_session_accessible(
             session_id, tmp_path, source_native_store=tmp_path,
         )
+
+
+@pytest.mark.parametrize("failure", ["symlink", "replace"])
+def test_symlink_publication_failure_preserves_previous_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    import os
+
+    config = tmp_path / "config"
+    source = config / "projects" / "source"
+    source.mkdir(parents=True)
+    (source / "session-1.jsonl").write_text('{"sessionId":"session-1"}\n')
+    child = tmp_path / "child"
+    target = config / "projects" / project_slug(child) / "session-1.jsonl"
+    target.parent.mkdir(parents=True)
+    target.write_text("previous target\n")
+
+    def fail(*args: object, **kwargs: object) -> None:
+        raise OSError("publication failed")
+
+    if failure == "symlink":
+        monkeypatch.setattr(Path, "symlink_to", fail)
+    else:
+        monkeypatch.setattr(os, "replace", fail)
+    with pytest.raises(OSError, match="publication failed"):
+        ensure_claude_session_accessible(
+            "session-1", child, source_native_store=source, target_config_root=config,
+        )
+    assert target.read_text() == "previous target\n"
+    assert list(target.parent.iterdir()) == [target]

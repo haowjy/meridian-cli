@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Publish Claude seed symlinks by atomic replacement; failed publication leaves the previous target intact.
+
 - Refuse tracked reads and native capture without a complete recorded key; legacy Claude hints remain raw-reference-only.
 
 - Normalize native contradictions to typed entry-mismatch failures with expected/observed evidence; keep unavailable sources separate and suppress exit allocation and model attribution on refusal.

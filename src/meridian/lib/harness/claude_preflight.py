@@ -9,6 +9,7 @@ import shutil
 from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
+from uuid import uuid4
 
 import structlog
 
@@ -77,9 +78,12 @@ def ensure_claude_session_accessible(
         with source_file.open("rb") as source, atomic_replace(target_file, mode="wb") as target:
             shutil.copyfileobj(source, target)
     else:
-        if target_file.exists() or target_file.is_symlink():
-            target_file.unlink()
-        target_file.symlink_to(source_file)
+        temporary = target_file.with_name(f".{target_file.name}.{uuid4().hex}.tmp")
+        try:
+            temporary.symlink_to(source_file)
+            os.replace(temporary, target_file)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def read_parent_claude_permissions(execution_cwd: Path) -> tuple[list[str], list[str]]:
