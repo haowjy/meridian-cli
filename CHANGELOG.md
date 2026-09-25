@@ -3,6 +3,7 @@
 Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/). Versions `0.0.6` through `0.0.25` in git history only — changelog fell stale, resumed at `[Unreleased]`.
 
 ## [Unreleased]
+- Native search scopes handle thousands of bound sessions; concurrent refreshes skip duplicate writes.
 - Add a disposable native-keyed transcript search projection with exact substring verification.
 
 - Session log, export and previews read bound native chats; label spawn views. Reject legacy runner-history files.

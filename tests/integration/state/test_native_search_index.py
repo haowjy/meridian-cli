@@ -85,12 +85,16 @@ def test_source_replacement_and_rebuild_remove_old_fts_rows(tmp_path: Path) -> N
         entries=[TranscriptEntry(0, "obsolete value")],
     )
     index.replace_source(
-        key, locator="b", witness=witness, activity=2, entries=[TranscriptEntry(1, "current value")]
+        key,
+        locator="b",
+        witness=FileWitness(1, 2, 4, 4),
+        activity=2,
+        entries=[TranscriptEntry(1, "current value")],
     )
     assert index.search("obsolete")[1] == []
     assert index.search("current")[1][0].ordinal == 1
-    assert index.is_fresh(key, witness)
-    assert not index.is_fresh(key, FileWitness(1, 2, 4, 4))
+    assert index.is_fresh(key, FileWitness(1, 2, 4, 4))
+    assert not index.is_fresh(key, witness)
     assert index.counts() == (1, 1)
     index.rebuild()
     assert index.counts() == (0, 0)
@@ -149,7 +153,7 @@ def test_failed_replace_keeps_previous_source_and_fts_consistent(tmp_path: Path)
         index.replace_source(
             key,
             locator="b",
-            witness=witness,
+            witness=FileWitness(1, 2, 4, 4),
             activity=2,
             entries=[TranscriptEntry(1, "replacement")],
         )
@@ -158,3 +162,35 @@ def test_failed_replace_keeps_previous_source_and_fts_consistent(tmp_path: Path)
     assert index.search("survives failure")[1]
     assert index.search("replacement")[1] == []
     assert index.counts() == (1, 1)
+
+
+def test_scoped_search_accepts_5000_keys_and_excludes_outside_keys(tmp_path: Path) -> None:
+    index = NativeSearchIndex(tmp_path / "index.sqlite3")
+    keys = [NativeKey("codex", "/native", str(i)) for i in range(5000)]
+    for key in (keys[-1], NativeKey("codex", "/elsewhere", "4999")):
+        index.replace_source(
+            key,
+            locator="file",
+            witness=FileWitness(1, 2, 3, 4),
+            activity=0,
+            entries=[TranscriptEntry(1, "needle")],
+        )
+    assert [r.key for r in index.search("needle", keys=keys)[1]] == [keys[-1]]
+
+
+def test_duplicate_refresh_does_not_consume_entries(tmp_path: Path) -> None:
+    index = NativeSearchIndex(tmp_path / "index.sqlite3")
+    key = NativeKey("codex", "/native", "one")
+    witness = FileWitness(1, 2, 3, 4)
+    index.replace_source(
+        key, locator="file", witness=witness, activity=0, entries=[TranscriptEntry(1, "original")]
+    )
+    index.replace_source(
+        key,
+        locator="file",
+        witness=witness,
+        activity=0,
+        entries=[TranscriptEntry(1, "wrong duplicate")],
+    )
+    assert index.search("original")[1]
+    assert not index.search("wrong")[1]
