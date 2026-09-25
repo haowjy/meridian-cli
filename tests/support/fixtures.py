@@ -63,9 +63,9 @@ def write_agent(
 
 
 def allow_headless_claude(project_root: Path) -> None:
-    """Opt a test project out of the built-in deny_headless_harnesses=["claude"]
-    default so Claude spawn-prepare reaches tool resolution. Use in tests that
-    exercise spawn-prepare *mechanics*, not the headless-deny policy itself."""
+    """Clear a project headless-harness deny so Claude spawn-prepare reaches
+    tool resolution. Use in tests that exercise spawn-prepare mechanics, not
+    the headless-deny policy itself."""
     (project_root / "meridian.toml").write_text(
         "[spawn]\ndeny_headless_harnesses = []\n", encoding="utf-8"
     )

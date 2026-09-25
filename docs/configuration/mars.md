@@ -84,6 +84,7 @@ agents (`Explore`, `Plan`, `General-purpose` / `general-purpose`) stay denied.
 
 ## Deny headless spawn harnesses
 
+Headless spawns are allowed on every harness unless a project opts out.
 Use `[spawn].deny_headless_harnesses` when a project should not launch
 headless subagents through specific harnesses. This applies to
 `meridian spawn`, including `meridian spawn -a <agent>`. Exclusions reach Mars
