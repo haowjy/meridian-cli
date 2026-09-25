@@ -96,10 +96,10 @@ CODEX_EXTRACTOR = CodexHarnessExtractor()
 __all__ = ["CODEX_EXTRACTOR", "CodexHarnessExtractor"]
 
 
-def _nested_get(payload: Mapping[str, object], *keys: str) -> object:
+def _nested_get(payload: object, *keys: str) -> object:
     current: object = payload
     for key in keys:
         if not isinstance(current, Mapping):
             return None
-        current = current.get(key)
+        current = cast("Mapping[str, object]", current).get(key)
     return current
