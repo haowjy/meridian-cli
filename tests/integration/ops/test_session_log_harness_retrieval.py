@@ -118,7 +118,7 @@ def test_session_log_resolves_opencode_db_transcript_when_session_diff_is_empty(
         harness_session_id=session_id,
         model="gpt-5.3-codex",
         chat_id="c1",
-        native_store=storage_root.as_posix(),
+        native_store=(storage_root.parent / "opencode.db").as_posix(),
     )
 
     spawn_store.start_spawn(
@@ -181,7 +181,7 @@ def test_session_log_resolves_opencode_db_without_legacy_session_file(
         harness_session_id=session_id,
         model="gpt-5.3-codex",
         chat_id=chat_id,
-        native_store=(xdg_data_home / "opencode" / "storage").as_posix(),
+        native_store=(xdg_data_home / "opencode" / "opencode.db").as_posix(),
     )
     spawn_store.start_spawn(
         runtime_root,
@@ -254,7 +254,7 @@ def test_session_log_renders_opencode_db_completed_tool_parts(
 
     session_store.start_session(
         runtime_root, harness="opencode", harness_session_id=session_id, model="test",
-        chat_id="c1", spawn_id="p1", native_store=str(xdg_data_home / "opencode" / "storage"),
+        chat_id="c1", spawn_id="p1", native_store=str(xdg_data_home / "opencode" / "opencode.db"),
     )
     spawn_store.start_spawn(
         runtime_root,
@@ -333,7 +333,7 @@ def test_session_log_default_render_shows_completed_opencode_task_result(
 
     session_store.start_session(
         runtime_root, harness="opencode", harness_session_id=session_id, model="test",
-        chat_id="c1", spawn_id="p1", native_store=str(xdg_data_home / "opencode" / "storage"),
+        chat_id="c1", spawn_id="p1", native_store=str(xdg_data_home / "opencode" / "opencode.db"),
     )
     spawn_store.start_spawn(
         runtime_root,
@@ -391,7 +391,7 @@ def test_session_log_renders_opencode_db_compaction_as_segment_handoff(
 
     session_store.start_session(
         runtime_root, harness="opencode", harness_session_id=session_id, model="test",
-        chat_id="c1", spawn_id="p1", native_store=str(xdg_data_home / "opencode" / "storage"),
+        chat_id="c1", spawn_id="p1", native_store=str(xdg_data_home / "opencode" / "opencode.db"),
     )
     spawn_store.start_spawn(
         runtime_root,
@@ -449,7 +449,7 @@ def test_session_log_preserves_positive_empty_opencode_db_over_legacy_json(
 
     session_store.start_session(
         runtime_root, harness="opencode", harness_session_id=session_id, model="test",
-        chat_id="c1", spawn_id="p1", native_store=str(xdg_data_home / "opencode" / "storage"),
+        chat_id="c1", spawn_id="p1", native_store=str(xdg_data_home / "opencode" / "opencode.db"),
     )
     spawn_store.start_spawn(
         runtime_root,
@@ -536,7 +536,7 @@ def test_session_log_falls_back_to_spawn_history_when_opencode_db_has_no_message
         session_store.start_session(
             runtime_root,
             harness="opencode",
-            native_store=str(xdg_data_home / "opencode" / "storage"),
+            native_store=str(xdg_data_home / "opencode" / "opencode.db"),
             harness_session_id=session_id,
             model="gpt-5.3-codex",
             chat_id="c1",

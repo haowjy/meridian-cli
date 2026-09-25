@@ -551,10 +551,6 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def resolve_native_session_file(
         self, *, project_root: Path, session_id: str, native_store: Path,
     ) -> Path | None:
-        if native_store.name == "storage":
-            return self.resolve_session_file(
-                project_root=project_root, session_id=session_id, config_root_hint=native_store,
-            )
         return native_store if opencode_db_any_session_exists(
             session_id=session_id, db_path=native_store,
         ) else None

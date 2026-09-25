@@ -66,9 +66,10 @@ def test_relative_codex_home_uses_child_cwd(tmp_path: Path) -> None:
     assert env["CODEX_HOME"] == str(tmp_path / "relative-home")
 
 
-def test_opencode_database_override_ignores_default_decoy(tmp_path: Path) -> None:
+@pytest.mark.parametrize("filename", ["selected.sqlite", "storage"])
+def test_opencode_database_override_ignores_default_decoy(tmp_path: Path, filename: str) -> None:
     adapter = HarnessRegistry.with_defaults().get(HarnessId.OPENCODE)
-    selected = tmp_path / "override" / "selected.sqlite"
+    selected = tmp_path / "override" / filename
     default = tmp_path / "home" / "opencode.db"
     for path in (selected, default):
         write_opencode_db_session(db_path=path, session_id=SID, messages=[])

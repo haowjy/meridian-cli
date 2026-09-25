@@ -41,6 +41,7 @@ async def test_streaming_initial_identity(
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     expected_id = ""
     observed_id = ""
+    expected_store = None
 
     class Connection(_ClaudeSeedPersistenceConnection):
         @property
@@ -48,11 +49,12 @@ async def test_streaming_initial_identity(
             return observed_id
 
         async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-            nonlocal expected_id, observed_id
+            nonlocal expected_id, observed_id, expected_store
             self._spawn_id = config.spawn_id
             self._project_root = config.control_root
             self.state = "connected"
             assert spec.native_identity_plan is not None
+            expected_store = spec.native_identity_plan.native_store
             expected_id = spec.native_identity_plan.harness_session_id or ""
             observed_id = (
                 "source-native"
@@ -133,6 +135,9 @@ async def test_streaming_initial_identity(
         record = session_store.get_session_record(runtime_root, managed.chat_id)
         assert record is not None
         assert record.harness_session_id == ((expected_id or None) if mismatch else observed_id)
+        if not mismatch:
+            assert expected_store is not None
+            assert record.native_store == expected_store
 
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
     assert row is not None

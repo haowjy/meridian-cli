@@ -120,6 +120,7 @@ class ContinueReplayReference(Protocol):
 
     @property
     def source_pi_session_dir(self) -> str | None: ...
+
     @property
     def source_native_store(self) -> str | None: ...
 

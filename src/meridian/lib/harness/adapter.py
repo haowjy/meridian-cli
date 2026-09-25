@@ -347,7 +347,7 @@ class NativePrimaryRuntimeMetadata(BaseModel):
 
 
 class PrimarySessionObservation(BaseModel):
-    """Post-exit native session discovery result for one primary launch."""
+    """Post-attempt exact identity and separate diagnostic observations."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -500,7 +500,7 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         resolved_session_id: str,
         exit_code: int,
     ) -> PrimarySessionObservation:
-        """Discover a native primary session id from on-disk session files."""
+        """Verify the planned native target and report separate post-attempt diagnostics."""
         ...
 
     def build_primary_runtime_request_handler(
