@@ -181,8 +181,6 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
         fake_project_subprocess_spec,
     )
     monkeypatch.setattr(codex_adapter, "fork_session", fake_fork_session)
-    forked_id = "00000000-0000-4000-8000-000000000002"
-    monkeypatch.setattr(codex_adapter, "extract_session_id", lambda *args: forked_id)
 
     outcome = run_harness_process(
         launch_context,
@@ -310,8 +308,6 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
         fake_project_subprocess_spec,
     )
     monkeypatch.setattr(codex_adapter, "fork_session", fail_if_forked)
-    source_id = "00000000-0000-4000-8000-000000000001"
-    monkeypatch.setattr(codex_adapter, "extract_session_id", lambda *args: source_id)
 
     outcome = run_harness_process(
         launch_context,

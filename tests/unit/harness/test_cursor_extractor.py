@@ -2,30 +2,17 @@
 
 from __future__ import annotations
 
-import json
-
-from meridian.lib.core.types import ArtifactKey, SpawnId
+from meridian.lib.core.types import SpawnId
+from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
 
 
-class _MemoryArtifactStore:
-    def __init__(self, payloads: dict[str, bytes]) -> None:
-        self._payloads = payloads
-
-    def get(self, key: ArtifactKey) -> bytes:
-        return self._payloads[str(key)]
-
-    def exists(self, key: ArtifactKey) -> bool:
-        return str(key) in self._payloads
-
-
-def _artifact_store_from_lines(
-    spawn_id: SpawnId,
-    lines: list[dict[str, object]],
-) -> _MemoryArtifactStore:
-    encoded = ("\n".join(json.dumps(line) for line in lines) + "\n").encode("utf-8")
-    return _MemoryArtifactStore({f"{spawn_id}/output.jsonl": encoded})
+def _artifact_store_from_lines(spawn_id: SpawnId, lines: list[dict[str, object]]) -> AttemptFacts:
+    facts = AttemptFacts()
+    for event in lines:
+        CURSOR_EXTRACTOR.fold(facts, event)
+    return facts
 
 
 def test_cursor_extractor_reads_session_usage_and_result_report() -> None:
@@ -50,14 +37,15 @@ def test_cursor_extractor_reads_session_usage_and_result_report() -> None:
         ],
     )
 
-    usage = CURSOR_EXTRACTOR.extract_usage(store, spawn_id)
+    usage = store.usage
+    assert usage is not None
 
-    assert CURSOR_EXTRACTOR.extract_session_id(store, spawn_id) == "ses-cursor-1"
+    assert store.first_session_id == "ses-cursor-1"
     assert usage.input_tokens == 123
     assert usage.output_tokens == 45
     assert usage.cache_read_input_tokens == 7
     assert usage.cache_creation_input_tokens == 8
-    assert CURSOR_EXTRACTOR.extract_report(store, spawn_id) == "final cursor report"
+    assert store.final_text == "final cursor report"
 
 
 def test_cursor_extractor_detects_session_from_nested_event_payload() -> None:
@@ -85,8 +73,8 @@ def test_cursor_extractor_returns_none_when_report_or_session_missing() -> None:
         ],
     )
 
-    assert CURSOR_EXTRACTOR.extract_report(store, spawn_id) is None
-    assert CURSOR_EXTRACTOR.extract_session_id(store, spawn_id) is None
+    assert store.final_text is None
+    assert store.first_session_id is None
 
 
 def test_cursor_extractor_falls_back_to_last_assistant_message_when_no_result() -> None:
@@ -111,7 +99,7 @@ def test_cursor_extractor_falls_back_to_last_assistant_message_when_no_result() 
         ],
     )
 
-    assert CURSOR_EXTRACTOR.extract_report(store, spawn_id) == "final assistant reply"
+    assert store.final_text == "final assistant reply"
 
 
 def test_cursor_extractor_prefers_result_over_assistant_message() -> None:
@@ -134,4 +122,4 @@ def test_cursor_extractor_prefers_result_over_assistant_message() -> None:
         ],
     )
 
-    assert CURSOR_EXTRACTOR.extract_report(store, spawn_id) == "terminal result text"
+    assert store.final_text == "terminal result text"

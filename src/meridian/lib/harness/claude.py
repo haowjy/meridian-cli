@@ -3,11 +3,10 @@
 import json
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, ClassVar, cast
+from typing import ClassVar
 from uuid import uuid4
 
-from meridian.lib.core.conversation import Conversation, ConversationTurn, ToolCall
-from meridian.lib.core.domain import SpawnStatus, TokenUsage
+from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import (
     LaunchIntent,
     NativeIdentity,
@@ -16,11 +15,10 @@ from meridian.lib.core.native_identity import (
     Operation,
     PostExit,
 )
-from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId, TransportId
+from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     CLAUDE_SPAWN_USAGE_VARIANTS,
     ApprovalContract,
-    ArtifactStore,
     BaseHarnessAdapter,
     BootstrapContract,
     BootstrapMode,
@@ -57,9 +55,6 @@ from meridian.lib.harness.claude_sessions import (
 from meridian.lib.harness.claude_sessions import (
     project_slug as project_slug,
 )
-from meridian.lib.harness.common import (
-    extract_claude_report,
-)
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR
@@ -84,7 +79,6 @@ from meridian.lib.launch.composition import (
 )
 from meridian.lib.launch.constants import (
     BASE_COMMAND_CLAUDE_SUBPROCESS,
-    OUTPUT_FILENAME,
     PRIMARY_BASE_COMMAND_CLAUDE,
 )
 from meridian.lib.launch.launch_types import (
@@ -128,49 +122,6 @@ def _extract_passthrough_session_id(args: tuple[str, ...]) -> str:
         if token.startswith("--session-id="):
             return token.partition("=")[2].strip()
     return ""
-
-
-def _read_artifact_text(artifacts: ArtifactStore, spawn_id: SpawnId, name: str) -> str:
-    key = ArtifactKey(f"{spawn_id}/{name}")
-    if not artifacts.exists(key):
-        return ""
-    return artifacts.get(key).decode("utf-8", errors="ignore")
-
-
-def _read_output_payloads(artifacts: ArtifactStore, spawn_id: SpawnId) -> list[dict[str, object]]:
-    raw_output = _read_artifact_text(artifacts, spawn_id, OUTPUT_FILENAME)
-    payloads: list[dict[str, object]] = []
-    for line in raw_output.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            payload_obj = json.loads(stripped)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload_obj, dict):
-            payloads.append(cast("dict[str, object]", payload_obj))
-    return payloads
-
-
-def _tool_call_from_payload(payload: dict[str, object]) -> ToolCall | None:
-    event_type = str(payload.get("type", payload.get("event", ""))).strip().lower()
-    if event_type != "tool_use":
-        return None
-
-    tool_name = str(payload.get("name", "")).strip()
-    if not tool_name:
-        return None
-
-    raw_input = payload.get("input")
-    tool_input: dict[str, Any] = (
-        cast("dict[str, Any]", raw_input) if isinstance(raw_input, dict) else {}
-    )
-    output_text: str | None = None
-    output_value = payload.get("output")
-    if isinstance(output_value, str):
-        output_text = output_value.strip() or None
-    return ToolCall(tool_name=tool_name, input=tool_input, output=output_text)
 
 
 class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
@@ -420,59 +371,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     ) -> None:
         _ = runtime_root, spawn_id, chat_id, state
 
-    def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
-        return CLAUDE_EXTRACTOR.extract_usage(artifacts, spawn_id)
-
-    def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return CLAUDE_EXTRACTOR.extract_session_id(artifacts, spawn_id)
-
-    def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return extract_claude_report(artifacts, spawn_id)
-
-    def extract_conversation(
-        self, artifacts: ArtifactStore, spawn_id: SpawnId
-    ) -> Conversation | None:
-        payloads = _read_output_payloads(artifacts, spawn_id)
-        tool_calls = tuple(
-            tool_call
-            for payload in payloads
-            if (tool_call := _tool_call_from_payload(payload)) is not None
-        )
-
-        # Read user-turn content: prefer starting-prompt.md (new), fall back to prompt.md (legacy)
-        prompt_text = (
-            _read_artifact_text(artifacts, spawn_id, "starting-prompt.md")
-            or _read_artifact_text(artifacts, spawn_id, "prompt.md")
-        ).strip()
-        report_text = _read_artifact_text(artifacts, spawn_id, "report.md").strip()
-        if not report_text:
-            fallback_report = extract_claude_report(artifacts, spawn_id)
-            report_text = fallback_report.strip() if fallback_report else ""
-
-        if not prompt_text and not report_text and not tool_calls:
-            return None
-
-        turns: list[ConversationTurn] = []
-        if prompt_text:
-            turns.append(ConversationTurn(role="user", content=prompt_text))
-        if report_text or tool_calls:
-            turns.append(
-                ConversationTurn(
-                    role="assistant",
-                    content=report_text,
-                    tool_calls=tool_calls,
-                )
-            )
-
-        if not turns:
-            return None
-
-        return Conversation(
-            spawn_id=str(spawn_id),
-            harness=str(self.id),
-            turns=tuple(turns),
-        )
-
     def seed_session(
         self,
         *,
@@ -522,15 +420,21 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             ),
         )
 
-
     def observe_after_exit(
-        self, identity: NativeIdentity, entry: NativeKeyFields, *,
-        child_env: Mapping[str, str], child_cwd: Path, pid: int | None,
+        self,
+        identity: NativeIdentity,
+        entry: NativeKeyFields,
+        *,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+        pid: int | None,
         started_at_epoch: float | None,
     ) -> PostExit:
         successor = reconcile_tui_trampoline_session_id(
-            project_root=child_cwd, recorded_session_id=entry.session_id or "",
-            started_at_epoch=started_at_epoch, native_store=Path(identity.native_store),
+            project_root=child_cwd,
+            recorded_session_id=entry.session_id or "",
+            started_at_epoch=started_at_epoch,
+            native_store=Path(identity.native_store),
         )
         return PostExit(
             trampoline_successor_id=successor if successor != entry.session_id else None,

@@ -123,27 +123,29 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
             on_child_started(111)
         return (0, 111)
 
-    exit_code, managed_session_id, managed_cancelled = process_runner._execute_primary_process(
-        harness_id=HarnessId.CODEX,
-        primary_spawn_id=SpawnId("p-contract-blackbox"),
-        log_dir=tmp_path,
-        control_root=tmp_path,
-        launch_cwd=tmp_path,
-        task_cwd=None,
-        child_env={},
-        launch_spec=ResolvedLaunchSpec(
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-            interactive=True,
-        ),
-        command=("codex",),
-        harness_contract=harness_contract,
-        native_run=_native_run(tmp_path),
-        run_primary_process_with_capture_fn=_black_box,
-        run_primary_attach_fn=lambda *args, **kwargs: (_ for _ in ()).throw(
-            AssertionError("subprocess_only contract should bypass managed attach")
-        ),
-        on_running=lambda _pid: None,
+    exit_code, managed_session_id, managed_cancelled, _facts = (
+        process_runner._execute_primary_process(
+            harness_id=HarnessId.CODEX,
+            primary_spawn_id=SpawnId("p-contract-blackbox"),
+            log_dir=tmp_path,
+            control_root=tmp_path,
+            launch_cwd=tmp_path,
+            task_cwd=None,
+            child_env={},
+            launch_spec=ResolvedLaunchSpec(
+                prompt="hello",
+                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+                interactive=True,
+            ),
+            command=("codex",),
+            harness_contract=harness_contract,
+            native_run=_native_run(tmp_path),
+            run_primary_process_with_capture_fn=_black_box,
+            run_primary_attach_fn=lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("subprocess_only contract should bypass managed attach")
+            ),
+            on_running=lambda _pid: None,
+        )
     )
 
     assert black_box_calls == 1
@@ -182,27 +184,29 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
             on_child_started(222)
         return (0, 222)
 
-    exit_code, managed_session_id, managed_cancelled = process_runner._execute_primary_process(
-        harness_id=HarnessId.CLAUDE,
-        primary_spawn_id=SpawnId("p-contract-fallback"),
-        log_dir=tmp_path,
-        control_root=tmp_path,
-        launch_cwd=tmp_path,
-        task_cwd=None,
-        child_env={},
-        launch_spec=ResolvedLaunchSpec(
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-            interactive=True,
-        ),
-        command=("claude",),
-        harness_contract=harness_contract,
-        native_run=_native_run(tmp_path),
-        run_primary_process_with_capture_fn=_black_box,
-        run_primary_attach_fn=lambda *args, **kwargs: (_ for _ in ()).throw(
-            PrimaryAttachError("fallback please")
-        ),
-        on_running=lambda _pid: None,
+    exit_code, managed_session_id, managed_cancelled, _facts = (
+        process_runner._execute_primary_process(
+            harness_id=HarnessId.CLAUDE,
+            primary_spawn_id=SpawnId("p-contract-fallback"),
+            log_dir=tmp_path,
+            control_root=tmp_path,
+            launch_cwd=tmp_path,
+            task_cwd=None,
+            child_env={},
+            launch_spec=ResolvedLaunchSpec(
+                prompt="hello",
+                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+                interactive=True,
+            ),
+            command=("claude",),
+            harness_contract=harness_contract,
+            native_run=_native_run(tmp_path),
+            run_primary_process_with_capture_fn=_black_box,
+            run_primary_attach_fn=lambda *args, **kwargs: (_ for _ in ()).throw(
+                PrimaryAttachError("fallback please")
+            ),
+            on_running=lambda _pid: None,
+        )
     )
 
     assert black_box_calls == 1

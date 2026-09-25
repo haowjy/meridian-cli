@@ -18,14 +18,14 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
 from meridian.lib.catalog.model_aliases import MarsResultCache
-from meridian.lib.core.domain import SpawnStatus, TokenUsage
+from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import (
     NativeIdentityError,
+    NativeKey,
 )
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     SpawnReservation,
-    has_durable_report_completion,
 )
 from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -36,6 +36,7 @@ from meridian.lib.harness.adapter import (
     NativePrimaryRuntimeMetadata,
     SubprocessHarness,
 )
+from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.connections import get_connection_class
 from meridian.lib.harness.connections.base import (
@@ -44,7 +45,6 @@ from meridian.lib.harness.connections.base import (
     PrimaryRuntimeRequestPolicy,
     RawHarnessEvent,
 )
-from meridian.lib.harness.cost import estimate_usage_cost
 from meridian.lib.harness.passthrough import get_passthrough
 from meridian.lib.harness.passthrough.base import PassthroughError
 from meridian.lib.harness.registry import HarnessRegistry
@@ -54,14 +54,14 @@ from meridian.lib.launch.artifact_io import (
     write_projection_artifacts,
 )
 from meridian.lib.launch.constants import (
-    HISTORY_FILENAME,
     OUTPUT_FILENAME,
     PRIMARY_META_FILENAME,
 )
+from meridian.lib.launch.extract import enrich_finalize
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.native_run import NativeRun, bind_entry, conclude_native_run
 from meridian.lib.state import spawn_store
-from meridian.lib.state.artifact_store import InMemoryStore, LocalStore, make_artifact_key
+from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.primary_meta import (
     ActivityState,
@@ -328,7 +328,7 @@ def _execute_via_managed_attach(
     native_run: NativeRun,
     run_primary_attach_fn: RunPrimaryAttach,
     on_running: Callable[[int], None],
-) -> tuple[int, str | None, bool]:
+) -> tuple[int, str | None, bool, AttemptFacts]:
     """Run managed attach path and persist managed session id when available."""
 
     managed_outcome = run_primary_attach_fn(
@@ -347,6 +347,7 @@ def _execute_via_managed_attach(
         managed_outcome.exit_code,
         native_run.entry.session_id,
         managed_outcome.cancelled,
+        managed_outcome.facts,
     )
 
 
@@ -371,26 +372,6 @@ def _execute_via_blackbox(
     return exit_code
 
 
-def _persist_blackbox_output_artifact(
-    *,
-    artifacts: LocalStore,
-    spawn_id: SpawnId | None,
-    log_dir: Path,
-) -> None:
-    """Mirror captured primary black-box output into the artifact store."""
-
-    if spawn_id is None:
-        return
-    output_path = log_dir / OUTPUT_FILENAME
-    if not output_path.is_file():
-        return
-    with suppress(OSError):
-        artifacts.put(
-            make_artifact_key(spawn_id, OUTPUT_FILENAME),
-            output_path.read_bytes(),
-        )
-
-
 def _execute_primary_process(
     *,
     harness_id: HarnessId,
@@ -407,13 +388,13 @@ def _execute_primary_process(
     run_primary_process_with_capture_fn: RunPrimaryProcessWithCapture,
     run_primary_attach_fn: RunPrimaryAttach,
     on_running: Callable[[int], None],
-) -> tuple[int, str | None, bool]:
+) -> tuple[int, str | None, bool, AttemptFacts]:
     """Run managed attach when eligible, otherwise fall back to black-box launch."""
 
     use_managed_backend = harness_contract.bootstrap.mode.value == "managed_primary_attach"
     if use_managed_backend:
         try:
-            exit_code, managed_session_id, cancelled = _execute_via_managed_attach(
+            return _execute_via_managed_attach(
                 harness_id=harness_id,
                 primary_spawn_id=primary_spawn_id,
                 log_dir=log_dir,
@@ -425,7 +406,6 @@ def _execute_primary_process(
                 run_primary_attach_fn=run_primary_attach_fn,
                 on_running=on_running,
             )
-            return exit_code, managed_session_id, cancelled
         except PrimaryAttachError as exc:
             if harness_contract.bootstrap.primary_attach_failure_policy == "raise":
                 raise
@@ -447,18 +427,18 @@ def _execute_primary_process(
     blackbox_env = dict(child_env)
     if harness_contract.bootstrap.primary_stderr_log:
         blackbox_env[PRIMARY_STDERR_LOG_PATH_ENV] = str(log_dir / "stderr.log")
-    return (
-        _execute_via_blackbox(
-            command=command,
-            launch_cwd=launch_cwd,
-            child_env=blackbox_env,
-            output_log_path=output_log_path,
-            run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
-            on_running=on_running,
-        ),
-        None,
-        False,
+    exit_code = _execute_via_blackbox(
+        command=command,
+        launch_cwd=launch_cwd,
+        child_env=blackbox_env,
+        output_log_path=output_log_path,
+        run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
+        on_running=on_running,
     )
+    facts = AttemptFacts()
+    if output_log_path is not None and output_log_path.is_file():
+        facts.fold_stdout(get_harness_bundle(harness_id).extractor, output_log_path)
+    return exit_code, None, False, facts
 
 
 def _finalize_lifecycle(
@@ -471,6 +451,8 @@ def _finalize_lifecycle(
     runtime_root: Path,
     primary_started: float,
     spawn_service: SpawnApplicationService,
+    facts: AttemptFacts,
+    native_key: NativeKey | None = None,
     cancellation_observed: bool = False,
     native_identity_error: str | None = None,
 ) -> int:
@@ -479,20 +461,20 @@ def _finalize_lifecycle(
     resolved_exit_code = exit_code
     if primary_spawn_id is not None:
         log_dir = resolve_spawn_log_dir(project_root, primary_spawn_id, runtime_root=runtime_root)
-        report_path = log_dir / "report.md"
-        try:
-            report_text = report_path.read_text(encoding="utf-8") if report_path.is_file() else None
-        except OSError:
-            report_text = None
-        duration = max(0.0, time.monotonic() - primary_started) if primary_started > 0.0 else None
-        durable_report_completion = has_durable_report_completion(report_text)
-        usage = _extract_primary_usage(
-            harness_adapter=harness_adapter,
-            primary_spawn_id=primary_spawn_id,
-            project_root=project_root,
-            model_id=model_id,
+        extraction = enrich_finalize(
+            artifacts=LocalStore(root_dir=runtime_root / "artifacts"),
+            extractor=get_harness_bundle(harness_adapter.id).extractor,
+            facts=facts,
+            native_key=native_key,
+            spawn_id=primary_spawn_id,
             log_dir=log_dir,
+            model_id=model_id,
+            harness_id=harness_adapter.id,
+            project_root=project_root,
         )
+        duration = max(0.0, time.monotonic() - primary_started) if primary_started > 0.0 else None
+        durable_report_completion = extraction.durable_report_completion
+        usage = extraction.usage if facts.usage is not None else None
         execution_outcome = asyncio.run(
             spawn_service.complete_execution(
                 primary_spawn_id,
@@ -519,57 +501,6 @@ def _finalize_lifecycle(
                 primary_spawn_id,
             )
     return resolved_exit_code
-
-
-def _extract_primary_usage(
-    *,
-    harness_adapter: Any,
-    primary_spawn_id: SpawnId,
-    project_root: Path,
-    model_id: str | None,
-    log_dir: Path,
-) -> TokenUsage | None:
-    """Best-effort usage extraction for primary-session finalization."""
-
-    try:
-        usage_artifacts = InMemoryStore()
-        for filename in (HISTORY_FILENAME, OUTPUT_FILENAME):
-            source = log_dir / filename
-            if not source.is_file():
-                continue
-            try:
-                usage_artifacts.put(
-                    make_artifact_key(primary_spawn_id, filename),
-                    source.read_bytes(),
-                )
-            except Exception:
-                logger.debug(
-                    "Failed to mirror primary artifact for usage extraction",
-                    exc_info=True,
-                )
-        raw_usage = harness_adapter.extract_usage(usage_artifacts, primary_spawn_id)
-        usage = estimate_usage_cost(
-            model_id=(model_id or "").strip() or None,
-            usage=raw_usage,
-            project_root=project_root,
-            harness_id=str(harness_adapter.id),
-        )
-        if all(
-            value is None
-            for value in (
-                usage.input_tokens,
-                usage.output_tokens,
-                usage.cache_read_input_tokens,
-                usage.cache_creation_input_tokens,
-                usage.reasoning_tokens,
-                usage.total_cost_usd,
-            )
-        ):
-            return None
-        return usage
-    except Exception:
-        logger.debug("Best-effort primary usage extraction failed", exc_info=True)
-        return None
 
 
 def _create_managed_primary_connection(
@@ -647,6 +578,8 @@ async def _run_primary_attach(
             task_cwd=task_cwd,
             env=env,
         )
+        facts = AttemptFacts()
+
         launcher = PrimaryAttachLauncher(
             spawn_id=spawn_id,
             spawn_dir=spawn_dir,
@@ -656,6 +589,12 @@ async def _run_primary_attach(
             runtime_root=spawn_dir.parent.parent,
             on_running=on_running,
             session_id_observer=session_id_observer,
+            event_hook=lambda event: facts.hook(
+                harness_bundle.extractor,
+                event,
+                scope_session_id=connection.session_id,
+            ),
+            facts=facts,
         )
         return await launcher.run(
             config=config,
@@ -753,7 +692,6 @@ def run_harness_process(
     launch_child_cwd = control_root
     prelaunch_state = HarnessPrelaunchState()
     native_run: NativeRun | None = None
-    artifacts = LocalStore(root_dir=runtime_root / "artifacts")
     spawn_service = build_spawn_application_service_from_roots(config_root, runtime_root)
     lifecycle_service = spawn_service.lifecycle
 
@@ -762,6 +700,7 @@ def run_harness_process(
     )
     exit_code = 2
     managed_cancelled = False
+    facts = AttemptFacts()
     native_primary_tui_pid: int | None = None
     write_native_primary_metadata = False
     native_primary_metadata_command: tuple[str, ...] = command
@@ -1046,6 +985,7 @@ def run_harness_process(
                     exit_code,
                     managed_session_id,
                     managed_cancelled,
+                    facts,
                 ) = _execute_primary_process(
                     harness_id=harness_id,
                     primary_spawn_id=primary_spawn_id,
@@ -1064,11 +1004,6 @@ def run_harness_process(
                 )
                 if managed_session_id is not None:
                     resolved_harness_session_id = managed_session_id
-                _persist_blackbox_output_artifact(
-                    artifacts=artifacts,
-                    spawn_id=primary_spawn_id,
-                    log_dir=log_dir,
-                )
                 with suppress(Exception):
                     lifecycle_service.record_exited(
                         primary_spawn_id,
@@ -1096,11 +1031,7 @@ def run_harness_process(
                             started_at_epoch=primary_started_epoch or None,
                             prior_error=identity_error,
                             prior_error_phase=identity_error_phase,
-                            artifacts=(
-                                artifacts
-                                if not write_native_primary_metadata and primary_started_epoch > 0
-                                else None
-                            ),
+                            facts=facts,
                             connection_session_id=None,
                             lifecycle=lifecycle,
                         )
@@ -1121,6 +1052,8 @@ def run_harness_process(
                         runtime_root=runtime_root,
                         primary_started=primary_started,
                         spawn_service=spawn_service,
+                        facts=facts,
+                        native_key=native_run.entry.complete() if native_run else None,
                         cancellation_observed=managed_cancelled,
                         native_identity_error=identity_error.failure_code
                         if identity_error

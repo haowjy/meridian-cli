@@ -13,6 +13,7 @@ from itertools import groupby
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
+from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.harness.opencode_storage import resolve_opencode_home_dir
 from meridian.lib.state.native_search_index import OpenCodeV1Witness, OpenCodeV2Witness
 from meridian.lib.state.native_snapshot import TranscriptValidation
@@ -894,3 +895,34 @@ __all__ = [
     "read_last_model",
     "resolve_opencode_db_path",
 ]
+
+
+def read_opencode_v2_turn(key: NativeKey, turn_ids: tuple[str, ...]) -> str | None:
+    """Only event-named V2 replies in the recorded session/store can supply facts."""
+    if not turn_ids or not Path(key.native_store).is_file():
+        return None
+    with closing(_connect_readonly(Path(key.native_store))) as connection:
+        connection.row_factory = sqlite3.Row
+        if "session_message" not in _table_names(connection):
+            return None
+        for message_id in reversed(turn_ids):
+            row = connection.execute(
+                "SELECT type,seq,data FROM session_message WHERE session_id=? AND id=?",
+                (key.session_id, message_id),
+            ).fetchone()
+            if row is not None:
+                report = extract_last_assistant_report(
+                    [
+                        {
+                            "record": _V2_RECORD,
+                            "version": _V2_VERSION,
+                            "type": row["type"],
+                            "seq": row["seq"],
+                            "session_id": key.session_id,
+                            "data": _load_json_object(row["data"]) or {},
+                        }
+                    ]
+                )
+                if report:
+                    return report
+    return None

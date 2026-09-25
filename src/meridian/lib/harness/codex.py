@@ -11,12 +11,11 @@ from pathlib import Path
 from typing import ClassVar, cast
 from uuid import uuid4
 
-from meridian.lib.core.domain import SpawnStatus, TokenUsage
+from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import LaunchIntent, Operation
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     ApprovalContract,
-    ArtifactStore,
     BaseHarnessAdapter,
     BootstrapContract,
     BootstrapMode,
@@ -44,10 +43,7 @@ from meridian.lib.harness.codex_rollout import (
     CODEX_ROLLOUT_FILENAME_RE,
     materialize_fork_rollout,
 )
-from meridian.lib.harness.common import (
-    extract_codex_report,
-    extract_codex_thread_id,
-)
+from meridian.lib.harness.common import extract_codex_thread_id
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
     PrimaryRuntimeRequestPolicy,
@@ -435,9 +431,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         _ = config
         return {}
 
-    def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
-        return CODEX_EXTRACTOR.extract_usage(artifacts, spawn_id)
-
     def resolve_session_file(
         self,
         *,
@@ -458,9 +451,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             session_id=normalized_session_id,
             native_store=sessions_root,
         )
-
-    def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return CODEX_EXTRACTOR.extract_session_id(artifacts, spawn_id)
 
     def fork_session(self, source_session_id: str, *, native_store: str | None = None) -> str:
         normalized_source_session_id = source_session_id.strip()
@@ -550,9 +540,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
     def owns_untracked_session(self, *, project_root: Path, session_ref: str) -> bool:
         return _owns_session(project_root, session_ref)
-
-    def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return extract_codex_report(artifacts, spawn_id)
 
 
 def _resolve_codex_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:

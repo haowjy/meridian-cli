@@ -32,10 +32,10 @@ from meridian.lib.core.native_identity import (
 from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
+from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.common import parse_json_stream_event, unwrap_event_payload
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
-from meridian.lib.harness.extractor import StreamingExtractor
 from meridian.lib.harness.semantics import (
     NormalizedHarnessEvent,
     TerminalEventOutcome,
@@ -163,6 +163,7 @@ class StreamingRunConclusion:
     def absorb_attempt(self, attempt: _AttemptRuntime) -> None:
         """Merge one attempt's terminal fields into the run conclusion."""
 
+        self.failure_reason = None
         self.exit_code = attempt.drain_exit_code
         self.final_attempt_terminal_observed = attempt.terminal_observed
         self.authoritative_terminal_status = attempt.authoritative_terminal_status
@@ -383,14 +384,9 @@ def _persist_attempt_artifacts(
     spawn_id: SpawnId,
     log_dir: Path,
 ) -> None:
-    for name in (
-        STDERR_FILENAME,
-        TOKENS_FILENAME,
-    ):
-        source = log_dir / name
-        if not source.exists():
-            continue
-        artifacts.put(make_artifact_key(spawn_id, name), source.read_bytes())
+    source = log_dir / STDERR_FILENAME
+    if source.exists():
+        artifacts.put(make_artifact_key(spawn_id, STDERR_FILENAME), source.read_bytes())
 
 
 def _retry_blocked_after_pi_child_started(
@@ -608,12 +604,13 @@ async def _start_spawn_with_timeout(
     config: ConnectionConfig,
     run_spec: ResolvedLaunchSpec,
     timeout_seconds: float,
+    event_hook: Callable[[RawHarnessEvent], None] | None = None,
 ) -> HarnessConnection[Any]:
     """Start a managed connection within the shared startup-phase bound."""
 
     try:
         async with asyncio.timeout(timeout_seconds):
-            return await manager.start_spawn(config, run_spec)
+            return await manager.start_spawn(config, run_spec, event_hook=event_hook)
     except TimeoutError as exc:
         raise StartupPhaseTimeout(timeout_seconds) from exc
 
@@ -632,6 +629,7 @@ async def run_streaming_spawn(
     lifecycle_service: SpawnLifecycleService | None = None,
     on_control_endpoint_ready: Callable[[str], None] | None = None,
     on_running: Callable[[HarnessConnection[Any]], None] | None = None,
+    event_hook: Callable[[RawHarnessEvent], None] | None = None,
 ) -> DrainOutcome:
     """Run one streaming spawn to completion without spawn-store finalization.
 
@@ -677,6 +675,7 @@ async def run_streaming_spawn(
             config=config,
             run_spec=run_spec,
             timeout_seconds=startup_timeout_seconds,
+            event_hook=event_hook,
         )
         if on_running is not None:
             on_running(connection)
@@ -788,6 +787,7 @@ async def _run_streaming_attempt(
     lifecycle_service: SpawnLifecycleService,
     runner_phase: list[str] | None = None,
     on_running: Callable[[HarnessConnection[Any]], None] | None = None,
+    event_hook: Callable[[RawHarnessEvent], None] | None = None,
 ) -> _AttemptRuntime:
     completion_task: asyncio.Task[DrainOutcome | None] | None = None
     timeout_task: asyncio.Task[None] | None = None
@@ -825,6 +825,7 @@ async def _run_streaming_attempt(
             config=config,
             run_spec=run_spec,
             timeout_seconds=startup_timeout_seconds,
+            event_hook=event_hook,
         )
         terminal_event_capture = (
             terminal_event_future
@@ -1084,7 +1085,6 @@ async def execute_with_streaming(
             runtime_root, project_root, run.spawn_id, clock=resolved_clock
         )
         lifecycle_path = lifecycle.path
-        report_path = log_dir / REPORT_FILENAME
 
         def _record_lifecycle(event: str, **details: object) -> None:
             assert lifecycle_path is not None
@@ -1261,6 +1261,7 @@ async def execute_with_streaming(
                 ):
                     break
 
+                facts = AttemptFacts()
                 attempt_number = conclusion.retries_attempted + 1
                 if attempt_number > 1:
                     session_attempt = replace(
@@ -1294,9 +1295,11 @@ async def execute_with_streaming(
                 def record_started(
                     connection: HarnessConnection[Any],
                     captured_observer: Callable[[str], None] = native_run.observe,
+                    attempt_facts: AttemptFacts = facts,
                 ) -> None:
                     nonlocal attempt_pid
                     attempt_pid = connection.subprocess_pid
+                    attempt_facts.scope_session_id = connection.session_id
                     native_id = connection.session_id
                     if native_id:
                         captured_observer(native_id)
@@ -1319,6 +1322,9 @@ async def execute_with_streaming(
                     lifecycle_service=lifecycle_service,
                     runner_phase=runner_phase,
                     on_running=record_started,
+                    event_hook=lambda event, facts=facts: facts.hook(
+                        harness_bundle.extractor, event
+                    ),
                 )
                 runner_phase[0] = "processing_attempt"
                 conclusion.absorb_attempt(attempt)
@@ -1357,9 +1363,6 @@ async def execute_with_streaming(
                     spawn_id=run.spawn_id,
                     log_dir=log_dir,
                 )
-                if report_path.exists():
-                    report_bytes = report_path.read_bytes()
-                    artifacts.put(make_artifact_key(run.spawn_id, REPORT_FILENAME), report_bytes)
 
                 outcome = conclude_native_run(
                     native_run,
@@ -1373,23 +1376,17 @@ async def execute_with_streaming(
                     started_at_epoch=started_at_epoch,
                     prior_error=attempt.identity_error,
                     prior_error_phase="running",
-                    artifacts=artifacts,
+                    facts=facts,
                     connection_session_id=(
                         attempt.connection.session_id if attempt.connection is not None else None
                     ),
                     lifecycle=lifecycle,
                 )
-                streaming_extractor = StreamingExtractor(
-                    connection=attempt.connection,
-                    bundle=harness_bundle,
-                    spec=spec,
-                    launch_env=child_env,
-                    child_cwd=child_cwd,
-                    runtime_root=runtime_root,
-                )
                 extraction = enrich_finalize(
                     artifacts=artifacts,
-                    extractor=streaming_extractor,
+                    extractor=harness_bundle.extractor,
+                    facts=facts,
+                    native_key=native_run.entry.complete(),
                     spawn_id=run.spawn_id,
                     log_dir=log_dir,
                     model_id=run.model,

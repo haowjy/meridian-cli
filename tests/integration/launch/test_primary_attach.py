@@ -42,6 +42,7 @@ async def test_primary_attach_event_stream_runs_without_history_writer(tmp_path:
     event = RawHarnessEvent(event_type="test.noop", harness_id="codex", payload={})
 
     class FiniteConnection:
+        harness_id = HarnessId.CODEX
         primary_event_scope = None
 
         def observe_event_semantics(self, _semantics: object) -> None:
@@ -59,7 +60,7 @@ async def test_primary_attach_event_stream_runs_without_history_writer(tmp_path:
     )
     seen: list[RawHarnessEvent] = []
     launcher._history_writer = None
-    launcher._event_hook = seen.append
+    launcher._event_hooks = (seen.append,)
     launcher._update_activity_from_event = lambda _event: None  # type: ignore[method-assign]
 
     await launcher._run_event_writer()
@@ -1193,3 +1194,68 @@ async def test_primary_attach_initial_id_mismatch_is_typed(tmp_path: Path) -> No
     assert caught.value.expected == NativeKeyFields("codex", "/store", "assigned-id")
     assert caught.value.observed == NativeKeyFields("codex", "/store", "observed-other")
     assert process_launcher.output_log_paths == []
+
+
+@pytest.mark.asyncio
+async def test_pi_primary_folds_and_persists_phase_without_history(tmp_path: Path):
+    from meridian.lib.harness.attempt_facts import AttemptFacts
+    from meridian.lib.harness.extractors.pi import PI_EXTRACTOR
+
+    spawn_id = SpawnId("p-pi-facts")
+    start_spawn(
+        tmp_path,
+        spawn_id=spawn_id,
+        chat_id="c1",
+        model="test",
+        agent="test",
+        harness="pi",
+        prompt="test",
+        status="running",
+    )
+    events = [
+        RawHarnessEvent(
+            harness_id="pi",
+            event_type="message_end",
+            payload={
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "primary report"}],
+                    "usage": {"input": 7, "output": 9},
+                },
+            },
+        ),
+        RawHarnessEvent(
+            harness_id="pi",
+            event_type="meridian.pi.lifecycle.phase",
+            payload={"phase": "cleanup_completed"},
+        ),
+    ]
+
+    class Connection:
+        harness_id = HarnessId.PI
+        primary_event_scope = None
+
+        def observe_event_semantics(self, _semantics):
+            pass
+
+        async def events(self):
+            for event in events:
+                yield event
+
+    facts = AttemptFacts()
+    launcher = PrimaryAttachLauncher(
+        spawn_id=spawn_id,
+        spawn_dir=tmp_path / "spawns" / spawn_id,
+        connection=Connection(),
+        tui_command_builder=lambda _: (),
+        process_launcher=object(),
+        runtime_root=tmp_path,
+        facts=facts,
+        event_hook=lambda event: facts.hook(PI_EXTRACTOR, event),
+    )
+    await launcher._run_event_writer()
+    assert facts.final_text == "primary report"
+    assert facts.usage.input_tokens == 7
+    phase = json.loads((tmp_path / "spawns" / spawn_id / "pi-lifecycle.json").read_text())
+    assert phase["phase"] == "cleanup_completed"

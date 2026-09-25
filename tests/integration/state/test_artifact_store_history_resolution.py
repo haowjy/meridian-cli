@@ -29,7 +29,7 @@ def test_legacy_artifact_history_remains_readable(tmp_path: Path) -> None:
     assert key in artifacts.list_artifacts(str(spawn_id))
 
 
-def test_all_state_read_paths_prefer_canonical_history(tmp_path: Path) -> None:
+def test_artifact_reads_never_redirect_to_spawn_history(tmp_path: Path) -> None:
     spawn_id = SpawnId("p1")
     canonical_path = tmp_path / "spawns" / str(spawn_id) / HISTORY_FILENAME
     legacy_path = tmp_path / "artifacts" / str(spawn_id) / HISTORY_FILENAME
@@ -41,6 +41,8 @@ def test_all_state_read_paths_prefer_canonical_history(tmp_path: Path) -> None:
     assert resolve_spawn_history_path(tmp_path, spawn_id) == canonical_path
     assert resolve_spawn_output_path(tmp_path, str(spawn_id)) is None
     assert artifacts.exists(key)
-    assert artifacts.get(key) == b"canonical history\n"
-    assert read_artifact_text(artifacts, spawn_id, HISTORY_FILENAME) == "canonical history\n"
+    assert artifacts.get(key) == b"conflicting legacy history\n"
+    assert (
+        read_artifact_text(artifacts, spawn_id, HISTORY_FILENAME) == "conflicting legacy history\n"
+    )
     assert artifacts.list_artifacts(str(spawn_id)).count(key) == 1

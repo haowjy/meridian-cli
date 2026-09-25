@@ -18,6 +18,7 @@ from meridian.lib.config.settings import load_config
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.claude import project_slug
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import build_launch_context
@@ -164,7 +165,6 @@ def test_run_harness_process_keeps_binding_when_observed_session_differs(
         harness_id=HarnessId.CLAUDE,
         model="claude-sonnet-4-5",
     )
-    claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
     observed_id = "observed-different-session"
 
     def fake_run_primary_process_with_capture(
@@ -178,11 +178,12 @@ def test_run_harness_process_keeps_binding_when_observed_session_differs(
         on_child_started(666)
         return (0, 666)
 
-    def observed_session(*args: object, **kwargs: object) -> str:
-        _ = kwargs
-        return observed_id
+    def capture_facts(*args: object, **kwargs: object):
+        return 0, None, False, AttemptFacts(first_session_id=observed_id)
 
-    monkeypatch.setattr(claude_adapter, "extract_session_id", observed_session)
+    monkeypatch.setattr(
+        "meridian.lib.launch.process.runner._execute_primary_process", capture_facts
+    )
 
     outcome = run_harness_process(
         launch_context,

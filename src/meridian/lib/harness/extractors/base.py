@@ -3,47 +3,32 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Generic, Protocol, TypeVar, cast, runtime_checkable
 
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.adapter import ArtifactStore, SpawnExtractor
+from meridian.lib.core.native_identity import NativeKey
+from meridian.lib.harness.adapter import SpawnExtractor
+from meridian.lib.harness.attempt_facts import AttemptFacts
+from meridian.lib.harness.common import (
+    _coerce_optional_int,
+    coerce_optional_float,
+    iter_nested_dicts,
+)
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
-ExtractorSpecT = TypeVar("ExtractorSpecT", bound=ResolvedLaunchSpec, contravariant=True)
+ExtractorSpecT = TypeVar("ExtractorSpecT", bound=ResolvedLaunchSpec, covariant=True)
 
 
 @runtime_checkable
 class HarnessExtractor(SpawnExtractor, Protocol, Generic[ExtractorSpecT]):
     """Harness-owned extraction surface shared by subprocess and streaming."""
 
+    def read_native_turn(self, key: NativeKey, turn_ids: tuple[str, ...]) -> str | None:
+        return None
+
     def detect_session_id_from_event(self, event: RawHarnessEvent) -> str | None:
         """Best-effort extraction from one live event frame."""
-        ...
-
-    def detect_session_id_from_artifacts(
-        self,
-        *,
-        spec: ExtractorSpecT,
-        launch_env: Mapping[str, str],
-        child_cwd: Path,
-        runtime_root: Path,
-    ) -> str | None:
-        """Best-effort fallback extraction from harness-owned artifacts."""
-        ...
-
-    def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
-        """Extract normalized usage from persisted artifacts."""
-        ...
-
-    def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        """Extract session id directly from persisted run artifacts."""
-        ...
-
-    def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        """Extract final report text from persisted artifacts."""
         ...
 
 
@@ -83,3 +68,42 @@ __all__ = [
     "normalize_harness_event_type",
     "session_from_mapping_with_keys",
 ]
+
+
+def fold_usage_fallback(facts: AttemptFacts, event: Mapping[str, object]) -> None:
+    """Keep the first best generic live usage until a harness-specific total arrives."""
+    if facts.usage_is_specific:
+        return
+    usage = facts.usage or TokenUsage()
+    for payload in iter_nested_dicts(dict(event)):
+        candidate = TokenUsage()
+        for input_key, output_key in (
+            ("input_tokens", "output_tokens"),
+            ("input", "output"),
+            ("prompt_tokens", "completion_tokens"),
+            ("prompt_token_count", "completion_token_count"),
+            ("inputTokenCount", "outputTokenCount"),
+        ):
+            if input_key in payload or output_key in payload:
+                candidate = TokenUsage(
+                    input_tokens=_coerce_optional_int(payload.get(input_key)),
+                    output_tokens=_coerce_optional_int(payload.get(output_key)),
+                )
+                break
+        if sum(v is not None for v in (candidate.input_tokens, candidate.output_tokens)) > sum(
+            v is not None for v in (usage.input_tokens, usage.output_tokens)
+        ):
+            usage = usage.model_copy(
+                update={
+                    "input_tokens": candidate.input_tokens,
+                    "output_tokens": candidate.output_tokens,
+                }
+            )
+        if usage.total_cost_usd is None:
+            for cost_key in ("total_cost_usd", "cost_usd", "cost", "total_cost", "totalCostUsd"):
+                cost = coerce_optional_float(payload.get(cost_key))
+                if cost is not None:
+                    usage = usage.model_copy(update={"total_cost_usd": cost})
+                    break
+    if usage != TokenUsage():
+        facts.usage = usage

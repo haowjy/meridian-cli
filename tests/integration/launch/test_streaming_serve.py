@@ -125,3 +125,33 @@ async def test_serve_later_switch_has_one_conflict(tmp_path, monkeypatch):
         session_store.get_session_record(runtime_root, row.chat_id).harness_session_id
         == "entry-thread"
     )
+
+
+@pytest.mark.asyncio
+async def test_streaming_serve_prices_live_usage_with_resolved_default_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    from meridian.lib.harness.connections.base import RawHarnessEvent
+
+    cache = tmp_path / ".mars" / "models-cache.json"
+    cache.parent.mkdir(exist_ok=True)
+    cache.write_text(json.dumps({"models": [{"id": "gpt-5.4", "cost_input": 1, "cost_output": 2}]}))
+
+    async def run(**kwargs):
+        kwargs["event_hook"](
+            RawHarnessEvent(
+                harness_id="codex",
+                event_type="thread/tokenUsage/updated",
+                payload={"tokenUsage": {"total": {"inputTokens": 100, "outputTokens": 200}}},
+            )
+        )
+        return DrainOutcome(status="succeeded", exit_code=0)
+
+    monkeypatch.setattr(streaming_serve_module, "run_streaming_spawn", run)
+    await streaming_serve_module.streaming_serve("codex", "hello")
+    row = get_spawn(resolve_runtime_root(tmp_path), "p1")
+    assert row.terminal.input_tokens == 100
+    assert row.terminal.total_cost_usd == pytest.approx(0.0005)

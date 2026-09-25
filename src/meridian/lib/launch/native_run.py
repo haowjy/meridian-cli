@@ -17,6 +17,7 @@ from meridian.lib.core.native_identity import (
     PostExit,
 )
 from meridian.lib.core.types import ChatId, SpawnId
+from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
 from meridian.lib.launch.session_scope import SessionAttempt
 from meridian.lib.state import session_store, spawn_store
@@ -27,7 +28,6 @@ if TYPE_CHECKING:
     from meridian.lib.harness.adapter import SubprocessHarness
     from meridian.lib.launch.context import LaunchContext
     from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-    from meridian.lib.state.artifact_store import ArtifactStore
 
 logger = structlog.get_logger(__name__)
 
@@ -65,7 +65,7 @@ class NativeRun:
         candidate = session_id.strip()
         if not candidate:
             return
-        # Live callbacks, on-running, artifact extraction and current transport
+        # Live callbacks, on-running, attempt facts and current transport
         # state can repeat the same signal. Bind/log each candidate once per attempt.
         if candidate in self._noted:
             return
@@ -127,7 +127,7 @@ def conclude_native_run(
     started: bool,
     started_at_epoch: float | None,
     prior_error: NativeIdentityError | None,
-    artifacts: ArtifactStore | None,
+    facts: AttemptFacts,
     connection_session_id: str | None,
     lifecycle: LifecycleLog,
     prior_error_phase: str = "post_exit",
@@ -136,15 +136,9 @@ def conclude_native_run(
     error = prior_error
     post = PostExit()
     if error is None:
-        extracted = None
-        if artifacts is not None:
-            try:
-                extracted = adapter.extract_session_id(artifacts, spawn_id)
-            except Exception:
-                logger.debug("Best-effort harness session observation failed", exc_info=True)
         try:
-            if extracted:
-                run.observe(extracted)
+            if facts.first_session_id:
+                run.observe(facts.first_session_id)
             if connection_session_id:
                 run.note(connection_session_id)
             if started and run.identity is not None:
