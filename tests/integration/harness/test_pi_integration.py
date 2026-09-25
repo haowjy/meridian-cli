@@ -28,6 +28,7 @@ from meridian.lib.state.paths import (
     resolve_spawn_log_dir,
 )
 from meridian.lib.streaming.spawn_manager import SpawnManager
+from tests.support.pi_extensions import configure_pi_extension_projection
 
 _PI_HELP_SURFACE = (
     "--mode rpc --model --append-system-prompt --session --session-id --fork "
@@ -46,18 +47,6 @@ async def _next_non_phase_event(event_iter):  # type: ignore[no-untyped-def]
         event = await anext(event_iter)
         if not _is_pi_phase_event(event):
             return event
-
-
-def _configure_extension_projection(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
-    source_root = root / "dist" / "extensions"
-    for extension_name in ("managed-bash", "meridian-spawn-watch", "session-boundary"):
-        (source_root / extension_name).mkdir(parents=True, exist_ok=True)
-        (source_root / extension_name / "index.js").write_text(
-            "export default {}\\n",
-            encoding="utf-8",
-        )
-    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_SOURCE_ROOT", str(source_root))
-    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_TARGET_ROOT", str(root / "agent" / "extensions"))
 
 
 class _NoopControlServer:
@@ -191,7 +180,7 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _configure_extension_projection(monkeypatch, tmp_path)
+    configure_pi_extension_projection(monkeypatch, tmp_path)
 
     fake_pi = tmp_path / "bin" / "pi-fake"
     fake_pi.parent.mkdir(parents=True, exist_ok=True)
@@ -289,7 +278,7 @@ async def test_pi_rpc_connection_redacts_secret_like_cli_args_in_process_spawned
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _configure_extension_projection(monkeypatch, tmp_path)
+    configure_pi_extension_projection(monkeypatch, tmp_path)
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -359,7 +348,7 @@ async def test_pi_rpc_connection_ignores_non_lifecycle_stderr_lines_but_logs_the
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _configure_extension_projection(monkeypatch, tmp_path)
+    configure_pi_extension_projection(monkeypatch, tmp_path)
 
     spawn_id = SpawnId("p-pi-stderr-ignore")
     plain_stderr = "warning from stderr"
@@ -462,7 +451,7 @@ async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_withou
         persisted.append(pi_lifecycle.read(runtime_root, spawn_id))
 
     monkeypatch.setattr(pi_lifecycle, "record", record_and_read)
-    _configure_extension_projection(monkeypatch, tmp_path)
+    configure_pi_extension_projection(monkeypatch, tmp_path)
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -573,7 +562,7 @@ async def test_pi_spawn_manager_startup_diagnostics_report_outcome_and_marker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _configure_extension_projection(monkeypatch, tmp_path)
+    configure_pi_extension_projection(monkeypatch, tmp_path)
 
     async def start_connection(
         config: ConnectionConfig,
@@ -657,7 +646,7 @@ async def test_pi_spawn_manager_prompt_response_failure_fails_fast_with_reported
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _configure_extension_projection(monkeypatch, tmp_path)
+    configure_pi_extension_projection(monkeypatch, tmp_path)
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -734,7 +723,7 @@ async def test_pi_connection_launches_in_control_root_when_task_cwd_provided(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _configure_extension_projection(monkeypatch, tmp_path)
+    configure_pi_extension_projection(monkeypatch, tmp_path)
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -794,7 +783,7 @@ async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_even
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _configure_extension_projection(monkeypatch, tmp_path)
+    configure_pi_extension_projection(monkeypatch, tmp_path)
 
     spawn_id = SpawnId("p-pi-stderr-early-exit")
     crash_stderr = "TypeError: markAsUncloneable is not a function"
@@ -864,7 +853,7 @@ async def test_pi_rpc_malformed_line_does_not_satisfy_first_event_watchdog(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _configure_extension_projection(monkeypatch, tmp_path)
+    configure_pi_extension_projection(monkeypatch, tmp_path)
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -917,7 +906,7 @@ async def test_pi_rpc_nonzero_exit_before_first_event_reports_exit_code(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _configure_extension_projection(monkeypatch, tmp_path)
+    configure_pi_extension_projection(monkeypatch, tmp_path)
 
     crash_stderr = "Pi crashed before its first response"
     bin_dir = tmp_path / "bin"
@@ -971,7 +960,7 @@ async def test_pi_rpc_connection_start_fails_fast_when_runtime_resolution_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _configure_extension_projection(monkeypatch, tmp_path)
+    configure_pi_extension_projection(monkeypatch, tmp_path)
     expected_error = "runtime probe failed before launch"
 
     def _fail_resolve_runtime(*, env: dict[str, str], role: str) -> object:
