@@ -2142,8 +2142,7 @@ def _build_fork_create_input(
             forked_from_chat_id=resolved_reference.source_chat_id,
             source_control_root=resolved_reference.source_control_root,
             source_execution_cwd=resolved_reference.source_execution_cwd,
-            source_claude_config_dir=resolved_reference.source_claude_config_dir,
-            source_pi_session_dir=resolved_reference.source_pi_session_dir,
+            source_native_store=resolved_reference.source_native_store,
         ),
         **launch_options,
     )

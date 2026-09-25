@@ -25,6 +25,7 @@ from meridian.lib.harness.pi_paths import resolve_pi_agent_dir, resolve_pi_spawn
 class NativeModelReadContext:
     """Source-session paths a reader needs to locate the native store."""
 
+    native_store: str | None = None
     project_root: str | None = None
     claude_config_dir: str | None = None
     pi_session_dir: str | None = None
@@ -170,6 +171,45 @@ def read_last_executed_model(
     if not normalized_session_id:
         return None
     try:
+        if context.native_store is not None:
+            from meridian.lib.core.native_identity import NativeSessionUnavailable
+            from meridian.lib.core.types import HarnessId
+            from meridian.lib.harness.registry import get_default_harness_registry
+
+            adapter = get_default_harness_registry().get(HarnessId(harness))
+            try:
+                native = adapter.resolve_native_session_file(
+                    project_root=Path(context.project_root or "."),
+                    session_id=normalized_session_id,
+                    native_store=Path(context.native_store),
+                )
+            except NativeSessionUnavailable:
+                return None
+            if native is None:
+                return None
+            if harness == "opencode":
+                return opencode_transcript.read_last_model(
+                    normalized_session_id, launch_env={"OPENCODE_DB": str(native)}
+                )
+            last: str | None = None
+            fallback: str | None = None
+            for payload in _iter_json_objects(native):
+                event_type = payload.get("type")
+                if harness == "claude" and event_type == "assistant":
+                    last = _nested_str(payload, "message", "model") or last
+                elif harness == "codex":
+                    if event_type == "turn_context":
+                        last = _nested_str(payload, "payload", "model") or last
+                    elif event_type == "world_state":
+                        fallback = _nested_str(payload, "payload", "state", "model") or fallback
+                elif harness == "pi":
+                    if event_type == "model_change":
+                        last = _nested_str(payload, "modelId") or last
+                    elif event_type == "session":
+                        fallback = _nested_str(payload, "model") or _nested_str(
+                            payload, "model", "modelId"
+                        ) or fallback
+            return last or fallback
         if harness == "opencode":
             return opencode_transcript.read_last_model(
                 normalized_session_id, launch_env=context.launch_env
