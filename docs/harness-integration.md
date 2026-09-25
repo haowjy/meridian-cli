@@ -165,10 +165,29 @@ Every adapter must implement:
 | `capabilities` | Boolean feature flags (`supports_stream_events`, etc.) |
 | `consumed_fields` / `explicitly_ignored_fields` | `SpawnParams` field accounting |
 | `resolve_launch_spec()` | Map `SpawnParams` → `HarnessLaunchSpec` |
-| `build_command()` | Produce the final argv list |
 | `project_content()` | Map `ComposedLaunchContent` → harness channels |
 | `env_overrides()` | Return child process env overrides |
 | `extract_usage()`, `extract_session_id()`, `extract_report()` | Delegate to extractor |
+
+Native-session adapters additionally opt into the base identity template with
+`native_identity = True`. Supply these primitives and policy flags; do not override
+`plan_native_identity()` or `finalize_native_identity()`:
+
+| Member | Contract |
+|---|---|
+| `native_store_for_launch()` | Pure absolute store resolution from child env/cwd and operation; no writes |
+| `pin_native_store()` | Pin the resolved store in the child env only; no mkdir |
+| `assign_session_id()` | Retain resume/pre-fork IDs; mint owned create/fork IDs, else return `None` |
+| `validate_intent()` | Harness-specific source/ID validation before exec |
+| `refused_identity_flags` | Native selector flags forbidden in passthrough args |
+| `continues_in_source_store` | Operations that retain the source namespace |
+| `resolves_untracked_source` | Whether the template resolves an untracked resume source |
+| `resolve_native_session_file(session_id=, native_store=)` | Resolve exactly within the recorded store, validating native identity |
+| `observe_after_exit()` | Return `PostExit` evidence after teardown; launch owns binding and persistence |
+
+The template constructs `NativeIdentity`, checks passthrough and source rules,
+and pins the store before argv projection. Command projection belongs to the
+harness projection module, not an adapter `build_command()` hook.
 
 **SpawnParams accounting**: Every field in `SpawnParams` must appear in
 `consumed_fields` **or** `explicitly_ignored_fields`. The merge of both sets

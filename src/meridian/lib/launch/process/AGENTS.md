@@ -61,8 +61,8 @@ not bind or decide identity independently.
 **Assigned identity binds before exec.** When the finalized
 `native_identity` carries an ID (Meridian-minted create, verified resume, or
 fork target), the runner binds it as `source="assigned"` before starting the child;
-a conflict refuses the launch. Only plans without an ID (e.g. Claude fork) wait for
-the first owned observation. Observations bind once and never replace the key.
+a conflict refuses the launch. Only `NativeIdentity` values without an ID
+(e.g. Claude fork) wait for the first owned observation. Observations bind once and never replace the key.
 Adapter cleanup still runs on binding errors.
 
 **Session scope wraps everything.** `session_scope()` opens before the spawn row is

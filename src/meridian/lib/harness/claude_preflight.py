@@ -30,10 +30,6 @@ logger = structlog.get_logger(__name__)
 CLAUDE_PARENT_ALLOWED_TOOLS_FLAG = "--meridian-parent-allowed-tools"
 
 
-def _claude_config_root() -> Path:
-    return resolve_claude_config_root(os.environ, Path.cwd())
-
-
 def validate_claude_session_file(path: Path, session_id: str) -> None:
     """Verify the exact native source, not merely its filename."""
     try:
@@ -61,7 +57,7 @@ def ensure_claude_session_accessible(
     """Seed the child's project from exactly the recorded store/ID pair."""
     source_file = source_native_store / f"{source_session_id}.jsonl"
     validate_claude_session_file(source_file, source_session_id)
-    target_root = target_config_root or _claude_config_root()
+    target_root = target_config_root or resolve_claude_config_root(os.environ, Path.cwd())
     target_file = target_root / "projects" / project_slug(child_cwd) / source_file.name
     if target_file.exists() and target_file.samefile(source_file):
         return
