@@ -7,6 +7,7 @@ import uuid
 from dataclasses import replace
 from typing import Any
 
+import structlog
 from pydantic import TypeAdapter
 
 from meridian.cli.utils import require_established_project_root
@@ -18,7 +19,6 @@ from meridian.lib.bootstrap.services import (
 from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.registry import get_default_harness_registry, get_harness_bundle
 from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
@@ -121,8 +121,9 @@ async def streaming_serve(
         connection_config = replace(connection_config, debug_tracer=tracer)
 
     native_key = None
-    facts = AttemptFacts()
     extractor = get_harness_bundle(harness_id).extractor
+    fold = extractor.create_fold()
+    facts = fold.facts
 
     print(f"Started spawn {spawn_id} (harness={prepared.resolved_harness})")
     print(f"Transcript: meridian session log {spawn_id}")
@@ -162,7 +163,7 @@ async def streaming_serve(
                 nonlocal connection, started_pid
                 connection = started_connection
                 started_pid = connection.subprocess_pid
-                facts.scope_session_id = connection.session_id
+                fold.bind_scope(connection.session_id)
                 if connection.session_id:
                     native_run.observe(connection.session_id)
 
@@ -196,7 +197,7 @@ async def streaming_serve(
                     lifecycle_service=lifecycle_service,
                     on_control_endpoint_ready=_report_control_endpoint,
                     on_running=record_started,
-                    event_hook=lambda event: facts.hook(extractor, event),
+                    event_hook=fold,
                 )
                 outcome_status = TypeAdapter(TerminalSpawnStatus).validate_python(outcome.status)
                 outcome_exit_code = outcome.exit_code
@@ -250,24 +251,31 @@ async def streaming_serve(
         raise
     finally:
         with signal_coordinator().mask_sigterm():
-            extraction = enrich_finalize(
-                artifacts=LocalStore(root_dir=runtime_root / "artifacts"),
-                extractor=extractor,
-                facts=facts,
-                native_key=native_key,
-                spawn_id=spawn_id,
-                log_dir=runtime_root / "spawns" / str(spawn_id),
-                model_id=prepared.resolved_model,
-                harness_id=harness_id,
-                project_root=project_root,
-                failure_reason=failure_message,
-            )
+            usage = None
+            try:
+                extraction = enrich_finalize(
+                    artifacts=LocalStore(root_dir=runtime_root / "artifacts"),
+                    extractor=extractor,
+                    facts=facts,
+                    native_key=native_key,
+                    spawn_id=spawn_id,
+                    log_dir=runtime_root / "spawns" / str(spawn_id),
+                    model_id=prepared.resolved_model,
+                    harness_id=harness_id,
+                    project_root=project_root,
+                    failure_reason=failure_message,
+                )
+                usage = extraction.usage
+            except Exception:
+                structlog.get_logger(__name__).exception(
+                    "finalize_enrichment_failed", spawn_id=str(spawn_id)
+                )
             finalize_outcome = await spawn_service.complete_spawn(
                 spawn_id,
                 status=outcome_status,
                 exit_code=outcome_exit_code,
                 origin="launcher",
-                usage=extraction.usage,
+                usage=usage,
                 duration_secs=max(0.0, time.monotonic() - start_monotonic),
                 error=failure_message if outcome_status == "failed" else None,
             )

@@ -4,6 +4,7 @@ from enum import StrEnum
 from functools import partial
 from pathlib import Path
 
+import structlog
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.domain import TokenUsage
@@ -44,7 +45,7 @@ class FinalizeReportKind(StrEnum):
 class FinalizeExtraction(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    usage: TokenUsage
+    usage: TokenUsage | None
     harness_session_id: str | None
     report_path: Path | None
     report: ExtractedReport
@@ -78,6 +79,7 @@ def _persist_report(
     spawn_id: SpawnId,
     log_dir: Path,
     extracted: ExtractedReport,
+    text_capped: bool,
 ) -> Path | None:
     if extracted.content is None:
         return None
@@ -89,6 +91,8 @@ def _persist_report(
             "# Spawn failed" if extracted.source in {"failure_reason", "pi_failure"} else "# Report"
         )
         wrapped = f"{heading}\n\n{extracted.content.strip()}\n"
+        if text_capped and extracted.source == "assistant_message":
+            wrapped += "\n[Attempt text was truncated at 1 MiB before report extraction.]\n"
         atomic_write_text(target, wrapped)
         artifacts.put(report_key, wrapped.encode("utf-8"))
         return target
@@ -138,11 +142,17 @@ def enrich_finalize(
     if explicit_report.is_file():
         artifacts.put(ArtifactKey(f"{spawn_id}/{REPORT_FILENAME}"), explicit_report.read_bytes())
 
-    usage = estimate_usage_cost(
-        model_id=(model_id or "").strip() or None,
-        usage=facts.usage or TokenUsage(),
-        project_root=project_root,
-        harness_id=str(harness_id) if harness_id is not None else None,
+    if facts.incomplete:
+        structlog.get_logger(__name__).warning("facts_incomplete", spawn_id=str(spawn_id))
+    usage = (
+        estimate_usage_cost(
+            model_id=(model_id or "").strip() or None,
+            usage=facts.usage,
+            project_root=project_root,
+            harness_id=str(harness_id) if harness_id is not None else None,
+        )
+        if facts.usage is not None and not facts.incomplete
+        else None
     )
     harness_session_id = facts.first_session_id
     report = extract_or_fallback_report(
@@ -159,6 +169,7 @@ def enrich_finalize(
         spawn_id=spawn_id,
         log_dir=log_dir,
         extracted=report,
+        text_capped=facts.text_capped,
     )
 
     return FinalizeExtraction(

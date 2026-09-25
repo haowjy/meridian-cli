@@ -6,12 +6,12 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import RawHarnessEvent
-from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
 from meridian.lib.streaming.drain_coordinator import (
     DrainCoordinator,
@@ -41,7 +41,25 @@ PublishTerminal = Callable[
 ]
 FanOutEvent = Callable[[SpawnId, "NormalizedHarnessEvent"], None]
 FanOutTurnBoundary = Callable[[SpawnId, "TerminalEventOutcome"], Awaitable[None]]
-EmitEvent = Callable[[SpawnId, RawHarnessEvent], bool]
+
+
+@dataclass(frozen=True)
+class NoWriter:
+    pass
+
+
+@dataclass(frozen=True)
+class Written:
+    pass
+
+
+@dataclass(frozen=True)
+class WriteFailed:
+    error: str
+
+
+EmitOutcome = NoWriter | Written | WriteFailed
+EmitEvent = Callable[[SpawnId, RawHarnessEvent], EmitOutcome]
 
 
 class SpawnDrainLoop:
@@ -51,14 +69,12 @@ class SpawnDrainLoop:
         self,
         *,
         sessions: dict[SpawnId, SpawnSession],
-        history_writers: dict[SpawnId, HarnessHistoryWriter],
         emit_event: EmitEvent,
         publish_terminal: PublishTerminal,
         fan_out_event: FanOutEvent,
         fan_out_turn_boundary: FanOutTurnBoundary,
     ) -> None:
         self._sessions = sessions
-        self._history_writers = history_writers
         self._emit_event = emit_event
         self._publish_terminal = publish_terminal
         self._fan_out_event = fan_out_event
@@ -117,10 +133,7 @@ class SpawnDrainLoop:
                     break
                 wake = await drain_waiter.wait(_next_timeout(coordinator))
                 if isinstance(wake, DrainClosedWake):
-                    if (
-                        should_defer_close is not None
-                        and should_defer_close()
-                    ):
+                    if should_defer_close is not None and should_defer_close():
                         continue
                     session = self._sessions.get(spawn_id)
                     close_outcome = (
@@ -171,10 +184,9 @@ class SpawnDrainLoop:
                         direction="inbound",
                         data={"event_type": event.event_type, "harness_id": event.harness_id},
                     )
-                history_writer = self._history_writers.get(spawn_id)
-                write_succeeded = self._emit_event(spawn_id, event)
-                if history_writer is not None:
-                    if not write_succeeded:
+                emit_outcome = self._emit_event(spawn_id, event)
+                match emit_outcome:
+                    case WriteFailed(error):
                         consecutive_write_failures += 1
                         if tracer is not None:
                             tracer.emit(
@@ -182,39 +194,33 @@ class SpawnDrainLoop:
                                 "persist_error",
                                 data={
                                     "event_type": event.event_type,
-                                    "error": "history write failed",
+                                    "error": error,
                                     "consecutive_failures": consecutive_write_failures,
                                 },
                             )
                         logger.warning(
-                            "Failed to persist event for spawn %s (%d/%d consecutive failures)",
+                            "Failed to persist event for spawn %s (%d/%d consecutive failures): %s",
                             spawn_id,
                             consecutive_write_failures,
                             max_consecutive_failures,
+                            error,
                         )
                         if consecutive_write_failures >= max_consecutive_failures:
-                            logger.error(
-                                (
-                                    "Aborting drain loop for spawn %s after %d "
-                                    "consecutive write failures"
-                                ),
-                                spawn_id,
-                                max_consecutive_failures,
-                            )
                             drain_error = RuntimeError(
                                 "Aborted drain loop after repeated output persistence failures"
                             )
                             break
                         continue
-                    consecutive_write_failures = 0
-                    if tracer is not None:
-                        tracer.emit(
-                            "drain",
-                            "event_persisted",
-                            data={"event_type": event.event_type},
-                        )
-                else:
-                    consecutive_write_failures = 0
+                    case Written():
+                        consecutive_write_failures = 0
+                        if tracer is not None:
+                            tracer.emit(
+                                "drain",
+                                "event_persisted",
+                                data={"event_type": event.event_type},
+                            )
+                    case NoWriter():
+                        consecutive_write_failures = 0
 
                 event_outcome = normalized_event.semantics.terminal
                 self._fan_out_event(spawn_id, normalized_event)
@@ -277,9 +283,7 @@ class SpawnDrainLoop:
                             0.0,
                             time.monotonic() - session.started_monotonic,
                         ),
-                        authoritative=(
-                            not drain_plan.raw_terminal_frames_authoritative
-                        ),
+                        authoritative=(not drain_plan.raw_terminal_frames_authoritative),
                     )
                 elif drain_cancelled:
                     outcome = DrainOutcome(
@@ -314,9 +318,7 @@ class SpawnDrainLoop:
                         exit_code=recorded_terminal_outcome.exit_code,
                         error=recorded_terminal_outcome.error,
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
-                        authoritative=(
-                            not drain_plan.raw_terminal_frames_authoritative
-                        ),
+                        authoritative=(not drain_plan.raw_terminal_frames_authoritative),
                     )
                 else:
                     outcome = DrainOutcome(

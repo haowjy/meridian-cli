@@ -6,13 +6,13 @@ from collections.abc import Mapping
 from typing import cast
 
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.harness.attempt_facts import AttemptFacts, HarnessFailure
+from meridian.lib.harness.attempt_facts import HarnessFailure
 from meridian.lib.harness.common import coerce_optional_int
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.pi_failure import compact_pi_failure_output, pi_failure_from_payload
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
-from .base import HarnessExtractor
+from .base import AttemptFold, HarnessExtractor
 
 
 def _usage_from_message(message: Mapping[str, object]) -> TokenUsage | None:
@@ -66,16 +66,16 @@ class PiHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
             return session_id.strip()
         return None
 
-    def fold(self, facts: AttemptFacts, event: Mapping[str, object]) -> None:
-        payload = dict(event)
-        kind = str(payload.get("event_type", payload.get("type", "")))
-        facts.output_seen = facts.output_seen or not kind.startswith("meridian.")
-        facts.observe(
-            self.detect_session_id_from_event(
-                RawHarnessEvent(event_type=kind, harness_id="pi", payload=payload)
-            )
-        )
-        failure = pi_failure_from_payload(payload)
+    def create_fold(self) -> AttemptFold:
+        return PiFold(self)
+
+
+class PiFold(AttemptFold):
+    generic_usage = False
+
+    def fold_event(self, kind: str, payload: Mapping[str, object]) -> None:
+        facts = self.facts
+        failure = pi_failure_from_payload(dict(payload))
         if failure:
             facts.failure = HarnessFailure(compact_pi_failure_output(failure), "pi_failure")
         if kind == "message_end":
@@ -87,7 +87,7 @@ class PiHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
                     facts.usage = usage
                 text = _assistant_message_text(message)
                 if text:
-                    facts.set_text(text, "pi_message_end")
+                    self.set_text(text, "pi_message_end")
         elif kind == "agent_end":
             messages = payload.get("messages")
             if isinstance(messages, list):
@@ -95,7 +95,7 @@ class PiHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
                     if isinstance(message, dict) and (
                         text := _assistant_message_text(cast("dict[str, object]", message))
                     ):
-                        facts.set_text(text, "pi_agent_end")
+                        self.set_text(text, "pi_agent_end")
                         break
 
 

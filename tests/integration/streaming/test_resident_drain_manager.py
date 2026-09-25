@@ -9,7 +9,6 @@ import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 from meridian.lib.ops.spawn.models import SpawnSignalInput
 from meridian.lib.state import spawn_store
@@ -755,11 +754,12 @@ async def test_codex_resident_finalization_preserves_artifact_report(tmp_path: P
         outcome = await manager.wait_for_completion(spawn_id)
         assert outcome is not None
         assert outcome.status == "succeeded"
-        facts = AttemptFacts()
+        fold = CODEX_EXTRACTOR.create_fold()
+        facts = fold.facts
         while not subscriber.empty():
             event = subscriber.get_nowait()
             if event is not None:
-                facts.hook(CODEX_EXTRACTOR, event.raw)
+                fold(event.raw)
         assert facts.final_text == "Resident report."
     finally:
         await manager.stop_spawn(spawn_id)

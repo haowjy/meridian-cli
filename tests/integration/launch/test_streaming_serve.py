@@ -155,3 +155,27 @@ async def test_streaming_serve_prices_live_usage_with_resolved_default_model(
     row = get_spawn(resolve_runtime_root(tmp_path), "p1")
     assert row.terminal.input_tokens == 100
     assert row.terminal.total_cost_usd == pytest.approx(0.0005)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("run_fails", [False, True])
+async def test_enrichment_failure_never_blocks_terminal_write(tmp_path, monkeypatch, run_fails):
+    async def run(**kwargs):
+        if run_fails:
+            raise RuntimeError("original run error")
+        return DrainOutcome(status="succeeded", exit_code=0)
+
+    def enrich(**kwargs):
+        raise OSError("report disk failed")
+
+    monkeypatch.setattr(streaming_serve_module, "run_streaming_spawn", run)
+    monkeypatch.setattr(streaming_serve_module, "enrich_finalize", enrich)
+    if run_fails:
+        with pytest.raises(RuntimeError, match="original run error"):
+            await streaming_serve_module.streaming_serve("codex", "hello")
+    else:
+        await streaming_serve_module.streaming_serve("codex", "hello")
+    row = get_spawn(resolve_runtime_root(tmp_path), "p1")
+    assert row.status == ("failed" if run_fails else "succeeded")
+    assert row.terminal.input_tokens is None
+    assert row.terminal.error == ("original run error" if run_fails else None)

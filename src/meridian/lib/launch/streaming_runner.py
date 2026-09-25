@@ -32,10 +32,10 @@ from meridian.lib.core.native_identity import (
 from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
-from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.common import parse_json_stream_event, unwrap_event_payload
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
+from meridian.lib.harness.extractors.base import AttemptFold
 from meridian.lib.harness.semantics import (
     NormalizedHarnessEvent,
     TerminalEventOutcome,
@@ -1261,7 +1261,8 @@ async def execute_with_streaming(
                 ):
                     break
 
-                facts = AttemptFacts()
+                fold = harness_bundle.extractor.create_fold()
+                facts = fold.facts
                 attempt_number = conclusion.retries_attempted + 1
                 if attempt_number > 1:
                     session_attempt = replace(
@@ -1295,11 +1296,11 @@ async def execute_with_streaming(
                 def record_started(
                     connection: HarnessConnection[Any],
                     captured_observer: Callable[[str], None] = native_run.observe,
-                    attempt_facts: AttemptFacts = facts,
+                    attempt_fold: AttemptFold = fold,
                 ) -> None:
                     nonlocal attempt_pid
                     attempt_pid = connection.subprocess_pid
-                    attempt_facts.scope_session_id = connection.session_id
+                    attempt_fold.bind_scope(connection.session_id)
                     native_id = connection.session_id
                     if native_id:
                         captured_observer(native_id)
@@ -1322,9 +1323,7 @@ async def execute_with_streaming(
                     lifecycle_service=lifecycle_service,
                     runner_phase=runner_phase,
                     on_running=record_started,
-                    event_hook=lambda event, facts=facts: facts.hook(
-                        harness_bundle.extractor, event
-                    ),
+                    event_hook=fold,
                 )
                 runner_phase[0] = "processing_attempt"
                 conclusion.absorb_attempt(attempt)
@@ -1425,6 +1424,7 @@ async def execute_with_streaming(
 
                 if (
                     budget_tracker is not None
+                    and extraction.usage is not None
                     and extraction.usage.total_cost_usd is not None
                     and budget_tracker.observe_cost(extraction.usage.total_cost_usd) is not None
                 ):

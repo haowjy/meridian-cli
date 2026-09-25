@@ -6,7 +6,17 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Mapping
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, ClassVar, Generic, Literal, Protocol, TypeVar, final, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Generic,
+    Literal,
+    Protocol,
+    TypeVar,
+    final,
+    runtime_checkable,
+)
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -22,7 +32,6 @@ from meridian.lib.core.native_identity import (
     PostExit,
 )
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
-from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
     PrimaryRuntimeRequestPolicy,
@@ -44,6 +53,9 @@ from meridian.lib.launch.launch_types import (
 )
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.permissions import PermissionConfig
+
+if TYPE_CHECKING:
+    from meridian.lib.harness.extractors.base import AttemptFold
 
 AdapterSpecT = TypeVar("AdapterSpecT", bound=ResolvedLaunchSpec, covariant=True)
 
@@ -356,13 +368,13 @@ class NativePrimaryRuntimeMetadata(BaseModel):
 RecordConfigDirFn = Callable[[str], None]
 
 
-
-
 @runtime_checkable
 class SpawnExtractor(Protocol):
     """Attempt-local extraction interface for spawn finalization."""
 
-    def fold(self, facts: AttemptFacts, event: Mapping[str, object]) -> None: ...
+    def create_fold(self) -> AttemptFold: ...
+
+    def detect_session_id_from_event(self, event: RawHarnessEvent) -> str | None: ...
 
     def read_native_turn(self, key: NativeKey, turn_ids: tuple[str, ...]) -> str | None: ...
 

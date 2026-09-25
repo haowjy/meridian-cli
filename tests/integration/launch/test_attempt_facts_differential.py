@@ -8,7 +8,6 @@ import pytest
 
 from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent
 from meridian.lib.launch.extract import enrich_finalize
@@ -122,8 +121,9 @@ async def test_live_fold_equals_same_run_artifact_oracle(
     spawn = SpawnId("p1")
     start_row(tmp_path, str(spawn), harness, None)
     connection = FakeResidentConnection(harness)
-    facts = AttemptFacts()
     extractor = get_harness_bundle(harness).extractor
+    fold = extractor.create_fold()
+    facts = fold.facts
     db = tmp_path / "opencode.db"
     if case == "opencode_v2":
         write_opencode_v2_db_session(
@@ -160,7 +160,7 @@ async def test_live_fold_equals_same_run_artifact_oracle(
                 permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
             ),
             drain_policy=PersistentDrainPolicy(),
-            event_hook=lambda event: facts.hook(extractor, event),
+            event_hook=fold,
         )
         for payload in CASES[case]:
             connection.emit(
@@ -200,6 +200,11 @@ async def test_live_fold_equals_same_run_artifact_oracle(
         spawn_id=spawn,
         log_dir=tmp_path / "new",
     )
+    # F11 gives the old all-unknown usage value its explicit None representation.
+    from meridian.lib.core.domain import TokenUsage
+
+    if expected.usage == TokenUsage():
+        expected = expected.model_copy(update={"usage": None})
     assert actual.model_dump(exclude={"report_path"}) == expected.model_dump(
         exclude={"report_path"}
     )
