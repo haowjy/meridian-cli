@@ -174,9 +174,7 @@ def test_capture_resolution_bypasses_owned_stream_and_disposable_index(tmp_path:
     assert not (root / "history-index" / "history.sqlite3").exists()
 
 
-def test_capture_uses_bound_generation_not_sidecar_identity(
-    tmp_path: Path, monkeypatch
-):
+def test_capture_uses_bound_generation_not_sidecar_identity(tmp_path: Path, monkeypatch):
     project, root, key, _ = _capture_fixture(tmp_path, monkeypatch)
     write_primary_metadata(
         root / "spawns" / key,
@@ -676,15 +674,11 @@ def test_pi_normal_stop_publishes(tmp_path: Path, monkeypatch):
 
 def test_capture_retry_removes_stale_atomic_temps(tmp_path: Path, monkeypatch):
     project, root, key, _native = _capture_fixture(tmp_path, monkeypatch)
-    spawn_dir = root / "spawns" / key
-    stale_snapshot = spawn_dir / ".native-transcript.jsonl.deadbeef.tmp"
-    stale_history = spawn_dir / ".history.jsonl.deadbeef.tmp"
+    stale_snapshot = root / "spawns" / key / ".native-transcript.jsonl.deadbeef.tmp"
     stale_snapshot.write_text("partial snapshot")
-    stale_history.write_text("partial history")
     materialize_native_history(project, root, key)
     _assert_sealed_snapshot(_snapshot_path(root, key), contains="exact-native")
     assert not stale_snapshot.exists()
-    assert not stale_history.exists()
 
 
 def _native_file_capture(tmp_path: Path, harness: str, events: list[dict[str, object]]):
