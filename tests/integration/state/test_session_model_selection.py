@@ -180,3 +180,24 @@ def test_concurrent_append_deduplicates_under_the_session_log_lock(tmp_path: Pat
         assert len(rows) == 2  # One historical start, one durable selection.
     finally:
         store.stop_session(tmp_path, "c1")
+
+
+def test_duplicate_invocation_attempt_link_replays_as_same_native_key(tmp_path: Path) -> None:
+    import json
+
+    from meridian.lib.state.native_binding import Same, bind
+
+    generation = start(tmp_path, "c1")
+    try:
+        assert selected(tmp_path, "c1", generation, "p1", "sol")
+        before = store.get_session_record(tmp_path, "c1")
+        assert before is not None
+        assert not selected(tmp_path, "c1", generation, "p1", "sol", attempt="retry")
+        last = json.loads((tmp_path / "sessions.jsonl").read_text().splitlines()[-1])
+        link = store.SessionUpdateEvent.model_validate(last)
+        assert link.startup_attempt_id == "retry"
+        assert bind(before.key_fields(), link.key_fields()) == Same(before.key_fields())
+        assert store.get_session_record(tmp_path, "c1") == before
+        assert store.list_session_generations(tmp_path) == (before,)
+    finally:
+        store.stop_session(tmp_path, "c1")

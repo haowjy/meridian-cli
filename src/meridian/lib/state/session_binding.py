@@ -5,12 +5,14 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 
+from meridian.lib.core.native_identity import BindSource
 from meridian.lib.core.types import ChatId, HarnessSessionId
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store as sessions
 from meridian.lib.state.atomic import append_durable_jsonl_line
 from meridian.lib.state.event_store import read_events
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
+from meridian.lib.state.native_binding import Bound, Conflict, bind, report_conflict
 from meridian.lib.state.paths import RuntimePaths
 
 
@@ -35,7 +37,7 @@ class SessionBindings:
         harness_session_id: str,
         *,
         native_store: str | None = None,
-        source: str = "observed",
+        source: BindSource = "observed",
         session_instance_id: str | None = None,
         startup_attempt_id: str | None = None,
     ) -> sessions.NativeBindingResult:
@@ -62,18 +64,13 @@ class SessionBindings:
             return sessions.NativeBindingResult(
                 "conflict", existing.harness_session_id, existing.native_store
             )
-        if sessions._binding_conflicts(existing, event):
-            # Only a rejected write reports; replay folds stay silent.
-            sessions._report_binding_conflict(existing, event)
+        outcome = bind(existing.key_fields(), event.key_fields())
+        if isinstance(outcome, Conflict):
+            report_conflict(chat_id, outcome, source)
             return sessions.NativeBindingResult(
                 "conflict", existing.harness_session_id, existing.native_store
             )
-        status = (
-            "already_bound"
-            if existing.harness_session_id == event.harness_session_id
-            and (not native_store or native_store == existing.native_store)
-            else "bound"
-        )
+        status = "bound" if isinstance(outcome, Bound) else "already_bound"
         if startup_attempt_id is not None:
             sessions._validate_startup_identity(self.events, event)
         if status == "bound" or startup_attempt_id is not None:
@@ -84,8 +81,8 @@ class SessionBindings:
             sessions.project_session_event(self.records, event)
         return sessions.NativeBindingResult(
             status,
-            existing.harness_session_id or event.harness_session_id,
-            existing.native_store or native_store,
+            outcome.key.session_id,
+            outcome.key.native_store,
         )
 
     def commit(self) -> None:
