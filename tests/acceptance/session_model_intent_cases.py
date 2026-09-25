@@ -2,7 +2,7 @@
 
 import json
 from collections import Counter
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -362,6 +362,7 @@ def immutable_and_cost(root):
     counts = Counter()
     decode, fold, read = a.decode_row, a.fold_row, s.read_journal
     freeze, admit = a._RetainedModelIntent.freeze, a.freeze_model_intent
+    byte_read = Path.read_bytes
 
     def counted(name, call):
         def invoke(*args, **kwargs):
@@ -377,12 +378,27 @@ def immutable_and_cost(root):
         patch.object(a, "freeze_model_intent", counted("admit", admit)),
         patch.object(a._RetainedModelIntent, "freeze", counted("snapshot_entry", freeze)),
         patch.object(s, "read_journal", counted("read", read)),
+        patch.object(Path, "read_bytes", counted("byte_read", byte_read)),
     ):
         assert s.record_model_selection(root, event)
-        assert counts == {"decode": 3, "proposal_decode": 1, "fold": 3, "read": 1, "admit": 1}
+        assert counts == {
+            "decode": 3,
+            "proposal_decode": 1,
+            "fold": 3,
+            "read": 1,
+            "admit": 1,
+            "byte_read": 1,
+        }
         counts.clear()
         view = snapshot(root)
-        assert counts == {"decode": 4, "fold": 4, "read": 1, "admit": 1, "snapshot_entry": 1}
+        assert counts == {
+            "decode": 4,
+            "fold": 4,
+            "read": 1,
+            "admit": 1,
+            "snapshot_entry": 1,
+            "byte_read": 1,
+        }
         facts = view.replay_model_facts(source)
         entry = facts.latest_invocation
         event.selection.provenance["source"] = "caller-mutated"
@@ -407,6 +423,20 @@ def immutable_and_cost(root):
             pass
         else:
             raise AssertionError("index mutable")
+
+        class IndexedOnly(tuple):
+            def __iter__(self):
+                raise AssertionError("query scanned retained entries")
+
+        view = s.NativeSourceUseSnapshot(
+            replace(
+                view.journal,
+                metadata=replace(
+                    view.journal.metadata,
+                    model_intents=IndexedOnly(view.journal.metadata.model_intents),
+                ),
+            )
+        )
         baseline = counts.copy()
         with (
             patch.object(Path, "open", side_effect=AssertionError("query opened file")),
@@ -425,17 +455,42 @@ def immutable_and_cost(root):
     path = root / "decided-payload"
     _, _, original = pinned(path)
     original = changed(original, kind="initial_seed", startup_attempt_id=None)
-    leaf = s._append_accepted_model_selection
+    planner = s.plan_model_selection
 
-    def mutate_then_append(path, transaction, decision):
+    def plan_then_mutate(identity, metadata, candidate, **kwargs):
+        decision = planner(identity, metadata, candidate, **kwargs)
+        candidate.selection.provenance["source"] = "mutated-normalized-candidate"
         original.selection.provenance["source"] = "racing-caller"
-        leaf(path, transaction, decision)
+        return decision
 
-    with patch.object(s, "_append_accepted_model_selection", mutate_then_append):
+    with patch.object(s, "plan_model_selection", plan_then_mutate):
         assert s.record_model_selection(path, original)
     persisted = json.loads((path / "sessions.jsonl").read_text().splitlines()[-1])
     assert persisted["selection"]["provenance"] == {"source": "fixture"}
     assert persisted["startup_attempt_id"] is None
+
+
+def seed_invalidation_and_legacy_retry(root):
+    source, start, event = pinned(root)
+    seed = changed(event, kind="initial_seed", startup_attempt_id=None)
+    assert s.record_model_selection(root, seed)
+    view = snapshot(root)
+    assert not view.journal.metadata.startup_ids
+    append(root, start.model_copy(update={"model": "contrary"}))
+    assert snapshot(root).replay_model_facts(source) == a.FactsUnavailable("source_conflict")
+    assert view.replay_model_facts(source).first_committed_seed.correlation == "exact_source"
+    path = root / "legacy-retry"
+    _, _, event = pinned(path)
+    assert s.record_model_selection(path, legacy(event))
+    retry = legacy(event, startup_attempt_id="retry")
+    assert not s.record_model_selection(path, retry)
+    rows = (path / "sessions.jsonl").read_text().splitlines()
+    assert json.loads(rows[-1])["event"] == "update"
+    assert not s.record_model_selection(path, retry)
+    assert (path / "sessions.jsonl").read_text().splitlines() == rows
+    # A historical duplicate v1 selection remains legal, unlike exact v2.
+    append(path, legacy(event))
+    assert len(snapshot(path).journal.metadata.model_intents) == 2
 
 
 def run(root: Path) -> None:
@@ -447,6 +502,7 @@ def run(root: Path) -> None:
         full_source_and_order,
         traversal_cost,
         immutable_and_cost,
+        seed_invalidation_and_legacy_retry,
     )
     for case in manifest:
         case(root / case.__name__)

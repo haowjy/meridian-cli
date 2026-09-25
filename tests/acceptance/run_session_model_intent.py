@@ -55,6 +55,18 @@ def main() -> None:
         )
 
         def audit(event, arguments):
+            # These layers are outside this state-only acceptance boundary.
+            if event == "import" and arguments[0].startswith(
+                (
+                    "meridian.lib.harness",
+                    "meridian.lib.catalog",
+                    "meridian.lib.ops",
+                    "meridian.lib.launch",
+                    "meridian.lib.state.spawn_store",
+                )
+            ):
+                phase["forbidden_entrypoint_import"] += 1
+                raise RuntimeError("state acceptance attempted native/catalog/old-spawn entrypoint")
             if event in {
                 "subprocess.Popen",
                 "os.system",
@@ -65,8 +77,18 @@ def main() -> None:
             } or event.startswith(("socket.", "ctypes.dlopen", "ctypes.dlsym")):
                 phase[event] += 1
                 raise RuntimeError("denied: " + event)
+            if event in {"os.mkdir", "os.remove", "os.rmdir", "os.rename", "os.link", "os.symlink"}:
+                paths = (
+                    arguments[:2]
+                    if event in {"os.rename", "os.link", "os.symlink"}
+                    else arguments[:1]
+                )
+                for value in paths:
+                    if not Path(os.path.realpath(os.fsdecode(value))).is_relative_to(root):
+                        phase["outside_data_mutation"] += 1
+                        raise PermissionError("mutation outside disposable root")
             if event == "open" and isinstance(arguments[0], (str, bytes)):
-                path = Path(os.fsdecode(arguments[0])).absolute()
+                path = Path(os.path.realpath(os.fsdecode(arguments[0])))
                 mode, flags = arguments[1:3]
                 writing = (isinstance(mode, str) and any(c in mode for c in "wax+")) or (
                     isinstance(flags, int) and flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT)

@@ -169,7 +169,10 @@ Both paths share liveness rules in `reaper.py` and completion/cancel precedence 
 Native chat binding authority shares `sessions.jsonl` and `sessions_flock`; do not
 add a parallel ledger. Exact model intent is retained by that strict fold: v1
 selection rows remain legacy-unscoped, while v2 rows require a prior exact source
-pin and matching captured start. `NativeSourceUseSnapshot.replay_model_facts()` is
+pin and matching captured start. `plan_model_selection` owns live/replay admission;
+only frozen accepted values cross the model writer boundary. Startup watches
+update membership through one binding path; exact source indexes reference stable
+retained slots, including retracted entries. `NativeSourceUseSnapshot.replay_model_facts()` is
 a pure projection over the retained fold, not evidence that a producer or tracked
 transport has been qualified. `AttemptCoordinator` is the sole native-fact mutation
 entry point. It binds an adapter-created owner instance; methods pull witnesses
