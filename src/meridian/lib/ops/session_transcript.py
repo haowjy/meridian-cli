@@ -11,7 +11,7 @@ from typing import Literal, NamedTuple
 
 from meridian.lib.core.command_strings import format_command_for_display
 from meridian.lib.harness.native_witness import Witness, file_witness
-from meridian.lib.harness.opencode_search_source import read_opencode_search_source
+from meridian.lib.harness.opencode_snapshot import read_opencode_snapshot
 from meridian.lib.harness.pi_journal import project_pi_reopen_default
 from meridian.lib.harness.transcript import (
     ToolCall,
@@ -360,7 +360,7 @@ def read_native_source(
             if budget and not budget.current():
                 return
             if source.kind == "opencode_db":
-                with read_opencode_search_source(source.path, source.session_id) as (w, raw):
+                with read_opencode_snapshot(source.path, source.session_id) as (w, raw):
                     read.witness = w
                     yield from budget.events(raw) if budget else raw
                 validation.state, validation.reason = "complete", None

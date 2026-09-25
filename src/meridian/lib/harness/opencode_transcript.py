@@ -13,7 +13,6 @@ from itertools import groupby
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
-from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.harness.opencode_storage import resolve_opencode_home_dir
 from meridian.lib.state.native_snapshot import TranscriptValidation
 
@@ -44,7 +43,7 @@ def resolve_opencode_db_path(launch_env: Mapping[str, str] | None = None) -> Pat
     return resolve_opencode_home_dir(launch_env) / "opencode.db"
 
 
-def _connect_readonly(db_path: Path) -> sqlite3.Connection:
+def connect_readonly(db_path: Path) -> sqlite3.Connection:
     # mode=ro allows normal WAL read marks, never native database writes.
     return sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.1)
 
@@ -56,7 +55,7 @@ def _table_names(connection: sqlite3.Connection) -> set[str]:
     }
 
 
-def _schema(connection: sqlite3.Connection) -> OpenCodeDbSchema | None:
+def db_schema(connection: sqlite3.Connection) -> OpenCodeDbSchema | None:
     names = _table_names(connection)
     if "session_v2" in names:
         return "sqlite_v2"
@@ -69,8 +68,8 @@ def detect_opencode_db_schema(db_path: Path | None = None) -> OpenCodeDbSchema |
     resolved_db_path = db_path or resolve_opencode_db_path()
     if not resolved_db_path.is_file():
         return None
-    with closing(_connect_readonly(resolved_db_path)) as connection:
-        return _schema(connection)
+    with closing(connect_readonly(resolved_db_path)) as connection:
+        return db_schema(connection)
 
 
 def opencode_db_session_exists(
@@ -87,9 +86,7 @@ def opencode_db_session_exists(
     if not resolved_db_path.is_file():
         return False
 
-    with closing(
-        sqlite3.connect(resolved_db_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.1)
-    ) as connection:
+    with closing(connect_readonly(resolved_db_path)) as connection:
         row = connection.execute(
             "SELECT 1 FROM session WHERE id = ?", (normalized_session_id,)
         ).fetchone()
@@ -115,7 +112,7 @@ def opencode_db_v2_session_exists(
         return False
 
     try:
-        with closing(_connect_readonly(resolved_db_path)) as connection:
+        with closing(connect_readonly(resolved_db_path)) as connection:
             if "session_v2" not in _table_names(connection):
                 return False
             row = connection.execute(
@@ -144,7 +141,7 @@ def opencode_db_any_session_exists(
     resolved_db_path = db_path or resolve_opencode_db_path()
     if not resolved_db_path.is_file():
         return False
-    with closing(_connect_readonly(resolved_db_path)) as connection:
+    with closing(connect_readonly(resolved_db_path)) as connection:
         names = _table_names(connection)
         table = "session_v2" if "session_v2" in names else "session" if "session" in names else None
         if table is None:
@@ -435,15 +432,13 @@ def iter_opencode_db_events(
     resolved_db_path = db_path or resolve_opencode_db_path()
     if not resolved_db_path.is_file():
         raise FileNotFoundError(resolved_db_path)
-    with closing(
-        sqlite3.connect(resolved_db_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.1)
-    ) as connection:
+    with closing(connect_readonly(resolved_db_path)) as connection:
         connection.row_factory = sqlite3.Row
         connection.execute("BEGIN")
-        yield from _iter_v1_events(connection, normalized_session_id)
+        yield from iter_v1_session_events(connection, normalized_session_id)
 
 
-def _iter_v1_events(
+def iter_v1_session_events(
     connection: sqlite3.Connection, normalized_session_id: str
 ) -> Generator[dict[str, object]]:
     for table, required in (
@@ -518,15 +513,16 @@ def iter_opencode_v2_db_events(
     if not resolved_db_path.is_file():
         return
 
-    with closing(_connect_readonly(resolved_db_path)) as connection:
+    with closing(connect_readonly(resolved_db_path)) as connection:
         connection.row_factory = sqlite3.Row
-        if _schema(connection) != "sqlite_v2" or "session_message" not in _table_names(connection):
+        tables = _table_names(connection)
+        if db_schema(connection) != "sqlite_v2" or "session_message" not in tables:
             return
         connection.execute("BEGIN")
-        yield from _iter_v2_events(connection, normalized_session_id)
+        yield from iter_v2_session_events(connection, normalized_session_id)
 
 
-def _iter_v2_events(
+def iter_v2_session_events(
     connection: sqlite3.Connection, normalized_session_id: str
 ) -> Generator[dict[str, object]]:
     session = connection.execute(
@@ -544,15 +540,20 @@ def _iter_v2_events(
         "SELECT type,seq,data FROM session_message WHERE session_id=? ORDER BY seq,time_created,id",
         (normalized_session_id,),
     ):
-        payload = _load_json_object(message["data"])
-        yield {
-            "record": _V2_RECORD,
-            "version": _V2_VERSION,
-            "type": str(message["type"]),
-            "seq": message["seq"],
-            "session_id": normalized_session_id,
-            "data": payload if payload is not None else {},
-        }
+        yield v2_message_event(message, normalized_session_id)
+
+
+def v2_message_event(message: sqlite3.Row, session_id: str) -> dict[str, object]:
+    """One `session_message` row (type, seq, data) as a V2 transcript event."""
+    payload = _load_json_object(message["data"])
+    return {
+        "record": _V2_RECORD,
+        "version": _V2_VERSION,
+        "type": str(message["type"]),
+        "seq": message["seq"],
+        "session_id": session_id,
+        "data": payload if payload is not None else {},
+    }
 
 
 def iter_opencode_db_session_events(
@@ -605,7 +606,7 @@ def read_last_model(
 
     raw_model: object = None
     try:
-        with closing(_connect_readonly(resolved_db_path)) as connection:
+        with closing(connect_readonly(resolved_db_path)) as connection:
             names = _table_names(connection)
             if "session_v2" in names:
                 row = connection.execute(
@@ -803,17 +804,12 @@ def extract_last_assistant_report_from_session_path(path: Path) -> str | None:
     return extract_last_assistant_report(provider.iter_events(path))
 
 
-def read_opencode_v2_turn(key: NativeKey, turn_ids: tuple[str, ...]) -> str | None:
-    """Stable fact-reader entrypoint; the snapshot helpers own the implementation."""
-    from meridian.lib.harness.opencode_search_source import read_opencode_v2_turn as read_turn
-
-    return read_turn(key, turn_ids)
-
-
 __all__ = [
     "OpenCodeDbSchema",
     "OpenCodeStorageTranscriptProvider",
     "OpenCodeV2StorageTranscriptProvider",
+    "connect_readonly",
+    "db_schema",
     "detect_opencode_db_schema",
     "extract_last_assistant_report",
     "extract_last_assistant_report_from_session_path",
@@ -821,10 +817,12 @@ __all__ = [
     "iter_opencode_db_events",
     "iter_opencode_db_session_events",
     "iter_opencode_v2_db_events",
+    "iter_v1_session_events",
+    "iter_v2_session_events",
     "opencode_db_any_session_exists",
     "opencode_db_session_exists",
     "opencode_db_v2_session_exists",
     "read_last_model",
-    "read_opencode_v2_turn",
     "resolve_opencode_db_path",
+    "v2_message_event",
 ]

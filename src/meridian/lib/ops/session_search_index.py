@@ -13,7 +13,7 @@ from typing import TypedDict
 from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.native_witness import FileWitness, Witness, file_witness
-from meridian.lib.harness.opencode_search_source import opencode_session_witnesses
+from meridian.lib.harness.opencode_snapshot import opencode_session_witnesses
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.ops.session_target import SessionLogTarget, TranscriptSource
 from meridian.lib.ops.session_transcript import (
