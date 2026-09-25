@@ -156,7 +156,18 @@ async def test_streaming_initial_identity(
             json.loads(line)
             for line in (lifecycle / "runner-lifecycle.jsonl").read_text().splitlines()
         ]
-        assert any(fact["event"] == "entry_mismatch" for fact in facts)
+        mismatch_facts = [fact for fact in facts if fact["event"] == "entry_mismatch"]
+        assert len(mismatch_facts) == 1
+        assert mismatch_facts[0]["expected"] == {
+            "harness": "claude", "native_store": expected_store,
+            "session_id": "source-native" if operation == "fork" else expected_id,
+        }
+        assert mismatch_facts[0]["observed"] == {
+            "harness": "claude", "native_store": expected_store, "session_id": observed_id,
+        }
+        assert mismatch_facts[0]["reason"] == (
+            "fork_reused_source" if operation == "fork" else "key"
+        )
         assert not any(event.get("harness_session_id") == observed_id for event in events)
     else:
         assert exit_code == 0

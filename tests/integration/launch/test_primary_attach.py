@@ -1097,7 +1097,11 @@ async def test_primary_attach_signal_during_failed_startup_returns_cancelled(
 
 @pytest.mark.asyncio
 async def test_primary_attach_initial_id_mismatch_is_typed(tmp_path: Path) -> None:
-    from meridian.lib.core.native_identity import NativeEntryMismatch, NativeIdentityPlan
+    from meridian.lib.core.native_identity import (
+        NativeEntryMismatch,
+        NativeIdentityPlan,
+        NativeKeyFields,
+    )
 
     spawn_id = SpawnId("p900-mismatch")
     spawn_dir = tmp_path / "spawns" / spawn_id
@@ -1116,6 +1120,6 @@ async def test_primary_attach_initial_id_mismatch_is_typed(tmp_path: Path) -> No
             config=_build_config(spawn_id=spawn_id, control_root=tmp_path),
             spec=spec, cwd=tmp_path, env={},
         )
-    assert caught.value.expected == "assigned-id"
-    assert caught.value.observed == "observed-other"
+    assert caught.value.expected == NativeKeyFields("codex", "/store", "assigned-id")
+    assert caught.value.observed == NativeKeyFields("codex", "/store", "observed-other")
     assert process_launcher.output_log_paths == []

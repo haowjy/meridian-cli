@@ -21,7 +21,11 @@ from meridian.lib.bootstrap.services import build_spawn_application_service_from
 from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.core.clock import RealClock
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
-from meridian.lib.core.native_identity import NativeSessionUnavailable
+from meridian.lib.core.native_identity import (
+    NativeEntryMismatch,
+    NativeIdentityError,
+    NativeKeyFields,
+)
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     SpawnReservation,
@@ -49,7 +53,8 @@ from meridian.lib.harness.passthrough import get_passthrough
 from meridian.lib.harness.passthrough.base import PassthroughError
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.artifact_io import (
-    append_runner_lifecycle_event,
+    LifecycleLog,
+    record_identity_failure,
     write_projection_artifacts,
 )
 from meridian.lib.launch.constants import (
@@ -58,7 +63,6 @@ from meridian.lib.launch.constants import (
     PRIMARY_META_FILENAME,
     RUNNER_LIFECYCLE_FILENAME,
 )
-from meridian.lib.launch.errors import NativeEntryMismatch
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.run_boundary import finalize_run_boundary
 from meridian.lib.state import spawn_store
@@ -816,7 +820,7 @@ def run_harness_process(
                 get_session_active_work_id_fn=get_session_active_work_id_fn,
                 update_session_work_id_fn=update_session_work_id_fn,
             )
-            startup_identity_error: NativeEntryMismatch | NativeSessionUnavailable | None = None
+            startup_identity_error: NativeIdentityError | None = None
             try:
                 write_native_primary_metadata = False
                 should_fork = (
@@ -1000,8 +1004,10 @@ def run_harness_process(
                     )
                     if result.status == "conflict":
                         raise NativeEntryMismatch(
-                            f"({result.native_store}, {result.harness_session_id})",
-                            f"({identity_plan.native_store}, {identity_plan.harness_session_id})",
+                            NativeKeyFields(str(harness_adapter.id),
+                                result.native_store, result.harness_session_id),
+                            NativeKeyFields(str(harness_adapter.id), identity_plan.native_store,
+                                            identity_plan.harness_session_id),
                         )
                     resolved_harness_session_id = bind_harness_session_id(
                         runtime_root=runtime_root, spawn_id=primary_spawn_id,
@@ -1123,12 +1129,11 @@ def run_harness_process(
                         primary_spawn_id,
                         exit_code=exit_code,
                     )
-            except (NativeEntryMismatch, NativeSessionUnavailable) as exc:
+            except NativeIdentityError as exc:
                 startup_identity_error = exc
                 exit_code = 1
             finally:
                 try:
-                    native_identity_error = None
                     boundary_error = startup_identity_error
                     observed_harness_session_id = None
                     try:
@@ -1150,9 +1155,12 @@ def run_harness_process(
                         observed_harness_session_id and expected_harness_session_id
                         and observed_harness_session_id != expected_harness_session_id
                     ):
+                        expected = NativeKeyFields(
+                            str(harness_adapter.id),
+                            identity_plan.native_store if identity_plan else None,
+                            expected_harness_session_id)
                         boundary_error = NativeEntryMismatch(
-                            expected_harness_session_id, observed_harness_session_id,
-                        )
+                            expected, expected.with_session(observed_harness_session_id))
                     else:
                         resolved_harness_session_id = bind_harness_session_id(
                             runtime_root=runtime_root,
@@ -1163,13 +1171,9 @@ def run_harness_process(
                             current_session_id=resolved_harness_session_id,
                             chat_id=managed.chat_id,
                         )
-                    if (
-                        boundary_error is None and identity_plan is not None
-                        and primary_started_epoch > 0
-                    ):
-                        boundary_error = harness_adapter.verify_native_identity(
-                            identity_plan,
-                        )
+                    if (boundary_error is None and identity_plan is not None
+                            and primary_started_epoch > 0):
+                        boundary_error = harness_adapter.verify_native_identity(identity_plan)
                     observation = harness_adapter.observe_primary_session_id(
                         native_identity_plan=identity_plan,
                         command=command,
@@ -1195,20 +1199,15 @@ def run_harness_process(
                             pid=native_primary_tui_pid, identity_error=boundary_error,
                         ) if primary_spawn_id is not None else boundary_error
                     )
-                    if isinstance(boundary_error, NativeSessionUnavailable):
-                        native_identity_error = boundary_error.failure_code
-                    if isinstance(boundary_error, NativeEntryMismatch):
+                    native_identity_error = boundary_error.failure_code if boundary_error else None
+                    if boundary_error is not None:
                         assert primary_spawn_id is not None
-                        native_identity_error = "entry_mismatch"
-                        append_runner_lifecycle_event(
-                            runtime_root, primary_spawn_id,
-                            resolve_spawn_log_dir(
-                                config_root, primary_spawn_id, runtime_root=runtime_root,
-                            ) / RUNNER_LIFECYCLE_FILENAME,
-                            clock=RealClock(), event="entry_mismatch", phase="post_exit",
-                            expected=boundary_error.expected, observed=boundary_error.observed,
+                        record_identity_failure(boundary_error, phase="post_exit",
+                            lifecycle=LifecycleLog(runtime_root, primary_spawn_id,
+                                resolve_spawn_log_dir(config_root, primary_spawn_id,
+                                    runtime_root=runtime_root) / RUNNER_LIFECYCLE_FILENAME,
+                                RealClock()),
                         )
-                    if native_identity_error:
                         exit_code = 1
                     elif native_primary_tui_pid is not None:
                         assert managed.attempt is not None

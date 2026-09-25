@@ -12,6 +12,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Managed Pi launches load a bounded, atomic v2 session-boundary observer without writing native journals.
 
 ### Fixed
+- Report native identity refusals with consistent structured expected/observed keys.
 - Exercise Pi CLI exit hints and continue/fork dry-runs against verified and unresolved exits.
 - Require tracked continue/fork references to include the full recorded native key.
 - Report native-binding conflicts on rejected writes, not during historical replay.

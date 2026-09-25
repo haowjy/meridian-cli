@@ -6,9 +6,13 @@ from pathlib import Path
 
 import structlog
 
-from meridian.lib.core.native_identity import NativeSessionUnavailable, RunBoundary
+from meridian.lib.core.native_identity import (
+    NativeEntryMismatch,
+    NativeIdentityError,
+    NativeKeyFields,
+    RunBoundary,
+)
 from meridian.lib.harness.adapter import SubprocessHarness
-from meridian.lib.launch.errors import NativeEntryMismatch
 from meridian.lib.state import session_store, spawn_store
 
 logger = structlog.get_logger()
@@ -17,8 +21,8 @@ logger = structlog.get_logger()
 def finalize_run_boundary(
     *, adapter: SubprocessHarness, child_env: dict[str, str], runtime_root: Path,
     spawn_id: str, pid: int | None,
-    identity_error: NativeEntryMismatch | NativeSessionUnavailable | None = None,
-) -> NativeEntryMismatch | NativeSessionUnavailable | None:
+    identity_error: NativeIdentityError | None = None,
+) -> NativeIdentityError | None:
     """Return an entry conflict; exit uncertainty is not an execution failure."""
     boundary = (
         adapter.observe_run_boundary(child_env=child_env, pid=pid)
@@ -40,8 +44,8 @@ def finalize_run_boundary(
     if mismatch:
         assert observed is not None
         identity_error = NativeEntryMismatch(
-            f"({entry.native_store}, {entry.harness_session_id})",
-            f"({observed.native_store}, {observed.session_id})",
+            NativeKeyFields(entry.harness, entry.native_store, entry.harness_session_id),
+            NativeKeyFields(str(adapter.id), observed.native_store, observed.session_id),
         )
     exit_chat_id = None
     if identity_error is None and boundary.exit is not None:

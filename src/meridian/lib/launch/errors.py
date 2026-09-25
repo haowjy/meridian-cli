@@ -2,8 +2,6 @@
 
 from enum import StrEnum
 
-from meridian.lib.core.native_identity import NativeEntryMismatch as NativeEntryMismatch
-
 
 class ErrorCategory(StrEnum):
     RETRYABLE = "retryable"
