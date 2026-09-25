@@ -1,6 +1,6 @@
 # Meridian Pi extensions
 
-This folder contains Meridian-managed Pi extension sources for spawned RPC sessions.
+This folder contains Meridian-managed Pi extension sources for spawned RPC and primary native TUI sessions.
 
 Meridian does **not** bundle a Pi runtime. Install/update Pi separately and run it directly.
 
@@ -13,10 +13,11 @@ npm run build:extensions
 
 This writes a stable entrypoint under `dist/extensions/`:
 
+- `dist/extensions/session-boundary/index.js` — bounded native entry/exit observations
 - `dist/extensions/managed-bash/index.js` — managed shell tasks, `/ps`
 - `dist/extensions/meridian-spawn-watch/index.js` — correlated spawn discovery, `/spawn`, `/spawn:wait`
 
-Launch projection copies that extension entrypoint into Meridian-owned state for each spawned run.
+Launch projection resolves these stable bundle paths for each managed launch.
 
 ## Verify (every implementation pass)
 

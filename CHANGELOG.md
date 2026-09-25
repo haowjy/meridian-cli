@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Session logs label unresolved exits as entry-based views.
 - Runs retain immutable entry chats and resolve verified native exits to their own chats; missing exits stay explicit.
 - Managed Pi launches load a bounded, atomic session-boundary observer without writing to native journals.
 
