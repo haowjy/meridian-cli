@@ -807,9 +807,7 @@ async def test_primary_attach_merges_observer_client_env_into_tui(tmp_path: Path
         env={"PATH": "/usr/bin"},
     )
 
-    assert process_launcher.launch_envs == [
-        {"PATH": "/usr/bin", "OPENCODE_PASSWORD": "s3cret"}
-    ]
+    assert process_launcher.launch_envs == [{"PATH": "/usr/bin", "OPENCODE_PASSWORD": "s3cret"}]
     assert process_launcher.launch_commands == [
         ("opencode", "--server", "http://127.0.0.1:7812", "--session", "thread-123")
     ]
@@ -1143,18 +1141,54 @@ async def test_primary_attach_initial_id_mismatch_is_typed(tmp_path: Path) -> No
     spawn_dir = tmp_path / "spawns" / spawn_id
     connection = FakeManagedConnection(events=[], session_id="observed-other")
     process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir)
+    from meridian.lib.launch.native_run import bind_entry
+    from meridian.lib.launch.session_scope import SessionAttempt
+    from meridian.lib.state import session_store
+
+    chat_id = session_store.start_session(tmp_path, "codex", "", "")
+    record = session_store.get_session_record(tmp_path, chat_id)
+    assert record is not None
+    spec = _build_spec().model_copy(
+        update={
+            "native_identity": NativeIdentity(
+                "codex",
+                "resume",
+                "/store",
+                "assigned-id",
+                "assigned-id",
+                None,
+            )
+        }
+    )
+    native_run = bind_entry(
+        SessionAttempt(tmp_path, chat_id, record.session_instance_id, None), spec, harness="codex"
+    )
     launcher = PrimaryAttachLauncher(
-        spawn_id=spawn_id, spawn_dir=spawn_dir, connection=connection,
+        spawn_id=spawn_id,
+        spawn_dir=spawn_dir,
+        connection=connection,
         tui_command_builder=lambda sid: ("codex", "resume", sid),
         process_launcher=process_launcher,
+        session_id_observer=native_run.observe,
     )
-    spec = _build_spec().model_copy(update={"native_identity": NativeIdentity(
-        "codex", "resume", "/store", "assigned-id", "assigned-id", None,
-    )})
+    spec = _build_spec().model_copy(
+        update={
+            "native_identity": NativeIdentity(
+                "codex",
+                "resume",
+                "/store",
+                "assigned-id",
+                "assigned-id",
+                None,
+            )
+        }
+    )
     with pytest.raises(NativeEntryMismatch) as caught:
         await launcher.run(
             config=_build_config(spawn_id=spawn_id, control_root=tmp_path),
-            spec=spec, cwd=tmp_path, env={},
+            spec=spec,
+            cwd=tmp_path,
+            env={},
         )
     assert caught.value.expected == NativeKeyFields("codex", "/store", "assigned-id")
     assert caught.value.observed == NativeKeyFields("codex", "/store", "observed-other")

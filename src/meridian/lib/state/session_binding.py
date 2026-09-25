@@ -5,14 +5,14 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 
-from meridian.lib.core.native_identity import BindSource
+from meridian.lib.core.native_identity import BindSource, NativeKeyFields
 from meridian.lib.core.types import ChatId, HarnessSessionId
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store as sessions
 from meridian.lib.state.atomic import append_durable_jsonl_line
 from meridian.lib.state.event_store import read_events
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
-from meridian.lib.state.native_binding import Bound, Conflict, bind, report_conflict
+from meridian.lib.state.native_binding import BindOutcome, Bound, Conflict, bind, report_conflict
 from meridian.lib.state.paths import RuntimePaths
 
 
@@ -34,13 +34,12 @@ class SessionBindings:
     def bind(
         self,
         chat_id: str,
-        harness_session_id: str,
+        attempted: NativeKeyFields,
         *,
-        native_store: str | None = None,
-        source: BindSource = "observed",
+        source: BindSource,
         session_instance_id: str | None = None,
         startup_attempt_id: str | None = None,
-    ) -> sessions.NativeBindingResult:
+    ) -> BindOutcome:
         if startup_attempt_id is not None and session_instance_id is None:
             raise ValueError("startup identity requires a captured session generation")
         existing = self.records.get(chat_id)
@@ -48,8 +47,10 @@ class SessionBindings:
             raise ValueError(f"Unknown chat: {chat_id}")
         event = sessions.SessionUpdateEvent(
             chat_id=ChatId(chat_id),
-            harness_session_id=HarnessSessionId(harness_session_id),
-            native_store=native_store,
+            harness_session_id=(
+                HarnessSessionId(attempted.session_id) if attempted.session_id else None
+            ),
+            native_store=attempted.native_store,
             source=source,
             session_instance_id=(
                 session_instance_id
@@ -61,29 +62,20 @@ class SessionBindings:
         if not sessions._generation_matches(
             existing.session_instance_id, event.session_instance_id
         ):
-            return sessions.NativeBindingResult(
-                "conflict", existing.harness_session_id, existing.native_store
-            )
-        outcome = bind(existing.key_fields(), event.key_fields())
+            return Conflict(existing.key_fields(), attempted, "generation")
+        outcome = bind(existing.key_fields(), attempted)
         if isinstance(outcome, Conflict):
             report_conflict(chat_id, outcome, source)
-            return sessions.NativeBindingResult(
-                "conflict", existing.harness_session_id, existing.native_store
-            )
-        status = "bound" if isinstance(outcome, Bound) else "already_bound"
+            return outcome
         if startup_attempt_id is not None:
             sessions._validate_startup_identity(self.events, event)
-        if status == "bound" or startup_attempt_id is not None:
+        if isinstance(outcome, Bound) or startup_attempt_id is not None:
             if (event.chat_id, event.session_instance_id) in self.historical:
                 raise ValueError("Historical sessions are inert and cannot be mutated")
             self._pending.append(event)
             self.events.append(event)
             sessions.project_session_event(self.records, event)
-        return sessions.NativeBindingResult(
-            status,
-            outcome.key.session_id,
-            outcome.key.native_store,
-        )
+        return outcome
 
     def commit(self) -> None:
         if not self._pending:

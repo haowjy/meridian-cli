@@ -7,6 +7,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Session log, export and previews read bound native chats; label spawn views. Reject legacy runner-history files.
 
+- Unify native identity checks across runners; reject reused fork IDs and verify streaming-serve exits.
+
 - Refuse passthrough identity flags and invalid Claude dry-run sources; await OpenCode fork IDs.
 - Keep live event hooks and subscriber delivery active without runner-history persistence.
 

@@ -88,7 +88,8 @@ async def test_streaming_initial_identity(
         prompt="hello",
         session=SessionRequest(
             requested_harness_session_id="source-native" if operation != "create" else None,
-            continue_fork=operation == "fork", source_native_store=str(source),
+            continue_fork=operation == "fork",
+            source_native_store=str(source),
         ),
     )
     run = Spawn(
@@ -119,7 +120,6 @@ async def test_streaming_initial_identity(
             skill_paths=(),
         ),
         request=request.session,
-        harness_session_id="source-native" if operation == "resume" else "",
         spawn_id=str(run.spawn_id),
         startup_attempt_id="attempt-entry",
     ) as managed:
@@ -131,7 +131,7 @@ async def test_streaming_initial_identity(
                 runtime_root=runtime_root,
                 artifacts=LocalStore(root_dir=runtime_root / "artifacts"),
                 registry=HarnessRegistry.with_defaults(),
-                session_attempt=managed.attempt,
+                session_attempt=managed,
             ),
             timeout=15,
         )
@@ -162,11 +162,14 @@ async def test_streaming_initial_identity(
         mismatch_facts = [fact for fact in facts if fact["event"] == "entry_mismatch"]
         assert len(mismatch_facts) == 1
         assert mismatch_facts[0]["expected"] == {
-            "harness": "claude", "native_store": expected_store,
+            "harness": "claude",
+            "native_store": expected_store,
             "session_id": "source-native" if operation == "fork" else expected_id,
         }
         assert mismatch_facts[0]["observed"] == {
-            "harness": "claude", "native_store": expected_store, "session_id": observed_id,
+            "harness": "claude",
+            "native_store": expected_store,
+            "session_id": observed_id,
         }
         assert mismatch_facts[0]["reason"] == (
             "fork_reused_source" if operation == "fork" else "key"
@@ -184,6 +187,8 @@ async def test_later_switch_does_not_rebind_or_fail_entry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from structlog.testing import capture_logs
+
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     expected_id = ""
 
@@ -252,23 +257,25 @@ async def test_later_switch_does_not_rebind_or_fail_entry(
             skill_paths=(),
         ),
         request=request.session,
-        harness_session_id="",
         spawn_id=str(run.spawn_id),
         startup_attempt_id="attempt-entry",
     ) as managed:
-        exit_code = await asyncio.wait_for(
-            _execute_with_context(
-                run,
-                request=request,
-                project_root=tmp_path,
-                runtime_root=runtime_root,
-                artifacts=LocalStore(root_dir=runtime_root / "artifacts"),
-                registry=HarnessRegistry.with_defaults(),
-                session_attempt=managed.attempt,
-            ),
-            timeout=15,
-        )
+        with capture_logs() as logs:
+            exit_code = await asyncio.wait_for(
+                _execute_with_context(
+                    run,
+                    request=request,
+                    project_root=tmp_path,
+                    runtime_root=runtime_root,
+                    artifacts=LocalStore(root_dir=runtime_root / "artifacts"),
+                    registry=HarnessRegistry.with_defaults(),
+                    session_attempt=managed,
+                ),
+                timeout=15,
+            )
         record = session_store.get_session_record(runtime_root, managed.chat_id)
         assert record is not None
         assert record.harness_session_id == expected_id
     assert exit_code == 0
+
+    assert len([log for log in logs if log["event"] == "native_binding_conflict"]) == 1

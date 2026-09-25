@@ -102,7 +102,8 @@ class _ClaudeSeedPersistenceConnection:
     async def events(self):  # type: ignore[no-untyped-def]
         assert self._project_root is not None
         log_dir = resolve_spawn_log_dir(
-            self._project_root, self._spawn_id,
+            self._project_root,
+            self._spawn_id,
             runtime_root=resolve_project_runtime_root_for_write(self._project_root),
         )
         (log_dir / "report.md").write_text("seeded claude complete", encoding="utf-8")
@@ -525,8 +526,11 @@ async def test_execute_with_streaming_persists_selected_task_cwd_on_projection_f
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("artifact_mismatch", [False, True])
 async def test_streaming_claude_exec_receives_prebound_identity(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    artifact_mismatch: bool,
 ) -> None:
     import json
     import shlex
@@ -548,27 +552,51 @@ async def test_streaming_claude_exec_receives_prebound_identity(
         f"{shlex.quote(str(binding_log))}\n"
         f"printf '%s\\n' \"$@\" > {shlex.quote(str(argv_log))}\n"
         "read -r prompt\n"
-        "printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"done\"}'\n"
+        + (
+            'printf \'%s\\n\' \'{"type":"system","subtype":"init","session_id":"wrong-entry"}\'\n'
+            if artifact_mismatch
+            else ""
+        )
+        + 'printf \'%s\\n\' \'{"type":"result","subtype":"success","result":"done"}\'\n'
     )
     run = Spawn(spawn_id=SpawnId("p42"), prompt="hello", model=ModelId("sonnet"), status="queued")
     request = _build_claude_request()
     spawn_store.start_spawn(
-        runtime_root, spawn_id=run.spawn_id, chat_id="", model=str(run.model), agent="",
-        harness="claude", kind="streaming", prompt=run.prompt, status="queued",
+        runtime_root,
+        spawn_id=run.spawn_id,
+        chat_id="",
+        model=str(run.model),
+        agent="",
+        harness="claude",
+        kind="streaming",
+        prompt=run.prompt,
+        status="queued",
     )
     with session_scope(
         runtime_root=runtime_root,
         metadata=PrimarySessionMetadata(
-            harness="claude", model="sonnet", agent="", agent_path="", skills=(), skill_paths=(),
+            harness="claude",
+            model="sonnet",
+            agent="",
+            agent_path="",
+            skills=(),
+            skill_paths=(),
         ),
-        request=request.session, harness_session_id="", spawn_id=str(run.spawn_id),
+        request=request.session,
+        spawn_id=str(run.spawn_id),
         startup_attempt_id="attempt-test",
     ) as managed:
-        task = asyncio.create_task(_execute_with_context(
-            run, request=request, project_root=tmp_path, runtime_root=runtime_root,
-            artifacts=LocalStore(root_dir=runtime_root / "artifacts"),
-            registry=HarnessRegistry.with_defaults(), session_attempt=managed.attempt,
-        ))
+        task = asyncio.create_task(
+            _execute_with_context(
+                run,
+                request=request,
+                project_root=tmp_path,
+                runtime_root=runtime_root,
+                artifacts=LocalStore(root_dir=runtime_root / "artifacts"),
+                registry=HarnessRegistry.with_defaults(),
+                session_attempt=managed,
+            )
+        )
         try:
             async with asyncio.timeout(15):
                 while not argv_log.exists():
@@ -586,7 +614,16 @@ async def test_streaming_claude_exec_receives_prebound_identity(
             assert record.native_store == str(
                 tmp_path / "home" / ".claude" / "projects" / project_slug(tmp_path)
             )
-            await asyncio.wait_for(task, 15)
+            code = await asyncio.wait_for(task, 15)
+            assert code == (1 if artifact_mismatch else 0)
+            row = spawn_store.get_spawn(runtime_root, run.spawn_id)
+            assert row is not None and row.run_boundary is not None
+            assert row.run_boundary.status == ("mismatch" if artifact_mismatch else "unresolved")
+            assert (
+                runtime_root / "spawns" / run.spawn_id / "report.md"
+            ).read_text().strip() == "# Report\n\ndone"
+            if artifact_mismatch:
+                assert row.terminal.error == "entry_mismatch"
         finally:
             if not task.done():
                 task.cancel()

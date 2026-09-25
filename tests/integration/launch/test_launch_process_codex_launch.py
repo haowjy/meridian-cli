@@ -87,7 +87,8 @@ def _build_primary_launch_context(
             session=session or SessionRequest(),
             launch_policy_snapshot=(
                 LaunchPolicySnapshot(model=model, harness=harness_id.value)
-                if session is not None else None
+                if session is not None
+                else None
             ),
         ),
         runtime=LaunchRuntime(
@@ -165,6 +166,7 @@ def test_run_harness_process_writes_codex_system_field_primary_projection_manife
             spec: Any,
             process_launcher: Any,
             on_running: Any = None,
+            session_id_observer: Any = None,
         ) -> PrimaryAttachOutcome:
             _ = harness_id, spawn_id, control_root, task_cwd, env, spec, process_launcher
             captured["log_dir"] = Path(spawn_dir)
@@ -204,8 +206,7 @@ def test_run_harness_process_writes_codex_system_field_primary_projection_manife
         harness_registry=harness_registry,
         dry_run=True,
     )
-    adapter = harness_registry.get_subprocess_harness(harness_id)
-    monkeypatch.setattr(adapter, "observe_session_id", lambda **kwargs: None)
+    harness_registry.get_subprocess_harness(harness_id)
 
     captured: dict[str, object] = {}
     outcome = run_harness_process(
@@ -215,8 +216,6 @@ def test_run_harness_process_writes_codex_system_field_primary_projection_manife
         run_primary_process_with_capture_fn=lambda *_args: (_ for _ in ()).throw(
             AssertionError("managed primary path should avoid black-box launcher")
         ),
-        stop_session_fn=lambda *args, **kwargs: None,
-        update_session_harness_id_fn=lambda *args, **kwargs: None,
     )
 
     log_dir = captured["log_dir"]
@@ -257,7 +256,7 @@ def test_run_harness_process_codex_primary_routes_to_managed_path(
             primary_session_mode=SessionMode.RESUME.value,
         ),
     )
-    codex_adapter = harness_registry.get_subprocess_harness(HarnessId.CODEX)
+    harness_registry.get_subprocess_harness(HarnessId.CODEX)
     captured: dict[str, object] = {}
     selector_args: list[Path | None] = []
 
@@ -275,13 +274,17 @@ def test_run_harness_process_codex_primary_routes_to_managed_path(
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
+        session_id_observer: Any = None,
     ) -> PrimaryAttachOutcome:
         _ = spawn_id, control_root, task_cwd, env, spec, process_launcher, on_running
         captured["harness_id"] = harness_id
         spawn_dir = Path(spawn_dir)
         spawn_dir.mkdir(parents=True, exist_ok=True)
         captured["spawn_dir"] = spawn_dir
-        return PrimaryAttachOutcome(exit_code=0, session_id="thread-managed", tui_pid=5150)
+        session_id_observer(spec.native_identity.session_id)
+        return PrimaryAttachOutcome(
+            exit_code=0, session_id=spec.native_identity.session_id, tui_pid=5150
+        )
 
     def fail_black_box(
         command: Any,
@@ -293,15 +296,12 @@ def test_run_harness_process_codex_primary_routes_to_managed_path(
         raise AssertionError("codex primary should use managed launcher path")
 
     monkeypatch.setattr(process_runner, "select_process_launcher", fake_select_process_launcher)
-    monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: None)
 
     outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_attach_fn=fake_run_primary_attach,
         run_primary_process_with_capture_fn=fail_black_box,
-        stop_session_fn=lambda *args, **kwargs: None,
-        update_session_harness_id_fn=lambda *args, **kwargs: None,
     )
 
     assert captured["harness_id"] == HarnessId.CODEX
@@ -310,7 +310,7 @@ def test_run_harness_process_codex_primary_routes_to_managed_path(
     assert outcome.primary_spawn_id is not None
     assert list(launch_context.runtime_root.rglob("tui.log")) == []
     assert outcome.exit_code == 0
-    assert outcome.resolved_harness_session_id == "thread-managed"
+    assert outcome.resolved_harness_session_id == "00000000-0000-4000-8000-000000000010"
 
 
 @pytest.mark.slow
@@ -334,7 +334,7 @@ def test_run_harness_process_codex_managed_attach_uses_control_root_with_distinc
             primary_session_mode=SessionMode.RESUME.value,
         ),
     )
-    codex_adapter = harness_registry.get_subprocess_harness(HarnessId.CODEX)
+    harness_registry.get_subprocess_harness(HarnessId.CODEX)
     captured: dict[str, object] = {}
 
     def fake_run_primary_attach(
@@ -347,6 +347,7 @@ def test_run_harness_process_codex_managed_attach_uses_control_root_with_distinc
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
+        session_id_observer: Any = None,
     ) -> PrimaryAttachOutcome:
         _ = spawn_id, spawn_dir, spec, process_launcher
         captured["harness_id"] = harness_id
@@ -357,10 +358,11 @@ def test_run_harness_process_codex_managed_attach_uses_control_root_with_distinc
         if callable(on_running):
             on_running(5152)
         return PrimaryAttachOutcome(
-            exit_code=0, session_id=spec.native_identity.session_id, tui_pid=5152,
+            exit_code=0,
+            session_id=spec.native_identity.session_id,
+            tui_pid=5152,
         )
 
-    monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: None)
     outcome = run_harness_process(
         launch_context,
         harness_registry,
@@ -368,8 +370,6 @@ def test_run_harness_process_codex_managed_attach_uses_control_root_with_distinc
         run_primary_process_with_capture_fn=lambda *_args: (_ for _ in ()).throw(
             AssertionError("managed primary path should avoid black-box launcher")
         ),
-        stop_session_fn=lambda *args, **kwargs: None,
-        update_session_harness_id_fn=lambda *args, **kwargs: None,
     )
 
     assert captured["harness_id"] == HarnessId.CODEX
@@ -412,7 +412,7 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
             primary_session_mode=SessionMode.RESUME.value,
         ),
     )
-    codex_adapter = harness_registry.get_subprocess_harness(HarnessId.CODEX)
+    harness_registry.get_subprocess_harness(HarnessId.CODEX)
     captured: dict[str, object] = {}
 
     def fake_run_primary_attach(
@@ -425,6 +425,7 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
+        session_id_observer: Any = None,
     ) -> PrimaryAttachOutcome:
         _ = harness_id, spawn_id, spawn_dir, control_root, task_cwd, env, spec, process_launcher
         assert callable(on_running)
@@ -434,7 +435,9 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
         captured["status_seen_before_return"] = running_record.status
         captured["worker_pid_seen_before_return"] = running_record.worker_pid
         return PrimaryAttachOutcome(
-            exit_code=0, session_id=spec.native_identity.session_id, tui_pid=5151,
+            exit_code=0,
+            session_id=spec.native_identity.session_id,
+            tui_pid=5151,
         )
 
     def fail_black_box(
@@ -446,15 +449,11 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
     ) -> tuple[int, int]:
         raise AssertionError("codex primary should use managed launcher path")
 
-    monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: None)
-
     outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_attach_fn=fake_run_primary_attach,
         run_primary_process_with_capture_fn=fail_black_box,
-        stop_session_fn=lambda *args, **kwargs: None,
-        update_session_harness_id_fn=lambda *args, **kwargs: None,
     )
 
     assert captured["status_seen_before_return"] == "running"
@@ -482,7 +481,7 @@ def test_run_harness_process_codex_managed_failure_raises_error(
             primary_session_mode=SessionMode.RESUME.value,
         ),
     )
-    codex_adapter = harness_registry.get_subprocess_harness(HarnessId.CODEX)
+    harness_registry.get_subprocess_harness(HarnessId.CODEX)
 
     def failing_managed(
         harness_id: Any,
@@ -494,12 +493,11 @@ def test_run_harness_process_codex_managed_failure_raises_error(
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
+        session_id_observer: Any = None,
     ) -> PrimaryAttachOutcome:
         _ = harness_id, spawn_id, control_root, task_cwd, env, spec, process_launcher, on_running
         Path(spawn_dir).mkdir(parents=True, exist_ok=True)
         raise PrimaryAttachError("managed startup error")
-
-    monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: None)
 
     with pytest.raises(PrimaryAttachError, match="managed startup error"):
         run_harness_process(
@@ -509,6 +507,4 @@ def test_run_harness_process_codex_managed_failure_raises_error(
             run_primary_process_with_capture_fn=lambda *_args: (_ for _ in ()).throw(
                 AssertionError("codex should not fall back to black-box")
             ),
-            stop_session_fn=lambda *args, **kwargs: None,
-            update_session_harness_id_fn=lambda *args, **kwargs: None,
         )

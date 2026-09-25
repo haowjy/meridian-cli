@@ -15,10 +15,10 @@ from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.native_identity import (
     LaunchIntent,
     NativeIdentity,
-    NativeIdentityError,
+    NativeKeyFields,
     NativeSessionUnavailable,
     Operation,
-    RunBoundary,
+    PostExit,
 )
 from meridian.lib.core.types import ArtifactKey, HarnessId, ModelId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
@@ -351,12 +351,6 @@ class NativePrimaryRuntimeMetadata(BaseModel):
     auth_policy: str | None = None
 
 
-class PrimarySessionObservation(BaseModel):
-    """Post-attempt exact identity and separate diagnostic observations."""
-
-    model_config = ConfigDict(frozen=True)
-
-    trampoline_successor_id: str | None = None
 
 
 RecordConfigDirFn = Callable[[str], None]
@@ -426,17 +420,13 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
         interactive: bool,
     ) -> NativeIdentity: ...
 
-    def verify_native_identity(
-        self,
-        plan: NativeIdentity,
-    ) -> NativeIdentityError | None: ...
 
-    def observe_run_boundary(
-        self,
-        *,
-        child_env: dict[str, str],
-        pid: int | None,
-    ) -> RunBoundary | None: ...
+
+    def observe_after_exit(
+        self, identity: NativeIdentity, entry: NativeKeyFields, *,
+        child_env: Mapping[str, str], child_cwd: Path, pid: int | None,
+        started_at_epoch: float | None,
+    ) -> PostExit: ...
 
     def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> AdapterSpecT: ...
 
@@ -511,21 +501,6 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         """Project prelaunch state into primary_meta.json runtime fields."""
         ...
 
-    def observe_primary_session_id(
-        self,
-        *,
-        native_identity: NativeIdentity | None,
-        command: tuple[str, ...],
-        child_env: dict[str, str],
-        launch_child_cwd: Path,
-        started_at_epoch: float | None,
-        expected_session_id: str,
-        requested_session_id: str,
-        resolved_session_id: str,
-        exit_code: int,
-    ) -> PrimarySessionObservation:
-        """Verify the planned native target and report separate post-attempt diagnostics."""
-        ...
 
     def build_primary_runtime_request_handler(
         self,
@@ -575,35 +550,6 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         """
         ...
 
-    def observe_session_id(
-        self,
-        *,
-        artifacts: ArtifactStore,
-        spawn_id: SpawnId | None = None,
-        current_session_id: str | None = None,
-        connection_session_id: str | None = None,
-        project_root: Path | None = None,
-        started_at_epoch: float | None = None,
-        started_at_local_iso: str | None = None,
-        expected_session_id: str | None = None,
-    ) -> str | None:
-        """Return the best available session ID observed after one execution.
-
-        Priority order (each step falls through only if the result is empty):
-        1. *connection_session_id* — live session id from the transport
-           layer (e.g. HTTP/WS adapters that know the session id at
-           connection time).
-        2. Artifact extraction via ``extract_session_id()``.
-        3. *current_session_id* — previously known id, returned as fallback.
-
-        No filesystem discovery fallback. Callers pass observations through the
-        immutable bind seam; a differing ID cannot replace the chat key.
-
-        I-4 contract: called exactly once per launch, by the driving adapter
-        after the executor returns.  MUST NOT read or write adapter-instance
-        singleton state shared across launches.
-        """
-        ...
 
     def fork_session(self, source_session_id: str, *, native_store: str | None = None) -> str: ...
 
@@ -761,21 +707,14 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
             else intent.preforked_session_id
         )
 
-    def observe_run_boundary(
-        self,
-        *,
-        child_env: dict[str, str],
-        pid: int | None,
-    ) -> RunBoundary | None:
-        """Return launch-owned boundary observations when supported."""
-        return None
 
-    def verify_native_identity(
-        self,
-        plan: NativeIdentity,
-    ) -> NativeIdentityError | None:
-        """Return an exact native entry conflict after execution, if supported."""
-        return None
+
+    def observe_after_exit(
+        self, identity: NativeIdentity, entry: NativeKeyFields, *,
+        child_env: Mapping[str, str], child_cwd: Path, pid: int | None,
+        started_at_epoch: float | None,
+    ) -> PostExit:
+        return PostExit()
 
     @abstractmethod
     def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> SpecT:
@@ -867,30 +806,6 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         _ = state
         return NativePrimaryRuntimeMetadata()
 
-    def observe_primary_session_id(
-        self,
-        *,
-        native_identity: NativeIdentity | None,
-        command: tuple[str, ...],
-        child_env: dict[str, str],
-        launch_child_cwd: Path,
-        started_at_epoch: float | None,
-        expected_session_id: str,
-        requested_session_id: str,
-        resolved_session_id: str,
-        exit_code: int,
-    ) -> PrimarySessionObservation:
-        _ = (
-            command,
-            child_env,
-            launch_child_cwd,
-            started_at_epoch,
-            expected_session_id,
-            requested_session_id,
-            resolved_session_id,
-            exit_code,
-        )
-        return PrimarySessionObservation()
 
     def build_primary_runtime_request_handler(
         self,
@@ -919,46 +834,6 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         """
         return project_inline_content(content)
 
-    def observe_session_id(
-        self,
-        *,
-        artifacts: ArtifactStore,
-        spawn_id: SpawnId | None = None,
-        current_session_id: str | None = None,
-        connection_session_id: str | None = None,
-        project_root: Path | None = None,
-        started_at_epoch: float | None = None,
-        started_at_local_iso: str | None = None,
-        expected_session_id: str | None = None,
-    ) -> str | None:
-        """Return the best observed session ID after one execution.
-
-        Default priority: connection_session_id > extract_session_id >
-        current_session_id. Native identity is never discovered by filesystem scan.
-
-        Concrete adapters may override for harness-specific extraction.
-        """
-
-        def _norm(v: str | None) -> str | None:
-            if not v:
-                return None
-            stripped = v.strip()
-            return stripped or None
-
-        live = _norm(connection_session_id)
-        if live:
-            return live
-
-        if spawn_id is not None:
-            extracted = _norm(self.extract_session_id(artifacts, spawn_id))
-            if extracted:
-                return extracted
-
-        current = _norm(current_session_id)
-        if current:
-            return current
-
-        return None
 
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:
         _ = run

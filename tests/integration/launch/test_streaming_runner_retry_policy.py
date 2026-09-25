@@ -52,9 +52,7 @@ async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
     monkeypatch: pytest.MonkeyPatch,
     timeout_source: str,
 ) -> None:
-    async def _abort_tail_exit_failure(
-        _coordinator: object, _recorded_outcome: object
-    ) -> object:
+    async def _abort_tail_exit_failure(_coordinator: object, _recorded_outcome: object) -> object:
         raise RuntimeError("Pi abort tail failed while classifying stream exit")
 
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
@@ -168,13 +166,12 @@ async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
         for event in history
     )
 
-    state = json.loads(
-        (runtime_root / "spawns" / str(run.spawn_id) / "state.json").read_text()
-    )
+    state = json.loads((runtime_root / "spawns" / str(run.spawn_id) / "state.json").read_text())
     assert re.fullmatch(
         r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3,6}Z",
         state["terminal"]["published_at"],
     )
+
 
 @pytest.mark.asyncio
 async def test_execute_with_streaming_finalizes_resident_deadline_without_retry(
@@ -264,10 +261,24 @@ async def test_execute_with_streaming_finalizes_resident_deadline_without_retry(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("different_ids", [False, True])
 async def test_execute_with_streaming_keeps_resident_rearm_budget_across_retry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    different_ids: bool,
 ) -> None:
+    from structlog.testing import capture_logs
+
+    from meridian.lib.state import session_store
+
+    original_start = _ResidentRearmRetryConnection.start
+
+    async def start(connection, config, spec):
+        await original_start(connection, config, spec)
+        if different_ids:
+            connection._session_id = f"thread-{connection._attempt_index}"
+
+    monkeypatch.setattr(_ResidentRearmRetryConnection, "start", start)
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
@@ -278,9 +289,7 @@ async def test_execute_with_streaming_keeps_resident_rearm_budget_across_retry(
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id, _transport_id=TransportId.STREAMING: (
-            _ResidentRearmRetryConnection
-        ),
+        lambda _harness_id, _transport_id=TransportId.STREAMING: _ResidentRearmRetryConnection,
     )
 
     run = Spawn(
@@ -314,21 +323,22 @@ async def test_execute_with_streaming_keeps_resident_rearm_budget_across_retry(
         encoding="utf-8",
     )
 
-    exit_code = await asyncio.wait_for(
-        _execute_with_context(
-            run,
-            request=request,
-            project_root=tmp_path,
-            runtime_root=runtime_root,
-            artifacts=artifacts,
-            registry=registry,
-            clock=fake_clock,
-            heartbeat_touch=fake_heartbeat.touch,
-            heartbeat_interval_secs=0.001,
-            guardrails=(guardrail,),
-        ),
-        timeout=15.0,
-    )
+    with capture_logs() as logs:
+        exit_code = await asyncio.wait_for(
+            _execute_with_context(
+                run,
+                request=request,
+                project_root=tmp_path,
+                runtime_root=runtime_root,
+                artifacts=artifacts,
+                registry=registry,
+                clock=fake_clock,
+                heartbeat_touch=fake_heartbeat.touch,
+                heartbeat_interval_secs=0.001,
+                guardrails=(guardrail,),
+            ),
+            timeout=15.0,
+        )
 
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
     assert exit_code == 0
@@ -337,6 +347,11 @@ async def test_execute_with_streaming_keeps_resident_rearm_budget_across_retry(
     assert row.status == "succeeded"
     assert row.resident_rearm_count == 1
 
+    if different_ids:
+        assert row.chat_id is not None
+        entry = session_store.get_session_record(runtime_root, row.chat_id)
+        assert entry.harness_session_id == "thread-1"
+        assert len([log for log in logs if log["event"] == "native_binding_conflict"]) == 1
 
 
 @pytest.mark.asyncio

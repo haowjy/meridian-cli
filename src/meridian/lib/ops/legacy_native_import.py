@@ -15,10 +15,12 @@ from contextlib import suppress
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from meridian.lib.core.native_identity import NativeKeyFields
 from meridian.lib.harness.legacy_native_stores import SUPPORTED, LegacyNativeStores
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import read_events, utc_now_iso
+from meridian.lib.state.native_binding import Conflict
 from meridian.lib.state.session_binding import session_bindings
 from meridian.lib.state.session_store import SessionRecord, list_all_session_records
 from meridian.lib.state.spawn.repository import SpawnStateQuarantined, read_state, scan_spawn_ids
@@ -155,12 +157,11 @@ def import_legacy_native_sessions(runtime_root: Path) -> ImportReport | None:
                     continue
                 result = bindings.bind(
                     chat_id,
-                    session_id,
-                    native_store=store,
+                    NativeKeyFields(original.harness, store, session_id),
                     source="legacy_import",
                     session_instance_id=original.session_instance_id,
                 )
-                if result.status == "conflict":
+                if isinstance(result, Conflict):
                     del report.bindings[chat_id]
                     report.counts[original.harness]["imported"] -= 1
                     report.record(original, "ambiguous_id")

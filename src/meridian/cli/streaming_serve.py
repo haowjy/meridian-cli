@@ -15,17 +15,22 @@ from meridian.lib.bootstrap.services import (
     build_spawn_lifecycle_service_from_roots,
     prepare_for_runtime_write,
 )
+from meridian.lib.core.clock import RealClock
 from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
+from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
+from meridian.lib.launch.constants import RUNNER_LIFECYCLE_FILENAME
+from meridian.lib.launch.native_run import bind_entry, conclude_native_run
 from meridian.lib.launch.process.session import build_session_metadata
 from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
 from meridian.lib.launch.resolve import (
     resolve_agent_launch_input,
     resolve_startup_timeout_seconds,
 )
-from meridian.lib.launch.session_scope import bind_harness_session_id, session_scope
+from meridian.lib.launch.session_scope import session_scope
 from meridian.lib.launch.streaming_runner import run_streaming_spawn, signal_coordinator
 from meridian.lib.ops.runtime import OperationRuntime
 from meridian.lib.ops.spawn.execute_init import build_spawn_mars_runtime
@@ -133,45 +138,50 @@ async def streaming_serve(
             runtime_root=runtime_root,
             metadata=build_session_metadata(launch_ctx.resolved_request),
             request=launch_ctx.resolved_request.session,
-            harness_session_id=(
-                launch_ctx.binding.spec.native_identity.session_id or ""
-                if launch_ctx.binding.spec.native_identity else ""
-            ),
-            native_store=(launch_ctx.binding.spec.native_identity.native_store
-                          if launch_ctx.binding.spec.native_identity else None),
             control_root=str(launch_ctx.control_root),
             execution_cwd=str(launch_ctx.binding.child_cwd),
             spawn_id=str(spawn_id),
             startup_attempt_id=uuid.uuid4().hex,
         ) as managed:
-            attempt = managed.attempt
-            assert attempt is not None
             spawn_store.update_spawn(runtime_root, spawn_id, chat_id=managed.chat_id)
-            observed_session_id = (
-                launch_ctx.binding.spec.native_identity.session_id
-                if launch_ctx.binding.spec.native_identity else None
+            lifecycle = LifecycleLog(
+                runtime_root, spawn_id, output_path.parent / RUNNER_LIFECYCLE_FILENAME, RealClock()
             )
-
-            def record_identity(session_id: str) -> None:
-                nonlocal observed_session_id
-                observed_session_id = bind_harness_session_id(
-                    runtime_root=runtime_root, spawn_id=spawn_id,
-                    record_session_id=attempt.record_harness_session_id,
-                    session_id=session_id, source="observed",
-                    current_session_id=observed_session_id or "",
-                    chat_id=managed.chat_id,
+            try:
+                native_run = bind_entry(
+                    managed, launch_ctx.binding.spec, harness=str(launch_ctx.harness.id)
                 )
+            except NativeIdentityError as exc:
+                record_identity_failure(exc, lifecycle=lifecycle, phase="pre_exec")
+                raise
+            connection: HarnessConnection[Any] | None = None
+            identity_error: NativeIdentityError | None = None
+            started_pid: int | None = None
+            started_at_epoch = time.time()
 
-            def record_started(connection: HarnessConnection[Any]) -> None:
+            def record_started(started_connection: HarnessConnection[Any]) -> None:
+                nonlocal connection, started_pid
+                connection = started_connection
+                started_pid = connection.subprocess_pid
                 if connection.session_id:
-                    record_identity(connection.session_id)
-                attempt.record_started(launch_ctx, str(spawn_id), observed_session_id)
+                    native_run.observe(connection.session_id)
 
             connection_config = replace(
                 connection_config,
-                session_id_observer=record_identity,
+                session_id_observer=native_run.observe,
                 child_env={**connection_config.child_env, "MERIDIAN_CHAT_ID": managed.chat_id},
             )
+            child_env = dict(connection_config.child_env)
+            prelaunch = launch_ctx.harness.prepare_prelaunch(
+                runtime_root=runtime_root,
+                spawn_id=spawn_id,
+                session=launch_ctx.resolved_request.session,
+                child_cwd=launch_ctx.binding.child_cwd,
+                child_env=child_env,
+                resolved_harness_session_id=native_run.entry.session_id or "",
+            )
+            child_env.update(prelaunch.env_overrides)
+            connection_config = replace(connection_config, child_env=child_env)
             try:
                 outcome = await run_streaming_spawn(
                     config=connection_config,
@@ -186,14 +196,33 @@ async def streaming_serve(
                     on_control_endpoint_ready=_report_control_endpoint,
                     on_running=record_started,
                 )
+            except NativeIdentityError as exc:
+                identity_error = exc
+                raise
             finally:
-                observed = launch_ctx.harness.observe_session_id(
-                    artifacts=LocalStore(root_dir=runtime_root / "artifacts"),
+                native_outcome = conclude_native_run(
+                    native_run,
+                    launch_ctx.harness,
+                    context=launch_ctx,
                     spawn_id=spawn_id,
-                    current_session_id=observed_session_id,
+                    child_env=connection_config.child_env,
+                    child_cwd=launch_ctx.binding.child_cwd,
+                    pid=started_pid,
+                    started=connection is not None,
+                    started_at_epoch=started_at_epoch,
+                    prior_error=identity_error,
+                    artifacts=LocalStore(root_dir=runtime_root / "artifacts"),
+                    connection_session_id=connection.session_id if connection is not None else None,
+                    lifecycle=lifecycle,
                 )
-                if observed:
-                    record_identity(observed)
+                launch_ctx.harness.cleanup_prelaunch(
+                    runtime_root=runtime_root,
+                    spawn_id=spawn_id,
+                    chat_id=managed.chat_id,
+                    state=prelaunch,
+                )
+                if native_outcome.error is not None:
+                    raise native_outcome.error
             outcome_status = TypeAdapter(TerminalSpawnStatus).validate_python(outcome.status)
             outcome_exit_code = outcome.exit_code
             if outcome_status == "failed":

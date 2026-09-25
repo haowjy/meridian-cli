@@ -17,7 +17,9 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.core.native_identity import NativeKeyFields
 from meridian.lib.state import session_store
+from meridian.lib.state.native_binding import Bound, Conflict, Same
 from tests.conftest import posix_only
 
 
@@ -527,7 +529,9 @@ def test_empty_harness_session_id_normalizes_to_none_before_update(tmp_path: Pat
         chat_id="c42",
     )
     try:
-        session_store.update_session_harness_id(runtime_root, chat_id, "resolved-thread")
+        session_store.update_session_harness_id(
+            runtime_root, chat_id, NativeKeyFields(session_id="resolved-thread"), source="observed"
+        )
 
         record = session_store.get_session_record(runtime_root, chat_id)
         assert record is not None
@@ -781,26 +785,47 @@ def test_work_attachment_history_ignores_malformed_session_update(tmp_path: Path
 def test_native_binding_is_immutable(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     chat_id = session_store.start_session(
-        runtime_root, harness="claude", harness_session_id="", model="test",
+        runtime_root,
+        harness="claude",
+        harness_session_id="",
+        model="test",
     )
     try:
         first = session_store.update_session_harness_id(
-            runtime_root, chat_id, "first", native_store="/native", source="assigned",
+            runtime_root,
+            chat_id,
+            NativeKeyFields(session_id="first", native_store="/native"),
+            source="assigned",
         )
-        assert first.status == "bound"
+        assert isinstance(first, Bound)
         bound_bytes = (runtime_root / "sessions.jsonl").read_bytes()
-        assert session_store.update_session_harness_id(
-            runtime_root, chat_id, "first", native_store="/native",
-        ).status == "already_bound"
+        assert isinstance(
+            session_store.update_session_harness_id(
+                runtime_root,
+                chat_id,
+                NativeKeyFields(session_id="first", native_store="/native"),
+                source="observed",
+            ),
+            Same,
+        )
         before = session_store.get_session_record(runtime_root, chat_id)
         conflict = session_store.update_session_harness_id(
-            runtime_root, chat_id, "other", native_store="/other",
+            runtime_root,
+            chat_id,
+            NativeKeyFields(session_id="other", native_store="/other"),
+            source="observed",
         )
-        assert conflict.status == "conflict"
-        assert conflict.harness_session_id == "first"
-        assert session_store.update_session_harness_id(
-            runtime_root, chat_id, "first", native_store="/other",
-        ).status == "conflict"
+        assert isinstance(conflict, Conflict)
+        assert conflict.kept.session_id == "first"
+        assert isinstance(
+            session_store.update_session_harness_id(
+                runtime_root,
+                chat_id,
+                NativeKeyFields(session_id="first", native_store="/other"),
+                source="observed",
+            ),
+            Conflict,
+        )
         assert session_store.get_session_record(runtime_root, chat_id) == before
         assert (runtime_root / "sessions.jsonl").read_bytes() == bound_bytes
     finally:
@@ -815,11 +840,19 @@ def test_historical_binding_conflict_is_silent_on_reads_and_logged_on_write(
     runtime_root = _state_root(tmp_path)
     _write_session_start(runtime_root=runtime_root, chat_id="c1", session_instance_id="gen-1")
     with (runtime_root / "sessions.jsonl").open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps({
-            "v": 1, "event": "update", "chat_id": "c1",
-            "harness_session_id": "legacy-other", "native_store": "/legacy/store",
-            "session_instance_id": "gen-1",
-        }) + "\n")
+        handle.write(
+            json.dumps(
+                {
+                    "v": 1,
+                    "event": "update",
+                    "chat_id": "c1",
+                    "harness_session_id": "legacy-other",
+                    "native_store": "/legacy/store",
+                    "session_instance_id": "gen-1",
+                }
+            )
+            + "\n"
+        )
     _write_session_start(runtime_root=runtime_root, chat_id="c2", session_instance_id="gen-2")
 
     with capture_logs() as logs:
@@ -828,16 +861,20 @@ def test_historical_binding_conflict_is_silent_on_reads_and_logged_on_write(
 
     with capture_logs() as logs:
         result = session_store.update_session_harness_id(
-            runtime_root, "c2", "rebound", native_store="/other/store",
+            runtime_root,
+            "c2",
+            NativeKeyFields(session_id="rebound", native_store="/other/store"),
+            source="observed",
         )
-    assert result.status == "conflict"
+    assert isinstance(result, Conflict)
     assert len([log for log in logs if log["event"] == "native_binding_conflict"]) == 1
 
 
 def test_legacy_binding_rows_ignore_identity_list(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
-    _write_session_start(runtime_root=runtime_root, chat_id="c1", harness="claude",
-                         session_instance_id="gen")
+    _write_session_start(
+        runtime_root=runtime_root, chat_id="c1", harness="claude", session_instance_id="gen"
+    )
     path = runtime_root / "sessions.jsonl"
     rows = [json.loads(line) for line in path.read_text().splitlines()]
     rows[0]["harness_session_ids"] = ["other", "first"]
@@ -845,10 +882,17 @@ def test_legacy_binding_rows_ignore_identity_list(tmp_path: Path) -> None:
     record = session_store.get_session_record(runtime_root, "c1")
     assert record is not None
     records = {"c1": record}
-    session_store.project_session_event(records, session_store.SessionUpdateEvent.model_validate({
-        "chat_id": "c1", "harness_session_id": "other", "native_store": "/other",
-        "session_instance_id": record.session_instance_id,
-    }))
+    session_store.project_session_event(
+        records,
+        session_store.SessionUpdateEvent.model_validate(
+            {
+                "chat_id": "c1",
+                "harness_session_id": "other",
+                "native_store": "/other",
+                "session_instance_id": record.session_instance_id,
+            }
+        ),
+    )
     assert records["c1"] == record
 
 
@@ -869,11 +913,20 @@ def test_concurrent_native_binding_has_one_winner(tmp_path: Path) -> None:
     chat_id = session_store.start_session(root, "claude", "", "sonnet")
     try:
         results = run_spawn_race_or_skip(
-            session_store.update_session_harness_id,
-            [(root, chat_id, "first"), (root, chat_id, "second")],
+            _race_bind,
+            [
+                (root, chat_id, NativeKeyFields(session_id="first")),
+                (root, chat_id, NativeKeyFields(session_id="second")),
+            ],
         )
-        assert sorted(result.status for result in results) == ["bound", "conflict"]
-        assert results[0].harness_session_id == results[1].harness_session_id
-        assert session_store.get_session_harness_id(root, chat_id) == results[0].harness_session_id
+        assert sorted(type(result).__name__ for result in results) == ["Bound", "Conflict"]
+        winner = next(result.key for result in results if isinstance(result, Bound))
+        loser = next(result.kept for result in results if isinstance(result, Conflict))
+        assert winner == loser
+        assert session_store.get_session_harness_id(root, chat_id) == winner.session_id
     finally:
         session_store.stop_session(root, chat_id)
+
+
+def _race_bind(root, chat_id, attempted):
+    return session_store.update_session_harness_id(root, chat_id, attempted, source="observed")

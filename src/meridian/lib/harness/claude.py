@@ -11,8 +11,10 @@ from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.native_identity import (
     LaunchIntent,
     NativeIdentity,
+    NativeKeyFields,
     NativeSessionUnavailable,
     Operation,
+    PostExit,
 )
 from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
@@ -30,7 +32,6 @@ from meridian.lib.harness.adapter import (
     McpConfig,
     PermissionResolver,
     PrelaunchBootstrapMode,
-    PrimarySessionObservation,
     ProjectionContract,
     ProjectionMode,
     RecordConfigDirFn,
@@ -521,63 +522,18 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             ),
         )
 
-    def observe_session_id(
-        self,
-        *,
-        artifacts: ArtifactStore,
-        spawn_id: SpawnId | None = None,
-        current_session_id: str | None = None,
-        connection_session_id: str | None = None,
-        project_root: Path | None = None,
-        started_at_epoch: float | None = None,
-        started_at_local_iso: str | None = None,
-        expected_session_id: str | None = None,
-    ) -> str | None:
-        _ = started_at_local_iso
 
-        live_session_id = (connection_session_id or "").strip()
-        if live_session_id:
-            return live_session_id
-
-        if spawn_id is not None:
-            extracted_session_id = (self.extract_session_id(artifacts, spawn_id) or "").strip()
-            if extracted_session_id:
-                return extracted_session_id
-
-        normalized_current = (current_session_id or expected_session_id or "").strip()
-        if not normalized_current:
-            return None
-        if project_root is None:
-            return (current_session_id or "").strip() or None
-
-        return normalized_current
-
-    def observe_primary_session_id(
-        self,
-        *,
-        native_identity: NativeIdentity | None,
-        command: tuple[str, ...],
-        child_env: dict[str, str],
-        launch_child_cwd: Path,
+    def observe_after_exit(
+        self, identity: NativeIdentity, entry: NativeKeyFields, *,
+        child_env: Mapping[str, str], child_cwd: Path, pid: int | None,
         started_at_epoch: float | None,
-        expected_session_id: str,
-        requested_session_id: str,
-        resolved_session_id: str,
-        exit_code: int,
-    ) -> PrimarySessionObservation:
-        entry = resolved_session_id or expected_session_id
+    ) -> PostExit:
         successor = reconcile_tui_trampoline_session_id(
-            project_root=launch_child_cwd,
-            recorded_session_id=entry,
-            started_at_epoch=started_at_epoch,
-            native_store=(
-                Path(native_identity.native_store)
-                if native_identity and native_identity.native_store
-                else None
-            ),
+            project_root=child_cwd, recorded_session_id=entry.session_id or "",
+            started_at_epoch=started_at_epoch, native_store=Path(identity.native_store),
         )
-        return PrimarySessionObservation(
-            trampoline_successor_id=successor if successor != entry else None,
+        return PostExit(
+            trampoline_successor_id=successor if successor != entry.session_id else None,
         )
 
     def resolve_native_session_file(

@@ -17,15 +17,16 @@ HarnessExtractor (adds live-event and planned-identity paths)
                                              ← already-planned identity, never discovery
 ```
 
-The `observe_session_id()` priority chain in the parent adapter calls these in order —
-see parent [`.context/CONTEXT.md`](../../.context/CONTEXT.md) for the full chain.
+Live IDs flow to `NativeRun.observe`; `conclude_native_run` owns the one
+post-exit artifact extraction followed by diagnostic connection-current ID.
+See the parent [identity order](../../.context/CONTEXT.md) for the full pipeline.
 
 ## Contracts
 
 ### `detect_session_id_from_event(event)`
 
 Best-effort. Returns `None` when the event carries no session information — the caller
-tries the next step in the priority chain. Never raises. The event comes from the live
+leaves identity pending until another owned signal. Never raises. The event comes from the live
 connection drain loop; call cost must be low.
 
 Codex accepts `thread.started`/`thread/started` and `session_id` identity
@@ -81,7 +82,7 @@ must account for the harness-specific raw format.
 
 ## Related .context/
 
-- [../../.context/CONTEXT.md](../../.context/CONTEXT.md) — `observe_session_id()` priority
+- [../../.context/CONTEXT.md](../../.context/CONTEXT.md) — post-exit identity order
   chain; `ArtifactStore` contract
 - [../../connections/.context/CONTEXT.md](../../connections/.context/CONTEXT.md) — `HarnessEvent`
   structure and `event_type` namespace scoping

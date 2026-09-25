@@ -408,7 +408,6 @@ def update_spawn(
     runner_created_at_epoch: float | None = None,
     resident_rearm_count: int | None = None,
     harness_session_id: str | None = None,
-    trampoline_successor_id: str | None = None,
     control_root: str | None = None,
     task_cwd: str | None = None,
     execution_cwd: str | None = None,
@@ -447,8 +446,6 @@ def update_spawn(
                 current.resident_rearm_count,
                 resident_rearm_count,
             )
-        if trampoline_successor_id is not None:
-            updates["trampoline_successor_id"] = trampoline_successor_id
         if harness_session_id is not None:
             updates["harness_session_id"] = harness_session_id
         if control_root is not None:

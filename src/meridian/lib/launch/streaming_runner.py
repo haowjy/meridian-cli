@@ -13,7 +13,6 @@ import uuid
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, replace
-from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -28,9 +27,7 @@ from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.domain import Spawn, SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.native_identity import (
-    NativeEntryMismatch,
     NativeIdentityError,
-    NativeKeyFields,
 )
 from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -77,6 +74,7 @@ from meridian.lib.launch.extract import (
     reset_finalize_attempt_artifacts,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.native_run import bind_entry, conclude_native_run
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.launch.resolve import (
     resolve_pi_child_wave_timeout_seconds,
@@ -85,7 +83,6 @@ from meridian.lib.launch.resolve import (
     resolve_resident_poll_seconds,
     resolve_startup_timeout_seconds,
 )
-from meridian.lib.launch.run_boundary import finalize_run_boundary
 from meridian.lib.launch.runner_helpers import (
     append_budget_exceeded_event as _append_budget_exceeded_event,
 )
@@ -104,7 +101,7 @@ from meridian.lib.launch.runner_helpers import (
 from meridian.lib.launch.runner_helpers import (
     write_structured_failure_artifact as _write_structured_failure_artifact,
 )
-from meridian.lib.launch.session_scope import SessionAttempt, bind_harness_session_id
+from meridian.lib.launch.session_scope import SessionAttempt
 from meridian.lib.launch.signals import signal_coordinator, signal_to_exit_code
 from meridian.lib.launch.streaming.heartbeat import FileHeartbeat, HeartbeatTouch
 from meridian.lib.launch.streaming.terminal_arbitrator import TriggerKind, arbitrate_terminal
@@ -114,7 +111,6 @@ from meridian.lib.state import paths as state_paths
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import ArtifactStore, make_artifact_key
 from meridian.lib.state.paths import resolve_spawn_log_dir
-from meridian.lib.state.session_store import NativeBindingResult, update_session_harness_id
 from meridian.lib.state.spawn.model import (
     BACKGROUND_LAUNCH_MODE,
     FOREGROUND_LAUNCH_MODE,
@@ -775,6 +771,7 @@ async def run_streaming_spawn(
                         await task
             if signal_cleanup is not None:
                 signal_cleanup()
+            await manager.join_teardown(spawn_id)
             with suppress(Exception):
                 await manager.shutdown(status=SpawnStatus.CANCELLED, exit_code=1, error="shutdown")
 
@@ -1001,11 +998,13 @@ async def _run_streaming_attempt(
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
+        if start_error is not None:
+            await manager.stop_spawn(run.spawn_id, status=SpawnStatus.FAILED,
+                                     exit_code=1, error=start_error)
         # Terminal publication hides the active connection while teardown can
         # still be publishing its native quit. Join that cleanup before reading
-        # the run boundary; stop_spawn also joins already-terminal sessions.
-        with suppress(Exception):
-            await manager.stop_spawn(run.spawn_id)
+        # the run boundary. Joining does not publish a synthetic cancellation.
+        await manager.join_teardown(run.spawn_id)
 
     if start_error is not None:
         drain_exit_code, drain_error, timed_out = DEFAULT_INFRA_EXIT_CODE, start_error, False
@@ -1033,36 +1032,6 @@ async def _run_streaming_attempt(
     )
 
 
-def _initial_identity_observer(
-    spec: ResolvedLaunchSpec, harness: str, accept: Callable[[str], None],
-) -> Callable[[str], None]:
-    initial_observed = False
-    plan = spec.native_identity
-    expected_id = (
-        plan.session_id if plan is not None
-        else spec.continue_session_id if not spec.continue_fork else None
-    )
-    expected = NativeKeyFields(harness, plan.native_store if plan else None, expected_id)
-
-    def observe(session_id: str) -> None:
-        nonlocal initial_observed
-        candidate = session_id.strip()
-        if not candidate:
-            return
-        if not initial_observed:
-            if expected_id and candidate != expected_id:
-                raise NativeEntryMismatch(expected, expected.with_session(candidate))
-            if spec.continue_fork and candidate == spec.continue_session_id:
-                raise NativeEntryMismatch(
-                    expected.with_session(candidate),
-                    expected.with_session(candidate), reason="fork_reused_source",
-                )
-            initial_observed = True
-        # Later switches diagnose conflicts but never confirm or replace entry.
-        accept(candidate)
-    return observe
-
-
 async def execute_with_streaming(
     run: Spawn,
     *,
@@ -1076,7 +1045,7 @@ async def execute_with_streaming(
     guardrails: tuple[Path, ...] = (),
     guardrail_timeout_seconds: float = DEFAULT_GUARDRAIL_TIMEOUT_SECONDS,
     harness_session_id_observer: Callable[[str], None] | None = None,
-    session_attempt: SessionAttempt | None = None,
+    session_attempt: SessionAttempt,
     event_observer: Callable[[StreamEvent], None] | None = None,
     stream_stdout_to_terminal: bool = False,
     stream_stderr_to_terminal: bool = False,
@@ -1203,34 +1172,10 @@ async def execute_with_streaming(
                 echo_stderr=stream_stdout_to_terminal,
             )
 
-        if session_attempt is not None and spec.native_identity is not None:
-            session_attempt = replace(
-                session_attempt, native_store=spec.native_identity.native_store,
-            )
-        observed_harness_session_id: str | None = None
-
-        def _observe_id(session_id: str, attempt: SessionAttempt | None) -> None:
-            nonlocal observed_harness_session_id
-            bound = bind_harness_session_id(
-                runtime_root=runtime_root, spawn_id=run.spawn_id,
-                record_session_id=(
-                    attempt.record_harness_session_id if attempt else lambda _: None
-                ),
-                session_id=session_id, source="observed",
-                current_session_id=observed_harness_session_id or "",
-                chat_id=attempt.chat_id if attempt else None,
-            )
-            observed_harness_session_id = bound or None
-            if bound and harness_session_id_observer is not None:
-                harness_session_id_observer(bound)
-
-        def _attempt_id_observer(attempt: SessionAttempt | None) -> Callable[[str], None]:
-            return _initial_identity_observer(
-                spec, str(resolved_harness_id), partial(_observe_id, attempt=attempt),
-            )
-
-        observe_attempt_id = _attempt_id_observer(session_attempt)
-
+        native_run = bind_entry(
+            session_attempt, spec, harness=str(resolved_harness_id),
+            on_accepted=harness_session_id_observer,
+        )
         config = ConnectionConfig(
             spawn_id=run.spawn_id,
             harness_id=resolved_harness_id,
@@ -1249,7 +1194,7 @@ async def execute_with_streaming(
             pi_task_ping_reset_on_activity=request.pi_task_ping_reset_on_activity,
             pi_session_role=pi_session_role,
             debug_tracer=tracer,
-            session_id_observer=observe_attempt_id,
+            session_id_observer=native_run.observe,
         )
 
         # I-10: spawn row MUST exist before execute_with_streaming is called.
@@ -1271,33 +1216,6 @@ async def execute_with_streaming(
             if spawn_row.launch_mode == BACKGROUND_LAUNCH_MODE
             else FOREGROUND_LAUNCH_MODE
         )
-
-        identity_plan = spec.native_identity
-        if identity_plan is not None and identity_plan.session_id:
-            result: NativeBindingResult | None = None
-            if session_attempt is not None:
-                result = update_session_harness_id(
-                    runtime_root, session_attempt.chat_id, identity_plan.session_id or "",
-                    native_store=identity_plan.native_store, source="assigned",
-                    session_instance_id=session_attempt.session_instance_id,
-                    startup_attempt_id=session_attempt.startup_attempt_id,
-                )
-                if result.status == "conflict":
-                    raise NativeEntryMismatch(
-                        NativeKeyFields(str(resolved_harness_id),
-                            result.native_store, result.harness_session_id),
-                        NativeKeyFields(str(resolved_harness_id),
-                            identity_plan.native_store, identity_plan.session_id),
-                    )
-            observed_harness_session_id = bind_harness_session_id(
-                runtime_root=runtime_root, spawn_id=run.spawn_id,
-                record_session_id=lambda _: result,
-                session_id=identity_plan.session_id, source="assigned",
-            )
-            if observed_harness_session_id and harness_session_id_observer is not None:
-                harness_session_id_observer(observed_harness_session_id)
-        elif spec.continue_session_id and not spec.continue_fork:
-            _observe_id(spec.continue_session_id, session_attempt)
 
         budget_tracker = (
             LiveBudgetTracker(budget=budget, space_spent_usd=space_spent_usd)
@@ -1340,12 +1258,11 @@ async def execute_with_streaming(
 
                 attempt_number = conclusion.retries_attempted + 1
                 if attempt_number > 1:
-                    if session_attempt is not None:
-                        session_attempt = replace(
-                            session_attempt, startup_attempt_id=uuid.uuid4().hex,
-                        )
-                    observe_attempt_id = _attempt_id_observer(session_attempt)
-                    config = replace(config, session_id_observer=observe_attempt_id)
+                    session_attempt = replace(
+                        session_attempt, startup_attempt_id=uuid.uuid4().hex,
+                    )
+                    native_run = native_run.retry(session_attempt)
+                    config = replace(config, session_id_observer=native_run.observe)
                     _preserve_attempt_artifacts(
                         artifacts=artifacts,
                         spawn_id=run.spawn_id,
@@ -1370,7 +1287,7 @@ async def execute_with_streaming(
 
                 def record_started(
                     connection: HarnessConnection[Any],
-                    captured_observer: Callable[[str], None] = observe_attempt_id,
+                    captured_observer: Callable[[str], None] = native_run.observe,
                 ) -> None:
                     nonlocal attempt_pid
                     attempt_pid = connection.subprocess_pid
@@ -1399,37 +1316,6 @@ async def execute_with_streaming(
                 )
                 runner_phase[0] = "processing_attempt"
                 conclusion.absorb_attempt(attempt)
-                identity_error = None
-                if spec.native_identity is not None:
-                    identity_error = harness.verify_native_identity(spec.native_identity)
-                    if identity_error:
-                        logger.warning(
-                            "Native identity verification conflict", error=identity_error
-                        )
-                        conclusion.exit_code = 1
-                        conclusion.failure_reason = identity_error.failure_code
-                observation = harness.observe_primary_session_id(
-                    native_identity=spec.native_identity, command=(),
-                    child_env=child_env, launch_child_cwd=child_cwd,
-                    started_at_epoch=started_at_epoch,
-                    expected_session_id=observed_harness_session_id or "",
-                    requested_session_id=spec.continue_session_id or "",
-                    resolved_session_id=observed_harness_session_id or "",
-                    exit_code=conclusion.exit_code,
-                )
-                if observation.trampoline_successor_id:
-                    spawn_store.update_spawn(
-                        runtime_root, run.spawn_id,
-                        trampoline_successor_id=observation.trampoline_successor_id,
-                    )
-                boundary_error = finalize_run_boundary(
-                    adapter=harness, child_env=child_env, runtime_root=runtime_root,
-                    spawn_id=str(run.spawn_id),
-                    pid=attempt_pid, identity_error=attempt.identity_error or identity_error,
-                )
-                if boundary_error:
-                    conclusion.exit_code = 1
-                    conclusion.authoritative_terminal_status = "failed"
                 if attempt.start_error is not None:
                     logger.info(
                         "Failed to execute streaming spawn attempt.",
@@ -1469,18 +1355,16 @@ async def execute_with_streaming(
                     report_bytes = report_path.read_bytes()
                     artifacts.put(make_artifact_key(run.spawn_id, REPORT_FILENAME), report_bytes)
 
-                entry_mismatch = (
-                    boundary_error if isinstance(boundary_error, NativeEntryMismatch) else None
+                outcome = conclude_native_run(
+                    native_run, harness, context=launch_context, spawn_id=run.spawn_id,
+                    child_env=child_env, child_cwd=child_cwd, pid=attempt_pid,
+                    started=attempt_pid is not None, started_at_epoch=started_at_epoch,
+                    prior_error=attempt.identity_error, artifacts=artifacts,
+                    connection_session_id=(attempt.connection.session_id
+                                           if attempt.connection is not None else None),
+                    lifecycle=LifecycleLog(
+                        runtime_root, run.spawn_id, lifecycle_path, resolved_clock),
                 )
-                if entry_mismatch is not None:
-                    conclusion.failure_reason = "entry_mismatch"
-                    record_identity_failure(
-                        entry_mismatch, lifecycle=LifecycleLog(
-                            runtime_root, run.spawn_id, lifecycle_path, resolved_clock,
-                        ), phase="post_exit",
-                    )
-                    break
-
                 streaming_extractor = StreamingExtractor(
                     connection=attempt.connection,
                     bundle=harness_bundle,
@@ -1500,20 +1384,11 @@ async def execute_with_streaming(
                     failure_reason=conclusion.failure_reason,
                 )
                 conclusion.extracted = extraction
-                if boundary_error:
-                    record_identity_failure(boundary_error, phase="post_exit",
-                        lifecycle=LifecycleLog(
-                            runtime_root, run.spawn_id, lifecycle_path, resolved_clock,
-                        ))
+                if outcome.error is not None:
                     conclusion.exit_code = 1
-                    conclusion.failure_reason = boundary_error.failure_code
+                    conclusion.failure_reason = outcome.error.failure_code
                     conclusion.authoritative_terminal_status = "failed"
                     break
-
-                if session_attempt is not None and attempt_pid is not None:
-                    session_attempt.record_started(
-                        launch_context, str(run.spawn_id), observed_harness_session_id,
-                    )
 
                 if (
                     _read_cancel_intent(runtime_root, run.spawn_id) is not None
@@ -1525,28 +1400,6 @@ async def execute_with_streaming(
                         spawn_id=run.spawn_id,
                     )
                     break
-
-                # I-4: adapter observe_session_id() remains the sole post-attempt
-                # observation callsite. Streaming connections may report a known
-                # session id earlier through ConnectionConfig.session_id_observer.
-                extracted_harness_session_id = (
-                    harness.observe_session_id(
-                        artifacts=artifacts,
-                        spawn_id=run.spawn_id,
-                        current_session_id=observed_harness_session_id,
-                        connection_session_id=(
-                            attempt.connection.session_id
-                            if attempt.connection is not None
-                            else None
-                        ),
-                        project_root=project_root,
-                        started_at_epoch=started_at_epoch,
-                        expected_session_id=observed_harness_session_id,
-                    )
-                    or ""
-                )
-                if extracted_harness_session_id:
-                    _observe_id(extracted_harness_session_id, session_attempt)
 
                 if attempt_cancelled:
                     if attempt.received_signal is not None:

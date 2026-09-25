@@ -16,15 +16,20 @@ from typing import Any, Literal
 
 import pytest
 
+from meridian.lib.core.native_identity import NativeKeyFields
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import BootstrapMode
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.native_run import NativeRun
 from meridian.lib.launch.process import runner as process_runner
 from meridian.lib.launch.process.ports import PRIMARY_STDERR_LOG_PATH_ENV, LaunchedProcess
 from meridian.lib.launch.process.primary_attach import PrimaryAttachError
 from meridian.lib.launch.process.subprocess_launcher import SubprocessProcessLauncher
+from meridian.lib.launch.session_scope import SessionAttempt
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
+from meridian.lib.state import session_store
+from meridian.lib.state.native_binding import Bound, Conflict
 
 
 def test_subprocess_launcher_captures_output_log(tmp_path: Path) -> None:
@@ -104,10 +109,6 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
     )
     black_box_calls = 0
 
-    class _Managed:
-        def record_harness_session_id(self, _session_id: str) -> None:
-            return None
-
     def _black_box(
         command: tuple[str, ...],
         cwd: Path,
@@ -137,8 +138,7 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
         ),
         command=("codex",),
         harness_contract=harness_contract,
-        managed=_Managed(),
-        runtime_root=tmp_path,
+        native_run=_native_run(tmp_path),
         run_primary_process_with_capture_fn=_black_box,
         run_primary_attach_fn=lambda *args, **kwargs: (_ for _ in ()).throw(
             AssertionError("subprocess_only contract should bypass managed attach")
@@ -167,10 +167,6 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
         }
     )
     black_box_calls = 0
-
-    class _Managed:
-        def record_harness_session_id(self, _session_id: str) -> None:
-            return None
 
     def _black_box(
         command: tuple[str, ...],
@@ -201,8 +197,7 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
         ),
         command=("claude",),
         harness_contract=harness_contract,
-        managed=_Managed(),
-        runtime_root=tmp_path,
+        native_run=_native_run(tmp_path),
         run_primary_process_with_capture_fn=_black_box,
         run_primary_attach_fn=lambda *args, **kwargs: (_ for _ in ()).throw(
             PrimaryAttachError("fallback please")
@@ -218,29 +213,31 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
 
 @pytest.mark.parametrize("source", ["assigned", "observed"])
 def test_binding_mirrors_only_the_first_identity(
-    tmp_path: Path, source: Literal["assigned", "observed"],
+    tmp_path: Path,
+    source: Literal["assigned", "observed"],
 ) -> None:
     from structlog.testing import capture_logs
 
-    from meridian.lib.launch.session_scope import bind_harness_session_id
-    from meridian.lib.state import session_store
-
     chat_id = session_store.start_session(tmp_path, "claude", "", "sonnet")
+    record = session_store.get_session_record(tmp_path, chat_id)
+    assert record is not None
+    attempt = SessionAttempt(tmp_path, chat_id, record.session_instance_id, None)
     try:
-        def record(candidate: str) -> session_store.NativeBindingResult:
-            return session_store.update_session_harness_id(tmp_path, chat_id, candidate)
-
-        assert bind_harness_session_id(
-            runtime_root=tmp_path, spawn_id=None, record_session_id=record,
-            session_id="first", source=source,
-        ) == "first"
+        first = attempt.bind(NativeKeyFields(session_id="first"), source)
+        assert isinstance(first, Bound)
         with capture_logs() as logs:
-            # Even a caller with stale in-memory state must consume the store's accepted ID.
-            assert bind_harness_session_id(
-                runtime_root=tmp_path, spawn_id=None, record_session_id=record,
-                session_id="other", source="observed",
-            ) == "first"
-        assert any(log["event"] == "native_binding_conflict" for log in logs)
+            conflict = attempt.bind(NativeKeyFields(session_id="other"), "observed")
+            assert isinstance(conflict, Conflict)
+            assert conflict.kept.session_id == "first"
+        assert len([log for log in logs if log["event"] == "native_binding_conflict"]) == 1
         assert session_store.get_session_harness_id(tmp_path, chat_id) == "first"
     finally:
         session_store.stop_session(tmp_path, chat_id)
+
+
+def _native_run(root: Path) -> NativeRun:
+    chat_id = session_store.start_session(root, "codex", "", "")
+    record = session_store.get_session_record(root, chat_id)
+    assert record is not None
+    attempt = SessionAttempt(root, chat_id, record.session_instance_id, None)
+    return NativeRun(attempt, None, NativeKeyFields("codex"), None, None)
