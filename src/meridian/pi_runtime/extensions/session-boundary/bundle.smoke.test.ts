@@ -9,7 +9,7 @@ import { describe, expect, it, onTestFinished } from "vitest";
 const fixturePath = fileURLToPath(new URL("./lifecycle.fixture.mjs", import.meta.url));
 
 describe("session-boundary built bundle registration", () => {
-  it.each(["quit", "restart"])("publishes %s through Pi lifecycle callbacks", (shape) => {
+  it.each(["quit", "restart", "eof", "exit", "eof-race"])("publishes %s through Pi lifecycle callbacks", (shape) => {
     const directory = mkdtempSync(join(tmpdir(), "boundary-bundle-"));
     onTestFinished(() => rmSync(directory, { recursive: true, force: true }));
     const recordPath = join(directory, "record.json");
@@ -29,12 +29,14 @@ describe("session-boundary built bundle registration", () => {
     expect(child.status).toBe(0);
     expect(JSON.parse(readFileSync(recordPath, "utf8"))).toMatchObject({
       v: 2, launch_nonce: "bundle-test-nonce", pid: child.pid,
-      revision: shape === "quit" ? 5 : 6,
+      revision: shape === "restart" ? 6 : ["quit", "eof"].includes(shape) ? 5 : 4,
       initial: { session_id: "native-entry", session_file: "/native-store/1_native-entry.jsonl" },
-      current: { session_id: "native-exit", session_file: "/native-store/2_native-exit.jsonl" },
-      quit: shape === "quit"
+      current: shape === "eof-race"
+        ? { session_id: "native-entry", session_file: "/native-store/1_native-entry.jsonl" }
+        : { session_id: "native-exit", session_file: "/native-store/2_native-exit.jsonl" },
+      quit: ["quit", "eof"].includes(shape)
         ? { session_id: "native-exit", session_file: "/native-store/2_native-exit.jsonl" } : null,
-      last_event: shape === "quit"
+      last_event: ["quit", "eof", "eof-race"].includes(shape)
         ? { type: "session_shutdown", reason: "quit" } : { type: "session_start", reason: "new" },
       invalid_reason: null,
     });

@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Exercise Pi runner invalidation, replacement/EOF races, abrupt exits, and quit/restart through the shipped bundle and Python reader.
+
 - Keep Pi shutdowns with invalidated hook contexts unresolved, not poisoned; version boundary records as v2.
 
 - Track the remaining OpenCode ambient-database report fallback for the native-history read-path cleanup.

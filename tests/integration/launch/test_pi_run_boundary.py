@@ -51,7 +51,7 @@ def test_reader_final_quit_only(tmp_path: Path, shape: str) -> None:
         assert result.exit is not None and result.exit.session_id == "exit"
 
 
-@pytest.mark.parametrize("shape", ["quit", "restart"])
+@pytest.mark.parametrize("shape", ["quit", "restart", "eof", "exit", "eof-race"])
 def test_reader_consumes_built_bundle_record(tmp_path: Path, shape: str) -> None:
     runtime = Path(__file__).resolve().parents[3] / "src/meridian/pi_runtime"
     fixture = runtime / "extensions/session-boundary/lifecycle.fixture.mjs"
@@ -77,7 +77,7 @@ def test_reader_consumes_built_bundle_record(tmp_path: Path, shape: str) -> None
     assert boundary.entry_observed is not None
     assert boundary.entry_observed.native_store == "/native-store"
     assert boundary.entry_observed.session_id == "native-entry"
-    if shape == "quit":
+    if shape in {"quit", "eof"}:
         assert boundary.exit is not None
         assert boundary.exit.native_store == "/native-store"
         assert boundary.exit.session_id == "native-exit"
