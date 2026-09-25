@@ -27,6 +27,7 @@ from meridian.lib.launch.continue_replay import (
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.resolve import resolve_agent_launch_input
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
+from meridian.lib.ops.run_boundary import run_boundary_summary
 from meridian.lib.ops.spawn.models import normalize_goal
 from meridian.lib.state.paths import resolve_project_runtime_root
 
@@ -34,6 +35,7 @@ from meridian.lib.state.paths import resolve_project_runtime_root
 class PrimaryLaunchOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    boundary_summary: str | None = None
     message: str
     exit_code: int
     command: tuple[str, ...] = ()
@@ -47,7 +49,7 @@ class PrimaryLaunchOutput(BaseModel):
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
-        lines: list[str] = []
+        lines: list[str] = [self.boundary_summary] if self.boundary_summary else []
         if self.warning:
             lines.append(f"warning: {self.warning}")
         if self.launch_plan:
@@ -391,6 +393,9 @@ def run_primary_launch(
 
         history_warning = session_stop_maintenance(project_root, launch_result.primary_spawn_id)
     return PrimaryLaunchOutput(
+        boundary_summary=(run_boundary_summary(
+            resolve_project_runtime_root(project_root), launch_result.primary_spawn_id
+        ) if not dry_run and launch_result.primary_spawn_id else None),
         message=_result_message(exit_code=launch_result.exit_code),
         exit_code=launch_result.exit_code,
         command=launch_result.command if dry_run else (),

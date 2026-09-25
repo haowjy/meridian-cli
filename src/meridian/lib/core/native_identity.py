@@ -12,3 +12,16 @@ class NativeIdentityPlan:
     native_store: str | None
     locator: str | None
     operation: Literal["create", "resume", "fork"]
+
+
+@dataclass(frozen=True)
+class NativeSessionKey:
+    native_store: str
+    session_id: str
+
+
+@dataclass(frozen=True)
+class RunBoundary:
+    """Owned entry/exit observations, independent of execution success."""
+    entry_observed: NativeSessionKey | None = None
+    exit: NativeSessionKey | None = None

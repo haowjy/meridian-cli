@@ -53,6 +53,7 @@ class SessionLogTarget(NamedTuple):
     file_path: Path | None
     source: str
     sources: tuple[TranscriptSource, ...]
+    view_label: str | None = None
 
 
 def _is_chat_ref(runtime_root: Path, value: str) -> bool:
@@ -358,6 +359,21 @@ def _resolve_from_spawn_id(
         # sessions. Capture must not follow presentation's output/legacy fallbacks.
         return _target_from_source(target.sources[0])
 
+    if row.exit_identity is not None and row.status in TERMINAL_SPAWN_STATUSES:
+        chat_id = (row.exit_chat_id if row.exit_identity == "verified"
+                   else row.entry_chat_id or row.chat_id)
+        if chat_id:
+            target = _resolve_from_chat_id(
+                project_root=project_root, runtime_root=runtime_root, chat_id=chat_id,
+            )
+            if row.exit_identity != "verified":
+                label = target.source + " (entry-based view)"
+                return target._replace(
+                    source=label, view_label="entry-based view (exit identity unresolved)",
+                    sources=tuple(source._replace(source_label=label) for source in target.sources),
+                )
+            return target
+
     record = _spawn_linked_chat_session(
         runtime_root=runtime_root, spawn_id=spawn_id, chat_id=row.chat_id,
     )
@@ -464,6 +480,15 @@ def resolve_session_log_target(
         return _resolve_from_chat_id(
             project_root=project_root, runtime_root=runtime_root, chat_id=normalized_ref,
         )
+
+    if runtime_root is not None and _is_spawn_ref(normalized_ref):
+        from meridian.lib.state.spawn_store import get_spawn
+
+        row = get_spawn(runtime_root, normalized_ref)
+        if row is not None and row.exit_identity is not None:
+            return _resolve_from_spawn_id(
+                project_root=project_root, runtime_root=runtime_root, spawn_id=normalized_ref,
+            )
 
     if runtime_root is not None:
         indexed = indexed_history_target(

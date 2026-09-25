@@ -1453,3 +1453,42 @@ def list_session_generations(runtime_root: Path) -> tuple[SessionRecord, ...]:
         rows = generations.setdefault((event.chat_id, generation), {})
         project_session_event(rows, event)
     return tuple(record for rows in generations.values() for record in rows.values())
+
+
+def get_or_create_exit_chat(
+    runtime_root: Path, entry_chat_id: str, harness: str, native_store: str, session_id: str,
+) -> str:
+    """Resolve an exact exit key under the session lock, including stopped chats."""
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    with (
+        lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
+        lock_file(paths.sessions_flock),
+    ):
+        records = _records_by_session(runtime_root)
+        entry = records[entry_chat_id]
+        for record in (entry, *records.values()):
+            if (record.harness, record.native_store, record.harness_session_id) == (
+                harness, native_store, session_id,
+            ):
+                return record.chat_id
+        chat_id = reserve_chat_id(runtime_root)
+        generation = uuid.uuid4().hex
+        now = utc_now_iso()
+        start = SessionStartEvent(
+            chat_id=ChatId(chat_id), kind=entry.kind, harness=harness,
+            harness_session_id=HarnessSessionId(session_id), native_store=native_store,
+            model=entry.model, control_root=entry.control_root, task_cwd=entry.task_cwd,
+            execution_cwd=entry.execution_cwd, session_instance_id=generation, started_at=now,
+        )
+        for event in (
+            start,
+            SessionUpdateEvent(
+                chat_id=ChatId(chat_id), harness_session_id=HarnessSessionId(session_id),
+                native_store=native_store, session_instance_id=generation, source="assigned",
+            ),
+            SessionStopEvent(
+                chat_id=ChatId(chat_id), session_instance_id=generation, stopped_at=now,
+            ),
+        ):
+            _append_session_event(paths.sessions_jsonl, paths.sessions_flock, event)
+        return chat_id

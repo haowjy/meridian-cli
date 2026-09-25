@@ -783,6 +783,7 @@ class SpawnCancelAllOutput(BaseModel):
 class SpawnDetailOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    boundary_summary: str | None = None
     spawn_id: str
     status: str
     model: str
@@ -893,6 +894,8 @@ class SpawnDetailOutput(BaseModel):
             "model": self.model,
             "harness": self.harness,
         }
+        if self.boundary_summary is not None:
+            wire["boundary_summary"] = self.boundary_summary
         if self.kind is not None:
             wire["kind"] = self.kind
         if self.activity is not None:
@@ -971,9 +974,9 @@ class SpawnDetailOutput(BaseModel):
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         effective_ctx = ctx or FormatContext()
-        if effective_ctx.verbosity > 0:
-            return self._format_verbose_text(always_show_transcript=True)
-        return self._format_moderate_text()
+        text = (self._format_verbose_text(always_show_transcript=True)
+                if effective_ctx.verbosity > 0 else self._format_moderate_text())
+        return f"{self.boundary_summary}\n{text}" if self.boundary_summary else text
 
     def format_wait_text(self, ctx: FormatContext | None = None) -> str:
         effective_ctx = ctx or FormatContext()

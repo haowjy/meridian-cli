@@ -17,7 +17,7 @@ describe("bounded session boundary", () => {
     publisher.observe({ type: "session_start", reason: "resume", identity: b });
     publisher.observe({ type: "session_shutdown", reason: "quit", identity: b });
     let record = JSON.parse(readFileSync(file, "utf8"));
-    expect(record).toMatchObject({ initial: a, current: b, quit: b, revision: 6 });
+    expect(record).toMatchObject({ initial: a, current: b, quit: b, revision: 5 });
     publisher.observe({ type: "session_start", reason: "reload", identity: b });
     record = JSON.parse(readFileSync(file, "utf8"));
     expect(record.quit).toBeNull();

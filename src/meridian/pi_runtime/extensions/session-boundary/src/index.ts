@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { publisherFor, readBoundaryCapability } from "../../shared/session_boundary";
+import { publisherFor, readBoundaryCapability, type BoundaryIdentity } from "../../shared/session_boundary";
 
 export default function sessionBoundaryExtension(pi: ExtensionAPI): void {
   const capability = readBoundaryCapability();
@@ -7,18 +7,19 @@ export default function sessionBoundaryExtension(pi: ExtensionAPI): void {
   const publisher = publisherFor(capability);
   for (const type of ["session_start", "session_before_switch", "session_shutdown"] as const) {
     pi.on(type, (event, context) => {
+      let identity: BoundaryIdentity | undefined;
       try {
-        publisher.observe({
-          type, reason: event.reason,
-          ...(type === "session_before_switch" ? {} : { identity: {
+        if (type !== "session_before_switch") {
+          identity = {
             session_id: context.sessionManager.getSessionId(),
             session_file: context.sessionManager.getSessionFile(),
-          } }),
-        });
+          };
+        }
       } catch (error) {
-        publisher.poison("observer_fault");
+        publisher.poison("identity_read_fault");
         throw error;
       }
+      publisher.observe({ type, reason: event.reason, identity });
     });
   }
 }

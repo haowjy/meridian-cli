@@ -1,0 +1,3 @@
+# Launch follow-ups
+
+- `run_boundary.py`: consume Lane C's owned Claude trampoline successor observation via `observe_run_boundary` after integration; do not infer or rebind entry.

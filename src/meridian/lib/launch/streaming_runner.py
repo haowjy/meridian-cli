@@ -76,6 +76,7 @@ from meridian.lib.launch.resolve import (
     resolve_resident_poll_seconds,
     resolve_startup_timeout_seconds,
 )
+from meridian.lib.launch.run_boundary import finalize_run_boundary
 from meridian.lib.launch.runner_helpers import (
     append_budget_exceeded_event as _append_budget_exceeded_event,
 )
@@ -1381,11 +1382,15 @@ async def execute_with_streaming(
                     _append_budget_exceeded_event(run=run, breach=preflight_breach)
                     break
 
+                attempt_pid: int | None = None
+
                 def record_started(
                     connection: HarnessConnection[Any],
                     captured_attempt: SessionAttempt | None = session_attempt,
                     captured_observer: Callable[[str], None] = observe_attempt_id,
                 ) -> None:
+                    nonlocal attempt_pid
+                    attempt_pid = connection.subprocess_pid
                     native_id = connection.session_id
                     if native_id:
                         captured_observer(native_id)
@@ -1415,6 +1420,11 @@ async def execute_with_streaming(
                 )
                 runner_phase[0] = "processing_attempt"
                 conclusion.absorb_attempt(attempt)
+                boundary_error = finalize_run_boundary(
+                    adapter=harness, child_env=child_env, runtime_root=runtime_root,
+                    spawn_id=str(run.spawn_id),
+                    pid=attempt_pid,
+                )
                 identity_error = None
                 if spec.native_identity_plan is not None:
                     identity_error = harness.verify_native_identity(spec.native_identity_plan)
@@ -1424,6 +1434,10 @@ async def execute_with_streaming(
                         )
                         conclusion.exit_code = 1
                         conclusion.failure_reason = identity_error
+                if boundary_error:
+                    identity_error = boundary_error
+                    conclusion.exit_code = 1
+                    conclusion.failure_reason = boundary_error
                 if attempt.start_error is not None:
                     logger.info(
                         "Failed to execute streaming spawn attempt.",

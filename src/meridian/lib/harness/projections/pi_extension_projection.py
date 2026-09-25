@@ -79,7 +79,9 @@ def resolve_pi_extension_entrypoints(
     if profile.spawn_watch_enabled:
         entrypoints.extend(resolve_pi_spawn_watch_entrypoint())
     if profile.session_boundary_enabled:
-        entrypoints.append(_resolve_bundle_entrypoint("session-boundary", "session-boundary/index.js"))
+        entrypoints.append(
+            _resolve_bundle_entrypoint("session-boundary", "session-boundary/index.js")
+        )
     return tuple(entrypoints)
 
 

@@ -51,6 +51,7 @@ from meridian.lib.launch.constants import (
     PRIMARY_META_FILENAME,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.run_boundary import finalize_run_boundary
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import InMemoryStore, LocalStore, make_artifact_key
 from meridian.lib.state.paths import resolve_spawn_log_dir
@@ -141,9 +142,13 @@ def _write_native_primary_metadata(
     """Best-effort metadata projection for native/black-box primary launches."""
 
     try:
+        boundary_row = spawn_store.get_spawn(runtime_root, spawn_id)
         write_primary_metadata(
             spawn_dir,
             PrimaryMetadata(
+                entry_chat_id=boundary_row.entry_chat_id if boundary_row else None,
+                exit_chat_id=boundary_row.exit_chat_id if boundary_row else None,
+                exit_identity=boundary_row.exit_identity if boundary_row else None,
                 managed_backend=False,
                 launcher_pid=launcher_pid,
                 backend_pid=None,
@@ -1140,6 +1145,13 @@ def run_harness_process(
                     )
             finally:
                 try:
+                    boundary_error = (
+                        finalize_run_boundary(
+                            adapter=harness_adapter, child_env=child_env,
+                            runtime_root=runtime_root, spawn_id=primary_spawn_id,
+                            pid=native_primary_tui_pid,
+                        ) if primary_spawn_id is not None else None
+                    )
                     native_identity_error = None
                     if identity_plan is not None and primary_started_epoch > 0:
                         native_identity_error = harness_adapter.verify_native_identity(
@@ -1150,6 +1162,9 @@ def run_harness_process(
                                 "Native identity verification conflict: %s", native_identity_error
                             )
                             exit_code = 1
+                    native_identity_error = boundary_error or native_identity_error
+                    if native_identity_error:
+                        exit_code = 1
                     (
                         exit_code,
                         resolved_harness_session_id,

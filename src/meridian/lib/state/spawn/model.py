@@ -91,6 +91,9 @@ class SpawnStateFields(BaseModel):
     retained_history_ids: tuple[UUID, ...] = ()
     state_revision: int = Field(default=0, ge=0)
     chat_id: OptionalPersistedChatId = None
+    entry_chat_id: OptionalPersistedChatId = None
+    exit_chat_id: OptionalPersistedChatId = None
+    exit_identity: Literal["verified", "unresolved", "mismatch"] | None = None
     owner_chat_id: OptionalPersistedChatId = None
     parent_id: str | None = None
     originating_bash_id: str | None = None

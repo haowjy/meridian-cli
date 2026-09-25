@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.config.settings import PiHarnessProfileConfig
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.native_identity import NativeIdentityPlan
+from meridian.lib.core.native_identity import NativeIdentityPlan, RunBoundary
 from meridian.lib.core.types import ArtifactKey, HarnessId, ModelId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
@@ -411,6 +411,11 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
 
     def verify_native_identity(self, plan: NativeIdentityPlan) -> str | None: ...
 
+    def observe_run_boundary(
+        self, *, child_env: dict[str, str], pid: int | None,
+    ) -> RunBoundary | None: ...
+
+
     def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> AdapterSpecT: ...
 
     def preflight(
@@ -635,6 +640,12 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
             self.native_store_for_launch(child_env=child_env, child_cwd=child_cwd)
             or plan.native_store
         ))
+
+    def observe_run_boundary(
+        self, *, child_env: dict[str, str], pid: int | None,
+    ) -> RunBoundary | None:
+        """Return launch-owned boundary observations when supported."""
+        return None
 
     def verify_native_identity(self, plan: NativeIdentityPlan) -> str | None:
         """Return an exact native entry conflict after execution, if supported."""

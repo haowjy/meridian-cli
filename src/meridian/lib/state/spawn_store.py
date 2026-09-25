@@ -400,6 +400,9 @@ def update_spawn(
     spawn_id: SpawnId | str,
     *,
     chat_id: str | None = None,
+    entry_chat_id: str | None = None,
+    exit_chat_id: str | None = None,
+    exit_identity: Literal["verified", "unresolved", "mismatch"] | None = None,
     launch_mode: LaunchMode | None = None,
     worker_pid: int | None = None,
     runner_pid: int | None = None,
@@ -424,6 +427,9 @@ def update_spawn(
 
     def merge(current: SpawnRecord) -> SpawnRecord:
         updates: dict[str, object] = {}
+        if exit_identity is not None:
+            updates.update(entry_chat_id=entry_chat_id, exit_chat_id=exit_chat_id,
+                           exit_identity=exit_identity)
         if chat_id is not None:
             updates["chat_id"] = chat_id
         if launch_mode is not None:

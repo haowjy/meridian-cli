@@ -31,6 +31,10 @@ export function reduceBoundary(record: BoundaryRecord, event: BoundaryEvent): Bo
   if (!bounded(event.reason, 64) || record.revision >= Number.MAX_SAFE_INTEGER) {
     throw new Error("Invalid Pi lifecycle event");
   }
+  if (event.type === "session_start" && record.last_event?.type === "session_start" &&
+      record.last_event.reason === event.reason && event.identity &&
+      record.current?.session_id === event.identity.session_id &&
+      record.current?.session_file === event.identity.session_file) return record;
   const next = { ...record, revision: record.revision + 1,
     last_event: { type: event.type, reason: event.reason }, quit: null };
   if (event.type === "session_before_switch") return next;
@@ -74,7 +78,9 @@ export class SessionBoundaryPublisher {
   observe(event: BoundaryEvent): void {
     if (this.poisoned) throw new Error("Pi boundary publisher poisoned");
     try {
-      this.record = reduceBoundary(this.record, event);
+      const next = reduceBoundary(this.record, event);
+      if (next === this.record) return;
+      this.record = next;
       this.publish(this.capability.path, this.record);
     } catch (error) {
       this.poison("observer_fault");
