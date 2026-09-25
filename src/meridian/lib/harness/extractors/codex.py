@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
@@ -15,36 +14,34 @@ from meridian.lib.harness.common import (
     _coerce_optional_int,  # pyright: ignore[reportPrivateUsage]
     _iter_json_lines_artifact,  # pyright: ignore[reportPrivateUsage]
     extract_codex_report,
-    extract_session_id_from_artifacts_with_patterns,
     extract_usage_from_artifacts,
 )
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
-from .base import HarnessExtractor, session_from_mapping_with_keys
+from .base import HarnessExtractor, normalize_harness_event_type
 
-_SESSION_ID_TEXT_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\bcodex\s+resume\s+([A-Za-z0-9][A-Za-z0-9._:-]{5,})\b", re.IGNORECASE),
-    re.compile(r"\bresume\s+([A-Za-z0-9][A-Za-z0-9._:-]{5,})\b", re.IGNORECASE),
-)
+
+def _owned_session_id(payload: Mapping[str, object], event_type: str) -> str | None:
+    if event_type.replace("/", ".") not in {"thread.started", "session_id"}:
+        return None
+    for key in ("thread_id", "threadId", "session_id"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    thread = payload.get("thread")
+    if isinstance(thread, dict):
+        value = thread.get("id")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 class CodexHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
     """Extractor implementation for Codex artifacts and events."""
 
     def detect_session_id_from_event(self, event: RawHarnessEvent) -> str | None:
-        return session_from_mapping_with_keys(
-            event.payload,
-            (
-                "threadId",
-                "thread_id",
-                "session_id",
-                "sessionId",
-                "sessionID",
-                "conversation_id",
-                "conversationId",
-            ),
-        )
+        return _owned_session_id(event.payload, event.event_type)
 
     def detect_session_id_from_artifacts(
         self,
@@ -67,20 +64,11 @@ class CodexHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
         return extract_usage_from_artifacts(artifacts, spawn_id)
 
     def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return extract_session_id_from_artifacts_with_patterns(
-            artifacts,
-            spawn_id,
-            json_keys=(
-                "session_id",
-                "sessionId",
-                "sessionID",
-                "conversation_id",
-                "conversationId",
-                "thread_id",
-                "threadId",
-            ),
-            text_patterns=_SESSION_ID_TEXT_PATTERNS,
-        )
+        for payload in _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME):
+            session_id = _owned_session_id(payload, normalize_harness_event_type(payload))
+            if session_id:
+                return session_id
+        return None
 
     def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
         return extract_codex_report(artifacts, spawn_id)

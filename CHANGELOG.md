@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Bind Codex identities only from owned identity event envelopes, never assistant prose or nested identity-shaped content.
+
 - Carry recorded source stores through continuation and fork requests; pin Codex/OpenCode resume environments and refuse missing native sources.
 
 - Persist the finalized native store with the first owned session observation in both runners.

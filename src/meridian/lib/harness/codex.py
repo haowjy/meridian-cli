@@ -3,7 +3,6 @@
 import json
 import logging
 import os
-import re
 import sqlite3
 import time
 from collections.abc import Awaitable, Callable
@@ -50,7 +49,6 @@ from meridian.lib.harness.codex_rollout import (
 from meridian.lib.harness.common import (
     extract_codex_report,
     extract_codex_thread_id,
-    extract_session_id_from_artifacts_with_patterns,
 )
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
@@ -220,19 +218,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_CODEX_SUBPROCESS
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_CODEX
-    SESSION_ID_KEYS: ClassVar[tuple[str, ...]] = (
-        "session_id",
-        "sessionId",
-        "sessionID",
-        "conversation_id",
-        "conversationId",
-        "thread_id",
-        "threadId",
-    )
-    SESSION_ID_TEXT_PATTERNS: ClassVar[tuple[re.Pattern[str], ...]] = (
-        re.compile(r"\bcodex\s+resume\s+([A-Za-z0-9][A-Za-z0-9._:-]{5,})\b", re.IGNORECASE),
-        re.compile(r"\bresume\s+([A-Za-z0-9][A-Za-z0-9._:-]{5,})\b", re.IGNORECASE),
-    )
     _CONSUMED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             "model",
@@ -488,12 +473,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return matches[0]
 
     def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return extract_session_id_from_artifacts_with_patterns(
-            artifacts,
-            spawn_id,
-            json_keys=self.SESSION_ID_KEYS,
-            text_patterns=self.SESSION_ID_TEXT_PATTERNS,
-        )
+        return CODEX_EXTRACTOR.extract_session_id(artifacts, spawn_id)
 
     def fork_session(self, source_session_id: str, *, native_store: str | None = None) -> str:
         normalized_source_session_id = source_session_id.strip()
