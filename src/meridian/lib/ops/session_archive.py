@@ -11,6 +11,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from meridian.lib.config.settings import HistoryArchiveConfig, load_config
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
+from meridian.lib.ops.runner_history_prune import (
+    PRUNE_AFTER_DAYS,
+    RunnerHistoryPrune,
+    prune_runner_history,
+)
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store, spawn_store
@@ -51,6 +56,7 @@ class SessionArchiveInput(BaseModel):
     list_archives: bool = False
     apply: bool = False
     after_days: int | None = Field(default=None, ge=0)
+    prune_runner_history: bool = False
 
 
 class SessionRestoreInput(BaseModel):
@@ -85,8 +91,11 @@ class SessionArchiveOutput(BaseModel):
     preparation_required: tuple[str, ...] = ()
     limited: bool = False
     snapshots: tuple[HistorySnapshot, ...] = ()
+    runner_history: RunnerHistoryPrune | None = None
 
     def format_text(self, ctx: object = None) -> str:
+        if self.runner_history is not None:
+            return self.runner_history.format_text()
         lines = [
             f"Selected: {len(self.selected)}; reclaimed: {len(self.reclaimed)}; "
             f"restored: {len(self.restored)}; protected: {len(self.protected)}"
@@ -412,6 +421,19 @@ def session_archive_sync(payload: SessionArchiveInput) -> SessionArchiveOutput:
     roots = resolve_roots_for_read(payload.project_root)
     if roots is None:
         raise ValueError("No project history")
+    if payload.prune_runner_history:
+        if payload.refs or payload.eligible or payload.list_archives or payload.destination:
+            raise ValueError(
+                "--prune-runner-history cannot be combined with refs, --eligible, --list "
+                "or --destination"
+            )
+        return SessionArchiveOutput(
+            runner_history=prune_runner_history(
+                roots.runtime_root,
+                apply=payload.apply,
+                after_days=PRUNE_AFTER_DAYS if payload.after_days is None else payload.after_days,
+            )
+        )
     if payload.list_archives:
         configured = (
             payload.destination or load_config(roots.project_root).history.archive.destination

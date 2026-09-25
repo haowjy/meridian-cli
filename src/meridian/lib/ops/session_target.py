@@ -167,6 +167,14 @@ def _spawn_target(*, row: SpawnRecord, runtime_root: Path) -> SessionLogTarget:
     return target._replace(view_label=spawn_view_label(row))
 
 
+def resolve_run_sources(row: SpawnRecord, runtime_root: Path) -> tuple[TranscriptSource, ...]:
+    """Every exact native source holding a run's turns: its log chat and its entry chat."""
+    targets = [_spawn_target(row=row, runtime_root=runtime_root)]
+    if row.chat_id is not None and row.chat_id != row.continue_chat_id:
+        targets.append(_resolve_from_chat_id(runtime_root=runtime_root, chat_id=row.chat_id))
+    return tuple(target.source for target in targets)
+
+
 def _resolve_from_spawn_id(
     *,
     project_root: Path,
@@ -309,5 +317,6 @@ __all__ = [
     "SessionLogTarget",
     "TranscriptSource",
     "native_source_label",
+    "resolve_run_sources",
     "resolve_transcript_source",
 ]

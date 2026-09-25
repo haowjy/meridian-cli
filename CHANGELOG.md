@@ -25,6 +25,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Remove `_MERIDIAN_GUARDRAIL_OUTPUT_LOG`; guardrail scripts receive `_MERIDIAN_GUARDRAIL_REPORT` and `_MERIDIAN_GUARDRAIL_CHAT_ID` instead.
 
 ### Added
+- `session archive --prune-runner-history [--apply] [--after-days N]` drops redundant runner `history.jsonl` for terminal spawns older than N days (default 14) whose exact native transcript resolves; dry-run by default, never automatic.
 - Import legacy chat native keys once from exact, header-validated stores; keep unresolved chats listed in a durable report. Read-only dev report previews bindings.
 - Include Meridian's unscoped interactive Pi sessions root in exact legacy binding candidates.
 - Validate legacy OpenCode keys through the same in-place exact reader used by live reads.
