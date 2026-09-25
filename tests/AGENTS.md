@@ -60,6 +60,13 @@ one. A fixed ID contradicts the prebound identity and fails the attempt as
 identity signal stay silent; report a different ID only in a deliberate
 mismatch regression.
 
+Native source fixtures for continue/fork tests carry faithful native headers:
+Claude a first-line `sessionId`, Codex a `session_meta.payload.id`, Pi a
+`type: session` header with `id` — each equal to the recorded ID. Exact
+locators validate the header before resume, fork, or reads, so an empty or
+`{}` journal is refused as `missing`, not resumed. Never loosen the validator
+to make a fixture pass; fix the fixture.
+
 Add fidelity only for a real behavior under test. Do not pre-build alternate close,
 timeout, or reader-error scenarios without a contract they protect.
 
