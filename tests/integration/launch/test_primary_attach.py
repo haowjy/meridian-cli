@@ -37,6 +37,36 @@ from meridian.lib.state.spawn_store import start_spawn
 _BACKEND_SCOPE_EPOCH = 12_345.0
 
 
+@pytest.mark.asyncio
+async def test_primary_attach_event_stream_runs_without_history_writer(tmp_path: Path) -> None:
+    event = RawHarnessEvent(event_type="test.noop", harness_id="codex", payload={})
+
+    class FiniteConnection:
+        primary_event_scope = None
+
+        def observe_event_semantics(self, _semantics: object) -> None:
+            return None
+
+        async def events(self):  # type: ignore[no-untyped-def]
+            yield event
+
+    launcher = PrimaryAttachLauncher(
+        spawn_id=SpawnId("p-no-writer"),
+        spawn_dir=tmp_path,
+        connection=cast("Any", FiniteConnection()),
+        tui_command_builder=lambda session_id: ("codex", session_id),
+        process_launcher=cast("ProcessLauncher", object()),
+    )
+    seen: list[RawHarnessEvent] = []
+    launcher._history_writer = None
+    launcher._event_hook = seen.append
+    launcher._update_activity_from_event = lambda _event: None  # type: ignore[method-assign]
+
+    await launcher._run_event_writer()
+
+    assert seen == [event]
+
+
 def _publish_spawn(spawn_dir: Path) -> None:
     start_spawn(
         spawn_dir.parent.parent,
@@ -718,6 +748,7 @@ async def test_primary_attach_writes_metadata_before_tui_launch(tmp_path: Path) 
             requested_sessions.append(session_id) or ("codex", "resume", session_id)
         ),
         process_launcher=process_launcher,
+        runtime_root=tmp_path,
     )
 
     await launcher.run(
@@ -736,6 +767,7 @@ async def test_primary_attach_writes_metadata_before_tui_launch(tmp_path: Path) 
     assert launch_meta["backend_port"] == 7811
     assert launch_meta["harness_session_id"] == "thread-123"
     assert process_launcher.output_log_paths == [None]
+    assert (spawn_dir / "heartbeat").is_file()
 
 
 @pytest.mark.asyncio
@@ -819,7 +851,10 @@ async def test_primary_attach_upgrades_provisional_backend_scope_without_duplica
 
 
 @pytest.mark.asyncio
-async def test_primary_attach_writes_valid_jsonl_events(tmp_path: Path) -> None:
+async def test_primary_attach_writes_valid_jsonl_events(
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
     spawn_dir = tmp_path / "spawns" / "p902"
     connection = FakeManagedConnection(
         events=[
@@ -851,18 +886,19 @@ async def test_primary_attach_writes_valid_jsonl_events(tmp_path: Path) -> None:
         env={},
     )
 
-    rows = _read_history_lines(spawn_dir)
-    assert [row["event_type"] for row in rows] == ["turn/started", "turn/completed"]
-    assert [row["turn_id"] for row in rows] == ["t1", "t1"]
-    for row in rows:
-        assert isinstance(row["payload"], dict)
-        assert row["harness_id"] == "codex"
-        assert isinstance(row["seq"], int)
-        assert isinstance(row["byte_offset"], int)
-        assert "item_id" not in row
-        assert "request_id" not in row
-        assert row["interrupt_epoch"] == 0
-        assert "stale_after_interrupt" not in row
+    if request.config.getoption("--runner-history") != "off":
+        rows = _read_history_lines(spawn_dir)
+        assert [row["event_type"] for row in rows] == ["turn/started", "turn/completed"]
+        assert [row["turn_id"] for row in rows] == ["t1", "t1"]
+        for row in rows:
+            assert isinstance(row["payload"], dict)
+            assert row["harness_id"] == "codex"
+            assert isinstance(row["seq"], int)
+            assert isinstance(row["byte_offset"], int)
+            assert "item_id" not in row
+            assert "request_id" not in row
+            assert row["interrupt_epoch"] == 0
+            assert "stale_after_interrupt" not in row
 
 
 @pytest.mark.asyncio

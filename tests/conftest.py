@@ -22,6 +22,20 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "e2e: full CLI invocation")
     config.addinivalue_line("markers", "contract: parity/drift checks")
     config.addinivalue_line("markers", "slow: takes >1s")
+    if config.getoption("--runner-history") == "off":
+        blind_dir = PACKAGE_ROOT / "tests" / "support" / "runner_history_blind"
+        os.environ["MERIDIAN_TEST_RUNNER_HISTORY"] = "off"
+        existing = os.environ.get("PYTHONPATH")
+        os.environ["PYTHONPATH"] = str(blind_dir) + (os.pathsep + existing if existing else "")
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--runner-history",
+        choices=("on", "off"),
+        default="on",
+        help="Disable runner-history writers and trap reads (PR 2 deletion gate)",
+    )
 
 
 @pytest.fixture
@@ -69,6 +83,17 @@ def _clean_meridian_runtime_env(
 
     if session_home is not None:
         monkeypatch.setenv("MERIDIAN_HOME", session_home)
+
+
+@pytest.fixture(autouse=True)
+def _runner_history_blind_mode(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if request.config.getoption("--runner-history") == "off":
+        from tests.support.runner_history_blind.patches import install_runner_history_blind
+
+        install_runner_history_blind(monkeypatch)
 
 
 @pytest.fixture(autouse=True)
