@@ -645,7 +645,10 @@ def test_tracked_chat_without_native_store_refuses_continue_and_fork(
     assert (exc.value.ref, exc.value.reason) == (chat_id, "unbound")
 
 
-def test_complete_claude_key_projects_exact_resume_command(tmp_path: Path) -> None:
+def test_complete_claude_key_projects_exact_resume_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stub_bundle_request_and_resolve(monkeypatch, model="sonnet", harness=HarnessId.CLAUDE)
     runtime_root = _state_root(tmp_path)
     native_store = runtime_root / "native-claude" / "projects"
     native_store.mkdir(parents=True, exist_ok=True)
