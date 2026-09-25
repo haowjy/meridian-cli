@@ -4,7 +4,16 @@ import ast
 import re
 from pathlib import Path
 
-from meridian.env_registry import ENV_VARS, EnvTier, is_registered_env_name
+import pytest
+
+from meridian.env_registry import (
+    ENV_VAR_BY_NAME,
+    ENV_VARS,
+    EnvSubtype,
+    EnvTier,
+    is_registered_env_name,
+)
+from meridian.lib.core.child_env import validate_child_env_keys
 
 _ENV_NAME = re.compile(r"_?MERIDIAN_[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*")
 _JS_STRING = re.compile(r'''["'](_?MERIDIAN_[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*)["']''')
@@ -66,3 +75,26 @@ def test_registry_prefix_matches_stability_tier() -> None:
         if entry.name.startswith("_MERIDIAN_") != (entry.tier is EnvTier.INTERNAL)
     ]
     assert mismatches == []
+
+
+def test_pi_admission_and_session_boundary_handles_are_not_caller_overrides() -> None:
+    trusted_pi_handles = {
+        "_MERIDIAN_PI_NOTIFICATION_GATE_VERSION",
+        "_MERIDIAN_PI_NOTIFICATION_GATE_ATTEMPT",
+        "_MERIDIAN_PI_NOTIFICATION_GATE_NONCE",
+        "_MERIDIAN_PI_SESSION_BOUNDARY_PATH",
+        "_MERIDIAN_PI_SESSION_BOUNDARY_RUN_ID",
+        "_MERIDIAN_PI_SESSION_BOUNDARY_ATTEMPT_ID",
+        "_MERIDIAN_PI_SESSION_BOUNDARY_SCOPE_ID",
+        "_MERIDIAN_PI_SESSION_BOUNDARY_NONCE",
+        "_MERIDIAN_PI_SESSION_BOUNDARY_PID",
+    }
+
+    assert trusted_pi_handles <= ENV_VAR_BY_NAME.keys()
+    for name in trusted_pi_handles:
+        contract = ENV_VAR_BY_NAME[name]
+        assert contract.tier is EnvTier.INTERNAL
+        assert contract.subtype is EnvSubtype.INJECTED_HANDLE
+        assert contract.child is False
+        with pytest.raises(RuntimeError, match="Unexpected Meridian key"):
+            validate_child_env_keys({name: "caller-controlled"})

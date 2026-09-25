@@ -24,6 +24,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Register Pi notification-admission and session-boundary handles as internal
+  contracts, but reject caller-controlled child-env overrides until trusted
+  producer wiring exists.
+
 - Preserve whitespace startup tokens for legacy v1 selections and session updates;
   require nonblank startup identity only for exact v2 selections.
 

@@ -217,6 +217,51 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _internal_handle(
         "_MERIDIAN_PI_SPAWN_WATCH_ENABLED", "Resolved Pi spawn-watch bundle toggle."
     ),
+    _internal_handle(
+        "_MERIDIAN_PI_NOTIFICATION_GATE_VERSION",
+        "Notification admission protocol version for a trusted Pi session.",
+        child=False,
+    ),
+    _internal_handle(
+        "_MERIDIAN_PI_NOTIFICATION_GATE_ATTEMPT",
+        "Notification admission attempt identifier for a trusted Pi session.",
+        child=False,
+    ),
+    _internal_handle(
+        "_MERIDIAN_PI_NOTIFICATION_GATE_NONCE",
+        "Notification admission nonce for a trusted Pi session.",
+        child=False,
+    ),
+    _internal_handle(
+        "_MERIDIAN_PI_SESSION_BOUNDARY_PATH",
+        "Trusted Pi session-boundary record path.",
+        child=False,
+    ),
+    _internal_handle(
+        "_MERIDIAN_PI_SESSION_BOUNDARY_RUN_ID",
+        "Trusted Pi session-boundary run identifier.",
+        child=False,
+    ),
+    _internal_handle(
+        "_MERIDIAN_PI_SESSION_BOUNDARY_ATTEMPT_ID",
+        "Trusted Pi session-boundary attempt identifier.",
+        child=False,
+    ),
+    _internal_handle(
+        "_MERIDIAN_PI_SESSION_BOUNDARY_SCOPE_ID",
+        "Trusted Pi session-boundary transport scope identifier.",
+        child=False,
+    ),
+    _internal_handle(
+        "_MERIDIAN_PI_SESSION_BOUNDARY_NONCE",
+        "Trusted Pi session-boundary launch nonce.",
+        child=False,
+    ),
+    _internal_handle(
+        "_MERIDIAN_PI_SESSION_BOUNDARY_PID",
+        "Trusted Pi session-boundary process identifier.",
+        child=False,
+    ),
 )
 
 ENV_FAMILIES: tuple[EnvFamily, ...] = (
