@@ -21,14 +21,27 @@ def read_header(path: Path) -> dict[str, object]:
             header: object = json.loads(handle.readline())
     except (OSError, UnicodeError, ValueError) as exc:
         raise ValueError(f"entry_mismatch: unreadable Pi header: {path}") from exc
-    if not isinstance(header, dict) or header.get("type") != "session":
+    if (
+        not isinstance(header, dict)
+        or header.get("type") != "session"
+        or not isinstance(header.get("id"), str)
+        or not header["id"]
+    ):
         raise ValueError(f"entry_mismatch: invalid Pi session header: {path}")
     return cast("dict[str, object]", header)
 
 
 def mint_session_id(store: Path) -> str:
     session_id = str(uuid.uuid4())
-    for path in store.glob("*.jsonl"):
+    try:
+        paths = tuple(store.iterdir())
+    except FileNotFoundError:
+        return session_id
+    except OSError as exc:
+        raise ValueError(f"native_identity_collision: cannot inspect {store}") from exc
+    for path in paths:
+        if path.suffix != ".jsonl":
+            continue
         try:
             header = read_header(path)
         except ValueError as exc:

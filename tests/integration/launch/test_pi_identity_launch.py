@@ -310,6 +310,9 @@ async def test_rpc_spawn_uses_prebound_scoped_store(pi_runtime: Path, behavior: 
         native_id, store = assert_prebound(root, managed.chat_id)
         assert store.name == "p42"
         assert (code == 0) == (behavior == "ok")
+        row = spawn_store.get_spawn(ctx.runtime_root, run.spawn_id)
+        assert row is not None
+        assert row.status == ("succeeded" if behavior == "ok" else "failed")
         if behavior == "fail":
             with pytest.raises(ValueError, match="native_transcript_missing"):
                 context(
