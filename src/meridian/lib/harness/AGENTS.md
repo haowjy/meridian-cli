@@ -95,19 +95,12 @@ source. `SessionRequest.source_native_store` is the sole source-namespace carrie
 for all harnesses; it always comes from the recorded chat, never config hints.
 `finalize_native_identity()` pins store/ID against the final child env
 before argv projection, so the bound key, env and argv agree. The runner binds
-nonempty plans as `assigned` before exec; `verify_native_identity()` checks that
-exact target after the attempt and never selects a replacement. Runner order:
-assigned bind → initial owned `NativeEntryMismatch` check →
-`verify_native_identity` → `observe_primary_session_id` diagnostics →
-`finalize_run_boundary`. Typed contradictions carry expected/observed evidence;
-`NativeSessionUnavailable` preserves unbound/missing/ambiguous refusal codes.
-Launch refusals reach `ops/spawn/failure_policy`; neither kind permits exit
-allocation or invocation attribution. Exit allocation also requires the exact native
-resolver to find a valid source; unresolved exits do not fail the completed run.
-`observe_session_id()` returns owned connection/process signals, then an
-already-known ID, as `observed`; observations bind once and cannot overwrite.
-It must not mutate adapter-instance state. Cwd, timestamps, logs, and newest-file
-or prefix scans never establish tracked chat identity.
+nonempty identities as `assigned` before exec. `observe_after_exit()` returns
+`PostExit`: typed entry errors, owned entry/exit keys, and separate diagnostics.
+It never binds or persists. `launch/native_run.py` owns the observation order,
+entry decision, exact exit allocation and invocation attribution for every runner.
+Cwd, timestamps, logs, and newest-file or prefix scans never establish tracked
+chat identity.
 
 `legacy_native_stores.py` derives one-time import candidates from recorded facts,
 using these same store formats and exact validators. Store or header-contract
@@ -125,8 +118,8 @@ replacement within the same config root, otherwise atomic copy. Missing sources 
 before exec, including when an ambient same-ID file exists. Model reads use the
 same exact adapter resolver, with no ambient-store fallback. OpenCode's
 newly recorded store is its resolved database path, including `OPENCODE_DB`.
-Claude trampoline successors travel in `PrimarySessionObservation` and persist
-separately on the run, never through the entry-ID return, chat binding, or exit
+Claude trampoline successors travel in `PostExit` and persist in `run_boundary`,
+never through the entry-ID return, chat binding, or exit
 allocator. Claude exit identity stays unresolved without launch-correlated evidence.
 
 **Terminal event classification is harness- and parent-scope-aware.** `event_type`

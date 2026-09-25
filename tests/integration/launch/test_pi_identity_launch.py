@@ -65,7 +65,7 @@ def install_shim(root: Path, *, behavior: str = "ok") -> None:
         f"{shlex.quote(str(scratch / 'binding-at-exec'))}\n"
         f'printf "%s\\n" "$@" > {shlex.quote(str(scratch / "argv"))}\n'
         'printf "%s\\n" "$PI_CODING_AGENT_SESSION_DIR" > '
-        f'{shlex.quote(str(scratch / "env-store"))}\n'
+        f"{shlex.quote(str(scratch / 'env-store'))}\n"
         "id=; source=; session=; rpc=\n"
         'while [ "$#" -gt 0 ]; do\n'
         ' case "$1" in\n'
@@ -286,7 +286,6 @@ async def test_rpc_spawn_uses_prebound_scoped_store(pi_runtime: Path, behavior: 
             harness="pi", model="pi-test", agent="", agent_path="", skills=(), skill_paths=()
         ),
         request=ctx.request.session,
-        harness_session_id="",
         spawn_id="p42",
         startup_attempt_id="test-attempt",
     ) as managed:
@@ -298,7 +297,7 @@ async def test_rpc_spawn_uses_prebound_scoped_store(pi_runtime: Path, behavior: 
                 project_root=root,
                 runtime_root=ctx.runtime_root,
                 artifacts=LocalStore(root_dir=ctx.runtime_root / "artifacts"),
-                session_attempt=managed.attempt,
+                session_attempt=managed,
             ),
             20,
         )
@@ -322,7 +321,9 @@ async def test_rpc_spawn_uses_prebound_scoped_store(pi_runtime: Path, behavior: 
 
 @pytest.mark.parametrize("primary", [True, False])
 def test_collision_refuses_before_exec(
-    pi_runtime: Path, monkeypatch: pytest.MonkeyPatch, primary: bool,
+    pi_runtime: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    primary: bool,
 ) -> None:
     install_shim(pi_runtime)
     planned = context(pi_runtime, primary=primary).binding.spec.native_identity
@@ -344,22 +345,35 @@ async def test_spawn_continue_reuses_chat_and_fork_allocates_new_chat(pi_runtime
     install_shim(root)
     source = None
     for number, operation in enumerate(("create", "resume", "fork"), 42):
-        session = SessionRequest() if source is None else SessionRequest(
-            requested_harness_session_id=source.harness_session_id,
-            continue_chat_id=source.chat_id,
-            continue_source_ref=source.chat_id,
-            continue_source_tracked=True,
-            source_native_store=source.native_store,
-            continue_fork=operation == "fork",
+        session = (
+            SessionRequest()
+            if source is None
+            else SessionRequest(
+                requested_harness_session_id=source.harness_session_id,
+                continue_chat_id=source.chat_id,
+                continue_source_ref=source.chat_id,
+                continue_source_tracked=True,
+                source_native_store=source.native_store,
+                continue_fork=operation == "fork",
+            )
         )
         ctx = context(root, primary=False, spawn_id=f"p{number}", session=session)
         run = Spawn(
-            spawn_id=SpawnId(f"p{number}"), prompt="hello",
-            model=ModelId("pi-test"), status="queued",
+            spawn_id=SpawnId(f"p{number}"),
+            prompt="hello",
+            model=ModelId("pi-test"),
+            status="queued",
         )
         spawn_store.start_spawn(
-            ctx.runtime_root, spawn_id=run.spawn_id, chat_id="", model="pi-test",
-            agent="", harness="pi", kind="streaming", prompt="hello", status="queued",
+            ctx.runtime_root,
+            spawn_id=run.spawn_id,
+            chat_id="",
+            model="pi-test",
+            agent="",
+            harness="pi",
+            kind="streaming",
+            prompt="hello",
+            status="queued",
         )
         with _session_execution_context(
             runtime_root=ctx.runtime_root,
@@ -367,14 +381,15 @@ async def test_spawn_continue_reuses_chat_and_fork_allocates_new_chat(pi_runtime
                 harness="pi", model="pi-test", agent="", agent_path="", skills=(), skill_paths=()
             ),
             request=session,
-            harness_session_id=(session.requested_harness_session_id or "")
-            if operation == "resume" else "",
             run_agent_name=None,
             spawn_id=str(run.spawn_id),
         ) as managed:
             code = await asyncio.wait_for(
                 execute_with_streaming(
-                    run, request=ctx.request, launch_context=ctx, project_root=root,
+                    run,
+                    request=ctx.request,
+                    launch_context=ctx,
+                    project_root=root,
                     runtime_root=ctx.runtime_root,
                     artifacts=LocalStore(root_dir=ctx.runtime_root / "artifacts"),
                     session_attempt=managed.attempt,
@@ -390,7 +405,8 @@ async def test_spawn_continue_reuses_chat_and_fork_allocates_new_chat(pi_runtime
             elif operation == "resume":
                 assert record.chat_id == source.chat_id == "c1"
                 assert (record.harness_session_id, record.native_store) == (
-                    source.harness_session_id, source.native_store,
+                    source.harness_session_id,
+                    source.native_store,
                 )
             else:
                 assert record.chat_id == "c2"
@@ -398,9 +414,9 @@ async def test_spawn_continue_reuses_chat_and_fork_allocates_new_chat(pi_runtime
                 unchanged = session_store.get_session_record(ctx.runtime_root, source.chat_id)
                 assert unchanged is not None
                 assert (unchanged.harness_session_id, unchanged.native_store) == (
-                    source.harness_session_id, source.native_store,
+                    source.harness_session_id,
+                    source.native_store,
                 )
-
 
 
 def test_primary_create_with_unreadable_sibling_warns_and_executes(pi_runtime: Path) -> None:
@@ -419,8 +435,7 @@ def test_primary_create_with_unreadable_sibling_warns_and_executes(pi_runtime: P
     assert outcome.chat_id is not None
     assert_prebound(pi_runtime, outcome.chat_id)
     assert any(
-        event.get("event") == "pi_store_unreadable_header"
-        and event.get("path") == str(unreadable)
+        event.get("event") == "pi_store_unreadable_header" and event.get("path") == str(unreadable)
         for event in logs
     )
     assert unreadable.read_text() == ""

@@ -125,7 +125,7 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
     )
 
     captured: dict[str, object] = {}
-    claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
+    harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
 
     def fake_run_primary_process_with_capture(
         command: tuple[str, ...],
@@ -148,13 +148,10 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
         on_child_started(222)
         return (0, 222)
 
-    monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
-
     outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
-        stop_session_fn=lambda *args, **kwargs: None,
     )
 
     assert captured["prompt_file_exists"] is True
@@ -188,7 +185,6 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
     assert outcome.exit_code == 0
 
 
-
 @pytest.mark.slow
 def test_run_harness_process_black_box_primary_uses_control_root_with_distinct_task_cwd(
     monkeypatch: pytest.MonkeyPatch,
@@ -205,7 +201,7 @@ def test_run_harness_process_black_box_primary_uses_control_root_with_distinct_t
         model="claude-sonnet-4-5",
         execution_cwd=task_cwd,
     )
-    claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
+    harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
     captured: dict[str, object] = {}
 
     def fake_run_primary_process_with_capture(
@@ -223,12 +219,10 @@ def test_run_harness_process_black_box_primary_uses_control_root_with_distinct_t
         on_child_started(4445)
         return (0, 4445)
 
-    monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
     outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
-        stop_session_fn=lambda *args, **kwargs: None,
     )
 
     assert captured["cwd"] == project_root
@@ -281,8 +275,6 @@ def test_run_harness_process_claude_primary_print_json_persists_session_id_from_
         launch_context,
         harness_registry,
         run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
-        stop_session_fn=lambda *args, **kwargs: None,
-        update_session_harness_id_fn=lambda *args, **kwargs: None,
     )
 
     assert isinstance(captured["output_log_path"], Path)
@@ -307,7 +299,7 @@ def test_run_harness_process_claude_primary_stays_on_black_box_path(
         harness_id=HarnessId.CLAUDE,
         model="claude-sonnet-4-5",
     )
-    claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
+    harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
     black_box_calls = 0
 
     def fail_managed(
@@ -320,6 +312,7 @@ def test_run_harness_process_claude_primary_stays_on_black_box_path(
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
+        session_id_observer: Any = None,
     ) -> PrimaryAttachOutcome:
         _ = (
             harness_id,
@@ -347,14 +340,11 @@ def test_run_harness_process_claude_primary_stays_on_black_box_path(
         on_child_started(7272)
         return (0, 7272)
 
-    monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
-
     outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_attach_fn=fail_managed,
         run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
-        stop_session_fn=lambda *args, **kwargs: None,
     )
 
     assert black_box_calls == 1

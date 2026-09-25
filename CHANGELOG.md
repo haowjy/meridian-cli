@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Unify native identity checks across runners; reject reused fork IDs and verify streaming-serve exits.
+
 - Refuse passthrough identity flags and invalid Claude dry-run sources; await OpenCode fork IDs.
 
 ### Added

@@ -44,7 +44,7 @@ and to every implementation together.
 
 ## Related
 
-- [../.context/CONTEXT.md](../.context/CONTEXT.md) — `observe_session_id()` priority
+- [../.context/CONTEXT.md](../.context/CONTEXT.md) — post-exit identity order
   chain that drives when and how extractor methods are called.
 - [../connections/AGENTS.md](../connections/AGENTS.md) — `RawHarnessEvent` that
   `detect_session_id_from_event` receives.

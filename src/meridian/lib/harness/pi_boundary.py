@@ -8,18 +8,18 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from meridian.lib.core.native_identity import NativeSessionKey, RunBoundary
+from meridian.lib.core.native_identity import NativeKey, PostExit
 
 
 class _Identity(BaseModel):
     session_id: str = Field(min_length=1, max_length=256, pattern=r"^[^\x00-\x1f]+$")
     session_file: str = Field(min_length=1, max_length=4096, pattern=r"^[^\x00-\x1f]+$")
 
-    def key(self) -> NativeSessionKey:
+    def key(self) -> NativeKey:
         path = Path(self.session_file)
         if not path.is_absolute():
             raise ValueError("relative native path")
-        return NativeSessionKey(str(path.parent.resolve()), self.session_id)
+        return NativeKey("pi", str(path.parent.resolve()), self.session_id)
 
 
 class _Event(BaseModel):
@@ -40,17 +40,17 @@ class _Record(BaseModel):
     invalid_reason: str | None
 
 
-def read_boundary(path: Path, *, nonce: str, pid: int | None) -> RunBoundary:
+def read_boundary(path: Path, *, nonce: str, pid: int | None) -> PostExit:
     """Missing, stale, corrupt and non-final records cannot verify an exit."""
     try:
         with path.open("rb") as handle:
             data = handle.read(16 * 1024 + 1)
         if len(data) > 16 * 1024:
-            return RunBoundary()
+            return PostExit()
         record = _Record.model_validate(json.loads(data))
         if (record.v != 2 or record.launch_nonce != nonce or record.pid != pid
                 or record.invalid_reason is not None):
-            return RunBoundary()
+            return PostExit()
         entry = record.initial.key() if record.initial else None
         final_quit = (
             record.last_event is not None
@@ -58,9 +58,9 @@ def read_boundary(path: Path, *, nonce: str, pid: int | None) -> RunBoundary:
             and record.last_event.reason == "quit"
             and record.quit is not None
         )
-        return RunBoundary(
+        return PostExit(
             entry_observed=entry,
             exit=record.quit.key() if final_quit and record.quit else None,
         )
     except (OSError, ValueError, ValidationError):
-        return RunBoundary()
+        return PostExit()

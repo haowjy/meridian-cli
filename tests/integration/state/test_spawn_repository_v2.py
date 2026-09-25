@@ -82,13 +82,15 @@ def test_dogfood_boundary_state_loads_and_continues_at_verified_exit(tmp_path: P
     state["exit_chat_id"] = "c-exit"
     state["exit_identity"] = "verified"
     state.pop("run_boundary", None)
+    state["trampoline_successor_id"] = "diagnostic-only"
     state_path.write_text(json.dumps(state), encoding="utf-8")
 
     loaded = read_state(spawns_dir, "p1", include_prompt=False)
 
     assert loaded is not None
     assert loaded.chat_id == "c1"
-    assert loaded.run_boundary == RunBoundaryOutcome(status="verified", exit_chat_id="c-exit")
+    assert loaded.run_boundary == RunBoundaryOutcome(
+        status="verified", exit_chat_id="c-exit", trampoline_successor_id="diagnostic-only")
     assert loaded.continue_chat_id == "c-exit"
 
 
@@ -164,7 +166,6 @@ def test_mutating_legacy_row_rewrites_it_as_v3(tmp_path: Path) -> None:
     legacy.pop("record_mode")
     for key in (
         "session_instance_id",
-        "trampoline_successor_id",
         "parent_history_id",
         "owner_history_id",
         "forked_from_history_id",

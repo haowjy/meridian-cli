@@ -104,27 +104,18 @@ field is missing from both sets, it raises `ImportError`. Adding a field to a
 harness-specific `LaunchSpec` without updating the corresponding projection module →
 startup failure.
 
-### `observe_session_id()` Priority Chain
+### Post-exit identity observations
 
-Called exactly once per launch by the driving adapter after the executor returns.
-Must not mutate adapter-instance state. The base implementation uses a simple
-fallback chain; Claude overrides it with harness-specific reconciliation:
+`observe_after_exit(identity, entry, ...) -> PostExit` is pure observation.
+Pi validates the exact assigned source/header and reads the launch-correlated
+boundary sidecar. Claude reads trampoline-successor evidence for diagnostics
+only; that successor never binds a chat or allocates a verified exit.
 
-1. `connection_session_id` — live session ID from transport layer (present for connection-based paths)
-2. `extract_session_id()` — extraction from spawn artifacts (`session_id.txt`, then JSONL history)
-3. `current_session_id` — previously known ID, returned as fallback
-
-Callers pass observations through the immutable bind seam. A differing ID is a
-conflict, never a replacement for the chat key. There is no filesystem-discovery
-fallback; exact target verification cannot choose a replacement identity.
-
-**Claude trampoline diagnostic.** `observe_session_id()` returns only owned or
-already-known entry IDs. `observe_primary_session_id()` separately checks
-`/tui fullscreen` history and matching successor transcript evidence in the pinned
-store. Its `trampoline_successor_id` is recorded on the run; it cannot bind or
-replace the entry chat. Both runners pass this successor with the planned store
-to `finalize_run_boundary()` as an exit-only fallback when the adapter returns no
-boundary. The shared exit allocator reuses or creates the successor's own chat.
+`launch/native_run.conclude_native_run` owns ordering: artifact first ID,
+connection-current ID (diagnostic), adapter observation, entry verification,
+exact exit allocation, boundary persistence, then invocation attribution.
+`extract_session_id()` is the sole remaining artifact identity seam; the planned
+run-facts change removes it. There is no filesystem-discovery fallback.
 
 ### `HarnessContract` as Inspectable Surface
 

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.core.native_identity import NativeKeyFields
 from meridian.lib.state import session_store as store
 
 
@@ -79,9 +80,10 @@ def test_pending_selection_binds_only_its_attempt_without_reordering(tmp_path: P
         store.update_session_harness_id(
             tmp_path,
             "c1",
-            "thread",
+            NativeKeyFields(session_id="thread"),
             session_instance_id=generation,
             startup_attempt_id="failed-attempt",
+            source="observed",
         )
         assert selected(tmp_path, "c1", generation, "p1", "sol", None, "accepted-attempt")
         assert current(tmp_path, "thread") is None
@@ -89,9 +91,10 @@ def test_pending_selection_binds_only_its_attempt_without_reordering(tmp_path: P
         store.update_session_harness_id(
             tmp_path,
             "c1",
-            "thread",
+            NativeKeyFields(session_id="thread"),
             session_instance_id=generation,
             startup_attempt_id="accepted-attempt",
+            source="observed",
         )
         assert current(tmp_path) == "astra"
         assert not selected(tmp_path, "c1", generation, "p1", "sol", "thread", "retry")
@@ -127,7 +130,12 @@ def test_seed_cannot_replace_started_selection_and_write_failure_propagates(
 def test_old_generation_id_cannot_bind_new_pending_selection(tmp_path: Path) -> None:
     old = start(tmp_path, "c1", "")
     store.update_session_harness_id(
-        tmp_path, "c1", "old-thread", session_instance_id=old, startup_attempt_id="attempt-1"
+        tmp_path,
+        "c1",
+        NativeKeyFields(session_id="old-thread"),
+        session_instance_id=old,
+        startup_attempt_id="attempt-1",
+        source="observed",
     )
     store.stop_session(tmp_path, "c1")
     new = start(tmp_path, "c1", "")
@@ -135,7 +143,12 @@ def test_old_generation_id_cannot_bind_new_pending_selection(tmp_path: Path) -> 
         assert selected(tmp_path, "c1", new, "p2", "astra", None)
         assert current(tmp_path, "old-thread") is None
         store.update_session_harness_id(
-            tmp_path, "c1", "old-thread", session_instance_id=new, startup_attempt_id="attempt-1"
+            tmp_path,
+            "c1",
+            NativeKeyFields(session_id="old-thread"),
+            session_instance_id=new,
+            startup_attempt_id="attempt-1",
+            source="observed",
         )
         assert current(tmp_path, "new-thread") is None
         assert current(tmp_path, "old-thread") == "astra"
@@ -150,10 +163,20 @@ def test_unbound_duplicate_resolving_late_cannot_refresh_older_invocation(tmp_pa
         assert selected(tmp_path, "c1", generation, "p2", "astra", "thread", "new")
         assert selected(tmp_path, "c1", generation, "p1", "sol", None, "retry")
         store.update_session_harness_id(
-            tmp_path, "c1", "thread", session_instance_id=generation, startup_attempt_id="retry"
+            tmp_path,
+            "c1",
+            NativeKeyFields(session_id="thread"),
+            session_instance_id=generation,
+            startup_attempt_id="retry",
+            source="observed",
         )
         store.update_session_harness_id(
-            tmp_path, "c1", "thread", session_instance_id=generation, startup_attempt_id="first"
+            tmp_path,
+            "c1",
+            NativeKeyFields(session_id="thread"),
+            session_instance_id=generation,
+            startup_attempt_id="first",
+            source="observed",
         )
         assert current(tmp_path) == "astra"
     finally:

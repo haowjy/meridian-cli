@@ -7,6 +7,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.project_root import resolve_project_root_resolution
+from meridian.lib.core.native_identity import NativeKeyFields
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.runtime import async_from_sync, resolve_runtime_root_for_read
 from meridian.lib.ops.session_repair_target import resolve_session_repair_target
@@ -112,7 +113,9 @@ def repair_session_reference_sync(payload: SessionRepairInput) -> SessionRepairO
             chat_record is not None
             and (chat_record.harness_session_id or "").strip() != detected_harness_session_id
         ):
-            session_store.update_session_harness_id(runtime_root, ref, detected_harness_session_id)
+            session_store.update_session_harness_id(
+                runtime_root, ref, NativeKeyFields(session_id=detected_harness_session_id),
+                source="observed")
             session_record_updated = True
 
         primary_spawn = read_latest_primary_spawn_for_chat_read_only(
@@ -157,7 +160,8 @@ def repair_session_reference_sync(payload: SessionRepairInput) -> SessionRepairO
                 != detected_harness_session_id
             ):
                 session_store.update_session_harness_id(
-                    runtime_root, chat_id, detected_harness_session_id
+                    runtime_root, chat_id, NativeKeyFields(session_id=detected_harness_session_id),
+                    source="observed"
                 )
                 session_record_updated = True
 

@@ -33,7 +33,7 @@ def test_owned_envelope_only(payload: dict[str, object], expected: str | None) -
     adapter = HarnessRegistry.with_defaults().get(HarnessId.CODEX)
     artifacts = InMemoryStore()
     artifacts.put(ArtifactKey("p1/output.jsonl"), (json.dumps(payload) + "\n").encode())
-    assert adapter.observe_session_id(artifacts=artifacts, spawn_id=SpawnId("p1")) == expected
+    assert adapter.extract_session_id(artifacts, SpawnId("p1")) == expected
     event = RawHarnessEvent(event_type=str(payload["type"]), harness_id="codex", payload=payload)
     assert (
         get_harness_bundle(HarnessId.CODEX).extractor.detect_session_id_from_event(event)
@@ -46,7 +46,7 @@ def test_claude_ignores_identity_keys_inside_message_content() -> None:
     artifacts = InMemoryStore()
     payload = {"type": "assistant", "message": {"session_id": SID}}
     artifacts.put(ArtifactKey("p1/output.jsonl"), (json.dumps(payload) + "\n").encode())
-    assert adapter.observe_session_id(artifacts=artifacts, spawn_id=SpawnId("p1")) is None
+    assert adapter.extract_session_id(artifacts, SpawnId("p1")) is None
     payload = {"type": "system", "session_id": SID}
     artifacts.put(ArtifactKey("p1/output.jsonl"), (json.dumps(payload) + "\n").encode())
-    assert adapter.observe_session_id(artifacts=artifacts, spawn_id=SpawnId("p1")) == SID
+    assert adapter.extract_session_id(artifacts, SpawnId("p1")) == SID

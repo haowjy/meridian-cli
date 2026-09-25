@@ -57,14 +57,14 @@ The report and `system-prompt.md` paths are derived in `bind_launch_context` fro
 
 ### Native identity order
 
-Both runners bind the assigned immutable native key before exec, validate the
-first owned identity with `NativeEntryMismatch`, run `verify_native_identity`,
-collect `observe_primary_session_id` diagnostics, then call
-`finalize_run_boundary`. Contradictions retain expected/observed evidence and
-stable `entry_mismatch`; unavailable sources retain `NativeSessionUnavailable`
-codes. The shared exit allocator refuses either error and runs only on owned
-boundary evidence. Streaming attempts join post-publication teardown before
-reading that boundary: terminal publication alone does not mean Pi quit is on disk.
+All runners use `bind_entry` before exec and `NativeRun.observe` for owned
+signals. Only a first signal contradicting pre-exec assignment or reusing a fork
+source fails the attempt. Later signals and the connection's current ID are
+store-authoritative diagnostics. `conclude_native_run` runs after teardown joins:
+artifact first ID, connection current ID, `observe_after_exit`, entry verification,
+exit allocation, one boundary write, typed failure or invocation attribution.
+Retries re-arm against the original pre-exec facts, not a previously observed ID.
+Repeated delivery of the same ID within an attempt binds/logs once.
 New exit chats are allocated only when the exact native resolver finds a valid
 session; an already-bound exact chat still wins, including the entry chat. A verified
 exit chat is the post-run target for spawn references and resume hints; chat references
@@ -169,7 +169,7 @@ constraint required for the background worker's disk-persisted request.
 |------|------|
 | I-1 | Runtime composition happens at `bind_launch_context()`; `build_launch_context()` is its prepare+bind wrapper |
 | I-2 | Driving adapters and connections consume the bound argv, env, and permissions without reconstruction |
-| I-4 | `observe_session_id()` called exactly once post-execution (primary path only) |
+| I-4 | `conclude_native_run()` once per attempt after teardown joins: IDs → adapter → boundary → attribution |
 | I-5 | `SpawnRequest`/`LaunchRuntime` carry no derived state; `LaunchContext` complete at construction |
 | I-10 | Fork materialization (`fork.py`) happens only after spawn row exists |
 | I-13 | `LaunchContext.warnings` is the sole channel for composition warnings |

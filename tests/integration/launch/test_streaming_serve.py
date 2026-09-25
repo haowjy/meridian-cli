@@ -94,3 +94,34 @@ async def test_streaming_serve_reports_platform_control_endpoint(
 
     output = capsys.readouterr().out
     assert f"Control endpoint: {reported_endpoint}" in output
+
+
+@pytest.mark.asyncio
+async def test_serve_later_switch_has_one_conflict(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from structlog.testing import capture_logs
+
+    from meridian.lib.state import session_store
+
+    runtime_root = resolve_runtime_root(tmp_path)
+
+    async def run(**kwargs):
+        observer = kwargs["config"].session_id_observer
+        observer("entry-thread")
+        connection = SimpleNamespace(session_id="entry-thread", subprocess_pid=1234)
+        kwargs["on_running"](connection)
+        observer("later-thread")
+        connection.session_id = "later-thread"
+        return DrainOutcome(status="succeeded", exit_code=0)
+
+    monkeypatch.setattr(streaming_serve_module, "run_streaming_spawn", run)
+    with capture_logs() as logs:
+        await streaming_serve_module.streaming_serve("codex", "hello")
+    assert len([log for log in logs if log["event"] == "native_binding_conflict"]) == 1
+    row = get_spawn(runtime_root, "p1")
+    assert row.status == "succeeded"
+    assert (
+        session_store.get_session_record(runtime_root, row.chat_id).harness_session_id
+        == "entry-thread"
+    )
