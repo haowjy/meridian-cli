@@ -672,13 +672,10 @@ def _enforce_headless_harness_policy(
 
 def _missing_continue_session_error(source_ref: str | None) -> str:
     normalized_source = (source_ref or "").strip()
-    if normalized_source:
-        if normalized_source.startswith("p") and normalized_source[1:].isdigit():
-            return f"Spawn '{normalized_source}' has no recorded session - cannot continue/fork."
-        return (
-            f"Session '{normalized_source}' has no recorded harness session - cannot continue/fork."
-        )
-    return "Source reference has no recorded harness session - cannot continue/fork."
+    return (
+        f"{normalized_source or 'Source reference'} has no verified native session; "
+        "cannot continue/fork."
+    )
 
 
 def _collect_git_context_clone_roots(config: ContextConfig | None) -> tuple[Path, ...]:

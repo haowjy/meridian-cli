@@ -11,7 +11,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 from meridian.cli.argv_normalization import validate_fork_mode
-from meridian.cli.utils import missing_fork_session_error_with_discovery
+from meridian.cli.utils import missing_fork_session_error
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.util import FormatContext
@@ -231,12 +231,7 @@ def run_primary_launch(
         )
         if resolved_continue.missing_harness_session_id:
             raise ValueError(
-                missing_fork_session_error_with_discovery(
-                    source_ref=resume_target,
-                    project_root=project_root,
-                    source_harness=resolved_continue.harness,
-                    source_chat_id=resolved_continue.source_chat_id,
-                )
+                missing_fork_session_error(resume_target)
             )
         continue_contract = build_continue_replay_contract(
             source=continue_replay_source_from_reference(
@@ -285,12 +280,7 @@ def run_primary_launch(
         )
         if resolved_fork.missing_harness_session_id:
             raise ValueError(
-                missing_fork_session_error_with_discovery(
-                    source_ref=selected_fork_target,
-                    project_root=project_root,
-                    source_harness=resolved_fork.harness,
-                    source_chat_id=resolved_fork.source_chat_id,
-                )
+                missing_fork_session_error(selected_fork_target)
             )
 
         source_harness = (

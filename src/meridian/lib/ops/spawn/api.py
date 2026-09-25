@@ -229,9 +229,7 @@ def _forked_from_output(payload: SpawnCreateInput) -> str | None:
 
 def _missing_follow_up_session_error(source_ref: str) -> str:
     normalized = source_ref.strip()
-    if normalized.startswith("p") and normalized[1:].isdigit():
-        return f"Spawn '{normalized}' has no recorded session — cannot continue/fork."
-    return f"Session '{normalized}' has no recorded harness session — cannot continue/fork."
+    return f"{normalized} has no verified native session; cannot continue/fork."
 
 
 def _validate_exact_work_id(work_id: str) -> str:

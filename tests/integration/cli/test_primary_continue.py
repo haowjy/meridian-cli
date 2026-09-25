@@ -586,3 +586,13 @@ def test_opencode_exact_continue_explicit_override_keeps_model_in_spec(
         == "deepseek/deepseek-flash"
     )
 
+
+
+def test_primary_continue_unbound_chat_refuses_to_guess(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    chat_id = session_store.start_session(
+        runtime_root, harness="claude", harness_session_id="", model="sonnet",
+    )
+    session_store.stop_session(runtime_root, chat_id)
+    with pytest.raises(ValueError, match=f"{chat_id} has no verified native session; cannot continue"):
+        _run_primary_continue(tmp_path, chat_id)
