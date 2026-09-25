@@ -175,14 +175,14 @@ def _write_session_lease(paths: RuntimePaths, chat_id: str, session_instance_id:
 
 def resolve_session_instance_id(paths: RuntimePaths, runtime_root: Path, chat_id: str) -> str:
     held = _SESSION_LOCK_HANDLES.get(_session_lock_key(runtime_root, chat_id))
-    _, lease_generation = _read_session_lease(paths, chat_id)
-    if held is not None or lease_generation.strip():
-        return session_instance_for_event(
-            held.session_instance_id if held is not None else None, lease_generation, None
-        )
-    return session_instance_for_event(
-        None, lease_generation, _records_by_session(runtime_root).get(chat_id)
-    )
+    held_generation = held.session_instance_id if held is not None else None
+    lease_generation = ""
+    record = None
+    if held_generation is None:
+        _, lease_generation = _read_session_lease(paths, chat_id)
+        if not lease_generation.strip():
+            record = _records_by_session(runtime_root).get(chat_id)
+    return session_instance_for_event(held_generation, lease_generation, record)
 
 
 def _read_session_counter(paths: RuntimePaths) -> int:
