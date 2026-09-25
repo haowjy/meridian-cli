@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Headless Claude spawns are allowed by default again. `spawn.deny_headless_harnesses` defaults to empty; set `["claude"]` to opt out. Anthropic paused the June 15 Agent SDK credit split, so `claude -p` still draws on subscription usage limits.
+- Removed the primary startup warning that claimed Anthropic would disable headless Claude runs on 2026-06-15.
+
 ## [0.6.6] - 2026-09-22
 
 ### Changed

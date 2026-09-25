@@ -45,7 +45,7 @@ opencode = "opencode-go/kimi-k2.6"  # default for OpenCode harness
 agent = "product-lead"
 
 [spawn]
-deny_headless_harnesses = ["claude"]
+# deny_headless_harnesses = ["claude"]
 
 # -- Output streaming -------------------------------------------------------
 [output]

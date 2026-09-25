@@ -380,7 +380,7 @@ Meridian CLI processes default `MERIDIAN_MANAGED=1` in their environment, while 
 
 In Claude launches, native `Agent()` follows that same boundary: generic `Agent` is allowed only with Mars Claude `agent_copy` plus an effective `.claude` managed target. Without it, use `meridian spawn`. Claude built-ins (`Explore`, `Plan`, `General-purpose` / `general-purpose`) stay denied.
 
-To prevent `meridian spawn -a <agent>` from launching headless Claude runs, set:
+Headless Claude spawns are allowed by default. To prevent `meridian spawn -a <agent>` from launching them, set:
 
 ```toml
 [spawn]
