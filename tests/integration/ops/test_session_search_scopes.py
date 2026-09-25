@@ -250,7 +250,29 @@ def test_large_loose_transcript_returns_early_matches_before_budget_exhaustion(
             ]
         ),
     )
-    path = root / "spawns" / key / "history.jsonl"
+    store = tmp_path / "native"
+    store.mkdir()
+    sid = "11111111-1111-4111-8111-111111111111"
+    path = store / f"{sid}.jsonl"
+    path.write_text(
+        json.dumps({"sessionId": sid})
+        + "\n"
+        + json.dumps(
+            {
+                "type": "assistant",
+                "message": {"content": "early needle"},
+            }
+        )
+        + "\n"
+    )
+    session_store.start_session(
+        root,
+        harness="claude",
+        harness_session_id=sid,
+        native_store=str(store),
+        model="test",
+        chat_id="c1",
+    )
     padding = json.dumps({"type": "padding", "data": "x" * 4096}) + "\n"
     with path.open("a") as handle:
         for _ in range(16640):
@@ -319,7 +341,7 @@ def test_browse_subset_search_matches_portable_loose_and_zip_history(tmp_path, m
             query="needle",
         )
     )
-    assert steps[0].matched and steps[0].error is None
+    assert not steps[0].matched and "unbound" in (steps[0].error or "")
     assert not steps[1].matched and steps[1].error
 
 

@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Session log, export and previews read bound native chats; label spawn views. Reject legacy runner-history files.
+
 - Refuse passthrough identity flags and invalid Claude dry-run sources; await OpenCode fork IDs.
 
 ### Added

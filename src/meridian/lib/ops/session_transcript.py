@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 import time
-import zipfile
-import zlib
 from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -145,9 +143,7 @@ def _is_visible_message(message: AbsoluteTranscriptMessage) -> bool:
 def group_transcript_entries(
     messages: tuple[AbsoluteTranscriptMessage, ...],
 ) -> tuple[AbsoluteTranscriptEntry, ...]:
-    interaction_messages = tuple(
-        message for message in messages if _is_visible_message(message)
-    )
+    interaction_messages = tuple(message for message in messages if _is_visible_message(message))
     if not interaction_messages:
         return ()
 
@@ -171,7 +167,8 @@ def group_transcript_entries(
     for index, message in enumerate(interaction_messages):
         if current and (
             message.segment_index != current[-1].segment_index
-            or _is_plain_user_message(message) or message.kind == "annotation"
+            or _is_plain_user_message(message)
+            or message.kind == "annotation"
         ):
             chunks.append(current)
             current = []
@@ -323,9 +320,12 @@ class TranscriptBudget:
     exhausted: bool = False
 
     def current(self) -> bool:
-        if self.remaining_bytes <= 0 or time.monotonic() >= self.deadline:
+        if self.remaining_bytes < 0 or time.monotonic() >= self.deadline:
             self.exhausted = True
         return not self.exhausted
+
+    def consume(self, size: int) -> None:
+        self.remaining_bytes -= size
 
     def events(self, events: Iterator[dict[str, object]]) -> Iterator[dict[str, object]]:
         while True:
@@ -335,7 +335,6 @@ class TranscriptBudget:
                 event = next(events)
             except StopIteration:
                 return
-            self.remaining_bytes -= len(json.dumps(event, ensure_ascii=False).encode())
             if self.remaining_bytes < 0 or time.monotonic() >= self.deadline:
                 self.exhausted = True
                 return
@@ -347,7 +346,20 @@ def iter_source_events(
     *,
     validation: TranscriptValidation | None = None,
     current: Callable[[], bool] | None = None,
+    consume: Callable[[int], None] | None = None,
 ) -> Generator[dict[str, object]]:
+    if (
+        source.kind == "native_file" and source.harness == "pi" and source.path is not None
+        and not is_native_snapshot(source.path)
+    ):
+        projection = project_pi_reopen_default(source.path.read_text(encoding="utf-8"))
+        if projection.reasons:
+            raise ValueError("partial: " + ", ".join(projection.reasons))
+        yield from projection.events
+        if validation is not None:
+            validation.state = "complete"
+            validation.reason = None
+        return
     if source.kind == "archive":
         from uuid import UUID
 
@@ -370,6 +382,7 @@ def iter_source_events(
             raise FileNotFoundError(f"Session file for '{source.session_id}' not found")
         yield from iter_transcript_events(
             source.path,
+            consume=consume,
             validation=validation,
             current=current,
             check_header=snapshot_binding(
@@ -399,13 +412,21 @@ def _parse_transcript_source(
                     source,
                     validation=validation,
                     current=budget.current if budget else None,
+                    consume=budget.consume if budget else None,
                 )
             )
             if budget is not None:
                 events = list(budget.events(iter(events)))
             source_text = "".join(json.dumps(event) + "\n" for event in events)
         else:
-            source_text = source.path.read_text(encoding="utf-8")
+            raw = source.path.read_bytes()
+            if budget is not None:
+                budget.consume(len(raw))
+                if not budget.current():
+                    validation.state = "partial"
+                    validation.reason = "Transcript read budget exhausted"
+                    return parse_transcript_events_with_prologues(()), validation
+            source_text = raw.decode("utf-8")
         projection = project_pi_reopen_default(source_text)
         if not is_native_snapshot(source.path):
             validation.state = "complete"
@@ -416,7 +437,10 @@ def _parse_transcript_source(
         )
         return parsed, validation
     events = iter_source_events(
-        source, validation=validation, current=budget.current if budget else None
+        source,
+        validation=validation,
+        current=budget.current if budget else None,
+        consume=budget.consume if budget else None,
     )
     try:
         parsed = parse_transcript_events_with_prologues(budget.events(events) if budget else events)
@@ -439,14 +463,6 @@ def _target_for_source(target: SessionLogTarget, source: TranscriptSource) -> Se
     )
 
 
-def _has_usable_interaction_content(parsed: TranscriptParseResult) -> bool:
-    return any(
-        message.role in {"assistant", "user"} and message.content.strip()
-        for segment in parsed.segments
-        for message in segment
-    )
-
-
 def parse_session_target(
     *,
     project_root: Path,
@@ -455,31 +471,9 @@ def parse_session_target(
     route: SessionLogRoute,
     budget: TranscriptBudget | None = None,
 ) -> ParsedSessionTranscript:
-    parsed: TranscriptParseResult | None = None
-    resolved_target = target
-    archive_errors: list[Exception] = []
-    validation: TranscriptValidation | None = None
-    for source in target.sources:
-        try:
-            candidate, validation = _parse_transcript_source(source, budget)
-        except (ValueError, OSError, EOFError, zipfile.BadZipFile, zlib.error) as exc:
-            if source.kind != "archive":
-                raise
-            archive_errors.append(exc)
-            continue
-        parsed = candidate
-        resolved_target = _target_for_source(target, source)
-        if (
-            validation.header is not None
-            or validation.state != "complete"
-            or _has_usable_interaction_content(candidate)
-            or candidate.rendering_reason
-        ):
-            break
-    if parsed is None:
-        if archive_errors:
-            raise archive_errors[-1]
-        raise FileNotFoundError(f"Session file for '{target.session_id}' not found")
+    source = target.sources[0]
+    parsed, validation = _parse_transcript_source(source, budget)
+    resolved_target = _target_for_source(target, source)
 
     flattened = flatten_transcript_segments(parsed.segments)
     interaction_entries = group_transcript_entries(flattened)
@@ -489,9 +483,7 @@ def parse_session_target(
         interaction_entries=interaction_entries,
     )
     all_entries = tuple(entry for segment in segment_entries for entry in segment)
-    resolved_interaction_entries = tuple(
-        entry for entry in all_entries if entry.kind != "setup"
-    )
+    resolved_interaction_entries = tuple(entry for entry in all_entries if entry.kind != "setup")
     return ParsedSessionTranscript(
         project_root=project_root,
         runtime_root=runtime_root,

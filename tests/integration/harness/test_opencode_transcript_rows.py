@@ -13,9 +13,10 @@ from meridian.lib.harness.transcript import parse_transcript_events_with_prologu
 from meridian.lib.harness.transcript_preview import PreviewAccumulator
 from meridian.lib.ops.session_archive import archive_history
 from meridian.lib.state import spawn_store
-from meridian.lib.state.history import ingest_portable_history, iter_history_events
+from meridian.lib.state.history import ingest_portable_history
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.retention_archive import iter_archived_events
+from tests.support.history import written_events as iter_history_events
 from tests.support.opencode_db import write_opencode_db_session_with_parts
 
 

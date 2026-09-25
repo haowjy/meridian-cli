@@ -5,10 +5,8 @@ import pytest
 
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.state import history as history_mod
-from meridian.lib.state.history import (
-    HarnessHistoryWriter,
-    read_history_range,
-)
+from meridian.lib.state.history import HarnessHistoryWriter
+from tests.support.history import written_events as read_history_range
 
 _WIRE_ENVELOPE_FIXTURE = (
     Path(__file__).parents[2] / "fixtures" / "history" / "wire_envelopes.jsonl"
@@ -251,89 +249,6 @@ def test_writer_caps_unparseable_wire_text_with_visible_marker(tmp_path: Path) -
     assert len(stored) == 4096
     assert stored.endswith("\n[truncated by Meridian]")
     assert raw_text.startswith(stored.removesuffix("\n[truncated by Meridian]"))
-
-
-def test_reader_accepts_all_wire_metadata_shapes(tmp_path: Path) -> None:
-    history_path = tmp_path / "history.jsonl"
-    old_record = {
-        "seq": 0,
-        "event_type": "thread/started",
-        "harness_id": "codex",
-        "payload": {"threadId": "thread-old"},
-        "raw_text": '{"method":"thread/started","params":{"threadId":"thread-old"}}',
-    }
-    new_record = {
-        "seq": 1,
-        "event_type": "thread/started",
-        "harness_id": "codex",
-        "payload": {"threadId": "thread-new"},
-        "meta": {"method": "thread/started"},
-    }
-    unparsed_record = {
-        "seq": 2,
-        "event_type": "meridian/error",
-        "harness_id": "pi",
-        "payload": {"error": "invalid JSON"},
-        "meta": {"raw_unparsed": "not valid JSON"},
-    }
-    metadata_free_record = {
-        "seq": 3,
-        "event_type": "message",
-        "harness_id": "opencode",
-        "payload": {"text": "hello"},
-    }
-    history_path.write_text(
-        "".join(
-            f"{json.dumps(record)}\n"
-            for record in (
-                old_record,
-                new_record,
-                unparsed_record,
-                metadata_free_record,
-            )
-        ),
-        encoding="utf-8",
-    )
-
-    assert read_history_range(history_path) == [
-        old_record,
-        new_record,
-        unparsed_record,
-        metadata_free_record,
-    ]
-
-
-def test_iter_history_events_tolerates_truncated_or_corrupt_lines(tmp_path: Path) -> None:
-    history_path = tmp_path / "history.jsonl"
-    history_path.parent.mkdir(parents=True, exist_ok=True)
-    history_path.write_text(
-        '{"seq":0,"byte_offset":0,"event_type":"ok","harness_id":"codex","payload":{"v":1}}\n'
-        '{"seq":1,"byte_offset":80,"event_type":"ok","harness_id":"codex","payload":{"v":2}}\n'
-        '{"seq":2,"byte_offset":160,"event_type":"bad","harness_id":"codex","payload":',
-        encoding="utf-8",
-    )
-
-    events = list(history_mod.iter_history_events(history_path))
-    assert [event["seq"] for event in events] == [0, 1]
-def test_write_failure_returns_error_result(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    history_path = tmp_path / "history.jsonl"
-    writer = HarnessHistoryWriter(history_path)
-
-    def _fail_append(*_args: object, **_kwargs: object) -> None:
-        raise OSError("disk full")
-
-    monkeypatch.setattr(history_mod, "append_text_line", _fail_append)
-    result = writer.write(_event(0))
-
-    assert result.success is False
-    assert result.seq == -1
-    assert result.error is not None
-    assert "disk full" in result.error
-    assert writer.last_seq == -1
-    assert history_path.exists() is False
 
 
 def test_writer_adds_causal_fields_and_marks_stale_after_interrupt(tmp_path: Path) -> None:

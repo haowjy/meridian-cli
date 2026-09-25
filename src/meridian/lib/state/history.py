@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
@@ -20,7 +20,6 @@ from meridian.lib.state.history_codec import (
     transcript_header,
 )
 from meridian.lib.state.managed_primary import ManagedPrimaryCausalTracker
-from meridian.lib.state.native_snapshot import read_jsonl_frame
 from meridian.lib.state.spawn.repository import read_state
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
@@ -300,137 +299,6 @@ def _bounded_unparsed_wire(raw_text: str) -> str:
         return raw_text
     prefix_length = _RAW_UNPARSED_MAX_LENGTH - len(_RAW_UNPARSED_TRUNCATION_MARKER)
     return raw_text[:prefix_length] + _RAW_UNPARSED_TRUNCATION_MARKER
-
-
-@dataclass
-class HistoryCursor:
-    """Complete-line byte extent for an append-only history projection."""
-
-    extent: int = 0
-
-
-def iter_history_events(
-    path: Path,
-    *,
-    cursor: HistoryCursor | None = None,
-    end: int | None = None,
-    current: Callable[[], bool] | None = None,
-    frame_guard: Callable[[bytes], None] | None = None,
-) -> Generator[dict[str, Any]]:
-    """Yield complete history events, optionally resuming a bounded byte snapshot."""
-    if not path.exists():
-        return
-    cursor = cursor if cursor is not None else HistoryCursor()
-    with path.open("rb") as handle:
-        handle.seek(cursor.extent)
-        while end is None or handle.tell() < end:
-            line = read_jsonl_frame(handle, current=current, end=end)
-            if not line:
-                break
-            stripped_raw = line.strip()
-            if stripped_raw and frame_guard is not None:
-                frame_guard(stripped_raw)
-            if not line.endswith(b"\n"):
-                break
-            cursor.extent = handle.tell()
-            stripped = line.decode("utf-8", errors="ignore").strip()
-            if not stripped:
-                continue
-            try:
-                payload = json.loads(stripped)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(payload, dict) and payload.get("record") != "meridian.transcript":
-                yield cast("dict[str, Any]", payload)
-
-
-def iter_history_from_seq(
-    path: Path,
-    *,
-    start_seq: int = 0,
-    limit: int | None = None,
-) -> Iterator[dict[str, Any]]:
-    """Yield events from start_seq, optionally limited.
-
-    Unlike read_history_range(), this is lazy so callers can stream through
-    histories without loading all events into memory.
-    """
-
-    yielded = 0
-    if not path.exists():
-        return
-    with path.open(encoding="utf-8") as handle:
-        for line in handle:
-            if not line.endswith("\n"):
-                break
-            stripped = line.strip()
-            if not stripped:
-                continue
-            try:
-                envelope = json.loads(stripped)
-            except json.JSONDecodeError:
-                # Crash-only tolerance for truncated/corrupt trailing lines.
-                continue
-            if not isinstance(envelope, dict):
-                continue
-
-            envelope = cast("dict[str, Any]", envelope)
-            seq = envelope.get("seq", -1)
-            if not isinstance(seq, int) or seq < start_seq:
-                continue
-            yield envelope
-            yielded += 1
-            if limit is not None and yielded >= limit:
-                break
-
-
-def read_history_range(
-    path: Path,
-    *,
-    start_seq: int = 0,
-    limit: int | None = None,
-) -> list[dict[str, Any]]:
-    """Read a seq range from history.jsonl."""
-
-    events: list[dict[str, Any]] = []
-    for envelope in iter_history_events(path):
-        seq = envelope.get("seq", -1)
-        if not isinstance(seq, int) or seq < start_seq:
-            continue
-        events.append(envelope)
-        if limit is not None and len(events) >= limit:
-            break
-    return events
-
-
-def strip_seq_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
-    """Strip seq metadata and return the raw harness event shape."""
-
-    return {
-        key: value
-        for key, value in envelope.items()
-        if key
-        not in (
-            "seq",
-            "byte_offset",
-            "timestamp",
-            "turn_id",
-            "item_id",
-            "request_id",
-            "interrupt_epoch",
-            "stale_after_interrupt",
-        )
-    }
-
-
-__all__ = [
-    "HarnessHistoryWriter",
-    "WriteResult",
-    "iter_history_events",
-    "iter_history_from_seq",
-    "read_history_range",
-    "strip_seq_envelope",
-]
 
 
 def write_retained_child_stream(

@@ -156,10 +156,13 @@ def _flatten_segments(
     for index, segment in enumerate(segments):
         if index:
             summary = segment_setups[index] if index < len(segment_setups) else None
-            messages.append(TranscriptMessage(
-                "annotation", "Compaction boundary" + (f":\n{summary}" if summary else ""),
-                kind="annotation",
-            ))
+            messages.append(
+                TranscriptMessage(
+                    "annotation",
+                    "Compaction boundary" + (f":\n{summary}" if summary else ""),
+                    kind="annotation",
+                )
+            )
         messages.extend(segment)
     return messages
 
@@ -338,6 +341,8 @@ def session_export_sync(
         messages=_flatten_segments(transcript.segments, transcript.segment_setups),
         appendices=appendices,
     )
+    if transcript.target.view_label:
+        markdown = f"{transcript.target.view_label}\n\n{markdown}"
     if transcript.read_reasons:
         warnings = "\n".join(f"> {reason}" for reason in transcript.read_reasons)
         markdown = f"{warnings}\n\n{markdown}"

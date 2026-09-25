@@ -1,5 +1,6 @@
 """Presentation for a spawn's native-session run boundary."""
 
+from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.state.spawn.model import SpawnRecord
 
 
@@ -12,3 +13,14 @@ def run_boundary_summary(row: SpawnRecord) -> str | None:
         return f"entry {entry} → exit {boundary.exit_chat_id}"
     suffix = " (entry mismatch)" if boundary.status == "mismatch" else ""
     return f"entry {entry} → exit unresolved{suffix}"
+
+
+def spawn_view_label(row: SpawnRecord) -> str | None:
+    if row.status not in TERMINAL_SPAWN_STATUSES:
+        return "entry-based view (run in progress)"
+    boundary = row.run_boundary
+    if boundary is None:
+        return "entry chat (run predates exit tracking)"
+    if boundary.status != "verified":
+        return f"entry-based view (exit identity {boundary.status})"
+    return f"exit chat {row.continue_chat_id}" if row.continue_chat_id != row.chat_id else None

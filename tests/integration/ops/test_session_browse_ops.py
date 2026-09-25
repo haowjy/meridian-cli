@@ -366,16 +366,16 @@ def test_subset_search_is_ordered_and_failure_isolated(tmp_path: Path, monkeypat
     matching_chat = session_store.start_session(
         runtime_root,
         harness="codex",
-            harness_session_id=matching_id,
-            native_store=(home / ".codex" / "sessions").as_posix(),
+        harness_session_id=matching_id,
+        native_store=(home / ".codex" / "sessions").as_posix(),
         model="gpt-5.4",
         kind="primary",
     )
     other_chat = session_store.start_session(
         runtime_root,
         harness="codex",
-            harness_session_id=other_id,
-            native_store=(home / ".codex" / "sessions").as_posix(),
+        harness_session_id=other_id,
+        native_store=(home / ".codex" / "sessions").as_posix(),
         model="gpt-5.4",
         kind="primary",
     )
@@ -540,7 +540,29 @@ def test_subset_search_does_not_borrow_sibling_history_when_primary_spawn_is_mis
     assert steps[0].matched is False
 
 
-def test_preview_is_bounded_cached_and_rebuilt_from_loose_or_zip(tmp_path, monkeypatch) -> None:
+def _bind_preview_native(root, key, events):
+    store = root.parent / "native"
+    store.mkdir(exist_ok=True)
+    sid = "11111111-1111-4111-8111-111111111111"
+    path = store / f"{sid}.jsonl"
+    path.write_text(
+        json.dumps({"sessionId": sid})
+        + "\n"
+        + "".join(json.dumps(event) + "\n" for event in events)
+    )
+    session_store.start_session(
+        root,
+        harness="claude",
+        harness_session_id=sid,
+        native_store=str(store),
+        chat_id="c1",
+        model="test",
+    )
+    session_store.stop_session(root, "c1")
+    return path
+
+
+def test_native_preview_stays_bounded_and_cached_after_reclaim(tmp_path, monkeypatch) -> None:
     from meridian.lib.ops import session_preview
     from meridian.lib.ops.session_archive import archive_history
     from meridian.lib.ops.session_preview import PreviewIdentity, SessionPreview
@@ -557,6 +579,9 @@ def test_preview_is_bounded_cached_and_rebuilt_from_loose_or_zip(tmp_path, monke
     ingest_portable_history(
         root, key, iter({"role": "assistant", "content": f"message {i}"} for i in range(100))
     )
+    _bind_preview_native(
+        root, key, ({"role": "assistant", "content": f"message {i}"} for i in range(100))
+    )
     state = spawn_store.get_spawn(root, key)
     assert state is not None
     identity = PreviewIdentity(key, str(state.history_id))
@@ -569,7 +594,6 @@ def test_preview_is_bounded_cached_and_rebuilt_from_loose_or_zip(tmp_path, monke
         raise AssertionError("warm previews must not replay transcript bodies")
 
     with monkeypatch.context() as patch:
-        patch.setattr(session_preview, "iter_history_events", forbid_body)
         patch.setattr(session_preview, "iter_source_events", forbid_body)
         assert reader.peek(identity) is not None
         assert reader.refresh(identity, lambda: True) == view
@@ -579,7 +603,7 @@ def test_preview_is_bounded_cached_and_rebuilt_from_loose_or_zip(tmp_path, monke
     assert archived is not None and "message 99" in archived.lines
     Path(result.archives[0]).rename(tmp_path / "offline.zip")
     offline = reader.refresh(identity, lambda: True)
-    assert offline is not None and "archive offline" in offline.status
+    assert offline is not None and offline.state == "current"
     assert "message 99" in offline.lines
     HistoryIndex(root).rebuild()
     assert reader.peek(identity) is None
@@ -590,7 +614,6 @@ def test_preview_reparses_same_inode_rewrite_and_metadata_accepts_large_event(
     tmp_path, unfinished
 ) -> None:
     from meridian.lib.ops.session_preview import PreviewIdentity, SessionPreview
-    from meridian.lib.state.history import ingest_portable_history
     from meridian.lib.state.history_index import HistoryIndex
 
     project, root = _project_roots(tmp_path)
@@ -600,7 +623,7 @@ def test_preview_reparses_same_inode_rewrite_and_metadata_accepts_large_event(
         )
     )
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
-    ingest_portable_history(
+    path = _bind_preview_native(
         root,
         key,
         iter(
@@ -614,12 +637,11 @@ def test_preview_reparses_same_inode_rewrite_and_metadata_accepts_large_event(
     assert state is not None
     identity = PreviewIdentity(key, str(state.history_id))
     if unfinished:
-        with (root / "spawns" / key / "history.jsonl").open("ab") as handle:
+        with path.open("ab") as handle:
             handle.write(b'{"unfinished":')
     reader = SessionPreview(str(project))
     before = reader.refresh(identity, lambda: True)
     assert before is not None and "PREFIX_A" in before.lines
-    path = root / "spawns" / key / "history.jsonl"
     original = path.read_bytes()
     with path.open("r+b") as handle:
         handle.write(original.replace(b"PREFIX_A", b"PREFIX_B"))
@@ -632,43 +654,9 @@ def test_preview_reparses_same_inode_rewrite_and_metadata_accepts_large_event(
     assert rebuilt is not None and "PREFIX_B" in rebuilt.lines
 
 
-def test_preview_verifies_required_archive_members_not_only_transcript(tmp_path) -> None:
-    import zipfile
-
-    from meridian.lib.ops.session_archive import archive_history
-    from meridian.lib.ops.session_preview import PreviewIdentity, SessionPreview
-    from meridian.lib.state.history import ingest_portable_history
-
-    project, root = _project_roots(tmp_path)
-    key = str(
-        spawn_store.start_spawn(
-            root, chat_id="c1", model="test", agent="coder", harness="codex", prompt="hello"
-        )
-    )
-    spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
-    ingest_portable_history(root, key, iter(({"role": "assistant", "content": "readable"},)))
-    state = spawn_store.get_spawn(root, key)
-    assert state is not None
-    result = archive_history(root, destination=tmp_path / "zips", refs=(key,), apply=True)
-    path = Path(result.archives[0])
-    with zipfile.ZipFile(path) as archive:
-        members = {name: archive.read(name) for name in archive.namelist()}
-    prompt = next(name for name in members if name.endswith("/starting-prompt.md"))
-    members[prompt] = b"modified prompt"
-    with zipfile.ZipFile(path, "w") as archive:
-        for name, data in members.items():
-            archive.writestr(name, data)
-    reader = SessionPreview(str(project))
-    identity = PreviewIdentity(key, str(state.history_id))
-    view = reader.refresh(identity, lambda: True)
-    assert view is not None and view.state == "unavailable"
-    assert reader.peek(identity) is None
-
-
 @pytest.mark.parametrize("change", ["rebuild", "replace", "rewrite"])
 def test_preview_rejects_changed_snapshot_at_publication(tmp_path, monkeypatch, change) -> None:
     from meridian.lib.ops.session_preview import PreviewIdentity, SessionPreview
-    from meridian.lib.state.history import ingest_portable_history
     from meridian.lib.state.history_index import HistoryIndex
 
     project, root = _project_roots(tmp_path)
@@ -678,7 +666,7 @@ def test_preview_rejects_changed_snapshot_at_publication(tmp_path, monkeypatch, 
         )
     )
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
-    ingest_portable_history(
+    path = _bind_preview_native(
         root,
         key,
         iter(
@@ -698,7 +686,6 @@ def test_preview_rejects_changed_snapshot_at_publication(tmp_path, monkeypatch, 
         if change == "rebuild":
             index.rebuild()
         else:
-            path = root / "spawns" / key / "history.jsonl"
             replacement = path.with_suffix(".replacement")
             replacement.write_bytes(path.read_bytes().replace(b"snapshot A", b"snapshot B"))
             if change == "rewrite":

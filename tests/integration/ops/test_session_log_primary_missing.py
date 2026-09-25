@@ -9,6 +9,9 @@ reading, and error behavior when no session ID is recorded for primary spawns.
 import json
 from pathlib import Path
 
+import pytest
+
+from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.state import spawn_store
@@ -26,7 +29,7 @@ def _write_spawn_output(
     output_path.write_text("\n".join(json.dumps(event) for event in events) + "\n")
 
 
-def test_session_log_primary_file_authority_needs_no_harness_session_id(
+def test_unbound_primary_does_not_read_runner_history(
     tmp_path: Path,
 ) -> None:
     project_root = tmp_path / "repo"
@@ -55,9 +58,5 @@ def test_session_log_primary_file_authority_needs_no_harness_session_id(
         },
     )
 
-    output = session_log_sync(
-        SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
-    )
-    assert [(message.role, message.content) for message in output.messages] == [
-        ("assistant", "primary live progress")
-    ]
+    with pytest.raises(NativeSessionUnavailable, match="unbound"):
+        session_log_sync(SessionLogInput(ref="p42", project_root=project_root.as_posix()))

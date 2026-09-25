@@ -142,7 +142,7 @@ async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
     assert row.terminal.exit_code == 3
     assert row.terminal.error == "timeout"
     history_path = runtime_root / "spawns" / str(run.spawn_id) / "history.jsonl"
-    from meridian.lib.state.history import iter_history_events
+    from tests.support.history import written_events as iter_history_events
 
     history = list(iter_history_events(history_path))
     finalized = [
