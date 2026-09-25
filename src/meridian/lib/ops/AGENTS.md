@@ -43,13 +43,16 @@ spawn. The reaper also reads `_MERIDIAN_DEPTH` and skips reaping when nested.
 `session_log.py`, `session_log_render.py` (pure rendering — clean/raw modes, tool
 collapsing, content pipeline), `session_render.py`, `session_search.py`,
 `session_target.py`, `session_export.py`, `session_repair.py`, `session_corpus.py`,
-`session_archive.py`, `session_index.py`.
+`session_archive.py`, `runner_history_prune.py`, `session_index.py`.
 
 Discovery composes the shared `state/history_index.py` projection; lifecycle/control
 reads stay authoritative. `session_corpus.py` selects search roots and work scope.
 `session_archive.py` owns eligibility, dependency protection and the shared manual/
 automatic retention policy; ZIP bytes and inert restore live in `state/retention_*`.
 Archive does not capture natives — stop-maintenance publishes the seal first.
+`runner_history_prune.py` is the explicit `session archive --prune-runner-history`
+rule: terminal, older than N days, exact native source(s) resolve now → drop runner
+stream files. Any doubt skips; automatic maintenance never calls it.
 `session_index.py` coordinates explicit index inspection/rebuild, not another index.
 
 **Work and workspace:** `work_lifecycle.py`, `work_attachment.py`,

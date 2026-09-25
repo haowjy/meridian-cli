@@ -397,6 +397,16 @@ def _session_archive(
     list_archives: Annotated[bool, Parameter(name="--list")] = False,
     apply: Annotated[bool, Parameter(name="--apply")] = False,
     after_days: Annotated[int | None, Parameter(name="--after-days")] = None,
+    prune_runner_history: Annotated[
+        bool,
+        Parameter(
+            name="--prune-runner-history",
+            help=(
+                "List (or with --apply, delete) runner history.jsonl of terminal spawns "
+                "older than --after-days (default 14) whose exact native transcript resolves."
+            ),
+        ),
+    ] = False,
 ) -> None:
     emit(
         session_archive_sync(
@@ -408,6 +418,7 @@ def _session_archive(
                 list_archives=list_archives,
                 apply=apply,
                 after_days=after_days,
+                prune_runner_history=prune_runner_history,
             )
         )
     )
