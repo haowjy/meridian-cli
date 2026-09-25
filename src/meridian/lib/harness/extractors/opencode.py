@@ -9,7 +9,7 @@ from typing import cast
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.harness.attempt_facts import AttemptFacts
-from meridian.lib.harness.common import _coerce_optional_int, coerce_optional_float
+from meridian.lib.harness.common import coerce_optional_float, coerce_optional_int
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.opencode_report import extract_opencode_session_id
 from meridian.lib.harness.opencode_transcript import read_opencode_v2_turn
@@ -52,8 +52,14 @@ class OpenCodeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
         properties = payload.get("properties")
         if not isinstance(properties, dict):
             return
+        properties = cast("dict[str, object]", properties)
         info = properties.get("info")
-        if kind == "message.updated" and isinstance(info, dict) and info.get("role") == "assistant":
+        if (
+            kind == "message.updated"
+            and isinstance(info, dict)
+            and cast("dict[str, object]", info).get("role") == "assistant"
+        ):
+            info = cast("dict[str, object]", info)
             message_id = info.get("id")
             if isinstance(message_id, str) and message_id != facts.message_id:
                 facts.message_id = message_id
@@ -62,9 +68,10 @@ class OpenCodeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
             parts = info.get("parts")
             if isinstance(parts, list):
                 text = "".join(
-                    str(part.get("text", ""))
-                    for part in parts
-                    if isinstance(part, dict) and part.get("type") == "text"
+                    str(cast("dict[str, object]", part).get("text", ""))
+                    for part in cast("list[object]", parts)
+                    if isinstance(part, dict)
+                    and cast("dict[str, object]", part).get("type") == "text"
                 )
                 if text.strip() and facts.final_text_source != "opencode_v1_parts":
                     facts.set_text(text.strip(), "opencode_v1_embedded")
@@ -72,11 +79,14 @@ class OpenCodeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
         if (
             kind == "message.part.updated"
             and isinstance(part, dict)
-            and part.get("type") == "text"
+            and cast("dict[str, object]", part).get("type") == "text"
             and facts.message_id
-            and part.get("messageID", part.get("message_id")) == facts.message_id
+            and cast("dict[str, object]", part).get(
+                "messageID", cast("dict[str, object]", part).get("message_id")
+            )
+            == facts.message_id
         ):
-            text = part.get("text")
+            text = cast("dict[str, object]", part).get("text")
             if isinstance(text, str) and text.strip():
                 prior = facts.final_text if facts.final_text_source == "opencode_v1_parts" else None
                 facts.set_text((prior or "") + text.strip(), "opencode_v1_parts")
@@ -117,11 +127,11 @@ def _try_parse_opencode_usage(payload: dict[str, object]) -> TokenUsage | None:
             else {}
         )
         nested_usage = TokenUsage(
-            input_tokens=_coerce_optional_int(nested_tokens.get("input")),
-            output_tokens=_coerce_optional_int(nested_tokens.get("output")),
-            cache_read_input_tokens=_coerce_optional_int(nested_cache.get("read")),
-            cache_creation_input_tokens=_coerce_optional_int(nested_cache.get("write")),
-            reasoning_tokens=_coerce_optional_int(nested_tokens.get("reasoning")),
+            input_tokens=coerce_optional_int(nested_tokens.get("input")),
+            output_tokens=coerce_optional_int(nested_tokens.get("output")),
+            cache_read_input_tokens=coerce_optional_int(nested_cache.get("read")),
+            cache_creation_input_tokens=coerce_optional_int(nested_cache.get("write")),
+            reasoning_tokens=coerce_optional_int(nested_tokens.get("reasoning")),
             total_cost_usd=coerce_optional_float(
                 nested_info.get("cost") if nested_info is not None else None
             ),
@@ -146,15 +156,15 @@ def _try_parse_opencode_usage(payload: dict[str, object]) -> TokenUsage | None:
     cost_obj = payload.get("cost")
     cost_source = cast("dict[str, object]", cost_obj) if isinstance(cost_obj, dict) else payload
     legacy_usage = TokenUsage(
-        input_tokens=_coerce_optional_int(usage.get("input_tokens") or usage.get("input")),
-        output_tokens=_coerce_optional_int(usage.get("output_tokens") or usage.get("output")),
-        cache_read_input_tokens=_coerce_optional_int(
+        input_tokens=coerce_optional_int(usage.get("input_tokens") or usage.get("input")),
+        output_tokens=coerce_optional_int(usage.get("output_tokens") or usage.get("output")),
+        cache_read_input_tokens=coerce_optional_int(
             usage.get("cache_read_input_tokens") or usage.get("cache_read")
         ),
-        cache_creation_input_tokens=_coerce_optional_int(
+        cache_creation_input_tokens=coerce_optional_int(
             usage.get("cache_creation_input_tokens") or usage.get("cache_write")
         ),
-        reasoning_tokens=_coerce_optional_int(
+        reasoning_tokens=coerce_optional_int(
             usage.get("reasoning_tokens") or usage.get("reasoning")
         ),
         total_cost_usd=coerce_optional_float(cost_source.get("total_cost_usd")),

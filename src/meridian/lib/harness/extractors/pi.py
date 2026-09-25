@@ -7,7 +7,7 @@ from typing import cast
 
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.harness.attempt_facts import AttemptFacts, HarnessFailure
-from meridian.lib.harness.common import _coerce_optional_int
+from meridian.lib.harness.common import coerce_optional_int
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.pi_failure import compact_pi_failure_output, pi_failure_from_payload
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -21,12 +21,12 @@ def _usage_from_message(message: Mapping[str, object]) -> TokenUsage | None:
         return None
     usage = cast("dict[str, object]", usage_obj)
     cost = usage.get("cost")
-    total = cost.get("total") if isinstance(cost, dict) else None
+    total = cast("dict[str, object]", cost).get("total") if isinstance(cost, dict) else None
     return TokenUsage(
-        input_tokens=_coerce_optional_int(usage.get("input")),
-        output_tokens=_coerce_optional_int(usage.get("output")),
-        cache_read_input_tokens=_coerce_optional_int(usage.get("cacheRead")),
-        cache_creation_input_tokens=_coerce_optional_int(usage.get("cacheWrite")),
+        input_tokens=coerce_optional_int(usage.get("input")),
+        output_tokens=coerce_optional_int(usage.get("output")),
+        cache_read_input_tokens=coerce_optional_int(usage.get("cacheRead")),
+        cache_creation_input_tokens=coerce_optional_int(usage.get("cacheWrite")),
         total_cost_usd=float(total) if isinstance(total, int | float) else None,
     )
 
@@ -81,6 +81,7 @@ class PiHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
         if kind == "message_end":
             message = payload.get("message")
             if isinstance(message, dict):
+                message = cast("dict[str, object]", message)
                 usage = _usage_from_message(message)
                 if usage is not None:
                     facts.usage = usage
@@ -90,8 +91,10 @@ class PiHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
         elif kind == "agent_end":
             messages = payload.get("messages")
             if isinstance(messages, list):
-                for message in reversed(messages):
-                    if isinstance(message, dict) and (text := _assistant_message_text(message)):
+                for message in reversed(cast("list[object]", messages)):
+                    if isinstance(message, dict) and (
+                        text := _assistant_message_text(cast("dict[str, object]", message))
+                    ):
                         facts.set_text(text, "pi_agent_end")
                         break
 

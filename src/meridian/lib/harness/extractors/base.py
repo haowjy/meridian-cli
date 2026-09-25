@@ -10,8 +10,8 @@ from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.harness.adapter import SpawnExtractor
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.common import (
-    _coerce_optional_int,
     coerce_optional_float,
+    coerce_optional_int,
     iter_nested_dicts,
 )
 from meridian.lib.harness.connections.base import RawHarnessEvent
@@ -86,8 +86,8 @@ def fold_usage_fallback(facts: AttemptFacts, event: Mapping[str, object]) -> Non
         ):
             if input_key in payload or output_key in payload:
                 candidate = TokenUsage(
-                    input_tokens=_coerce_optional_int(payload.get(input_key)),
-                    output_tokens=_coerce_optional_int(payload.get(output_key)),
+                    input_tokens=coerce_optional_int(payload.get(input_key)),
+                    output_tokens=coerce_optional_int(payload.get(output_key)),
                 )
                 break
         if sum(v is not None for v in (candidate.input_tokens, candidate.output_tokens)) > sum(

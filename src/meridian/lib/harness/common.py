@@ -158,7 +158,7 @@ def unwrap_event_payload(line: dict[str, object]) -> dict[str, object]:
     return line
 
 
-def _coerce_optional_int(value: object) -> int | None:
+def coerce_optional_int(value: object) -> int | None:
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, int):

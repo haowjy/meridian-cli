@@ -3,6 +3,7 @@
 Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/). Versions `0.0.6` through `0.0.25` in git history only — changelog fell stale, resumed at `[Unreleased]`.
 
 ## [Unreleased]
+- Speed up spawn transcript availability checks; remove obsolete runner-history discovery paths.
 - Session discovery preserves accepted native bindings across resumes; metadata rebuilds ignore runner history.
 - Finalize reports, usage and identity from live attempt facts; read only event-named native replies.
 - Archive capture requires an exact native transcript; legacy runner-history archive members stay inert.

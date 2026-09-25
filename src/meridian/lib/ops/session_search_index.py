@@ -39,21 +39,21 @@ from meridian.lib.state.native_search_index import (
     search_text,
     witness_json,
 )
+from meridian.lib.state.session_fold import by_native_key
 from meridian.lib.state.session_store import list_all_session_records
 
 LAZY_SOURCE_BYTES = 64 * 1024 * 1024
 
 
 def native_bindings(runtime_root: Path) -> dict[NativeKey, tuple[str, ...]]:
-    """Only this seam folds authority; replace with session_fold.by_native_key when available."""
-    grouped: dict[NativeKey, list[str]] = defaultdict(list)
-    for record in sorted(
+    """Invert authoritative bindings, preserving newest-first chat aliases."""
+    records = sorted(
         list_all_session_records(runtime_root), key=lambda record: record.started_at, reverse=True
-    ):
-        key = record.native_key()
-        if key is not None:
-            grouped[key].append(record.chat_id)
-    return {key: tuple(chats) for key, chats in grouped.items()}
+    )
+    return {
+        key: tuple(record.chat_id for record in aliases)
+        for key, aliases in by_native_key({record.chat_id: record for record in records}).items()
+    }
 
 
 @dataclass(frozen=True)

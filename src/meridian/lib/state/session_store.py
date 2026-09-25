@@ -203,10 +203,26 @@ def reserve_chat_id(runtime_root: Path) -> str:
         return f"c{next_value}"
 
 
-def _records_by_session(runtime_root: Path) -> dict[str, SessionRecord]:
+def _records_by_session(
+    runtime_root: Path, *, chat_ids: set[str] | None = None
+) -> dict[str, SessionRecord]:
     paths = RuntimePaths.from_root_dir(runtime_root)
+
+    def selected_event(payload: dict[str, Any]) -> SessionEvent | None:
+        if chat_ids is not None:
+            record = (
+                payload.get("record") if payload.get("event") == "historical_import" else payload
+            )
+            raw_id = (
+                cast("dict[str, object]", record).get("chat_id")
+                if isinstance(record, dict) else None
+            )
+            if not isinstance(raw_id, str) or raw_id.strip() not in chat_ids:
+                return None
+        return parse_event(payload)
+
     records: dict[str, SessionRecord] = {}
-    for event in read_events(paths.sessions_jsonl, parse_event):
+    for event in read_events(paths.sessions_jsonl, selected_event):
         project_session_event(records, event)
     return records
 
@@ -532,7 +548,7 @@ def list_all_session_records(runtime_root: Path) -> list[SessionRecord]:
 def get_session_record(runtime_root: Path, chat_id: str) -> SessionRecord | None:
     """Return a materialized record for one chat ID, if present."""
 
-    return _records_by_session(runtime_root).get(chat_id)
+    return _records_by_session(runtime_root, chat_ids={chat_id}).get(chat_id)
 
 
 def _bound_model_selections(
@@ -772,11 +788,12 @@ def get_session_records(runtime_root: Path, chat_ids: set[str]) -> list[SessionR
 
     if not chat_ids:
         return []
-    records = _records_by_session(runtime_root)
+    selected = {chat_id.strip() for chat_id in chat_ids if chat_id.strip()}
+    records = _records_by_session(runtime_root, chat_ids=selected)
     return [
         records[chat_id]
         for chat_id in sorted(
-            {chat_id.strip() for chat_id in chat_ids if chat_id.strip()},
+            selected,
             key=_session_sort_key,
         )
         if chat_id in records

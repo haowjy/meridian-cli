@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, NoReturn, cast
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, cast
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -245,14 +245,6 @@ class HistorySnapshot(BaseModel):
     portable_digest: str
     current: bool
     path: str
-
-
-class HistoryCandidate(NamedTuple):
-    history_id: str
-    local_id: str
-    chat_id: str | None
-    archived: bool
-    activity: str
 
 
 def _remaining(deadline: float) -> float:
@@ -1315,41 +1307,6 @@ class HistoryIndex:
                 )
             )
         return tuple(result)
-
-    def candidates(
-        self, *, include_archives: bool = False, deadline: float | None = None
-    ) -> tuple[HistoryCandidate, ...]:
-        with self.query(deadline=deadline) as db:
-            record_rows = select(
-                RECORDS.c.history_id,
-                RECORDS.c.local_id,
-                RECORDS.c.chat,
-                RECORDS.c.archive_id,
-                RECORDS.c.activity,
-            )
-            if not include_archives:
-                record_rows = record_rows.where(RECORDS.c.archive_id.is_(None))
-            newer = SESSIONS.alias("newer")
-            session_rows = select(
-                SESSIONS.c.chat.label("history_id"),
-                SESSIONS.c.chat.label("local_id"),
-                SESSIONS.c.chat.label("chat"),
-                literal(None).label("archive_id"),
-                SESSIONS.c.activity,
-            ).where(
-                ~exists().where(RECORDS.c.chat == SESSIONS.c.chat),
-                ~exists().where(
-                    newer.c.chat == SESSIONS.c.chat, newer.c.ordinal > SESSIONS.c.ordinal
-                ),
-            )
-            rows = db.execute(
-                union_all(record_rows, session_rows).order_by(
-                    text("activity DESC"), text("history_id")
-                )
-            )
-            return tuple(
-                HistoryCandidate(row[0], row[1], row[2], row[3] is not None, row[4]) for row in rows
-            )
 
     def spawns(
         self,
