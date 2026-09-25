@@ -8,12 +8,14 @@ from pathlib import Path
 
 import pytest
 
+from meridian.cli.primary_launch import PrimaryLaunchOutput, run_primary_launch
 from meridian.lib.harness.pi_boundary import read_boundary
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.ops.reference import resolve_session_reference
 from meridian.lib.ops.session_target import resolve_session_log_target
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from tests.integration.launch.test_pi_identity_launch import (
     context,
     install_shim,
@@ -180,6 +182,86 @@ def test_primary_post_exit_boundary(pi_runtime: Path, shape: str) -> None:  # no
         assert ("entry-based view" in target.source) == (
             shape in {"restart", "truncated", "switch-missing"}
         )
+
+
+def _primary_cli(root: Path, *, continue_ref: str | None = None,
+                 fork_ref: str | None = None, dry_run: bool = False) -> PrimaryLaunchOutput:
+    return run_primary_launch(
+        project_root=root,
+        continue_ref=continue_ref,
+        fork_ref=fork_ref,
+        fork_fresh_ref=None,
+        model=None,
+        harness="pi",
+        agent=None,
+        work="",
+        task_dir=None,
+        yolo=False,
+        approval=None,
+        autocompact=None,
+        effort=None,
+        sandbox=None,
+        timeout=None,
+        dry_run=dry_run,
+        passthrough=(),
+        prompt="hello",
+    )
+
+
+@pytest.mark.parametrize(
+    "shape,expected_chat", [("switch", "exit"), ("switch-missing", "entry")],
+)
+def test_primary_cli_resume_hint_uses_verified_exit_or_entry_fallback(
+    pi_runtime: Path, shape: str, expected_chat: str,  # noqa: F811
+) -> None:
+    root = pi_runtime
+    install_boundary_shim(root, shape)
+
+    output = _primary_cli(root)
+    rendered = output.format_text()
+    runtime = resolve_project_runtime_root_for_write(root)
+    row = spawn_store.list_spawns(runtime).records[0]
+    target_chat = row.exit_chat_id if expected_chat == "exit" else row.entry_chat_id
+    assert target_chat is not None
+    assert output.resume_command == f"meridian --continue {target_chat}"
+    assert f"meridian --continue {target_chat}" in rendered
+
+
+@pytest.mark.parametrize("shape,expected_id", [
+    ("switch", "switched-id"),
+    ("switch-missing", "entry"),
+])
+def test_primary_cli_spawn_refs_project_exit_or_entry_native_key(
+    pi_runtime: Path, shape: str, expected_id: str,  # noqa: F811
+) -> None:
+    root = pi_runtime
+    install_boundary_shim(root, shape)
+    runtime = resolve_project_runtime_root_for_write(root)
+    _primary_cli(root)
+    row = spawn_store.list_spawns(runtime).records[0]
+    assert row is not None and row.entry_chat_id is not None
+
+    continued = _primary_cli(root, continue_ref=row.id, dry_run=True)
+    forked = _primary_cli(root, fork_ref=row.id, dry_run=True)
+    chat_continued = _primary_cli(root, continue_ref=row.entry_chat_id, dry_run=True)
+
+    target_chat_id = row.exit_chat_id if shape == "switch" else row.entry_chat_id
+    target_record = session_store.get_session_record(runtime, target_chat_id or "")
+    entry_record = session_store.get_session_record(runtime, row.entry_chat_id)
+    assert target_record is not None and target_record.native_store is not None
+    assert entry_record is not None and entry_record.native_store is not None
+    target_file = Path(target_record.native_store) / (
+        f"2_{expected_id}.jsonl" if expected_id == "switched-id"
+        else f"1_{target_record.harness_session_id}.jsonl"
+    )
+    entry_file = Path(entry_record.native_store) / f"1_{entry_record.harness_session_id}.jsonl"
+    for projected in (continued, forked):
+        assert str(target_file) in projected.command
+        if shape == "switch":
+            assert str(entry_file) not in projected.command
+    assert str(entry_file) in chat_continued.command
+    if shape == "switch":
+        assert str(target_file) not in chat_continued.command
 
 
 def assert_entry_mismatch(runtime: Path, spawn_id: str, entry: session_store.SessionRecord) -> None:
