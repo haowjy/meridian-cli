@@ -53,6 +53,13 @@ Worked helpers:
 - `tests/support/opencode.py`: `FakeOpenCodeProcess.exit(return_code)` makes backend
   death observable while the OpenCode event iterator is still active.
 
+A fake connection that reports a native session ID must adopt
+`spec.native_identity_plan.harness_session_id` in `start()` when the plan assigns
+one. A fixed ID contradicts the prebound identity and fails the attempt as
+`entry_mismatch` before the scenario under test runs. Fakes that model a missing
+identity signal stay silent; report a different ID only in a deliberate
+mismatch regression.
+
 Add fidelity only for a real behavior under test. Do not pre-build alternate close,
 timeout, or reader-error scenarios without a contract they protect.
 
