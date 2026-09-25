@@ -4,8 +4,10 @@
 emit hook updates it before any writer; a failed fold marks it incomplete and the
 emit boundary logs the error without stopping delivery. Only the current reply is
 retained; final text has a 1 MiB UTF-8 cap, marked in persisted reports.
-Incomplete facts log `facts_incomplete` and persist unknown usage, never a partial
-total. `AttemptFold` owns parsing cursor state; `bind_scope` is its sole scope seam.
+Incomplete facts log `facts_incomplete`. A failed fold step drops generic
+fallback usage for the rest of the attempt, never a harness-reported total;
+malformed stdout lines only mark facts incomplete. `AttemptFold` owns parsing
+cursor state; `bind_scope` is its sole scope seam.
 
 Finalization prefers explicit `report.md`, then attempt facts, then exact native
 reply evidence. OpenCode V2 is the exception: its event-named native reply wins

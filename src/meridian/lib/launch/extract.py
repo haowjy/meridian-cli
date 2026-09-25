@@ -151,7 +151,7 @@ def enrich_finalize(
             project_root=project_root,
             harness_id=str(harness_id) if harness_id is not None else None,
         )
-        if facts.usage is not None and not facts.incomplete
+        if facts.usage is not None
         else None
     )
     harness_session_id = facts.first_session_id

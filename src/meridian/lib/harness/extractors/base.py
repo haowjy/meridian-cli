@@ -58,6 +58,7 @@ class AttemptFold:
     facts: AttemptFacts = field(default_factory=AttemptFacts)
     scope_session_id: str | None = None
     usage_is_specific: bool = False
+    generic_usage_lost: bool = False
     text_source: str | None = None
     generic_usage = True
 
@@ -77,11 +78,15 @@ class AttemptFold:
             if not self.accepts(kind, event):
                 return
             self.facts.observe(self.session_id(event))
-            if self.generic_usage and not self.usage_is_specific:
+            if self.generic_usage and not (self.usage_is_specific or self.generic_usage_lost):
                 fold_usage_fallback(self.facts, event.payload)
             self.fold_event(kind, event.payload)
         except Exception:
             self.facts.incomplete = True
+            if not self.usage_is_specific:
+                # A lost fold step leaves generic usage partial; a harness total still wins.
+                self.facts.usage = None
+                self.generic_usage_lost = True
             raise
 
     def fold_event(self, kind: str, payload: Mapping[str, object]) -> None:

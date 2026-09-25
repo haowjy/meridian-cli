@@ -32,6 +32,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Managed Pi launches load a bounded, atomic v2 session-boundary observer without writing native journals.
 
 ### Fixed
+- Keep harness-reported cost when unrelated output lines are malformed.
 - Preserve reports across malformed output; flag incomplete facts and truncated attempt text. Finalize streaming runs even when report extraction fails. Keep Pi cleanup diagnostics through shutdown.
 - Unify native identity checks across runners; reject reused fork IDs and verify streaming-serve exits.
 - Refuse passthrough identity flags and invalid Claude dry-run sources; await OpenCode fork IDs.

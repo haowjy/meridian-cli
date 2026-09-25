@@ -417,7 +417,7 @@ def test_primary_print_survives_corrupt_stdout_and_fold_drift(monkeypatch, tmp_p
     assert outcome.exit_code == 0
     row = list_spawns(context.runtime_root).records[0]
     assert row.status == "succeeded"
-    assert row.terminal.input_tokens is None
+    assert row.terminal.input_tokens == 7
     assert (
         "surviving report" in (context.runtime_root / "spawns" / row.id / "report.md").read_text()
     )
