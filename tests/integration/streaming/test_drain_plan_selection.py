@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent
 from meridian.lib.harness.semantics import NormalizedHarnessEvent
+from meridian.lib.state.history import WriteResult
 from meridian.lib.streaming.drain_coordinator import DrainPlan
 from meridian.lib.streaming.drain_policy import (
     PiRpcQuiescenceDrainPolicy,
@@ -100,13 +101,9 @@ def test_spawn_manager_authored_event_emission_order(
     manager = SpawnManager(runtime_root=tmp_path, project_root=tmp_path)
 
     class _Writer:
-        def write(self, event: RawHarnessEvent) -> None:
+        def write(self, event: RawHarnessEvent) -> WriteResult:
             calls.append(("persist", event))
-
-    class _Observers:
-        def dispatch(self, target_spawn_id: SpawnId, event: RawHarnessEvent) -> None:
-            assert target_spawn_id == spawn_id
-            calls.append(("dispatch", event))
+            return WriteResult(success=True, seq=0)
 
     class _Tracer:
         def emit(
@@ -127,7 +124,11 @@ def test_spawn_manager_authored_event_emission_order(
             calls.append(("trace", event))
 
     manager._history_writers[spawn_id] = cast("Any", _Writer())
-    manager._observers = cast("Any", _Observers())
+
+    def _hook(event: RawHarnessEvent) -> None:
+        calls.append(("hook", event))
+
+    manager.register_event_hook(spawn_id, _hook)
     def _fan_out(target_spawn_id: SpawnId, event: NormalizedHarnessEvent | None) -> None:
         assert target_spawn_id == spawn_id
         assert event is not None
@@ -149,8 +150,8 @@ def test_spawn_manager_authored_event_emission_order(
     manager.emit_event(spawn_id, authored_event)
 
     assert [stage for stage, _event in calls] == [
+        "hook",
         "persist",
-        "dispatch",
         "fan_out",
         "trace",
     ]

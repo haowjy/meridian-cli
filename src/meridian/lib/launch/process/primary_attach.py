@@ -40,6 +40,7 @@ from meridian.lib.platform.process_scope.base import (
 from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.state.primary_meta import ActivityState, PrimaryMetadata, write_primary_metadata
 from meridian.lib.state.process_scope_projection import record_scope
+from meridian.lib.streaming.heartbeat import heartbeat_loop
 
 from .ports import LaunchedProcess, ProcessLauncher, RunningProcess
 
@@ -228,6 +229,7 @@ class PrimaryAttachLauncher:
         process_launcher: ProcessLauncher,
         runtime_root: Path | None = None,
         on_running: Callable[[int], None] | None = None,
+        event_hook: Callable[[RawHarnessEvent], None] | None = None,
     ) -> None:
         self._spawn_id = spawn_id
         self._spawn_dir = spawn_dir
@@ -236,10 +238,12 @@ class PrimaryAttachLauncher:
         self._process_launcher = process_launcher
         self._runtime_root = runtime_root
         self._on_running = on_running
+        self._event_hook = event_hook
         self._metadata = _LauncherMetadata()
         self._metadata_lock = Lock()
         self._history_writer: HarnessHistoryWriter | None = None
         self._event_writer_task: asyncio.Task[None] | None = None
+        self._heartbeat_task: asyncio.Task[None] | None = None
         self._tui_scope_snapshot: ProcessScopeSnapshot | None = None
         self._running_process: RunningProcess | None = None
         self._signal_cancel_requested = False
@@ -269,6 +273,10 @@ class PrimaryAttachLauncher:
             runtime_root=self._runtime_root,
             spawn_id=str(self._spawn_id) if self._runtime_root is not None else None,
         )
+        if self._runtime_root is not None:
+            self._heartbeat_task = asyncio.create_task(
+                heartbeat_loop(self._runtime_root, self._spawn_id)
+            )
         self._signal_cancel_requested = False
         cancel_receiver = SignalCallbackReceiver(
             target_signals=(signal.SIGTERM, signal.SIGHUP),
@@ -440,6 +448,12 @@ class PrimaryAttachLauncher:
                 writer_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await writer_task
+            heartbeat_task = self._heartbeat_task
+            if heartbeat_task is not None:
+                heartbeat_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await heartbeat_task
+                self._heartbeat_task = None
             if (
                 running_process is not None
                 and launch_task is not None
@@ -494,15 +508,19 @@ class PrimaryAttachLauncher:
         )
 
     async def _run_event_writer(self) -> None:
-        """Stream connection events to history.jsonl."""
+        """Observe live events and persist them when a history writer exists."""
 
         writer = self._history_writer
-        if writer is None:
-            raise RuntimeError("primary attach history writer is not initialized")
         try:
             async for event in self._connection.events():
                 self._update_activity_from_event(event)
-                writer.write(event)
+                if self._event_hook is not None:
+                    try:
+                        self._event_hook(event)
+                    except Exception:
+                        logger.exception("Primary attach event hook failed")
+                if writer is not None:
+                    writer.write(event)
         finally:
             self._history_writer = None
 

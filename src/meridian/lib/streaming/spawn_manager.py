@@ -38,12 +38,6 @@ from meridian.lib.streaming.drain_policy import (
     TURN_BOUNDARY_EVENT_TYPE,
     DrainPolicy,
 )
-from meridian.lib.streaming.event_observers import (
-    CallbackObserver,
-    EventObserver,
-    EventObserverRegistry,
-    HarnessEventCallback,
-)
 from meridian.lib.streaming.heartbeat import heartbeat_loop
 from meridian.lib.streaming.spawn_dispatch import dispatch_start
 from meridian.lib.streaming.spawn_drain_loop import (
@@ -71,6 +65,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 InjectResultCallback = Callable[[InjectResult], None]
+EventHook = Callable[[RawHarnessEvent], None]
 
 
 def _default_control_server_factory(
@@ -120,7 +115,7 @@ class SpawnManager:
         self._cleanup_tasks: dict[SpawnId, asyncio.Task[None]] = {}
         self._heartbeat_tasks: dict[SpawnId, asyncio.Task[None]] = {}
         self._history_writers: dict[SpawnId, HarnessHistoryWriter] = {}
-        self._observers = EventObserverRegistry()
+        self._event_hooks: dict[SpawnId, list[EventHook]] = {}
 
     @property
     def runtime_root(self) -> Path:
@@ -187,7 +182,7 @@ class SpawnManager:
         spec: ResolvedLaunchSpec,
         *,
         drain_policy: DrainPolicy | None = None,
-        on_event: HarnessEventCallback | None = None,
+        event_hook: EventHook | None = None,
     ) -> HarnessConnection[Any]:
         """Start one connection and register durable drain/control resources."""
 
@@ -195,6 +190,8 @@ class SpawnManager:
         if spawn_id in self._sessions:
             msg = f"Spawn {spawn_id} is already active"
             raise ValueError(msg)
+        if event_hook is not None:
+            self.register_event_hook(spawn_id, event_hook)
 
         started_monotonic = time.monotonic()
         completion_future: asyncio.Future[DrainOutcome] = asyncio.get_running_loop().create_future()
@@ -216,7 +213,7 @@ class SpawnManager:
         async def _cleanup_unregistered_start() -> object:
             if tracer is not None:
                 tracer.close()
-            await self._observers.shutdown(spawn_id)
+            self._event_hooks.pop(spawn_id, None)
             self._history_writers.pop(spawn_id, None)
             if drain_task is not None and not drain_task.done():
                 drain_task.cancel()
@@ -241,8 +238,6 @@ class SpawnManager:
                 runtime_root=self._runtime_root,
                 spawn_id=str(spawn_id),
             )
-            if on_event is not None:
-                self.register_observer(spawn_id, CallbackObserver(on_event))
             control_server = self._control_server_factory(
                 spawn_id,
                 socket_path,
@@ -289,15 +284,21 @@ class SpawnManager:
         self._completion_futures[spawn_id] = completion_future
         return connection
 
-    def register_observer(self, spawn_id: SpawnId, observer: EventObserver) -> None:
-        """Register a non-blocking post-persist event observer for one spawn."""
+    def register_event_hook(self, spawn_id: SpawnId, hook: EventHook) -> None:
+        """Register a synchronous, best-effort hook for each received event."""
 
-        self._observers.register(spawn_id, observer)
+        self._event_hooks.setdefault(spawn_id, []).append(hook)
 
-    def unregister_observer(self, spawn_id: SpawnId, observer: EventObserver) -> None:
-        """Remove a previously registered event observer for one spawn."""
+    def unregister_event_hook(self, spawn_id: SpawnId, hook: EventHook) -> None:
+        """Remove one previously registered synchronous event hook."""
 
-        self._observers.unregister(spawn_id, observer)
+        hooks = self._event_hooks.get(spawn_id)
+        if hooks is None:
+            return
+        with suppress(ValueError):
+            hooks.remove(hook)
+        if not hooks:
+            self._event_hooks.pop(spawn_id, None)
 
     def control_endpoint(self, spawn_id: SpawnId) -> str | None:
         """Return the current platform-aware control endpoint for one active spawn."""
@@ -317,7 +318,9 @@ class SpawnManager:
         drain_loop = SpawnDrainLoop(
             sessions=self._sessions,
             history_writers=self._history_writers,
-            observers=self._observers,
+            emit_event=lambda event_spawn_id, event: self._emit(
+                event_spawn_id, event, fan_out=False
+            ),
             publish_terminal=self._publish_terminal,
             fan_out_event=self._fan_out_event,
             fan_out_turn_boundary=self._fan_out_turn_boundary,
@@ -614,7 +617,7 @@ class SpawnManager:
         session = self._sessions.get(spawn_id)
         if session is None:
             await self._stop_heartbeat(spawn_id)
-            await self._observers.shutdown(spawn_id)
+            self._event_hooks.pop(spawn_id, None)
             return None
         if session.terminal_published:
             cleanup_task = self._cleanup_tasks.get(spawn_id)
@@ -683,7 +686,7 @@ class SpawnManager:
         cleanup_task = self._cleanup_tasks.get(spawn_id)
         if cleanup_task is not None:
             await asyncio.gather(cleanup_task, return_exceptions=True)
-        await self._observers.shutdown(spawn_id)
+        self._event_hooks.pop(spawn_id, None)
 
         with suppress(Exception):
             await session.control_server.stop()
@@ -722,7 +725,6 @@ class SpawnManager:
             except Exception:
                 logger.exception("Terminal finalizer failed for spawn %s", spawn_id)
         self._resolve_completion_future(session, outcome)
-        self._observers.complete(spawn_id)
         self._fan_out_event(spawn_id, None)
         cleanup_task = asyncio.create_task(
             self._run_post_publication_teardown(
@@ -800,18 +802,7 @@ class SpawnManager:
             harness_id=session.connection.harness_id.value,
             raw_text=None,
         )
-        history_writer = self._history_writers.get(spawn_id)
-        if history_writer is not None:
-            with suppress(Exception):
-                history_writer.write(terminal_event)
-                self._observers.dispatch(spawn_id, terminal_event)
-        self._fan_out_event(
-            spawn_id,
-            normalize_event(
-                terminal_event,
-                primary_event_scope=session.connection.primary_event_scope,
-            ),
-        )
+        self._emit(spawn_id, terminal_event, deliver_on_write_failure=True)
 
     async def _fan_out_turn_boundary(
         self,
@@ -830,37 +821,11 @@ class SpawnManager:
             },
             raw_text=None,
         )
-        history_writer = self._history_writers.get(spawn_id)
-        if history_writer is not None:
-            try:
-                history_writer.write(synthetic)
-                self._observers.dispatch(spawn_id, synthetic)
-            except Exception as persist_exc:
-                logger.warning(
-                    "Failed to persist turn boundary event for spawn %s: %s",
-                    spawn_id,
-                    persist_exc,
-                )
-        self._fan_out_event(spawn_id, normalize_event(synthetic))
+        self._emit(spawn_id, synthetic, deliver_on_write_failure=True)
 
     def emit_event(self, spawn_id: SpawnId, event: RawHarnessEvent) -> None:
         """Persist and publish one manager-authored harness event."""
-
-        history_writer = self._history_writers.get(spawn_id)
-        if history_writer is not None:
-            try:
-                history_writer.write(event)
-                self._observers.dispatch(spawn_id, event)
-            except Exception as persist_exc:
-                logger.warning(
-                    "Failed to persist event %s for spawn %s: %s",
-                    event.event_type,
-                    spawn_id,
-                    persist_exc,
-                )
-        session = self._sessions.get(spawn_id)
-        scope = session.connection.primary_event_scope if session is not None else None
-        self._fan_out_event(spawn_id, normalize_event(event, primary_event_scope=scope))
+        self._emit(spawn_id, event, deliver_on_write_failure=True)
         tracer = self.get_tracer(spawn_id)
         if tracer is not None:
             trace_event = f"{event.harness_id}_{event.event_type.rsplit('.', 1)[-1]}"
@@ -869,6 +834,39 @@ class SpawnManager:
                 trace_event,
                 data=event.payload,
             )
+
+    def _emit(
+        self,
+        spawn_id: SpawnId,
+        event: RawHarnessEvent,
+        *,
+        deliver_on_write_failure: bool = False,
+        fan_out: bool = True,
+    ) -> bool:
+        """Run synchronous hooks, write if configured, then fan out by contract."""
+
+        for hook in tuple(self._event_hooks.get(spawn_id, ())):
+            try:
+                hook(event)
+            except Exception:
+                logger.exception("Event hook failed for spawn %s", spawn_id)
+
+        writer = self._history_writers.get(spawn_id)
+        succeeded = True
+        if writer is not None:
+            try:
+                result = writer.write(event)
+                if not result.success:
+                    raise RuntimeError(result.error or "history write failed")
+            except Exception as exc:
+                succeeded = False
+                logger.warning("Failed to persist event for spawn %s: %s", spawn_id, exc)
+
+        session = self._sessions.get(spawn_id)
+        scope = session.connection.primary_event_scope if session is not None else None
+        if fan_out and (succeeded or writer is None or deliver_on_write_failure):
+            self._fan_out_event(spawn_id, normalize_event(event, primary_event_scope=scope))
+        return succeeded
 
     async def shutdown(
         self,
@@ -894,7 +892,7 @@ class SpawnManager:
         for spawn_id in list(self._heartbeat_tasks):
             await self._stop_heartbeat(spawn_id)
         for spawn_id in list(self._completion_futures):
-            await self._observers.shutdown(spawn_id)
+            self._event_hooks.pop(spawn_id, None)
         if self._cleanup_tasks:
             await asyncio.gather(
                 *tuple(self._cleanup_tasks.values()),
@@ -1012,7 +1010,7 @@ class SpawnManager:
             await session.teardown.stop_connection(session.connection, outcome)
         with suppress(Exception):
             await session.control_server.stop()
-        await self._observers.shutdown(spawn_id)
+        self._event_hooks.pop(spawn_id, None)
         self._history_writers.pop(spawn_id, None)
         if self._sessions.get(spawn_id) is session:
             self._sessions.pop(spawn_id, None)

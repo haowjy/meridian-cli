@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import os
+import subprocess
+import sys
 import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -44,8 +47,8 @@ from meridian.lib.streaming.drain_wait import (
     DrainTimeoutWake,
     _cancel_task,
 )
-from meridian.lib.streaming.event_observers import EventObserverRegistry
 from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
+from meridian.lib.streaming.spawn_manager import SpawnManager
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 from tests.support.fakes import FakeClock
 from tests.support.history import written_events as read_history_range
@@ -53,6 +56,50 @@ from tests.support.pi import PiDrainScenario
 
 _SPAWN_ID = SpawnId("p-persist-order")
 Call = tuple[str, RawHarnessEvent]
+
+
+def test_manager_hooks_and_subscribers_run_without_history_writer(tmp_path: Path) -> None:
+    manager = SpawnManager(tmp_path / "runtime", tmp_path)
+    event = RawHarnessEvent(event_type="message", harness_id="fake", payload={})
+    calls: list[str] = []
+
+    def failing_hook(_event: RawHarnessEvent) -> None:
+        calls.append("failing-hook")
+        raise RuntimeError("hook failure")
+
+    manager.register_event_hook(_SPAWN_ID, failing_hook)
+    manager.register_event_hook(_SPAWN_ID, lambda _event: calls.append("hook"))
+    manager._fan_out_event = lambda _spawn_id, _event: calls.append("fan-out")  # type: ignore[method-assign]
+
+    assert manager._emit(_SPAWN_ID, event) is True
+    assert calls == ["failing-hook", "hook", "fan-out"]
+
+
+def test_history_blind_mode_traps_reads_in_cli_subprocesses(
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    if request.config.getoption("--runner-history") != "off":
+        pytest.skip("requires --runner-history=off")
+
+    history_path = tmp_path / "spawns" / "p-child" / "history.jsonl"
+    history_path.parent.mkdir(parents=True)
+    history_path.write_text("{}\n", encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; Path(__import__('sys').argv[1]).read_text()",
+            str(history_path),
+        ],
+        capture_output=True,
+        check=False,
+        env=os.environ.copy(),
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "runner history read is disabled" in result.stderr
 
 
 def test_history_writer_stamps_lifecycle_rows_with_subsecond_wall_clock(tmp_path: Path) -> None:
@@ -343,8 +390,15 @@ async def _run_drain(
     def record_observer_dispatch(_spawn_id: SpawnId, event: RawHarnessEvent) -> None:
         calls.append(("observe", event))
 
-    observers = Mock()
-    observers.dispatch.side_effect = record_observer_dispatch
+    writer = cast("HarnessHistoryWriter", _HistoryWriter(results, calls))
+
+    def emit_event(_spawn_id: SpawnId, event: RawHarnessEvent) -> bool:
+        result = writer.write(event)
+        if not result.success:
+            return False
+        record_observer_dispatch(_spawn_id, event)
+        return True
+
     sessions: dict[SpawnId, SpawnSession] = {}
     if outcomes is not None:
         sessions[_SPAWN_ID] = cast(
@@ -369,10 +423,8 @@ async def _run_drain(
 
     loop = SpawnDrainLoop(
         sessions=sessions,
-        history_writers={
-            _SPAWN_ID: cast("HarnessHistoryWriter", _HistoryWriter(results, calls))
-        },
-        observers=cast("EventObserverRegistry", observers),
+        history_writers={_SPAWN_ID: writer},
+        emit_event=emit_event,
         publish_terminal=_publish_terminal if outcomes is not None else Mock(),
         fan_out_event=lambda _spawn_id, event: calls.append(("fan_out", event.raw)),
         fan_out_turn_boundary=AsyncMock(),
@@ -442,17 +494,18 @@ async def test_held_descendant_refresh_does_not_block_ordered_event_delivery(
     )
     started = await PiDrainScenario.start(tmp_path, monkeypatch, spawn_id=_SPAWN_ID)
 
-    observers = Mock()
-    observers.dispatch.side_effect = lambda _spawn_id, event: calls.append(("observe", event))
+    history_writer = _HistoryWriter([WriteResult(success=True, seq=i) for i in range(3)], calls)
+
+    def emit_event(_spawn_id: SpawnId, event: RawHarnessEvent) -> bool:
+        result = history_writer.write(event)
+        if result.success:
+            calls.append(("observe", event))
+        return result.success
+
     loop = SpawnDrainLoop(
         sessions={},
-        history_writers={
-            _SPAWN_ID: cast(
-                "HarnessHistoryWriter",
-                _HistoryWriter([WriteResult(success=True, seq=i) for i in range(3)], calls),
-            )
-        },
-        observers=cast("EventObserverRegistry", observers),
+        history_writers={_SPAWN_ID: cast("HarnessHistoryWriter", history_writer)},
+        emit_event=emit_event,
         publish_terminal=Mock(),
         fan_out_event=lambda _spawn_id, event: calls.append(("fan_out", event.raw)),
         fan_out_turn_boundary=AsyncMock(),
@@ -575,11 +628,10 @@ async def test_persisted_activity_restarts_elapsed_stabilization_before_concurre
         [WriteResult(success=True, seq=0), WriteResult(success=True, seq=1)],
         [],
     )
-    observers = Mock()
     loop = SpawnDrainLoop(
         sessions={},
         history_writers={_SPAWN_ID: cast("HarnessHistoryWriter", history_writer)},
-        observers=cast("EventObserverRegistry", observers),
+        emit_event=lambda _spawn_id, event: history_writer.write(event).success,
         publish_terminal=Mock(),
         fan_out_event=Mock(),
         fan_out_turn_boundary=AsyncMock(),

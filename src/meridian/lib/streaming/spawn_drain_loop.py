@@ -27,7 +27,6 @@ from meridian.lib.streaming.drain_wait import (
     DrainInputWaiter,
     DrainTimeoutWake,
 )
-from meridian.lib.streaming.event_observers import EventObserverRegistry
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 
 if TYPE_CHECKING:
@@ -42,6 +41,7 @@ PublishTerminal = Callable[
 ]
 FanOutEvent = Callable[[SpawnId, "NormalizedHarnessEvent"], None]
 FanOutTurnBoundary = Callable[[SpawnId, "TerminalEventOutcome"], Awaitable[None]]
+EmitEvent = Callable[[SpawnId, RawHarnessEvent], bool]
 
 
 class SpawnDrainLoop:
@@ -52,14 +52,14 @@ class SpawnDrainLoop:
         *,
         sessions: dict[SpawnId, SpawnSession],
         history_writers: dict[SpawnId, HarnessHistoryWriter],
-        observers: EventObserverRegistry,
+        emit_event: EmitEvent,
         publish_terminal: PublishTerminal,
         fan_out_event: FanOutEvent,
         fan_out_turn_boundary: FanOutTurnBoundary,
     ) -> None:
         self._sessions = sessions
         self._history_writers = history_writers
-        self._observers = observers
+        self._emit_event = emit_event
         self._publish_terminal = publish_terminal
         self._fan_out_event = fan_out_event
         self._fan_out_turn_boundary = fan_out_turn_boundary
@@ -172,20 +172,9 @@ class SpawnDrainLoop:
                         data={"event_type": event.event_type, "harness_id": event.harness_id},
                     )
                 history_writer = self._history_writers.get(spawn_id)
+                write_succeeded = self._emit_event(spawn_id, event)
                 if history_writer is not None:
-                    try:
-                        write_result = history_writer.write(event)
-                        if not write_result.success:
-                            raise RuntimeError(write_result.error or "history write failed")
-                        consecutive_write_failures = 0
-                        if tracer is not None:
-                            tracer.emit(
-                                "drain",
-                                "event_persisted",
-                                data={"event_type": event.event_type},
-                            )
-                        self._observers.dispatch(spawn_id, event)
-                    except Exception as persist_exc:
+                    if not write_succeeded:
                         consecutive_write_failures += 1
                         if tracer is not None:
                             tracer.emit(
@@ -193,7 +182,7 @@ class SpawnDrainLoop:
                                 "persist_error",
                                 data={
                                     "event_type": event.event_type,
-                                    "error": str(persist_exc),
+                                    "error": "history write failed",
                                     "consecutive_failures": consecutive_write_failures,
                                 },
                             )
@@ -202,7 +191,6 @@ class SpawnDrainLoop:
                             spawn_id,
                             consecutive_write_failures,
                             max_consecutive_failures,
-                            exc_info=True,
                         )
                         if consecutive_write_failures >= max_consecutive_failures:
                             logger.error(
@@ -218,6 +206,15 @@ class SpawnDrainLoop:
                             )
                             break
                         continue
+                    consecutive_write_failures = 0
+                    if tracer is not None:
+                        tracer.emit(
+                            "drain",
+                            "event_persisted",
+                            data={"event_type": event.event_type},
+                        )
+                else:
+                    consecutive_write_failures = 0
 
                 event_outcome = normalized_event.semantics.terminal
                 self._fan_out_event(spawn_id, normalized_event)
