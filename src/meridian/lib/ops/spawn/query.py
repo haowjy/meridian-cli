@@ -9,15 +9,12 @@ from typing import NamedTuple, cast
 
 from meridian.lib.core.depth import is_root_side_effect_process
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
-from meridian.lib.harness.pi_lifecycle_events import PI_PHASE_EVENT_TYPE as _PI_PHASE_EVENT_TYPE
-from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
 from meridian.lib.ops.reference import resolve_spawn_ref
 from meridian.lib.ops.run_boundary import run_boundary_summary
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
-from meridian.lib.state import session_identity, spawn_store
+from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.liveness import is_process_alive
-from meridian.lib.state.paths import resolve_spawn_history_path
 from meridian.lib.state.reaper import (
     SPAWN_HEARTBEAT_WINDOW_SECS,
     SPAWN_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS,
@@ -37,8 +34,6 @@ _ASSISTANT_ROLE_MARKER_RE = re.compile(r"^(assistant|codex)$", re.IGNORECASE)
 _LOG_ROLE_MARKER_RE = re.compile(r"^(user|assistant|codex|exec)$", re.IGNORECASE)
 _NESTED_READ_ACTIVITY_ARTIFACTS: tuple[str, ...] = (
     "heartbeat",
-    HISTORY_FILENAME,
-    OUTPUT_FILENAME,
     "bash-records.json",
     "stderr.log",
     "report.md",
@@ -75,12 +70,7 @@ def _iso_to_epoch(raw_value: str | None) -> float | None:
 def _has_recent_spawn_activity(runtime_root: Path, spawn_id: str, now: float) -> bool:
     spawn_dir = runtime_root / "spawns" / spawn_id
     for artifact_name in _NESTED_READ_ACTIVITY_ARTIFACTS:
-        if artifact_name == HISTORY_FILENAME:
-            artifact_path = resolve_spawn_history_path(runtime_root, spawn_id)
-            if artifact_path is None:
-                continue
-        else:
-            artifact_path = spawn_dir / artifact_name
+        artifact_path = spawn_dir / artifact_name
         try:
             mtime_epoch = artifact_path.stat().st_mtime
         except OSError:
@@ -453,32 +443,22 @@ def _latest_pi_lifecycle_phase(
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     if resolved_runtime_root is None:
         return None
-    history_path = resolve_spawn_history_path(resolved_runtime_root, spawn_id)
-    if history_path is None:
-        return None
+    lifecycle = _read_pi_lifecycle(resolved_runtime_root, spawn_id)
+    return _lifecycle_text(lifecycle, "phase")
 
-    last_phase: str | None = None
-    for line in history_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            raw_payload = json.loads(stripped)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(raw_payload, dict):
-            continue
-        payload = cast("dict[str, object]", raw_payload)
-        if payload.get("event_type") != _PI_PHASE_EVENT_TYPE:
-            continue
-        raw_event_payload = payload.get("payload")
-        if not isinstance(raw_event_payload, dict):
-            continue
-        event_payload = cast("dict[str, object]", raw_event_payload)
-        phase_value = event_payload.get("phase")
-        if isinstance(phase_value, str) and phase_value.strip():
-            last_phase = phase_value.strip()
-    return last_phase
+
+def _read_pi_lifecycle(runtime_root: Path, spawn_id: str) -> dict[str, object]:
+    path = runtime_root / "spawns" / spawn_id / "pi-lifecycle.json"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return cast("dict[str, object]", raw) if isinstance(raw, dict) else {}
+
+
+def _lifecycle_text(lifecycle: dict[str, object], key: str) -> str | None:
+    value = lifecycle.get(key)
+    return value if isinstance(value, str) else None
 
 
 def _pi_cleanup_telemetry(
@@ -490,75 +470,12 @@ def _pi_cleanup_telemetry(
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     if resolved_runtime_root is None:
         return _PiCleanupTelemetry(None, None, None, None)
-    history_path = resolve_spawn_history_path(resolved_runtime_root, spawn_id)
-    if history_path is None:
-        return _PiCleanupTelemetry(None, None, None, None)
-
-    status_rank: dict[str, int] = {"running": 0, "completed": 1, "escalated": 2, "failed": 3}
-    cleanup_status: str | None = None
-    cleanup_phase: str | None = None
-    cleanup_reason: str | None = None
-    cleanup_error: str | None = None
-
-    for line in history_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            raw_payload = json.loads(stripped)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(raw_payload, dict):
-            continue
-        payload = cast("dict[str, object]", raw_payload)
-        if payload.get("event_type") != _PI_PHASE_EVENT_TYPE:
-            continue
-        raw_event_payload = payload.get("payload")
-        if not isinstance(raw_event_payload, dict):
-            continue
-        event_payload = cast("dict[str, object]", raw_event_payload)
-        phase_value = event_payload.get("phase")
-        phase = (
-            phase_value.strip()
-            if isinstance(phase_value, str) and phase_value.strip()
-            else None
-        )
-        status_value = event_payload.get("cleanup_status")
-        status = (
-            status_value.strip()
-            if isinstance(status_value, str) and status_value.strip()
-            else None
-        )
-        if phase is None and status is None:
-            continue
-        if phase is not None and not phase.startswith("cleanup_") and status is None:
-            continue
-
-        if phase is not None:
-            cleanup_phase = phase
-            if phase == "cleanup_escalated":
-                status = "escalated"
-            elif phase == "cleanup_failed":
-                status = "failed"
-
-        if status is not None:
-            prior_rank = status_rank.get(cleanup_status or "", -1)
-            current_rank = status_rank.get(status, -1)
-            if current_rank >= prior_rank:
-                cleanup_status = status
-
-        reason_value = event_payload.get("reason")
-        if isinstance(reason_value, str) and reason_value.strip():
-            cleanup_reason = reason_value.strip()
-        error_value = event_payload.get("error")
-        if isinstance(error_value, str) and error_value.strip():
-            cleanup_error = error_value.strip()
-
+    lifecycle = _read_pi_lifecycle(resolved_runtime_root, spawn_id)
     return _PiCleanupTelemetry(
-        status=cleanup_status,
-        phase=cleanup_phase,
-        reason=cleanup_reason,
-        error=cleanup_error,
+        status=_lifecycle_text(lifecycle, "cleanup_status"),
+        phase=_lifecycle_text(lifecycle, "cleanup_phase"),
+        reason=_lifecycle_text(lifecycle, "reason"),
+        error=_lifecycle_text(lifecycle, "error"),
     )
 
 
@@ -586,9 +503,13 @@ def spawn_session_log_available(
     harness_session_id: str | None = None,
 ) -> bool:
     """Return whether ``meridian session log`` can resolve content for one spawn."""
-    if (harness_session_id or "").strip():
-        return True
-    return resolve_spawn_history_path(runtime_root, spawn_id) is not None
+    row = spawn_store.get_spawn(runtime_root, spawn_id)
+    if row is None or row.continue_chat_id is None:
+        return False
+    return any(
+        record.chat_id == row.continue_chat_id and record.native_key() is not None
+        for record in session_store.list_session_generations(runtime_root)
+    )
 
 
 def detail_from_row(

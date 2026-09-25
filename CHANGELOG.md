@@ -11,6 +11,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Refuse passthrough identity flags and invalid Claude dry-run sources; await OpenCode fork IDs.
 - Keep live event hooks and subscriber delivery active without runner-history persistence.
+- Read Pi lifecycle telemetry from an atomic sidecar, drop history-based staleness checks, and expose guardrail report/chat paths.
 
 ### Added
 - Import legacy chat native keys once from exact, header-validated stores; keep unresolved chats listed in a durable report. Read-only dev report previews bindings.

@@ -494,32 +494,17 @@ def test_spawn_show_and_list_hydrate_primary_and_pi_diagnostics(tmp_path: Path) 
         harness="pi",
         prompt="hello",
     )
-    history_path = runtime_root / "spawns" / str(pi_id) / "history.jsonl"
-    history_path.parent.mkdir(parents=True, exist_ok=True)
-    history_path.write_text(
-        "\n".join(
-            [
-                json.dumps(
-                    {
-                        "seq": 0,
-                        "event_type": "meridian.pi.lifecycle.phase",
-                        "payload": {"phase": "initial_prompt_sent"},
-                    }
-                ),
-                json.dumps(
-                    {
-                        "seq": 1,
-                        "event_type": "meridian.pi.lifecycle.phase",
-                        "payload": {
-                            "phase": "cleanup_stop_escalated",
-                            "cleanup_status": "escalated",
-                            "reason": "abort_grace_expired",
-                        },
-                    }
-                ),
-            ]
-        )
-        + "\n",
+    lifecycle_path = runtime_root / "spawns" / str(pi_id) / "pi-lifecycle.json"
+    lifecycle_path.parent.mkdir(parents=True, exist_ok=True)
+    lifecycle_path.write_text(
+        json.dumps(
+            {
+                "phase": "cleanup_stop_escalated",
+                "cleanup_status": "escalated",
+                "cleanup_phase": "cleanup_stop_escalated",
+                "reason": "abort_grace_expired",
+            }
+        ),
         encoding="utf-8",
     )
 

@@ -347,6 +347,7 @@ class SpawnManager:
             receiver=receiver,
             config=config,
             emit_event=self.emit_event,
+            register_event_hook=self.register_event_hook,
             inject=self.inject,
             build_spawn_application_service=_build_spawn_application_service,
         )

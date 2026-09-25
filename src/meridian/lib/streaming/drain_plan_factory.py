@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -9,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.pi_lifecycle_events import build_pi_phase_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.streaming.drain_coordinator import DrainPlan
 from meridian.lib.streaming.drain_policy import (
     PiRpcQuiescenceDrainPolicy,
@@ -23,6 +25,7 @@ if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import (
         ConnectionConfig,
         HarnessConnection,
+        RawHarnessEvent,
     )
 
 class SerializedInject(Protocol):
@@ -44,6 +47,52 @@ class DescendantCancellationService(Protocol):
 
 
 BuildSpawnApplicationService = Callable[[Path, Path], DescendantCancellationService]
+RegisterEventHook = Callable[[SpawnId, Callable[["RawHarnessEvent"], None]], None]
+
+
+def record_pi_lifecycle_event(
+    *, runtime_root: Path, spawn_id: SpawnId, event: RawHarnessEvent
+) -> None:
+    """Atomically retain bounded Pi lifecycle diagnostics outside runner history."""
+    if event.event_type != "meridian.pi.lifecycle.phase":
+        return
+    phase_value = event.payload.get("phase")
+    if not isinstance(phase_value, str) or not phase_value.strip():
+        return
+    phase = phase_value.strip()
+    path = runtime_root / "spawns" / str(spawn_id) / "pi-lifecycle.json"
+    try:
+        prior = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        prior = {}
+    if not isinstance(prior, dict):
+        prior = {}
+    updated = dict(cast("dict[str, object]", prior))
+    attempt = event.payload.get("attempt")
+    if isinstance(attempt, (str, int)):
+        updated["attempt"] = attempt
+    status_value = event.payload.get("cleanup_status")
+    status = status_value.strip() if isinstance(status_value, str) else ""
+    status_rank = {"running": 0, "completed": 1, "escalated": 2, "failed": 3}
+    previous_status = updated.get("cleanup_status")
+    if status and status_rank.get(status, -1) >= status_rank.get(
+        previous_status if isinstance(previous_status, str) else "", -1
+    ):
+        updated["cleanup_status"] = status
+    for key in ("reason", "error"):
+        value = event.payload.get(key)
+        if isinstance(value, str) and value.strip():
+            updated[key] = value.strip()
+    updated["phase"] = phase
+    if phase == "cleanup_escalated":
+        updated["cleanup_status"] = "escalated"
+        updated["cleanup_phase"] = phase
+    elif phase == "cleanup_failed":
+        updated["cleanup_status"] = "failed"
+        updated["cleanup_phase"] = phase
+    elif phase.startswith("cleanup_"):
+        updated["cleanup_phase"] = phase
+    atomic_write_text(path, json.dumps(updated, sort_keys=True) + "\n")
 
 
 def build_drain_plan(
@@ -54,6 +103,7 @@ def build_drain_plan(
     receiver: HarnessConnection[Any],
     config: ConnectionConfig,
     emit_event: EmitEvent,
+    register_event_hook: RegisterEventHook,
     inject: SerializedInject,
     build_spawn_application_service: BuildSpawnApplicationService,
 ) -> DrainPlan:
@@ -106,6 +156,12 @@ def build_drain_plan(
         )
 
     if receiver.harness_id is HarnessId.PI:
+        register_event_hook(
+            spawn_id,
+            lambda event: record_pi_lifecycle_event(
+                runtime_root=runtime_root, spawn_id=spawn_id, event=event
+            ),
+        )
         coordinator = PiDrainCoordinator.for_connection(
             runtime_root=runtime_root,
             spawn_id=spawn_id,
@@ -136,4 +192,4 @@ def build_drain_plan(
     return DrainPlan()
 
 
-__all__ = ["build_drain_plan"]
+__all__ = ["build_drain_plan", "record_pi_lifecycle_event"]

@@ -90,16 +90,10 @@ from meridian.lib.launch.runner_helpers import (
     append_text_to_stderr_artifact as _append_text_to_stderr_artifact,
 )
 from meridian.lib.launch.runner_helpers import (
-    artifact_is_zero_bytes as _artifact_is_zero_bytes,
-)
-from meridian.lib.launch.runner_helpers import (
     guardrail_failure_text as _guardrail_failure_text,
 )
 from meridian.lib.launch.runner_helpers import (
     spawn_kind as _spawn_kind,
-)
-from meridian.lib.launch.runner_helpers import (
-    write_structured_failure_artifact as _write_structured_failure_artifact,
 )
 from meridian.lib.launch.session_scope import SessionAttempt
 from meridian.lib.launch.signals import signal_coordinator, signal_to_exit_code
@@ -1085,7 +1079,6 @@ async def execute_with_streaming(
     try:
         log_dir = resolve_spawn_log_dir(project_root, run.spawn_id, runtime_root=runtime_root)
         lifecycle_path = log_dir / RUNNER_LIFECYCLE_FILENAME
-        output_log_path = log_dir / HISTORY_FILENAME
         report_path = log_dir / REPORT_FILENAME
 
         def _record_lifecycle(event: str, **details: object) -> None:
@@ -1451,37 +1444,19 @@ async def execute_with_streaming(
                     conclusion.failure_reason = None
                     break
 
-                if extraction.output_is_empty:
-                    if conclusion.exit_code == 0:
-                        conclusion.exit_code = 1
-                        conclusion.failure_reason = "empty_output"
-                        break
-                    if _artifact_is_zero_bytes(
-                        artifacts=artifacts,
-                        spawn_id=run.spawn_id,
-                        filename=HISTORY_FILENAME,
-                    ) and _artifact_is_zero_bytes(
-                        artifacts=artifacts,
-                        spawn_id=run.spawn_id,
-                        filename=STDERR_FILENAME,
-                    ):
-                        _write_structured_failure_artifact(
-                            artifacts=artifacts,
-                            spawn_id=run.spawn_id,
-                            output_log_path=output_log_path,
-                            exit_code=conclusion.exit_code,
-                            failure_reason=conclusion.failure_reason,
-                            timed_out=attempt.timed_out,
-                        )
-
+                if extraction.output_is_empty and conclusion.exit_code == 0:
+                    conclusion.exit_code = 1
+                    conclusion.failure_reason = "empty_output"
+                    break
                 if conclusion.exit_code == 0:
+                    guardrail_spawn = spawn_store.get_spawn(runtime_root, run.spawn_id)
                     guardrail_result = run_guardrails(
                         guardrails,
                         spawn_id=run.spawn_id,
                         cwd=child_cwd,
                         env=child_env,
                         report_path=extraction.report_path,
-                        output_log_path=output_log_path,
+                        chat_id=(guardrail_spawn.continue_chat_id if guardrail_spawn else None),
                         timeout_seconds=guardrail_timeout_seconds,
                     )
                     if guardrail_result.ok:

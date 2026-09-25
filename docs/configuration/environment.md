@@ -98,8 +98,8 @@ archive keys, defaults and precedence. These do not control UI visibility archiv
 | Variable | Purpose |
 |---|---|
 | `_MERIDIAN_GUARDRAIL_RUN_ID` | Spawn id passed to guardrail scripts |
-| `_MERIDIAN_GUARDRAIL_OUTPUT_LOG` | Path to `output.jsonl` |
-| `_MERIDIAN_GUARDRAIL_REPORT_PATH` | Path to `report.md` when a report exists |
+| `_MERIDIAN_GUARDRAIL_CHAT_ID` | Chat id for `meridian session log` |
+| `_MERIDIAN_GUARDRAIL_REPORT` | Path to `report.md` when a report exists |
 | `MERIDIAN_SECRET_<KEY>` | Secret injection/redaction channel |
 
 ## Permission Naming
