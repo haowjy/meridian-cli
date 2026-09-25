@@ -2,7 +2,18 @@
 
 from pathlib import Path
 
+from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.state import session_store, spawn_store
+
+
+def post_run_continue_chat_id(
+    *, entry_chat_id: str | None, exit_identity: str | None, exit_chat_id: str | None,
+    status: str | None,
+) -> str | None:
+    """Choose the post-run chat without ever redirecting a chat reference."""
+    if status in TERMINAL_SPAWN_STATUSES and exit_identity == "verified" and exit_chat_id:
+        return exit_chat_id
+    return entry_chat_id
 
 
 def run_boundary_summary(runtime_root: Path, spawn_id: str) -> str | None:

@@ -27,8 +27,9 @@ from meridian.lib.launch.continue_replay import (
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.resolve import resolve_agent_launch_input
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
-from meridian.lib.ops.run_boundary import run_boundary_summary
+from meridian.lib.ops.run_boundary import post_run_continue_chat_id, run_boundary_summary
 from meridian.lib.ops.spawn.models import normalize_goal
+from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
 
 
@@ -383,6 +384,16 @@ def run_primary_launch(
     )
 
     continue_chat_id = getattr(launch_result, "continue_chat_id", None)
+    if not dry_run and launch_result.primary_spawn_id:
+        runtime_root = resolve_project_runtime_root(project_root)
+        row = spawn_store.get_spawn(runtime_root, launch_result.primary_spawn_id)
+        if row is not None:
+            continue_chat_id = post_run_continue_chat_id(
+                entry_chat_id=row.entry_chat_id or row.chat_id,
+                exit_identity=row.exit_identity,
+                exit_chat_id=row.exit_chat_id,
+                status=row.status,
+            )
     history_warning = None
     if not dry_run and launch_result.primary_spawn_id:
         from meridian.lib.ops.session_archive import session_stop_maintenance

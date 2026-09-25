@@ -15,6 +15,7 @@ from meridian.lib.ops.reference_recovery import (
     RecoveryResult,
     recover_harness_session_id,
 )
+from meridian.lib.ops.run_boundary import post_run_continue_chat_id
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.history_index import indexed_spawn_scan
@@ -229,10 +230,25 @@ def _resolve_spawn_reference(
     bound_session = session_identity.get_session_record_for_spawn(
         runtime_root, row.id, require_harness_session_id=False,
     )
+    target_chat_id = post_run_continue_chat_id(
+        entry_chat_id=row.entry_chat_id or row.chat_id,
+        exit_identity=row.exit_identity,
+        exit_chat_id=row.exit_chat_id,
+        status=row.status,
+    )
+    target_session = (
+        session_store.get_session_record(runtime_root, target_chat_id)
+        if target_chat_id and target_chat_id != (row.entry_chat_id or row.chat_id)
+        else None
+    )
     return _build_tracked_reference(
-        harness_session_id=harness_session_id,
-        stored_harness=stored_harness,
-        source_chat_id=_normalize_optional(row.chat_id),
+        harness_session_id=(
+            target_session.harness_session_id if target_session else harness_session_id
+        ),
+        stored_harness=(target_session.harness if target_session else stored_harness),
+        source_chat_id=(
+            target_session.chat_id if target_session else _normalize_optional(row.chat_id)
+        ),
         source_model=_normalize_optional(row.model),
         source_agent=_normalize_optional(row.agent),
         source_skills=row.skills,
@@ -241,7 +257,8 @@ def _resolve_spawn_reference(
         source_spawn_id=row.id,
         source_control_root=source_control_root,
         source_execution_cwd=source_execution_cwd,
-        source_native_store=bound_session.native_store if bound_session else None,
+        source_native_store=(target_session.native_store if target_session else
+                             bound_session.native_store if bound_session else None),
         source_launch_policy_snapshot=row.launch_policy_snapshot,
     )
 

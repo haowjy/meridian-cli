@@ -18,6 +18,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
+from meridian.lib.ops.run_boundary import post_run_continue_chat_id
 from meridian.lib.ops.spawn.query import read_spawn_row_read_only
 from meridian.lib.state import session_identity, session_store
 from meridian.lib.state.history_index import HistoryIndex
@@ -318,8 +319,12 @@ def _resolve_from_spawn_id(
         return _target_from_source(target.sources[0])
 
     if row.exit_identity is not None and row.status in TERMINAL_SPAWN_STATUSES:
-        chat_id = (row.exit_chat_id if row.exit_identity == "verified"
-                   else row.entry_chat_id or row.chat_id)
+        chat_id = post_run_continue_chat_id(
+            entry_chat_id=row.entry_chat_id or row.chat_id,
+            exit_identity=row.exit_identity,
+            exit_chat_id=row.exit_chat_id,
+            status=row.status,
+        )
         if chat_id:
             target = _resolve_from_chat_id(
                 project_root=project_root, runtime_root=runtime_root, chat_id=chat_id,
