@@ -226,7 +226,8 @@ def test_plain_browse_and_bare_continue_are_identical(tmp_path) -> None:
     )
 
     assert browse.returncode == bare.returncode == 0
-    assert browse.stderr == bare.stderr == ""
+    assert "Imported native sessions for 0 of 1 existing chats" in browse.stderr
+    assert bare.stderr == ""
     assert re.sub(r"\b\d+[smhd]\b", "AGE", browse.stdout) == re.sub(
         r"\b\d+[smhd]\b", "AGE", bare.stdout
     )

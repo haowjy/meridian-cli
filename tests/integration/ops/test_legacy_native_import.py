@@ -215,3 +215,169 @@ def test_help_does_not_import_and_runtime_read_does(
     assert not (root / legacy.MARKER).exists()
     resolve_runtime_authority_for_read(root)
     assert (root / legacy.MARKER).is_file()
+
+
+def test_damaged_spawn_defers_import_without_blocking_runtime_resolution(
+    homes: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
+
+    home, root = homes
+    _chat(root, 1, "claude", "native-id")
+    _claude(home, root, "native-id")
+    broken = root / "spawns/p1/state.json"
+    broken.parent.mkdir(parents=True)
+    broken.write_text('{"v": 3, "broken": true}')
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "0")
+    monkeypatch.setenv("_MERIDIAN_RUNTIME_DIR", str(root))
+    assert resolve_runtime_authority_for_read(root).runtime_root == root
+    assert "Native session import deferred" in capsys.readouterr().err
+    assert not (root / legacy.MARKER).exists()
+    assert session_store.get_session_record(root, "c1").native_store is None  # type: ignore[union-attr]
+
+
+def test_null_old_id_array_and_crash_recovery_counts(homes: tuple[Path, Path]) -> None:
+    home, root = homes
+    _chat(root, 1, "claude", "native-id", harness_session_ids=None)
+    _claude(home, root, "native-id")
+    report = legacy.import_legacy_native_sessions(root)
+    assert report is not None and report.counts["claude"]["imported"] == 1
+    (root / legacy.MARKER).unlink()  # Simulate losing only the completion marker.
+    recovered = legacy.import_legacy_native_sessions(root)
+    assert recovered is not None and recovered.counts["claude"]["imported"] == 1
+    assert len((root / "sessions.jsonl").read_text().splitlines()) == 2
+
+
+def test_opencode_wal_source_bytes_and_metadata_untouched(homes: tuple[Path, Path]) -> None:
+    import sqlite3
+
+    home, root = homes
+    _chat(root, 1, "opencode", "ses_wal")
+    db = home / ".local/share/opencode/opencode.db"
+    db.parent.mkdir(parents=True)
+    with sqlite3.connect(db) as connection:
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("CREATE TABLE session (id TEXT PRIMARY KEY)")
+        connection.execute("INSERT INTO session VALUES ('ses_wal')")
+        connection.commit()
+        files = list(db.parent.iterdir())
+        before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in files}
+        report = legacy.report_legacy_native_import(root)
+        assert report.bindings["c1"] == ("ses_wal", str(db))
+        assert {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in files} == before
+        assert set(db.parent.iterdir()) == set(files)
+
+
+@pytest.mark.parametrize("harness", ["claude", "codex", "pi", "opencode"])
+def test_imported_chat_native_log_and_continue_projection(
+    homes: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    harness: str,
+) -> None:
+    from meridian.cli.primary_launch import run_primary_launch
+    from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+    from meridian.lib.core.types import HarnessId
+    from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
+    from tests.support.executables import prepend_fake_executables
+    from tests.support.launch import stub_bundle_request_and_resolve
+
+    home, root = homes
+    sid = str(uuid4()) if harness != "opencode" else "ses_log"
+    _chat(root, 1, harness, sid, spawn_id="p1", control_root=str(root))
+    record = SpawnRecord(
+        id="p1",
+        chat_id="c1",
+        harness=harness,
+        harness_session_id=sid,
+        execution_cwd=str(root),
+        control_root=str(root),
+        kind="primary",
+        launch_policy_snapshot=LaunchPolicySnapshot(
+            model="test", harness=harness, agent_opt_out=True
+        ),
+    )
+    state = root / "spawns/p1/state.json"
+    state.parent.mkdir(parents=True)
+    state.write_text(record_to_stored_state(record).model_dump_json())
+    (root / "mars.toml").write_text(f'[settings]\ntargets = [".{harness}"]\n')
+    if harness == "claude":
+        source = _claude(home, root, sid)
+    elif harness == "codex":
+        source = home / ".codex/sessions" / f"rollout-2026-09-25T00-00-00-{sid}.jsonl"
+        source.parent.mkdir(parents=True)
+        source.write_text(
+            json.dumps({"type": "session_meta", "payload": {"id": sid}})
+            + "\n"
+            + json.dumps(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "native hello"}],
+                    },
+                }
+            )
+            + "\n"
+        )
+    elif harness == "pi":
+        source = home / ".meridian/meridian-pi/sessions/p1" / f"2026_{sid}.jsonl"
+        source.parent.mkdir(parents=True)
+        source.write_text(
+            json.dumps({"type": "session", "id": sid})
+            + "\n"
+            + json.dumps(
+                {
+                    "type": "message",
+                    "id": "msg1",
+                    "parentId": None,
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "native hello"}],
+                    },
+                }
+            )
+            + "\n"
+        )
+    else:
+        source = home / ".local/share/opencode/opencode.db"
+        write_opencode_db_session(
+            db_path=source, session_id=sid, messages=[("assistant", "native hello")]
+        )
+    monkeypatch.setenv("_MERIDIAN_RUNTIME_DIR", str(root))
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "0")
+    monkeypatch.delenv("OPENCODE_DB", raising=False)
+    log = session_log_sync(SessionLogInput(ref="c1", project_root=str(root)))
+    assert log.session_id == sid
+    assert any(message.content == "native hello" for message in log.messages)
+    prepend_fake_executables(monkeypatch, root / "bin", harness)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="test",
+        harness=HarnessId(harness),
+        harness_model="test/test" if harness == "opencode" else "test",
+    )
+    output = run_primary_launch(
+        project_root=root,
+        continue_ref="c1",
+        fork_ref=None,
+        fork_fresh_ref=None,
+        model=None,
+        harness=None,
+        agent=None,
+        work="",
+        task_dir=None,
+        yolo=False,
+        approval=None,
+        autocompact=None,
+        effort=None,
+        sandbox=None,
+        timeout=None,
+        dry_run=True,
+        passthrough=(),
+        skills=(),
+    )
+    assert output.exit_code == 0
+    assert sid in output.format_text() or str(source) in output.format_text()

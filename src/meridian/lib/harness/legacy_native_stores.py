@@ -29,7 +29,14 @@ class LegacyNativeStores:
         self._opencode: dict[Path, Path] = {}
         self._codex: dict[Path, dict[str, list[Path]]] = {}
 
-    def candidates(self, chat: SessionRecord, spawns: list[SpawnRecord]) -> set[Path]:
+    def candidates(
+        self,
+        chat: SessionRecord,
+        spawns: list[SpawnRecord],
+        recorded_cwds: set[Path],
+    ) -> set[Path]:
+        if chat.native_store:
+            return {Path(chat.native_store)}
         adapter = get_default_harness_registry().get(HarnessId(chat.harness))
         facts = [chat, *spawns]
         cwds = {
@@ -38,6 +45,7 @@ class LegacyNativeStores:
             for value in (fact.execution_cwd, fact.task_cwd, fact.control_root)
             if value
         }
+        cwds.update(recorded_cwds)
         # Snapshots contain explicitly recorded env, not today's shell configuration.
         envs = [
             spawn.launch_policy_snapshot.env
@@ -77,11 +85,16 @@ class LegacyNativeStores:
         chat: SessionRecord,
         spawns: list[SpawnRecord],
         session_id: str,
+        recorded_cwds: set[Path],
     ) -> tuple[set[Path], bool]:
         matches: set[Path] = set()
         ambiguous = False
         adapter = get_default_harness_registry().get(HarnessId(chat.harness))
-        for store in self.candidates(chat, spawns):
+        try:
+            candidates = self.candidates(chat, spawns, recorded_cwds)
+        except NativeSessionUnavailable:
+            return matches, ambiguous
+        for store in candidates:
             try:
                 if chat.harness == "codex":
                     if store not in self._codex:

@@ -1,5 +1,6 @@
 """One locked native bind path, amortizing journal replay for bulk imports."""
 
+import json
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -7,7 +8,8 @@ from pathlib import Path
 from meridian.lib.core.types import ChatId, HarnessSessionId
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store as sessions
-from meridian.lib.state.event_store import append_event, read_events
+from meridian.lib.state.atomic import append_durable_jsonl_line
+from meridian.lib.state.event_store import read_events
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.paths import RuntimePaths
 
@@ -19,6 +21,7 @@ class SessionBindings:
         self.runtime_root = runtime_root
         self.paths = RuntimePaths.from_root_dir(runtime_root)
         self.events = read_events(self.paths.sessions_jsonl, sessions._parse_event)
+        self._pending: list[sessions.SessionUpdateEvent] = []
         self.records: dict[str, sessions.SessionRecord] = {}
         self.historical: set[tuple[str, str]] = set()
         for event in self.events:
@@ -72,10 +75,7 @@ class SessionBindings:
         if status == "bound" or startup_attempt_id is not None:
             if (event.chat_id, event.session_instance_id) in self.historical:
                 raise ValueError("Historical sessions are inert and cannot be mutated")
-            HistoryChanges(self.runtime_root).mark(HistorySource(kind="sessions"))
-            append_event(
-                self.paths.sessions_jsonl, self.paths.sessions_flock, event, exclude_none=True
-            )
+            self._pending.append(event)
             self.events.append(event)
             sessions.project_session_event(self.records, event)
         return sessions.NativeBindingResult(
@@ -83,6 +83,23 @@ class SessionBindings:
             existing.harness_session_id or event.harness_session_id,
             existing.native_store or native_store,
         )
+
+    def commit(self) -> None:
+        if not self._pending:
+            return
+        HistoryChanges(self.runtime_root).mark(HistorySource(kind="sessions"))
+        lines = "".join(
+            json.dumps(
+                event.model_dump(mode="json", exclude_none=True),
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            + "\n"
+            for event in self._pending
+        )
+        # One fsync per lock-scoped batch; torn tails remain recoverable JSONL.
+        append_durable_jsonl_line(self.paths.sessions_jsonl, lines)
+        self._pending.clear()
 
 
 @contextmanager
@@ -93,4 +110,6 @@ def session_bindings(runtime_root: Path) -> Generator[SessionBindings]:
         lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
         lock_file(paths.sessions_flock),
     ):
-        yield SessionBindings(runtime_root)
+        bindings = SessionBindings(runtime_root)
+        yield bindings
+        bindings.commit()
