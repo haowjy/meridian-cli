@@ -29,7 +29,7 @@ def test_stdout_bad_byte_and_fold_error_preserve_report(tmp_path):
     extractor = ClaudeHarnessExtractor()
     fold = DriftingFold(extractor)
     facts = fold.facts
-    fold.fold_stdout(output)
+    fold.fold_stdout(output, "claude")
     assert facts.incomplete
     assert facts.final_text == "surviving report"
     result = enrich_finalize(
@@ -80,7 +80,7 @@ def test_blank_stdout_lines_do_not_hide_known_usage(tmp_path):
     output.write_bytes(b'\n{"type":"result","result":"done","usage":{"input_tokens":7}}\n\n')
     extractor = ClaudeHarnessExtractor()
     fold = extractor.create_fold()
-    fold.fold_stdout(output)
+    fold.fold_stdout(output, "claude")
     result = enrich_finalize(
         artifacts=InMemoryStore(),
         extractor=extractor,
@@ -111,7 +111,7 @@ def test_non_json_stdout_line_keeps_harness_reported_cost(tmp_path):
     )
     extractor = ClaudeHarnessExtractor()
     fold = extractor.create_fold()
-    fold.fold_stdout(output)
+    fold.fold_stdout(output, "claude")
     result = _finalize(tmp_path, extractor, fold.facts)
     assert result.usage is not None
     assert result.usage.total_cost_usd == 1.25

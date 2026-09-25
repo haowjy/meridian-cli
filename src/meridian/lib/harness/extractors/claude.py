@@ -92,4 +92,4 @@ class ClaudeFold(AttemptFold):
 
 CLAUDE_EXTRACTOR = ClaudeHarnessExtractor()
 
-__all__ = ["CLAUDE_EXTRACTOR", "ClaudeHarnessExtractor"]
+__all__ = ["CLAUDE_EXTRACTOR", "ClaudeFold", "ClaudeHarnessExtractor"]
