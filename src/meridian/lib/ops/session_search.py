@@ -7,6 +7,7 @@ import time
 from collections import Counter
 from collections.abc import Iterator, Sequence
 from pathlib import Path
+from shlex import quote
 from typing import NamedTuple
 
 from pydantic import BaseModel, ConfigDict, computed_field
@@ -21,6 +22,7 @@ from meridian.lib.ops.runtime import (
 )
 from meridian.lib.ops.session_corpus import SessionCorpusScope, resolve_session_search_corpus
 from meridian.lib.ops.session_search_index import SearchProjection
+from meridian.lib.ops.session_target import native_source_label
 from meridian.lib.ops.session_transcript import (
     AbsoluteTranscriptEntry,
     ParsedSessionTranscript,
@@ -348,8 +350,6 @@ def _render_match(
         context=_OPEN_CONTEXT if row.kind != "setup" else None,
     )
     if scope.runtime_root != runtime_root:
-        from shlex import quote
-
         command = (
             "env -u MERIDIAN_PROJECT_DIR -u _MERIDIAN_DEPTH "
             f"_MERIDIAN_RUNTIME_DIR={quote(str(scope.runtime_root))} " + command
@@ -359,7 +359,7 @@ def _render_match(
         chat_id=chats[0],
         chat_ids=chats,
         session_id=row.key.session_id,
-        source=row.key.harness,
+        source=native_source_label(row.key.harness),
         segment=row.segment or 0,
         segment_start_message=row.seg_start or 0,
         segment_end_message=row.seg_end or 0,

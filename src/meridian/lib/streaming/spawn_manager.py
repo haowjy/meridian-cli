@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.event_hooks import run_event_hooks
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import (
@@ -22,7 +23,6 @@ from meridian.lib.harness.control_action import (
     ControlActionCoordinator,
     ControlActionType,
 )
-from meridian.lib.harness.extractors.base import run_event_hooks
 from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.harness.semantics import NormalizedHarnessEvent, normalize_event
 from meridian.lib.launch.constants import LAST_OBSERVED_EVENT_FILENAME

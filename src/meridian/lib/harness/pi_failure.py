@@ -3,7 +3,7 @@
 import logging
 from typing import cast
 
-_PI_LIFECYCLE_PHASE_EVENT = "meridian.pi.lifecycle.phase"
+from meridian.lib.harness.pi_lifecycle_events import PI_PHASE_EVENT_TYPE
 
 
 def _pi_failure_output_verbose() -> bool:
@@ -91,7 +91,7 @@ def pi_failure_from_payload(payload: dict[str, object]) -> str | None:
         if command == "prompt" and payload.get("success") is False and not is_inject_response:
             error = _failure_text_from_value(payload.get("error"))
             return error or "pi_prompt_rejected"
-    if event_type == _PI_LIFECYCLE_PHASE_EVENT:
+    if event_type == PI_PHASE_EVENT_TYPE:
         phase = str(payload.get("phase", "")).strip().lower()
         if phase == "finalized":
             error = _failure_text_from_value(payload.get("error"))

@@ -1,8 +1,7 @@
-"""Read-only OpenCode snapshots and freshness witnesses for native readers."""
+"""Read-only OpenCode snapshots: freshness witnesses, raw session events, exact turns."""
 
 from __future__ import annotations
 
-# pyright: reportPrivateUsage=false
 import json
 import sqlite3
 from collections.abc import Generator, Iterable, Iterator
@@ -12,14 +11,12 @@ from pathlib import Path
 from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.harness.native_witness import OpenCodeV1Witness, OpenCodeV2Witness
 from meridian.lib.harness.opencode_transcript import (
-    _V2_RECORD,
-    _V2_VERSION,
-    _connect_readonly,
-    _iter_v1_events,
-    _iter_v2_events,
-    _load_json_object,
-    _schema,
+    connect_readonly,
+    db_schema,
     extract_last_assistant_report,
+    iter_v1_session_events,
+    iter_v2_session_events,
+    v2_message_event,
 )
 
 OpenCodeWitness = OpenCodeV1Witness | OpenCodeV2Witness
@@ -29,7 +26,7 @@ def _session_witnesses(
     connection: sqlite3.Connection, session_ids: Iterable[str]
 ) -> dict[str, OpenCodeWitness]:
     ids = json.dumps(list(session_ids))
-    if _schema(connection) == "sqlite_v2":
+    if db_schema(connection) == "sqlite_v2":
         rows = connection.execute(
             "WITH wanted AS (SELECT value AS id FROM json_each(?)), "
             "messages AS (SELECT session_id,count(*) AS n,max(seq) AS seq,"
@@ -59,23 +56,27 @@ def opencode_session_witnesses(
     db_path: Path, session_ids: Iterable[str]
 ) -> dict[str, OpenCodeWitness]:
     """Grouped existence and freshness check in the recorded DB, never ambient storage."""
-    with closing(_connect_readonly(db_path)) as connection:
+    with closing(connect_readonly(db_path)) as connection:
         connection.execute("BEGIN")
         return _session_witnesses(connection, session_ids)
 
 
 @contextmanager
-def read_opencode_search_source(
+def read_opencode_snapshot(
     db_path: Path, session_id: str
 ) -> Generator[tuple[OpenCodeWitness, Iterator[dict[str, object]]]]:
     """Witness and raw native events share one short read-only snapshot."""
-    with closing(_connect_readonly(db_path)) as connection:
+    with closing(connect_readonly(db_path)) as connection:
         connection.row_factory = sqlite3.Row
         connection.execute("BEGIN")
         witness = _session_witnesses(connection, (session_id,)).get(session_id)
         if witness is None:
             raise ValueError("OpenCode transcript session does not exist")
-        reader = _iter_v2_events if isinstance(witness, OpenCodeV2Witness) else _iter_v1_events
+        reader = (
+            iter_v2_session_events
+            if isinstance(witness, OpenCodeV2Witness)
+            else iter_v1_session_events
+        )
         yield witness, reader(connection, session_id)
 
 
@@ -83,9 +84,9 @@ def read_opencode_v2_turn(key: NativeKey, turn_ids: tuple[str, ...]) -> str | No
     """Only event-named V2 replies in the recorded session/store can supply facts."""
     if not turn_ids or not Path(key.native_store).is_file():
         return None
-    with closing(_connect_readonly(Path(key.native_store))) as connection:
+    with closing(connect_readonly(Path(key.native_store))) as connection:
         connection.row_factory = sqlite3.Row
-        if _schema(connection) != "sqlite_v2":
+        if db_schema(connection) != "sqlite_v2":
             return None
         for message_id in reversed(turn_ids):
             row = connection.execute(
@@ -93,18 +94,15 @@ def read_opencode_v2_turn(key: NativeKey, turn_ids: tuple[str, ...]) -> str | No
                 (key.session_id, message_id),
             ).fetchone()
             if row is not None:
-                report = extract_last_assistant_report(
-                    [
-                        {
-                            "record": _V2_RECORD,
-                            "version": _V2_VERSION,
-                            "type": row["type"],
-                            "seq": row["seq"],
-                            "session_id": key.session_id,
-                            "data": _load_json_object(row["data"]) or {},
-                        }
-                    ]
-                )
+                report = extract_last_assistant_report([v2_message_event(row, key.session_id)])
                 if report:
                     return report
     return None
+
+
+__all__ = [
+    "OpenCodeWitness",
+    "opencode_session_witnesses",
+    "read_opencode_snapshot",
+    "read_opencode_v2_turn",
+]

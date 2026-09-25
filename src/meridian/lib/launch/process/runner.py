@@ -437,7 +437,7 @@ def _execute_primary_process(
     )
     fold = get_harness_bundle(harness_id).extractor.create_fold()
     if output_log_path is not None and output_log_path.is_file():
-        fold.fold_stdout(output_log_path)
+        fold.fold_stdout(output_log_path, harness_id)
     return exit_code, None, False, fold.facts
 
 

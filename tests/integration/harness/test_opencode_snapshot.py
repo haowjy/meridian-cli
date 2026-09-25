@@ -6,9 +6,9 @@ import sqlite3
 import pytest
 
 from meridian.lib.harness.native_witness import OpenCodeV1Witness, OpenCodeV2Witness
-from meridian.lib.harness.opencode_search_source import (
+from meridian.lib.harness.opencode_snapshot import (
     opencode_session_witnesses,
-    read_opencode_search_source,
+    read_opencode_snapshot,
 )
 from tests.support.opencode_db import write_opencode_db_session, write_opencode_v2_db_session
 
@@ -31,7 +31,7 @@ def test_grouped_witness_and_events_share_read_snapshot(tmp_path, version):
     with sqlite3.connect(path) as writer:
         writer.execute("PRAGMA journal_mode=WAL")
         assert opencode_session_witnesses(path, ("one", "missing")) == {"one": expected}
-        with read_opencode_search_source(path, "one") as (witness, events):
+        with read_opencode_snapshot(path, "one") as (witness, events):
             writer.execute(
                 f"UPDATE {table} SET time_updated=time_updated+1,data=?",
                 (json.dumps({"type": "text", "text": "replacement"}),),

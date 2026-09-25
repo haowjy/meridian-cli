@@ -20,6 +20,7 @@ from typing import Any
 import psutil
 import structlog
 
+from meridian.lib.core.event_hooks import run_event_hooks
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.connections.base import (
@@ -28,7 +29,7 @@ from meridian.lib.harness.connections.base import (
     RawHarnessEvent,
 )
 from meridian.lib.harness.connections.errors import PortBindError
-from meridian.lib.harness.extractors.base import AttemptFold, run_event_hooks
+from meridian.lib.harness.extractors.base import AttemptFold
 from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec

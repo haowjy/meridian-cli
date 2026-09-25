@@ -49,7 +49,13 @@ def test_refresh_rebuild_unbind_and_browse(tmp_path, monkeypatch):
         return session_search_sync(SessionSearchInput(query=query, project_root=str(project)))
 
     write_native(path, "first needle")
-    assert search("first").matches[0].open_command.startswith(f"meridian session log {chat} ")
+    first = search("first").matches[0]
+    assert first.open_command.startswith(f"meridian session log {chat} ")
+    # Search and session log label a native source by the same rule.
+    direct = session_search_sync(
+        SessionSearchInput(query="first", ref=chat, project_root=str(project))
+    )
+    assert first.source == direct.matches[0].source == "claude transcript"
     write_native(path, "second needle")
     assert search("first").matches == ()
     second = search("second")

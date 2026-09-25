@@ -49,7 +49,10 @@ from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.harness.extractors.pi import PI_EXTRACTOR
 from meridian.lib.harness.pi_boundary import read_boundary
 from meridian.lib.harness.pi_identity import mint_session_id, resolve_session_file, verify_identity
-from meridian.lib.harness.pi_lifecycle_events import redact_pi_command_for_history
+from meridian.lib.harness.pi_lifecycle_events import (
+    PI_PHASE_EVENT_TYPE,
+    redact_pi_command_for_history,
+)
 from meridian.lib.harness.pi_paths import (
     pi_agent_dir_env_override,
     pi_meridian_state_dir_env_override,
@@ -530,7 +533,7 @@ def _event_sinks(
     runtime_root: Path, spawn_id: SpawnId
 ) -> tuple[Callable[[RawHarnessEvent], None], ...]:
     def lifecycle_sink(event: RawHarnessEvent) -> None:
-        if event.event_type != "meridian.pi.lifecycle.phase":
+        if event.event_type != PI_PHASE_EVENT_TYPE:
             return
         phase = event.payload.get("phase")
         if isinstance(phase, str) and phase.strip():

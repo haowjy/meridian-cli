@@ -43,14 +43,13 @@ class CodexFold(AttemptFold):
 
     def accepts(self, kind: str, event: RawHarnessEvent) -> bool:
         thread_id = extract_codex_thread_id(event.payload)
-        if self.scope_session_id and thread_id and thread_id != self.scope_session_id:
-            return False
-        if kind == "turn.started" and self.main_thread_id is None:
-            self.main_thread_id = thread_id
-        return not (self.main_thread_id and thread_id and self.main_thread_id != thread_id)
+        owners = (self.scope_session_id, self.main_thread_id)
+        return not thread_id or all(not owner or owner == thread_id for owner in owners)
 
     def fold_event(self, kind: str, payload: Mapping[str, object]) -> None:
         facts = self.facts
+        if kind == "turn.started" and self.main_thread_id is None:
+            self.main_thread_id = extract_codex_thread_id(dict(payload))
         item = payload.get("item")
         if isinstance(item, dict):
             item = cast("dict[str, object]", item)

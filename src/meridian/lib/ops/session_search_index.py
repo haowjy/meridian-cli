@@ -13,7 +13,7 @@ from typing import TypedDict
 from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.native_witness import FileWitness, Witness, file_witness
-from meridian.lib.harness.opencode_search_source import opencode_session_witnesses
+from meridian.lib.harness.opencode_snapshot import opencode_session_witnesses
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.ops.session_target import SessionLogTarget, TranscriptSource
 from meridian.lib.ops.session_transcript import (
@@ -251,7 +251,9 @@ class SearchProjection:
                 self.errors[key] = "over lazy source cap — run meridian session index rebuild"
                 return None
             budget = None if rebuild else TranscriptBudget(deadline, LAZY_SOURCE_BYTES)
-            target = SessionLogTarget(TranscriptSource.native(key, source.locator))
+            target = SessionLogTarget(
+                TranscriptSource.native(key.harness, key.session_id, source.locator)
+            )
             read = read_native_source(target.source, budget=budget)
             transcript = parse_session_target(
                 project_root=self.project_root,

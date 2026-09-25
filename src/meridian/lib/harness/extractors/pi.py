@@ -84,6 +84,7 @@ class PiFold(AttemptFold):
                 message = cast("dict[str, object]", message)
                 usage = _usage_from_message(message)
                 if usage is not None:
+                    self.usage_is_specific = True
                     facts.usage = usage
                 text = _assistant_message_text(message)
                 if text:
