@@ -94,3 +94,50 @@ def test_opencode_database_override_ignores_default_decoy(tmp_path: Path, filena
         )
         is None
     )
+
+
+def test_codex_symlink_store_remains_reopenable(tmp_path: Path) -> None:
+    adapter = HarnessRegistry.with_defaults().get(HarnessId.CODEX)
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    real_store = tmp_path / "shared-journals"
+    real_store.mkdir()
+    (home / "sessions").symlink_to(real_store, target_is_directory=True)
+    (real_store / f"rollout-2026-01-01T00-00-00-{SID}.jsonl").write_text("{}\n")
+    env = {"CODEX_HOME": str(home)}
+    store = adapter.native_store_for_launch(child_env=env, child_cwd=tmp_path)
+    session = SessionRequest(
+        requested_harness_session_id=SID, source_native_store=store, continue_source_tracked=True
+    )
+    env["CODEX_HOME"] = str(tmp_path / "wrong")
+    result = adapter.finalize_native_identity(
+        NativeIdentityPlan(SID, None, None, "resume"),
+        child_env=env,
+        child_cwd=tmp_path,
+        session=session,
+        spawn_id=SpawnId("p1"),
+        interactive=False,
+    )
+    assert result.native_store == store
+    assert env["CODEX_HOME"] == str(home)
+
+
+def test_codex_unselectable_store_cannot_fall_through_to_sibling(tmp_path: Path) -> None:
+    adapter = HarnessRegistry.with_defaults().get(HarnessId.CODEX)
+    sibling = tmp_path / "sessions"
+    sibling.mkdir()
+    (sibling / f"rollout-2026-01-01T00-00-00-{SID}.jsonl").write_text("{}\n")
+    session = SessionRequest(
+        requested_harness_session_id=SID,
+        source_native_store=str(tmp_path / "different-store"),
+        continue_source_tracked=True,
+    )
+    with pytest.raises(ValueError, match="native_transcript_missing"):
+        adapter.finalize_native_identity(
+            NativeIdentityPlan(SID, None, None, "resume"),
+            child_env={},
+            child_cwd=tmp_path,
+            session=session,
+            spawn_id=SpawnId("p1"),
+            interactive=False,
+        )

@@ -350,6 +350,8 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         store = self.native_store_for_launch(child_env=child_env, child_cwd=child_cwd)
         locator = None
         if plan.operation != "create" and session.source_native_store:
+            if store != session.source_native_store:
+                raise ValueError("native_transcript_missing: source namespace cannot be selected")
             source_id = session.requested_harness_session_id or plan.harness_session_id or ""
             source = self.resolve_session_file(
                 project_root=child_cwd, session_id=source_id, config_root_hint=Path(store),
@@ -365,7 +367,9 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if not home.is_absolute():
             home = child_cwd / home
         child_env["CODEX_HOME"] = str(home.resolve())
-        return str((home / "sessions").resolve())
+        # Keep the sessions entry under CODEX_HOME even when that entry is a symlink;
+        # its parent is the namespace needed to reopen this store.
+        return str(home.resolve() / "sessions")
 
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str:
         _ = name, description
