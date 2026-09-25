@@ -106,10 +106,22 @@ def install_boundary_shim(root: Path, shape: str) -> None:
     )
     if shape == "truncated":
         publication = 'printf "{" > "$_MERIDIAN_PI_SESSION_BOUNDARY_PATH"\n'
-    shim.write_text(shim.read_text().replace(
-        'if [ "$rpc" != "rpc" ]; then exit 0; fi',
-        publication + 'if [ "$rpc" != "rpc" ]; then exit 0; fi',
-    ))
+    if shape == "late-quit":
+        # Pi abort stops the turn, not the RPC process. Quit is published only
+        # during the later process shutdown, after terminal turn publication.
+        shim.write_text(shim.read_text().replace(
+            "*) exit 0 ;;", "*) : ;;",
+        ).replace(
+            'if [ "$rpc" != "rpc" ]; then exit 0; fi',
+            "publish_quit() {\n" + publication + "exit 0\n}\n"
+            "trap publish_quit TERM\n"
+            'if [ "$rpc" != "rpc" ]; then exit 0; fi',
+        ))
+    else:
+        shim.write_text(shim.read_text().replace(
+            'if [ "$rpc" != "rpc" ]; then exit 0; fi',
+            publication + 'if [ "$rpc" != "rpc" ]; then exit 0; fi',
+        ))
 
 
 @pytest.mark.parametrize("shape", ["same", "switch", "restart", "mismatch", "truncated"])
@@ -177,7 +189,9 @@ def test_concurrent_exits_converge_on_one_stopped_chat(pi_runtime: Path) -> None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("shape", ["switch", "mismatch", "header-missing", "header-poisoned"])
+@pytest.mark.parametrize("shape", [
+    "switch", "mismatch", "header-missing", "header-poisoned", "late-quit",
+])
 async def test_rpc_post_attempt_boundary(pi_runtime: Path, shape: str) -> None:  # noqa: F811
     import asyncio
     from dataclasses import replace
@@ -233,7 +247,7 @@ async def test_rpc_post_attempt_boundary(pi_runtime: Path, shape: str) -> None: 
             artifacts=LocalStore(root_dir=ctx.runtime_root / "artifacts"),
             session_attempt=managed.attempt,
         ), 20)
-        assert code == (0 if shape == "switch" else 1)
+        assert code == (0 if shape in {"switch", "late-quit"} else 1)
         entry = session_store.get_session_record(ctx.runtime_root, managed.chat_id)
         assert entry is not None and entry.harness_session_id not in {"wrong-entry", "switched-id"}
         if shape == "mismatch":

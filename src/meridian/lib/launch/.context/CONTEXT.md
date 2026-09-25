@@ -63,7 +63,9 @@ collect `observe_primary_session_id` diagnostics, then call
 `finalize_run_boundary`. Contradictions retain expected/observed evidence and
 stable `entry_mismatch`; unavailable sources retain `NativeSessionUnavailable`
 codes. The shared exit allocator refuses either error and runs only on owned
-boundary evidence. Invocation attribution waits for validation. Startup refusals
+boundary evidence. Streaming attempts join post-publication teardown before
+reading that boundary: terminal publication alone does not mean Pi quit is on disk.
+Invocation attribution waits for validation. Startup refusals
 outside runner finalization flow through `ops/spawn/failure_policy`.
 
 Claude fullscreen correlation is diagnostic, not owned exit evidence. Only

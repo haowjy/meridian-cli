@@ -1008,9 +1008,11 @@ async def _run_streaming_attempt(
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
-        if manager.get_connection(run.spawn_id) is not None:
-            with suppress(Exception):
-                await manager.stop_spawn(run.spawn_id)
+        # Terminal publication hides the active connection while teardown can
+        # still be publishing its native quit. Join that cleanup before reading
+        # the run boundary; stop_spawn also joins already-terminal sessions.
+        with suppress(Exception):
+            await manager.stop_spawn(run.spawn_id)
 
     pi_drain_terminal = config.harness_id == HarnessId.PI and drain_error is not None
     return _AttemptRuntime(
