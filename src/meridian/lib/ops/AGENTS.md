@@ -42,7 +42,11 @@ spawn. The reaper also reads `_MERIDIAN_DEPTH` and skips reaping when nested.
 **Session:** `session_list.py`, `session_reentry.py`, `session_transcript.py`,
 `session_log.py`, `session_log_render.py` (pure rendering — clean/raw modes, tool
 collapsing, content pipeline), `session_render.py`, `session_search.py`,
-`session_target.py`, `session_export.py`, `session_repair.py`, `session_corpus.py`,
+`session_search_index.py` (`SearchProjection` — rebuildable search rows refreshed
+from authoritative bindings and exact native sources), `session_preview.py`
+(cache-first bounded session previews, canonical reads outside index locks),
+`session_target.py`, `session_repair_target.py` (session-reference repair target
+resolution), `session_export.py`, `session_repair.py`, `session_corpus.py`,
 `session_archive.py`, `session_index.py`.
 
 Discovery composes the shared `state/history_index.py` projection; lifecycle/control
