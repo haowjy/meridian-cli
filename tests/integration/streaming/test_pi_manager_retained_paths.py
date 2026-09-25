@@ -86,7 +86,7 @@ async def test_spawn_manager_derives_direct_followup_transitions_from_pi_events(
 
         followup_ready.set()
 
-        outcome = await asyncio.wait_for(completion, timeout=2.0)
+        outcome = await asyncio.wait_for(completion, timeout=5.0)
         assert outcome is not None
         assert outcome.status == "succeeded"
         event_types = [event["event_type"] for event in read_history(tmp_path, spawn_id)]

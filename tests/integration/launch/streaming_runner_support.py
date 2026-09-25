@@ -116,7 +116,9 @@ class _ReportThenHangConnection:
         return self._resident_backend
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        _ = spec
+        plan = spec.native_identity_plan
+        if plan is not None and plan.harness_session_id is not None:
+            self._session_id = plan.harness_session_id
         self._spawn_id = config.spawn_id
         self._project_root = config.control_root
         self.state = "connected"
@@ -233,7 +235,9 @@ class _OpenCodeTerminalWithScopeConnection:
         return self._scope_snapshot
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        _ = spec
+        plan = spec.native_identity_plan
+        if plan is not None and plan.harness_session_id is not None:
+            self._session_id = plan.harness_session_id
         self._spawn_id = config.spawn_id
         self._project_root = config.control_root
         current_scope = self._scope_snapshot
@@ -351,7 +355,9 @@ class _ResidentDeadlineConnection:
         return self._resident_backend
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        _ = spec
+        plan = spec.native_identity_plan
+        if plan is not None and plan.harness_session_id is not None:
+            self._session_id = plan.harness_session_id
         type(self).starts += 1
         self._spawn_id = config.spawn_id
         self.state = "connected"
@@ -458,6 +464,7 @@ class _ScriptedRetryOpenCodeConnection:
         self.state = "created"
         self._spawn_id = SpawnId("")
         self._attempt_index = 0
+        self._session_id = type(self).session_id_value
         self._resident_backend = _IdleResidentBackend()
         self.capabilities = ConnectionCapabilities(
             mid_turn_injection="http_post",
@@ -477,7 +484,7 @@ class _ScriptedRetryOpenCodeConnection:
 
     @property
     def session_id(self) -> str | None:
-        return type(self).session_id_value
+        return self._session_id
 
     @property
     def subprocess_pid(self) -> int | None:
@@ -485,7 +492,7 @@ class _ScriptedRetryOpenCodeConnection:
 
     @property
     def primary_event_scope(self) -> PrimaryEventScope | None:
-        session_id = type(self).session_id_value
+        session_id = self.session_id
         return PrimaryEventScope(HarnessId.OPENCODE, session_id) if session_id else None
 
     def observe_event_semantics(self, semantics: object) -> None:
@@ -496,7 +503,9 @@ class _ScriptedRetryOpenCodeConnection:
         return self._resident_backend
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        _ = spec
+        plan = spec.native_identity_plan
+        if plan is not None and plan.harness_session_id is not None:
+            self._session_id = plan.harness_session_id
         type(self).starts += 1
         self._attempt_index = type(self).starts
         self._spawn_id = config.spawn_id

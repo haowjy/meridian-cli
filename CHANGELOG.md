@@ -6,29 +6,19 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Test harness connections honor preassigned native IDs; Pi timeout scenarios reach the timeout instead of failing entry.
 - Tracked continue/fork refuses native IDs without a recorded harness; never infers identity from ambient stores.
-
 - Contradictory initial native identity fails the attempt as `entry_mismatch`; later switches never rebind entry.
 - Pi exit metadata verifies the original launch plan, without reconstructing identity from argv.
-
 - Pi continue reads the bound store, never a primary metadata hint; malformed collision headers fail closed.
-
 - Pi binds native IDs before TUI/RPC exec, resumes exact files, and refuses identity overrides; newest files never replace chats.
-
 - Pi native identity preflight verifies exact journal headers and rejects ID collisions.
-
 - Chat restarts and managed-primary metadata preserve the original native binding.
-
 - Continue and fork refuse unbound chats with a clear error; removed discovery-based recovery advice.
-
 - Chat transcript and repair reads use only recorded identity; missing native sessions report unavailable instead of scanning.
-
 - Claude trampoline reconciliation diagnoses successors without replacing the recorded chat identity.
-
 - Claude fresh launches bind the exact planned `--session-id` before exec, including the child native store.
-
 - Assigned and observed session identities bind once; connection and post-exit signals cannot overwrite.
-
 - Chats keep their first native session ID and store; conflicting updates no longer rebind history.
 
 ## [0.6.7] - 2026-09-25

@@ -63,6 +63,7 @@ class FakePiConnection(HarnessConnection[ResolvedLaunchSpec]):
     def __init__(self, events: list[RawHarnessEvent]) -> None:
         self._events = events
         self._spawn_id = SpawnId("")
+        self._session_id = "ses-pi"
         self._state: ConnectionState = "created"
         self.stop_reasons: list[str | None] = []
 
@@ -90,14 +91,16 @@ class FakePiConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     @property
     def session_id(self) -> str | None:
-        return "ses-pi"
+        return self._session_id
 
     @property
     def subprocess_pid(self) -> int | None:
         return 4242
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        del spec
+        plan = spec.native_identity_plan
+        if plan is not None and plan.harness_session_id is not None:
+            self._session_id = plan.harness_session_id
         self._spawn_id = config.spawn_id
         self._state = "connected"
 

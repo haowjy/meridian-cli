@@ -219,7 +219,9 @@ class _OpenCodeConnectSessionConnection:
         return None
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        _ = spec
+        plan = spec.native_identity_plan
+        if plan is not None and plan.harness_session_id is not None:
+            self._session_id = plan.harness_session_id
         self._spawn_id = config.spawn_id
         if config.session_id_observer is not None:
             config.session_id_observer(self._session_id)
