@@ -12,7 +12,11 @@ import uuid
 from pathlib import Path
 from typing import Literal, cast
 
+import structlog
+
 from meridian.lib.core.native_identity import NativeIdentityPlan
+
+logger = structlog.get_logger(__name__)
 
 
 def read_header(path: Path) -> dict[str, object]:
@@ -46,8 +50,11 @@ def mint_session_id(store: Path) -> str:
             continue
         try:
             header = read_header(path)
-        except ValueError as exc:
-            raise ValueError(f"native_identity_collision: cannot verify {path}") from exc
+        except ValueError:
+            # A torn sibling must not disable fresh UUID launches in the shared store.
+            # Exact source reads still fail closed; this scan is not an ID reservation.
+            logger.warning("pi_store_unreadable_header", path=str(path))
+            continue
         if header.get("id") == session_id:
             raise ValueError(f"native_identity_collision: {session_id} already exists in {path}")
     return session_id

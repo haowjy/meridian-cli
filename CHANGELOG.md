@@ -6,12 +6,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Fresh Pi UUID launches warn and skip torn sibling headers; exact resume/fork sources still fail closed.
 - Spawned exact continue reuses its source chat; fresh and fork launches keep separate chats.
 - Test harness connections honor preassigned native IDs; Pi timeout scenarios reach the timeout instead of failing entry.
 - Tracked continue/fork refuses native IDs without a recorded harness; never infers identity from ambient stores.
 - Contradictory initial native identity fails the attempt as `entry_mismatch`; later switches never rebind entry.
 - Pi exit metadata verifies the original launch plan, without reconstructing identity from argv.
-- Pi continue reads the bound store, never a primary metadata hint; malformed collision headers fail closed.
+- Pi continue reads the bound store, never a primary metadata hint.
 - Pi binds native IDs before TUI/RPC exec, resumes exact files, and refuses identity overrides; newest files never replace chats.
 - Pi native identity preflight verifies exact journal headers and rejects ID collisions.
 - Chat restarts and managed-primary metadata preserve the original native binding.

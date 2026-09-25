@@ -71,3 +71,23 @@ def test_reference_store_comes_from_exact_binding_not_primary_metadata(
         runtime_root=tmp_path,
     )
     assert reference.source_pi_session_dir == store
+
+
+@pytest.mark.parametrize("header", ["", "torn", "[]", '{"type":"session"}'])
+def test_mint_warns_and_skips_unreadable_sibling_but_exact_read_refuses(
+    tmp_path: Path, header: str,
+) -> None:
+    from structlog.testing import capture_logs
+
+    unreadable = tmp_path / "1_unreadable-id.jsonl"
+    unreadable.write_text(header)
+    with capture_logs() as logs:
+        assert mint_session_id(tmp_path)
+    assert any(
+        event.get("event") == "pi_store_unreadable_header"
+        and event.get("path") == str(unreadable)
+        and event.get("log_level") == "warning"
+        for event in logs
+    )
+    with pytest.raises(ValueError, match="entry_mismatch"):
+        resolve_session_file(tmp_path, "unreadable-id")

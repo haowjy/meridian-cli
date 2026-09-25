@@ -328,16 +328,15 @@ async def test_rpc_spawn_uses_prebound_scoped_store(pi_runtime: Path, behavior: 
 
 
 @pytest.mark.parametrize("primary", [True, False])
-@pytest.mark.parametrize("header", ['{"type":"session","id":"chosen-id"}', 'broken'])
 def test_collision_refuses_before_exec(
-    pi_runtime: Path, monkeypatch: pytest.MonkeyPatch, primary: bool, header: str,
+    pi_runtime: Path, monkeypatch: pytest.MonkeyPatch, primary: bool,
 ) -> None:
     install_shim(pi_runtime)
     planned = context(pi_runtime, primary=primary).binding.spec.native_identity_plan
     assert planned is not None and planned.native_store is not None
     store = Path(planned.native_store)
     store.mkdir(parents=True, exist_ok=True)
-    (store / "unrelated-basename.jsonl").write_text(header + "\n")
+    (store / "unrelated-basename.jsonl").write_text('{"type":"session","id":"chosen-id"}\n')
     monkeypatch.setattr("meridian.lib.harness.pi_identity.uuid.uuid4", lambda: "chosen-id")
     with pytest.raises(ValueError, match="native_identity_collision"):
         context(pi_runtime, primary=primary)
@@ -408,3 +407,27 @@ async def test_spawn_continue_reuses_chat_and_fork_allocates_new_chat(pi_runtime
                 assert (unchanged.harness_session_id, unchanged.native_store) == (
                     source.harness_session_id, source.native_store,
                 )
+
+
+
+def test_primary_create_with_unreadable_sibling_warns_and_executes(pi_runtime: Path) -> None:
+    from structlog.testing import capture_logs
+
+    install_shim(pi_runtime)
+    planned = context(pi_runtime).binding.spec.native_identity_plan
+    assert planned is not None and planned.native_store is not None
+    store = Path(planned.native_store)
+    store.mkdir(parents=True, exist_ok=True)
+    unreadable = store / "torn.jsonl"
+    unreadable.write_text("")
+    with capture_logs() as logs:
+        outcome = run_harness_process(context(pi_runtime), HarnessRegistry.with_defaults())
+    assert outcome.exit_code == 0
+    assert outcome.chat_id is not None
+    assert_prebound(pi_runtime, outcome.chat_id)
+    assert any(
+        event.get("event") == "pi_store_unreadable_header"
+        and event.get("path") == str(unreadable)
+        for event in logs
+    )
+    assert unreadable.read_text() == ""

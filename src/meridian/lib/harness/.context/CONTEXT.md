@@ -67,6 +67,16 @@ the accounting guard will run on a partial registration set and fail.
 
 ## Contracts
 
+### Pi UUID collision preflight
+
+Fresh UUID minting checks readable headers in the pinned store, warns
+`pi_store_unreadable_header` with the path for unreadable/invalid siblings, and
+skips them. A matching readable ID or store enumeration failure still refuses.
+This favors UUID4 collision improbability over blocking the whole shared store
+on a torn journal; it is not an atomic ID reservation or an absolute absence
+proof. Exact resume/fork source reads and post-execution ID/ancestry verification
+remain fail-closed.
+
 ### SpawnParams Accounting Invariant
 
 Every `SpawnParams` field must appear in each adapter's `consumed_fields` **or**
