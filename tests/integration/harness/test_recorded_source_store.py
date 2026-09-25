@@ -8,6 +8,7 @@ from meridian.lib.core.native_identity import NativeIdentityPlan
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.request import SessionRequest
+from tests.support.opencode_db import write_opencode_db_session
 
 SID = "12345678-1234-4234-8234-123456789abc"
 
@@ -15,14 +16,15 @@ SID = "12345678-1234-4234-8234-123456789abc"
 @pytest.mark.parametrize("harness", [HarnessId.CODEX, HarnessId.OPENCODE])
 def test_recorded_resume_store(tmp_path: Path, harness: HarnessId) -> None:
     adapter = HarnessRegistry.with_defaults().get(harness)
-    store = tmp_path / "source" / ("sessions" if harness == HarnessId.CODEX else "storage")
+    store = tmp_path / "source" / ("sessions" if harness == HarnessId.CODEX else "selected.sqlite")
     native = (
-        store / f"rollout-2026-01-01T00-00-00-{SID}.jsonl"
-        if harness == HarnessId.CODEX
-        else store / "session" / f"{SID}.json"
+        store / f"rollout-2026-01-01T00-00-00-{SID}.jsonl" if harness == HarnessId.CODEX else store
     )
     native.parent.mkdir(parents=True)
-    native.write_text("{}\n")
+    if harness == HarnessId.CODEX:
+        native.write_text("{}\n")
+    else:
+        write_opencode_db_session(db_path=store, session_id=SID, messages=[])
     env = {"CODEX_HOME": str(tmp_path / "decoy"), "OPENCODE_HOME": str(tmp_path / "decoy")}
     session = SessionRequest(
         requested_harness_session_id=SID,
@@ -40,7 +42,9 @@ def test_recorded_resume_store(tmp_path: Path, harness: HarnessId) -> None:
     )
     assert finalized.native_store == str(store)
     assert finalized.locator == str(native)
-    assert env["CODEX_HOME" if harness == HarnessId.CODEX else "OPENCODE_HOME"] == str(store.parent)
+    assert env["CODEX_HOME" if harness == HarnessId.CODEX else "OPENCODE_DB"] == str(
+        store.parent if harness == HarnessId.CODEX else store
+    )
     native.unlink()
     with pytest.raises(ValueError, match="native_transcript_missing"):
         adapter.finalize_native_identity(
@@ -51,3 +55,41 @@ def test_recorded_resume_store(tmp_path: Path, harness: HarnessId) -> None:
             spawn_id=SpawnId("p1"),
             interactive=False,
         )
+
+
+def test_relative_codex_home_uses_child_cwd(tmp_path: Path) -> None:
+    adapter = HarnessRegistry.with_defaults().get(HarnessId.CODEX)
+    env = {"CODEX_HOME": "relative-home"}
+    assert adapter.native_store_for_launch(child_env=env, child_cwd=tmp_path) == str(
+        tmp_path / "relative-home" / "sessions"
+    )
+    assert env["CODEX_HOME"] == str(tmp_path / "relative-home")
+
+
+def test_opencode_database_override_ignores_default_decoy(tmp_path: Path) -> None:
+    adapter = HarnessRegistry.with_defaults().get(HarnessId.OPENCODE)
+    selected = tmp_path / "override" / "selected.sqlite"
+    default = tmp_path / "home" / "opencode.db"
+    for path in (selected, default):
+        write_opencode_db_session(db_path=path, session_id=SID, messages=[])
+    env = {"OPENCODE_HOME": str(default.parent), "OPENCODE_DB": str(selected)}
+    store = adapter.native_store_for_launch(child_env=env, child_cwd=tmp_path)
+    assert store == str(selected)
+    assert (
+        adapter.resolve_native_session_file(
+            project_root=tmp_path,
+            session_id=SID,
+            native_store=Path(store),
+        )
+        == selected
+    )
+    assert adapter.native_transcript_kind(selected) == "opencode_db"
+    selected.unlink()
+    assert (
+        adapter.resolve_native_session_file(
+            project_root=tmp_path,
+            session_id=SID,
+            native_store=Path(store),
+        )
+        is None
+    )

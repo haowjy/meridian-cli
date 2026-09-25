@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Record the effective OpenCode database namespace (including OPENCODE_DB); normalize relative Codex homes against the child cwd.
+
 - Separate recorded native stores from legacy Claude configuration hints; missing tracked stores never fall back to ambient namespaces.
 
 - Bind Codex identities only from owned identity event envelopes, never assistant prose or nested identity-shaped content.

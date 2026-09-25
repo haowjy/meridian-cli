@@ -118,7 +118,7 @@ def _resolve_adapter_file_target(
         return None
     return _target_from_source(
         TranscriptSource(
-            kind="opencode_db" if candidate.suffix == ".db" else "native_file",
+            kind=adapter.native_transcript_kind(candidate),
             session_id=session_id,
             harness=str(harness_id),
             path=candidate,

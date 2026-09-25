@@ -360,9 +360,12 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return replace(plan, native_store=store, locator=locator)
 
     def native_store_for_launch(self, *, child_env: dict[str, str], child_cwd: Path) -> str:
-        _ = child_cwd
         from meridian.lib.harness.codex_rollout import resolve_codex_home
-        return str((resolve_codex_home(child_env) / "sessions").resolve())
+        home = resolve_codex_home(child_env)
+        if not home.is_absolute():
+            home = child_cwd / home
+        child_env["CODEX_HOME"] = str(home.resolve())
+        return str((home / "sessions").resolve())
 
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str:
         _ = name, description

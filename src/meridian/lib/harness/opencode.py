@@ -61,7 +61,11 @@ from meridian.lib.harness.opencode_storage import (
     resolve_opencode_home_dir,
     resolve_opencode_storage_root,
 )
-from meridian.lib.harness.opencode_transcript import opencode_db_any_session_exists
+from meridian.lib.harness.opencode_transcript import (
+    detect_opencode_db_schema,
+    opencode_db_any_session_exists,
+    resolve_opencode_db_path,
+)
 from meridian.lib.harness.passthrough.opencode import (
     build_opencode_attach_command,
     build_opencode_server_attach_command,
@@ -404,16 +408,15 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     ) -> NativeIdentityPlan:
         store = session.source_native_store
         if plan.operation != "create" and store:
-            child_env["OPENCODE_HOME"] = str(Path(store).parent)
-            child_env["OPENCODE_DB"] = str(Path(store).parent / "opencode.db")
+            child_env["OPENCODE_DB"] = store
         elif plan.operation != "create" and session.continue_source_tracked:
             raise ValueError("native_transcript_missing: recorded source store is absent")
         store = self.native_store_for_launch(child_env=child_env, child_cwd=child_cwd)
         locator = None
         if plan.operation != "create" and session.source_native_store:
             source_id = session.requested_harness_session_id or plan.harness_session_id or ""
-            source = self.resolve_session_file(
-                project_root=child_cwd, session_id=source_id, config_root_hint=Path(store),
+            source = self.resolve_native_session_file(
+                project_root=child_cwd, session_id=source_id, native_store=Path(store),
             )
             if source is None:
                 raise ValueError(f"native_transcript_missing: {source_id}")
@@ -421,8 +424,15 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return replace(plan, native_store=store, locator=locator)
 
     def native_store_for_launch(self, *, child_env: dict[str, str], child_cwd: Path) -> str:
-        _ = child_cwd
-        return str(resolve_opencode_storage_root(child_env).resolve())
+        database = resolve_opencode_db_path(child_env)
+        if str(database) == ":memory:":
+            raise ValueError(
+                "native_transcript_missing: in-memory OpenCode stores cannot be tracked"
+            )
+        if not database.is_absolute():
+            database = child_cwd / database
+        child_env["OPENCODE_DB"] = str(database.resolve())
+        return str(database.resolve())
 
     def resolve_launch_spec(
         self,
@@ -535,6 +545,20 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         # Resume and fork both seed from an existing harness session id.
         return SessionSeed(session_id=normalized_harness_session_id)
 
+    def native_transcript_kind(self, path: Path) -> str:
+        return "opencode_db" if detect_opencode_db_schema(path) is not None else "native_file"
+
+    def resolve_native_session_file(
+        self, *, project_root: Path, session_id: str, native_store: Path,
+    ) -> Path | None:
+        if native_store.name == "storage":
+            return self.resolve_session_file(
+                project_root=project_root, session_id=session_id, config_root_hint=native_store,
+            )
+        return native_store if opencode_db_any_session_exists(
+            session_id=session_id, db_path=native_store,
+        ) else None
+
     def resolve_session_file(
         self,
         *,
@@ -547,7 +571,8 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if not normalized:
             return None
         storage_root = config_root_hint or resolve_opencode_storage_root()
-        database = storage_root.parent / "opencode.db"
+        database = (storage_root.parent / "opencode.db"
+                    if config_root_hint is not None else resolve_opencode_db_path())
         if opencode_db_any_session_exists(session_id=normalized, db_path=database):
             return database
         matches = [

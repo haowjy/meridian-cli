@@ -92,23 +92,25 @@ def test_owned_event_pins_store(
     record = session_store.get_session_record(root / ".meridian", outcome.chat_id)
     assert record and record.harness_session_id == NATIVE_ID
     assert record.native_store == str(
-        tmp_path / ("codex/sessions" if harness == HarnessId.CODEX else "opencode/storage")
+        tmp_path / ("codex/sessions" if harness == HarnessId.CODEX else "opencode/opencode.db")
     )
     store = Path(record.native_store)
     native_file = (
         store / f"rollout-2026-01-01T00-00-00-{NATIVE_ID}.jsonl"
         if harness == HarnessId.CODEX
-        else store / "session" / f"{NATIVE_ID}.json"
+        else store
     )
     native_file.parent.mkdir(parents=True)
-    native_file.write_text(
-        json.dumps({"type": "session_meta", "payload": {"id": NATIVE_ID}}) + "\n"
-    )
+    if harness == HarnessId.CODEX:
+        native_file.write_text("{}\n")
+    else:
+        from tests.support.opencode_db import write_opencode_db_session
+        write_opencode_db_session(db_path=store, session_id=NATIVE_ID, messages=[])
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "elsewhere"))
     monkeypatch.setenv("OPENCODE_HOME", str(tmp_path / "elsewhere"))
     assert (
-        registry.get(harness).resolve_session_file(
-            project_root=root, session_id=NATIVE_ID, config_root_hint=store
+        registry.get(harness).resolve_native_session_file(
+            project_root=root, session_id=NATIVE_ID, native_store=store
         )
         == native_file
     )

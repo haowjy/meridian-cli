@@ -517,6 +517,8 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
 
     def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None: ...
 
+    def native_transcript_kind(self, path: Path) -> str: ...
+
     def resolve_native_session_file(
         self, *, project_root: Path, session_id: str, native_store: Path,
     ) -> Path | None: ...
@@ -854,6 +856,9 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
         _ = artifacts, spawn_id
         return None
+
+    def native_transcript_kind(self, path: Path) -> str:
+        return "native_file"
 
     def resolve_native_session_file(
         self, *, project_root: Path, session_id: str, native_store: Path,
