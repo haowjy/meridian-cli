@@ -282,14 +282,15 @@ def test_run_harness_process_reconciles_claude_tui_trampoline_session_id(
         run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
     )
 
-    assert outcome.resolved_harness_session_id == real_session_id
+    assert outcome.resolved_harness_session_id != real_session_id
+    assert outcome.resolved_harness_session_id
     assert outcome.chat_id is not None
     spawns = list_spawns(launch_context.runtime_root)
     assert len(spawns.records) == 1
-    assert spawns.records[0].harness_session_id == real_session_id
+    assert spawns.records[0].harness_session_id == outcome.resolved_harness_session_id
     assert (
         session_store.get_session_harness_id(launch_context.runtime_root, outcome.chat_id)
-        == real_session_id
+        == outcome.resolved_harness_session_id
     )
 
 

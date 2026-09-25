@@ -105,7 +105,7 @@ def test_claude_reconciliation_keeps_recorded_id_when_transcript_exists(
     )
 
 
-def test_claude_reconciliation_replaces_tui_trampoline_with_successor_transcript(
+def test_claude_reconciliation_keeps_tui_trampoline_identity(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -142,7 +142,7 @@ def test_claude_reconciliation_replaces_tui_trampoline_with_successor_transcript
             project_root=project_root,
             started_at_epoch=now - 1,
         )
-        == real_session_id
+        == recorded_session_id
     )
 
 

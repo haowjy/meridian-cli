@@ -287,13 +287,7 @@ def reconcile_tui_trampoline_session_id(
     recorded_session_id: str,
     started_at_epoch: float | None = None,
 ) -> str | None:
-    """Return a durable Claude transcript ID when a recorded ID is a TUI trampoline.
-
-    The recorded ID is preserved if its transcript exists.  A replacement is accepted
-    only when Claude prompt history shows the recorded ID entered `/tui fullscreen`
-    for the same project and the next same-project prompt matches the first user
-    prompt in a different session's durable transcript file.
-    """
+    """Diagnose a TUI trampoline successor without changing the recorded identity."""
 
     normalized_session_id = recorded_session_id.strip()
     if not normalized_session_id:
@@ -301,11 +295,16 @@ def reconcile_tui_trampoline_session_id(
     transcript_path = _claude_project_dir(project_root) / f"{normalized_session_id}.jsonl"
     if transcript_path.is_file():
         return normalized_session_id
-    return _find_tui_trampoline_successor_session_id(
+    successor = _find_tui_trampoline_successor_session_id(
         project_root=project_root,
         recorded_session_id=normalized_session_id,
         started_at_epoch=started_at_epoch,
     )
+    if successor and successor != normalized_session_id:
+        logger.warning("native_binding_conflict", extra={
+            "kept": normalized_session_id, "attempted": successor, "source": "trampoline",
+        })
+    return normalized_session_id
 
 
 def detect_primary_session_id(
