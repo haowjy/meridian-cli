@@ -10,10 +10,14 @@ from pathlib import Path
 from typing import IO, Any, Literal, NamedTuple, Self, cast
 
 import psutil
-import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from meridian.lib.core.native_identity import NativeEntryMismatch, NativeKeyFields
+from meridian.lib.core.native_identity import (
+    BindSource,
+    NativeEntryMismatch,
+    NativeKey,
+    NativeKeyFields,
+)
 from meridian.lib.core.types import (
     ChatId,
     HarnessSessionId,
@@ -32,6 +36,7 @@ from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import append_event, read_events, utc_now_iso
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.liveness import is_process_alive_with_birth
+from meridian.lib.state.native_binding import Conflict, bind, report_conflict
 from meridian.lib.state.paths import RuntimePaths, normalize_path_for_write
 
 
@@ -92,6 +97,12 @@ class SessionRecord(BaseModel):
     forked_from_history_id: uuid.UUID | None = None
     spawn_id: str | None = None
 
+    def key_fields(self) -> NativeKeyFields:
+        return NativeKeyFields(self.harness, self.native_store, self.harness_session_id)
+
+    def native_key(self) -> NativeKey | None:
+        return self.key_fields().complete()
+
 
 class SessionStartEvent(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -121,6 +132,9 @@ class SessionStartEvent(BaseModel):
     spawn_id: str | None = None
     model_selection_protocol: Literal[1] | None = None
 
+    def key_fields(self) -> NativeKeyFields:
+        return NativeKeyFields(self.harness, self.native_store, self.harness_session_id)
+
 
 class SessionStopEvent(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -146,7 +160,10 @@ class SessionUpdateEvent(BaseModel):
     spawn_id: str | None = None
     history_id: uuid.UUID | None = None
     startup_attempt_id: str | None = None
-    source: str = "observed"
+    source: BindSource | None = None
+
+    def key_fields(self) -> NativeKeyFields:
+        return NativeKeyFields(native_store=self.native_store, session_id=self.harness_session_id)
 
 
 class SessionHistoricalEvent(BaseModel):
@@ -451,14 +468,15 @@ def project_session_event(records: dict[str, SessionRecord], event: SessionEvent
     if isinstance(event, SessionStartEvent):
         record = _record_from_start_event(event)
         existing = records.get(event.chat_id)
-        if existing is not None and _binding_conflicts(existing, event):
-            return
         if existing is not None:
+            outcome = bind(existing.key_fields(), event.key_fields())
+            if isinstance(outcome, Conflict):
+                return
             record = record.model_copy(
                 update={
-                    "harness": existing.harness or record.harness,
-                    "harness_session_id": existing.harness_session_id or record.harness_session_id,
-                    "native_store": existing.native_store or record.native_store,
+                    "harness": outcome.key.harness or record.harness,
+                    "harness_session_id": outcome.key.session_id or record.harness_session_id,
+                    "native_store": outcome.key.native_store or record.native_store,
                 }
             )
         records[record.chat_id] = record
@@ -490,7 +508,7 @@ def project_session_event(records: dict[str, SessionRecord], event: SessionEvent
         return
     if not _generation_matches(existing.session_instance_id, event.session_instance_id):
         return
-    if _binding_conflicts(existing, event):
+    if isinstance(bind(existing.key_fields(), event.key_fields()), Conflict):
         return
     harness_session_id = existing.harness_session_id
     updated_work_id = existing.active_work_id
@@ -631,19 +649,15 @@ def start_session(
             lock_file(paths.sessions_flock),
         ):
             existing = get_session_record(runtime_root, resolved_chat_id)
-            if existing is not None and _binding_conflicts(existing, event):
-                _report_binding_conflict(existing, event)
-                raise NativeEntryMismatch(NativeKeyFields(existing.harness,
-                        existing.native_store, existing.harness_session_id),
-                    NativeKeyFields(event.harness, event.native_store, event.harness_session_id),
-                )
             if existing is not None:
+                outcome = bind(existing.key_fields(), event.key_fields())
+                if isinstance(outcome, Conflict):
+                    report_conflict(event.chat_id, outcome, "start")
+                    raise NativeEntryMismatch(outcome.kept, outcome.attempted)
                 event = event.model_copy(update={
-                    "harness": existing.harness or event.harness,
-                    "harness_session_id": (
-                        existing.harness_session_id or event.harness_session_id
-                    ),
-                    "native_store": existing.native_store or event.native_store,
+                    "harness": outcome.key.harness or event.harness,
+                    "harness_session_id": outcome.key.session_id or event.harness_session_id,
+                    "native_store": outcome.key.native_store or event.native_store,
                 })
             # Chat-only callers select the current generation. Resolved references
             # carry their exact portable ancestor and must never be re-resolved.
@@ -656,7 +670,7 @@ def start_session(
                 from meridian.lib.state.spawn.model import SpawnRecord
                 from meridian.lib.state.spawn.repository import Applied, write_state_locked
 
-                def bind(current: SpawnRecord) -> SpawnRecord:
+                def bind_spawn(current: SpawnRecord) -> SpawnRecord:
                     return current.model_copy(
                         update={
                             "chat_id": event.chat_id,
@@ -667,7 +681,7 @@ def start_session(
                     )
 
                 binding = write_state_locked(
-                    paths.spawns_dir, spawn_id, bind, allow_terminal_overwrite=True
+                    paths.spawns_dir, spawn_id, bind_spawn, allow_terminal_overwrite=True
                 )
                 if isinstance(binding, Applied):
                     event = event.model_copy(
@@ -723,45 +737,13 @@ class NativeBindingResult:
     native_store: str | None
 
 
-def _binding_conflicts(
-    existing: SessionRecord,
-    event: SessionStartEvent | SessionUpdateEvent,
-) -> bool:
-    for field in ("harness_session_id", "native_store", "harness"):
-        kept = getattr(existing, field)
-        attempted = getattr(event, field, None)
-        if kept and attempted and kept != attempted:
-            return True
-    return False
-
-
-def _report_binding_conflict(
-    existing: SessionRecord,
-    event: SessionStartEvent | SessionUpdateEvent,
-) -> None:
-    """Report a rejected write attempt; replay is intentionally silent."""
-    for field in ("harness_session_id", "native_store", "harness"):
-        kept = getattr(existing, field)
-        attempted = getattr(event, field, None)
-        if kept and attempted and kept != attempted:
-            structlog.get_logger(__name__).warning(
-                "native_binding_conflict",
-                chat_id=event.chat_id,
-                kept=kept,
-                attempted=attempted,
-                field=field,
-                source=getattr(event, "source", "start"),
-            )
-            return
-
-
 def update_session_harness_id(
     runtime_root: Path,
     chat_id: str,
     harness_session_id: str,
     *,
     native_store: str | None = None,
-    source: str = "observed",
+    source: BindSource = "observed",
     session_instance_id: str | None = None,
     startup_attempt_id: str | None = None,
 ) -> NativeBindingResult:
@@ -947,11 +929,8 @@ def _validate_startup_identity(
 
 
 def get_initial_model_selection(
-    runtime_root: Path,
-    harness: str,
-    harness_session_id: str,
-    *,
-    source_chat_id: str | None = None,
+    runtime_root: Path, harness: str, harness_session_id: str,
+    *, source_chat_id: str | None = None,
 ) -> SessionModelSelectionEvent | None:
     """Read a legacy conversation's original value without seeding or replaying attempts."""
     from meridian.lib.state.spawn_store import get_spawn
@@ -963,22 +942,16 @@ def get_initial_model_selection(
         if isinstance(event, SessionUpdateEvent):
             updates.setdefault((event.chat_id, event.session_instance_id), []).append(event)
     starts = [
-        event
-        for event in events
+        event for event in events
         if isinstance(event, SessionStartEvent) and event.harness == harness
     ]
-    start = next(
-        (
-            event
-            for event in starts
-            if event.harness_session_id == harness_session_id
-            or any(
-                update.harness_session_id == harness_session_id
-                for update in updates.get((event.chat_id, event.session_instance_id), [])
-            )
-        ),
-        None,
-    )
+    start = next((
+        event for event in starts
+        if event.harness_session_id == harness_session_id or any(
+            update.harness_session_id == harness_session_id
+            for update in updates.get((event.chat_id, event.session_instance_id), [])
+        )
+    ), None)
     origin_chat_id = start.chat_id if start is not None else source_chat_id
     if origin_chat_id is not None:
         start = next((event for event in starts if event.chat_id == origin_chat_id), None)
@@ -986,8 +959,7 @@ def get_initial_model_selection(
         return None
     generation_updates = updates.get((start.chat_id, start.session_instance_id), [])
     spawn_id = start.spawn_id or next(
-        (update.spawn_id for update in generation_updates if update.spawn_id),
-        None,
+        (update.spawn_id for update in generation_updates if update.spawn_id), None,
     )
     spawn = get_spawn(runtime_root, spawn_id) if spawn_id else None
     snapshot = spawn.launch_policy_snapshot if spawn is not None else None
@@ -1008,26 +980,21 @@ def get_initial_model_selection(
             canonical_model_id=canonical if named else None,
             harness_model_id=executable if named else None,
             model_mode=(
-                "named"
-                if named
-                else "harness_default"
-                if not snapshot.model and not canonical
-                else None
+                "named" if named else
+                "harness_default" if not snapshot.model and not canonical else None
             ),
-            provider_constraint=(snapshot.model_selection_provider_constraint if named else None),
+            provider_constraint=(
+                snapshot.model_selection_provider_constraint if named else None
+            ),
             selection_source="initial_launch",
             provenance=snapshot.field_provenance,
         )
     return SessionModelSelectionEvent(
-        kind="initial_seed",
-        harness=harness,
+        kind="initial_seed", harness=harness,
         harness_session_id=HarnessSessionId(harness_session_id),
-        chat_id=start.chat_id,
-        session_instance_id=start.session_instance_id,
-        spawn_id=spawn_id,
-        startup_attempt_id=None,
-        recorded_at=utc_now_iso(),
-        selection=selection,
+        chat_id=start.chat_id, session_instance_id=start.session_instance_id,
+        spawn_id=spawn_id, startup_attempt_id=None,
+        recorded_at=utc_now_iso(), selection=selection,
     )
 
 
@@ -1065,17 +1032,13 @@ def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent
             raise FileNotFoundError(runtime_root)
         with lock_file(paths.sessions_flock):
             events = read_events(paths.sessions_jsonl, _parse_event)
-            source_start = next(
-                (
-                    start
-                    for start in events
-                    if isinstance(start, SessionStartEvent)
-                    and start.chat_id == event.chat_id
-                    and start.session_instance_id == event.session_instance_id
-                    and start.harness == event.harness
-                ),
-                None,
-            )
+            source_start = next((
+                start for start in events
+                if isinstance(start, SessionStartEvent)
+                and start.chat_id == event.chat_id
+                and start.session_instance_id == event.session_instance_id
+                and start.harness == event.harness
+            ), None)
             if source_start is None:
                 raise ValueError("selection has no matching captured session generation")
             if event.kind == "initial_seed" and source_start.model_selection_protocol is not None:
@@ -1086,12 +1049,9 @@ def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent
             for prior, prior_id in bound[:-1]:
                 if prior.harness != event.harness:
                     continue
-                if (
-                    native_id is not None
-                    and prior_id == native_id
-                    and (
-                        event.kind == "initial_seed"
-                        or (prior.kind == "invocation_started" and prior.spawn_id == event.spawn_id)
+                if native_id is not None and prior_id == native_id and (
+                    event.kind == "initial_seed" or (
+                        prior.kind == "invocation_started" and prior.spawn_id == event.spawn_id
                     )
                 ):
                     if event.kind == "invocation_started" and not any(
@@ -1102,17 +1062,12 @@ def record_model_selection(runtime_root: Path, event: SessionModelSelectionEvent
                         and identity.harness_session_id == native_id
                         for identity in events
                     ):
-                        append_event(
-                            paths.sessions_jsonl,
-                            paths.sessions_flock,
-                            SessionUpdateEvent(
-                                chat_id=event.chat_id,
-                                session_instance_id=event.session_instance_id,
-                                startup_attempt_id=event.startup_attempt_id,
-                                harness_session_id=HarnessSessionId(native_id),
-                            ),
-                            exclude_none=True,
-                        )
+                        append_event(paths.sessions_jsonl, paths.sessions_flock, SessionUpdateEvent(
+                            chat_id=event.chat_id,
+                            session_instance_id=event.session_instance_id,
+                            startup_attempt_id=event.startup_attempt_id,
+                            harness_session_id=HarnessSessionId(native_id),
+                        ), exclude_none=True)
                     return False
                 if event.kind == "invocation_started" and (
                     prior.kind == event.kind
@@ -1405,28 +1360,56 @@ def list_session_generations(runtime_root: Path) -> tuple[SessionRecord, ...]:
     """All generations, including historical and legacy starts, in source order."""
     generations: dict[tuple[str, str], dict[str, SessionRecord]] = {}
     latest_blank: dict[str, str] = {}
-    accepted: dict[str, SessionRecord] = {}
+    accepted: dict[str, NativeKeyFields] = {}
+    current_generation: dict[str, str] = {}
+    historical: set[str] = set()
     for ordinal, event in enumerate(
         read_events(RuntimePaths.from_root_dir(runtime_root).sessions_jsonl, _parse_event)
     ):
-        prior = accepted.get(event.chat_id)
-        if isinstance(event, (SessionStartEvent, SessionUpdateEvent)) and prior is not None:
-            if _binding_conflicts(prior, event):
+        chat_id = event.chat_id
+        if isinstance(event, (SessionStartEvent, SessionUpdateEvent)):
+            outcome = bind(accepted.get(chat_id, NativeKeyFields()), event.key_fields())
+            if isinstance(outcome, Conflict):
                 continue
-            if isinstance(event, SessionStartEvent):
+            if isinstance(event, SessionStartEvent) and chat_id in accepted:
                 event = event.model_copy(update={
-                    "harness": prior.harness or event.harness,
-                    "harness_session_id": prior.harness_session_id or event.harness_session_id,
-                    "native_store": prior.native_store or event.native_store,
+                    "harness": outcome.key.harness or event.harness,
+                    "harness_session_id": outcome.key.session_id or event.harness_session_id,
+                    "native_store": outcome.key.native_store or event.native_store,
                 })
-        project_session_event(accepted, event)
+        if (
+            isinstance(event, (SessionUpdateEvent, SessionStopEvent)) and chat_id in historical
+            and _generation_matches(current_generation[chat_id], event.session_instance_id)
+        ):
+            raise ValueError("Historical session authority contains a mutation")
         generation = event.session_instance_id
         if not generation:
             if isinstance(event, SessionStartEvent):
-                latest_blank[event.chat_id] = f"legacy:{ordinal}"
-            generation = latest_blank.get(event.chat_id, "")
-        rows = generations.setdefault((event.chat_id, generation), {})
+                latest_blank[chat_id] = f"legacy:{ordinal}"
+            generation = latest_blank.get(chat_id, "")
+        rows = generations.setdefault((chat_id, generation), {})
         project_session_event(rows, event)
+        if isinstance(event, (SessionStartEvent, SessionHistoricalEvent)):
+            if isinstance(event, SessionHistoricalEvent):
+                historical.add(chat_id)
+            else:
+                historical.discard(chat_id)
+            current_generation[chat_id] = event.session_instance_id
+            accepted[chat_id] = (
+                event.key_fields() if isinstance(event, SessionStartEvent)
+                else event.record.key_fields()
+            )
+        elif isinstance(event, SessionUpdateEvent) and chat_id in accepted and _generation_matches(
+            current_generation[chat_id], event.session_instance_id,
+        ):
+            # Buckets retain generation spelling; the chat fold matches normalized
+            # generations. Advance its key from the event, not an older bucket.
+            prior = accepted[chat_id]
+            accepted[chat_id] = NativeKeyFields(
+                prior.harness, prior.native_store or event.native_store,
+                event.harness_session_id
+                if event.harness_session_id is not None else prior.session_id,
+            )
     return tuple(record for rows in generations.values() for record in rows.values())
 
 

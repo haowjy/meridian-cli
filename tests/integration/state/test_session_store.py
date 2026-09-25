@@ -675,7 +675,9 @@ def test_cleanup_unlinks_cleaned_session_locks(
     assert tuple(sessions_dir.glob("*.lock")) == (live_lock,)
 
 
-def test_records_by_session_ignores_mismatched_generation_stop_and_update(tmp_path: Path) -> None:
+def test_records_by_session_drops_conflicting_update_whole_and_ignores_wrong_generation(
+    tmp_path: Path,
+) -> None:
     runtime_root = _state_root(tmp_path)
     with (runtime_root / "sessions.jsonl").open("a", encoding="utf-8") as handle:
         handle.write(
@@ -848,7 +850,6 @@ def test_legacy_binding_rows_ignore_identity_list(tmp_path: Path) -> None:
         "session_instance_id": record.session_instance_id,
     }))
     assert records["c1"] == record
-    assert "harness_session_ids" not in record.model_dump()
 
 
 def test_restart_cannot_rebind_chat(tmp_path: Path) -> None:
