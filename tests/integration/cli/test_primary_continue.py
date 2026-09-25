@@ -7,6 +7,7 @@ handoff to the launch layer.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, cast
 
@@ -49,7 +50,9 @@ def _seed_primary_spawn(
     snapshot = launch_policy_snapshot
     store = runtime_root / "native-codex" / "sessions"
     store.mkdir(parents=True, exist_ok=True)
-    (store / f"rollout-2026-01-01T00-00-00-{harness_session_id}.jsonl").write_text("{}\n")
+    (store / f"rollout-2026-01-01T00-00-00-{harness_session_id}.jsonl").write_text(
+        json.dumps({"type": "session_meta", "payload": {"id": harness_session_id}}) + "\n",
+    )
     session_store.start_session(
         runtime_root, chat_id="c-primary", spawn_id=spawn_id,
         harness=snapshot.harness if snapshot is not None else "codex",
