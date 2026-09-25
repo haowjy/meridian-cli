@@ -59,9 +59,6 @@ class ClaudeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
         return extract_usage_from_artifacts(artifacts, spawn_id)
 
     def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        recorded = read_session_id_artifact(artifacts, spawn_id)
-        if recorded:
-            return recorded
         for payload in _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME):
             session_id = self.detect_session_id_from_event(RawHarnessEvent(
                 event_type=normalize_harness_event_type(payload),
@@ -69,7 +66,7 @@ class ClaudeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
             ))
             if session_id:
                 return session_id
-        return None
+        return read_session_id_artifact(artifacts, spawn_id)
 
     def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
         return extract_claude_report(artifacts, spawn_id)

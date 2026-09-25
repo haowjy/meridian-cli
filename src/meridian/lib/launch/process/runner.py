@@ -58,6 +58,7 @@ from meridian.lib.launch.constants import (
     PRIMARY_META_FILENAME,
     RUNNER_LIFECYCLE_FILENAME,
 )
+from meridian.lib.launch.errors import NativeEntryMismatch
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.run_boundary import finalize_run_boundary
 from meridian.lib.state import spawn_store
@@ -554,29 +555,6 @@ def _finalize_lifecycle_and_observe_session(
                 "Launcher finalize skipped; spawn already terminal or missing: %s",
                 primary_spawn_id,
             )
-    observed_harness_session_id = None
-    try:
-        if observe_adapter_session_id and primary_started_epoch > 0.0:
-            observed_harness_session_id = harness_adapter.observe_session_id(
-                artifacts=artifacts,
-                spawn_id=primary_spawn_id,
-                current_session_id=resolved_harness_session_id,
-                project_root=launch_child_cwd,
-                started_at_epoch=primary_started_epoch,
-                started_at_local_iso=primary_started_local_iso,
-                expected_session_id=expected_harness_session_id,
-            )
-    except Exception:
-        logger.debug("Best-effort harness session observation failed", exc_info=True)
-    resolved_harness_session_id = bind_harness_session_id(
-        runtime_root=runtime_root,
-        spawn_id=primary_spawn_id,
-        record_session_id=managed.record_harness_session_id,
-        session_id=observed_harness_session_id,
-        source="observed",
-        current_session_id=resolved_harness_session_id,
-        chat_id=managed.chat_id,
-    )
     return resolved_exit_code, resolved_harness_session_id
 
 
@@ -1106,10 +1084,6 @@ def run_harness_process(
                         launch_mode=FOREGROUND_LAUNCH_MODE,
                         worker_pid=child_pid,
                     )
-                    assert managed.attempt is not None
-                    managed.attempt.record_started(
-                        runtime_context, str(primary_spawn_id), resolved_harness_session_id,
-                    )
                     if write_native_primary_metadata:
                         _write_native_primary_metadata(
                             runtime_root=runtime_root,
@@ -1163,6 +1137,40 @@ def run_harness_process(
             finally:
                 try:
                     native_identity_error = None
+                    boundary_error = None
+                    observed_harness_session_id = None
+                    try:
+                        if not write_native_primary_metadata and primary_started_epoch > 0.0:
+                            observed_harness_session_id = harness_adapter.observe_session_id(
+                                artifacts=artifacts,
+                                spawn_id=primary_spawn_id,
+                                current_session_id=resolved_harness_session_id,
+                                project_root=launch_child_cwd,
+                                started_at_epoch=primary_started_epoch,
+                                started_at_local_iso=primary_started_local_iso,
+                                expected_session_id=expected_harness_session_id,
+                            )
+                    except Exception:
+                        logger.debug(
+                            "Best-effort harness session observation failed", exc_info=True,
+                        )
+                    if (
+                        observed_harness_session_id and expected_harness_session_id
+                        and observed_harness_session_id != expected_harness_session_id
+                    ):
+                        boundary_error = NativeEntryMismatch(
+                            expected_harness_session_id, observed_harness_session_id,
+                        )
+                    else:
+                        resolved_harness_session_id = bind_harness_session_id(
+                            runtime_root=runtime_root,
+                            spawn_id=primary_spawn_id,
+                            record_session_id=managed.record_harness_session_id,
+                            session_id=observed_harness_session_id,
+                            source="observed",
+                            current_session_id=resolved_harness_session_id,
+                            chat_id=managed.chat_id,
+                        )
                     if identity_plan is not None and primary_started_epoch > 0:
                         native_identity_error = harness_adapter.verify_native_identity(
                             identity_plan,
@@ -1197,7 +1205,7 @@ def run_harness_process(
                         if identity_plan is not None and identity_plan.native_store
                         and observation.trampoline_successor_id else None
                     )
-                    boundary_error = (
+                    boundary_error = boundary_error or (
                         finalize_run_boundary(
                             adapter=harness_adapter, child_env=child_env,
                             runtime_root=runtime_root, spawn_id=primary_spawn_id,
@@ -1217,6 +1225,11 @@ def run_harness_process(
                         )
                     if native_identity_error:
                         exit_code = 1
+                    elif native_primary_tui_pid is not None:
+                        assert managed.attempt is not None
+                        managed.attempt.record_started(
+                            runtime_context, str(primary_spawn_id), resolved_harness_session_id,
+                        )
                     (
                         exit_code,
                         resolved_harness_session_id,

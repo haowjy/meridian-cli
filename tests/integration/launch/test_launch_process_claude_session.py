@@ -194,9 +194,13 @@ def test_run_harness_process_keeps_binding_when_observed_session_differs(
         update_session_harness_id_fn=lambda *args, **kwargs: None,
     )
 
+    assert outcome.exit_code == 1
     assert outcome.resolved_harness_session_id != observed_id
     assert outcome.resolved_harness_session_id
     spawns = list_spawns(launch_context.runtime_root)
+    assert spawns.records[0].terminal is not None
+    assert spawns.records[0].terminal.error == "entry_mismatch"
+    assert str(spawns.records[0].status) == "failed"
     assert all(
         spawn.harness_session_id == outcome.resolved_harness_session_id for spawn in spawns.records
     )
