@@ -26,7 +26,6 @@ from meridian.lib.bootstrap.services import (
 from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.domain import Spawn, SpawnStatus, TerminalSpawnStatus
-from meridian.lib.core.native_identity import NativeSessionKey
 from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
@@ -1417,17 +1416,10 @@ async def execute_with_streaming(
                         runtime_root, run.spawn_id,
                         trampoline_successor_id=observation.trampoline_successor_id,
                     )
-                exit_key = (
-                    NativeSessionKey(
-                        identity_plan.native_store, observation.trampoline_successor_id,
-                    )
-                    if identity_plan is not None and identity_plan.native_store
-                    and observation.trampoline_successor_id else None
-                )
                 boundary_error = finalize_run_boundary(
                     adapter=harness, child_env=child_env, runtime_root=runtime_root,
                     spawn_id=str(run.spawn_id),
-                    pid=attempt_pid, exit_key=exit_key,
+                    pid=attempt_pid,
                 )
                 if boundary_error:
                     conclusion.exit_code = 1

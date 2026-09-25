@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from meridian.lib.core.native_identity import NativeSessionKey, RunBoundary
+from meridian.lib.core.native_identity import RunBoundary
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.launch.errors import NativeEntryMismatch
 from meridian.lib.state import session_store, spawn_store
@@ -12,14 +12,12 @@ from meridian.lib.state import session_store, spawn_store
 
 def finalize_run_boundary(
     *, adapter: SubprocessHarness, child_env: dict[str, str], runtime_root: Path,
-    spawn_id: str, pid: int | None, exit_key: NativeSessionKey | None = None,
+    spawn_id: str, pid: int | None,
 ) -> NativeEntryMismatch | None:
     """Return an entry conflict; exit uncertainty is not an execution failure."""
     boundary = adapter.observe_run_boundary(child_env=child_env, pid=pid)
     if boundary is None:
-        if exit_key is None:
-            return None
-        boundary = RunBoundary(exit=exit_key)
+        boundary = RunBoundary()
     row = spawn_store.get_spawn(runtime_root, spawn_id)
     if row is None or row.chat_id is None:
         return None

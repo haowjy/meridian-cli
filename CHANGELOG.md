@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Keep Claude fullscreen successor correlation diagnostic only; exit identity remains unresolved without launch-owned evidence.
+
 - Fail primary launches on contradictory initial owned identity before completion or model attribution; retain structured entry-mismatch evidence.
 
 - Build locked Pi extension bundles before full preflight tests and packaging; missing pnpm fails the gate.

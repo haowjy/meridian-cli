@@ -16,6 +16,7 @@ import pytest
 
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.claude import project_slug
 from meridian.lib.harness.registry import get_default_harness_registry
@@ -384,7 +385,7 @@ def test_claude_fork_plan_waits_for_owned_new_identity(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("existing_exit", [False, True])
-def test_claude_trampoline_exit_uses_own_chat(
+def test_unrelated_claude_trampoline_candidate_is_diagnostic(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing_exit: bool,
 ) -> None:
     import shlex
@@ -437,31 +438,31 @@ def test_claude_trampoline_exit_uses_own_chat(
         f"printf {shlex.quote(history)} \"$entry\" > "
         f"{shlex.quote(str(store.parent.parent / 'history.jsonl'))}\n"
         f"printf '%s' {shlex.quote(transcript)} > "
-        f"{shlex.quote(str(store / f'{successor}.jsonl'))}\n"
+        f"{shlex.quote(str(store / f'{successor}.jsonl'))}\nexit 1\n"
     )
     outcome = run_harness_process(context, registry)
-    assert outcome.exit_code == 0
+    assert outcome.exit_code == 1
     row = list_spawns(context.runtime_root).records[0]
     entry = session_store.get_session_record(context.runtime_root, outcome.chat_id)
     assert entry is not None and entry.harness_session_id != successor
     assert row.harness_session_id == entry.harness_session_id == outcome.resolved_harness_session_id
     assert row.trampoline_successor_id == successor
     assert row.entry_chat_id == entry.chat_id
-    assert row.exit_identity == "verified"
-    assert row.exit_chat_id and row.exit_chat_id != entry.chat_id
-    exit_chat = session_store.get_session_record(context.runtime_root, row.exit_chat_id)
-    assert exit_chat is not None and exit_chat.harness_session_id == successor
-    assert exit_chat.native_store == entry.native_store == str(store)
-    if existing_exit:
-        assert row.exit_chat_id == existing_chat
-    target = resolve_session_log_target(
-        ref=row.id, file_path=None, project_root=root, runtime_root=context.runtime_root,
-    )
-    assert target.session_id == successor
+    assert row.exit_identity == "unresolved"
+    assert row.exit_chat_id is None
+    with pytest.raises(NativeSessionUnavailable, match="native_transcript_missing"):
+        resolve_session_log_target(
+            ref=row.id, file_path=None, project_root=root, runtime_root=context.runtime_root,
+        )
     shown = subprocess.run(
         [sys.executable, "-m", "meridian", "spawn", "show", row.id],
         cwd=root, text=True, capture_output=True, timeout=15,
     )
     assert shown.returncode == 0, shown.stderr
     assert f"entry {entry.chat_id} ({entry.harness_session_id})" in shown.stdout
-    assert f"→ exit {exit_chat.chat_id} ({successor})" in shown.stdout
+    assert "→ exit unresolved" in shown.stdout
+    logged = subprocess.run(
+        [sys.executable, "-m", "meridian", "session", "log", row.id],
+        cwd=root, text=True, capture_output=True, timeout=15,
+    )
+    assert "TRAMPOLINE-EXIT" not in logged.stdout

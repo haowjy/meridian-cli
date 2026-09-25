@@ -21,7 +21,6 @@ from meridian.lib.bootstrap.services import build_spawn_application_service_from
 from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.core.clock import RealClock
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
-from meridian.lib.core.native_identity import NativeSessionKey
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     SpawnReservation,
@@ -1198,18 +1197,11 @@ def run_harness_process(
                             runtime_root, primary_spawn_id,
                             trampoline_successor_id=observation.trampoline_successor_id,
                         )
-                    exit_key = (
-                        NativeSessionKey(
-                            identity_plan.native_store, observation.trampoline_successor_id,
-                        )
-                        if identity_plan is not None and identity_plan.native_store
-                        and observation.trampoline_successor_id else None
-                    )
                     boundary_error = boundary_error or (
                         finalize_run_boundary(
                             adapter=harness_adapter, child_env=child_env,
                             runtime_root=runtime_root, spawn_id=primary_spawn_id,
-                            pid=native_primary_tui_pid, exit_key=exit_key,
+                            pid=native_primary_tui_pid,
                         ) if primary_spawn_id is not None else None
                     )
                     if boundary_error is not None:
