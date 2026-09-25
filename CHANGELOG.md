@@ -6,6 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Chat transcript and repair reads use only recorded identity; missing native sessions report unavailable instead of scanning.
+
 - Claude trampoline reconciliation diagnoses successors without replacing the recorded chat identity.
 
 - Claude fresh launches bind the exact planned `--session-id` before exec, including the child native store.
