@@ -19,9 +19,11 @@ run_harness_process()
     ├── _execute_via_managed_attach()   ← PrimaryAttachLauncher path
     │       └── fallback on PrimaryAttachError → _execute_via_blackbox()
     │
-    └── _finalize_lifecycle_and_observe_session()
-            ├── spawn_service.complete_execution()
-            └── harness_adapter.observe_session_id()  ← I-4: called exactly once
+    └── post-exit finalization
+            ├── observe_session_id() + initial identity validation
+            ├── verify_native_identity() + diagnostic observation
+            ├── finalize_run_boundary() + accepted invocation attribution
+            └── _finalize_lifecycle() → complete_execution()
 ```
 
 **Backend selection rules:**
@@ -42,10 +44,11 @@ arrive through `SubprocessHarness` hooks — never `HarnessId` branches:
   resolved runtime path) and secret redaction before metadata persistence.
 - `uses_native_primary_metadata` / `native_primary_runtime_metadata` — whether and
   which runtime fields populate `primary_meta.json`.
-- `observe_primary_session_id` — post-exit check of the native identity plan (Pi
-  verifies its assigned file: ok/pending/conflict). It never selects a replacement;
-  any returned ID goes through `bind_harness_session_id(source="observed")`, which
-  cannot overwrite the pre-exec binding.
+- `observe_primary_session_id` — diagnostic observations only (Claude fullscreen
+  correlation); never binds an entry or allocates an exit.
+- `verify_native_identity` — typed exact-file validation after execution.
+- `observe_run_boundary` — launch-correlated entry/final-quit evidence for the
+  shared boundary finalizer.
 - `build_primary_runtime_request_handler` — managed-primary runtime request handler
   (Codex/OpenCode permission broker).
 - `capabilities.captures_blackbox_output` and `bootstrap.primary_stderr_log` drive
@@ -57,7 +60,7 @@ and spawn paths share one writer; `runner.py` never names a harness id.
 ## Hard Invariants
 
 **I-4:** `harness_adapter.observe_session_id()` is called exactly once per launch,
-in `_finalize_lifecycle_and_observe_session()`, after the process exits. Never call
+in the runner finalization block, before lifecycle completion. Never call
 it during execution, and never call it twice.
 
 **Assigned identity binds before exec.** When the finalized

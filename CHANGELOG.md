@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Delete dead session-discovery metadata and prose-ID vocabulary; document runner validation order and Pi v2 fail-closed boundary dependencies.
+
 - Publish Claude seed symlinks by atomic replacement; failed publication leaves the previous target intact.
 
 - Refuse tracked reads and native capture without a complete recorded key; legacy Claude hints remain raw-reference-only.

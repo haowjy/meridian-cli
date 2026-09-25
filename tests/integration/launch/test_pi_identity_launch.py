@@ -175,14 +175,7 @@ def test_primary_assigns_before_exec_and_verifies_exact_entry(
             root / ".meridian" / "spawns" / str(outcome.primary_spawn_id) / "primary_meta.json"
         ).read_text()
     )
-    assert (
-        meta["harness_session_discovery"]
-        == {
-            "ok": "ok",
-            "fail": "pending",
-            "mismatch": "conflict",
-        }[behavior]
-    )
+    assert meta["exit_identity"] == ("mismatch" if behavior == "mismatch" else "unresolved")
     if behavior == "fail":
         with pytest.raises(ValueError, match="native_transcript_missing"):
             context(

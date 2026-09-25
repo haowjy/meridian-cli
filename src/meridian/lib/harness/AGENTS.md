@@ -96,7 +96,13 @@ for all harnesses; it always comes from the recorded chat, never config hints.
 `finalize_native_identity()` pins store/ID against the final child env
 before argv projection, so the bound key, env and argv agree. The runner binds
 nonempty plans as `assigned` before exec; `verify_native_identity()` checks that
-exact target after the attempt and never selects a replacement.
+exact target after the attempt and never selects a replacement. Runner order:
+assigned bind → initial owned `NativeEntryMismatch` check →
+`verify_native_identity` → `observe_primary_session_id` diagnostics →
+`finalize_run_boundary`. Typed contradictions carry expected/observed evidence;
+`NativeSessionUnavailable` preserves unbound/missing/ambiguous refusal codes.
+Launch refusals reach `ops/spawn/failure_policy`; neither kind permits exit
+allocation or invocation attribution.
 `observe_session_id()` returns owned connection/process signals, then an
 already-known ID, as `observed`; observations bind once and cannot overwrite.
 It must not mutate adapter-instance state. Cwd, timestamps, logs, and newest-file
@@ -107,12 +113,16 @@ ID; multiple matching files fail as `ambiguous_native_file`, rather than selecti
 a winner. `resolve_native_session_file()` takes an explicit native store;
 `resolve_session_file()` accepts legacy config hints or untracked raw references.
 Never reinterpret a recorded Claude project store as a config root. Claude
-preparation seeds only `<source_native_store>/<id>.jsonl`; missing sources refuse
+store derives from the final child environment without a Meridian
+`CLAUDE_CONFIG_DIR` override. Preparation validates the exact native header and
+seeds `<store>/<id>.jsonl` from `<source_native_store>/<id>.jsonl`: atomic symlink
+replacement within the same config root, otherwise atomic copy. Missing sources refuse
 before exec, including when an ambient same-ID file exists. Model reads use the
 same exact adapter resolver, with no ambient-store fallback. OpenCode's
 newly recorded store is its resolved database path, including `OPENCODE_DB`.
 Claude trampoline successors travel in `PrimarySessionObservation` and persist
-separately on the run, never through the entry-ID return or chat binding.
+separately on the run, never through the entry-ID return, chat binding, or exit
+allocator. Claude exit identity stays unresolved without launch-correlated evidence.
 
 **Terminal event classification is harness- and parent-scope-aware.** `event_type`
 is NOT globally unique — always check `event.harness_id`. `turn/completed` is Codex;

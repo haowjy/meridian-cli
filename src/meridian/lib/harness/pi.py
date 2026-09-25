@@ -30,7 +30,6 @@ from meridian.lib.harness.adapter import (
     McpConfig,
     NativePrimaryRuntimeMetadata,
     PermissionResolver,
-    PrimarySessionObservation,
     ProjectionContract,
     ProjectionMode,
     RecordConfigDirFn,
@@ -439,28 +438,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
     def redact_primary_command(self, command: tuple[str, ...]) -> tuple[str, ...]:
         return tuple(redact_pi_command_for_history(command))
-
-    def observe_primary_session_id(
-        self,
-        *,
-        native_identity_plan: NativeIdentityPlan | None,
-        command: tuple[str, ...],
-        child_env: dict[str, str],
-        launch_child_cwd: Path,
-        started_at_epoch: float | None,
-        expected_session_id: str,
-        requested_session_id: str,
-        resolved_session_id: str,
-        exit_code: int,
-    ) -> PrimarySessionObservation:
-        assert native_identity_plan is not None
-        try:
-            status = verify_identity(native_identity_plan)
-        except ValueError as exc:
-            return PrimarySessionObservation(discovery="conflict", detail=str(exc))
-        return PrimarySessionObservation(
-            session_id=native_identity_plan.harness_session_id, discovery=status,
-        )
 
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:
         _ = run

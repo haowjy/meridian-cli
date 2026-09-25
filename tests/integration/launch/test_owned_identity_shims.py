@@ -119,7 +119,9 @@ def test_owned_event_pins_store(
     )
     native_file.parent.mkdir(parents=True)
     if harness == HarnessId.CODEX:
-        native_file.write_text("{}\n")
+        native_file.write_text(
+            json.dumps({"type": "session_meta", "payload": {"id": NATIVE_ID}}) + "\n",
+        )
     else:
         from tests.support.opencode_db import write_opencode_db_session
 

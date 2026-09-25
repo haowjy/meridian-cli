@@ -66,7 +66,6 @@ from meridian.lib.state.artifact_store import InMemoryStore, LocalStore, make_ar
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.primary_meta import (
     ActivityState,
-    HarnessSessionDiscovery,
     PrimaryMetadata,
     write_primary_metadata,
 )
@@ -145,8 +144,6 @@ def _write_native_primary_metadata(
     exit_code: int | None,
     harness_session_id: str | None,
     runtime_metadata: NativePrimaryRuntimeMetadata | None = None,
-    harness_session_discovery: HarnessSessionDiscovery | None = None,
-    harness_session_discovery_detail: str | None = None,
 ) -> None:
     """Best-effort metadata projection for native/black-box primary launches."""
 
@@ -165,10 +162,6 @@ def _write_native_primary_metadata(
                 backend_port=None,
                 activity=activity,
                 harness_session_id=(harness_session_id or "").strip() or None,
-                harness_session_discovery=harness_session_discovery,
-                harness_session_discovery_detail=(
-                    (harness_session_discovery_detail or "").strip() or None
-                ),
                 command=command,
                 launch_cwd=str(launch_cwd),
                 started_at_epoch=started_at_epoch,
@@ -488,28 +481,20 @@ def _execute_primary_process(
     )
 
 
-def _finalize_lifecycle_and_observe_session(
+def _finalize_lifecycle(
     *,
     primary_spawn_id: SpawnId | None,
     exit_code: int,
-    resolved_harness_session_id: str,
-    expected_harness_session_id: str,
     harness_adapter: Any,
-    artifacts: LocalStore,
     project_root: Path,
-    launch_child_cwd: Path,
     model_id: str | None,
     runtime_root: Path,
     primary_started: float,
-    primary_started_epoch: float,
-    primary_started_local_iso: str | None,
-    managed: Any,
     spawn_service: SpawnApplicationService,
-    observe_adapter_session_id: bool = True,
     cancellation_observed: bool = False,
     native_identity_error: str | None = None,
-) -> tuple[int, str]:
-    """Finalize lifecycle, observe identity, and durably bind accepted selections."""
+) -> int:
+    """Complete execution after native identity validation and attribution."""
 
     resolved_exit_code = exit_code
     if primary_spawn_id is not None:
@@ -555,7 +540,7 @@ def _finalize_lifecycle_and_observe_session(
                 "Launcher finalize skipped; spawn already terminal or missing: %s",
                 primary_spawn_id,
             )
-    return resolved_exit_code, resolved_harness_session_id
+    return resolved_exit_code
 
 
 def _extract_primary_usage(
@@ -1230,40 +1215,19 @@ def run_harness_process(
                         managed.attempt.record_started(
                             runtime_context, str(primary_spawn_id), resolved_harness_session_id,
                         )
-                    (
-                        exit_code,
-                        resolved_harness_session_id,
-                    ) = _finalize_lifecycle_and_observe_session(
+                    exit_code = _finalize_lifecycle(
                         primary_spawn_id=primary_spawn_id,
                         exit_code=exit_code,
-                        resolved_harness_session_id=resolved_harness_session_id,
-                        expected_harness_session_id=expected_harness_session_id,
                         harness_adapter=harness_adapter,
-                        artifacts=artifacts,
                         project_root=control_root,
-                        launch_child_cwd=launch_child_cwd,
                         model_id=session_metadata.model,
                         runtime_root=runtime_root,
                         primary_started=primary_started,
-                        primary_started_epoch=primary_started_epoch,
-                        primary_started_local_iso=primary_started_local_iso,
-                        managed=managed,
                         spawn_service=spawn_service,
-                        observe_adapter_session_id=not write_native_primary_metadata,
                         cancellation_observed=managed_cancelled,
                         native_identity_error=native_identity_error,
                     )
                     if write_native_primary_metadata and primary_spawn_id is not None:
-                        if observation.session_id:
-                            resolved_harness_session_id = bind_harness_session_id(
-                                runtime_root=runtime_root,
-                                spawn_id=primary_spawn_id,
-                                record_session_id=managed.record_harness_session_id,
-                                session_id=observation.session_id,
-                                source="observed",
-                                current_session_id=resolved_harness_session_id,
-                                chat_id=managed.chat_id,
-                            )
                         _write_native_primary_metadata(
                             runtime_root=runtime_root,
                             spawn_id=primary_spawn_id,
@@ -1282,8 +1246,6 @@ def run_harness_process(
                             exit_code=exit_code,
                             harness_session_id=resolved_harness_session_id,
                             runtime_metadata=native_primary_runtime_metadata,
-                            harness_session_discovery=observation.discovery,
-                            harness_session_discovery_detail=observation.detail,
                         )
                 finally:
                     if primary_spawn_id is not None:

@@ -150,7 +150,6 @@ def test_claude_reconciliation_keeps_tui_trampoline_identity(
         started_at_epoch=now - 1, expected_session_id=recorded_session_id,
         requested_session_id="", resolved_session_id=recorded_session_id, exit_code=0,
     )
-    assert observation.session_id is None
     assert observation.trampoline_successor_id == real_session_id
 
 

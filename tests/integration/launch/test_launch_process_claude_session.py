@@ -327,8 +327,9 @@ def test_run_harness_process_resume_does_not_inject_seed_args(
     assert plan.harness_session_id == "existing-session-id"
 
 
+@pytest.mark.parametrize("signal", ["silent", "match", "mismatch", "switch"])
 def test_primary_claude_exec_receives_prebound_identity(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, signal: str,
 ) -> None:
     import shlex
 
@@ -341,19 +342,31 @@ def test_primary_claude_exec_receives_prebound_identity(
     root.mkdir()
     context, registry = _build_primary_launch_context(
         project_root=root, harness_id=HarnessId.CLAUDE, model="claude-sonnet-4-5",
+        extra_args=("--print",),
     )
     argv_log = tmp_path / "argv"
     binding_log = tmp_path / "binding-at-exec.jsonl"
     shim = tmp_path / "fake-bin" / "claude"
+    frames = ""
+    if signal != "silent":
+        frames = (
+            'while [ "$#" -gt 0 ]; do\n'
+            ' if [ "$1" = "--session-id" ]; then shift; id=$1; fi\n shift\ndone\n'
+            + ('id=wrong-entry\n' if signal == "mismatch" else "")
+            + "printf '{\"type\":\"system\",\"subtype\":\"init\","
+            "\"session_id\":\"%s\"}\\n' \"$id\"\n"
+        )
+    if signal == "switch":
+        frames += "printf '%s\\n' '{\"type\":\"result\",\"session_id\":\"later-id\"}'\n"
     shim.write_text(
         "#!/bin/sh\n"
         f"cp {shlex.quote(str(context.runtime_root / 'sessions.jsonl'))} "
         f"{shlex.quote(str(binding_log))}\n"
         f"printf '%s\\n' \"$@\" > {shlex.quote(str(argv_log))}\n"
-        "exit 0\n"
+        + frames + "exit 0\n"
     )
     outcome = run_harness_process(context, registry)
-    assert outcome.exit_code == 0
+    assert outcome.exit_code == (1 if signal == "mismatch" else 0)
     argv = argv_log.read_text().splitlines()
     native_id = argv[argv.index("--session-id") + 1]
     events = [json.loads(line) for line in binding_log.read_text().splitlines()]
@@ -365,6 +378,15 @@ def test_primary_claude_exec_receives_prebound_identity(
     assert record.native_store == str(
         tmp_path / "home" / ".claude" / "projects" / project_slug(root)
     )
+
+    if signal == "mismatch":
+        row = list_spawns(context.runtime_root).records[0]
+        assert row.status == "failed" and row.terminal is not None
+        assert row.terminal.error == "entry_mismatch" and row.exit_chat_id is None
+        session_events = [json.loads(line) for line in (
+            context.runtime_root / "sessions.jsonl"
+        ).read_text().splitlines()]
+        assert not any(event.get("kind") == "invocation_started" for event in session_events)
 
 
 def test_claude_fork_plan_waits_for_owned_new_identity(tmp_path: Path) -> None:

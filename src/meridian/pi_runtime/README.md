@@ -8,7 +8,8 @@ Meridian does **not** bundle a Pi runtime. Install/update Pi separately and run 
 
 ```bash
 cd src/meridian/pi_runtime
-npm run build:extensions
+pnpm install --frozen-lockfile
+pnpm run build:extensions
 ```
 
 This writes a stable entrypoint under `dist/extensions/`:
@@ -34,6 +35,20 @@ run `verify:extensions` before that test (or the full Python suite).
 Then delegate **smoke-tester** for runtime verification (`meridian pi`, spawn flows). UX reference: `~/gitrepos/ref/pi-processes`. Work-item map: `pi-generic-background-tasks/pi-processes-parity-map.md` in the meridian-cli work dir.
 
 **Pi extension imports:** only package-root `@earendil-works/pi-tui` / `pi-coding-agent` — subpaths break under Pi's extension loader.
+
+## Native boundary contract
+
+The session-boundary extension publishes v2 records correlated by launch nonce
+and Pi PID. Only a final owned shutdown/quit with a readable native identity
+qualifies an exit. Switch, restart, missing/corrupt records, and stale-context
+shutdowns remain unresolved; they never substitute the last-seen identity.
+
+Pi 0.87.1's invalidated context is recognized by the error-text prefix
+`This extension ctx is stale after session replacement or reload.`
+Only shutdown catches that specific condition and clears quit without poisoning.
+If Pi rewords it (or another identity read fails), the extension poisons the
+record and rethrows: exit resolution fails closed. Requalify this dependency
+when upgrading Pi; do not broaden the catch to guess an identity.
 
 ## Spawn rows and wait
 

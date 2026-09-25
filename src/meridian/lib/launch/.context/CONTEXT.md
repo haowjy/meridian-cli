@@ -55,6 +55,21 @@ These are the only things that differ between the preview bind and the real bind
 The report and `system-prompt.md` paths are derived in `bind_launch_context` from
 `spawn_id` (the spawn log dir), not carried here.
 
+### Native identity order
+
+Both runners bind the assigned immutable native key before exec, validate the
+first owned identity with `NativeEntryMismatch`, run `verify_native_identity`,
+collect `observe_primary_session_id` diagnostics, then call
+`finalize_run_boundary`. Contradictions retain expected/observed evidence and
+stable `entry_mismatch`; unavailable sources retain `NativeSessionUnavailable`
+codes. The shared exit allocator refuses either error and runs only on owned
+boundary evidence. Invocation attribution waits for validation. Startup refusals
+outside runner finalization flow through `ops/spawn/failure_policy`.
+
+Claude fullscreen correlation is diagnostic, not owned exit evidence. Only
+Pi's correlated final quit currently supplies a verified exit. A tracked read
+requires the complete recorded native key; no legacy hint repair is allowed.
+
 ### Exact Continue Replay
 
 Primary `meridian --continue` and subagent `spawn --continue` are exact

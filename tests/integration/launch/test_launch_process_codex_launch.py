@@ -356,7 +356,9 @@ def test_run_harness_process_codex_managed_attach_uses_control_root_with_distinc
         captured["project_env"] = dict(env).get("MERIDIAN_PROJECT_DIR")
         if callable(on_running):
             on_running(5152)
-        return PrimaryAttachOutcome(exit_code=0, session_id="thread-managed", tui_pid=5152)
+        return PrimaryAttachOutcome(
+            exit_code=0, session_id=spec.native_identity_plan.harness_session_id, tui_pid=5152,
+        )
 
     monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: None)
     outcome = run_harness_process(
@@ -431,7 +433,9 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
         running_record = list_spawns(launch_context.runtime_root).records[0]
         captured["status_seen_before_return"] = running_record.status
         captured["worker_pid_seen_before_return"] = running_record.worker_pid
-        return PrimaryAttachOutcome(exit_code=0, session_id="thread-managed", tui_pid=5151)
+        return PrimaryAttachOutcome(
+            exit_code=0, session_id=spec.native_identity_plan.harness_session_id, tui_pid=5151,
+        )
 
     def fail_black_box(
         command: Any,
@@ -456,7 +460,7 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
     assert captured["status_seen_before_return"] == "running"
     assert captured["worker_pid_seen_before_return"] == 5151
     assert outcome.exit_code == 0
-    assert outcome.resolved_harness_session_id == "thread-managed"
+    assert outcome.resolved_harness_session_id == "00000000-0000-4000-8000-000000000010"
 
 
 @pytest.mark.slow

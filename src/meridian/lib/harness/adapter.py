@@ -41,7 +41,6 @@ from meridian.lib.launch.launch_types import (
 )
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.permissions import PermissionConfig
-from meridian.lib.state.primary_meta import HarnessSessionDiscovery
 
 AdapterSpecT = TypeVar("AdapterSpecT", bound=ResolvedLaunchSpec, covariant=True)
 
@@ -356,10 +355,7 @@ class PrimarySessionObservation(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    session_id: str | None = None
-    discovery: HarnessSessionDiscovery | None = None
     trampoline_successor_id: str | None = None
-    detail: str | None = None
 
 
 RecordConfigDirFn = Callable[[str], None]

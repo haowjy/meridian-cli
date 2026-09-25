@@ -79,32 +79,22 @@ receiver is unregistered in `run()`'s `finally`, which restores the previous han
 
 ## Session ID Observation — Invariant I-4
 
-`harness_adapter.observe_session_id()` is called **exactly once** after the process exits,
-inside `_finalize_lifecycle_and_observe_session()`. It discovers the harness session ID from
-artifacts (history.jsonl, output.jsonl) written during execution.
+`harness_adapter.observe_session_id()` is called once after captured execution,
+before lifecycle completion. The first owned event is compared with the assigned
+key; a contradiction fails as `entry_mismatch` with expected/observed evidence.
+Managed attach validates its initial connection identity before attaching.
 
-Generated seeds and native-fork source IDs are not authoritative child identities.
-Fresh/native-fork model selections stay pending until an observed ID binds the captured
-startup attempt. Exact resume and materialized forks already have known identities.
-The existing Claude transcript/trampoline detector can confirm a generated seed or
-its successor; a seed alone cannot. No last-executed model is inferred.
-
-Observation failures remain best-effort. Persisting an observed identity is required:
-errors propagate, and a conflicting known identity is rejected. Adapter cleanup still
-runs. Do not call `observe_session_id()` elsewhere in the lifecycle.
+Assigned keys bind before exec. Observed-only plans bind from owned signals;
+neither path discovers a replacement. Post-exit native verification precedes
+diagnostic observation, boundary finalization, and invocation attribution.
+Claude fullscreen candidates stay diagnostic, never verified exit identities.
 
 ## Finalization Ownership
 
-`_finalize_lifecycle_and_observe_session()` is called in a `finally` block inside
-`run_harness_process()`. It is responsible for:
-- Calling `spawn_service.complete_execution()` with `ExecutionTerminalFacts`
-- Resolving the final exit code (may differ from process exit code for graceful report-completion)
-- Persisting observed harness session ID
-
-The surrounding `finally` calls `harness_adapter.cleanup_prelaunch()`, including when
-identity persistence fails.
-
-`complete_execution()` is idempotent — safe to call on a spawn already in terminal state.
+`_finalize_lifecycle()` completes execution only after identity validation.
+Typed identity errors prevent durable-report success and attribution.
+The surrounding `finally` always calls adapter prelaunch cleanup.
+`complete_execution()` is idempotent.
 
 ## run_harness_process() Caller Contract
 
