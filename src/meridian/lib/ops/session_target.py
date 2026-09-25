@@ -9,6 +9,7 @@ does not repair or mutate authoritative state.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Literal, NamedTuple
 
@@ -156,23 +157,34 @@ def _indexed_spawn(
     return SpawnRecord.model_validate_json(records[0]) if records else None
 
 
-def _spawn_target(*, row: SpawnRecord, runtime_root: Path) -> SessionLogTarget:
+def _spawn_target(
+    *, row: SpawnRecord, record_for: Callable[[str], session_store.SessionRecord | None]
+) -> SessionLogTarget:
     if row.chat_id is None:
         raise NativeSessionUnavailable(row.id, "unbound")
     chat_id = row.continue_chat_id
-    record = session_store.get_session_record(runtime_root, chat_id) if chat_id else None
+    record = record_for(chat_id) if chat_id else None
     if record is None:
         raise NativeSessionUnavailable(row.id, "unbound")
     target = _target_from_record(record)
     return target._replace(view_label=spawn_view_label(row))
 
 
-def resolve_run_sources(row: SpawnRecord, runtime_root: Path) -> tuple[TranscriptSource, ...]:
+def _stored_record(runtime_root: Path) -> Callable[[str], session_store.SessionRecord | None]:
+    return lambda chat_id: session_store.get_session_record(runtime_root, chat_id)
+
+
+def resolve_run_sources(
+    row: SpawnRecord, sessions: Mapping[str, session_store.SessionRecord]
+) -> tuple[TranscriptSource, ...]:
     """Every exact native source holding a run's turns: its log chat and its entry chat."""
-    targets = [_spawn_target(row=row, runtime_root=runtime_root)]
+    sources = [_spawn_target(row=row, record_for=sessions.get).source]
     if row.chat_id is not None and row.chat_id != row.continue_chat_id:
-        targets.append(_resolve_from_chat_id(runtime_root=runtime_root, chat_id=row.chat_id))
-    return tuple(target.source for target in targets)
+        entry = sessions.get(row.chat_id)
+        if entry is None:
+            raise NativeSessionUnavailable(row.id, "unbound")
+        sources.append(_target_from_record(entry).source)
+    return tuple(sources)
 
 
 def _resolve_from_spawn_id(
@@ -204,7 +216,7 @@ def _resolve_from_spawn_id(
             raise NativeSessionUnavailable(row.id, "unbound")
         return _native_target(key, session)
 
-    return _spawn_target(row=row, runtime_root=runtime_root)
+    return _spawn_target(row=row, record_for=_stored_record(runtime_root))
 
 
 def _resolve_from_session_ref(
@@ -238,7 +250,7 @@ def _resolve_from_session_ref(
         )
     row = _indexed_spawn(runtime_root, session_ref, deadline=deadline)
     if row is not None:
-        return _spawn_target(row=row, runtime_root=runtime_root)
+        return _spawn_target(row=row, record_for=_stored_record(runtime_root))
     return _untracked_target(project_root=project_root, session_ref=session_ref)
 
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 import stat
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
@@ -20,10 +21,11 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.ops.session_target import resolve_run_sources
 from meridian.lib.platform.atomic import iter_atomic_temp_paths
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state import spawn_store
+from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.process_scope_projection import read_scope_projection
 from meridian.lib.state.reaper import scope_liveness
+from meridian.lib.state.session_store import SessionRecord
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 from meridian.lib.state.timestamps import iso_timestamp_to_epoch
@@ -102,7 +104,9 @@ def _size(paths: tuple[Path, ...]) -> int:
     return sum(path.lstat().st_size for path in paths)
 
 
-def _skip_reason(root: Path, row: SpawnRecord, cutoff: float) -> str | tuple[Path, ...]:
+def _skip_reason(
+    root: Path, row: SpawnRecord, sessions: Mapping[str, SessionRecord], cutoff: float
+) -> str | tuple[Path, ...]:
     """Return a skip reason, or the exact native paths that make the stream redundant."""
     if row.record_mode == "historical":
         return "historical"
@@ -123,7 +127,7 @@ def _skip_reason(root: Path, row: SpawnRecord, cutoff: float) -> str | tuple[Pat
     ):
         return "live_scope"
     try:
-        sources = resolve_run_sources(row, root)
+        sources = resolve_run_sources(row, sessions)
     except NativeSessionUnavailable as exc:
         return exc.reason
     except Exception:  # The rule is "any doubt skips", not "known doubts skip".
@@ -145,6 +149,9 @@ def prune_runner_history(
 def _prune(root: Path, *, apply: bool, after_days: int) -> RunnerHistoryPrune:
     cutoff = time.time() - after_days * 86400
     rows = sorted(spawn_store.list_spawns(root).records, key=lambda row: (len(row.id), row.id))
+    sessions = {
+        str(record.chat_id): record for record in session_store.list_all_session_records(root)
+    }
     pruned: list[PrunedSpawn] = []
     skipped: dict[str, list[str]] = {}
     skipped_bytes: dict[str, int] = {}
@@ -153,7 +160,7 @@ def _prune(root: Path, *, apply: bool, after_days: int) -> RunnerHistoryPrune:
         files = runner_stream_files(root, row.id)
         if not files:
             continue
-        verdict = _skip_reason(root, row, cutoff)
+        verdict = _skip_reason(root, row, sessions, cutoff)
         if isinstance(verdict, str):
             skipped.setdefault(verdict, []).append(row.id)
             skipped_bytes[verdict] = skipped_bytes.get(verdict, 0) + _size(files)
