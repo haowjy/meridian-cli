@@ -102,6 +102,7 @@ def _deny_effects(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     monkeypatch.setattr(os, "fork", denied("process"))
     monkeypatch.setattr(os, "forkpty", denied("process"))
     monkeypatch.setattr(os, "execv", denied("process"))
+
     class DeniedInternetSocket(_original_socket):
         def __new__(cls, family=socket.AF_INET, *args, **kwargs):
             if family != socket.AF_UNIX:
@@ -327,9 +328,7 @@ def _append_start(root: Path, *, generation: str, spawn: str = "p1") -> None:
         handle.write((event.model_dump_json(exclude_none=True) + "\n").encode())
 
 
-def _exact_journal(
-    root: Path, store_path: str = "/synthetic/native"
-) -> tuple[object, str]:
+def _exact_journal(root: Path, store_path: str = "/synthetic/native") -> tuple[object, str]:
     from tests.integration.ops.test_native_reference_authority import _pinned_journal
 
     _pinned_journal(root, store_path)
@@ -440,9 +439,10 @@ def test_exact_startup_conflicts_and_seed_order_are_not_usable(
 
     assert store.record_model_selection(tmp_path, invocation)
     seed = invocation.model_copy(update={"kind": "initial_seed", "startup_attempt_id": None})
-    assert not store.record_model_selection(tmp_path, seed)
+    with pytest.raises(ValueError, match="seed_after_intent"):
+        store.record_model_selection(tmp_path, seed)
     with (tmp_path / "sessions.jsonl").open("ab") as handle:
-        handle.write((seed.model_dump_json(exclude_none=True) + "\n").encode())
+        handle.write((seed.model_dump_json(exclude_none=False) + "\n").encode())
     snapshot = session_store_module.read_native_source_use_snapshot(tmp_path)
     assert isinstance(snapshot, session_store_module.NativeIdUnavailable)
     assert expected == "rejected"
@@ -556,9 +556,10 @@ def test_exact_first_seed_latest_invocation_and_v1_membership_independence(
     second_generation = "generation-second"
     _append_start(tmp_path, generation=second_generation, spawn="p2")
     assert store.record_model_selection(
-        tmp_path, _v2_event(source, second_generation, "latest", startup="attempt-b").model_copy(
+        tmp_path,
+        _v2_event(source, second_generation, "latest", startup="attempt-b").model_copy(
             update={"spawn_id": "p2"}
-        )
+        ),
     )
 
     snapshot = session_store_module.read_native_source_use_snapshot(tmp_path)
@@ -640,8 +641,8 @@ def test_deferred_legacy_value_binds_once_and_contradiction_retracts_it(tmp_path
         with (tmp_path / "sessions.jsonl").open("ab") as handle:
             handle.write((update.model_dump_json(exclude_none=True) + "\n").encode())
     journal = authority.read_journal((tmp_path / "sessions.jsonl").read_bytes())
-    assert not any(
-        fact.event.startup_attempt_id == "deferred"
+    assert all(
+        fact.effective_native_id is None and fact.correlation == "ambiguous"
         for fact in journal.snapshot.metadata.model_intents
     )
     assert journal.snapshot.metadata.selections == frozenset()
@@ -683,13 +684,9 @@ def test_identical_start_replay_and_wrong_source_ref_rejects_v2_append(tmp_path:
     event = _v2_event(source, generation, "model")
     assert store.record_model_selection(tmp_path, event)
     wrong_ref = source.model_copy(
-        update={
-            "ref": source.ref.model_copy(
-                update={"locator_event_id": "0" * 64}
-            )
-        }
+        update={"ref": source.ref.model_copy(update={"locator_event_id": "0" * 64})}
     )
     before = (tmp_path / "sessions.jsonl").read_bytes()
-    with pytest.raises(ValueError, match="current exact pin"):
+    with pytest.raises(ValueError, match="source_not_eligible"):
         store.record_model_selection(tmp_path, _v2_event(wrong_ref, generation, "wrong"))
     assert (tmp_path / "sessions.jsonl").read_bytes() == before

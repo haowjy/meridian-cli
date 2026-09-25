@@ -6,6 +6,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Share exact model-intent admission between live writes and replay; freeze accepted
+  payloads, index source facts, and bind/retract through bounded startup watches.
+
 - Retain immutable source-correlated model intent in the strict session fold;
   add exact v2 selection replay without enabling tracked transport.
 
