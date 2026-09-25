@@ -632,6 +632,7 @@ def start_session(
         ):
             existing = get_session_record(runtime_root, resolved_chat_id)
             if existing is not None and _binding_conflicts(existing, event):
+                _report_binding_conflict(existing, event)
                 raise NativeEntryMismatch(
                     f"({existing.harness}, {existing.native_store}, {existing.harness_session_id})",
                     f"({event.harness}, {event.native_store}, {event.harness_session_id})",
@@ -730,6 +731,19 @@ def _binding_conflicts(
         kept = getattr(existing, field)
         attempted = getattr(event, field, None)
         if kept and attempted and kept != attempted:
+            return True
+    return False
+
+
+def _report_binding_conflict(
+    existing: SessionRecord,
+    event: SessionStartEvent | SessionUpdateEvent,
+) -> None:
+    """Report a rejected write attempt; replay is intentionally silent."""
+    for field in ("harness_session_id", "native_store", "harness"):
+        kept = getattr(existing, field)
+        attempted = getattr(event, field, None)
+        if kept and attempted and kept != attempted:
             structlog.get_logger(__name__).warning(
                 "native_binding_conflict",
                 chat_id=event.chat_id,
@@ -738,8 +752,7 @@ def _binding_conflicts(
                 field=field,
                 source=getattr(event, "source", "start"),
             )
-            return True
-    return False
+            return
 
 
 def update_session_harness_id(
@@ -780,6 +793,7 @@ def update_session_harness_id(
                 "conflict", existing.harness_session_id, existing.native_store
             )
         if _binding_conflicts(existing, event):
+            _report_binding_conflict(existing, event)
             return NativeBindingResult(
                 "conflict", existing.harness_session_id, existing.native_store
             )

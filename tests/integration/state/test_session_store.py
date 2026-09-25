@@ -805,6 +805,33 @@ def test_native_binding_is_immutable(tmp_path: Path) -> None:
         session_store.stop_session(runtime_root, chat_id)
 
 
+def test_historical_binding_conflict_is_silent_on_reads_and_logged_on_write(
+    tmp_path: Path,
+) -> None:
+    from structlog.testing import capture_logs
+
+    runtime_root = _state_root(tmp_path)
+    _write_session_start(runtime_root=runtime_root, chat_id="c1", session_instance_id="gen-1")
+    with (runtime_root / "sessions.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({
+            "v": 1, "event": "update", "chat_id": "c1",
+            "harness_session_id": "legacy-other", "native_store": "/legacy/store",
+            "session_instance_id": "gen-1",
+        }) + "\n")
+    _write_session_start(runtime_root=runtime_root, chat_id="c2", session_instance_id="gen-2")
+
+    with capture_logs() as logs:
+        assert session_store.get_session_record(runtime_root, "c2") is not None
+    assert not [log for log in logs if log["event"] == "native_binding_conflict"]
+
+    with capture_logs() as logs:
+        result = session_store.update_session_harness_id(
+            runtime_root, "c2", "rebound", native_store="/other/store",
+        )
+    assert result.status == "conflict"
+    assert len([log for log in logs if log["event"] == "native_binding_conflict"]) == 1
+
+
 def test_legacy_binding_rows_ignore_identity_list(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     _write_session_start(runtime_root=runtime_root, chat_id="c1", harness="claude",

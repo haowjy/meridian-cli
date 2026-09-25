@@ -9,6 +9,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Managed Pi launches load a bounded, atomic v2 session-boundary observer without writing native journals.
 
 ### Fixed
+- Report native-binding conflicts on rejected writes, not during historical replay.
 - Continue hints and spawn refs target a verified run exit; chat refs remain immutable.
 - Do not allocate exit chats for native sessions absent from the exact store.
 - Join streaming teardown before reading native exit boundaries; a Pi quit published after turn completion now resolves its exit chat.
