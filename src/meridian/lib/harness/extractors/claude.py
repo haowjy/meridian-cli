@@ -6,12 +6,11 @@ from collections.abc import Mapping
 from typing import cast
 
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.common import coerce_optional_float, coerce_optional_int, extract_text
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
-from .base import HarnessExtractor, fold_usage_fallback, normalize_harness_event_type
+from .base import AttemptFold, HarnessExtractor
 
 
 class ClaudeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
@@ -26,20 +25,17 @@ class ClaudeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
                 return value.strip()
         return None
 
-    def fold(self, facts: AttemptFacts, event: Mapping[str, object]) -> None:
-        payload = dict(event)
-        fold_usage_fallback(facts, payload)
-        kind = normalize_harness_event_type(payload)
-        facts.output_seen = facts.output_seen or not kind.startswith("meridian.")
-        facts.observe(
-            self.detect_session_id_from_event(
-                RawHarnessEvent(event_type=kind, harness_id="claude", payload=payload)
-            )
-        )
+    def create_fold(self) -> AttemptFold:
+        return ClaudeFold(self)
+
+
+class ClaudeFold(AttemptFold):
+    def fold_event(self, kind: str, payload: Mapping[str, object]) -> None:
+        facts = self.facts
         if kind == "result":
             text = extract_text(payload.get("result"))
             if text:
-                facts.set_text(text, "claude_result")
+                self.set_text(text, "claude_result")
             model_usage = payload.get("modelUsage")
             usage: object = (
                 cast("dict[str, object]", model_usage)
@@ -66,9 +62,7 @@ class ClaudeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
                         coerce_optional_int(row.get(keys[0], row.get(keys[1]))) for row in rows
                     ]
                     known = [n for n in numbers if n is not None]
-                    previous = (
-                        getattr(facts.usage, field, None) if facts.usage_is_specific else None
-                    )
+                    previous = getattr(facts.usage, field, None) if self.usage_is_specific else None
                     values[field] = (sum(known) + (previous or 0)) if known else previous
                 cost = coerce_optional_float(payload.get("total_cost_usd"))
                 if cost is None:
@@ -79,7 +73,7 @@ class ClaudeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
                         if known_costs
                         else (facts.usage.total_cost_usd if facts.usage else None)
                     )
-                facts.usage_is_specific = True
+                self.usage_is_specific = True
                 facts.usage = TokenUsage(
                     input_tokens=values["input_tokens"],
                     output_tokens=values["output_tokens"],
@@ -88,12 +82,12 @@ class ClaudeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
                     total_cost_usd=cost,
                 )
             elif (cost := coerce_optional_float(payload.get("total_cost_usd"))) is not None:
-                facts.usage_is_specific = True
+                self.usage_is_specific = True
                 facts.usage = TokenUsage(total_cost_usd=cost)
-        elif kind == "assistant" and facts.final_text_source != "claude_result":
+        elif kind == "assistant" and self.text_source != "claude_result":
             text = extract_text(payload.get("content")) or extract_text(payload.get("message"))
             if text:
-                facts.set_text(text, "claude_assistant")
+                self.set_text(text, "claude_assistant")
 
 
 CLAUDE_EXTRACTOR = ClaudeHarnessExtractor()

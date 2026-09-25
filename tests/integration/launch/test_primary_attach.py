@@ -1198,7 +1198,6 @@ async def test_primary_attach_initial_id_mismatch_is_typed(tmp_path: Path) -> No
 
 @pytest.mark.asyncio
 async def test_pi_primary_folds_and_persists_phase_without_history(tmp_path: Path):
-    from meridian.lib.harness.attempt_facts import AttemptFacts
     from meridian.lib.harness.extractors.pi import PI_EXTRACTOR
 
     spawn_id = SpawnId("p-pi-facts")
@@ -1243,7 +1242,8 @@ async def test_pi_primary_folds_and_persists_phase_without_history(tmp_path: Pat
             for event in events:
                 yield event
 
-    facts = AttemptFacts()
+    fold = PI_EXTRACTOR.create_fold()
+    facts = fold.facts
     launcher = PrimaryAttachLauncher(
         spawn_id=spawn_id,
         spawn_dir=tmp_path / "spawns" / spawn_id,
@@ -1251,8 +1251,7 @@ async def test_pi_primary_folds_and_persists_phase_without_history(tmp_path: Pat
         tui_command_builder=lambda _: (),
         process_launcher=object(),
         runtime_root=tmp_path,
-        facts=facts,
-        event_hook=lambda event: facts.hook(PI_EXTRACTOR, event),
+        fold=fold,
     )
     await launcher._run_event_writer()
     assert facts.final_text == "primary report"

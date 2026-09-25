@@ -7,6 +7,7 @@ import pytest
 from meridian.lib.core.native_identity import NativeKey
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.attempt_facts import AttemptFacts
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.launch.extract import enrich_finalize
 from meridian.lib.state.artifact_store import InMemoryStore
@@ -14,21 +15,22 @@ from tests.support.opencode_db import write_opencode_v2_db_session
 
 
 def test_extract_opencode_report_ignores_child_session_assistant_text():
-    facts = AttemptFacts()
+    fold = OPENCODE_EXTRACTOR.create_fold()
+    facts = fold.facts
     for role, session, message in [
         ("user", "ses_parent", "u"),
         ("assistant", "ses_child", "child"),
         ("assistant", "ses_parent", "parent"),
     ]:
-        OPENCODE_EXTRACTOR.fold(
-            facts,
+        _fold(
+            fold,
             {
                 "type": "message.updated",
                 "properties": {"info": {"role": role, "sessionID": session, "id": message}},
             },
         )
-        OPENCODE_EXTRACTOR.fold(
-            facts,
+        _fold(
+            fold,
             {
                 "type": "message.part.updated",
                 "properties": {
@@ -53,8 +55,9 @@ def test_extract_opencode_report_ignores_child_session_assistant_text():
     ],
 )
 def test_extract_session_id_rejects_non_session_value(event):
-    facts = AttemptFacts()
-    OPENCODE_EXTRACTOR.fold(facts, event)
+    fold = OPENCODE_EXTRACTOR.create_fold()
+    facts = fold.facts
+    _fold(fold, event)
     assert facts.first_session_id is None
 
 
@@ -73,9 +76,10 @@ def test_extract_opencode_report_reads_v2_db_final_assistant(tmp_path: Path, mon
             ],
         )
     monkeypatch.setenv("OPENCODE_DB", str(ambient))
-    facts = AttemptFacts()
-    OPENCODE_EXTRACTOR.fold(
-        facts,
+    fold = OPENCODE_EXTRACTOR.create_fold()
+    facts = fold.facts
+    _fold(
+        fold,
         {
             "type": "session.text.ended",
             "sessionID": session,
@@ -114,9 +118,10 @@ def test_no_native_report_without_exact_attribution(tmp_path: Path, ids):
 
 
 def test_v2_missing_join_falls_back_to_stream(tmp_path: Path):
-    facts = AttemptFacts()
-    OPENCODE_EXTRACTOR.fold(
-        facts,
+    fold = OPENCODE_EXTRACTOR.create_fold()
+    facts = fold.facts
+    _fold(
+        fold,
         {
             "type": "session.text.ended",
             "sessionID": "ses_owned",
@@ -154,9 +159,11 @@ def test_unreadable_native_db_cannot_break_report_precedence(tmp_path: Path, exp
 
 
 def test_child_events_before_parent_user_do_not_supply_run_facts():
-    facts = AttemptFacts(scope_session_id="ses_parent")
-    OPENCODE_EXTRACTOR.fold(
-        facts,
+    fold = OPENCODE_EXTRACTOR.create_fold()
+    fold.bind_scope("ses_parent")
+    facts = fold.facts
+    _fold(
+        fold,
         {
             "type": "session.text.ended",
             "sessionID": "ses_child",
@@ -167,8 +174,8 @@ def test_child_events_before_parent_user_do_not_supply_run_facts():
     assert facts.first_session_id is None
     assert facts.final_text is None
     assert facts.native_turn_ids == ()
-    OPENCODE_EXTRACTOR.fold(
-        facts,
+    _fold(
+        fold,
         {
             "type": "session.text.ended",
             "sessionID": "ses_parent",
@@ -179,3 +186,13 @@ def test_child_events_before_parent_user_do_not_supply_run_facts():
     assert facts.first_session_id == "ses_parent"
     assert facts.final_text == "parent reply"
     assert facts.native_turn_ids == ("parent",)
+
+
+def _fold(fold, payload):
+    fold(
+        RawHarnessEvent(
+            harness_id="fixture",
+            event_type=payload.get("type", payload.get("event_type", "")),
+            payload=payload,
+        )
+    )

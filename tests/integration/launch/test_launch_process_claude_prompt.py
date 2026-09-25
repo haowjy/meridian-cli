@@ -379,3 +379,45 @@ def test_explicit_no_agent_skips_claude_native_agent_projection(
     assert "--agents" not in command
     assert launch_context.binding.spec.agent_name is None
     assert launch_context.binding.spec.agents_payload is None
+
+
+@pytest.mark.slow
+def test_primary_print_survives_corrupt_stdout_and_fold_drift(monkeypatch, tmp_path):
+    from meridian.lib.harness.extractors.claude import ClaudeFold
+
+    project = tmp_path / "corrupt-print"
+    project.mkdir()
+    context, registry = _build_primary_launch_context(
+        project_root=project,
+        harness_id=HarnessId.CLAUDE,
+        model="claude-sonnet-4-5",
+        extra_args=("--print",),
+    )
+    original_fold = ClaudeFold.fold_event
+
+    def drifting_fold(self, kind, payload):
+        if kind == "broken":
+            raise ValueError("format drift")
+        original_fold(self, kind, payload)
+
+    def captured_child(command, cwd, env, output_log_path, on_child_started=None):
+        output_log_path.write_bytes(
+            b'\xff\n{"type":"broken"}\n'
+            b'{"type":"result","result":"surviving report","usage":{"input_tokens":7}}\n'
+        )
+        on_child_started(445)
+        return 0, 445
+
+    monkeypatch.setattr(ClaudeFold, "fold_event", drifting_fold)
+    outcome = run_harness_process(
+        context,
+        registry,
+        run_primary_process_with_capture_fn=captured_child,
+    )
+    assert outcome.exit_code == 0
+    row = list_spawns(context.runtime_root).records[0]
+    assert row.status == "succeeded"
+    assert row.terminal.input_tokens is None
+    assert (
+        "surviving report" in (context.runtime_root / "spawns" / row.id / "report.md").read_text()
+    )

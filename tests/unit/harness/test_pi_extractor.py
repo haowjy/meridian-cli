@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.attempt_facts import AttemptFacts
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.extractors.pi import PI_EXTRACTOR
 
 
 def _output_store(spawn_id: SpawnId, lines: list[dict[str, object]]) -> AttemptFacts:
-    facts = AttemptFacts()
+    fold = PI_EXTRACTOR.create_fold()
+    facts = fold.facts
     for event in lines:
-        PI_EXTRACTOR.fold(facts, event)
+        _fold(fold, event)
     return facts
 
 
@@ -70,3 +72,13 @@ def test_pi_extractor_reads_report_from_last_assistant_agent_end_message() -> No
     )
 
     assert store.final_text == "final\nreport"
+
+
+def _fold(fold, payload):
+    fold(
+        RawHarnessEvent(
+            harness_id="fixture",
+            event_type=payload.get("type", payload.get("event_type", "")),
+            payload=payload,
+        )
+    )

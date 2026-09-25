@@ -449,6 +449,19 @@ async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_withou
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from meridian.lib.state import pi_lifecycle
+    from meridian.lib.streaming import spawn_manager as manager_module
+
+    # Exercise the actual RPC stream, drain plan and teardown with no writer at all.
+    monkeypatch.setattr(manager_module, "HarnessHistoryWriter", lambda *a, **kw: None)
+    persisted = []
+    record = pi_lifecycle.record
+
+    def record_and_read(runtime_root, spawn_id, event):
+        record(runtime_root, spawn_id, event)
+        persisted.append(pi_lifecycle.read(runtime_root, spawn_id))
+
+    monkeypatch.setattr(pi_lifecycle, "record", record_and_read)
     _configure_extension_projection(monkeypatch, tmp_path)
 
     bin_dir = tmp_path / "bin"
@@ -522,6 +535,13 @@ async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_withou
         assert inbound_messages[0]["message"] == "hello auto prompt"
     finally:
         await manager.shutdown()
+
+    phases = {item.phase for item in persisted}
+    assert "process_spawned" in phases  # RPC connection
+    assert "drain_started" in phases  # drain-plan coordinator
+    assert "cleanup_completed" in phases  # PiDrainSessionTeardown
+    assert persisted[-1].cleanup_status == "completed"
+    assert not (tmp_path / "spawns" / spawn_id / "history.jsonl").exists()
 
 
 @pytest.mark.asyncio

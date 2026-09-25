@@ -398,3 +398,7 @@ def heartbeat_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
     """Return heartbeat sentinel path for a spawn under a state root."""
 
     return RuntimePaths.from_root_dir(runtime_root).spawns_dir / str(spawn_id) / "heartbeat"
+
+
+def pi_lifecycle_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
+    return runtime_root / "spawns" / str(spawn_id) / "pi-lifecycle.json"

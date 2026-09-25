@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import secrets
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import ClassVar, cast
 
@@ -97,6 +97,7 @@ from meridian.lib.launch.constants import (
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.safety.permissions import PermissionConfig
+from meridian.lib.state import pi_lifecycle
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import spawn_log_subpath
 
@@ -524,6 +525,22 @@ PI_SEMANTICS = HarnessSemantics(
     },
 )
 
+
+def _event_sinks(
+    runtime_root: Path, spawn_id: SpawnId
+) -> tuple[Callable[[RawHarnessEvent], None], ...]:
+    def lifecycle_sink(event: RawHarnessEvent) -> None:
+        if event.event_type != "meridian.pi.lifecycle.phase":
+            return
+        phase = event.payload.get("phase")
+        if isinstance(phase, str) and phase.strip():
+            pi_lifecycle.record(
+                runtime_root, spawn_id, pi_lifecycle.PiLifecycle.model_validate(event.payload)
+            )
+
+    return (lifecycle_sink,)
+
+
 register_harness_bundle(
     HarnessBundle(
         harness_id=HarnessId.PI,
@@ -535,5 +552,6 @@ register_harness_bundle(
             subprocess_cli_args=_project_pi_subprocess_cli_args,
         ),
         semantics=PI_SEMANTICS,
+        event_sinks=_event_sinks,
     )
 )

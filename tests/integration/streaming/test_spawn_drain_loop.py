@@ -47,7 +47,12 @@ from meridian.lib.streaming.drain_wait import (
     DrainTimeoutWake,
     _cancel_task,
 )
-from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
+from meridian.lib.streaming.spawn_drain_loop import (
+    EmitOutcome,
+    SpawnDrainLoop,
+    WriteFailed,
+    Written,
+)
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 from tests.support.fakes import FakeClock
@@ -71,7 +76,7 @@ def test_manager_hooks_and_subscribers_run_without_history_writer(tmp_path: Path
     manager.register_event_hook(_SPAWN_ID, lambda _event: calls.append("hook"))
     manager._fan_out_event = lambda _spawn_id, _event: calls.append("fan-out")  # type: ignore[method-assign]
 
-    assert manager._emit(_SPAWN_ID, event) is True
+    manager.emit_event(_SPAWN_ID, event)
     assert calls == ["failing-hook", "hook", "fan-out"]
 
 
@@ -280,9 +285,7 @@ class _StabilizingEvidence:
 
     def note_event_persisted(self, event: RawHarnessEvent) -> EvidenceEventDecision:
         if event.event_type == "message":
-            return EvidenceEventDecision(
-                activity=EvidenceActivity(code="persisted_event")
-            )
+            return EvidenceEventDecision(activity=EvidenceActivity(code="persisted_event"))
         return EvidenceEventDecision()
 
     async def assess(self, trigger: AssessmentTrigger) -> WorkAssessment:
@@ -384,6 +387,7 @@ async def _run_drain(
     results: list[WriteResult],
     *,
     outcomes: list[DrainOutcome] | None = None,
+    tracer=None,
 ) -> list[Call]:
     calls: list[Call] = []
 
@@ -392,12 +396,12 @@ async def _run_drain(
 
     writer = cast("HarnessHistoryWriter", _HistoryWriter(results, calls))
 
-    def emit_event(_spawn_id: SpawnId, event: RawHarnessEvent) -> bool:
+    def emit_event(_spawn_id: SpawnId, event: RawHarnessEvent) -> EmitOutcome:
         result = writer.write(event)
         if not result.success:
-            return False
+            return WriteFailed(result.error or "history write failed")
         record_observer_dispatch(_spawn_id, event)
-        return True
+        return Written()
 
     sessions: dict[SpawnId, SpawnSession] = {}
     if outcomes is not None:
@@ -423,7 +427,6 @@ async def _run_drain(
 
     loop = SpawnDrainLoop(
         sessions=sessions,
-        history_writers={_SPAWN_ID: writer},
         emit_event=emit_event,
         publish_terminal=_publish_terminal if outcomes is not None else Mock(),
         fan_out_event=lambda _spawn_id, event: calls.append(("fan_out", event.raw)),
@@ -435,7 +438,7 @@ async def _run_drain(
         spawn_id=_SPAWN_ID,
         receiver=cast("HarnessConnection[Any]", _Receiver(events)),
         drain_plan=DrainPlan(coordinator=coordinator),
-        tracer=None,
+        tracer=tracer,
     )
     return calls
 
@@ -470,7 +473,8 @@ async def test_failed_history_write_blocks_post_persist_delivery() -> None:
 
 @pytest.mark.asyncio
 async def test_held_descendant_refresh_does_not_block_ordered_event_delivery(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     entered = threading.Event()
     release = threading.Event()
@@ -496,15 +500,14 @@ async def test_held_descendant_refresh_does_not_block_ordered_event_delivery(
 
     history_writer = _HistoryWriter([WriteResult(success=True, seq=i) for i in range(3)], calls)
 
-    def emit_event(_spawn_id: SpawnId, event: RawHarnessEvent) -> bool:
+    def emit_event(_spawn_id: SpawnId, event: RawHarnessEvent) -> EmitOutcome:
         result = history_writer.write(event)
         if result.success:
             calls.append(("observe", event))
-        return result.success
+        return Written() if result.success else WriteFailed(result.error or "history write failed")
 
     loop = SpawnDrainLoop(
         sessions={},
-        history_writers={_SPAWN_ID: cast("HarnessHistoryWriter", history_writer)},
         emit_event=emit_event,
         publish_terminal=Mock(),
         fan_out_event=lambda _spawn_id, event: calls.append(("fan_out", event.raw)),
@@ -545,16 +548,12 @@ async def test_tenth_history_write_failure_aborts_without_delivery() -> None:
     )
 
     assert calls == [
-        call
-        for event in events[:10]
-        for call in (("pre_persist", event), ("persist", event))
+        call for event in events[:10] for call in (("pre_persist", event), ("persist", event))
     ]
     assert len(outcomes) == 1
     assert outcomes[0].status == "failed"
     assert outcomes[0].exit_code == 1
-    assert outcomes[0].error == (
-        "Aborted drain loop after repeated output persistence failures"
-    )
+    assert outcomes[0].error == ("Aborted drain loop after repeated output persistence failures")
 
 
 @pytest.mark.asyncio
@@ -611,8 +610,7 @@ async def test_terminal_frame_history_write_failure_is_not_delivered_or_terminal
 
 
 @pytest.mark.asyncio
-async def test_persisted_activity_restarts_elapsed_stabilization_before_concurrent_aux(
-) -> None:
+async def test_persisted_activity_restarts_elapsed_stabilization_before_concurrent_aux() -> None:
     wake = asyncio.Event()
     candidate_started = asyncio.Event()
     clock = FakeClock()
@@ -624,14 +622,9 @@ async def test_persisted_activity_restarts_elapsed_stabilization_before_concurre
         cleanup=_NoopCompletionCleanup(),
         clock=clock.monotonic,
     )
-    history_writer = _HistoryWriter(
-        [WriteResult(success=True, seq=0), WriteResult(success=True, seq=1)],
-        [],
-    )
     loop = SpawnDrainLoop(
         sessions={},
-        history_writers={_SPAWN_ID: cast("HarnessHistoryWriter", history_writer)},
-        emit_event=lambda _spawn_id, event: history_writer.write(event).success,
+        emit_event=lambda _spawn_id, event: Written(),
         publish_terminal=Mock(),
         fan_out_event=Mock(),
         fan_out_turn_boundary=AsyncMock(),
@@ -663,3 +656,20 @@ async def test_persisted_activity_restarts_elapsed_stabilization_before_concurre
     assert after_event_evaluation.trigger == "event"
     assert after_event_evaluation.stabilization_elapsed is False
     assert after_event_evaluation.state.stabilization_at == 4.0
+
+
+@pytest.mark.asyncio
+async def test_drain_trace_retains_the_writer_failure_reason():
+    event = RawHarnessEvent(event_type="message", harness_id="test", payload={})
+    tracer = Mock()
+    await _run_drain(
+        [event], [WriteResult(success=False, error="disk full: ENOSPC")], tracer=tracer
+    )
+    errors = [
+        call.kwargs["data"]
+        for call in tracer.emit.call_args_list
+        if call.args == ("drain", "persist_error")
+    ]
+    assert errors == [
+        {"event_type": "message", "error": "disk full: ENOSPC", "consecutive_failures": 1}
+    ]

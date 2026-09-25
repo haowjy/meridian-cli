@@ -9,9 +9,10 @@ from meridian.lib.harness.extractors.cursor import CURSOR_EXTRACTOR
 
 
 def _artifact_store_from_lines(spawn_id: SpawnId, lines: list[dict[str, object]]) -> AttemptFacts:
-    facts = AttemptFacts()
+    fold = CURSOR_EXTRACTOR.create_fold()
+    facts = fold.facts
     for event in lines:
-        CURSOR_EXTRACTOR.fold(facts, event)
+        _fold(fold, event)
     return facts
 
 
@@ -123,3 +124,13 @@ def test_cursor_extractor_prefers_result_over_assistant_message() -> None:
     )
 
     assert store.final_text == "terminal result text"
+
+
+def _fold(fold, payload):
+    fold(
+        RawHarnessEvent(
+            harness_id="fixture",
+            event_type=payload.get("type", payload.get("event_type", "")),
+            payload=payload,
+        )
+    )

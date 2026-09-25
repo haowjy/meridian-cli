@@ -28,6 +28,8 @@ from meridian.lib.harness.connections.base import (
     RawHarnessEvent,
 )
 from meridian.lib.harness.connections.errors import PortBindError
+from meridian.lib.harness.extractors.base import AttemptFold, run_event_hooks
+from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.signals import SignalCallbackReceiver, signal_coordinator
@@ -40,7 +42,6 @@ from meridian.lib.platform.process_scope.base import (
 from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.state.primary_meta import ActivityState, PrimaryMetadata, write_primary_metadata
 from meridian.lib.state.process_scope_projection import record_scope
-from meridian.lib.streaming.drain_plan_factory import record_pi_lifecycle_event
 from meridian.lib.streaming.heartbeat import heartbeat_loop
 
 from .ports import LaunchedProcess, ProcessLauncher, RunningProcess
@@ -231,8 +232,7 @@ class PrimaryAttachLauncher:
         process_launcher: ProcessLauncher,
         runtime_root: Path | None = None,
         on_running: Callable[[int], None] | None = None,
-        event_hook: Callable[[RawHarnessEvent], None] | None = None,
-        facts: AttemptFacts | None = None,
+        fold: AttemptFold | None = None,
         session_id_observer: Callable[[str], None] | None = None,
     ) -> None:
         self._spawn_id = spawn_id
@@ -242,14 +242,13 @@ class PrimaryAttachLauncher:
         self._process_launcher = process_launcher
         self._runtime_root = runtime_root
         self._on_running = on_running
-        self._event_hooks = (event_hook,) if event_hook is not None else ()
-        if connection.harness_id is HarnessId.PI and runtime_root is not None:
-
-            def phase_sink(event: RawHarnessEvent) -> None:
-                record_pi_lifecycle_event(runtime_root=runtime_root, spawn_id=spawn_id, event=event)
-
-            self._event_hooks += (phase_sink,)
-        self._facts = facts if facts is not None else AttemptFacts()
+        self._fold = fold or get_harness_bundle(connection.harness_id).extractor.create_fold()
+        self._event_hooks = (self._fold,)
+        if runtime_root is not None:
+            self._event_hooks += get_harness_bundle(connection.harness_id).event_sinks(
+                runtime_root, spawn_id
+            )
+        self._facts = self._fold.facts
         self._session_id_observer = session_id_observer
         self._metadata = _LauncherMetadata()
         self._metadata_lock = Lock()
@@ -323,6 +322,7 @@ class PrimaryAttachLauncher:
                 self._metadata.backend_port = self._resolve_backend_port()
             self._write_metadata()
 
+            self._fold.bind_scope(session_id)
             self._set_harness_session_id(session_id)
             self._record_backend_scope_from_connection(session_id)
             self._event_writer_task = asyncio.create_task(self._run_event_writer())
@@ -514,11 +514,7 @@ class PrimaryAttachLauncher:
         try:
             async for event in self._connection.events():
                 self._update_activity_from_event(event)
-                for hook in self._event_hooks:
-                    try:
-                        hook(event)
-                    except Exception:
-                        logger.exception("Primary attach event hook failed")
+                run_event_hooks(self._event_hooks, event)
                 if writer is not None:
                     writer.write(event)
         finally:

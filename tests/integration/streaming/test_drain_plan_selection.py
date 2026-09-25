@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent
+from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.harness.semantics import NormalizedHarnessEvent
 from meridian.lib.state.history import WriteResult
 from meridian.lib.streaming.drain_coordinator import DrainPlan
@@ -94,9 +95,15 @@ def test_spawn_manager_selects_complete_drain_plan_by_connection_capability(
 
 
 def test_pi_phase_events_update_sidecar_without_history(tmp_path: Path) -> None:
+    from tests.support.pi import start_row
+
+    start_row(tmp_path, "p-pi", HarnessId.PI, None)
     manager = SpawnManager(runtime_root=tmp_path, project_root=tmp_path)
     plan = _select_plan(manager, harness_id=HarnessId.PI)
     assert isinstance(plan.coordinator, PiDrainCoordinator)
+
+    for sink in get_harness_bundle(HarnessId.PI).event_sinks(tmp_path, SpawnId("p-pi")):
+        manager.register_event_hook(SpawnId("p-pi"), sink)
 
     for phase, status in (
         ("initial_prompt_sent", None),
@@ -160,6 +167,7 @@ def test_spawn_manager_authored_event_emission_order(
         calls.append(("hook", event))
 
     manager.register_event_hook(spawn_id, _hook)
+
     def _fan_out(target_spawn_id: SpawnId, event: NormalizedHarnessEvent | None) -> None:
         assert target_spawn_id == spawn_id
         assert event is not None
@@ -193,3 +201,24 @@ def test_spawn_manager_authored_event_emission_order(
         raw_text=None,
     )
     assert all(event == expected for _stage, event in calls)
+
+
+def test_late_pi_phase_cannot_recreate_deleted_spawn(tmp_path):
+    from meridian.lib.state import pi_lifecycle
+    from meridian.lib.state.spawn_aggregate import delete_published_spawn
+    from tests.support.pi import start_row
+
+    spawn = SpawnId("p1")
+    start_row(tmp_path, spawn, HarnessId.PI, None)
+    sinks = get_harness_bundle(HarnessId.PI).event_sinks(tmp_path, spawn)
+    assert delete_published_spawn(tmp_path, spawn, can_delete=lambda row: row is not None)
+    for sink in sinks:
+        sink(
+            RawHarnessEvent(
+                harness_id="pi",
+                event_type="meridian.pi.lifecycle.phase",
+                payload={"phase": "cleanup_completed"},
+            )
+        )
+    assert not (tmp_path / "spawns" / spawn).exists()
+    assert pi_lifecycle.read(tmp_path, spawn).phase is None

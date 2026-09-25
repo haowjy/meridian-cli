@@ -12,7 +12,7 @@ from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.ops.reference import resolve_spawn_ref
 from meridian.lib.ops.run_boundary import run_boundary_summary
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
-from meridian.lib.state import session_identity, session_store, spawn_store
+from meridian.lib.state import pi_lifecycle, session_identity, session_store, spawn_store
 from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.reaper import (
@@ -443,22 +443,8 @@ def _latest_pi_lifecycle_phase(
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     if resolved_runtime_root is None:
         return None
-    lifecycle = _read_pi_lifecycle(resolved_runtime_root, spawn_id)
-    return _lifecycle_text(lifecycle, "phase")
-
-
-def _read_pi_lifecycle(runtime_root: Path, spawn_id: str) -> dict[str, object]:
-    path = runtime_root / "spawns" / spawn_id / "pi-lifecycle.json"
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return cast("dict[str, object]", raw) if isinstance(raw, dict) else {}
-
-
-def _lifecycle_text(lifecycle: dict[str, object], key: str) -> str | None:
-    value = lifecycle.get(key)
-    return value if isinstance(value, str) else None
+    lifecycle = pi_lifecycle.read(resolved_runtime_root, spawn_id)
+    return lifecycle.phase
 
 
 def _pi_cleanup_telemetry(
@@ -470,12 +456,12 @@ def _pi_cleanup_telemetry(
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     if resolved_runtime_root is None:
         return _PiCleanupTelemetry(None, None, None, None)
-    lifecycle = _read_pi_lifecycle(resolved_runtime_root, spawn_id)
+    lifecycle = pi_lifecycle.read(resolved_runtime_root, spawn_id)
     return _PiCleanupTelemetry(
-        status=_lifecycle_text(lifecycle, "cleanup_status"),
-        phase=_lifecycle_text(lifecycle, "cleanup_phase"),
-        reason=_lifecycle_text(lifecycle, "reason"),
-        error=_lifecycle_text(lifecycle, "error"),
+        status=lifecycle.cleanup_status,
+        phase=lifecycle.cleanup_phase,
+        reason=lifecycle.reason,
+        error=lifecycle.error,
     )
 
 

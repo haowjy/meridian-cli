@@ -435,10 +435,10 @@ def _execute_primary_process(
         run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
         on_running=on_running,
     )
-    facts = AttemptFacts()
+    fold = get_harness_bundle(harness_id).extractor.create_fold()
     if output_log_path is not None and output_log_path.is_file():
-        facts.fold_stdout(get_harness_bundle(harness_id).extractor, output_log_path)
-    return exit_code, None, False, facts
+        fold.fold_stdout(output_log_path)
+    return exit_code, None, False, fold.facts
 
 
 def _finalize_lifecycle(
@@ -578,7 +578,7 @@ async def _run_primary_attach(
             task_cwd=task_cwd,
             env=env,
         )
-        facts = AttemptFacts()
+        fold = harness_bundle.extractor.create_fold()
 
         launcher = PrimaryAttachLauncher(
             spawn_id=spawn_id,
@@ -589,12 +589,7 @@ async def _run_primary_attach(
             runtime_root=spawn_dir.parent.parent,
             on_running=on_running,
             session_id_observer=session_id_observer,
-            event_hook=lambda event: facts.hook(
-                harness_bundle.extractor,
-                event,
-                scope_session_id=connection.session_id,
-            ),
-            facts=facts,
+            fold=fold,
         )
         return await launcher.run(
             config=config,

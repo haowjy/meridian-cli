@@ -3,7 +3,6 @@
 import pytest
 
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.connections.base import RawHarnessEvent
 
@@ -29,8 +28,9 @@ def test_owned_envelope_only(payload: dict[str, object], expected: str | None) -
     from meridian.lib.harness.bundle import get_harness_bundle
 
     extractor = get_harness_bundle(HarnessId.CODEX).extractor
-    facts = AttemptFacts()
-    extractor.fold(facts, payload)
+    fold = extractor.create_fold()
+    facts = fold.facts
+    _fold(fold, payload)
     assert facts.first_session_id == expected
     event = RawHarnessEvent(event_type=str(payload["type"]), harness_id="codex", payload=payload)
     assert (
@@ -41,8 +41,19 @@ def test_owned_envelope_only(payload: dict[str, object], expected: str | None) -
 
 def test_claude_ignores_identity_keys_inside_message_content() -> None:
     extractor = get_harness_bundle(HarnessId.CLAUDE).extractor
-    facts = AttemptFacts()
-    extractor.fold(facts, {"type": "assistant", "message": {"session_id": SID}})
+    fold = extractor.create_fold()
+    facts = fold.facts
+    _fold(fold, {"type": "assistant", "message": {"session_id": SID}})
     assert facts.first_session_id is None
-    extractor.fold(facts, {"type": "system", "session_id": SID})
+    _fold(fold, {"type": "system", "session_id": SID})
     assert facts.first_session_id == SID
+
+
+def _fold(fold, payload):
+    fold(
+        RawHarnessEvent(
+            harness_id="fixture",
+            event_type=payload.get("type", payload.get("event_type", "")),
+            payload=payload,
+        )
+    )

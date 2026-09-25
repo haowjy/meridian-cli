@@ -1,7 +1,8 @@
 # harness/extractors/ — Attempt Facts
 
-One extractor per harness. `fold(facts, event)` updates bounded, attempt-local
-facts synchronously before event persistence. Retries use fresh facts. Extractors
+One stateless extractor per harness. `create_fold()` makes an attempt-local
+fold with its own cursor and bounded facts. Calling it with a `RawHarnessEvent`
+updates facts synchronously before event persistence. Retries use fresh folds. Extractors
 never read runner history or artifact-store output. Claude `--print` is the
 black-box exception: the runner folds its captured stdout after exit.
 
@@ -14,6 +15,6 @@ in the recorded native store, never the latest message in a conversation or an
 ambient namespace. OpenCode V2 prefers this read over streamed text.
 
 Access extractors through `get_harness_bundle().extractor`, after harness bootstrap.
-Keep harness-specific parsing here; runners only carry facts and register hooks.
+Keep harness-specific parsing here; runners only carry facts and register folds.
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — precedence, ownership, usage semantics.
