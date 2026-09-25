@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Persist the finalized native store with the first owned session observation in both runners.
+
 ### Fixed
 
 - Fresh Pi UUID launches warn and skip torn sibling headers; exact resume/fork sources still fail closed.

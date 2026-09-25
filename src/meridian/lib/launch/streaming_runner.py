@@ -1204,6 +1204,10 @@ async def execute_with_streaming(
                 echo_stderr=stream_stdout_to_terminal,
             )
 
+        if session_attempt is not None and spec.native_identity_plan is not None:
+            session_attempt = replace(
+                session_attempt, native_store=spec.native_identity_plan.native_store,
+            )
         observed_harness_session_id: str | None = None
 
         def _observe_id(session_id: str, attempt: SessionAttempt | None) -> None:

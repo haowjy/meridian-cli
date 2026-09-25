@@ -9,6 +9,7 @@ import time
 import uuid
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -1002,6 +1003,12 @@ def run_harness_process(
                 lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
                 launch_spec = runtime_context.binding.spec
                 identity_plan = launch_spec.native_identity_plan
+                if identity_plan is not None and managed.attempt is not None:
+                    attempt = replace(managed.attempt, native_store=identity_plan.native_store)
+                    managed = replace(
+                        managed, attempt=attempt,
+                        record_harness_session_id=attempt.record_harness_session_id,
+                    )
                 if identity_plan is not None and identity_plan.harness_session_id:
                     result = update_session_harness_id(
                         runtime_root, managed.chat_id, identity_plan.harness_session_id or "",

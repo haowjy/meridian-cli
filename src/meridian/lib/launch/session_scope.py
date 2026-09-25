@@ -72,10 +72,11 @@ class SessionAttempt:
     chat_id: str
     session_instance_id: str
     startup_attempt_id: str
+    native_store: str | None = None
 
     def record_harness_session_id(self, session_id: str) -> NativeBindingResult:
         return update_session_harness_id(
-            self.runtime_root, self.chat_id, session_id,
+            self.runtime_root, self.chat_id, session_id, native_store=self.native_store,
             session_instance_id=self.session_instance_id,
             startup_attempt_id=self.startup_attempt_id,
         )
