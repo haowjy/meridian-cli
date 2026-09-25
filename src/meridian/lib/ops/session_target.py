@@ -31,6 +31,11 @@ _CODEX_FILENAME_RE = re.compile(
 )
 
 
+def native_source_label(harness: str) -> str:
+    """One label for a native source across log, preview and search."""
+    return f"{harness} transcript"
+
+
 class TranscriptSource(NamedTuple):
     kind: Literal["file", "native_file", "opencode_db"]
     session_id: str
@@ -39,12 +44,14 @@ class TranscriptSource(NamedTuple):
     path: Path
 
     @classmethod
-    def native(cls, key: NativeKey, path: Path) -> TranscriptSource:
+    def native(cls, harness: str, session_id: str, path: Path) -> TranscriptSource:
+        """The one native source rule: the adapter names the kind of its own file."""
+        adapter = get_default_harness_registry().get_subprocess_harness(HarnessId(harness))
         return cls(
-            kind="opencode_db" if key.harness == "opencode" else "native_file",
-            session_id=key.session_id,
-            harness=key.harness,
-            source_label=key.harness,
+            kind=adapter.native_transcript_kind(path),
+            session_id=session_id,
+            harness=harness,
+            source_label=native_source_label(harness),
             path=path,
         )
 
@@ -102,15 +109,7 @@ def _native_target(key: NativeKey, record: session_store.SessionRecord) -> Sessi
     )
     if candidate is None or not candidate.is_file():
         raise NativeSessionUnavailable(record.chat_id, "missing")
-    return SessionLogTarget(
-        TranscriptSource(
-            kind=adapter.native_transcript_kind(candidate),
-            session_id=key.session_id,
-            harness=key.harness,
-            source_label=f"{key.harness} transcript",
-            path=candidate,
-        )
-    )
+    return SessionLogTarget(TranscriptSource.native(key.harness, key.session_id, candidate))
 
 
 def _target_from_record(record: session_store.SessionRecord) -> SessionLogTarget:
@@ -245,14 +244,7 @@ def _untracked_target(*, project_root: Path, session_ref: str) -> SessionLogTarg
     if candidate is None or not candidate.is_file():
         raise FileNotFoundError(f"Session file for '{session_ref}' (harness={inferred}) not found")
     return SessionLogTarget(
-        TranscriptSource(
-            kind=adapter.native_transcript_kind(candidate),
-            session_id=session_ref,
-            harness=str(inferred),
-            source_label=f"{inferred} transcript",
-            path=candidate,
-        ),
-        view_label="untracked",
+        TranscriptSource.native(str(inferred), session_ref, candidate), view_label="untracked"
     )
 
 
@@ -312,4 +304,9 @@ def resolve_transcript_source(
     )
 
 
-__all__ = ["SessionLogTarget", "TranscriptSource", "resolve_transcript_source"]
+__all__ = [
+    "SessionLogTarget",
+    "TranscriptSource",
+    "native_source_label",
+    "resolve_transcript_source",
+]

@@ -431,15 +431,12 @@ def test_snapshot_preview_bypasses_stream_append_checkpoint(tmp_path: Path, monk
 
 
 def test_resolved_native_source_checks_snapshot_binding(tmp_path: Path) -> None:
-    from meridian.lib.core.native_identity import NativeKey
     from meridian.lib.ops.session_target import SessionLogTarget, TranscriptSource
     from meridian.lib.ops.session_transcript import SessionLogRoute, parse_session_target
 
     path = tmp_path / "copied-native.jsonl"
     _snapshot(path)  # Valid empty snapshot for native-1, not selected-native.
-    target = SessionLogTarget(
-        TranscriptSource.native(NativeKey("pi", str(tmp_path), "selected-native"), path)
-    )
+    target = SessionLogTarget(TranscriptSource.native("pi", "selected-native", path))
     with pytest.raises(ValueError, match="binding"):
         parse_session_target(
             project_root=tmp_path,

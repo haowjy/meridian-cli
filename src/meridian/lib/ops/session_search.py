@@ -21,6 +21,7 @@ from meridian.lib.ops.runtime import (
 )
 from meridian.lib.ops.session_corpus import SessionCorpusScope, resolve_session_search_corpus
 from meridian.lib.ops.session_search_index import SearchProjection
+from meridian.lib.ops.session_target import native_source_label
 from meridian.lib.ops.session_transcript import (
     AbsoluteTranscriptEntry,
     ParsedSessionTranscript,
@@ -359,7 +360,7 @@ def _render_match(
         chat_id=chats[0],
         chat_ids=chats,
         session_id=row.key.session_id,
-        source=row.key.harness,
+        source=native_source_label(row.key.harness),
         segment=row.segment or 0,
         segment_start_message=row.seg_start or 0,
         segment_end_message=row.seg_end or 0,

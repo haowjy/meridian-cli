@@ -251,7 +251,9 @@ class SearchProjection:
                 self.errors[key] = "over lazy source cap — run meridian session index rebuild"
                 return None
             budget = None if rebuild else TranscriptBudget(deadline, LAZY_SOURCE_BYTES)
-            target = SessionLogTarget(TranscriptSource.native(key, source.locator))
+            target = SessionLogTarget(
+                TranscriptSource.native(key.harness, key.session_id, source.locator)
+            )
             read = read_native_source(target.source, budget=budget)
             transcript = parse_session_target(
                 project_root=self.project_root,
