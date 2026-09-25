@@ -533,6 +533,12 @@ def test_session_log_falls_back_to_spawn_history_when_opencode_db_has_no_message
         SessionLogInput(ref=resolved_ref, project_root=project_root.as_posix(), full=True)
     )
 
+    if ref_kind == "chat":
+        assert output.session_id == session_id
+        assert output.source == "opencode transcript"
+        assert not output.messages
+        return
+
     expected_output_session_id = (
         session_id if expected_session_id == "session" else expected_session_id
     )

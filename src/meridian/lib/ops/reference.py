@@ -49,11 +49,7 @@ class ResolvedSessionReference:
 
     @property
     def missing_harness_session_id(self) -> bool:
-        """True when a tracked reference exists but has no harness session id.
-
-        Considers authoritative recovery (session_store, spawn_row, primary_meta)
-        but excludes detected_unverified.
-        """
+        """True when a tracked reference has no exact recorded native ID."""
 
         return self.tracked and self.authoritative_harness_session_id is None
 
@@ -67,21 +63,8 @@ class ResolvedSessionReference:
 
     @property
     def authoritative_harness_session_id(self) -> str | None:
-        """Return the harness session id, using only authoritative recovery.
-
-        Excludes DETECTED_UNVERIFIED — suitable for continue/fork paths
-        that require verified session identity.
-        """
-
-        if self.harness_session_id:
-            return self.harness_session_id
-        if self.recovery is None:
-            return None
-        from meridian.lib.ops.reference_recovery import RecoveryProvenance
-
-        if self.recovery.provenance == RecoveryProvenance.DETECTED_UNVERIFIED:
-            return None
-        return self.recovery.harness_session_id
+        """Both direct and recovered IDs now come only from recorded state."""
+        return self.effective_harness_session_id
 
 
 def _normalize_optional(value: str | None) -> str | None:
@@ -106,10 +89,6 @@ def resolve_spawn_ref(runtime_root: Path, ref: str) -> SpawnId | None:
         return SpawnId(matches[0].id)
 
     return None
-
-
-def _latest_harness_session_id(record: session_store.SessionRecord) -> str | None:
-    return _normalize_optional(record.harness_session_id)
 
 
 def _latest_primary_spawn_id_for_chat(runtime_root: Path, chat_id: str) -> str | None:
@@ -338,8 +317,10 @@ def _reference_from_session(
             or session.execution_cwd
             or project_root.as_posix()
         ),
-        source_claude_config_dir=_normalize_optional(session.claude_config_dir),
-        source_pi_session_dir=source_pi_session_dir,
+        source_claude_config_dir=_normalize_optional(
+            session.native_store or session.claude_config_dir
+        ),
+        source_pi_session_dir=session.native_store or source_pi_session_dir,
         source_launch_policy_snapshot=_launch_policy_snapshot_for_session(
             runtime_root,
             session,
@@ -356,7 +337,7 @@ def _resolve_chat_reference(
         return _resolve_untracked_reference(project_root, ref)
     session = records[0]
     return _reference_from_session(
-        runtime_root, session, project_root, _latest_harness_session_id(session)
+        runtime_root, session, project_root, _normalize_optional(session.harness_session_id)
     )
 
 

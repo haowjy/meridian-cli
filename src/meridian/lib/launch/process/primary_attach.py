@@ -306,6 +306,10 @@ class PrimaryAttachLauncher:
 
             self._event_writer_task = asyncio.create_task(self._run_event_writer())
             self._set_harness_session_id(session_id)
+            if self._metadata.harness_session_id != session_id:
+                raise RuntimeError(
+                    "native binding conflict; refusing to attach another conversation"
+                )
             self._set_activity("idle")
 
             if session_id is None or not session_id.strip():
@@ -516,6 +520,26 @@ class PrimaryAttachLauncher:
     def _set_harness_session_id(self, session_id: str | None) -> None:
         if session_id is None:
             return
+        if self._runtime_root is not None:
+            from meridian.lib.launch.session_scope import bind_harness_session_id
+            from meridian.lib.state.session_identity import get_session_record_for_spawn
+            from meridian.lib.state.session_store import update_session_harness_id
+
+            record = get_session_record_for_spawn(
+                self._runtime_root, str(self._spawn_id), require_harness_session_id=False,
+            )
+            if record is not None:
+                runtime_root = self._runtime_root
+                session_id = bind_harness_session_id(
+                    runtime_root=runtime_root, spawn_id=self._spawn_id,
+                    record_session_id=lambda candidate: update_session_harness_id(
+                        runtime_root, record.chat_id, candidate,
+                        session_instance_id=record.session_instance_id,
+                    ),
+                    session_id=session_id, source="observed",
+                    current_session_id=record.harness_session_id or "",
+                    chat_id=record.chat_id,
+                )
         should_write = False
         with self._metadata_lock:
             if (self._metadata.harness_session_id

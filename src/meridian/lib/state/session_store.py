@@ -454,6 +454,7 @@ def project_session_event(records: dict[str, SessionRecord], event: SessionEvent
         if existing is not None:
             record = record.model_copy(
                 update={
+                    "harness": existing.harness or record.harness,
                     "harness_session_id": existing.harness_session_id or record.harness_session_id,
                     "native_store": existing.native_store or record.native_store,
                 }
@@ -623,7 +624,21 @@ def start_session(
             forked_from_history_id=forked_from_history_id,
             model_selection_protocol=model_selection_protocol,
         )
-        with lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"):
+        with (
+            lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
+            lock_file(paths.sessions_flock),
+        ):
+            existing = get_session_record(runtime_root, resolved_chat_id)
+            if existing is not None and _binding_conflicts(existing, event):
+                raise ValueError(f"{resolved_chat_id}: native binding conflict")
+            if existing is not None:
+                event = event.model_copy(update={
+                    "harness": existing.harness or event.harness,
+                    "harness_session_id": (
+                        existing.harness_session_id or event.harness_session_id
+                    ),
+                    "native_store": existing.native_store or event.native_store,
+                })
             # Chat-only callers select the current generation. Resolved references
             # carry their exact portable ancestor and must never be re-resolved.
             if forked_from_chat_id and forked_from_history_id is None:
@@ -1415,9 +1430,21 @@ def list_session_generations(runtime_root: Path) -> tuple[SessionRecord, ...]:
     """All generations, including historical and legacy starts, in source order."""
     generations: dict[tuple[str, str], dict[str, SessionRecord]] = {}
     latest_blank: dict[str, str] = {}
+    accepted: dict[str, SessionRecord] = {}
     for ordinal, event in enumerate(
         read_events(RuntimePaths.from_root_dir(runtime_root).sessions_jsonl, _parse_event)
     ):
+        prior = accepted.get(event.chat_id)
+        if isinstance(event, (SessionStartEvent, SessionUpdateEvent)) and prior is not None:
+            if _binding_conflicts(prior, event):
+                continue
+            if isinstance(event, SessionStartEvent):
+                event = event.model_copy(update={
+                    "harness": prior.harness or event.harness,
+                    "harness_session_id": prior.harness_session_id or event.harness_session_id,
+                    "native_store": prior.native_store or event.native_store,
+                })
+        project_session_event(accepted, event)
         generation = event.session_instance_id
         if not generation:
             if isinstance(event, SessionStartEvent):

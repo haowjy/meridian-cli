@@ -44,7 +44,7 @@ def _assert_not_captured(root: Path, key: str) -> None:
     assert not (root / "spawns" / key / "history.jsonl").exists()
 
 
-def test_stop_maintenance_captures_completed_spawn_after_chat_reuse(
+def test_stop_maintenance_captures_completed_spawn_with_another_chat(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "home"))
@@ -54,10 +54,10 @@ def test_stop_maintenance_captures_completed_spawn_after_chat_reuse(
     native_root = resolve_pi_spawn_session_root()
     native_root.mkdir(parents=True)
     keys: list[str] = []
-    for native_id in ("old-native", "new-native"):
+    for chat_id, native_id in (("c1", "old-native"), ("c2", "new-native")):
         key = spawn_store.start_spawn(
             root,
-            chat_id="c1",
+            chat_id=chat_id,
             prompt="question",
             harness="pi",
             model="test",
@@ -71,11 +71,11 @@ def test_stop_maintenance_captures_completed_spawn_after_chat_reuse(
             "pi",
             native_id,
             "test",
-            chat_id="c1",
+            chat_id=chat_id,
             kind="primary",
             spawn_id=key,
         )
-        session_store.stop_session(root, "c1")
+        session_store.stop_session(root, chat_id)
         spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
         events = [
             {"type": "session", "version": 3, "id": native_id, "cwd": str(project)},
@@ -89,7 +89,7 @@ def test_stop_maintenance_captures_completed_spawn_after_chat_reuse(
         (native_root / f"timestamp_{native_id}.jsonl").write_text(
             "".join(json.dumps(event) + "\n" for event in events)
         )
-    latest = session_store.get_session_record(root, "c1")
+    latest = session_store.get_session_record(root, "c2")
     assert latest is not None and latest.spawn_id == keys[1]
     assert session_stop_maintenance(project, keys[0]) is None
     captured = _snapshot_path(root, keys[0])
@@ -226,7 +226,8 @@ def test_capture_exact_generation_supplies_identity_not_newer_chat(tmp_path: Pat
         spawn_id=key,
     )
     session_store.stop_session(root, "c1")
-    session_store.start_session(root, "pi", "new-native", "test", chat_id="c1", kind="primary")
+    session_store.start_session(root, "pi", "", "test", chat_id="c1", kind="primary")
+    session_store.stop_session(root, "c1")
     try:
         materialize_native_history(project, root, key)
         _assert_sealed_snapshot(

@@ -12,7 +12,7 @@ import os
 import sys
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -228,6 +228,8 @@ class _ObservingAdapter:
 
 
 class _RecordingManaged:
+    chat_id = "c1"
+
     def __init__(self) -> None:
         self.recorded: list[str] = []
 
@@ -297,3 +299,33 @@ def test_finalize_does_not_rebind_matching_observation(tmp_path: Path) -> None:
 
     assert resolved_session_id == "ses_known_conversation"
     assert managed.recorded == []
+
+
+@pytest.mark.parametrize("source", ["assigned", "observed"])
+def test_binding_mirrors_only_the_first_identity(
+    tmp_path: Path, source: Literal["assigned", "observed"],
+) -> None:
+    from structlog.testing import capture_logs
+
+    from meridian.lib.launch.session_scope import bind_harness_session_id
+    from meridian.lib.state import session_store
+
+    chat_id = session_store.start_session(tmp_path, "claude", "", "sonnet")
+    try:
+        def record(candidate: str) -> session_store.NativeBindingResult:
+            return session_store.update_session_harness_id(tmp_path, chat_id, candidate)
+
+        assert bind_harness_session_id(
+            runtime_root=tmp_path, spawn_id=None, record_session_id=record,
+            session_id="first", source=source,
+        ) == "first"
+        with capture_logs() as logs:
+            # Even a caller with stale in-memory state must consume the store's accepted ID.
+            assert bind_harness_session_id(
+                runtime_root=tmp_path, spawn_id=None, record_session_id=record,
+                session_id="other", source="observed",
+            ) == "first"
+        assert any(log["event"] == "native_binding_conflict" for log in logs)
+        assert session_store.get_session_harness_id(tmp_path, chat_id) == "first"
+    finally:
+        session_store.stop_session(tmp_path, chat_id)

@@ -178,7 +178,7 @@ def test_fork_history_is_frozen_before_source_chat_resumes(tmp_path: Path) -> No
         session_store.start_session(
             root,
             harness="codex",
-            harness_session_id="resumed",
+            harness_session_id="first",
             model="test",
             kind="primary",
             chat_id=source,
@@ -205,8 +205,6 @@ def test_fork_history_is_frozen_before_source_chat_resumes(tmp_path: Path) -> No
         state = spawn_store.get_spawn(root, child)
         assert state is not None
         assert state.forked_from_history_id == original.history_id
-        exact = session_store.resolve_session_ref(root, "first")
-        assert exact is not None and exact.history_id == original.history_id
     finally:
         session_store.stop_session(root, source)
         if fork:

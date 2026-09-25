@@ -148,7 +148,7 @@ def test_session_reentry_rechecks_live_lease(tmp_path: Path) -> None:
     assert resolve_session_reentry(project_root.as_posix(), chat_id) == Resume(chat_id)
 
 
-def test_list_and_reentry_share_recorded_primary_metadata_recovery(tmp_path: Path) -> None:
+def test_list_and_reentry_refuse_primary_metadata_as_binding(tmp_path: Path) -> None:
     project_root, runtime_root = _project_roots(tmp_path)
     harness_session_id = "45454545-4545-4545-8545-454545454545"
     chat_id = session_store.start_session(
@@ -176,15 +176,15 @@ def test_list_and_reentry_share_recorded_primary_metadata_recovery(tmp_path: Pat
 
     live_listing = session_list_sync(SessionListInput(project_root=project_root.as_posix()))
     live_row = next(row for row in live_listing.rows if row.chat_id == chat_id)
-    assert live_row.reentry == Fork(chat_id)
-    assert resolve_session_reentry(project_root.as_posix(), chat_id) == Fork(chat_id)
+    assert isinstance(live_row.reentry, Blocked)
+    assert isinstance(resolve_session_reentry(project_root.as_posix(), chat_id), Blocked)
 
     session_store.stop_session(runtime_root, chat_id)
 
     stopped_listing = session_list_sync(SessionListInput(project_root=project_root.as_posix()))
     stopped_row = next(row for row in stopped_listing.rows if row.chat_id == chat_id)
-    assert stopped_row.reentry == Resume(chat_id)
-    assert resolve_session_reentry(project_root.as_posix(), chat_id) == Resume(chat_id)
+    assert isinstance(stopped_row.reentry, Blocked)
+    assert isinstance(resolve_session_reentry(project_root.as_posix(), chat_id), Blocked)
 
 
 def test_recorded_primary_spawn_id_avoids_global_spawn_recovery_scan(
@@ -218,8 +218,8 @@ def test_recorded_primary_spawn_id_avoids_global_spawn_recovery_scan(
     monkeypatch.setattr(spawn_store, "list_spawns", fail_global_scan)
     try:
         listing = session_list_sync(SessionListInput(project_root=project_root.as_posix(), limit=1))
-        assert listing.rows[0].reentry == Fork(chat_id)
-        assert resolve_session_reentry(project_root.as_posix(), chat_id) == Fork(chat_id)
+        assert isinstance(listing.rows[0].reentry, Blocked)
+        assert isinstance(resolve_session_reentry(project_root.as_posix(), chat_id), Blocked)
     finally:
         session_store.stop_session(runtime_root, chat_id)
 
@@ -723,7 +723,7 @@ def test_native_preview_does_not_follow_reused_chat_generation(tmp_path, monkeyp
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     for number in (1, 2):
-        native = f"{number:08d}-1111-4111-8111-111111111111"
+        native = "00000001-1111-4111-8111-111111111111"
         _write_codex_rollout(
             home=home, project_root=project, session_id=native, text=f"generation {number}"
         )

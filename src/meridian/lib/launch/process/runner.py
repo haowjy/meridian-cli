@@ -557,6 +557,7 @@ def _finalize_lifecycle_and_observe_session(
         session_id=observed_harness_session_id,
         source="observed",
         current_session_id=resolved_harness_session_id,
+        chat_id=managed.chat_id,
     )
     return resolved_exit_code, resolved_harness_session_id
 
@@ -994,16 +995,22 @@ def run_harness_process(
                 lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
                 launch_spec = runtime_context.binding.spec
                 identity_plan = launch_spec.native_identity_plan
-                if identity_plan is not None and identity_plan.harness_session_id:
+                if identity_plan is not None:
                     result = update_session_harness_id(
-                        runtime_root, managed.chat_id, identity_plan.harness_session_id,
+                        runtime_root, managed.chat_id, identity_plan.harness_session_id or "",
                         native_store=identity_plan.native_store, source="assigned",
+                        session_instance_id=(
+                            managed.attempt.session_instance_id if managed.attempt else None
+                        ),
+                        startup_attempt_id=(
+                            managed.attempt.startup_attempt_id if managed.attempt else None
+                        ),
                     )
                     if result.status == "conflict":
                         raise ValueError(f"{managed.chat_id}: native binding conflict before exec")
                     resolved_harness_session_id = bind_harness_session_id(
                         runtime_root=runtime_root, spawn_id=primary_spawn_id,
-                        record_session_id=managed.record_harness_session_id,
+                        record_session_id=lambda _: result,
                         session_id=result.harness_session_id, source="assigned",
                     )
                     expected_harness_session_id = resolved_harness_session_id
@@ -1170,6 +1177,7 @@ def run_harness_process(
                                 session_id=observation.session_id,
                                 source="observed",
                                 current_session_id=resolved_harness_session_id,
+                                chat_id=managed.chat_id,
                             )
                         _write_native_primary_metadata(
                             runtime_root=runtime_root,

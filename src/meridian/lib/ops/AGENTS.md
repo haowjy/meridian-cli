@@ -89,6 +89,8 @@ references. All `--from` / `-f` operations route through this.
 Raw native references retain the supplied ID, not a matching chat's later ID.
 Their harness namespace must be unambiguous or explicit. Tracked chat/spawn
 references use their recorded harness; native-file discovery cannot replace it.
+A chat transcript reads only its bound native key. Missing identity or transcript
+is typed unavailable; runner output and primary metadata cannot repair it.
 
 ## Resolve-Before-Persist vs Row-First
 

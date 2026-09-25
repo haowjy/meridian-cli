@@ -81,13 +81,6 @@ class ForkMaterializationMode(StrEnum):
     MERIDIAN_MATERIALIZED_FORK = "meridian_materialized_fork"
 
 
-class SessionSeedMode(StrEnum):
-    """How one harness derives a seeded session id before runtime events begin."""
-
-    NONE = "none"
-    PROJECTED_ARGS = "projected_args"
-
-
 class PrelaunchBootstrapMode(StrEnum):
     """How one harness performs prelaunch environment/bootstrap work."""
 
@@ -191,8 +184,6 @@ class BootstrapContract(BaseModel):
     fork_materialization: ForkMaterializationMode = ForkMaterializationMode.NATIVE_CONTINUE_FORK
     primary_attach_failure_policy: Literal["raise", "fallback_to_blackbox"] = "raise"
     seeds_resume_metadata: bool = True
-    primary_session_seed_mode: SessionSeedMode = SessionSeedMode.NONE
-    streaming_session_seed_mode: SessionSeedMode = SessionSeedMode.NONE
     prelaunch_bootstrap_mode: PrelaunchBootstrapMode = PrelaunchBootstrapMode.NONE
     #: Whether the black-box primary child needs the stderr log path env var
     #: injected so its runtime writes stderr to the spawn dir.
@@ -442,19 +433,6 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
 
     def blocked_child_env_vars(self) -> frozenset[str]: ...
 
-    def derive_primary_seeded_session_id(
-        self,
-        *,
-        spec: ResolvedLaunchSpec,
-        command: tuple[str, ...],
-    ) -> str | None: ...
-
-    def derive_streaming_seeded_session_id(
-        self,
-        *,
-        spec: ResolvedLaunchSpec,
-    ) -> str | None: ...
-
     def prepare_prelaunch(
         self,
         *,
@@ -673,23 +651,6 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
 
     def blocked_child_env_vars(self) -> frozenset[str]:
         return frozenset()
-
-    def derive_primary_seeded_session_id(
-        self,
-        *,
-        spec: ResolvedLaunchSpec,
-        command: tuple[str, ...],
-    ) -> str | None:
-        _ = spec, command
-        return None
-
-    def derive_streaming_seeded_session_id(
-        self,
-        *,
-        spec: ResolvedLaunchSpec,
-    ) -> str | None:
-        _ = spec
-        return None
 
     def prepare_prelaunch(
         self,

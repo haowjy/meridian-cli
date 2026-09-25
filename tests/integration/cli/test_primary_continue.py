@@ -466,7 +466,6 @@ def test_fork_old_harness_generation_preserves_selected_history(
     session_store.stop_session(root, source)
     source = session_store.start_session(
         root,
-        chat_id=source,
         harness="codex",
         harness_session_id="newer-native",
         model="gpt-5.3-codex",
@@ -594,5 +593,7 @@ def test_primary_continue_unbound_chat_refuses_to_guess(tmp_path: Path) -> None:
         runtime_root, harness="claude", harness_session_id="", model="sonnet",
     )
     session_store.stop_session(runtime_root, chat_id)
-    with pytest.raises(ValueError, match=f"{chat_id} has no verified native session; cannot continue"):
+    with pytest.raises(
+        ValueError, match=f"{chat_id} has no verified native session; cannot continue",
+    ):
         _run_primary_continue(tmp_path, chat_id)

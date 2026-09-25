@@ -363,7 +363,7 @@ def test_cleanup_cannot_delete_concurrently_restarted_session(
         session_store.start_session(
             runtime_root,
             harness="codex",
-            harness_session_id="new-thread",
+            harness_session_id="c10-thread",
             model="gpt-5.4",
             chat_id=chat_id,
         )
@@ -786,6 +786,7 @@ def test_native_binding_is_immutable(tmp_path: Path) -> None:
             runtime_root, chat_id, "first", native_store="/native", source="assigned",
         )
         assert first.status == "bound"
+        bound_bytes = (runtime_root / "sessions.jsonl").read_bytes()
         assert session_store.update_session_harness_id(
             runtime_root, chat_id, "first", native_store="/native",
         ).status == "already_bound"
@@ -795,7 +796,11 @@ def test_native_binding_is_immutable(tmp_path: Path) -> None:
         )
         assert conflict.status == "conflict"
         assert conflict.harness_session_id == "first"
+        assert session_store.update_session_harness_id(
+            runtime_root, chat_id, "first", native_store="/other",
+        ).status == "conflict"
         assert session_store.get_session_record(runtime_root, chat_id) == before
+        assert (runtime_root / "sessions.jsonl").read_bytes() == bound_bytes
     finally:
         session_store.stop_session(runtime_root, chat_id)
 
@@ -817,3 +822,30 @@ def test_legacy_binding_rows_ignore_identity_list(tmp_path: Path) -> None:
     }))
     assert records["c1"] == record
     assert "harness_session_ids" not in record.model_dump()
+
+
+def test_restart_cannot_rebind_chat(tmp_path: Path) -> None:
+    root = _state_root(tmp_path)
+    chat_id = session_store.start_session(root, "claude", "first", "sonnet")
+    session_store.stop_session(root, chat_id)
+    before = session_store.get_session_record(root, chat_id)
+    with pytest.raises(ValueError, match="native binding conflict"):
+        session_store.start_session(root, "claude", "other", "sonnet", chat_id=chat_id)
+    assert session_store.get_session_record(root, chat_id) == before
+
+
+def test_concurrent_native_binding_has_one_winner(tmp_path: Path) -> None:
+    from tests.support.process_race import run_spawn_race_or_skip
+
+    root = _state_root(tmp_path)
+    chat_id = session_store.start_session(root, "claude", "", "sonnet")
+    try:
+        results = run_spawn_race_or_skip(
+            session_store.update_session_harness_id,
+            [(root, chat_id, "first"), (root, chat_id, "second")],
+        )
+        assert sorted(result.status for result in results) == ["bound", "conflict"]
+        assert results[0].harness_session_id == results[1].harness_session_id
+        assert session_store.get_session_harness_id(root, chat_id) == results[0].harness_session_id
+    finally:
+        session_store.stop_session(root, chat_id)

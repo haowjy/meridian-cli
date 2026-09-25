@@ -28,7 +28,6 @@ from meridian.lib.harness.adapter import (
     ProjectionMode,
     RecordConfigDirFn,
     RunPromptPolicy,
-    SessionSeedMode,
     SpawnParams,
     TransportContract,
 )
@@ -234,8 +233,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             bootstrap=BootstrapContract(
                 mode=BootstrapMode.SUBPROCESS_ONLY,
                 fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
-                primary_session_seed_mode=SessionSeedMode.PROJECTED_ARGS,
-                streaming_session_seed_mode=SessionSeedMode.PROJECTED_ARGS,
                 prelaunch_bootstrap_mode=PrelaunchBootstrapMode.ENV_OVERLAY_AND_SESSION_ACCESS,
             ),
             capability_limits=(
@@ -387,21 +384,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         # Meridian manages nesting limits itself; suppress Claude's parent-session
         # sentinel so child Claude spawns can run under Meridian control.
         return frozenset({"CLAUDECODE"})
-
-    def derive_primary_seeded_session_id(
-        self,
-        *,
-        spec: ResolvedLaunchSpec,
-        command: tuple[str, ...],
-    ) -> str | None:
-        return extract_session_id_from_args(command)
-
-    def derive_streaming_seeded_session_id(
-        self,
-        *,
-        spec: ResolvedLaunchSpec,
-    ) -> str | None:
-        return extract_session_id_from_args(spec.extra_args)
 
     def prepare_prelaunch(
         self,

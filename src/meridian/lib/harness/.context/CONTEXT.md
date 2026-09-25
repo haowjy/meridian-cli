@@ -105,7 +105,9 @@ fallback chain; Claude overrides it with harness-specific reconciliation:
 3. `current_session_id` — previously known ID, returned as fallback
 4. `detect_primary_session_id()` — filesystem scan (only when `project_root` and `started_at_epoch` provided)
 
-Callers treat the result as authoritative. Only skip an earlier step if its source is absent (no connection, no artifacts file).
+Callers pass observations through the immutable bind seam. A differing ID is a
+conflict, never a replacement for the chat key. Adapter discovery legs are not
+entry evidence.
 
 **Claude override.** `ClaudeAdapter.observe_session_id()` replaces the base
 implementation's priority chain with a trampoline-aware path: after steps 1–2,
@@ -114,9 +116,8 @@ it calls `reconcile_tui_trampoline_session_id()` before falling through to
 `/tui fullscreen` evidence tied to the recorded session ID, finds the next
 same-project prompt with a different session ID, and verifies the successor has
 a transcript whose first user message matches. If the recorded ID already has a
-transcript, it is preserved — reconciliation only activates when the transcript
-is missing. Fallback is always the recorded ID rather than `None`, so existing
-behavior is preserved when no trampoline successor exists.
+transcript, it is preserved. When missing, a discovered successor produces a
+conflict diagnostic; the recorded ID is still preserved.
 
 This is a Claude-specific concern. Claude's new TUI creates a transient session
 when entering `/tui fullscreen`, then writes the durable transcript under a

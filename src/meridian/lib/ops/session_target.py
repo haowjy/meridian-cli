@@ -282,15 +282,14 @@ def _resolve_from_chat_id(
     if session_record is None:
         raise ValueError(f"Chat '{chat_id}' not found")
     session_id = session_record.harness_session_id
+    native_store = session_record.native_store or session_record.claude_config_dir
     if not session_id or not session_record.harness:
         raise NativeSessionUnavailable(chat_id, "unbound")
     target = _resolve_harness_transcript_target_or_none(
         project_root=Path(session_record.execution_cwd or session_record.task_cwd or project_root),
         session_id=session_id,
         harness=session_record.harness,
-        config_root_hint=_config_root_hint(
-            session_record.native_store or session_record.claude_config_dir
-        ),
+        config_root_hint=_config_root_hint(native_store),
     )
     if target is None:
         raise NativeSessionUnavailable(chat_id, "missing")
@@ -479,13 +478,6 @@ def resolve_session_log_target(
         return _resolve_untracked_session_ref(
             project_root=project_root,
             session_ref=normalized_ref,
-        )
-
-    if _is_chat_ref(runtime_root, normalized_ref):
-        return _resolve_from_chat_id(
-            project_root=project_root,
-            runtime_root=runtime_root,
-            chat_id=normalized_ref,
         )
 
     if _is_spawn_ref(normalized_ref):

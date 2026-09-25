@@ -20,8 +20,6 @@ class RecoveryProvenance(StrEnum):
 
     SESSION_STORE = "session_store"
     SPAWN_ROW = "spawn_row"
-    PRIMARY_META = "primary_meta"
-    DETECTED_UNVERIFIED = "detected_unverified"
 
 
 @dataclass(frozen=True)
@@ -38,10 +36,6 @@ def _normalize(value: str | None) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
-
-
-def _latest_harness_session_id(record: session_store.SessionRecord) -> str | None:
-    return _normalize(record.harness_session_id)
 
 
 def recover_recorded_chat_harness_session_id(
@@ -64,7 +58,7 @@ def _recover_from_session_record(
 ) -> RecoveryResult | None:
     if session.record_mode == "historical":
         return None
-    session_id = _latest_harness_session_id(session)
+    session_id = _normalize(session.harness_session_id)
     if session_id is None:
         return None
     return RecoveryResult(
@@ -121,14 +115,13 @@ def recover_harness_session_id(
                 require_harness_session_id=True,
             )
             if linked_record is not None:
-                session_id = _latest_harness_session_id(linked_record)
+                session_id = _normalize(linked_record.harness_session_id)
                 if session_id:
                     return RecoveryResult(
                         harness_session_id=session_id,
                         provenance=RecoveryProvenance.SESSION_STORE,
                         supporting_chat_id=linked_record.chat_id,
                     )
-
 
         return None
 

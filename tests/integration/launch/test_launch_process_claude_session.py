@@ -316,3 +316,61 @@ def test_run_harness_process_resume_does_not_inject_seed_args(
     # Resume path: adapter returns the existing session ID, no session_args injection
     assert launch_context.seed_harness_session_args == ()
     assert launch_context.seed_harness_session_id == "existing-session-id"
+    plan = launch_context.binding.spec.native_identity_plan
+    assert plan.operation == "resume"
+    assert plan.harness_session_id == "existing-session-id"
+
+
+def test_primary_claude_exec_receives_prebound_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import shlex
+
+    from tests.support.executables import prepend_fake_executables
+
+    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    prepend_fake_executables(monkeypatch, tmp_path, "claude")
+    root = tmp_path / "repo"
+    root.mkdir()
+    context, registry = _build_primary_launch_context(
+        project_root=root, harness_id=HarnessId.CLAUDE, model="claude-sonnet-4-5",
+    )
+    argv_log = tmp_path / "argv"
+    binding_log = tmp_path / "binding-at-exec.jsonl"
+    shim = tmp_path / "fake-bin" / "claude"
+    shim.write_text(
+        "#!/bin/sh\n"
+        f"cp {shlex.quote(str(context.runtime_root / 'sessions.jsonl'))} "
+        f"{shlex.quote(str(binding_log))}\n"
+        f"printf '%s\\n' \"$@\" > {shlex.quote(str(argv_log))}\n"
+        "exit 0\n"
+    )
+    outcome = run_harness_process(context, registry)
+    assert outcome.exit_code == 0
+    argv = argv_log.read_text().splitlines()
+    native_id = argv[argv.index("--session-id") + 1]
+    events = [json.loads(line) for line in binding_log.read_text().splitlines()]
+    assert any(row.get("harness_session_id") == native_id for row in events)
+    assert outcome.chat_id is not None
+    record = session_store.get_session_record(context.runtime_root, outcome.chat_id)
+    assert record is not None
+    assert record.harness_session_id == native_id == outcome.resolved_harness_session_id
+    assert record.native_store == str(tmp_path / "home" / ".claude")
+
+
+def test_claude_fork_plan_waits_for_owned_new_identity(tmp_path: Path) -> None:
+    context, _ = _build_primary_launch_context(
+        project_root=tmp_path, harness_id=HarnessId.CLAUDE, model="claude-sonnet-4-5",
+        session=SessionRequest(
+            requested_harness_session_id="source-native", continue_fork=True,
+            primary_session_mode=SessionMode.FORK.value,
+        ),
+    )
+    plan = context.binding.spec.native_identity_plan
+    assert plan.operation == "fork"
+    assert plan.harness_session_id is None
+    assert plan.native_store
+    assert "--session-id" not in context.binding.argv
+    assert "--fork-session" in context.binding.argv
+    assert context.binding.argv[context.binding.argv.index("--resume") + 1] == "source-native"

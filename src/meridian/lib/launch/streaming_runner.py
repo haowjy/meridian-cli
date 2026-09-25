@@ -101,7 +101,7 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import ArtifactStore, make_artifact_key
 from meridian.lib.state.atomic import append_text_line
 from meridian.lib.state.paths import resolve_spawn_log_dir
-from meridian.lib.state.session_store import update_session_harness_id
+from meridian.lib.state.session_store import NativeBindingResult, update_session_harness_id
 from meridian.lib.state.spawn.model import (
     BACKGROUND_LAUNCH_MODE,
     FOREGROUND_LAUNCH_MODE,
@@ -1226,6 +1226,7 @@ async def execute_with_streaming(
                     ),
                     session_id=session_id, source="observed",
                     current_session_id=observed_harness_session_id or "",
+                    chat_id=attempt.chat_id if attempt else None,
                 )
                 observed_harness_session_id = bound or None
                 if bound and harness_session_id_observer is not None:
@@ -1276,10 +1277,11 @@ async def execute_with_streaming(
         )
 
         identity_plan = spec.native_identity_plan
-        if identity_plan is not None and identity_plan.harness_session_id:
+        if identity_plan is not None:
+            result: NativeBindingResult | None = None
             if session_attempt is not None:
                 result = update_session_harness_id(
-                    runtime_root, session_attempt.chat_id, identity_plan.harness_session_id,
+                    runtime_root, session_attempt.chat_id, identity_plan.harness_session_id or "",
                     native_store=identity_plan.native_store, source="assigned",
                     session_instance_id=session_attempt.session_instance_id,
                     startup_attempt_id=session_attempt.startup_attempt_id,
@@ -1290,12 +1292,10 @@ async def execute_with_streaming(
                     )
             observed_harness_session_id = bind_harness_session_id(
                 runtime_root=runtime_root, spawn_id=run.spawn_id,
-                record_session_id=(
-                    session_attempt.record_harness_session_id if session_attempt else lambda _: None
-                ),
+                record_session_id=lambda _: result,
                 session_id=identity_plan.harness_session_id, source="assigned",
             )
-            if harness_session_id_observer is not None:
+            if observed_harness_session_id and harness_session_id_observer is not None:
                 harness_session_id_observer(observed_harness_session_id)
         elif spec.continue_session_id and not spec.continue_fork:
             observe_attempt_id(spec.continue_session_id)
@@ -1379,7 +1379,7 @@ async def execute_with_streaming(
                         captured_observer(native_id)
                     if captured_attempt is not None:
                         captured_attempt.record_started(
-                            launch_context, str(run.spawn_id), native_id,
+                            launch_context, str(run.spawn_id), observed_harness_session_id,
                         )
 
                 attempt = await _run_streaming_attempt(

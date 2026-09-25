@@ -106,7 +106,7 @@ class _ClaudeSeedPersistenceConnection:
         )
 
 
-class _OpenCodeSeedPortConnection:
+class _UnboundOpenCodeConnection:
     observed_start_session_id: str | None = None
 
     def __init__(self) -> None:
@@ -318,7 +318,7 @@ async def test_execute_with_streaming_persists_claude_seed_before_start(
 
 
 @pytest.mark.asyncio
-async def test_execute_with_streaming_does_not_bind_unverified_adapter_seed(
+async def test_execute_with_streaming_without_owned_signal_stays_unbound(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -328,18 +328,12 @@ async def test_execute_with_streaming_does_not_bind_unverified_adapter_seed(
     fake_clock = FakeClock(start=1_000.0)
     fake_heartbeat = FakeHeartbeat()
     fake_heartbeat.set_clock(fake_clock)
-    _OpenCodeSeedPortConnection.observed_start_session_id = None
+    _UnboundOpenCodeConnection.observed_start_session_id = None
 
-    opencode_adapter = registry.get_subprocess_harness(HarnessId.OPENCODE)
-    monkeypatch.setattr(
-        opencode_adapter,
-        "derive_streaming_seeded_session_id",
-        lambda **_kwargs: "seeded-opencode-session",
-    )
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id, _transport_id=TransportId.STREAMING: _OpenCodeSeedPortConnection,
+        lambda _harness_id, _transport_id=TransportId.STREAMING: _UnboundOpenCodeConnection,
     )
 
     run = Spawn(
@@ -384,7 +378,7 @@ async def test_execute_with_streaming_does_not_bind_unverified_adapter_seed(
     assert exit_code in (0, 1, 2)
     assert row is not None
     assert row.harness_session_id is None
-    assert row.harness_session_id == _OpenCodeSeedPortConnection.observed_start_session_id
+    assert row.harness_session_id == _UnboundOpenCodeConnection.observed_start_session_id
 
 
 @pytest.mark.asyncio
@@ -464,16 +458,10 @@ async def test_execute_with_streaming_persists_selected_task_cwd_on_projection_f
     external_task_cwd = tmp_path.parent / f"{tmp_path.name}-outside-task"
     external_task_cwd.mkdir(parents=True, exist_ok=True)
 
-    opencode_adapter = registry.get_subprocess_harness(HarnessId.OPENCODE)
-    monkeypatch.setattr(
-        opencode_adapter,
-        "derive_streaming_seeded_session_id",
-        lambda **_kwargs: "seeded-opencode-session",
-    )
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id, _transport_id=TransportId.STREAMING: _OpenCodeSeedPortConnection,
+        lambda _harness_id, _transport_id=TransportId.STREAMING: _UnboundOpenCodeConnection,
     )
     monkeypatch.setattr(
         launch_context_module,
@@ -525,3 +513,70 @@ async def test_execute_with_streaming_persists_selected_task_cwd_on_projection_f
     assert row is not None
     assert row.control_root == tmp_path.as_posix()
     assert row.task_cwd == external_task_cwd.as_posix()
+
+
+@pytest.mark.asyncio
+async def test_streaming_claude_exec_receives_prebound_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+    import shlex
+
+    from meridian.lib.launch.session_scope import session_scope
+    from meridian.lib.launch.types import PrimarySessionMetadata
+    from meridian.lib.state import session_store
+    from tests.support.executables import prepend_fake_executables
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    prepend_fake_executables(monkeypatch, tmp_path, "claude")
+    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
+    argv_log = tmp_path / "argv"
+    binding_log = tmp_path / "binding-at-exec.jsonl"
+    (tmp_path / "fake-bin" / "claude").write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "--version" ]; then echo "2.1.0 (Claude Code)"; exit 0; fi\n'
+        f"cp {shlex.quote(str(runtime_root / 'sessions.jsonl'))} "
+        f"{shlex.quote(str(binding_log))}\n"
+        f"printf '%s\\n' \"$@\" > {shlex.quote(str(argv_log))}\n"
+        "read -r prompt\n"
+        "printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"done\"}'\n"
+    )
+    run = Spawn(spawn_id=SpawnId("p42"), prompt="hello", model=ModelId("sonnet"), status="queued")
+    request = _build_claude_request()
+    spawn_store.start_spawn(
+        runtime_root, spawn_id=run.spawn_id, chat_id="", model=str(run.model), agent="",
+        harness="claude", kind="streaming", prompt=run.prompt, status="queued",
+    )
+    with session_scope(
+        runtime_root=runtime_root,
+        metadata=PrimarySessionMetadata(
+            harness="claude", model="sonnet", agent="", agent_path="", skills=(), skill_paths=(),
+        ),
+        request=request.session, harness_session_id="", spawn_id=str(run.spawn_id),
+        startup_attempt_id="attempt-test",
+    ) as managed:
+        task = asyncio.create_task(_execute_with_context(
+            run, request=request, project_root=tmp_path, runtime_root=runtime_root,
+            artifacts=LocalStore(root_dir=runtime_root / "artifacts"),
+            registry=HarnessRegistry.with_defaults(), session_attempt=managed.attempt,
+        ))
+        try:
+            async with asyncio.timeout(15):
+                while not argv_log.exists():
+                    if task.done():
+                        await task
+                        pytest.fail("Claude shim never received argv")
+                    await asyncio.sleep(0.01)
+            argv = argv_log.read_text().splitlines()
+            native_id = argv[argv.index("--session-id") + 1]
+            events = [json.loads(line) for line in binding_log.read_text().splitlines()]
+            assert any(row.get("harness_session_id") == native_id for row in events)
+            record = session_store.get_session_record(runtime_root, managed.chat_id)
+            assert record is not None
+            assert record.harness_session_id == native_id
+            assert record.native_store == str(tmp_path / "home" / ".claude")
+            await asyncio.wait_for(task, 15)
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)

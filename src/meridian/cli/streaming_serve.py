@@ -159,6 +159,7 @@ async def streaming_serve(
                     record_session_id=attempt.record_harness_session_id,
                     session_id=session_id, source="observed",
                     current_session_id=observed_session_id or "",
+                    chat_id=managed.chat_id,
                 )
 
             def record_started(connection: HarnessConnection[Any]) -> None:

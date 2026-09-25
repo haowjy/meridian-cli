@@ -42,6 +42,7 @@ def bind_harness_session_id(
     record_session_id: Callable[[str], NativeBindingResult | None],
     session_id: str | None,
     source: SessionIdSource,
+    chat_id: str | None = None,
     current_session_id: str = "",
 ) -> str:
     """Bind once and mirror the accepted identity, never the attempted identity."""
@@ -51,7 +52,8 @@ def bind_harness_session_id(
         return current
     if current and candidate != current:
         logger.warning(
-            "native_binding_conflict", kept=current, attempted=candidate, source=source,
+            "native_binding_conflict", chat_id=chat_id, kept=current,
+            attempted=candidate, source=source,
             spawn_id=str(spawn_id) if spawn_id is not None else None,
         )
         return current

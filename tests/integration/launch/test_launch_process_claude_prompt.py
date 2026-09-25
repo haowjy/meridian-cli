@@ -287,10 +287,11 @@ def test_run_harness_process_claude_primary_print_json_persists_session_id_from_
 
     assert isinstance(captured["output_log_path"], Path)
     assert captured["output_log_path"].name == OUTPUT_FILENAME
-    assert outcome.resolved_harness_session_id == emitted_session_id
+    assert outcome.resolved_harness_session_id != emitted_session_id
+    assert outcome.resolved_harness_session_id
     spawns = list_spawns(launch_context.runtime_root)
     assert len(spawns.records) == 1
-    assert spawns.records[0].harness_session_id == emitted_session_id
+    assert spawns.records[0].harness_session_id == outcome.resolved_harness_session_id
 
 
 @pytest.mark.slow

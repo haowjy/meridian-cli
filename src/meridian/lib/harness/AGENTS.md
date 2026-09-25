@@ -91,7 +91,9 @@ startup failure.
 
 **`observe_session_id()` called exactly once post-execution** (primary path only).
 Priority: connection session ID → artifact extraction → known ID → filesystem scan.
-Must not mutate adapter-instance state.
+Must not mutate adapter-instance state. Returned observations cannot overwrite a
+bound identity. `plan_native_identity()` provides pre-exec assignments where
+supported; child-store resolution uses the final child environment.
 
 **Terminal event classification is harness- and parent-scope-aware.** `event_type`
 is NOT globally unique — always check `event.harness_id`. `turn/completed` is Codex;

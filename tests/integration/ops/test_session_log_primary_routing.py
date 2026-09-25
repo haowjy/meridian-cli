@@ -129,7 +129,7 @@ def test_session_log_active_managed_primary_prefers_live_output_over_native_tran
     ]
 
 
-def test_session_log_active_managed_primary_chat_matches_spawn_live_output(
+def test_session_log_active_chat_reads_exact_native_transcript(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -195,10 +195,11 @@ def test_session_log_active_managed_primary_chat_matches_spawn_live_output(
             SessionLogInput(ref=chat_id, project_root=project_root.as_posix(), tail=5)
         )
 
-        assert chat_target.file_path == spawn_target.file_path
-        assert chat_target.source == spawn_target.source == "spawn p42 output"
+        assert chat_target.file_path != spawn_target.file_path
+        assert chat_target.source == "codex transcript"
+        assert spawn_target.source == "spawn p42 output"
         assert [(message.role, message.content) for message in chat_output.messages] == [
-            ("assistant", "same live output")
+            ("assistant", "native chat transcript should wait")
         ]
     finally:
         session_store.stop_session(runtime_root, chat_id)

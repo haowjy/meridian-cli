@@ -79,12 +79,12 @@ def test_pending_selection_binds_only_its_attempt_without_reordering(tmp_path: P
         store.update_session_harness_id(
             tmp_path,
             "c1",
-            "wrong-attempt",
+            "thread",
             session_instance_id=generation,
             startup_attempt_id="failed-attempt",
         )
         assert selected(tmp_path, "c1", generation, "p1", "sol", None, "accepted-attempt")
-        assert current(tmp_path, "wrong-attempt") is None
+        assert current(tmp_path, "thread") is None
         assert selected(tmp_path, "c1", generation, "p2", "astra", "thread", "next-invocation")
         store.update_session_harness_id(
             tmp_path,
@@ -135,10 +135,10 @@ def test_old_generation_id_cannot_bind_new_pending_selection(tmp_path: Path) -> 
         assert selected(tmp_path, "c1", new, "p2", "astra", None)
         assert current(tmp_path, "old-thread") is None
         store.update_session_harness_id(
-            tmp_path, "c1", "new-thread", session_instance_id=new, startup_attempt_id="attempt-1"
+            tmp_path, "c1", "old-thread", session_instance_id=new, startup_attempt_id="attempt-1"
         )
-        assert current(tmp_path, "new-thread") == "astra"
-        assert current(tmp_path, "old-thread") is None
+        assert current(tmp_path, "new-thread") is None
+        assert current(tmp_path, "old-thread") == "astra"
     finally:
         store.stop_session(tmp_path, "c1")
 

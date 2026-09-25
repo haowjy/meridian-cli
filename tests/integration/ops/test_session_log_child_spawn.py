@@ -371,12 +371,10 @@ def test_session_log_chat_reads_file_authority_without_harness_session_id(
             },
         )
 
-        output = session_log_sync(
-            SessionLogInput(ref=chat_id, project_root=project_root.as_posix(), tail=5)
-        )
-        assert [(message.role, message.content) for message in output.messages] == [
-            ("assistant", "primary live progress")
-        ]
+        with pytest.raises(ValueError, match="no verified native session for c42"):
+            session_log_sync(
+                SessionLogInput(ref=chat_id, project_root=project_root.as_posix(), tail=5)
+            )
     finally:
         session_store.stop_session(runtime_root, chat_id)
 

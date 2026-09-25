@@ -150,6 +150,13 @@ claims for the next doctor pass.
 Both paths share liveness rules in `reaper.py` and completion/cancel precedence in
 `reconciliation.py`.
 
+## Native Chat Identity
+
+A chat keeps one `(harness, native_store, harness_session_id)` binding across
+starts and updates. `update_session_harness_id` atomically returns bound,
+already-bound, or conflict; callers must mirror its accepted ID, not their
+candidate. Historical multi-ID arrays are ignored on read.
+
 ## Entry Points
 
 - `user_paths.py` — `get_user_home()`. Start here for any new user-level storage.
