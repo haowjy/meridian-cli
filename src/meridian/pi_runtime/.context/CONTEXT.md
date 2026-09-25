@@ -170,4 +170,11 @@ subpath imports break under Pi's extension loader.
 - [../../lib/harness/connections/.context/CONTEXT.md](../../lib/harness/connections/.context/CONTEXT.md) — Pi RPC JSON-RPC transport
 - [../../lib/streaming/.context/CONTEXT.md](../../lib/streaming/.context/CONTEXT.md) — Pi drain/quiescence policy consumes disk-backed state
 
-Session boundary consumes launch path/nonce handles and atomically publishes a bounded record. Initial entry never changes on switches; only a final shutdown/quit supplies exit identity. No itinerary or native journal writes.
+Session boundary consumes launch path/nonce handles and atomically publishes a bounded record. Initial entry never changes on switches; only a final shutdown/quit with readable identity supplies exit identity. No itinerary or native journal writes.
+
+Pi lifecycle handlers use their invocation ctx, never a retained ctx. Pi 0.87.1
+can race RPC stdin EOF against session replacement: a freshly supplied shutdown
+ctx can still belong to an invalidated runner. Boundary v2 records that shutdown
+without identity, clearing any earlier quit rather than poisoning the observer.
+Do not infer an exit from current/targetSessionFile or synthesize a quit for the
+replacement. EOF after a completed RPC switch does emit quit for the new session.
