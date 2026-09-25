@@ -81,10 +81,7 @@ def test_projects_reopen_default_lineage_before_common_normalization() -> None:
         "summary",
         "leaf",
     ]
-    parsed = parse_transcript_events_with_prologues(projection.events)._replace(
-        view_basis=projection.view_basis,
-        completeness_reasons=tuple(projection.reasons),
-    )
+    parsed = parse_transcript_events_with_prologues(projection.events)
     rendered = "\n".join(message.content for segment in parsed.segments for message in segment)
     assert "selected response" in rendered
     assert "off-lineage wrong" not in rendered
@@ -118,15 +115,11 @@ def test_linear_pi_journal_keeps_its_existing_normalized_messages() -> None:
             },
         )
     )
-    parsed = parse_transcript_events_with_prologues(projection.events)._replace(
-        view_basis=projection.view_basis,
-        completeness_reasons=tuple(projection.reasons),
-    )
+    parsed = parse_transcript_events_with_prologues(projection.events)
 
     assert projection.complete is True
     assert projection.view_basis == "reopen-default"
-    assert parsed.view_basis == "reopen-default"
-    assert parsed.completeness_reasons == ()
+    assert projection.reasons == ()
     messages = [
         (message.role, message.content)
         for segment in parsed.segments

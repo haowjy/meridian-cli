@@ -5,16 +5,17 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable, Generator, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, NamedTuple
 
 from meridian.lib.core.command_strings import format_command_for_display
+from meridian.lib.harness.native_witness import Witness, file_witness
+from meridian.lib.harness.opencode_search_source import read_opencode_search_source
 from meridian.lib.harness.pi_journal import project_pi_reopen_default
 from meridian.lib.harness.transcript import (
     ToolCall,
     TranscriptMessage,
-    TranscriptParseResult,
     is_native_snapshot,
     iter_transcript_events,
     parse_transcript_events_with_prologues,
@@ -23,7 +24,7 @@ from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
 from meridian.lib.ops.session_target import (
     SessionLogTarget,
     TranscriptSource,
-    resolve_session_log_target,
+    resolve_transcript_source,
 )
 from meridian.lib.state.native_snapshot import TranscriptValidation, snapshot_binding
 
@@ -94,14 +95,11 @@ class ParsedSessionTranscript(NamedTuple):
     def search_ready(self) -> bool:
         validation = self.storage_validation
         # Ordinary append streams retain their existing partial-result contract.
-        # Snapshot/ZIP prefixes have not proved their enclosing integrity yet.
+        # Snapshot prefixes have not proved their enclosing integrity yet.
         return (
             validation is None
             or validation.state == "complete"
-            or (
-                validation.header is None
-                and not any(source.kind == "archive" for source in self.target.sources)
-            )
+            or validation.header is None
         ) and not self.completeness_reasons
 
 
@@ -301,16 +299,8 @@ def _route_from_request(
     normalized_file = (file_path or "").strip()
     if normalized_file:
         return SessionLogRoute(mode="file", value=normalized_file)
-    normalized_ref = ref.strip() or target.session_id
+    normalized_ref = ref.strip() or target.source.session_id
     return SessionLogRoute(mode="ref", value=normalized_ref)
-
-
-def route_for_corpus_target(target: SessionLogTarget) -> SessionLogRoute:
-    if any(source.kind == "archive" for source in target.sources):
-        return SessionLogRoute(mode="ref", value=target.sources[0].history_id or target.session_id)
-    if target.file_path is None:
-        return SessionLogRoute(mode="ref", value=target.session_id)
-    return SessionLogRoute(mode="file", value=str(target.file_path))
 
 
 @dataclass
@@ -318,9 +308,14 @@ class TranscriptBudget:
     deadline: float
     remaining_bytes: int
     exhausted: bool = False
+    selected: Callable[[], bool] | None = None
 
     def current(self) -> bool:
-        if self.remaining_bytes < 0 or time.monotonic() >= self.deadline:
+        if (
+            self.remaining_bytes < 0
+            or time.monotonic() >= self.deadline
+            or (self.selected is not None and not self.selected())
+        ):
             self.exhausted = True
         return not self.exhausted
 
@@ -341,128 +336,75 @@ class TranscriptBudget:
             yield event
 
 
-def iter_source_events(
-    source: TranscriptSource,
-    *,
-    validation: TranscriptValidation | None = None,
-    current: Callable[[], bool] | None = None,
-    consume: Callable[[int], None] | None = None,
-) -> Generator[dict[str, object]]:
-    if (
-        source.kind == "native_file"
-        and source.harness == "pi"
-        and source.path is not None
-        and not is_native_snapshot(source.path)
-    ):
-        projection = project_pi_reopen_default(source.path.read_text(encoding="utf-8"))
-        if projection.reasons:
-            raise ValueError("partial: " + ", ".join(projection.reasons))
-        yield from projection.events
-        if validation is not None:
-            validation.state = "complete"
-            validation.reason = None
-        return
-    if source.kind == "archive":
-        from uuid import UUID
-
-        from meridian.lib.state.retention_archive import iter_archived_events
-
-        if source.path is None or source.history_id is None:
-            raise ValueError("Incomplete archive locator")
-        yield from iter_archived_events(
-            source.path, UUID(source.history_id), source.manifest_sha256
-        )
-    elif source.kind == "opencode_db":
-        from meridian.lib.harness.opencode_transcript import iter_opencode_db_session_events
-
-        yield from iter_opencode_db_session_events(
-            session_id=source.session_id,
-            db_path=source.path,
-        )
-    else:
-        if source.path is None:
-            raise FileNotFoundError(f"Session file for '{source.session_id}' not found")
-        yield from iter_transcript_events(
-            source.path,
-            consume=consume,
-            validation=validation,
-            current=current,
-            check_header=snapshot_binding(
-                history_id=source.history_id,
-                harness=source.harness if source.kind == "native_file" else None,
-                native_session_id=source.session_id if source.kind == "native_file" else None,
-            ),
-        )
-        return
-    if validation is not None:
-        validation.state = "complete"
-        validation.reason = None
+@dataclass
+class NativeRead:
+    events: Generator[dict[str, object]]
+    validation: TranscriptValidation = field(default_factory=TranscriptValidation)
+    view_basis: Literal["reopen-default"] | None = None
+    reasons: tuple[str, ...] = ()
+    witness: Witness | None = None
 
 
-def _parse_transcript_source(
-    source: TranscriptSource, budget: TranscriptBudget | None = None
-) -> tuple[TranscriptParseResult, TranscriptValidation]:
-    validation = TranscriptValidation()
-    if source.kind == "native_file" and source.harness == "pi" and source.path is not None:
-        if budget is not None and not budget.current():
-            validation.state = "partial"
-            validation.reason = "Transcript read paused before complete EOF"
-            return parse_transcript_events_with_prologues(()), validation
-        if is_native_snapshot(source.path):
-            events = list(
-                iter_source_events(
-                    source,
-                    validation=validation,
-                    current=budget.current if budget else None,
-                    consume=budget.consume if budget else None,
-                )
+def read_native_source(
+    source: TranscriptSource, *, budget: TranscriptBudget | None = None
+) -> NativeRead:
+    """One native byte/snapshot read for log, preview and search.
+
+    The iterator owns the read-only connection; callers must exhaust or close it.
+    Validation, Pi view metadata and the before witness belong to these same bytes.
+    """
+
+    def events() -> Generator[dict[str, object]]:
+        validation = read.validation
+        try:
+            if budget and not budget.current():
+                return
+            if source.kind == "opencode_db":
+                with read_opencode_search_source(source.path, source.session_id) as (w, raw):
+                    read.witness = w
+                    yield from budget.events(raw) if budget else raw
+                validation.state, validation.reason = "complete", None
+                return
+            read.witness = file_witness(source.path)
+            raw = iter_transcript_events(
+                source.path,
+                validation=validation,
+                current=budget.current if budget else None,
+                consume=budget.consume if budget else None,
+                check_header=snapshot_binding(
+                    harness=source.harness if source.kind == "native_file" else None,
+                    native_session_id=source.session_id if source.kind == "native_file" else None,
+                ),
             )
-            if budget is not None:
-                events = list(budget.events(iter(events)))
-            source_text = "".join(json.dumps(event) + "\n" for event in events)
-        else:
-            raw = source.path.read_bytes()
-            if budget is not None:
-                budget.consume(len(raw))
-                if not budget.current():
-                    validation.state = "partial"
-                    validation.reason = "Transcript read budget exhausted"
-                    return parse_transcript_events_with_prologues(()), validation
-            source_text = raw.decode("utf-8")
-        projection = project_pi_reopen_default(source_text)
-        if not is_native_snapshot(source.path):
-            validation.state = "complete"
-            validation.reason = None
-        parsed = parse_transcript_events_with_prologues(projection.events)._replace(
-            view_basis=projection.view_basis,
-            completeness_reasons=tuple(projection.reasons),
-        )
-        return parsed, validation
-    events = iter_source_events(
-        source,
-        validation=validation,
-        current=budget.current if budget else None,
-        consume=budget.consume if budget else None,
-    )
-    try:
-        parsed = parse_transcript_events_with_prologues(budget.events(events) if budget else events)
-    finally:
-        events.close()
-    if budget is not None and budget.exhausted:
-        validation.state = "partial"
-        validation.reason = "Transcript read budget exhausted before complete validation"
-        validation.descriptor = None
-    return parsed, validation
+            try:
+                if source.kind == "native_file" and source.harness == "pi":
+                    if is_native_snapshot(source.path):
+                        text = "".join(json.dumps(event) + "\n" for event in raw)
+                    else:
+                        data = source.path.read_bytes()
+                        if budget:
+                            budget.consume(len(data))
+                        text = data.decode("utf-8")
+                        validation.state, validation.reason = "complete", None
+                    if budget and not budget.current():
+                        return
+                    projection = project_pi_reopen_default(text)
+                    read.view_basis, read.reasons = projection.view_basis, projection.reasons
+                    yield from (
+                        budget.events(iter(projection.events)) if budget else projection.events
+                    )
+                else:
+                    yield from budget.events(raw) if budget else raw
+            finally:
+                raw.close()
+        finally:
+            if budget and budget.exhausted:
+                validation.state = "partial"
+                validation.reason = "Transcript read budget exhausted before complete validation"
+                validation.descriptor = None
 
-
-def _target_for_source(target: SessionLogTarget, source: TranscriptSource) -> SessionLogTarget:
-    return target._replace(
-        session_id=source.session_id,
-        harness=source.harness,
-        file_path=source.path,
-        source=source.source_label,
-        sources=(source,),
-    )
+    read = NativeRead(events())
+    return read
 
 
 def parse_session_target(
@@ -472,19 +414,13 @@ def parse_session_target(
     target: SessionLogTarget,
     route: SessionLogRoute,
     budget: TranscriptBudget | None = None,
-    events: Iterator[dict[str, object]] | None = None,
+    native_read: NativeRead | None = None,
 ) -> ParsedSessionTranscript:
-    source = target.sources[0]
-    if events is None:
-        parsed, validation = _parse_transcript_source(source, budget)
-    else:
-        parsed = parse_transcript_events_with_prologues(budget.events(events) if budget else events)
-        validation = TranscriptValidation()
-        validation.state = "partial" if budget and budget.exhausted else "complete"
-        validation.reason = (
-            "Transcript read budget exhausted" if budget and budget.exhausted else None
-        )
-    resolved_target = _target_for_source(target, source)
+    read = native_read or read_native_source(target.source, budget=budget)
+    try:
+        parsed = parse_transcript_events_with_prologues(read.events)
+    finally:
+        read.events.close()
 
     flattened = flatten_transcript_segments(parsed.segments)
     interaction_entries = group_transcript_entries(flattened)
@@ -498,7 +434,7 @@ def parse_session_target(
     return ParsedSessionTranscript(
         project_root=project_root,
         runtime_root=runtime_root,
-        target=resolved_target,
+        target=target,
         route=route,
         segments=parsed.segments,
         total_compactions=parsed.total_compactions,
@@ -508,9 +444,9 @@ def parse_session_target(
         all_entries=all_entries,
         segment_entries=segment_entries,
         rendering_reason=parsed.rendering_reason,
-        storage_validation=validation,
-        view_basis=parsed.view_basis,
-        completeness_reasons=parsed.completeness_reasons,
+        storage_validation=read.validation,
+        view_basis=read.view_basis,
+        completeness_reasons=read.reasons,
     )
 
 
@@ -522,7 +458,7 @@ def read_session_transcript(
 ) -> ParsedSessionTranscript:
     authority = resolve_runtime_authority_for_read(project_root)
     runtime_root = authority.runtime_root
-    target = resolve_session_log_target(
+    target = resolve_transcript_source(
         ref=ref,
         file_path=file_path,
         project_root=authority.project_root,
@@ -592,5 +528,4 @@ __all__ = [
     "group_transcript_entries",
     "parse_session_target",
     "read_session_transcript",
-    "route_for_corpus_target",
 ]

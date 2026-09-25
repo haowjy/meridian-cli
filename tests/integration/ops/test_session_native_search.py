@@ -230,3 +230,46 @@ def test_corpus_preserves_ref_search_readiness_when_renderer_warns(tmp_path, mon
     assert "1 sources searched with warnings (see --json)" in projected.format_text()
     assert "future" not in projected.format_text().split("Open:")[-1]
     assert projected.sources_not_searched == 0
+
+
+def test_append_between_inspect_and_refresh_uses_current_before_witness(tmp_path, monkeypatch):
+    import time
+
+    from meridian.lib.ops.session_search_index import SearchProjection
+
+    project, root, store = corpus(tmp_path, monkeypatch)
+    session_store.start_session(
+        root, harness="claude", harness_session_id="one", native_store=str(store), model="test"
+    )
+    path = store / "one.jsonl"
+    write_native(path, "original")
+    session_search_sync(SessionSearchInput(query="original", project_root=str(project)))
+    write_native(path, "changed before inspect")
+    projection = SearchProjection.open(root, project)
+    deadline = time.monotonic() + 10
+    projection.inspect(projection.bindings, deadline=deadline)
+    with path.open("a") as stream:
+        stream.write(
+            json.dumps({"type": "assistant", "message": {"content": "appended needle"}}) + "\n"
+        )
+    projection.refresh(projection.bindings, deadline=deadline)
+    assert len(projection.search("appended needle")) == 1
+    assert not projection.errors
+
+
+def test_search_warning_and_unavailability_text_json_contract():
+    from meridian.lib.ops.session_search import SessionSearchOutput
+
+    output = SessionSearchOutput(
+        matches=(),
+        sources_total=8,
+        sources_not_searched=4,
+        errors=tuple(f"project c{i}: missing" for i in range(4)),
+        warnings=tuple(f"project c{i}: renderer warning" for i in range(4, 8)),
+    )
+    assert not output.complete
+    assert output.model_dump()["warnings"] == output.warnings
+    assert output.model_dump()["errors"] == output.errors
+    assert "4 sources searched with warnings (see --json)" in output.format_text()
+    assert "4 sources not searched: missing (see --json)" in output.format_text()
+    assert "project c" not in output.format_text()

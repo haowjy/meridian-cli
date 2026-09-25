@@ -5,11 +5,11 @@ import sqlite3
 
 import pytest
 
-from meridian.lib.harness.opencode_transcript import (
+from meridian.lib.harness.native_witness import OpenCodeV1Witness, OpenCodeV2Witness
+from meridian.lib.harness.opencode_search_source import (
     opencode_session_witnesses,
     read_opencode_search_source,
 )
-from meridian.lib.state.native_search_index import OpenCodeV1Witness, OpenCodeV2Witness
 from tests.support.opencode_db import write_opencode_db_session, write_opencode_v2_db_session
 
 

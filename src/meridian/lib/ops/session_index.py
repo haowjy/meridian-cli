@@ -5,17 +5,16 @@ from __future__ import annotations
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.settings import load_config
 from meridian.lib.harness.transcript_preview import TRANSCRIPT_PREVIEW_VERSION
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
-from meridian.lib.ops.session_search_index import SearchProjection, native_bindings
+from meridian.lib.ops.session_search_index import SearchProjection, SearchStatus
 from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.history_index import QUERY_TIMEOUT, HistoryIndex
-from meridian.lib.state.native_search_index import INDEX_FILENAME, PARSER_VERSION, witness_json
 
 
 class SessionIndexInput(BaseModel):
@@ -70,7 +69,9 @@ def session_index_sync(payload: SessionIndexInput) -> SessionIndexOutput:
         _, pending = HistoryChanges(roots.runtime_root).inspect(
             timeout=max(0.0, deadline - time.monotonic())
         )
-        search = _search_status(roots.runtime_root, roots.project_root, deadline=deadline)
+        search = SearchProjection.read_status(
+            roots.runtime_root, roots.project_root, deadline=deadline
+        )
         return SessionIndexOutput(
             **search,
             baseline=status.baseline,
@@ -96,12 +97,7 @@ def session_index_sync(payload: SessionIndexInput) -> SessionIndexOutput:
     search: SearchStatus = {}
     if not payload.metadata_only:
         projection = SearchProjection.open(roots.runtime_root, roots.project_root)
-        if projection.index:
-            projection.index.rebuild()
-        projection.stored.clear()
-        projection.inspect(projection.bindings, deadline=float("inf"))
-        projection.refresh(projection.bindings, deadline=float("inf"), rebuild=True)
-        search = _search_status(roots.runtime_root, roots.project_root, deadline=float("inf"))
+        search = projection.rebuild()
     _, pending = HistoryChanges(roots.runtime_root).inspect()
     return SessionIndexOutput(
         baseline="complete" if coverage.complete else "incomplete",
@@ -109,36 +105,6 @@ def session_index_sync(payload: SessionIndexInput) -> SessionIndexOutput:
         pending_sources=len(pending),
         preview_cached=index.preview_count(preview_version=TRANSCRIPT_PREVIEW_VERSION),
         **search,
-    )
-
-
-class SearchStatus(TypedDict, total=False):
-    search_fresh: int
-    search_stale: int
-    search_unindexed: int
-    search_bytes: int
-    search_unavailable: int
-
-
-def _search_status(runtime_root: Path, project_root: Path, *, deadline: float) -> SearchStatus:
-    if not (runtime_root / "history-index" / INDEX_FILENAME).exists():
-        return SearchStatus(search_fresh=0, search_unindexed=len(native_bindings(runtime_root)))
-    projection = SearchProjection.open(runtime_root, project_root)
-    projection.inspect(projection.bindings, deadline=deadline)
-    indexed = projection.stored.keys() & projection.bindings.keys()
-    current = {
-        key
-        for key in indexed
-        if key in projection.sources
-        and (projection.stored[key].witness, projection.stored[key].parser_version)
-        == (witness_json(projection.sources[key].witness), PARSER_VERSION)
-    }
-    return SearchStatus(
-        search_fresh=len(current),
-        search_stale=len(indexed - current),
-        search_unavailable=len(projection.errors.keys() - projection.fresh),
-        search_unindexed=len(projection.bindings.keys() - indexed),
-        search_bytes=projection.index.path.stat().st_size if projection.index else 0,
     )
 
 

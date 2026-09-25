@@ -181,9 +181,7 @@ def _entry_row_with_index(
         role=entry.role,
         kind=entry.kind,
         content=entry.content,
-        messages=tuple(
-            _entry_message_row(message) for message in entry.messages
-        ),
+        messages=tuple(_entry_message_row(message) for message in entry.messages),
     )
 
 
@@ -345,9 +343,7 @@ def session_log_sync(
 
     resolved_tail: int | None = None
     if not uses_window_selectors:
-        interaction_entries = [
-            entry for entry in address_space.entries if entry.kind != "setup"
-        ]
+        interaction_entries = [entry for entry in address_space.entries if entry.kind != "setup"]
         resolved_tail = None if payload.full else (payload.tail if payload.tail is not None else 5)
         page = window_from_tail(
             address_space.entries if payload.full else interaction_entries,
@@ -446,9 +442,9 @@ def session_log_sync(
     )
 
     return SessionLogOutput(
-        session_id=parsed.target.session_id,
+        session_id=parsed.target.source.session_id,
         requested_ref=payload.ref.strip() or None,
-        source=parsed.target.source,
+        source=parsed.target.source.source_label,
         view_label=parsed.target.view_label,
         total_entries=total_entries,
         total_segments=len(parsed.segments),
@@ -462,8 +458,7 @@ def session_log_sync(
         previous_segment_command=previous_segment_command,
         next_segment_command=next_segment_command,
         hints=(
-            _window_hints(payload, uses_absolute_window=uses_window_selectors)
-            + parsed.read_reasons
+            _window_hints(payload, uses_absolute_window=uses_window_selectors) + parsed.read_reasons
         ),
         truncate=payload.truncate,
     )

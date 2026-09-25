@@ -317,7 +317,7 @@ def session_export_sync(
         file_path=payload.file_path,
         project_root=payload.project_root,
     )
-    ref = payload.ref.strip() or transcript.target.session_id
+    ref = payload.ref.strip() or transcript.target.source.session_id
     runtime_root = transcript.runtime_root
     exact_chat_id, owner_chat_id, parent_id = (
         _session_scope_for_ref(runtime_root, ref)
@@ -335,8 +335,8 @@ def session_export_sync(
         else []
     )
     markdown = _render_markdown(
-        session_id=transcript.target.session_id,
-        source=transcript.target.source,
+        session_id=transcript.target.source.session_id,
+        source=transcript.target.source.source_label,
         metadata=_session_metadata(runtime_root, ref) if runtime_root is not None else [],
         messages=_flatten_segments(transcript.segments, transcript.segment_setups),
         appendices=appendices,
@@ -346,7 +346,7 @@ def session_export_sync(
     if transcript.read_reasons:
         warnings = "\n".join(f"> {reason}" for reason in transcript.read_reasons)
         markdown = f"{warnings}\n\n{markdown}"
-    return SessionExportOutput(session_id=transcript.target.session_id, markdown=markdown)
+    return SessionExportOutput(session_id=transcript.target.source.session_id, markdown=markdown)
 
 
 session_export = async_from_sync(session_export_sync)

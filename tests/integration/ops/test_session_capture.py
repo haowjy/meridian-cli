@@ -9,7 +9,7 @@ import pytest
 
 from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.ops.session_archive import materialize_native_history, session_stop_maintenance
-from meridian.lib.ops.session_target import resolve_session_log_target
+from meridian.lib.ops.session_target import resolve_transcript_source
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.native_snapshot import (
     NATIVE_SNAPSHOT_FILENAME,
@@ -143,7 +143,7 @@ def _capture_fixture(tmp_path: Path, monkeypatch, *, native_id: str | None = "ex
 
 def test_capture_does_not_discover_an_unrecorded_native_session(tmp_path: Path, monkeypatch):
     project, root, key, native = _capture_fixture(tmp_path, monkeypatch, native_id=None)
-    with pytest.raises(ValueError, match="exact native identity"):
+    with pytest.raises(ValueError, match="unbound"):
         materialize_native_history(project, root, key)
     assert native.exists()
     _assert_not_captured(root, key)
@@ -151,7 +151,7 @@ def test_capture_does_not_discover_an_unrecorded_native_session(tmp_path: Path, 
 
 def test_capture_missing_exact_source_never_uses_newer_detection(tmp_path: Path, monkeypatch):
     project, root, key, _ = _capture_fixture(tmp_path, monkeypatch, native_id="missing-native")
-    with pytest.raises(FileNotFoundError, match="missing-native"):
+    with pytest.raises(ValueError, match="native_transcript_missing"):
         materialize_native_history(project, root, key)
     _assert_not_captured(root, key)
 
@@ -161,21 +161,20 @@ def test_capture_resolution_bypasses_owned_stream_and_disposable_index(tmp_path:
     stream = root / "spawns" / key / "history.jsonl"
     stream.write_bytes(b'partial original stream\n{"torn":')
     before = stream.stat()
-    target = resolve_session_log_target(
+    target = resolve_transcript_source(
         ref=key,
         file_path=None,
         project_root=project,
         runtime_root=root,
         purpose="capture",
     )
-    assert len(target.sources) == 1
-    assert target.sources[0].kind == "native_file" and target.file_path == native
-    assert target.session_id == "exact-native"
+    assert target.source.kind == "native_file" and target.source.path == native
+    assert target.source.session_id == "exact-native"
     assert stream.stat() == before
     assert not (root / "history-index" / "history.sqlite3").exists()
 
 
-def test_capture_conflicting_sidecar_identity_is_not_a_precedence_choice(
+def test_capture_uses_bound_generation_not_sidecar_identity(
     tmp_path: Path, monkeypatch
 ):
     project, root, key, _ = _capture_fixture(tmp_path, monkeypatch)
@@ -185,9 +184,10 @@ def test_capture_conflicting_sidecar_identity_is_not_a_precedence_choice(
         runtime_root=root,
         spawn_id=key,
     )
-    with pytest.raises(ValueError, match="Conflicting native identity"):
-        materialize_native_history(project, root, key)
-    _assert_not_captured(root, key)
+    target = resolve_transcript_source(
+        ref=key, project_root=project, runtime_root=root, purpose="capture"
+    )
+    assert target.source.session_id == "exact-native"
 
 
 def test_capture_rejects_active_same_native_owner_then_retries(tmp_path: Path, monkeypatch):

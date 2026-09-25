@@ -259,11 +259,7 @@ def test_shared_parse_never_falls_back_from_empty_or_budget_partial_snapshot(
     _snapshot(path)
     fallback = tmp_path / "fallback.jsonl"
     fallback.write_text('{"type":"assistant","message":{"content":"wrong source"}}\n')
-    sources = (
-        TranscriptSource("file", "native-1", "pi", "snapshot", path),
-        TranscriptSource("file", "other", "claude", "fallback", fallback),
-    )
-    target = SessionLogTarget("native-1", "pi", path, "snapshot", sources)
+    target = SessionLogTarget(TranscriptSource("file", "native-1", "pi", "snapshot", path))
     parsed = parse_session_target(
         project_root=tmp_path,
         runtime_root=None,
@@ -271,7 +267,7 @@ def test_shared_parse_never_falls_back_from_empty_or_budget_partial_snapshot(
         route=SessionLogRoute("file", str(path)),
     )
     assert parsed.entries == ()
-    assert parsed.target.source == "snapshot"
+    assert parsed.target.source.source_label == "snapshot"
     assert parsed.storage_validation is not None
     assert parsed.storage_validation.state == "complete"
     partial = parse_session_target(
@@ -281,7 +277,7 @@ def test_shared_parse_never_falls_back_from_empty_or_budget_partial_snapshot(
         route=SessionLogRoute("file", str(path)),
         budget=TranscriptBudget(time.monotonic() - 1, 1_000_000),
     )
-    assert partial.target.source == "snapshot"
+    assert partial.target.source.source_label == "snapshot"
     assert partial.storage_validation is not None
     assert partial.storage_validation.state == "partial"
     assert partial.read_reasons
@@ -302,7 +298,7 @@ def test_partial_sealed_prefix_is_visible_to_log_but_not_search(tmp_path: Path) 
     raw = json.dumps({"type": "assistant", "message": {"content": "early needle"}})
     _snapshot(path, (raw, json.dumps({"padding": "x" * 10000})))
     source = TranscriptSource("file", "native-1", "claude", "snapshot", path)
-    target = SessionLogTarget("native-1", "claude", path, "snapshot", (source,))
+    target = SessionLogTarget(source)
     parsed = parse_session_target(
         project_root=tmp_path,
         runtime_root=None,
@@ -326,7 +322,7 @@ def test_partial_sealed_prefix_is_visible_to_log_but_not_search(tmp_path: Path) 
     )
 
 
-def test_unselected_archive_does_not_disqualify_loose_prefix(tmp_path: Path) -> None:
+def test_loose_prefix_retains_search_readiness(tmp_path: Path) -> None:
     import time
 
     from meridian.lib.ops.session_target import SessionLogTarget, TranscriptSource
@@ -343,27 +339,17 @@ def test_unselected_archive_does_not_disqualify_loose_prefix(tmp_path: Path) -> 
         + json.dumps({"padding": "x" * 10000})
         + "\n"
     )
-    sources = (
-        TranscriptSource("file", "native-1", "claude", "stream", path),
-        TranscriptSource(
-            "archive",
-            "native-1",
-            "claude",
-            "equivalent archive",
-            tmp_path / "offline.zip",
-            history_id="unused",
-        ),
-    )
+    source = TranscriptSource("file", "native-1", "claude", "stream", path)
     parsed = parse_session_target(
         project_root=tmp_path,
         runtime_root=None,
-        target=SessionLogTarget("native-1", "claude", path, "stream", sources),
+        target=SessionLogTarget(source),
         route=SessionLogRoute("file", str(path)),
         budget=TranscriptBudget(time.monotonic() + 10, 1000),
     )
     assert any("early needle" in entry.content for entry in parsed.entries)
     assert parsed.search_ready
-    assert parsed.target.sources == (sources[0],)
+    assert parsed.target.source == source
 
 
 @pytest.mark.parametrize("damage", ["duplicate_marker", "torn_header", "oversized_header"])
@@ -418,11 +404,24 @@ def test_snapshot_preview_bypasses_stream_append_checkpoint(tmp_path: Path, monk
     from meridian.lib.ops.session_target import SessionLogTarget, TranscriptSource
 
     path = tmp_path / "history.jsonl"  # Renamed storage still must not become an append stream.
-    _snapshot(path, ('{"type":"assistant","message":{"content":"retained needle"}}',))
+    _snapshot(
+        path,
+        (
+            json.dumps({"type": "session", "id": "native-1", "version": 3, "cwd": str(tmp_path)}),
+            json.dumps(
+                {
+                    "type": "message",
+                    "id": "a",
+                    "parentId": None,
+                    "message": {"role": "user", "content": "retained needle"},
+                }
+            ),
+        ),
+    )
     source = TranscriptSource("native_file", "native-1", "pi", "snapshot", path)
-    target = SessionLogTarget("native-1", "pi", path, "snapshot", (source,))
+    target = SessionLogTarget(source)
     monkeypatch.setattr(session_preview, "resolve_roots_for_read", lambda _: None)
-    monkeypatch.setattr(session_preview, "resolve_session_log_target", lambda **_: target)
+    monkeypatch.setattr(session_preview, "resolve_transcript_source", lambda **_: target)
     view = session_preview.SessionPreview(str(tmp_path)).refresh(
         session_preview.PreviewIdentity("p1", history_id="fixture"), lambda: True
     )
@@ -432,25 +431,15 @@ def test_snapshot_preview_bypasses_stream_append_checkpoint(tmp_path: Path, monk
 
 
 def test_resolved_native_source_checks_snapshot_binding(tmp_path: Path) -> None:
-    from types import SimpleNamespace
-
-    from meridian.lib.core.types import HarnessId
-    from meridian.lib.ops.session_target import _resolve_adapter_file_target
+    from meridian.lib.core.native_identity import NativeKey
+    from meridian.lib.ops.session_target import SessionLogTarget, TranscriptSource
     from meridian.lib.ops.session_transcript import SessionLogRoute, parse_session_target
 
     path = tmp_path / "copied-native.jsonl"
     _snapshot(path)  # Valid empty snapshot for native-1, not selected-native.
-    target = _resolve_adapter_file_target(
-        project_root=tmp_path,
-        session_id="selected-native",
-        harness_id=HarnessId.PI,
-        adapter=SimpleNamespace(
-            resolve_native_session_file=lambda **_: path,
-            native_transcript_kind=lambda _: "native_file",
-        ),
-        config_root_hint=None, native_store=tmp_path,
+    target = SessionLogTarget(
+        TranscriptSource.native(NativeKey("pi", str(tmp_path), "selected-native"), path)
     )
-    assert target is not None
     with pytest.raises(ValueError, match="binding"):
         parse_session_target(
             project_root=tmp_path,
@@ -517,9 +506,9 @@ def test_managed_preview_rejects_later_reserved_markers(
     path = tmp_path / "history.jsonl"
     path.write_bytes(payload)
     source = TranscriptSource("native_file", "p1", "pi", "owned", path)
-    target = SessionLogTarget("p1", "pi", path, "owned", (source,))
+    target = SessionLogTarget(source)
     monkeypatch.setattr(session_preview, "resolve_roots_for_read", lambda _: None)
-    monkeypatch.setattr(session_preview, "resolve_session_log_target", lambda **_: target)
+    monkeypatch.setattr(session_preview, "resolve_transcript_source", lambda **_: target)
     view = session_preview.SessionPreview(str(tmp_path)).refresh(
         session_preview.PreviewIdentity("p1", history_id="fixture"), lambda: True
     )
