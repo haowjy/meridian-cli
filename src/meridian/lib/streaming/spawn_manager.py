@@ -601,6 +601,12 @@ class SpawnManager:
             return -1
         return writer.last_seq
 
+    async def join_teardown(self, spawn_id: SpawnId) -> None:
+        """Wait for post-publication cleanup without changing terminal intent."""
+        cleanup_task = self._cleanup_tasks.get(spawn_id)
+        if cleanup_task is not None:
+            await asyncio.gather(cleanup_task, return_exceptions=True)
+
     async def stop_spawn(
         self,
         spawn_id: SpawnId,

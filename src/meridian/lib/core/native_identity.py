@@ -149,17 +149,3 @@ class PostExit:
     entry_observed: NativeKey | None = None
     exit: NativeKey | None = None
     trampoline_successor_id: str | None = None
-
-
-@dataclass(frozen=True)
-class NativeSessionKey:
-    native_store: str
-    session_id: str
-
-
-@dataclass(frozen=True)
-class RunBoundary:
-    """Owned entry/exit observations, independent of execution success."""
-
-    entry_observed: NativeSessionKey | None = None
-    exit: NativeSessionKey | None = None

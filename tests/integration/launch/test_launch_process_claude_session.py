@@ -74,7 +74,8 @@ def _build_primary_launch_context(
             session=session or SessionRequest(),
             launch_policy_snapshot=(
                 LaunchPolicySnapshot(model=model, harness=harness_id.value)
-                if session is not None else None
+                if session is not None
+                else None
             ),
         ),
         runtime=LaunchRuntime(
@@ -110,7 +111,7 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
         harness_id=HarnessId.CLAUDE,
         model="claude-sonnet-4-5",
     )
-    claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
+    harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
     captured: dict[str, object] = {}
 
     def fake_run_primary_process_with_capture(
@@ -129,14 +130,10 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
         on_child_started(555)
         return (0, 555)
 
-    monkeypatch.setattr(claude_adapter, "observe_session_id", _no_observed_session)
-
     outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
-        stop_session_fn=lambda *args, **kwargs: None,
-        update_session_harness_id_fn=lambda *args, **kwargs: None,
     )
 
     # No pre-seeded session from the launch context; Claude generates one in the command.
@@ -181,18 +178,16 @@ def test_run_harness_process_keeps_binding_when_observed_session_differs(
         on_child_started(666)
         return (0, 666)
 
-    def observed_session(**kwargs: object) -> str:
+    def observed_session(*args: object, **kwargs: object) -> str:
         _ = kwargs
         return observed_id
 
-    monkeypatch.setattr(claude_adapter, "observe_session_id", observed_session)
+    monkeypatch.setattr(claude_adapter, "extract_session_id", observed_session)
 
     outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
-        stop_session_fn=lambda *args, **kwargs: None,
-        update_session_harness_id_fn=lambda *args, **kwargs: None,
     )
 
     assert outcome.exit_code == 1
@@ -292,7 +287,7 @@ def test_run_harness_process_reconciles_claude_tui_trampoline_session_id(
     assert outcome.chat_id is not None
     spawns = list_spawns(launch_context.runtime_root)
     assert len(spawns.records) == 1
-    assert spawns.records[0].trampoline_successor_id == real_session_id
+    assert spawns.records[0].run_boundary.trampoline_successor_id == real_session_id
     assert spawns.records[0].harness_session_id == outcome.resolved_harness_session_id
     assert (
         session_store.get_session_harness_id(launch_context.runtime_root, outcome.chat_id)
@@ -319,7 +314,8 @@ def test_run_harness_process_resume_does_not_inject_seed_args(
         harness_id=HarnessId.CLAUDE,
         model="claude-sonnet-4-5",
         session=SessionRequest(
-            requested_harness_session_id="existing-session-id", source_native_store=str(source),
+            requested_harness_session_id="existing-session-id",
+            source_native_store=str(source),
             continue_chat_id="c42",
             primary_session_mode=SessionMode.RESUME.value,
         ),
@@ -334,7 +330,9 @@ def test_run_harness_process_resume_does_not_inject_seed_args(
 
 @pytest.mark.parametrize("signal", ["silent", "match", "mismatch", "switch"])
 def test_primary_claude_exec_receives_prebound_identity(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, signal: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    signal: str,
 ) -> None:
     import shlex
 
@@ -346,7 +344,9 @@ def test_primary_claude_exec_receives_prebound_identity(
     root = tmp_path / "repo"
     root.mkdir()
     context, registry = _build_primary_launch_context(
-        project_root=root, harness_id=HarnessId.CLAUDE, model="claude-sonnet-4-5",
+        project_root=root,
+        harness_id=HarnessId.CLAUDE,
+        model="claude-sonnet-4-5",
         extra_args=("--print",),
     )
     argv_log = tmp_path / "argv"
@@ -357,18 +357,17 @@ def test_primary_claude_exec_receives_prebound_identity(
         frames = (
             'while [ "$#" -gt 0 ]; do\n'
             ' if [ "$1" = "--session-id" ]; then shift; id=$1; fi\n shift\ndone\n'
-            + ('id=wrong-entry\n' if signal == "mismatch" else "")
-            + "printf '{\"type\":\"system\",\"subtype\":\"init\","
-            "\"session_id\":\"%s\"}\\n' \"$id\"\n"
+            + ("id=wrong-entry\n" if signal == "mismatch" else "")
+            + 'printf \'{"type":"system","subtype":"init",'
+            '"session_id":"%s"}\\n\' "$id"\n'
         )
     if signal == "switch":
-        frames += "printf '%s\\n' '{\"type\":\"result\",\"session_id\":\"later-id\"}'\n"
+        frames += 'printf \'%s\\n\' \'{"type":"result","session_id":"later-id"}\'\n'
     shim.write_text(
         "#!/bin/sh\n"
         f"cp {shlex.quote(str(context.runtime_root / 'sessions.jsonl'))} "
         f"{shlex.quote(str(binding_log))}\n"
-        f"printf '%s\\n' \"$@\" > {shlex.quote(str(argv_log))}\n"
-        + frames + "exit 0\n"
+        f"printf '%s\\n' \"$@\" > {shlex.quote(str(argv_log))}\n" + frames + "exit 0\n"
     )
     outcome = run_harness_process(context, registry)
     assert outcome.exit_code == (1 if signal == "mismatch" else 0)
@@ -389,9 +388,10 @@ def test_primary_claude_exec_receives_prebound_identity(
         assert row.status == "failed" and row.terminal is not None
         assert row.terminal.error == "entry_mismatch"
         assert row.run_boundary is not None and row.run_boundary.exit_chat_id is None
-        session_events = [json.loads(line) for line in (
-            context.runtime_root / "sessions.jsonl"
-        ).read_text().splitlines()]
+        session_events = [
+            json.loads(line)
+            for line in (context.runtime_root / "sessions.jsonl").read_text().splitlines()
+        ]
         assert not any(event.get("kind") == "invocation_started" for event in session_events)
 
 
@@ -400,9 +400,12 @@ def test_claude_fork_plan_waits_for_owned_new_identity(tmp_path: Path) -> None:
     source.mkdir()
     (source / "source-native.jsonl").write_text(json.dumps({"sessionId": "source-native"}) + "\n")
     context, _ = _build_primary_launch_context(
-        project_root=tmp_path, harness_id=HarnessId.CLAUDE, model="claude-sonnet-4-5",
+        project_root=tmp_path,
+        harness_id=HarnessId.CLAUDE,
+        model="claude-sonnet-4-5",
         session=SessionRequest(
-            requested_harness_session_id="source-native", continue_fork=True,
+            requested_harness_session_id="source-native",
+            continue_fork=True,
             source_native_store=str(source),
             primary_session_mode=SessionMode.FORK.value,
         ),
@@ -418,7 +421,9 @@ def test_claude_fork_plan_waits_for_owned_new_identity(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("existing_exit", [False, True])
 def test_unrelated_claude_trampoline_candidate_is_diagnostic(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing_exit: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    existing_exit: bool,
 ) -> None:
     import shlex
     import subprocess
@@ -439,7 +444,9 @@ def test_unrelated_claude_trampoline_candidate_is_diagnostic(
     monkeypatch.setenv("MERIDIAN_PROJECT_DIR", str(root))
     monkeypatch.setenv("MERIDIAN_TASK_DIR", str(root))
     context, registry = _build_primary_launch_context(
-        project_root=root, harness_id=HarnessId.CLAUDE, model="claude-sonnet-4-5",
+        project_root=root,
+        harness_id=HarnessId.CLAUDE,
+        model="claude-sonnet-4-5",
     )
     context = replace(context, runtime_root=resolve_project_runtime_root_for_write(root))
     store = tmp_path / "home" / ".claude" / "projects" / project_slug(root)
@@ -448,26 +455,50 @@ def test_unrelated_claude_trampoline_candidate_is_diagnostic(
     existing_chat = None
     if existing_exit:
         existing_chat = session_store.start_session(
-            context.runtime_root, "claude", successor, "claude-sonnet-4-5",
+            context.runtime_root,
+            "claude",
+            successor,
+            "claude-sonnet-4-5",
             native_store=str(store),
         )
         session_store.stop_session(context.runtime_root, existing_chat)
     # Match Claude's native history shape; the actual child supplies the assigned entry ID.
-    history = "\n".join(json.dumps(row) for row in (
-        {"display": "/tui fullscreen", "project": str(root), "sessionId": "%s",
-         "timestamp": 1781827479996},
-        {"display": "TRAMPOLINE-EXIT", "project": str(root), "sessionId": successor,
-         "timestamp": 1781827539538},
-    )) + "\n"
-    transcript = json.dumps({
-        "type": "user", "sessionId": successor, "timestamp": 1781827539538,
-        "message": {"role": "user", "content": "TRAMPOLINE-EXIT"},
-    }) + "\n"
+    history = (
+        "\n".join(
+            json.dumps(row)
+            for row in (
+                {
+                    "display": "/tui fullscreen",
+                    "project": str(root),
+                    "sessionId": "%s",
+                    "timestamp": 1781827479996,
+                },
+                {
+                    "display": "TRAMPOLINE-EXIT",
+                    "project": str(root),
+                    "sessionId": successor,
+                    "timestamp": 1781827539538,
+                },
+            )
+        )
+        + "\n"
+    )
+    transcript = (
+        json.dumps(
+            {
+                "type": "user",
+                "sessionId": successor,
+                "timestamp": 1781827539538,
+                "message": {"role": "user", "content": "TRAMPOLINE-EXIT"},
+            }
+        )
+        + "\n"
+    )
     shim = tmp_path / "fake-bin" / "claude"
     shim.write_text(
         '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do\n'
         ' if [ "$1" = "--session-id" ]; then shift; entry=$1; fi\n shift\ndone\n'
-        f"printf {shlex.quote(history)} \"$entry\" > "
+        f'printf {shlex.quote(history)} "$entry" > '
         f"{shlex.quote(str(store.parent.parent / 'history.jsonl'))}\n"
         f"printf '%s' {shlex.quote(transcript)} > "
         f"{shlex.quote(str(store / f'{successor}.jsonl'))}\nexit 1\n"
@@ -478,23 +509,51 @@ def test_unrelated_claude_trampoline_candidate_is_diagnostic(
     entry = session_store.get_session_record(context.runtime_root, outcome.chat_id)
     assert entry is not None and entry.harness_session_id != successor
     assert row.harness_session_id == entry.harness_session_id == outcome.resolved_harness_session_id
-    assert row.trampoline_successor_id == successor
+    assert row.run_boundary.trampoline_successor_id == successor
     assert row.chat_id == entry.chat_id
     assert (row.run_boundary.status if row.run_boundary else None) == "unresolved"
     assert (row.run_boundary.exit_chat_id if row.run_boundary else None) is None
     with pytest.raises(NativeSessionUnavailable, match="native_transcript_missing"):
         resolve_session_log_target(
-            ref=row.id, file_path=None, project_root=root, runtime_root=context.runtime_root,
+            ref=row.id,
+            file_path=None,
+            project_root=root,
+            runtime_root=context.runtime_root,
         )
     shown = subprocess.run(
         [sys.executable, "-m", "meridian", "spawn", "show", row.id],
-        cwd=root, text=True, capture_output=True, timeout=15,
+        cwd=root,
+        text=True,
+        capture_output=True,
+        timeout=15,
     )
     assert shown.returncode == 0, shown.stderr
     assert f"entry {entry.chat_id} ({entry.harness_session_id})" in shown.stdout
     assert "→ exit unresolved" in shown.stdout
     logged = subprocess.run(
         [sys.executable, "-m", "meridian", "session", "log", row.id],
-        cwd=root, text=True, capture_output=True, timeout=15,
+        cwd=root,
+        text=True,
+        capture_output=True,
+        timeout=15,
     )
     assert "TRAMPOLINE-EXIT" not in logged.stdout
+
+
+def test_identity_error_before_spawn_allocation_does_not_assert(tmp_path, monkeypatch):
+    from meridian.lib.core.lifecycle import SpawnLifecycleService
+    from meridian.lib.core.native_identity import NativeEntryMismatch, NativeKeyFields
+
+    context, registry = _build_primary_launch_context(
+        project_root=tmp_path, harness_id=HarnessId.CLAUDE, model="claude-sonnet-4-5"
+    )
+
+    def refuse(*args, **kwargs):
+        raise NativeEntryMismatch(
+            NativeKeyFields(session_id="first"), NativeKeyFields(session_id="other")
+        )
+
+    monkeypatch.setattr(SpawnLifecycleService, "start", refuse)
+    outcome = run_harness_process(context, registry)
+    assert outcome.exit_code == 1
+    assert outcome.primary_spawn_id is None

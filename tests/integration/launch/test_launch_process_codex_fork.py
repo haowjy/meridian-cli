@@ -137,10 +137,7 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
         if captured.get("fork_source_session"):
             assert spec.native_identity is not None
             assert spec.native_identity.operation == "fork"
-            assert (
-                spec.native_identity.session_id
-                == captured["build_continue_session"]
-            )
+            assert spec.native_identity.session_id == captured["build_continue_session"]
         return [*base_command, "resume", spec.continue_session_id or ""]
 
     def fake_fork_session(source_session_id: str) -> str:
@@ -157,6 +154,7 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
+        session_id_observer: Any = None,
     ) -> PrimaryAttachOutcome:
         _ = (
             harness_id,
@@ -169,33 +167,12 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
             on_running,
         )
         captured["env_chat_id"] = dict(env).get("MERIDIAN_CHAT_ID")
+        session_id_observer("00000000-0000-4000-8000-000000000002")
         return PrimaryAttachOutcome(
             exit_code=0,
             session_id="00000000-0000-4000-8000-000000000002",
             tui_pid=111,
         )
-
-    def fake_start_session(
-        runtime_root: Path,
-        harness: str,
-        harness_session_id: str | None,
-        model: str,
-        chat_id: str | None = None,
-        **kwargs: Any,
-    ) -> str:
-        _ = model
-        captured["chat_id_arg"] = chat_id
-        captured["start_harness_session_id"] = harness_session_id
-        captured["forked_from_chat_id"] = kwargs.get("forked_from_chat_id")
-        session_store.start_session(
-            runtime_root,
-            harness=harness,
-            harness_session_id=harness_session_id or "",
-            model=model,
-            chat_id="c999",
-            kind="primary",
-        )
-        return "c999"
 
     monkeypatch.setattr(
         launch_command,
@@ -204,25 +181,19 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
     )
     monkeypatch.setattr(codex_adapter, "fork_session", fake_fork_session)
     forked_id = "00000000-0000-4000-8000-000000000002"
-    monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: forked_id)
+    monkeypatch.setattr(codex_adapter, "extract_session_id", lambda *args: forked_id)
 
     outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_attach_fn=fake_run_primary_attach,
-        stop_session_fn=lambda *args, **kwargs: None,
-        update_session_harness_id_fn=lambda *args, **kwargs: None,
-        start_session_fn=fake_start_session,
     )
 
     assert captured["fork_source_session"] == "00000000-0000-4000-8000-000000000001"
     assert captured["build_continue_session"] == "00000000-0000-4000-8000-000000000002"
-    assert captured["chat_id_arg"] is None
     # I-10: fork happens after the row exists; the parent is not the child identity.
-    assert captured["start_harness_session_id"] == ""
-    assert captured["forked_from_chat_id"] == "c7"
-    assert captured["env_chat_id"] == "c999"
-    assert outcome.chat_id == "c999"
+    assert captured["env_chat_id"] == outcome.chat_id
+    assert outcome.chat_id is not None
     spawns = list_spawns(launch_context.runtime_root)
     assert len(spawns.records) == 1
     assert spawns.records[0].terminal.origin == "launcher"
@@ -303,6 +274,7 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
+        session_id_observer: Any = None,
     ) -> PrimaryAttachOutcome:
         _ = (
             harness_id,
@@ -315,6 +287,7 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
             on_running,
         )
         captured["env_chat_id"] = dict(env).get("MERIDIAN_CHAT_ID")
+        session_id_observer("00000000-0000-4000-8000-000000000001")
         return PrimaryAttachOutcome(
             exit_code=0,
             session_id="00000000-0000-4000-8000-000000000001",
@@ -328,24 +301,27 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
     )
     monkeypatch.setattr(codex_adapter, "fork_session", fail_if_forked)
     source_id = "00000000-0000-4000-8000-000000000001"
-    monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: source_id)
+    monkeypatch.setattr(codex_adapter, "extract_session_id", lambda *args: source_id)
 
     outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_attach_fn=fake_run_primary_attach,
-        stop_session_fn=lambda *args, **kwargs: None,
-        update_session_harness_id_fn=lambda *args, **kwargs: None,
-        start_session_fn=lambda *args, **kwargs: "c999",
     )
 
     assert captured["build_continue_session"] == "00000000-0000-4000-8000-000000000001"
-    assert captured["env_chat_id"] == "c999"
-    assert outcome.chat_id == "c999"
+    assert captured["env_chat_id"] == outcome.chat_id
+    assert outcome.chat_id is not None
+
+    assert outcome.exit_code == 1
+    row = list_spawns(launch_context.runtime_root).records[0]
+    assert row.terminal.error == "entry_mismatch"
+    assert row.run_boundary.status == "mismatch"
 
 
 def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import json
     import sqlite3
@@ -367,18 +343,32 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
         db.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT)")
         db.execute("INSERT INTO threads VALUES (?, ?)", (sid, str(source)))
     reference = ResolvedSessionReference(
-        harness_session_id=sid, harness="codex", source_chat_id="c-source",
-        source_model="gpt-5.4", source_agent=None, source_skills=(), source_work_id=None,
-        tracked=True, source_native_store=str(store),
+        harness_session_id=sid,
+        harness="codex",
+        source_chat_id="c-source",
+        source_model="gpt-5.4",
+        source_agent=None,
+        source_skills=(),
+        source_work_id=None,
+        tracked=True,
+        source_native_store=str(store),
     )
     fork = _build_fork_create_input(
         payload=SpawnForkInput(source_ref="c-source", prompt="fork"),
-        normalized_source_ref="c-source", resolved_reference=reference,
-        requested_model="gpt-5.4", requested_agent=None, inherited_skills=(),
-        requested_work="", requested_task_dir=None, requested_goal=None, harness="codex",
+        normalized_source_ref="c-source",
+        resolved_reference=reference,
+        requested_model="gpt-5.4",
+        requested_agent=None,
+        inherited_skills=(),
+        requested_work="",
+        requested_task_dir=None,
+        requested_goal=None,
+        harness="codex",
     )
     context, registry = _build_primary_launch_context(
-        project_root=tmp_path, harness_id=HarnessId.CODEX, model="gpt-5.4",
+        project_root=tmp_path,
+        harness_id=HarnessId.CODEX,
+        model="gpt-5.4",
         session=fork.session.model_copy(update={"primary_session_mode": "fork"}),
     )
     shim = tmp_path / "codex-shim"
@@ -386,21 +376,36 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
     observed: list[str] = []
 
     def attach(
-        harness_id, spawn_id, log_dir, control_root, task_cwd, env, spec, launcher, on_running,
+        harness_id,
+        spawn_id,
+        log_dir,
+        control_root,
+        task_cwd,
+        env,
+        spec,
+        launcher,
+        on_running,
+        session_id_observer,
     ):
         assert spec.native_identity is not None
         target_id = spec.native_identity.session_id
         assert target_id and target_id != sid
         result = subprocess.run(
-            ["sh", str(shim), target_id], env=env, cwd=control_root,
-            capture_output=True, text=True, check=True,
+            ["sh", str(shim), target_id],
+            env=env,
+            cwd=control_root,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         assert result.stdout.splitlines() == [str(store.parent), target_id]
         target = registry.get(HarnessId.CODEX).resolve_native_session_file(
-             session_id=target_id, native_store=store,
+            session_id=target_id,
+            native_store=store,
         )
         assert target is not None and target != source
         assert json.loads(target.read_text().splitlines()[0])["payload"]["id"] == target_id
+        session_id_observer(target_id)
         observed.append(target_id)
         return PrimaryAttachOutcome(exit_code=0, session_id=target_id, tui_pid=None)
 

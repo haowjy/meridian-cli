@@ -20,9 +20,7 @@ run_harness_process()
     │       └── fallback on PrimaryAttachError → _execute_via_blackbox()
     │
     └── post-exit finalization
-            ├── observe_session_id() + initial identity validation
-            ├── verify_native_identity() + diagnostic observation
-            ├── finalize_run_boundary() + accepted invocation attribution
+            ├── conclude_native_run() → identity, boundary, invocation attribution
             └── _finalize_lifecycle() → complete_execution()
 ```
 
@@ -44,11 +42,8 @@ arrive through `SubprocessHarness` hooks — never `HarnessId` branches:
   resolved runtime path) and secret redaction before metadata persistence.
 - `uses_native_primary_metadata` / `native_primary_runtime_metadata` — whether and
   which runtime fields populate `primary_meta.json`.
-- `observe_primary_session_id` — diagnostic observations only (Claude fullscreen
-  correlation); never binds an entry or allocates an exit.
-- `verify_native_identity` — typed exact-file validation after execution.
-- `observe_run_boundary` — launch-correlated entry/final-quit evidence for the
-  shared boundary finalizer.
+- `observe_after_exit` — exact entry validation, launch-correlated exit evidence,
+  and diagnostic observations; the shared pipeline decides and persists.
 - `build_primary_runtime_request_handler` — managed-primary runtime request handler
   (Codex/OpenCode permission broker).
 - `capabilities.captures_blackbox_output` and `bootstrap.primary_stderr_log` drive
@@ -59,9 +54,9 @@ and spawn paths share one writer; `runner.py` never names a harness id.
 
 ## Hard Invariants
 
-**I-4:** `harness_adapter.observe_session_id()` is called exactly once per launch,
-in the runner finalization block, before lifecycle completion. Never call
-it during execution, and never call it twice.
+**I-4:** `conclude_native_run()` runs once after child exit, before lifecycle
+completion. Managed attach routes owned IDs through `NativeRun.observe`; it does
+not bind or decide identity independently.
 
 **Assigned identity binds before exec.** When the finalized
 `native_identity` carries an ID (Meridian-minted create, verified resume, or

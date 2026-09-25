@@ -87,6 +87,12 @@ async def test_streaming_attempt_bounds_backend_startup_with_no_events(
     start_cancelled = asyncio.Event()
 
     class HangingStartupManager:
+        async def join_teardown(self, spawn_id):
+            pass
+
+        async def stop_spawn(self, spawn_id, **kwargs):
+            pass
+
         def get_connection(self, _spawn_id: SpawnId) -> None:
             return None
 
@@ -151,6 +157,9 @@ async def test_streaming_attempt_fresh_events_keep_slow_cursor_backend_alive(
     completion = asyncio.Event()
 
     class SlowActiveManager:
+        async def join_teardown(self, spawn_id):
+            pass
+
         def __init__(self) -> None:
             self.stop_calls: list[dict[str, object]] = []
             self.producer: asyncio.Task[None] | None = None

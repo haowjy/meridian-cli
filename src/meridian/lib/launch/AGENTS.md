@@ -69,13 +69,9 @@ prepare/bind entry:
    Foreground and background paths converge at `launch_prepared_spawn()`.
 3. **CLI streaming-serve** (`cli/streaming_serve.py`): resolve-before-persist via
    `SpawnApplicationService.prepare_spawn()`, then `run_streaming_spawn()`. Row
-   created only on successful preparation. A captured session attempt records selection
-   immediately after managed startup returns, before output consumption. A plan-assigned
-   native ID binds before exec; otherwise native ID callbacks or post-run artifact
-   observation bind pending selection; row creation alone is not model acceptance. An owned initial identity must match the assigned
-   or resume target before startup attribution; contradiction fails the attempt as
-   `entry_mismatch`. Later identity switches and post-exit observations never
-   rebind entry and are not startup confirmation.
+   created only on successful preparation. All three runners use `bind_entry()`
+   before exec and `conclude_native_run()` after teardown. Invocation attribution
+   follows successful identity conclusion, never merely row creation or startup.
 
 ## Key Types
 
@@ -103,7 +99,7 @@ Three concentric layers, each defined by function scope:
 |---|---|
 | I-1 | All composition inside `build_launch_context()` — no adapter composes independently |
 | I-2 | No driving adapter reconstructs argv, env, or permissions independently |
-| I-4 | `observe_session_id()` called exactly once post-execution (primary path only) |
+| I-4 | `conclude_native_run()` once per attempt after teardown joins: IDs → adapter → boundary → attribution |
 | I-5 | `SpawnRequest`/`LaunchRuntime` carry no derived state; `LaunchContext` complete at construction |
 | I-10 | Fork materialization (`fork.py`) happens only after spawn row exists |
 | I-13 | `LaunchContext.warnings` is the sole channel for composition warnings |

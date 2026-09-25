@@ -20,7 +20,6 @@ from typing import Any
 import psutil
 import structlog
 
-from meridian.lib.core.native_identity import NativeEntryMismatch, NativeKeyFields
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import (
     ConnectionConfig,
@@ -228,6 +227,7 @@ class PrimaryAttachLauncher:
         process_launcher: ProcessLauncher,
         runtime_root: Path | None = None,
         on_running: Callable[[int], None] | None = None,
+        session_id_observer: Callable[[str], None] | None = None,
     ) -> None:
         self._spawn_id = spawn_id
         self._spawn_dir = spawn_dir
@@ -236,6 +236,7 @@ class PrimaryAttachLauncher:
         self._process_launcher = process_launcher
         self._runtime_root = runtime_root
         self._on_running = on_running
+        self._session_id_observer = session_id_observer
         self._metadata = _LauncherMetadata()
         self._metadata_lock = Lock()
         self._history_writer: HarnessHistoryWriter | None = None
@@ -303,23 +304,7 @@ class PrimaryAttachLauncher:
                 self._metadata.backend_port = self._resolve_backend_port()
             self._write_metadata()
 
-            plan = spec.native_identity
-            if (plan is not None and plan.session_id and session_id
-                    and plan.session_id != session_id):
-                raise NativeEntryMismatch(
-                    NativeKeyFields(str(self._connection.harness_id),
-                        plan.native_store, plan.session_id),
-                    NativeKeyFields(str(self._connection.harness_id),
-                        plan.native_store, session_id),
-                )
             self._set_harness_session_id(session_id)
-            if self._metadata.harness_session_id != session_id:
-                raise NativeEntryMismatch(
-                    NativeKeyFields(str(self._connection.harness_id),
-                        plan.native_store if plan else None, self._metadata.harness_session_id),
-                    NativeKeyFields(str(self._connection.harness_id),
-                        plan.native_store if plan else None, session_id),
-                )
             self._record_backend_scope_from_connection(session_id)
             self._event_writer_task = asyncio.create_task(self._run_event_writer())
             self._set_activity("idle")
@@ -532,34 +517,12 @@ class PrimaryAttachLauncher:
     def _set_harness_session_id(self, session_id: str | None) -> None:
         if session_id is None:
             return
-        if self._runtime_root is not None:
-            from meridian.lib.launch.session_scope import bind_harness_session_id
-            from meridian.lib.state.session_identity import get_session_record_for_spawn
-            from meridian.lib.state.session_store import update_session_harness_id
-
-            record = get_session_record_for_spawn(
-                self._runtime_root, str(self._spawn_id), require_harness_session_id=False,
-            )
-            if record is not None:
-                runtime_root = self._runtime_root
-                session_id = bind_harness_session_id(
-                    runtime_root=runtime_root, spawn_id=self._spawn_id,
-                    record_session_id=lambda candidate: update_session_harness_id(
-                        runtime_root, record.chat_id, candidate,
-                        session_instance_id=record.session_instance_id,
-                    ),
-                    session_id=session_id, source="observed",
-                    current_session_id=record.harness_session_id or "",
-                    chat_id=record.chat_id,
-                )
+        if self._session_id_observer is not None:
+            self._session_id_observer(session_id)
         should_write = False
         with self._metadata_lock:
             if (self._metadata.harness_session_id
                     and self._metadata.harness_session_id != session_id):
-                logger.warning(
-                    "native_binding_conflict", kept=self._metadata.harness_session_id,
-                    attempted=session_id, source="observed", spawn_id=str(self._spawn_id),
-                )
                 return
             if self._metadata.harness_session_id != session_id:
                 self._metadata.harness_session_id = session_id

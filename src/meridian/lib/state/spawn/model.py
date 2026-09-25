@@ -83,6 +83,7 @@ class RunBoundaryOutcome(BaseModel):
 
     status: Literal["verified", "unresolved", "mismatch"]
     exit_chat_id: OptionalPersistedChatId = None
+    trampoline_successor_id: str | None = None
 
     @model_validator(mode="after")
     def _verified_has_exit_chat(self) -> Self:
@@ -122,7 +123,6 @@ class SpawnStateFields(BaseModel):
     goal: str | None = None
     display_label: str | None = None
     harness_session_id: OptionalPersistedHarnessSessionId = None
-    trampoline_successor_id: str | None = None
     control_root: str | None = None
     task_cwd: str | None = None
     execution_cwd: str | None = None
@@ -151,7 +151,7 @@ class SpawnStateFields(BaseModel):
         entry_chat_id = data.pop("entry_chat_id", None)
         exit_chat_id = data.pop("exit_chat_id", None)
         exit_identity = data.pop("exit_identity", None)
-        # Trampoline remains a top-level field until P3.
+        trampoline = data.pop("trampoline_successor_id", None)
         if data.get("chat_id") is None and entry_chat_id is not None:
             data["chat_id"] = entry_chat_id
         if data.get("run_boundary") is None and exit_identity is not None:
@@ -159,6 +159,11 @@ class SpawnStateFields(BaseModel):
                 "status": exit_identity,
                 "exit_chat_id": exit_chat_id,
             }
+        if trampoline is not None:
+            boundary = RunBoundaryOutcome.model_validate(
+                data.get("run_boundary") or {"status": "unresolved"}
+            ).model_dump()
+            data["run_boundary"] = {**boundary, "trampoline_successor_id": trampoline}
         return data
 
 class SpawnRecord(SpawnStateFields):

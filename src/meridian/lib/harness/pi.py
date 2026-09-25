@@ -14,8 +14,9 @@ from meridian.lib.core.native_identity import (
     LaunchIntent,
     NativeIdentity,
     NativeIdentityError,
+    NativeKeyFields,
     Operation,
-    RunBoundary,
+    PostExit,
 )
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
@@ -261,16 +262,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def resolve_native_session_file(self, *, session_id: str, native_store: Path) -> Path | None:
         return resolve_session_file(native_store, session_id, pending=True)
 
-    def verify_native_identity(
-        self,
-        plan: NativeIdentity,
-    ) -> NativeIdentityError | None:
-        try:
-            verify_identity(plan)
-        except NativeIdentityError as exc:
-            return exc
-        return None
-
     def resolve_launch_spec(
         self,
         run: SpawnParams,
@@ -383,17 +374,18 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             },
         )
 
-    def observe_run_boundary(
-        self,
-        *,
-        child_env: dict[str, str],
-        pid: int | None,
-    ) -> RunBoundary:
+    def observe_after_exit(
+        self, identity: NativeIdentity, entry: NativeKeyFields, *,
+        child_env: Mapping[str, str], child_cwd: Path, pid: int | None,
+        started_at_epoch: float | None,
+    ) -> PostExit:
+        try:
+            verify_identity(identity)
+        except NativeIdentityError as exc:
+            return PostExit(entry_error=exc)
         path = child_env.get("_MERIDIAN_PI_SESSION_BOUNDARY_PATH")
         nonce = child_env.get("_MERIDIAN_PI_SESSION_BOUNDARY_NONCE")
-        if not path or not nonce:
-            return RunBoundary()
-        return read_boundary(Path(path), nonce=nonce, pid=pid)
+        return read_boundary(Path(path), nonce=nonce, pid=pid) if path and nonce else PostExit()
 
     def uses_native_primary_metadata(self) -> bool:
         return self.contract.bootstrap.mode is BootstrapMode.SUBPROCESS_ONLY

@@ -5,7 +5,6 @@ import os
 import uuid
 from collections.abc import Callable
 from contextlib import ExitStack
-from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any, Literal, NamedTuple, Self, cast
 
@@ -36,7 +35,7 @@ from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import append_event, read_events, utc_now_iso
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.liveness import is_process_alive_with_birth
-from meridian.lib.state.native_binding import Conflict, bind, report_conflict
+from meridian.lib.state.native_binding import BindOutcome, Conflict, bind, report_conflict
 from meridian.lib.state.paths import RuntimePaths, normalize_path_for_write
 
 
@@ -730,29 +729,21 @@ def stop_session(runtime_root: Path, chat_id: str) -> None:
     _release_session_lock(runtime_root, chat_id)
 
 
-@dataclass(frozen=True)
-class NativeBindingResult:
-    status: Literal["bound", "already_bound", "conflict"]
-    harness_session_id: str | None
-    native_store: str | None
-
-
 def update_session_harness_id(
     runtime_root: Path,
     chat_id: str,
-    harness_session_id: str,
+    attempted: NativeKeyFields,
     *,
-    native_store: str | None = None,
-    source: BindSource = "observed",
+    source: BindSource,
     session_instance_id: str | None = None,
     startup_attempt_id: str | None = None,
-) -> NativeBindingResult:
+) -> BindOutcome:
     """Atomically bind the first native key; conflicts never append a rebind."""
     from meridian.lib.state.session_binding import session_bindings
 
     with session_bindings(runtime_root) as bindings:
         return bindings.bind(
-            chat_id, harness_session_id, native_store=native_store, source=source,
+            chat_id, attempted, source=source,
             session_instance_id=session_instance_id, startup_attempt_id=startup_attempt_id,
         )
 

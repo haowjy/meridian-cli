@@ -42,9 +42,8 @@ so an uncooperative relay cannot be re-joined by `asyncio.run()` during loop shu
    `stderr.log`), and falls back to black-box
 3. Black-box: calls `run_primary_process_with_capture_fn()` directly
 
-Managed attach persists the harness session ID from `PrimaryAttachOutcome.session_id`
-immediately on success. Black-box path may discover the session ID only at exit via
-`observe_session_id()`.
+Managed attach feeds owned IDs into `NativeRun.observe`. Black-box artifact IDs
+enter the same pipeline through `conclude_native_run` after exit.
 
 ### Signal cancellation
 
@@ -79,15 +78,11 @@ receiver is unregistered in `run()`'s `finally`, which restores the previous han
 
 ## Session ID Observation — Invariant I-4
 
-`harness_adapter.observe_session_id()` is called once after captured execution,
-before lifecycle completion. The first owned event is compared with the assigned
-key; a contradiction fails as `entry_mismatch` with expected/observed evidence.
-Managed attach validates its initial connection identity before attaching.
-
-Assigned keys bind before exec. Observed-only plans bind from owned signals;
-neither path discovers a replacement. Post-exit native verification precedes
-diagnostic observation, boundary finalization, and invocation attribution.
-Claude fullscreen candidates stay diagnostic, never verified exit identities.
+`bind_entry` owns pre-exec assignment. `NativeRun.observe` checks only the first
+owned signal against pre-exec facts. `conclude_native_run` then observes artifact
+and connection IDs, invokes `observe_after_exit`, verifies entry evidence and
+allocates an exact exit chat before writing the boundary and attributing startup.
+Claude fullscreen successors remain diagnostic, never verified exit identities.
 
 ## Finalization Ownership
 

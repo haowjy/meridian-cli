@@ -585,8 +585,6 @@ class _TimeoutAbortPiConnection(FakePiConnection):
             yield pi_event("message_update", {"abort_tail_frame": index})
 
 
-
-
 def _build_request() -> SpawnRequest:
     return SpawnRequest(
         model="gpt-5.3-codex",
@@ -626,6 +624,19 @@ async def _execute_with_context(
         ),
         harness_registry=registry,
     )
+    from meridian.lib.launch.session_scope import SessionAttempt
+    from meridian.lib.state import session_store, spawn_store
+
+    if "session_attempt" not in kwargs:
+        chat_id = session_store.start_session(
+            runtime_root, str(launch_context.harness.id), "", "", spawn_id=str(run.spawn_id)
+        )
+        record = session_store.get_session_record(runtime_root, chat_id)
+        assert record is not None
+        spawn_store.update_spawn(runtime_root, run.spawn_id, chat_id=chat_id)
+        kwargs["session_attempt"] = SessionAttempt(
+            runtime_root, chat_id, record.session_instance_id, "attempt-1", run.spawn_id
+        )
     return await streaming_runner_module.execute_with_streaming(
         run,
         request=request,

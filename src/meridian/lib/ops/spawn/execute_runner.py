@@ -30,7 +30,12 @@ from meridian.lib.launch.context import (
     RuntimeBindings,
 )
 from meridian.lib.launch.fork import materialize_fork
-from meridian.lib.launch.request import LaunchArgvIntent, LaunchRuntime, SpawnRequest
+from meridian.lib.launch.request import (
+    LaunchArgvIntent,
+    LaunchRuntime,
+    SessionRequest,
+    SpawnRequest,
+)
 from meridian.lib.launch.streaming_runner import execute_with_streaming
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
@@ -74,6 +79,10 @@ class PreparedExecutionHandoff:
     execution_cwd: str
     work_id: str | None
     harness_session_id_observer: Callable[[str], None] | None = None
+
+
+def _with_source_ref(exc: Exception, session: SessionRequest) -> Exception:
+    return exc.for_ref(session.source_ref) if isinstance(exc, NativeSessionUnavailable) else exc
 
 
 def _log_launch_failure_without_traceback(
@@ -141,13 +150,6 @@ async def _prepare_execution_handoff(
                 runtime_root=runtime_root,
                 metadata=session_metadata,
                 request=resolved_session,
-                harness_session_id=(
-                    resolved_session.requested_harness_session_id
-                    or (spawn_record.harness_session_id if spawn_record else "")
-                    or ""
-                )
-                if not resolved_session.continue_fork
-                else "",
                 run_agent_name=resolved_agent_name,
                 inherited_work_id=work_id,
                 control_root=runtime_request.resolved_control_root,
@@ -369,8 +371,7 @@ async def launch_prepared_spawn(
             prepared=prepared,
         )
     except Exception as exc:
-        if isinstance(exc, NativeSessionUnavailable):
-            exc = exc.for_ref(request.session.continue_source_ref or exc.ref)
+        exc = _with_source_ref(exc, request.session)
         await finalize_launch_failure(
             runtime_root,
             project_paths.project_root,
@@ -440,8 +441,7 @@ async def launch_prepared_spawn(
                     ),
                 )
         except Exception as exc:
-            if isinstance(exc, NativeSessionUnavailable):
-                exc = exc.for_ref(request.session.continue_source_ref or exc.ref)
+            exc = _with_source_ref(exc, request.session)
             await finalize_launch_failure(
                 runtime_root,
                 project_paths.project_root,

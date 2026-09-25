@@ -8,9 +8,9 @@ from uuid import uuid4
 
 import pytest
 
+from meridian.lib.core.native_identity import NativeIdentity
 from meridian.lib.harness.claude import ClaudeAdapter
 from meridian.lib.harness.claude_sessions import project_slug, reconcile_tui_trampoline_session_id
-from meridian.lib.state.artifact_store import InMemoryStore
 
 
 @pytest.fixture(autouse=True)
@@ -135,21 +135,23 @@ def test_claude_reconciliation_keeps_tui_trampoline_identity(
     )
 
     adapter = ClaudeAdapter()
-    assert (
-        adapter.observe_session_id(
-            artifacts=InMemoryStore(),
-            current_session_id=recorded_session_id,
-            project_root=project_root,
-            started_at_epoch=now - 1,
-        )
-        == recorded_session_id
+    identity = NativeIdentity(
+        "claude",
+        "create",
+        str(_project_dir(fake_home, project_root)),
+        recorded_session_id,
+        None,
+        None,
+    )
+    observation = adapter.observe_after_exit(
+        identity,
+        identity.entry_fields(),
+        child_env={},
+        child_cwd=project_root,
+        pid=None,
+        started_at_epoch=now - 1,
     )
 
-    observation = adapter.observe_primary_session_id(
-        native_identity=None, command=(), child_env={}, launch_child_cwd=project_root,
-        started_at_epoch=now - 1, expected_session_id=recorded_session_id,
-        requested_session_id="", resolved_session_id=recorded_session_id, exit_code=0,
-    )
     assert observation.trampoline_successor_id == real_session_id
 
 
@@ -174,15 +176,23 @@ def test_claude_reconciliation_preserves_recorded_id_without_trampoline_evidence
         ),
     )
 
-    assert (
-        ClaudeAdapter().observe_session_id(
-            artifacts=InMemoryStore(),
-            current_session_id=recorded_session_id,
-            project_root=project_root,
-            started_at_epoch=None,
-        )
-        == recorded_session_id
+    identity = NativeIdentity(
+        "claude",
+        "create",
+        str(_project_dir(fake_home, project_root)),
+        recorded_session_id,
+        None,
+        None,
     )
+    observation = ClaudeAdapter().observe_after_exit(
+        identity,
+        identity.entry_fields(),
+        child_env={},
+        child_cwd=project_root,
+        pid=None,
+        started_at_epoch=None,
+    )
+    assert observation.trampoline_successor_id is None
 
 
 def test_claude_reconciliation_preserves_recorded_id_for_existing_same_project_session(
@@ -219,12 +229,20 @@ def test_claude_reconciliation_preserves_recorded_id_for_existing_same_project_s
         ),
     )
 
-    assert (
-        ClaudeAdapter().observe_session_id(
-            artifacts=InMemoryStore(),
-            current_session_id=recorded_session_id,
-            project_root=project_root,
-            started_at_epoch=now - 1,
-        )
-        == recorded_session_id
+    identity = NativeIdentity(
+        "claude",
+        "create",
+        str(_project_dir(fake_home, project_root)),
+        recorded_session_id,
+        None,
+        None,
     )
+    observation = ClaudeAdapter().observe_after_exit(
+        identity,
+        identity.entry_fields(),
+        child_env={},
+        child_cwd=project_root,
+        pid=None,
+        started_at_epoch=now - 1,
+    )
+    assert observation.trampoline_successor_id is None
