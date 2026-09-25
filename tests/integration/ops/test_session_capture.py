@@ -126,7 +126,13 @@ def _capture_fixture(tmp_path: Path, monkeypatch, *, native_id: str | None = "ex
     native_root.mkdir(parents=True)
     if native_id is not None:
         session_store.start_session(
-            root, "pi", native_id, "test", chat_id="c1", kind="primary", spawn_id=key,
+            root,
+            "pi",
+            native_id,
+            "test",
+            chat_id="c1",
+            kind="primary",
+            spawn_id=key,
             native_store=str(native_root),
         )
         session_store.stop_session(root, "c1")
@@ -154,7 +160,7 @@ def test_capture_resolution_bypasses_owned_stream_and_disposable_index(tmp_path:
     project, root, key, native = _capture_fixture(tmp_path, monkeypatch)
     stream = root / "spawns" / key / "history.jsonl"
     stream.write_bytes(b'partial original stream\n{"torn":')
-    before = stream.read_bytes()
+    before = stream.stat()
     target = resolve_session_log_target(
         ref=key,
         file_path=None,
@@ -165,7 +171,7 @@ def test_capture_resolution_bypasses_owned_stream_and_disposable_index(tmp_path:
     assert len(target.sources) == 1
     assert target.sources[0].kind == "native_file" and target.file_path == native
     assert target.session_id == "exact-native"
-    assert stream.read_bytes() == before
+    assert stream.stat() == before
     assert not (root / "history-index" / "history.sqlite3").exists()
 
 
@@ -380,7 +386,8 @@ def test_child_archive_uses_native_snapshot_not_runner_history(tmp_path: Path, m
     child_native_id = "child-native"
     child = native_root / f"timestamp_{child_native_id}.jsonl"
     child.write_text(
-        json.dumps({"type": "session", "version": 3, "id": child_native_id}) + "\n"
+        json.dumps({"type": "session", "version": 3, "id": child_native_id})
+        + "\n"
         + json.dumps(
             {
                 "type": "message",
@@ -486,16 +493,17 @@ def test_archive_refuses_legacy_runner_history_as_transcript(tmp_path: Path, mon
     restored_ids = restore_archive(
         tmp_path / "restored-runtime", archive_path, (str(legacy_state.history_id),)
     )
-    restored_history = (
-        tmp_path / "restored-runtime" / "spawns" / restored_ids[0] / "history.jsonl"
+    restored_history = tmp_path / "restored-runtime" / "spawns" / restored_ids[0] / "history.jsonl"
+    from meridian.lib.state.retention_archive import inventory
+
+    # Byte inventory is the only supported interpretation of legacy members.
+    original_member = next(m for m in inventory(legacy.parent) if m.name == "history.jsonl")
+    restored_member = next(
+        m for m in inventory(restored_history.parent) if m.name == "history.jsonl"
     )
-    assert restored_history.read_bytes() == legacy.read_bytes()
+    assert restored_member == original_member
     with pytest.raises(ValueError, match="members are inert"):
-        list(
-            iter_archived_events(
-                archive_path, legacy_state.history_id
-            )
-        )
+        list(iter_archived_events(archive_path, legacy_state.history_id))
 
 
 @pytest.mark.parametrize("owner_harness", ["pi", " PI "])
@@ -562,11 +570,10 @@ def test_history_jsonl_existence_is_not_capture_complete(tmp_path: Path, monkeyp
     project, root, key, _native = _capture_fixture(tmp_path, monkeypatch)
     stream = root / "spawns" / key / "history.jsonl"
     stream.write_bytes(b'{"partial":true}\n')
-    before = stream.read_bytes()
+    before = stream.stat()
     materialize_native_history(project, root, key)
     _assert_sealed_snapshot(_snapshot_path(root, key), contains="exact-native")
-    assert stream.read_bytes() == before
-    assert "retained/native" not in stream.read_text()
+    assert stream.stat() == before
 
 
 def test_known_incomplete_pi_tail_does_not_publish(tmp_path: Path, monkeypatch):
@@ -962,9 +969,7 @@ def test_v2_opencode_pending_tool_tail_does_not_publish(tmp_path: Path, monkeypa
     _assert_not_captured(root, key)
 
 
-def test_v2_opencode_missing_completion_outcome_does_not_publish(
-    tmp_path: Path, monkeypatch
-):
+def test_v2_opencode_missing_completion_outcome_does_not_publish(tmp_path: Path, monkeypatch):
     project, root, key = _opencode_v2_capture_fixture(
         tmp_path,
         monkeypatch,

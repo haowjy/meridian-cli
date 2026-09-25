@@ -139,32 +139,13 @@ async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
     assert row.status == "timed_out"
     assert row.terminal.exit_code == 3
     assert row.terminal.error == "timeout"
-    history_path = runtime_root / "spawns" / str(run.spawn_id) / "history.jsonl"
-    from tests.support.history import written_events as iter_history_events
-
-    history = list(iter_history_events(history_path))
-    finalized = [
-        event
-        for event in history
-        if event.get("event_type") == "meridian.pi.lifecycle.phase"
-        and event["payload"].get("phase") == "finalized"
-    ]
-    assert finalized[-1]["payload"]["status"] == "timed_out"
-    assert finalized[-1]["payload"]["exit_code"] == 3
-    assert finalized[-1]["payload"]["error"] == "timeout"
     report = (runtime_root / "spawns" / str(run.spawn_id) / "report.md").read_text()
     assert report == "# Spawn failed\n\ntimeout\n"
-    cleanup_phases = [
-        event["payload"]["phase"]
-        for event in history
-        if event.get("event_type") == "meridian.pi.lifecycle.phase"
-        and str(event["payload"].get("phase", "")).startswith("cleanup_")
-    ]
-    assert cleanup_phases == ["cleanup_running", "cleanup_completed"]
-    assert all(
-        re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3,6}Z", event["timestamp"])
-        for event in history
+    lifecycle = json.loads(
+        (runtime_root / "spawns" / str(run.spawn_id) / "pi-lifecycle.json").read_text()
     )
+    assert lifecycle["phase"] == "cleanup_completed"
+    assert lifecycle["cleanup_status"] == "completed"
 
     state = json.loads((runtime_root / "spawns" / str(run.spawn_id) / "state.json").read_text())
     assert re.fullmatch(

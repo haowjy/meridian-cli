@@ -56,6 +56,16 @@ def test_raw_rows_preserve_unknown_material_columns_and_orphan_parts(
     # The same raw dialect remains interpretable after JSON serialization/retention.
     parsed = parse_transcript_events_with_prologues(json.loads(json.dumps(events)))
     assert parsed.rendering_reason
+
+
+def test_portable_history_writer_preserves_opencode_rows(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "opencode.db"
+    write_opencode_db_session_with_parts(
+        db_path=path,
+        session_id="s",
+        messages=[("assistant", {}, [{"type": "text", "text": "retained response"}])],
+    )
+    events = list(iter_opencode_db_events(session_id="s", db_path=path))
     monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "home"))
     project = tmp_path / "repo"
     project.mkdir()

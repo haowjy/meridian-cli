@@ -36,6 +36,7 @@ _PI_HELP_SURFACE = (
     "PI_CODING_AGENT_SESSION_DIR"
 )
 
+
 def _is_pi_phase_event(event: RawHarnessEvent) -> bool:
     return event.event_type == "meridian.pi.lifecycle.phase"
 
@@ -95,15 +96,6 @@ async def _start_existing_pi_connection(
     await connection.start(config, spec)
 
 
-def _history_events(runtime_root: Path, spawn_id: SpawnId) -> list[dict[str, object]]:
-    history_path = runtime_root / "spawns" / str(spawn_id) / "history.jsonl"
-    return [
-        json.loads(line)
-        for line in history_path.read_text(encoding="utf-8").splitlines()
-        if line
-    ]
-
-
 def _publish_manager_spawn(runtime_root: Path, spawn_id: SpawnId) -> None:
     spawn_store.start_spawn(
         runtime_root,
@@ -133,7 +125,6 @@ def test_pi_rpc_connection_surfaces_stdout_parse_diagnostics(
     assert parsed.event.payload["reason"] == expected_reason
     assert parsed.event.harness_id == HarnessId.PI.value
     assert parsed.is_protocol_event is False
-
 
 
 def test_pi_semantics_terminal_outcome_and_activity_mapping() -> None:
@@ -181,9 +172,12 @@ def test_pi_semantics_terminal_outcome_and_activity_mapping() -> None:
     assert normalize_event(cancelled_event).semantics.terminal is not None
     assert normalize_event(cancelled_event).semantics.terminal.status == "cancelled"
     assert normalize_event(cancelled_event).semantics.terminal.error == "cancelled"
-    assert normalize_event(
-        RawHarnessEvent(event_type="message_update", harness_id="pi", payload={})
-    ).semantics.activity == "turn_active"
+    assert (
+        normalize_event(
+            RawHarnessEvent(event_type="message_update", harness_id="pi", payload={})
+        ).semantics.activity
+        == "turn_active"
+    )
     agent_end = normalize_event(
         RawHarnessEvent(event_type="agent_end", harness_id="pi", payload={})
     ).semantics
@@ -262,7 +256,12 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
         ),
         ResolvedLaunchSpec(
             native_identity=NativeIdentity(
-                "pi", "create", str(scoped_session_dir), "planned-id", None, None,
+                "pi",
+                "create",
+                str(scoped_session_dir),
+                "planned-id",
+                None,
+                None,
             ),
             harness=HarnessId.PI,
             prompt="hello",
@@ -283,6 +282,7 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
     assert argv[argv.index("--mode") + 1] == "rpc"
     assert argv[argv.index("--session-dir") + 1] == str(scoped_session_dir)
 
+
 @pytest.mark.asyncio
 @pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
 async def test_pi_rpc_connection_redacts_secret_like_cli_args_in_process_spawned_phase(
@@ -296,12 +296,12 @@ async def test_pi_rpc_connection_redacts_secret_like_cli_args_in_process_spawned
     shim = bin_dir / "pi"
     shim.write_text(
         "#!/bin/sh\n"
-        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
-        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
-        "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-redacted\"}'\n"
+        'if [ "$1" = "--version" ]; then echo \'pi 1.2.3\'; exit 0; fi\n'
+        f'if [ "$1" = "--help" ]; then echo \'{_PI_HELP_SURFACE}\'; exit 0; fi\n'
+        'printf \'%s\\n\' \'{"type":"session","id":"ses-redacted"}\'\n'
         "while IFS= read -r line; do\n"
-        "  case \"$line\" in\n"
-        "    *'\"type\":\"abort\"'*) exit 0 ;;\n"
+        '  case "$line" in\n'
+        '    *\'"type":"abort"\'*) exit 0 ;;\n'
         "  esac\n"
         "done\n",
         encoding="utf-8",
@@ -324,7 +324,12 @@ async def test_pi_rpc_connection_redacts_secret_like_cli_args_in_process_spawned
         ),
         ResolvedLaunchSpec(
             native_identity=NativeIdentity(
-                "pi", "create", str(scoped_session_dir), "planned-id", None, None,
+                "pi",
+                "create",
+                str(scoped_session_dir),
+                "planned-id",
+                None,
+                None,
             ),
             harness=HarnessId.PI,
             prompt="hello",
@@ -370,20 +375,20 @@ async def test_pi_rpc_connection_ignores_non_lifecycle_stderr_lines_but_logs_the
     shim = bin_dir / "pi"
     shim.write_text(
         "#!/bin/sh\n"
-        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
-        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
-        "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-stderr-ignore\"}'\n"
+        'if [ "$1" = "--version" ]; then echo \'pi 1.2.3\'; exit 0; fi\n'
+        f'if [ "$1" = "--help" ]; then echo \'{_PI_HELP_SURFACE}\'; exit 0; fi\n'
+        'printf \'%s\\n\' \'{"type":"session","id":"ses-stderr-ignore"}\'\n'
         f"printf '%s\\n' '{plain_stderr}' >&2\n"
         f"printf '%s\\n' '{non_allowlisted_json}' >&2\n"
         f"printf '%s\\n' '{lifecycle_stderr}' >&2\n"
         "while IFS= read -r line; do\n"
-        "  case \"$line\" in\n"
-        "    *'\"type\":\"prompt\"'*)\n"
+        '  case "$line" in\n'
+        '    *\'"type":"prompt"\'*)\n'
         "      printf '%s\\n' '{\"type\":\"agent_start\"}'\n"
         "      printf '%s\\n' "
-        "'{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"stopReason\":\"stop\"}]}'\n"
+        '\'{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop"}]}\'\n'
         "      ;;\n"
-        "    *'\"type\":\"abort\"'*) exit 0 ;;\n"
+        '    *\'"type":"abort"\'*) exit 0 ;;\n'
         "  esac\n"
         "done\n",
         encoding="utf-8",
@@ -417,15 +422,12 @@ async def test_pi_rpc_connection_ignores_non_lifecycle_stderr_lines_but_logs_the
         if event.event_type == "agent_end":
             break
     await connection.send_cancel()
-    non_phase_events.extend(
-        [event async for event in event_iter if not _is_pi_phase_event(event)]
-    )
+    non_phase_events.extend([event async for event in event_iter if not _is_pi_phase_event(event)])
 
     assert not any(event.event_type == "pi.runtime.warn" for event in non_phase_events)
     assert not any(event.event_type == "meridian.quiescence.ready" for event in non_phase_events)
     assert not any(
-        event.event_type == "meridian.lifecycle.parse_error"
-        for event in non_phase_events
+        event.event_type == "meridian.lifecycle.parse_error" for event in non_phase_events
     )
     stderr_log = (
         resolve_spawn_log_dir(
@@ -455,18 +457,18 @@ async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_withou
     shim = bin_dir / "pi"
     shim.write_text(
         "#!/bin/sh\n"
-        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
-        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
-        "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-autoprompt\"}'\n"
+        'if [ "$1" = "--version" ]; then echo \'pi 1.2.3\'; exit 0; fi\n'
+        f'if [ "$1" = "--help" ]; then echo \'{_PI_HELP_SURFACE}\'; exit 0; fi\n'
+        'printf \'%s\\n\' \'{"type":"session","id":"ses-autoprompt"}\'\n'
         "while IFS= read -r line; do\n"
-        "  printf '%s\\n' \"$line\" >> \"$PI_RPC_INBOUND_LOG\"\n"
-        "  case \"$line\" in\n"
-        "    *'\"type\":\"prompt\"'*)\n"
+        '  printf \'%s\\n\' "$line" >> "$PI_RPC_INBOUND_LOG"\n'
+        '  case "$line" in\n'
+        '    *\'"type":"prompt"\'*)\n'
         "      printf '%s\\n' '{\"type\":\"agent_start\"}'\n"
         "      printf '%s\\n' "
-        "'{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"stopReason\":\"stop\"}]}'\n"
+        '\'{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop"}]}\'\n'
         "      ;;\n"
-        "    *'\"type\":\"abort\"'*)\n"
+        '    *\'"type":"abort"\'*)\n'
         "      exit 0\n"
         "      ;;\n"
         "  esac\n"
@@ -557,9 +559,7 @@ async def test_pi_spawn_manager_startup_diagnostics_report_outcome_and_marker(
         config: ConnectionConfig,
         spec: ResolvedLaunchSpec,
     ) -> PiRpcConnection:
-        connection = PiRpcConnection(
-            timing=PiRpcTimingPolicy(first_event_timeout_seconds=2.0)
-        )
+        connection = PiRpcConnection(timing=PiRpcTimingPolicy(first_event_timeout_seconds=2.0))
         await _start_existing_pi_connection(connection, config, spec)
         return connection
 
@@ -570,20 +570,20 @@ async def test_pi_spawn_manager_startup_diagnostics_report_outcome_and_marker(
         prompt_handler = (
             "      printf '%s\n' '{\"type\":\"agent_start\"}'\n"
             "      printf '%s\n' "
-            "'{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"stopReason\":\"stop\"}]}'\n"
+            '\'{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop"}]}\'\n'
         )
     else:
         prompt_handler = "      sleep 30\n"
     shim.write_text(
         "#!/bin/sh\n"
-        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
-        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
+        'if [ "$1" = "--version" ]; then echo \'pi 1.2.3\'; exit 0; fi\n'
+        f'if [ "$1" = "--help" ]; then echo \'{_PI_HELP_SURFACE}\'; exit 0; fi\n'
         "while IFS= read -r line; do\n"
-        "  case \"$line\" in\n"
-        "    *'\"type\":\"prompt\"'*)\n"
+        '  case "$line" in\n'
+        '    *\'"type":"prompt"\'*)\n'
         f"{prompt_handler}"
         "      ;;\n"
-        "    *'\"type\":\"abort\"'*) exit 0 ;;\n"
+        '    *\'"type":"abort"\'*) exit 0 ;;\n'
         "  esac\n"
         "done\n",
         encoding="utf-8",
@@ -600,6 +600,8 @@ async def test_pi_spawn_manager_startup_diagnostics_report_outcome_and_marker(
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
 
+    observed: list[RawHarnessEvent] = []
+    manager.register_event_hook(spawn_id, observed.append)
     await manager.start_spawn(
         ConnectionConfig(
             spawn_id=spawn_id,
@@ -621,9 +623,9 @@ async def test_pi_spawn_manager_startup_diagnostics_report_outcome_and_marker(
         assert outcome.status == expected_status
         assert outcome.error == expected_error
         assert any(
-            event.get("event_type") == "meridian.pi.lifecycle.phase"
-            and event.get("payload", {}).get("phase") == diagnostic_marker
-            for event in _history_events(tmp_path, spawn_id)
+            event.event_type == "meridian.pi.lifecycle.phase"
+            and event.payload.get("phase") == diagnostic_marker
+            for event in observed
         )
     finally:
         await manager.shutdown()
@@ -642,19 +644,19 @@ async def test_pi_spawn_manager_prompt_response_failure_fails_fast_with_reported
     shim = bin_dir / "pi"
     shim.write_text(
         "#!/bin/sh\n"
-        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
-        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
+        'if [ "$1" = "--version" ]; then echo \'pi 1.2.3\'; exit 0; fi\n'
+        f'if [ "$1" = "--help" ]; then echo \'{_PI_HELP_SURFACE}\'; exit 0; fi\n'
         "while IFS= read -r line; do\n"
-        "  case \"$line\" in\n"
-        "    *'\"type\":\"prompt\"'*)\n"
+        '  case "$line" in\n'
+        '    *\'"type":"prompt"\'*)\n'
         "      printf '%s\\n' "
-        "'{\"type\":\"response\",\"command\":\"prompt\",\"success\":false,"
-        "\"error\":\"No API key configured\"}'\n"
+        '\'{"type":"response","command":"prompt","success":false,'
+        '"error":"No API key configured"}\'\n'
         "      sleep 1\n"
         "      printf '%s\\n' "
-        "'{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"stopReason\":\"stop\"}]}'\n"
+        '\'{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop"}]}\'\n'
         "      ;;\n"
-        "    *'\"type\":\"abort\"'*) exit 0 ;;\n"
+        '    *\'"type":"abort"\'*) exit 0 ;;\n'
         "  esac\n"
         "done\n",
         encoding="utf-8",
@@ -671,6 +673,8 @@ async def test_pi_spawn_manager_prompt_response_failure_fails_fast_with_reported
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
 
+    observed: list[RawHarnessEvent] = []
+    manager.register_event_hook(spawn_id, observed.append)
     await manager.start_spawn(
         ConnectionConfig(
             spawn_id=spawn_id,
@@ -695,12 +699,11 @@ async def test_pi_spawn_manager_prompt_response_failure_fails_fast_with_reported
 
         response_events = [
             event
-            for event in _history_events(tmp_path, spawn_id)
-            if event.get("event_type") == "response"
-            and event.get("payload", {}).get("success") is False
+            for event in observed
+            if event.event_type == "response" and event.payload.get("success") is False
         ]
         assert len(response_events) == 1
-        assert response_events[0]["payload"]["error"] == "No API key configured"
+        assert response_events[0].payload["error"] == "No API key configured"
     finally:
         await manager.shutdown()
 
@@ -723,10 +726,10 @@ async def test_pi_connection_launches_in_control_root_when_task_cwd_provided(
     shim = bin_dir / "pi"
     shim.write_text(
         "#!/bin/sh\n"
-        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
-        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
-        "pwd > \"$PI_TEST_CWD_FILE\"\n"
-        "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-task-cwd\"}'\n"
+        'if [ "$1" = "--version" ]; then echo \'pi 1.2.3\'; exit 0; fi\n'
+        f'if [ "$1" = "--help" ]; then echo \'{_PI_HELP_SURFACE}\'; exit 0; fi\n'
+        'pwd > "$PI_TEST_CWD_FILE"\n'
+        'printf \'%s\\n\' \'{"type":"session","id":"ses-task-cwd"}\'\n'
         # Stay alive long enough for the connection to write the initial prompt,
         # then read one line (the prompt) before exiting cleanly.
         "read _prompt_line || true\n",
@@ -782,8 +785,8 @@ async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_even
     shim = bin_dir / "pi"
     shim.write_text(
         "#!/bin/sh\n"
-        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
-        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
+        'if [ "$1" = "--version" ]; then echo \'pi 1.2.3\'; exit 0; fi\n'
+        f'if [ "$1" = "--help" ]; then echo \'{_PI_HELP_SURFACE}\'; exit 0; fi\n'
         "# RPC mode: accept the initial prompt line, then die before any stdout event.\n"
         "read -r _prompt_line || true\n"
         f"printf '%s\\n' '{crash_stderr}' >&2\n"
@@ -824,9 +827,7 @@ async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_even
 
     events = [event async for event in connection.events()]
     error_events = [
-        event
-        for event in events
-        if event.event_type == "meridian/error/connectionClosed"
+        event for event in events if event.event_type == "meridian/error/connectionClosed"
     ]
     assert error_events
     message = str(error_events[0].payload.get("message", ""))
@@ -850,8 +851,8 @@ async def test_pi_rpc_malformed_line_does_not_satisfy_first_event_watchdog(
     shim = bin_dir / "pi"
     shim.write_text(
         "#!/bin/sh\n"
-        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
-        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
+        'if [ "$1" = "--version" ]; then echo \'pi 1.2.3\'; exit 0; fi\n'
+        f'if [ "$1" = "--help" ]; then echo \'{_PI_HELP_SURFACE}\'; exit 0; fi\n'
         "read -r _prompt_line || true\n"
         "printf '%s\\n' '{bad json'\n"
         "sleep 5\n",
@@ -860,9 +861,7 @@ async def test_pi_rpc_malformed_line_does_not_satisfy_first_event_watchdog(
     shim.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
-    connection = PiRpcConnection(
-        timing=PiRpcTimingPolicy(first_event_timeout_seconds=1.0)
-    )
+    connection = PiRpcConnection(timing=PiRpcTimingPolicy(first_event_timeout_seconds=1.0))
     await _start_existing_pi_connection(
         connection,
         ConnectionConfig(
@@ -882,9 +881,7 @@ async def test_pi_rpc_malformed_line_does_not_satisfy_first_event_watchdog(
 
     events = [event async for event in connection.events()]
 
-    assert any(
-        event.event_type == "meridian.lifecycle.parse_error" for event in events
-    )
+    assert any(event.event_type == "meridian.lifecycle.parse_error" for event in events)
     error_messages = [
         str(event.payload.get("message", ""))
         for event in events
@@ -908,8 +905,8 @@ async def test_pi_rpc_nonzero_exit_before_first_event_reports_exit_code(
     shim = bin_dir / "pi"
     shim.write_text(
         "#!/bin/sh\n"
-        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
-        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
+        'if [ "$1" = "--version" ]; then echo \'pi 1.2.3\'; exit 0; fi\n'
+        f'if [ "$1" = "--help" ]; then echo \'{_PI_HELP_SURFACE}\'; exit 0; fi\n'
         "read -r _prompt_line || true\n"
         f"printf '%s\\n' '{crash_stderr}' >&2\n"
         "exit 7\n",
