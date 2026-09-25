@@ -349,7 +349,9 @@ def iter_source_events(
     consume: Callable[[int], None] | None = None,
 ) -> Generator[dict[str, object]]:
     if (
-        source.kind == "native_file" and source.harness == "pi" and source.path is not None
+        source.kind == "native_file"
+        and source.harness == "pi"
+        and source.path is not None
         and not is_native_snapshot(source.path)
     ):
         projection = project_pi_reopen_default(source.path.read_text(encoding="utf-8"))
@@ -470,9 +472,18 @@ def parse_session_target(
     target: SessionLogTarget,
     route: SessionLogRoute,
     budget: TranscriptBudget | None = None,
+    events: Iterator[dict[str, object]] | None = None,
 ) -> ParsedSessionTranscript:
     source = target.sources[0]
-    parsed, validation = _parse_transcript_source(source, budget)
+    if events is None:
+        parsed, validation = _parse_transcript_source(source, budget)
+    else:
+        parsed = parse_transcript_events_with_prologues(budget.events(events) if budget else events)
+        validation = TranscriptValidation()
+        validation.state = "partial" if budget and budget.exhausted else "complete"
+        validation.reason = (
+            "Transcript read budget exhausted" if budget and budget.exhausted else None
+        )
     resolved_target = _target_for_source(target, source)
 
     flattened = flatten_transcript_segments(parsed.segments)

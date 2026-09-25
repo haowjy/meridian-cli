@@ -8,12 +8,13 @@ import math
 import os
 import sqlite3
 from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
-from contextlib import closing
+from contextlib import closing, contextmanager
 from itertools import groupby
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
 from meridian.lib.harness.opencode_storage import resolve_opencode_home_dir
+from meridian.lib.state.native_search_index import OpenCodeV1Witness, OpenCodeV2Witness
 from meridian.lib.state.native_snapshot import TranscriptValidation
 
 OpenCodeDbSchema = Literal["sqlite_v1", "sqlite_v2"]
@@ -46,9 +47,7 @@ def resolve_opencode_db_path(launch_env: Mapping[str, str] | None = None) -> Pat
 def _connect_readonly(db_path: Path) -> sqlite3.Connection:
     # SQLite may update WAL shared-memory read marks in mode=ro. This is the
     # same normal read behavior used by live OpenCode session-log reads.
-    return sqlite3.connect(
-        db_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.1
-    )
+    return sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.1)
 
 
 def _table_names(connection: sqlite3.Connection) -> set[str]:
@@ -156,9 +155,12 @@ def opencode_db_any_session_exists(
             return False
         # Exact identity checks must distinguish unreadable authority from absent IDs.
         # In particular, a torn import snapshot must defer, never persist "missing".
-        return connection.execute(
-            f"SELECT 1 FROM {table} WHERE id = ?", (session_id.strip(),)
-        ).fetchone() is not None
+        return (
+            connection.execute(
+                f"SELECT 1 FROM {table} WHERE id = ?", (session_id.strip(),)
+            ).fetchone()
+            is not None
+        )
 
 
 class _JsonlEventReader(Protocol):
@@ -442,62 +444,68 @@ def iter_opencode_db_events(
     ) as connection:
         connection.row_factory = sqlite3.Row
         connection.execute("BEGIN")
-        for table, required in (
-            ("session", {"id", "time_created", "time_updated"}),
-            ("message", {"id", "session_id", "time_created", "time_updated", "data"}),
-            ("part", {"id", "session_id", "message_id", "time_created", "time_updated", "data"}),
-        ):
-            columns = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
-            if not required <= columns:
-                raise ValueError(f"Unsupported OpenCode {table} schema")
-        session = connection.execute(
-            "SELECT * FROM session WHERE id=?", (normalized_session_id,)
-        ).fetchone()
-        if session is None:
-            raise ValueError("OpenCode transcript session does not exist")
+        yield from _iter_v1_events(connection, normalized_session_id)
+
+
+def _iter_v1_events(
+    connection: sqlite3.Connection, normalized_session_id: str
+) -> Generator[dict[str, object]]:
+    for table, required in (
+        ("session", {"id", "time_created", "time_updated"}),
+        ("message", {"id", "session_id", "time_created", "time_updated", "data"}),
+        ("part", {"id", "session_id", "message_id", "time_created", "time_updated", "data"}),
+    ):
+        columns = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
+        if not required <= columns:
+            raise ValueError(f"Unsupported OpenCode {table} schema")
+    session = connection.execute(
+        "SELECT * FROM session WHERE id=?", (normalized_session_id,)
+    ).fetchone()
+    if session is None:
+        raise ValueError("OpenCode transcript session does not exist")
+    yield {
+        "record": "opencode.transcript",
+        "version": 1,
+        "table": "session",
+        "row": _raw_row(session),
+    }
+    # Traverse selected parts once. A per-message session+message predicate
+    # can pick the native session-only index and rescan the session N times.
+    parts = connection.execute(
+        "SELECT p.* FROM part p CROSS JOIN message m "
+        "WHERE p.session_id=? AND m.id=p.message_id AND m.session_id=p.session_id "
+        "ORDER BY m.time_created,m.id,p.time_created,p.id",
+        (normalized_session_id,),
+    )
+    groups = groupby(parts, key=lambda part: part["message_id"])
+    pending = next(groups, None)
+    for message in connection.execute(
+        "SELECT * FROM message WHERE session_id=? ORDER BY time_created,id",
+        (normalized_session_id,),
+    ):
+        message_parts: list[dict[str, object]] = []
+        if pending is not None and pending[0] == message["id"]:
+            message_parts = [_raw_row(part) for part in pending[1]]
+            pending = next(groups, None)
         yield {
             "record": "opencode.transcript",
             "version": 1,
-            "table": "session",
-            "row": _raw_row(session),
+            "table": "message",
+            "row": _raw_row(message),
+            "parts": message_parts,
         }
-        # Traverse selected parts once. A per-message session+message predicate
-        # can pick the native session-only index and rescan the session N times.
-        parts = connection.execute(
-            "SELECT p.* FROM part p CROSS JOIN message m "
-            "WHERE p.session_id=? AND m.id=p.message_id AND m.session_id=p.session_id "
-            "ORDER BY m.time_created,m.id,p.time_created,p.id",
-            (normalized_session_id,),
-        )
-        groups = groupby(parts, key=lambda part: part["message_id"])
-        pending = next(groups, None)
-        for message in connection.execute(
-            "SELECT * FROM message WHERE session_id=? ORDER BY time_created,id",
-            (normalized_session_id,),
-        ):
-            message_parts: list[dict[str, object]] = []
-            if pending is not None and pending[0] == message["id"]:
-                message_parts = [_raw_row(part) for part in pending[1]]
-                pending = next(groups, None)
-            yield {
-                "record": "opencode.transcript",
-                "version": 1,
-                "table": "message",
-                "row": _raw_row(message),
-                "parts": message_parts,
-            }
-        for part in connection.execute(
-            "SELECT * FROM part p WHERE p.session_id=? AND NOT EXISTS "
-            "(SELECT 1 FROM message m WHERE m.id=p.message_id AND m.session_id=p.session_id) "
-            "ORDER BY p.time_created,p.id",
-            (normalized_session_id,),
-        ):
-            yield {
-                "record": "opencode.transcript",
-                "version": 1,
-                "table": "part",
-                "row": _raw_row(part),
-            }
+    for part in connection.execute(
+        "SELECT * FROM part p WHERE p.session_id=? AND NOT EXISTS "
+        "(SELECT 1 FROM message m WHERE m.id=p.message_id AND m.session_id=p.session_id) "
+        "ORDER BY p.time_created,p.id",
+        (normalized_session_id,),
+    ):
+        yield {
+            "record": "opencode.transcript",
+            "version": 1,
+            "table": "part",
+            "row": _raw_row(part),
+        }
 
 
 def iter_opencode_v2_db_events(
@@ -527,31 +535,36 @@ def iter_opencode_v2_db_events(
         if "session_v2" not in names or "session_message" not in names:
             return
         connection.execute("BEGIN")
-        session = connection.execute(
-            "SELECT * FROM session_v2 WHERE id=?", (normalized_session_id,)
-        ).fetchone()
-        if session is None:
-            return
+        yield from _iter_v2_events(connection, normalized_session_id)
+
+
+def _iter_v2_events(
+    connection: sqlite3.Connection, normalized_session_id: str
+) -> Generator[dict[str, object]]:
+    session = connection.execute(
+        "SELECT * FROM session_v2 WHERE id=?", (normalized_session_id,)
+    ).fetchone()
+    if session is None:
+        return
+    yield {
+        "record": _V2_RECORD,
+        "version": _V2_VERSION,
+        "type": "session",
+        "data": _raw_row(session),
+    }
+    for message in connection.execute(
+        "SELECT type,seq,data FROM session_message WHERE session_id=? ORDER BY seq,time_created,id",
+        (normalized_session_id,),
+    ):
+        payload = _load_json_object(message["data"])
         yield {
             "record": _V2_RECORD,
             "version": _V2_VERSION,
-            "type": "session",
-            "data": _raw_row(session),
+            "type": str(message["type"]),
+            "seq": message["seq"],
+            "session_id": normalized_session_id,
+            "data": payload if payload is not None else {},
         }
-        for message in connection.execute(
-            "SELECT type,seq,data FROM session_message "
-            "WHERE session_id=? ORDER BY seq,time_created,id",
-            (normalized_session_id,),
-        ):
-            payload = _load_json_object(message["data"])
-            yield {
-                "record": _V2_RECORD,
-                "version": _V2_VERSION,
-                "type": str(message["type"]),
-                "seq": message["seq"],
-                "session_id": normalized_session_id,
-                "data": payload if payload is not None else {},
-            }
 
 
 def iter_opencode_db_session_events(
@@ -570,6 +583,63 @@ def iter_opencode_db_session_events(
         yield from iter_opencode_v2_db_events(session_id=session_id, db_path=db_path)
         return
     yield from iter_opencode_db_events(session_id=session_id, db_path=db_path)
+
+
+OpenCodeWitness = OpenCodeV1Witness | OpenCodeV2Witness
+
+
+def _session_witnesses(
+    connection: sqlite3.Connection, session_ids: Iterable[str]
+) -> dict[str, OpenCodeWitness]:
+    ids = json.dumps(list(session_ids))
+    if "session_v2" in _table_names(connection):
+        rows = connection.execute(
+            "WITH wanted AS (SELECT value AS id FROM json_each(?)), "
+            "messages AS (SELECT session_id,count(*) AS n,max(seq) AS seq,"
+            "max(time_updated) AS updated FROM session_message "
+            "WHERE session_id IN (SELECT id FROM wanted) GROUP BY session_id) "
+            "SELECT s.id,coalesce(m.n,0),m.seq,m.updated,s.time_updated "
+            "FROM session_v2 s JOIN wanted w ON s.id=w.id "
+            "LEFT JOIN messages m ON m.session_id=s.id",
+            (ids,),
+        )
+        return {str(r[0]): OpenCodeV2Witness(*r[1:]) for r in rows}
+    rows = connection.execute(
+        "WITH wanted AS (SELECT value AS id FROM json_each(?)), "
+        "parts AS (SELECT session_id,count(*) AS n,max(time_updated) AS updated "
+        "FROM part WHERE session_id IN (SELECT id FROM wanted) GROUP BY session_id), "
+        "messages AS (SELECT session_id,count(*) AS n,max(time_updated) AS updated "
+        "FROM message WHERE session_id IN (SELECT id FROM wanted) GROUP BY session_id) "
+        "SELECT s.id,coalesce(p.n,0),p.updated,coalesce(m.n,0),m.updated,s.time_updated "
+        "FROM session s JOIN wanted w ON s.id=w.id "
+        "LEFT JOIN parts p ON p.session_id=s.id LEFT JOIN messages m ON m.session_id=s.id",
+        (ids,),
+    )
+    return {str(r[0]): OpenCodeV1Witness(*r[1:]) for r in rows}
+
+
+def opencode_session_witnesses(
+    db_path: Path, session_ids: Iterable[str]
+) -> dict[str, OpenCodeWitness]:
+    """Grouped existence and freshness check in the recorded DB, never ambient storage."""
+    with closing(_connect_readonly(db_path)) as connection:
+        connection.execute("BEGIN")
+        return _session_witnesses(connection, session_ids)
+
+
+@contextmanager
+def read_opencode_search_source(
+    db_path: Path, session_id: str
+) -> Generator[tuple[OpenCodeWitness, Iterator[dict[str, object]]]]:
+    """Witness and raw native events share one short read-only snapshot."""
+    with closing(_connect_readonly(db_path)) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.execute("BEGIN")
+        witness = _session_witnesses(connection, (session_id,)).get(session_id)
+        if witness is None:
+            raise ValueError("OpenCode transcript session does not exist")
+        reader = _iter_v2_events if isinstance(witness, OpenCodeV2Witness) else _iter_v1_events
+        yield witness, reader(connection, session_id)
 
 
 def _model_ref_text(raw_model: object) -> str | None:
@@ -730,9 +800,7 @@ def _v2_content_parts(content: object) -> list[dict[str, object]]:
             continue
         part = cast("dict[str, object]", item)
         parts.append(
-            _v2_tool_part(part)
-            if str(part.get("type", "")).strip().lower() == "tool"
-            else part
+            _v2_tool_part(part) if str(part.get("type", "")).strip().lower() == "tool" else part
         )
     return parts
 
@@ -795,6 +863,7 @@ def extract_last_assistant_report(events: Iterable[dict[str, object]]) -> str | 
 
 def extract_last_assistant_report_from_session_path(path: Path) -> str | None:
     """Return the last assistant message text for one OpenCode session file."""
+
     def _no_json(
         path: Path,
         *,
