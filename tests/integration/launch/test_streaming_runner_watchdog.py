@@ -202,7 +202,10 @@ async def test_streaming_attempt_fresh_events_keep_slow_cursor_backend_alive(
             return None
 
         async def stop_spawn(self, spawn_id: SpawnId, **kwargs: object) -> None:
-            self.stop_calls.append({"spawn_id": spawn_id, **kwargs})
+            # Real SpawnManager only joins teardown after terminal publication;
+            # it does not send another cancellation to a completed session.
+            if not completion.is_set():
+                self.stop_calls.append({"spawn_id": spawn_id, **kwargs})
 
     manager = SlowActiveManager()
     monkeypatch.setattr(streaming_runner_module, "CURSOR_INACTIVITY_TIMEOUT_SECONDS", 0.5)

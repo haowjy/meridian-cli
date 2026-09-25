@@ -25,7 +25,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Carry one recorded source store through references, continuation, forks, and model reads. Missing tracked stores never fall back to Claude config hints or ambient namespaces.
 - Accept IDs only from owned event envelopes, never assistant prose or nested tool/assistant content.
 - Remove obsolete discovery metadata and source carriers; document validation order and Pi's fail-closed stale-context error-prefix dependency.
-- Keep continuation fixtures faithful to Codex native headers, and missing-source fixtures bound to explicit native stores.
+- Keep continuation and missing-source fixtures faithful to native keys; model terminal teardown as a join, not another cancellation.
 - Build locked Pi extension bundles before full preflight tests and packaging; missing pnpm fails loudly.
 
 ### Scope
