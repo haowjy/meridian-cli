@@ -3,6 +3,15 @@
 from enum import StrEnum
 
 
+class NativeEntryMismatch(ValueError):
+    """An owned initial identity contradicts the exact launch target."""
+
+    def __init__(self, expected: str, observed: str) -> None:
+        self.expected = expected
+        self.observed = observed
+        super().__init__(f"entry_mismatch: expected {expected!r}, observed {observed!r}")
+
+
 class ErrorCategory(StrEnum):
     RETRYABLE = "retryable"
     UNRECOVERABLE = "unrecoverable"

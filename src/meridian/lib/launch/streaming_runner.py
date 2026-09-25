@@ -57,7 +57,12 @@ from meridian.lib.launch.env import (
     resolve_pi_session_role,
     scope_pi_session_dir_for_spawn,
 )
-from meridian.lib.launch.errors import ErrorCategory, classify_error, should_retry
+from meridian.lib.launch.errors import (
+    ErrorCategory,
+    NativeEntryMismatch,
+    classify_error,
+    should_retry,
+)
 from meridian.lib.launch.extract import (
     FinalizeExtraction,
     enrich_finalize,
@@ -136,6 +141,7 @@ class _AttemptRuntime:
     terminal_observed: bool = False
     authoritative_terminal_status: TerminalSpawnStatus | None = None
     start_error: str | None = None
+    entry_mismatch: NativeEntryMismatch | None = None
 
 
 class StartupPhaseTimeout(TimeoutError):
@@ -867,16 +873,16 @@ async def _run_streaming_attempt(
             if manager.raw_terminal_frames_are_authoritative(run.spawn_id)
             else None
         )
+        if on_running is not None:
+            recording_selection = True
+            on_running(connection)
+            recording_selection = False
         await manager.start_heartbeat(run.spawn_id)
         lifecycle_service.mark_running(
             run.spawn_id,
             launch_mode=launch_mode,
             worker_pid=connection.subprocess_pid,
         )
-        if on_running is not None:
-            recording_selection = True
-            on_running(connection)
-            recording_selection = False
         subscriber = manager.subscribe(run.spawn_id)
         if subscriber is None:
             raise RuntimeError("failed to subscribe to spawn stream")
@@ -1007,7 +1013,7 @@ async def _run_streaming_attempt(
                 exit_code=drain_exit_code,
             )
     except Exception as exc:
-        if recording_selection:
+        if recording_selection and not isinstance(exc, NativeEntryMismatch):
             raise
         return _AttemptRuntime(
             connection=connection,
@@ -1022,6 +1028,7 @@ async def _run_streaming_attempt(
             terminal_observed=False,
             authoritative_terminal_status=None,
             start_error=str(exc),
+            entry_mismatch=exc if isinstance(exc, NativeEntryMismatch) else None,
         )
     finally:
         if subscriber is not None:
@@ -1214,23 +1221,45 @@ async def execute_with_streaming(
 
         observed_harness_session_id: str | None = None
 
+        def _observe_id(session_id: str, attempt: SessionAttempt | None) -> None:
+            nonlocal observed_harness_session_id
+            bound = bind_harness_session_id(
+                runtime_root=runtime_root, spawn_id=run.spawn_id,
+                record_session_id=(
+                    attempt.record_harness_session_id if attempt else lambda _: None
+                ),
+                session_id=session_id, source="observed",
+                current_session_id=observed_harness_session_id or "",
+                chat_id=attempt.chat_id if attempt else None,
+            )
+            observed_harness_session_id = bound or None
+            if bound and harness_session_id_observer is not None:
+                harness_session_id_observer(bound)
+
         def _attempt_id_observer(attempt: SessionAttempt | None) -> Callable[[str], None]:
+            initial_observed = False
+            expected_id = (
+                spec.native_identity_plan.harness_session_id
+                if spec.native_identity_plan is not None
+                else spec.continue_session_id if not spec.continue_fork else None
+            )
+
             def observe(session_id: str) -> None:
-                nonlocal observed_harness_session_id
-                if spec.continue_fork and session_id.strip() == spec.continue_session_id:
-                    raise ValueError("fork returned its source conversation identity")
-                bound = bind_harness_session_id(
-                    runtime_root=runtime_root, spawn_id=run.spawn_id,
-                    record_session_id=(
-                        attempt.record_harness_session_id if attempt else lambda _: None
-                    ),
-                    session_id=session_id, source="observed",
-                    current_session_id=observed_harness_session_id or "",
-                    chat_id=attempt.chat_id if attempt else None,
-                )
-                observed_harness_session_id = bound or None
-                if bound and harness_session_id_observer is not None:
-                    harness_session_id_observer(bound)
+                nonlocal initial_observed
+                candidate = session_id.strip()
+                if not candidate:
+                    return
+                if not initial_observed:
+                    if expected_id and candidate != expected_id:
+                        raise NativeEntryMismatch(expected_id, candidate)
+                    if spec.continue_fork and candidate == spec.continue_session_id:
+                        raise NativeEntryMismatch(
+                            f"new fork target (not {spec.continue_session_id})", candidate,
+                        )
+                    initial_observed = True
+                # Subsequent owned signals can describe legitimate native switches.
+                # They diagnose conflicts, but never confirm or replace entry.
+                _observe_id(candidate, attempt)
             return observe
 
         observe_attempt_id = _attempt_id_observer(session_attempt)
@@ -1298,7 +1327,7 @@ async def execute_with_streaming(
             if observed_harness_session_id and harness_session_id_observer is not None:
                 harness_session_id_observer(observed_harness_session_id)
         elif spec.continue_session_id and not spec.continue_fork:
-            observe_attempt_id(spec.continue_session_id)
+            _observe_id(spec.continue_session_id, session_attempt)
 
         budget_tracker = (
             LiveBudgetTracker(budget=budget, space_spent_usd=space_spent_usd)
@@ -1372,9 +1401,7 @@ async def execute_with_streaming(
                     captured_attempt: SessionAttempt | None = session_attempt,
                     captured_observer: Callable[[str], None] = observe_attempt_id,
                 ) -> None:
-                    native_id = connection.session_id or (
-                        spec.continue_session_id if not spec.continue_fork else None
-                    )
+                    native_id = connection.session_id
                     if native_id:
                         captured_observer(native_id)
                     if captured_attempt is not None:
@@ -1442,6 +1469,15 @@ async def execute_with_streaming(
                     report_bytes = report_path.read_bytes()
                     artifacts.put(make_artifact_key(run.spawn_id, REPORT_FILENAME), report_bytes)
 
+                if attempt.entry_mismatch is not None:
+                    conclusion.failure_reason = "entry_mismatch"
+                    _record_lifecycle(
+                        "entry_mismatch", attempt=attempt_number,
+                        expected=attempt.entry_mismatch.expected,
+                        observed=attempt.entry_mismatch.observed,
+                    )
+                    break
+
                 streaming_extractor = StreamingExtractor(
                     connection=attempt.connection,
                     bundle=harness_bundle,
@@ -1493,7 +1529,7 @@ async def execute_with_streaming(
                     or ""
                 )
                 if extracted_harness_session_id:
-                    observe_attempt_id(extracted_harness_session_id)
+                    _observe_id(extracted_harness_session_id, session_attempt)
 
                 if attempt_cancelled:
                     if attempt.received_signal is not None:

@@ -72,7 +72,10 @@ prepare/bind entry:
    created only on successful preparation. A captured session attempt records selection
    immediately after managed startup returns, before output consumption. Native ID
    callbacks or post-run artifact observation bind pending selection; row creation
-   alone is not model acceptance.
+   alone is not model acceptance. An owned initial identity must match the assigned
+   or resume target before startup attribution; contradiction fails the attempt as
+   `entry_mismatch`. Later identity switches and post-exit observations never
+   rebind entry and are not startup confirmation.
 
 ## Key Types
 

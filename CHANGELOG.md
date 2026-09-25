@@ -6,6 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Contradictory initial native identity fails the attempt as `entry_mismatch`; later switches never rebind entry.
+
 - Chat restarts and managed-primary metadata preserve the original native binding.
 
 - Continue and fork refuse unbound chats with a clear error; removed discovery-based recovery advice.
