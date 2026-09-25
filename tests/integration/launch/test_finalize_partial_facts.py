@@ -69,3 +69,20 @@ def test_unknown_usage_is_none_and_empty_failure_does_not_create_history(tmp_pat
     assert result.usage is None
     assert result.report_path.is_file()
     assert not (tmp_path / "history.jsonl").exists()
+
+
+def test_blank_stdout_lines_do_not_hide_known_usage(tmp_path):
+    output = tmp_path / "output.jsonl"
+    output.write_bytes(b'\n{"type":"result","result":"done","usage":{"input_tokens":7}}\n\n')
+    extractor = ClaudeHarnessExtractor()
+    fold = extractor.create_fold()
+    fold.fold_stdout(output)
+    result = enrich_finalize(
+        artifacts=InMemoryStore(),
+        extractor=extractor,
+        facts=fold.facts,
+        spawn_id=SpawnId("p1"),
+        log_dir=tmp_path,
+    )
+    assert result.usage is not None
+    assert result.usage.input_tokens == 7

@@ -100,7 +100,9 @@ class AttemptFold:
                 except UnicodeDecodeError:
                     self.facts.incomplete = True
                     line = raw_line.decode("utf-8", errors="replace")
-                self.facts.output_seen = self.facts.output_seen or bool(line.strip())
+                if not line.strip():
+                    continue
+                self.facts.output_seen = True
                 try:
                     payload: object = json.loads(line)
                 except ValueError:

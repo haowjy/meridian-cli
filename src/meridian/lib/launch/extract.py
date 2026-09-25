@@ -92,7 +92,7 @@ def _persist_report(
         )
         wrapped = f"{heading}\n\n{extracted.content.strip()}\n"
         if text_capped and extracted.source == "assistant_message":
-            wrapped += "\n[Report truncated at the attempt text limit.]\n"
+            wrapped += "\n[Attempt text was truncated at 1 MiB before report extraction.]\n"
         atomic_write_text(target, wrapped)
         artifacts.put(report_key, wrapped.encode("utf-8"))
         return target
