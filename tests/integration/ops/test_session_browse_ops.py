@@ -366,14 +366,16 @@ def test_subset_search_is_ordered_and_failure_isolated(tmp_path: Path, monkeypat
     matching_chat = session_store.start_session(
         runtime_root,
         harness="codex",
-        harness_session_id=matching_id,
+            harness_session_id=matching_id,
+            native_store=(home / ".codex" / "sessions").as_posix(),
         model="gpt-5.4",
         kind="primary",
     )
     other_chat = session_store.start_session(
         runtime_root,
         harness="codex",
-        harness_session_id=other_id,
+            harness_session_id=other_id,
+            native_store=(home / ".codex" / "sessions").as_posix(),
         model="gpt-5.4",
         kind="primary",
     )
@@ -437,6 +439,7 @@ def test_subset_search_uses_recorded_primary_spawn_without_global_scan(
         runtime_root,
         harness="codex",
         harness_session_id=harness_session_id,
+        native_store=(home / ".codex" / "sessions").as_posix(),
         model="gpt-5.4",
         kind="primary",
         spawn_id="p42",

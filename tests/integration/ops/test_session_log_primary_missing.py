@@ -61,5 +61,3 @@ def test_session_log_primary_file_authority_needs_no_harness_session_id(
     assert [(message.role, message.content) for message in output.messages] == [
         ("assistant", "primary live progress")
     ]
-
-

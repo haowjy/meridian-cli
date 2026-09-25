@@ -9,7 +9,9 @@ from uuid import uuid4
 
 import pytest
 
+from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.types import SpawnId
+from meridian.lib.harness.adapter import SpawnParams
 from meridian.lib.harness.claude import ClaudeAdapter
 from meridian.lib.harness.claude_sessions import candidate_claude_project_dirs, project_slug
 from meridian.lib.harness.codex import CodexAdapter
@@ -252,7 +254,7 @@ def test_claude_adapter_uses_claude_config_dir_override(
     assert infer_harness_from_untracked_session_ref(project_root, override_session_id) == "claude"
 
 
-def test_claude_adapter_resolves_tracked_config_root_chain_in_trust_order(
+def test_claude_adapter_refuses_ambiguous_tracked_config_roots(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -277,32 +279,12 @@ def test_claude_adapter_resolves_tracked_config_root_chain_in_trust_order(
         )
 
     adapter = ClaudeAdapter()
-    assert (
+    with pytest.raises(ValueError, match="ambiguous native transcript"):
         adapter.resolve_session_file(
             project_root=project_root,
             session_id=session_id,
             config_root_hint=hint_root,
         )
-        == paths[0]
-    )
-    paths[0].unlink()
-    assert (
-        adapter.resolve_session_file(
-            project_root=project_root,
-            session_id=session_id,
-            config_root_hint=hint_root,
-        )
-        == paths[1]
-    )
-    paths[1].unlink()
-    assert (
-        adapter.resolve_session_file(
-            project_root=project_root,
-            session_id=session_id,
-            config_root_hint=hint_root,
-        )
-        == paths[2]
-    )
 
 
 @pytest.mark.parametrize(
@@ -404,14 +386,11 @@ def test_codex_adapter_owns_session_detection(
     os.utime(rollout_path, (now, now))
 
     adapter = CodexAdapter()
-    assert (
-        adapter.detect_primary_session_id(
-            project_root=project_root,
-            started_at_epoch=now - 1,
-            started_at_local_iso=None,
-        )
-        == session_id
-    )
+    assert adapter.detect_primary_session_id(
+        project_root=project_root,
+        started_at_epoch=now - 1,
+        started_at_local_iso=None,
+    ) is None
     assert adapter.owns_untracked_session(project_root=project_root, session_ref=session_id) is True
     assert infer_harness_from_untracked_session_ref(project_root, session_id) == "codex"
 
@@ -437,16 +416,17 @@ def test_codex_adapter_uses_codex_home_override(
     os.utime(override_rollout, (now - 5, now - 5))
 
     adapter = CodexAdapter()
+    assert adapter.detect_primary_session_id(
+        project_root=project_root,
+        started_at_epoch=now - 10,
+        started_at_local_iso=None,
+    ) is None
     assert (
-        adapter.detect_primary_session_id(
+        adapter.resolve_session_file(
             project_root=project_root,
-            started_at_epoch=now - 10,
-            started_at_local_iso=None,
+            session_id=override_session_id,
+            config_root_hint=codex_home_override / "sessions",
         )
-        == override_session_id
-    )
-    assert (
-        adapter.resolve_session_file(project_root=project_root, session_id=override_session_id)
         == override_rollout
     )
     assert (
@@ -476,14 +456,11 @@ def test_opencode_adapter_owns_session_detection(
     os.utime(log_path, (now, now))
 
     adapter = OpenCodeAdapter()
-    assert (
-        adapter.detect_primary_session_id(
-            project_root=project_root,
-            started_at_epoch=now - 1,
-            started_at_local_iso="2026-03-08T12:00:00",
-        )
-        == session_id
-    )
+    assert adapter.detect_primary_session_id(
+        project_root=project_root,
+        started_at_epoch=now - 1,
+        started_at_local_iso="2026-03-08T12:00:00",
+    ) is None
     assert adapter.owns_untracked_session(project_root=project_root, session_ref=session_id) is True
     assert infer_harness_from_untracked_session_ref(project_root, session_id) == "opencode"
 
@@ -519,14 +496,11 @@ def test_opencode_adapter_uses_xdg_data_home_override(
     os.utime(override_log, (now - 5, now - 5))
 
     adapter = OpenCodeAdapter()
-    assert (
-        adapter.detect_primary_session_id(
-            project_root=project_root,
-            started_at_epoch=now - 10,
-            started_at_local_iso="2026-03-08T12:00:00",
-        )
-        == override_session_id
-    )
+    assert adapter.detect_primary_session_id(
+        project_root=project_root,
+        started_at_epoch=now - 10,
+        started_at_local_iso="2026-03-08T12:00:00",
+    ) is None
     assert (
         adapter.owns_untracked_session(project_root=project_root, session_ref=override_session_id)
         is True
@@ -536,3 +510,98 @@ def test_opencode_adapter_uses_xdg_data_home_override(
         is False
     )
     assert infer_harness_from_untracked_session_ref(project_root, override_session_id) == "opencode"
+
+
+def test_tracked_resume_plans_reject_non_native_identity_flags() -> None:
+    claude = ClaudeAdapter()
+    with pytest.raises(ValueError, match="--continue"):
+        claude.plan_native_identity(
+            SpawnParams(
+                prompt="resume",
+                continue_harness_session_id=str(uuid4()),
+                extra_args=("--continue",),
+            )
+        )
+
+    codex = CodexAdapter()
+    with pytest.raises(ValueError, match="stored UUID"):
+        codex.plan_native_identity(
+            SpawnParams(prompt="resume", continue_harness_session_id="not-a-uuid")
+        )
+
+
+def test_codex_transcript_resolution_refuses_duplicate_exact_ids(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    session_id = str(uuid4())
+    sessions_root = tmp_path / "codex" / "sessions"
+    for timestamp in ("2026-01-01T00-00-00", "2026-01-02T00-00-00"):
+        path = sessions_root / "2026" / timestamp / f"rollout-{timestamp}-{session_id}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}\n", encoding="utf-8")
+
+    adapter = CodexAdapter()
+    with pytest.raises(NativeSessionUnavailable) as caught:
+        adapter.resolve_session_file(
+            project_root=tmp_path,
+            session_id=session_id,
+            config_root_hint=sessions_root,
+        )
+    assert caught.value.reason == "ambiguous_native_file"
+
+
+def test_claude_transcript_resolution_is_pinned_to_recorded_project_store(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    session_id = str(uuid4())
+    recorded_store = tmp_path / "recorded" / "projects" / project_slug(project_root)
+    ambient_store = tmp_path / "ambient" / "projects" / project_slug(project_root)
+    for store in (recorded_store, ambient_store):
+        store.mkdir(parents=True)
+        (store / f"{session_id}.jsonl").write_text("{}\n", encoding="utf-8")
+
+    adapter = ClaudeAdapter()
+    assert adapter.resolve_session_file(
+        project_root=project_root,
+        session_id=session_id,
+        config_root_hint=recorded_store,
+    ) == recorded_store / f"{session_id}.jsonl"
+    (recorded_store / f"{session_id}.jsonl").unlink()
+    assert adapter.resolve_session_file(
+        project_root=project_root,
+        session_id=session_id,
+        config_root_hint=recorded_store,
+    ) is None
+
+
+def test_opencode_transcript_resolution_uses_exact_storage_store(
+    tmp_path: Path,
+) -> None:
+    session_id = "ses_native_exact"
+    storage_root = tmp_path / "storage"
+    expected = storage_root / "session" / f"{session_id}.json"
+    expected.parent.mkdir(parents=True)
+    expected.write_text("{}", encoding="utf-8")
+    unrelated = storage_root / "session" / "ses_unrelated.json"
+    unrelated.write_text("{}", encoding="utf-8")
+
+    adapter = OpenCodeAdapter()
+    assert adapter.resolve_session_file(
+        project_root=tmp_path,
+        session_id=session_id,
+        config_root_hint=storage_root,
+    ) == expected
+
+    duplicate = storage_root / "session_diff" / f"{session_id}.json"
+    duplicate.parent.mkdir()
+    duplicate.write_text("{}", encoding="utf-8")
+    with pytest.raises(NativeSessionUnavailable) as caught:
+        adapter.resolve_session_file(
+            project_root=tmp_path,
+            session_id=session_id,
+            config_root_hint=storage_root,
+        )
+    assert caught.value.reason == "ambiguous_native_file"

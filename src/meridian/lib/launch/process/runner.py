@@ -495,7 +495,7 @@ def _finalize_lifecycle_and_observe_session(
     cancellation_observed: bool = False,
     native_identity_error: str | None = None,
 ) -> tuple[int, str]:
-    """Finalize lifecycle, discover identity, and durably bind accepted selections."""
+    """Finalize lifecycle, observe identity, and durably bind accepted selections."""
 
     resolved_exit_code = exit_code
     if primary_spawn_id is not None:
@@ -958,6 +958,7 @@ def run_harness_process(
                         harness_registry=harness_registry,
                         plan_overrides=plan_overrides,
                         runtime_work_id=attached_work_id,
+                        forked_harness_session_id=forked_session_id,
                         cache=cache,
                     )
                 write_projection_artifacts(
@@ -1001,7 +1002,7 @@ def run_harness_process(
                 lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
                 launch_spec = runtime_context.binding.spec
                 identity_plan = launch_spec.native_identity_plan
-                if identity_plan is not None:
+                if identity_plan is not None and identity_plan.harness_session_id:
                     result = update_session_harness_id(
                         runtime_root, managed.chat_id, identity_plan.harness_session_id or "",
                         native_store=identity_plan.native_store, source="assigned",

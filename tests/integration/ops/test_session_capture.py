@@ -752,9 +752,22 @@ def _opencode_capture_fixture(
         messages=messages,
     )
     monkeypatch.setenv("OPENCODE_HOME", str(opencode_home))
+    storage_root = opencode_home / "storage"
+    session_file = storage_root / "session" / f"{session_id}.json"
+    session_file.parent.mkdir(parents=True, exist_ok=True)
+    session_file.write_text("{}", encoding="utf-8")
     project = tmp_path / "repo"
     project.mkdir()
     root = resolve_project_runtime_root_for_write(project)
+    session_store.start_session(
+        root,
+        harness="opencode",
+        harness_session_id=session_id,
+        native_store=storage_root.as_posix(),
+        model="test",
+        chat_id="c1",
+        kind="primary",
+    )
     key = spawn_store.start_spawn(
         root,
         chat_id="c1",
@@ -766,6 +779,7 @@ def _opencode_capture_fixture(
         harness_session_id=session_id,
     )
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
+    session_store.stop_session(root, "c1")
     return project, root, key
 
 
@@ -821,9 +835,22 @@ def _opencode_v2_capture_fixture(
         idle_outcome=idle_outcome,
     )
     monkeypatch.setenv("OPENCODE_HOME", str(opencode_home))
+    storage_root = opencode_home / "storage"
+    session_file = storage_root / "session" / f"{session_id}.json"
+    session_file.parent.mkdir(parents=True, exist_ok=True)
+    session_file.write_text("{}", encoding="utf-8")
     project = tmp_path / "repo"
     project.mkdir()
     root = resolve_project_runtime_root_for_write(project)
+    session_store.start_session(
+        root,
+        harness="opencode",
+        harness_session_id=session_id,
+        native_store=storage_root.as_posix(),
+        model="test",
+        chat_id="c1",
+        kind="primary",
+    )
     key = spawn_store.start_spawn(
         root,
         chat_id="c1",
@@ -835,6 +862,7 @@ def _opencode_v2_capture_fixture(
         harness_session_id=session_id,
     )
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
+    session_store.stop_session(root, "c1")
     return project, root, key
 
 

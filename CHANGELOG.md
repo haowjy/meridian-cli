@@ -15,6 +15,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pi continue reads the bound store, never a primary metadata hint.
 - Pi binds native IDs before TUI/RPC exec, resumes exact files, and refuses identity overrides; newest files never replace chats.
 - Pi native identity preflight verifies exact journal headers and rejects ID collisions.
+- Claude, Codex, and OpenCode identity reads no longer discover sessions from filesystem recency; tracked reads use exact native stores.
+- Claude planned session IDs project through a typed launch field, and passthrough identity flags are refused for tracked launches.
+- Claude seed smoke fixture checks the typed ID and requires successful startup instead of accepting a failed attempt.
 - Chat restarts and managed-primary metadata preserve the original native binding.
 - Continue and fork refuse unbound chats with a clear error; removed discovery-based recovery advice.
 - Chat transcript and repair reads use only recorded identity; missing native sessions report unavailable instead of scanning.

@@ -188,7 +188,7 @@ def test_run_harness_process_writes_codex_system_field_primary_projection_manife
             launch_policy_snapshot=LaunchPolicySnapshot(model="gpt-5.4", harness=harness_id.value),
             extra_args=(f"--append-system-prompt={harness_id.value} passthrough system prompt",),
             session=SessionRequest(
-                requested_harness_session_id="existing-codex-session",
+                requested_harness_session_id="00000000-0000-4000-8000-000000000010",
                 continue_chat_id="c-codex",
                 primary_session_mode=SessionMode.RESUME.value,
             ),
@@ -252,7 +252,7 @@ def test_run_harness_process_codex_primary_routes_to_managed_path(
         harness_id=HarnessId.CODEX,
         model="gpt-5.4",
         session=SessionRequest(
-            requested_harness_session_id="existing-codex-session",
+            requested_harness_session_id="00000000-0000-4000-8000-000000000010",
             continue_chat_id="c-codex",
             primary_session_mode=SessionMode.RESUME.value,
         ),
@@ -329,7 +329,7 @@ def test_run_harness_process_codex_managed_attach_uses_control_root_with_distinc
         model="gpt-5.4",
         execution_cwd=task_cwd,
         session=SessionRequest(
-            requested_harness_session_id="existing-codex-session",
+            requested_harness_session_id="00000000-0000-4000-8000-000000000010",
             continue_chat_id="c-codex",
             primary_session_mode=SessionMode.RESUME.value,
         ),
@@ -405,7 +405,7 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
         harness_id=HarnessId.CODEX,
         model="gpt-5.4",
         session=SessionRequest(
-            requested_harness_session_id="existing-codex-session",
+            requested_harness_session_id="00000000-0000-4000-8000-000000000010",
             continue_chat_id="c-codex",
             primary_session_mode=SessionMode.RESUME.value,
         ),
@@ -473,7 +473,7 @@ def test_run_harness_process_codex_managed_failure_raises_error(
         harness_id=HarnessId.CODEX,
         model="gpt-5.4",
         session=SessionRequest(
-            requested_harness_session_id="existing-codex-session",
+            requested_harness_session_id="00000000-0000-4000-8000-000000000010",
             continue_chat_id="c-codex",
             primary_session_mode=SessionMode.RESUME.value,
         ),

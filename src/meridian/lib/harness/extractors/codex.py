@@ -10,11 +10,6 @@ from typing import cast
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import ArtifactStore
-from meridian.lib.harness.codex_rollout import (
-    CODEX_ROLLOUT_FILENAME_RE,
-    resolve_codex_home,
-    resolve_rollout_session_id,
-)
 from meridian.lib.harness.common import (
     OUTPUT_FILENAME,
     _coerce_optional_int,  # pyright: ignore[reportPrivateUsage]
@@ -32,38 +27,6 @@ _SESSION_ID_TEXT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bcodex\s+resume\s+([A-Za-z0-9][A-Za-z0-9._:-]{5,})\b", re.IGNORECASE),
     re.compile(r"\bresume\s+([A-Za-z0-9][A-Za-z0-9._:-]{5,})\b", re.IGNORECASE),
 )
-
-
-def _resolve_rollout_session_id(path: Path, project_root: Path) -> str | None:
-    return resolve_rollout_session_id(path, project_root)
-
-
-def _detect_primary_session_id(
-    *,
-    child_cwd: Path,
-    launch_env: Mapping[str, str],
-) -> str | None:
-    sessions_root = resolve_codex_home(launch_env) / "sessions"
-
-    if not sessions_root.is_dir():
-        return None
-
-    project_root = child_cwd.resolve()
-    candidates: list[tuple[float, Path]] = []
-    for candidate in sessions_root.rglob("rollout-*.jsonl"):
-        if CODEX_ROLLOUT_FILENAME_RE.match(candidate.name) is None:
-            continue
-        try:
-            modified_at = candidate.stat().st_mtime
-        except OSError:
-            continue
-        candidates.append((modified_at, candidate))
-
-    for _, candidate in sorted(candidates, key=lambda item: item[0], reverse=True):
-        resolved = _resolve_rollout_session_id(candidate, project_root)
-        if resolved:
-            return resolved
-    return None
 
 
 class CodexHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
@@ -94,7 +57,8 @@ class CodexHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
         _ = runtime_root
         if spec.continue_session_id and spec.continue_session_id.strip():
             return spec.continue_session_id.strip()
-        return _detect_primary_session_id(child_cwd=child_cwd, launch_env=launch_env)
+        _ = child_cwd, launch_env
+        return None
 
     def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
         specific = _extract_codex_usage(artifacts, spawn_id)

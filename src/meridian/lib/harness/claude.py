@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from meridian.lib.core.conversation import Conversation, ConversationTurn, ToolCall
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
-from meridian.lib.core.native_identity import NativeIdentityPlan
+from meridian.lib.core.native_identity import NativeIdentityPlan, NativeSessionUnavailable
 from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     CLAUDE_SPAWN_USAGE_VARIANTS,
@@ -50,7 +50,6 @@ from meridian.lib.harness.claude_sessions import (
     project_slug as project_slug,
 )
 from meridian.lib.harness.claude_utils import (
-    extract_session_id_from_args,
     has_session_identity_in_args,
 )
 from meridian.lib.harness.common import (
@@ -127,6 +126,15 @@ def _extract_passthrough_session_id(args: tuple[str, ...]) -> str:
         if token.startswith("--session-id="):
             return token.partition("=")[2].strip()
     return ""
+
+
+def _session_identity_flag(args: tuple[str, ...]) -> str:
+    for token in args:
+        if token in {"--session-id", "--resume", "--continue", "--fork-session", "-r", "-c"}:
+            return token
+        if token.startswith(("--session-id=", "--resume=", "--continue=")):
+            return token.partition("=")[0]
+    return "session identity flag"
 
 
 def _read_artifact_text(artifacts: ArtifactStore, spawn_id: SpawnId, name: str) -> str:
@@ -278,14 +286,17 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def plan_native_identity(self, run: SpawnParams) -> NativeIdentityPlan | None:
         source = (run.continue_harness_session_id or "").strip()
         if source:
+            if has_session_identity_in_args(run.extra_args):
+                flag = _session_identity_flag(run.extra_args)
+                raise ValueError(f"Tracked Claude launch does not allow passthrough {flag}")
             return NativeIdentityPlan(
                 None if run.continue_fork else source, None, None,
                 "fork" if run.continue_fork else "resume",
             )
-        explicit_id = extract_session_id_from_args(run.extra_args)
-        if has_session_identity_in_args(run.extra_args) and not explicit_id:
-            return None
-        return NativeIdentityPlan(explicit_id or str(uuid4()), None, None, "create")
+        if has_session_identity_in_args(run.extra_args):
+            flag = _session_identity_flag(run.extra_args)
+            raise ValueError(f"Tracked Claude launch does not allow passthrough {flag}")
+        return NativeIdentityPlan(str(uuid4()), None, None, "create")
 
     def native_store_for_launch(self, *, child_env: dict[str, str], child_cwd: Path) -> str:
         home = Path(child_env["HOME"]) if child_env.get("HOME") else get_home_path()
@@ -295,7 +306,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             root = home / configured.removeprefix("~").lstrip("/")
         if not root.is_absolute():
             root = child_cwd / root
-        return str(root.resolve())
+        return str((root / "projects" / project_slug(child_cwd)).resolve())
 
     def resolve_launch_spec(
         self, run: SpawnParams, perms: PermissionResolver
@@ -313,14 +324,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             }.get(normalized_value, normalized_value)
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
         identity_plan = self.plan_native_identity(run)
-        effective_extra_args = run.extra_args
-        if identity_plan and identity_plan.operation == "create" and not (
-            has_session_identity_in_args(run.extra_args)
-        ):
-            assert identity_plan.harness_session_id is not None
-            effective_extra_args = (
-                *run.extra_args, "--session-id", identity_plan.harness_session_id
-            )
 
         # prompt_file_path is owned by bind_launch_context, which sets it to
         # <spawn-log-dir>/system-prompt.md (the single artifact-dir authority).
@@ -341,7 +344,12 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             native_identity_plan=identity_plan,
             continue_fork=run.continue_fork and continue_session_id is not None,
             permission_resolver=perms,
-            extra_args=effective_extra_args,
+            extra_args=run.extra_args,
+            claude_session_seed_id=(
+                identity_plan.harness_session_id
+                if identity_plan and identity_plan.operation == "create"
+                else None
+            ),
             interactive=run.interactive,
             mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
@@ -604,11 +612,32 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         normalized_session_id = session_id.strip()
         if not normalized_session_id:
             return None
-        for project_dir in _candidate_claude_project_dirs(project_root, config_root_hint):
-            candidate = project_dir / f"{normalized_session_id}.jsonl"
-            if candidate.is_file():
-                return candidate
-        return None
+        if (
+            config_root_hint is not None
+            and config_root_hint.parent.name == "projects"
+            and config_root_hint.name == project_slug(project_root)
+        ):
+            project_dirs = [config_root_hint]
+        elif config_root_hint is not None:
+            hinted_session = config_root_hint / f"{normalized_session_id}.jsonl"
+            if hinted_session.is_file():
+                project_dirs = [config_root_hint]
+            else:
+                project_dirs = _candidate_claude_project_dirs(
+                    project_root, config_root_hint
+                )
+        else:
+            project_dirs = _candidate_claude_project_dirs(project_root)
+        matches = [
+            directory / f"{normalized_session_id}.jsonl"
+            for directory in project_dirs
+            if (directory / f"{normalized_session_id}.jsonl").is_file()
+        ]
+        if len(matches) > 1:
+            raise NativeSessionUnavailable(normalized_session_id, "ambiguous_native_file")
+        if not matches:
+            return None
+        return matches[0]
 
     def owns_untracked_session(self, *, project_root: Path, session_ref: str) -> bool:
         normalized_session_ref = session_ref.strip()

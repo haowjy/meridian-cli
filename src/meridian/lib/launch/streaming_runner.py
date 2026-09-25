@@ -1291,7 +1291,7 @@ async def execute_with_streaming(
         )
 
         identity_plan = spec.native_identity_plan
-        if identity_plan is not None:
+        if identity_plan is not None and identity_plan.harness_session_id:
             result: NativeBindingResult | None = None
             if session_attempt is not None:
                 result = update_session_harness_id(
@@ -1509,7 +1509,7 @@ async def execute_with_streaming(
                     break
 
                 # I-4: adapter observe_session_id() remains the sole post-attempt
-                # discovery callsite. Streaming connections may report a known
+                # observation callsite. Streaming connections may report a known
                 # session id earlier through ConnectionConfig.session_id_observer.
                 extracted_harness_session_id = (
                     harness.observe_session_id(

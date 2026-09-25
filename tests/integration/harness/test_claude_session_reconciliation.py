@@ -142,7 +142,7 @@ def test_claude_reconciliation_keeps_tui_trampoline_identity(
             project_root=project_root,
             started_at_epoch=now - 1,
         )
-        == recorded_session_id
+        == real_session_id
     )
 
 

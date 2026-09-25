@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
@@ -10,8 +9,6 @@ from typing import cast
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import ArtifactStore
-from meridian.lib.harness.claude_sessions import project_slug
-from meridian.lib.harness.claude_utils import extract_session_id_from_args
 from meridian.lib.harness.common import (
     OUTPUT_FILENAME,
     _coerce_optional_int,  # pyright: ignore[reportPrivateUsage]
@@ -23,51 +20,8 @@ from meridian.lib.harness.common import (
 )
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.platform import get_home_path
 
 from .base import HarnessExtractor, session_from_mapping_with_keys
-
-
-def _detect_primary_session_id(  # pyright: ignore[reportUnusedFunction]
-    *,
-    child_cwd: Path,
-    launch_env: Mapping[str, str],
-) -> str | None:
-    home = launch_env.get("HOME", "").strip()
-    home_path = Path(home).expanduser() if home else get_home_path()
-    projects_root = home_path / ".claude" / "projects"
-    project_dir = projects_root / project_slug(child_cwd)
-    if not project_dir.is_dir():
-        return None
-
-    candidates: list[tuple[float, Path]] = []
-    for candidate in project_dir.glob("*.jsonl"):
-        try:
-            modified_at = candidate.stat().st_mtime
-        except OSError:
-            continue
-        candidates.append((modified_at, candidate))
-
-    for _, candidate in sorted(candidates, key=lambda item: item[0], reverse=True):
-        try:
-            first_line = candidate.read_text(encoding="utf-8", errors="ignore").splitlines()[0]
-        except (OSError, IndexError):
-            first_line = ""
-        if not first_line.strip():
-            continue
-        try:
-            payload_obj = json.loads(first_line)
-        except json.JSONDecodeError:
-            payload_obj = None
-        if isinstance(payload_obj, dict):
-            payload = cast("dict[str, object]", payload_obj)
-            session_id = payload.get("sessionId")
-            if isinstance(session_id, str) and session_id.strip():
-                return session_id.strip()
-        if candidate.stem.strip():
-            return candidate.stem.strip()
-
-    return None
 
 
 class ClaudeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
@@ -90,7 +44,7 @@ class ClaudeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
         _ = runtime_root, launch_env, child_cwd
         if spec.continue_session_id and spec.continue_session_id.strip():
             return spec.continue_session_id.strip()
-        seeded_session_id = extract_session_id_from_args(spec.extra_args)
+        seeded_session_id = spec.claude_session_seed_id
         if seeded_session_id:
             return seeded_session_id
         return None

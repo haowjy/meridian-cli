@@ -81,12 +81,14 @@ def test_session_search_workspace_scope_uses_runtime_evidence_not_repo_markers(
         current_runtime,
         harness="codex",
         harness_session_id="11111111-1111-1111-1111-111111111111",
+        native_store=(home_root / ".codex" / "sessions").as_posix(),
         model="gpt-5.4-mini",
     )
     workspace_chat_id = session_store.start_session(
         workspace_runtime,
         harness="codex",
         harness_session_id="22222222-2222-2222-2222-222222222222",
+        native_store=(home_root / ".codex" / "sessions").as_posix(),
         model="gpt-5.4-mini",
     )
     try:
@@ -138,6 +140,7 @@ def test_session_search_global_scope_includes_runtime_root(tmp_path: Path, monke
         runtime_root,
         harness="codex",
         harness_session_id="33333333-3333-3333-3333-333333333333",
+        native_store=((tmp_path / "home") / ".codex" / "sessions").as_posix(),
         model="gpt-5.4-mini",
     )
     try:

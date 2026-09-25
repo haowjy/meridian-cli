@@ -113,11 +113,10 @@ fallback chain; Claude overrides it with harness-specific reconciliation:
 1. `connection_session_id` — live session ID from transport layer (present for connection-based paths)
 2. `extract_session_id()` — extraction from spawn artifacts (`session_id.txt`, then JSONL history)
 3. `current_session_id` — previously known ID, returned as fallback
-4. `detect_primary_session_id()` — filesystem scan (only when `project_root` and `started_at_epoch` provided)
 
 Callers pass observations through the immutable bind seam. A differing ID is a
-conflict, never a replacement for the chat key. Adapter discovery legs are not
-entry evidence.
+conflict, never a replacement for the chat key. There is no filesystem-discovery
+fallback; exact target verification cannot choose a replacement identity.
 
 **Claude override.** `ClaudeAdapter.observe_session_id()` replaces the base
 implementation's priority chain with a trampoline-aware path: after steps 1–2,

@@ -92,13 +92,18 @@ startup failure.
 **Native identity is planned, not discovered.** A chat binds one immutable
 `(harness, native_store, id)`. `plan_native_identity()` picks the operation and
 source; `finalize_native_identity()` pins store/ID against the final child env
-before argv projection, so the bound key, env and argv agree; the runner binds it
-before exec. `verify_native_identity()` checks that exact target after the attempt
-and never selects a replacement. Never add cwd/mtime/newest-file/prefix scans as
-identity evidence. `observe_session_id()` (once, post-execution, primary path)
-returns observations only; they bind once and cannot overwrite. Its filesystem leg
-still exists for Claude/Codex/OpenCode pending their exact-identity lane — see
-[.context/CONTEXT.md](.context/CONTEXT.md).
+before argv projection, so the bound key, env and argv agree. The runner binds
+nonempty plans as `assigned` before exec; `verify_native_identity()` checks that
+exact target after the attempt and never selects a replacement.
+`observe_session_id()` returns owned connection/process signals, then an
+already-known ID, as `observed`; observations bind once and cannot overwrite.
+It must not mutate adapter-instance state. Cwd, timestamps, logs, and newest-file
+or prefix scans never establish tracked chat identity.
+
+**Native transcript resolution is exact.** Use the recorded store and full native
+ID; multiple matching files fail as `ambiguous_native_file`, rather than selecting
+a winner. OpenCode database reads belong to the resolved store, not an ambient DB.
+Claude trampoline successors are diagnostic observations, never replacement keys.
 
 **Terminal event classification is harness- and parent-scope-aware.** `event_type`
 is NOT globally unique — always check `event.harness_id`. `turn/completed` is Codex;

@@ -35,6 +35,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
         "continue_session_id",
         "continue_fork",
+        "claude_session_seed_id",
         "harness",
         "agent_name",
         "agents_payload",

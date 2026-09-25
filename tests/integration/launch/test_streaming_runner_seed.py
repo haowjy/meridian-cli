@@ -10,7 +10,7 @@ import pytest
 
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
-from meridian.lib.harness.claude_utils import extract_session_id_from_args
+from meridian.lib.harness.claude_sessions import project_slug
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
@@ -25,6 +25,7 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
+    resolve_spawn_log_dir,
 )
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.integration.launch.streaming_runner_support import (
@@ -83,7 +84,7 @@ class _ClaudeSeedPersistenceConnection:
         row = spawn_store.get_spawn(runtime_root, config.spawn_id)
         assert row is not None
         self.__class__.observed_start_session_id = row.harness_session_id
-        assert row.harness_session_id == extract_session_id_from_args(spec.extra_args)
+        assert row.harness_session_id == spec.claude_session_seed_id
         self.state = "connected"
 
     async def stop(self) -> None:
@@ -99,6 +100,12 @@ class _ClaudeSeedPersistenceConnection:
         return None
 
     async def events(self):  # type: ignore[no-untyped-def]
+        assert self._project_root is not None
+        log_dir = resolve_spawn_log_dir(
+            self._project_root, self._spawn_id,
+            runtime_root=resolve_project_runtime_root_for_write(self._project_root),
+        )
+        (log_dir / "report.md").write_text("seeded claude complete", encoding="utf-8")
         yield RawHarnessEvent(
             event_type="result",
             harness_id="claude",
@@ -313,7 +320,7 @@ async def test_execute_with_streaming_persists_claude_seed_before_start(
     )
 
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
-    assert exit_code in (0, 1, 2)
+    assert exit_code == 0
     assert row is not None
     assert row.harness_session_id
     assert row.harness_session_id == _ClaudeSeedPersistenceConnection.observed_start_session_id
@@ -576,7 +583,9 @@ async def test_streaming_claude_exec_receives_prebound_identity(
             record = session_store.get_session_record(runtime_root, managed.chat_id)
             assert record is not None
             assert record.harness_session_id == native_id
-            assert record.native_store == str(tmp_path / "home" / ".claude")
+            assert record.native_store == str(
+                tmp_path / "home" / ".claude" / "projects" / project_slug(tmp_path)
+            )
             await asyncio.wait_for(task, 15)
         finally:
             if not task.done():
