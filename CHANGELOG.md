@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - Import legacy chat native keys once from exact, header-validated stores; keep unresolved chats listed in a durable report. Read-only dev report previews bindings.
+- Include Meridian's unscoped interactive Pi sessions root in exact legacy binding candidates.
 - Validate legacy OpenCode keys through the same in-place exact reader used by live reads.
 - Runs retain immutable entry chats; verified Pi exits resolve to their own chats. Missing or uncertain exits stay explicit; session logs label entry-based views.
 - Managed Pi launches load a bounded, atomic v2 session-boundary observer without writing native journals.

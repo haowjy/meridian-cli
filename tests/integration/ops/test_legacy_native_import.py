@@ -146,6 +146,46 @@ def test_refuse_ambiguity_wrong_header_and_disagreeing_ids(homes: tuple[Path, Pa
     assert all(chat.native_store is None for chat in session_store.list_all_session_records(root))
 
 
+@pytest.mark.parametrize("interactive", [False, True], ids=["spawn-scoped", "interactive-root"])
+def test_pi_import_matches_spawn_and_interactive_stores(
+    homes: tuple[Path, Path], interactive: bool,
+) -> None:
+    home, root = homes
+    session_id = "pi-session"
+    _chat(root, 1, "pi", session_id)
+    _spawn(root, 1, "pi", session_id)
+    store = home / ".meridian/meridian-pi/sessions"
+    if not interactive:
+        store /= "p1"
+    store.mkdir(parents=True)
+    (store / f"2026_{session_id}.jsonl").write_text(
+        json.dumps({"type": "session", "id": session_id}) + "\n"
+    )
+
+    report = legacy.report_legacy_native_import(root)
+
+    assert report.bindings["c1"] == (session_id, str(store.resolve()))
+
+
+def test_pi_import_refuses_match_in_interactive_and_spawn_stores(
+    homes: tuple[Path, Path],
+) -> None:
+    home, root = homes
+    session_id = "pi-session"
+    _chat(root, 1, "pi", session_id)
+    _spawn(root, 1, "pi", session_id)
+    root_store = home / ".meridian/meridian-pi/sessions"
+    for store in (root_store, root_store / "p1"):
+        store.mkdir(parents=True)
+        (store / f"2026_{session_id}.jsonl").write_text(
+            json.dumps({"type": "session", "id": session_id}) + "\n"
+        )
+
+    report = legacy.report_legacy_native_import(root)
+
+    assert report.unbound == {"ambiguous": ["c1"]}
+
+
 def test_crash_before_marker_retries_without_duplicate_events(
     homes: tuple[Path, Path],
     monkeypatch: pytest.MonkeyPatch,

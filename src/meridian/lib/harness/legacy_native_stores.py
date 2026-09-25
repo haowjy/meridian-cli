@@ -56,7 +56,8 @@ class LegacyNativeStores:
                 for cwd in cwds
             }
         if chat.harness == "pi":
-            return {(resolve_pi_spawn_session_root() / spawn.id).resolve() for spawn in spawns}
+            root = resolve_pi_spawn_session_root().resolve()
+            return {root, *(root / spawn.id for spawn in spawns)}
         stores: set[Path] = set()
         for env in envs or [{}]:
             recorded_env = {"HOME": str(get_home_path()), **env}
