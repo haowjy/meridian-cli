@@ -41,6 +41,7 @@ from meridian.lib.harness.bundle import (
 from meridian.lib.harness.claude_preflight import (
     build_claude_preflight_result,
     ensure_claude_session_accessible,
+    validate_claude_session_file,
 )
 from meridian.lib.harness.claude_sessions import (
     candidate_claude_project_dirs,
@@ -606,7 +607,10 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         self, *, project_root: Path, session_id: str, native_store: Path,
     ) -> Path | None:
         candidate = native_store / f"{session_id}.jsonl"
-        return candidate if candidate.is_file() else None
+        if not candidate.is_file():
+            return None
+        validate_claude_session_file(candidate, session_id)
+        return candidate
 
     def resolve_session_file(
         self,

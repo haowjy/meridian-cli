@@ -14,6 +14,7 @@ import structlog
 
 from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.harness.claude_sessions import project_slug
+from meridian.lib.launch.errors import NativeEntryMismatch
 from meridian.lib.launch.launch_types import PreflightResult
 from meridian.lib.launch.text_utils import dedupe_nonempty
 from meridian.lib.platform import IS_WINDOWS, get_home_path
@@ -40,6 +41,21 @@ def _claude_config_root() -> Path:
     return _default_canonical_claude_config_root()
 
 
+
+def validate_claude_session_file(path: Path, session_id: str) -> None:
+    """Verify the exact native source, not merely its filename."""
+    try:
+        with path.open(encoding="utf-8") as handle:
+            header = json.loads(handle.readline())
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise NativeSessionUnavailable(session_id, "missing") from exc
+    observed = header.get("sessionId") if isinstance(header, dict) else None
+    if not isinstance(observed, str) or not observed:
+        raise NativeSessionUnavailable(session_id, "missing")
+    if observed != session_id:
+        raise NativeEntryMismatch(session_id, observed)
+
+
 def ensure_claude_session_accessible(
     source_session_id: str,
     child_cwd: Path,
@@ -51,8 +67,7 @@ def ensure_claude_session_accessible(
     if Path(source_session_id).name != source_session_id or ".." in source_session_id:
         raise NativeSessionUnavailable(source_session_id, "missing")
     source_file = source_native_store / f"{source_session_id}.jsonl"
-    if not source_file.is_file():
-        raise NativeSessionUnavailable(source_session_id, "missing")
+    validate_claude_session_file(source_file, source_session_id)
     target_root = target_config_root or _claude_config_root()
     target_file = target_root / "projects" / project_slug(child_cwd) / source_file.name
     if target_file.exists() and target_file.samefile(source_file):

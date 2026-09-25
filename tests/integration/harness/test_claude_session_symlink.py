@@ -14,7 +14,7 @@ def test_exact_source_seed_is_idempotent(tmp_path: Path, same_config: bool) -> N
     source = config / "projects" / "source"
     source.mkdir(parents=True)
     native = source / "session-1.jsonl"
-    native.write_text("source\n")
+    native.write_text('{"sessionId":"session-1"}\n')
     target_config = config if same_config else tmp_path / "other-config"
     target_cwd = tmp_path / "child"
     for _ in range(2):
@@ -23,7 +23,7 @@ def test_exact_source_seed_is_idempotent(tmp_path: Path, same_config: bool) -> N
             source_native_store=source, target_config_root=target_config,
         )
     target = target_config / "projects" / project_slug(target_cwd) / native.name
-    assert target.read_text() == "source\n"
+    assert target.read_text() == '{"sessionId":"session-1"}\n'
     assert target.is_symlink() == same_config
 
 

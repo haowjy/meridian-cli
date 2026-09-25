@@ -1,4 +1,5 @@
 """Claude preparation reads the recorded file, never an ambient same-ID decoy."""
+import json
 import subprocess
 from pathlib import Path
 
@@ -21,7 +22,9 @@ def test_recorded_claude_source_preparation(
     store = tmp_path / "recorded" / "arbitrary-project-store"
     store.mkdir(parents=True)
     if not missing:
-        (store / f"{sid}.jsonl").write_text("RECORDED SOURCE\n")
+        (store / f"{sid}.jsonl").write_text(
+            json.dumps({"sessionId": sid, "message": "RECORDED SOURCE"}) + "\n",
+        )
     ambient = tmp_path / "ambient"
     decoy = ambient / "projects" / project_slug(cwd) / f"{sid}.jsonl"
     decoy.parent.mkdir(parents=True)
@@ -51,4 +54,4 @@ def test_recorded_claude_source_preparation(
         shim.write_text('#!/bin/sh\ncat "$1"\n')
         result = subprocess.run(["sh", str(shim), str(target)], text=True, capture_output=True)
         assert result.returncode == 0
-        assert result.stdout == "RECORDED SOURCE\n"
+        assert result.stdout == json.dumps({"sessionId": sid, "message": "RECORDED SOURCE"}) + "\n"

@@ -562,7 +562,9 @@ def test_claude_transcript_resolution_is_pinned_to_recorded_project_store(
     ambient_store = tmp_path / "ambient" / "projects" / project_slug(project_root)
     for store in (recorded_store, ambient_store):
         store.mkdir(parents=True)
-        (store / f"{session_id}.jsonl").write_text("{}\n", encoding="utf-8")
+        (store / f"{session_id}.jsonl").write_text(
+            json.dumps({"sessionId": session_id}) + "\n", encoding="utf-8",
+        )
 
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "ambient"))
     adapter = ClaudeAdapter()

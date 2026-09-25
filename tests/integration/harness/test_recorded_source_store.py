@@ -1,5 +1,6 @@
 """Recorded source namespaces survive a changed launch environment."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -22,7 +23,7 @@ def test_recorded_resume_store(tmp_path: Path, harness: HarnessId) -> None:
     )
     native.parent.mkdir(parents=True)
     if harness == HarnessId.CODEX:
-        native.write_text("{}\n")
+        native.write_text(json.dumps({"type": "session_meta", "payload": {"id": SID}}) + "\n")
     else:
         write_opencode_db_session(db_path=store, session_id=SID, messages=[])
     env = {"CODEX_HOME": str(tmp_path / "decoy"), "OPENCODE_HOME": str(tmp_path / "decoy")}
@@ -103,7 +104,9 @@ def test_codex_symlink_store_remains_reopenable(tmp_path: Path) -> None:
     real_store = tmp_path / "shared-journals"
     real_store.mkdir()
     (home / "sessions").symlink_to(real_store, target_is_directory=True)
-    (real_store / f"rollout-2026-01-01T00-00-00-{SID}.jsonl").write_text("{}\n")
+    (real_store / f"rollout-2026-01-01T00-00-00-{SID}.jsonl").write_text(
+            json.dumps({"type": "session_meta", "payload": {"id": SID}}) + "\n",
+        )
     env = {"CODEX_HOME": str(home)}
     store = adapter.native_store_for_launch(child_env=env, child_cwd=tmp_path)
     session = SessionRequest(
@@ -126,7 +129,9 @@ def test_codex_unselectable_store_cannot_fall_through_to_sibling(tmp_path: Path)
     adapter = HarnessRegistry.with_defaults().get(HarnessId.CODEX)
     sibling = tmp_path / "sessions"
     sibling.mkdir()
-    (sibling / f"rollout-2026-01-01T00-00-00-{SID}.jsonl").write_text("{}\n")
+    (sibling / f"rollout-2026-01-01T00-00-00-{SID}.jsonl").write_text(
+            json.dumps({"type": "session_meta", "payload": {"id": SID}}) + "\n",
+        )
     session = SessionRequest(
         requested_harness_session_id=SID,
         source_native_store=str(tmp_path / "different-store"),
@@ -141,3 +146,51 @@ def test_codex_unselectable_store_cannot_fall_through_to_sibling(tmp_path: Path)
             spawn_id=SpawnId("p1"),
             interactive=False,
         )
+
+
+@pytest.mark.parametrize("harness", [HarnessId.CLAUDE, HarnessId.CODEX])
+@pytest.mark.parametrize("content", ["", "{", "{}\n", "wrong-id"])
+def test_exact_sources_refuse_invalid_headers(
+    tmp_path: Path, harness: HarnessId, content: str,
+) -> None:
+    import json
+
+    from meridian.lib.core.native_identity import NativeSessionUnavailable
+    from meridian.lib.harness.claude_preflight import ensure_claude_session_accessible
+    from meridian.lib.launch.errors import NativeEntryMismatch
+
+    store = tmp_path / "sessions"
+    store.mkdir()
+    native = store / (
+        f"{SID}.jsonl" if harness == HarnessId.CLAUDE
+        else f"rollout-2026-01-01T00-00-00-{SID}.jsonl"
+    )
+    mismatch = content == "wrong-id"
+    if mismatch:
+        content = json.dumps(
+            {"sessionId": "other"} if harness == HarnessId.CLAUDE
+            else {"type": "session_meta", "payload": {"id": "other"}}
+        ) + "\n"
+    native.write_text(content)
+    adapter = HarnessRegistry.with_defaults().get(harness)
+    error = NativeEntryMismatch if mismatch else NativeSessionUnavailable
+    with pytest.raises(error):
+        adapter.resolve_native_session_file(
+            project_root=tmp_path, session_id=SID, native_store=store,
+        )
+    with pytest.raises(error):
+        if harness == HarnessId.CLAUDE:
+            ensure_claude_session_accessible(
+                SID, tmp_path / "child", source_native_store=store,
+                target_config_root=tmp_path / "target",
+            )
+        else:
+            adapter.finalize_native_identity(
+                NativeIdentityPlan(SID, None, None, "resume"),
+                child_env={}, child_cwd=tmp_path,
+                session=SessionRequest(
+                    requested_harness_session_id=SID, source_native_store=str(store),
+                    continue_source_tracked=True,
+                ),
+                spawn_id=SpawnId("p1"), interactive=False,
+            )

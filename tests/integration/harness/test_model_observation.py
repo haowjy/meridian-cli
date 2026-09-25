@@ -43,12 +43,14 @@ def test_claude_reads_last_assistant_model(tmp_path: Path) -> None:
                 json.dumps(
                     {
                         "type": "assistant",
+                        "sessionId": "ses-1",
                         "message": {"role": "assistant", "model": "claude-opus-5"},
                     }
                 ),
                 json.dumps(
                     {
                         "type": "assistant",
+                        "sessionId": "ses-1",
                         "message": {"role": "assistant", "model": "claude-fable-5"},
                     }
                 ),
@@ -75,6 +77,7 @@ def test_codex_reads_last_model(tmp_path: Path) -> None:
     rollout.write_text(
         "\n".join(
             [
+                json.dumps({"type": "session_meta", "payload": {"id": session_id}}),
                 json.dumps({"type": "turn_context", "payload": {"model": "gpt-5.6-luna"}}),
                 json.dumps(
                     {
