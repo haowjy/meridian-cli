@@ -506,10 +506,8 @@ def spawn_session_log_available(
     row = spawn_store.get_spawn(runtime_root, spawn_id)
     if row is None or row.continue_chat_id is None:
         return False
-    return any(
-        record.chat_id == row.continue_chat_id and record.native_key() is not None
-        for record in session_store.list_session_generations(runtime_root)
-    )
+    record = session_store.get_session_record(runtime_root, row.continue_chat_id)
+    return record is not None and record.native_key() is not None
 
 
 def detail_from_row(

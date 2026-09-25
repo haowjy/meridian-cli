@@ -111,11 +111,11 @@ Pi validates the exact assigned source/header and reads the launch-correlated
 boundary sidecar. Claude reads trampoline-successor evidence for diagnostics
 only; that successor never binds a chat or allocates a verified exit.
 
-`launch/native_run.conclude_native_run` owns ordering: artifact first ID,
+`launch/native_run.conclude_native_run` owns ordering: attempt-facts first ID,
 connection-current ID (diagnostic), adapter observation, entry verification,
 exact exit allocation, boundary persistence, then invocation attribution.
-`extract_session_id()` is the sole remaining artifact identity seam; the planned
-run-facts change removes it. There is no filesystem-discovery fallback.
+The facts hook observes owned live session IDs. There is no artifact-identity or
+filesystem-discovery fallback.
 
 ### `HarnessContract` as Inspectable Surface
 
@@ -215,29 +215,12 @@ unscoped-looking child task `session.idle` / `session.error` events. If no paren
 scope is known at all, Meridian preserves the legacy behavior and treats OpenCode
 terminal events as parent events.
 
-OpenCode report extraction follows the same boundary and is owned by
-`harness/opencode_report.py`. The OpenCode extractor delegates session-id and report
-parsing there instead of duplicating event-shape logic. `extract_opencode_report()`
-first resolves the parent session from `session_id.txt`, a terminal parent session
-event, or the first parent user `message.updated`, then ignores child-session
-assistant text while building `report.md`. Child task text remains visible through
-`meridian session log`.
-
-The stream extractor matches only the V1 `message.updated` / `message.part.updated`
-shapes and is intentionally left unchanged for V2. Managed OpenCode spawns never write
-`output.jsonl`: the drain loop persists raw events to `history.jsonl`, which the
-reader already falls back to, and V2's `session.text.*` / `session.step.*` frames
-define the live transport only. The real V2 artifacts bear this out — the R5/R8 probes
-(captured under `work/probes/final/` and `work/probes/tmux-interactive/`) record V2
-frames in the manually scraped `/api/event` log and store their finished transcript in
-`opencode.db` via schema-selected native capture, never on `output.jsonl`; every
-Meridian-captured OpenCode spawn used the frozen V1 binary and carries V1 event names.
-V2 report extraction is therefore DB-authoritative: `_extract_opencode_report_from_db`
-dispatches on detected schema (`session_v2` → V2, `session` → V1) through
-`opencode_db_any_session_exists` + `iter_opencode_db_session_events`, and interprets
-V2 rows at the shared `interpret_opencode_v2_record` seam. Adding a stream extractor
-without a V2 primary-session resolver would also risk selecting child task-session
-text, which the session-scoped DB path already excludes.
+OpenCode attempt facts are folded from owned live events by
+`extractors/opencode.py`. V1 uses assistant message/part updates. V2 records the
+assistant message ID from `session.text.ended`; finalization prefers that exact
+reply from the bound DB, then live text. It never reads the ambient DB or chooses
+the latest message. Transcript views independently read the chat's recorded DB
+through the schema-selected native reader; an empty session is an empty view.
 
 ## Rationale
 
@@ -432,8 +415,8 @@ diagnostic noise and does not become the source of truth.
 
 Managed Pi reads use the chat's recorded native store and ID. Native entry
 verification and launch planning are described in [Pi integration](pi-integration.md).
-Runner history remains a capture source for child records, not a substitute for
-an unavailable tracked native transcript.
+Both primary and child capture snapshot the bound native key. Spawns without an
+exact native source stay loose, with a reason.
 
 ## Session Read Path
 

@@ -119,7 +119,10 @@ def _session_browse(
     ] = False,
     include_archives: Annotated[
         bool,
-        Parameter(name="--include-archives", help="Include ZIP content in the picker's / search."),
+        Parameter(
+            name="--include-archives",
+            help="Include archived chats' native transcripts in the picker's / search.",
+        ),
     ] = False,
 ) -> None:
     presentation = resolve_browse_presentation(

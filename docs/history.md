@@ -17,17 +17,18 @@ A genuine initialization failure is recorded outside the replaceable index direc
 Later automatic requests report the failure instead of repeatedly starting over.
 Retry explicitly with `uv run meridian session index rebuild --metadata-only`;
 success clears the failure. Manual metadata projection has a 60-second budget,
-separate from archive import and optional preview warming. Cancellation and another
+separate from archive import and native-search rebuilding. Cancellation and another
 initializer holding a lock do not create persistent failures.
 
 `session index status` inspects the schema, failure state and pending work without
 initializing or catching up the index. A current schema does not prove complete
-coverage. Newer unsupported schemas require an explicit decision to rebuild;
+coverage. Native search status also reports fresh, stale, unindexed and unavailable
+sources plus projection size. Newer unsupported schemas require an explicit decision to rebuild;
 they are never silently queried or automatically downgraded.
 
 ```sh
 meridian session index status
-meridian session index rebuild  # also warms bounded previews
+meridian session index rebuild  # rebuild metadata and native search; previews refresh lazily
 meridian session index rebuild --metadata-only  # discovery metadata only
 meridian session index rebuild --reset  # damaged dirty-source coordination
 ```
@@ -94,14 +95,15 @@ archives and do not justify deleting source history.
 ```sh
 meridian session import /mnt/history/meridian/meridian-history-UUID.zip
 meridian session log HISTORY_UUID
-meridian session search "phrase" --include-archives
+meridian session search "phrase"
 meridian session browse --include-archives
 meridian session restore HISTORY_UUID --archive /mnt/history/meridian/meridian-history-UUID.zip
 ```
 
 The browser always lists archived metadata and can preview a selected ZIP row.
-Its `/` content search excludes ZIPs unless started with `--include-archives`;
-the search status shows `loose` or `+ZIP`.
+Its `/` content search excludes archived rows unless started with
+`--include-archives`. This adds their bound native transcripts, not ZIP content.
+Corpus `session search` includes all bound chats by default and has no such flag.
 
 Import explicitly selects a verified ZIP snapshot for direct reads without extracting it.
 Rebuild and automatic recovery discover orphan ZIPs as snapshot-only metadata;

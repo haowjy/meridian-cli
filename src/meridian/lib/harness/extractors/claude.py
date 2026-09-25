@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import cast
 
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.harness.attempt_facts import AttemptFacts
-from meridian.lib.harness.common import _coerce_optional_int, coerce_optional_float, extract_text
+from meridian.lib.harness.common import coerce_optional_float, coerce_optional_int, extract_text
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
@@ -40,9 +41,14 @@ class ClaudeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
             if text:
                 facts.set_text(text, "claude_result")
             model_usage = payload.get("modelUsage")
-            usage = model_usage if isinstance(model_usage, dict) else payload.get("usage")
+            usage: object = (
+                cast("dict[str, object]", model_usage)
+                if isinstance(model_usage, dict)
+                else payload.get("usage")
+            )
             if isinstance(usage, dict):
-                rows = [x for x in usage.values() if isinstance(x, dict)]
+                usage = cast("dict[str, object]", usage)
+                rows = [cast("dict[str, object]", x) for x in usage.values() if isinstance(x, dict)]
                 if not rows:
                     rows = [usage]
                 fields = {
@@ -54,10 +60,10 @@ class ClaudeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
                         "cache_creation_input_tokens",
                     ),
                 }
-                values = {}
+                values: dict[str, int | None] = {}
                 for field, keys in fields.items():
                     numbers = [
-                        _coerce_optional_int(row.get(keys[0], row.get(keys[1]))) for row in rows
+                        coerce_optional_int(row.get(keys[0], row.get(keys[1]))) for row in rows
                     ]
                     known = [n for n in numbers if n is not None]
                     previous = (
@@ -74,7 +80,13 @@ class ClaudeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
                         else (facts.usage.total_cost_usd if facts.usage else None)
                     )
                 facts.usage_is_specific = True
-                facts.usage = TokenUsage(**values, total_cost_usd=cost)
+                facts.usage = TokenUsage(
+                    input_tokens=values["input_tokens"],
+                    output_tokens=values["output_tokens"],
+                    cache_read_input_tokens=values["cache_read_input_tokens"],
+                    cache_creation_input_tokens=values["cache_creation_input_tokens"],
+                    total_cost_usd=cost,
+                )
             elif (cost := coerce_optional_float(payload.get("total_cost_usd"))) is not None:
                 facts.usage_is_specific = True
                 facts.usage = TokenUsage(total_cost_usd=cost)

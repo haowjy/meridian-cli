@@ -294,13 +294,14 @@ def test_legacy_runner_artifacts_do_not_authorize_transcript_reads(tmp_path: Pat
     with pytest.raises(ValueError, match="not a native transcript"):
         session_log_sync(SessionLogInput(file_path=str(runtime_root / "spawns/p42/history.jsonl")))
     with pytest.raises(ValueError, match="not a native transcript"):
-        session_search_sync(SessionSearchInput(
-            file_path=str(runtime_root / "spawns/p42/history.jsonl"), query="canonical marker",
-        ))
+        session_search_sync(
+            SessionSearchInput(
+                file_path=str(runtime_root / "spawns/p42/history.jsonl"),
+                query="canonical marker",
+            )
+        )
 
     assert not (runtime_root / "spawns" / "p42" / "native-transcript.jsonl").exists()
-    assert b"canonical marker" not in artifacts.get(history_key)
-    assert b"legacy marker" in artifacts.get(history_key)
     assert artifacts.list_artifacts("p42").count(history_key) == 1
     # Pi phases come from the pi-lifecycle.json sidecar, never from runner history.
     assert detail.pi_lifecycle_phase is None

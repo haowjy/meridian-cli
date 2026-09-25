@@ -368,36 +368,21 @@ def project_pi_spec_to_cli_args(spec, *, base_command) -> list[str]:
 
 **File: `src/meridian/lib/harness/extractors/pi.py`**
 
-Implement `HarnessExtractor` with three core methods and one detection method:
+Implement the live facts and identity ports:
 
 ```python
 class PiHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
-    def extract_session_id(self, artifacts, spawn_id) -> str | None: ...
-    def extract_usage(self, artifacts, spawn_id) -> TokenUsage: ...
-    def extract_report(self, artifacts, spawn_id) -> str | None: ...
-    def detect_session_id_from_event(self, event) -> str | None: ...
-    def detect_session_id_from_artifacts(self, *, spec, launch_env,
-                                          child_cwd, runtime_root) -> str | None: ...
+    def fold(self, facts: AttemptFacts, event: Mapping[str, object]) -> None: ...
+    def detect_session_id_from_event(self, event: RawHarnessEvent) -> str | None: ...
 ```
 
-**Session ID**: Pi emits `{"type":"session","id":"..."}` as the first JSONL line.
-Parse from artifact output. Also scan the harness's session directory
-(`sessions/<cwd-escaped>/*.jsonl`) as a fallback for when stdout capture fails.
-
-**Usage**: Pi puts usage in the last `message_end` with
-`message.role=="assistant"`. Extract `message.usage.input`, `message.usage.output`,
-`message.usage.cacheRead`, `message.usage.cacheWrite`. Cost in USD is available
-at `message.usage.cost.total` if the provider reports it.
-
-**Report**: Pi's final assistant text is in `agent_end.messages[-1].content`
-(where `role=="assistant"` and `content[].type=="text"`). Walk backwards through
-the event list and extract the last assistant text.
-
-**Fallback session ID from files**: If `--continue` was used (resume, not fork),
-the session ID was already known. For fresh spawns where stdout capture fails,
-scan `$PI_CODING_AGENT_SESSION_DIR/<cwd-escaped>/` for the most recently
-modified JSONL file and read its session header. CWD escaping: slashes `/`
-become `--`, directory name ends with `--`.
+Pi's `session` event names its native ID. Fold assistant `message_end` usage and
+`message_end`/`agent_end` final text into bounded `AttemptFacts`. Retries get a
+fresh fold. Never scan the latest native file or reread runner artifacts to
+recover identity or a report. Where a harness supports a native-turn fallback,
+`read_native_turn(key, ids)` may read only replies named by this attempt's events
+from its recorded store; otherwise the fact remains unknown. Claude `--print`
+is the black-box exception: its captured stdout is folded after exit.
 
 ### 1.5 Connection/Streaming Runner
 
@@ -667,34 +652,29 @@ Pi runtime.
 Every spawn writes `history.jsonl` in the spawn log directory. This is the
 generic event persistence layer — raw JSONL events from the harness, one
 per line, with Meridian-added metadata. This works automatically for any
-harness that uses the streaming runner drain loop. It is not the transcript
-authority for tracked chats or spawns with a recorded run boundary.
+harness that uses the streaming runner drain loop. It is never a transcript read source. Event delivery and attempt facts must also
+work without a writer.
 
 ### 3.2 Native Session File Resolution
 
 Harnesses store their own session files independently. For Pi, session files
 live under `$PI_CODING_AGENT_SESSION_DIR/<cwd-escaped>/<timestamp>_<uuid>.jsonl`.
 
-The extractor needs to:
-1. Know where the harness stores session files
-2. Know the file naming convention
-3. Know how to map the Meridian spawn's CWD to the harness's session directory
-
-This is harness-specific and must be implemented in the extractor's
-`detect_session_id_from_artifacts()` method. Pi's CWD encoding: slashes become
-`--`, directory name ends with `--`.
+The adapter's `resolve_native_session_file(session_id, native_store)` resolves
+only the recorded namespace and validates native identity. Live events provide
+session IDs; extractors fold attempt facts rather than discover artifact files.
 
 ### 3.3 Readable `meridian session log` Translation
 
-For a tracked `cN`, and a `pN` with a recorded run boundary, `meridian session
-log` reads the transcript for the bound native key (harness, native store, and
+For any tracked `cN` or `pN`, `meridian session log` reads the transcript for the bound native key (harness, native store, and
 session ID) through the exact reader. Pi transcripts are projected onto the
 session's reopen lineage. Incomplete, missing, or ambiguous native identities
 are refused with a typed reason; resolution does not discover a replacement
 transcript.
 
-Runner `history.jsonl` is still written. At this revision it is read only for
-pre-PR-1 `pN` references and untracked targets; PR 2 removes those reads.
+Old spawns without a boundary use their entry chat with a view label. Unbound
+chats report `unbound`, without a legacy hint. `--file history.jsonl` is rejected
+as "not a native transcript".
 
 Harness-specific transcript providers and parsers live in
 `src/meridian/lib/harness/transcript.py`.
@@ -815,8 +795,7 @@ expensive models for reasoning-heavy tasks.
 - [ ] Export formats include Pi session content
 
 **Pi status**: `session log` reads the bound native Pi transcript and projects it
-onto the session's reopen lineage. Runner `history.jsonl` is not its source for a
-spawn with a recorded run boundary.
+onto the session's reopen lineage. Runner `history.jsonl` is never its source.
 
 ### Packaging / Wheel Smoke
 
@@ -851,7 +830,7 @@ All must pass. The pre-push hook enforces this automatically.
 | Subprocess projection | Done | `pi --mode rpc ...`, inline system prompt, isolation flags |
 | Primary native TUI launch | Done | `pi [--model ...] [--session ...]`, no `--mode`, no extensions |
 | PiConnection (JSONL drain) | Done | Streaming runner drain loop, session ID capture, stderr logging |
-| PiExtractor | Done | Session ID, usage, report from artifacts + events |
+| PiExtractor | Done | Session ID, usage, report from live attempt facts |
 | Event semantics | Done | `agent_end` terminal, activity transitions, signal clearing |
 | Permission flags | Done | Empty tuple (Pi uses extension hooks) |
 | Managed extension build | Done | Extension JS bundles ship as package data; dev-rebuild via Node/npm |

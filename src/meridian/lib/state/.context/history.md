@@ -37,8 +37,7 @@ existing catch-up gate. Missing indexes rebuild. Compatible older schemas migrat
 in place on the live WAL; untrusted older schemas, corrupt files, generation
 mismatch and `--reset` rebuild. Both share the 15-second automatic metadata
 phase and an under-lock recheck. A genuine owned-build failure is latched
-in `history-index-init-failure.json`; manual publication clears it before optional
-preview warming. Failed marker cleanup warns; warm catch-up retries it under the
+in `history-index-init-failure.json`; manual publication clears it. Failed marker cleanup warns; warm catch-up retries it under the
 same gate after verifying schema/generation. Status and cache-only reads never
 perform this cleanup. Contention and cancellation are not persistent failures.
 
@@ -61,24 +60,18 @@ subtree-sized.
 
 History UUID identifies one transcript, not a reusable cN alias. Sessions retain
 all generations; fork-start captures the source UUID before a chat can resume.
-Headers carry portable origin/relationships. JSONL remains append-only across
-retries, with attempt boundaries; lifecycle extractors ignore earlier attempts.
-Missing native primary content is captured through harness transcript providers
-after stop, never synthesized from a rendered report. Archive packs sealed
-records only; it does not run capture. Post-stop maintenance receives
-the exact completed primary spawn ID from the launch outcome, not the latest chat
-projection, which may already refer to another run. Capture-purpose resolution bypasses
-SQLite/presentation fallbacks and requires agreement among state, primary metadata
-and the exact linked generation. Selection runs under the aggregate guard; known
-same-runtime active spawn/session owners and unreleased live scopes block the native
-read and are checked again before publication. Matched spawn bindings include their
-exact linked session/lease even when that session's native ID is absent; a reused
-chat's newer lease is not evidence about the older generation. Child preparation
-uses only its existing retained stream, never native-primary source fallback. This is an ownership precondition,
-not proof that provider input is complete or unchanged. Primary capture publishes
-`native-transcript.jsonl` only after a complete provider observation; a valid
-sealed snapshot is the idempotent no-op. Existence of `history.jsonl` is never
-that signal. Versioned ZIP membership/digest recipes remain.
+Headers carry portable origin/relationships. Attempt facts come from the live
+fold, not replayed runner events. Native capture snapshots the exact bound key
+for both primary and child spawns. No native source means no archive eligibility;
+those records stay loose with a reason. Archive packs sealed records and does
+not run capture. Post-stop maintenance receives the exact completed spawn ID,
+not the latest chat projection.
+
+Capture selection runs under the aggregate guard and requires agreement among
+state, primary metadata and the linked generation. Known active owners and
+unreleased live scopes block capture and are rechecked before publication.
+Only a complete provider observation seals `native-transcript.jsonl`; a valid
+seal is the idempotent no-op. Runner-stream existence is not capture evidence.
 
 `native_snapshot.py` defines the separate sealed JSONL storage codec. It retains
 raw native JSON text in source/ordinal envelopes; a final digest binds header,
@@ -91,9 +84,8 @@ at header consumption, before any body record; explicit file reads impose no
 identity inferred from their filename. Reserved storage frames cannot fall through
 to permissive native or append-stream interpretation after a damaged header.
 Early close/budget exhaustion is partial; a valid empty seal is complete, not a
-reason to select another source. Qualified primary publication is wired; a spawn
-with a sealed snapshot is selected ahead of its stream. Versioned archive
-digest/descriptor recipes still need wiring.
+reason to select another source. Explicit snapshot reads validate the seal; normal chat reads resolve the native
+key. Legacy ZIP stream members can be restored as inert bytes, never decoded.
 
 The index keeps current metadata, independent locations, generation aliases and
 session/work projections. Multiple ZIP copies remain candidates even with a
@@ -145,30 +137,20 @@ root gate and source lock, then rechecks POSIX inode/change-time and membership
 witnesses plus exact session metadata under the short exclusive gate. Witnesses
 only detect changes after checksum verification; they do not replace checksums.
 
-## Bounded preview projection
+## Search and previews
 
-The same database holds disposable preview checkpoints separately from metadata.
-`ops/session_preview.py` selects sources and feeds the shared harness normalizer
-through a bounded accumulator; no independent transcript interpretation or FTS.
-Metadata catch-up/automatic rebuild do not warm bodies. Explicit rebuild warms
-through this path unless `--metadata-only`; metadata activity reads only the last
-complete event (which can itself be large), not a transcript projection.
+`native-search-v1.sqlite3` is a separate disposable projection. It stores native
+keys, locators, freshness witnesses and normalized display entries, never chat
+IDs. Search inverts accepted bindings from the session authority, validates
+file/OpenCode witnesses, refreshes stale sources, then uses FTS5 trigrams only
+to nominate candidates. Python's exact substring predicate decides matches.
+Parser-version changes invalidate rows. Unsearched sources carry coverage reasons;
+no index may select a chat's native source. Rebuild refreshes search unless
+`--metadata-only`; status reports fresh/stale/unindexed counts and bytes.
 
-Selection reads eligible cache rows without catch-up or source access. Refresh
-parses outside locks, then publishes through root/database/source synchronization
-with build, generation, selected digest and source checks. Cached archived content
-must have passed required-member byte verification for that selected snapshot.
-Offline cache never substitutes a different snapshot; reading does not restore.
-
-Managed append-only streams reuse complete-line checkpoints; changed native files
-and OpenCode selected-session database snapshots reparse. Same-size edits, new
-inodes and truncation invalidate checkpoints. Tail witnesses assume controlled
-append-only growth, not arbitrary prefix edits plus append. External edits require
-explicit rebuild. The browser exposes stale/updating, unavailable/offline and
-clipping status, and refreshes an active selected row every two seconds.
-
-Preview compatibility uses the shared harness checkpoint version, passed into
-cache counts by ops; it does not require a metadata-schema rebuild. Counts exclude
-incompatible, incomplete and rendering-partial snapshots. Pi branch identity and
-rendering limits persist in the bounded checkpoint; a cached-empty old grammar
-must not bypass reparsing after a parser upgrade.
+Metadata activity uses spawn/session facts and sealed snapshot observations, not
+runner-stream tails. `ops/session_preview.py` lazily refreshes bounded native
+previews with the shared normalizer. Source signatures invalidate stale content;
+there is no runner-stream cursor. Cache publication checks generation and the
+selected source/digest under the existing locks. Incomplete or rendering-partial
+snapshots do not count as compatible cached previews.

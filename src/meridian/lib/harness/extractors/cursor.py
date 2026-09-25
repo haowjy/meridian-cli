@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import cast
 
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.harness.attempt_facts import AttemptFacts
-from meridian.lib.harness.common import _coerce_optional_int, _extract_text, iter_nested_dicts
+from meridian.lib.harness.common import coerce_optional_int, extract_text, iter_nested_dicts
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
@@ -53,24 +54,25 @@ class CursorHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
             for nested in iter_nested_dicts(payload):
                 usage = nested.get("usage")
                 if isinstance(usage, dict):
+                    usage = cast("dict[str, object]", usage)
                     facts.usage_is_specific = True
                     facts.usage = TokenUsage(
-                        input_tokens=_coerce_optional_int(usage.get("inputTokens")),
-                        output_tokens=_coerce_optional_int(usage.get("outputTokens")),
-                        cache_read_input_tokens=_coerce_optional_int(usage.get("cacheReadTokens")),
-                        cache_creation_input_tokens=_coerce_optional_int(
+                        input_tokens=coerce_optional_int(usage.get("inputTokens")),
+                        output_tokens=coerce_optional_int(usage.get("outputTokens")),
+                        cache_read_input_tokens=coerce_optional_int(usage.get("cacheReadTokens")),
+                        cache_creation_input_tokens=coerce_optional_int(
                             usage.get("cacheWriteTokens")
                         ),
                     )
                 for key in ("result", "text", "output", "content", "message"):
-                    text = _extract_text(nested.get(key))
+                    text = extract_text(nested.get(key))
                     if text:
                         facts.set_text(text, "cursor_result")
         elif (
             normalize_harness_event_type(payload) == "assistant"
             and facts.final_text_source != "cursor_result"
         ):
-            text = _extract_text(payload.get("message"))
+            text = extract_text(payload.get("message"))
             if text:
                 facts.set_text(text, "cursor_assistant")
 

@@ -345,7 +345,7 @@ def test_session_projection_matches_authority_for_nonobject_lines(tmp_path: Path
 
     (tmp_path / "sessions.jsonl").write_text('[]\nnull\n{"event":"unknown"}\n')
     assert session_store.list_session_generations(tmp_path) == ()
-    assert HistoryIndex(tmp_path).candidates() == ()
+    assert HistoryIndex(tmp_path).sessions() == []
 
 
 def test_corpus_shares_one_cold_budget_and_does_not_latch_skipped_roots(

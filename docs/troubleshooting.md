@@ -221,7 +221,7 @@ to read them without navigating the path directly.
 | ---- | -------- |
 | `state.json` | Authoritative spawn record (status, metrics, error) |
 | `report.md` | Agent's final report |
-| `history.jsonl` | Raw harness event log (surfaced through `meridian session log <spawn_id>`); `output.jsonl` may still appear as a legacy fallback |
+| `history.jsonl` | Redundant runner events, not readable as a transcript. `session log pN` shows its chat's native conversation with a view label; `output.jsonl` is Claude `--print` capture only |
 | `stderr.log` | Harness stderr, warnings, errors |
 | `launch-boundary.jsonl` | Background spawn startup lifecycle — parent-side launch attempt/spawned/failed events and worker-side boot/takeover events. Used by the reaper to detect startup-phase failures. |
 | `system-prompt.md` | System instruction content as sent to the harness (Claude composed launches) |

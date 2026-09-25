@@ -283,7 +283,7 @@ def test_exec_decision_builds_primary_invocation(decision, verb: str) -> None:
 
 
 @pytest.mark.parametrize("include_archives", [False, True])
-def test_browse_search_zip_opt_in_keeps_archived_rows_visible(include_archives):
+def test_browse_search_archived_opt_in_keeps_archived_rows_visible(include_archives):
     archived = _row("archived-id").model_copy(update={"archived": True})
     model = BrowseModel((_row("c1"), archived), include_archives=include_archives)
     assert len(model.visible_rows) == 2

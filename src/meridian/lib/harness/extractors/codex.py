@@ -7,7 +7,7 @@ from typing import cast
 
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.harness.attempt_facts import AttemptFacts
-from meridian.lib.harness.common import _coerce_optional_int, extract_codex_thread_id, extract_text
+from meridian.lib.harness.common import coerce_optional_int, extract_codex_thread_id, extract_text
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
@@ -23,7 +23,7 @@ def _owned_session_id(payload: Mapping[str, object], event_type: str) -> str | N
             return value.strip()
     thread = payload.get("thread")
     if isinstance(thread, dict):
-        value = thread.get("id")
+        value = cast("dict[str, object]", thread).get("id")
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
@@ -50,6 +50,7 @@ class CodexHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
         fold_usage_fallback(facts, payload)
         item = payload.get("item")
         if isinstance(item, dict):
+            item = cast("dict[str, object]", item)
             item_type = str(item.get("type", "")).lower().replace("_", "")
             if kind == "item.completed" and item_type == "agentmessage":
                 text = extract_text(item.get("text"))
@@ -62,25 +63,26 @@ class CodexHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
         if kind == "thread.tokenusage.updated":
             token_usage = payload.get("tokenUsage") or _nested_get(payload, "payload", "tokenUsage")
             if isinstance(token_usage, dict):
-                usage = token_usage.get("total")
+                usage = cast("dict[str, object]", token_usage).get("total")
         elif kind == "turn.completed":
             usage = payload.get("usage") or _nested_get(payload, "payload", "usage")
         if isinstance(usage, dict):
+            usage = cast("dict[str, object]", usage)
             facts.usage_is_specific = True
             facts.usage = TokenUsage(
-                input_tokens=_coerce_optional_int(
+                input_tokens=coerce_optional_int(
                     usage.get("inputTokens", usage.get("input_tokens"))
                 ),
-                output_tokens=_coerce_optional_int(
+                output_tokens=coerce_optional_int(
                     usage.get("outputTokens", usage.get("output_tokens"))
                 ),
-                cache_read_input_tokens=_coerce_optional_int(
+                cache_read_input_tokens=coerce_optional_int(
                     usage.get("cachedInputTokens", usage.get("cached_input_tokens"))
                 ),
-                cache_creation_input_tokens=_coerce_optional_int(
+                cache_creation_input_tokens=coerce_optional_int(
                     usage.get("cacheCreationInputTokens", usage.get("cache_creation_input_tokens"))
                 ),
-                reasoning_tokens=_coerce_optional_int(
+                reasoning_tokens=coerce_optional_int(
                     usage.get("reasoningOutputTokens", usage.get("reasoning_output_tokens"))
                 ),
             )

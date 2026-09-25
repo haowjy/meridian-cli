@@ -58,20 +58,10 @@ class RuntimePaths(BaseModel):
 
         return self.root_dir.parent / ".locks" / f"{self.root_dir.name}.lock"
 
-    def chat_history_path(self, c_id: str) -> Path:
-        """Return history.jsonl path for a chat."""
-
-        return self.chats_dir / c_id / "history.jsonl"
-
     def chat_lifecycle_path(self, c_id: str) -> Path:
         """Return lifecycle.jsonl path for a chat."""
 
         return self.chats_dir / c_id / "lifecycle.jsonl"
-
-    def spawn_history_path(self, p_id: str) -> Path:
-        """Return history.jsonl path for a spawn."""
-
-        return self.spawns_dir / p_id / "history.jsonl"
 
     @classmethod
     def from_root_dir(cls, root_dir: Path) -> Self:
@@ -408,50 +398,3 @@ def heartbeat_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
     """Return heartbeat sentinel path for a spawn under a state root."""
 
     return RuntimePaths.from_root_dir(runtime_root).spawns_dir / str(spawn_id) / "heartbeat"
-
-
-def spawn_output_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
-    """Return history.jsonl path for a spawn."""
-
-    from meridian.lib.launch.constants import HISTORY_FILENAME
-
-    return RuntimePaths.from_root_dir(runtime_root).spawns_dir / str(spawn_id) / HISTORY_FILENAME
-
-
-def resolve_spawn_history_path(
-    runtime_root: Path,
-    spawn_id: SpawnId | str,
-    *,
-    relative_path: Path | None = None,
-) -> Path | None:
-    """Resolve authoritative spawn history, falling back to a legacy artifact copy."""
-
-    from meridian.lib.launch.constants import HISTORY_FILENAME
-
-    history_path = relative_path or Path(HISTORY_FILENAME)
-    canonical = RuntimePaths.from_root_dir(runtime_root).spawns_dir / str(spawn_id) / history_path
-    if canonical.is_file():
-        return canonical
-    legacy = runtime_root / "artifacts" / str(spawn_id) / history_path
-    return legacy if legacy.is_file() else None
-
-
-def resolve_spawn_output_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path | None:
-    """Resolve a native snapshot or explicit output artifact for a spawn."""
-
-    from meridian.lib.launch.constants import OUTPUT_FILENAME
-    from meridian.lib.state.native_snapshot import canonical_transcript_path
-
-    spawn_dir = RuntimePaths.from_root_dir(runtime_root).spawns_dir / str(spawn_id)
-    canonical = canonical_transcript_path(spawn_dir)
-    if canonical is not None:
-        return canonical
-    for candidate in (
-        RuntimePaths.from_root_dir(runtime_root).spawns_dir
-        / str(spawn_id)
-        / OUTPUT_FILENAME,
-        runtime_root / "artifacts" / str(spawn_id) / OUTPUT_FILENAME,
-    ):
-        if candidate.is_file():
-            return candidate
-    return None
