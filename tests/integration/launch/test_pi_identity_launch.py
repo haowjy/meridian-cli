@@ -190,7 +190,7 @@ def test_primary_assigns_before_exec_and_verifies_exact_entry(
                 session=SessionRequest(
                     requested_harness_session_id=native_id,
                     continue_chat_id=outcome.chat_id,
-                    source_pi_session_dir=str(store),
+                    source_native_store=str(store),
                     primary_session_mode="resume",
                 ),
             )
@@ -217,7 +217,7 @@ def test_resume_and_fork_use_verified_absolute_source(
             session=SessionRequest(
                 requested_harness_session_id=native_id,
                 continue_chat_id=first.chat_id,
-                source_pi_session_dir=str(store),
+                source_native_store=str(store),
                 continue_fork=fork,
                 primary_session_mode="fork" if fork else "resume",
             ),
@@ -322,7 +322,7 @@ async def test_rpc_spawn_uses_prebound_scoped_store(pi_runtime: Path, behavior: 
                     primary=False,
                     session=SessionRequest(
                         requested_harness_session_id=native_id,
-                        source_pi_session_dir=str(store),
+                        source_native_store=str(store),
                     ),
                 )
 
@@ -356,7 +356,7 @@ async def test_spawn_continue_reuses_chat_and_fork_allocates_new_chat(pi_runtime
             continue_chat_id=source.chat_id,
             continue_source_ref=source.chat_id,
             continue_source_tracked=True,
-            source_pi_session_dir=source.native_store,
+            source_native_store=source.native_store,
             continue_fork=operation == "fork",
         )
         ctx = context(root, primary=False, spawn_id=f"p{number}", session=session)

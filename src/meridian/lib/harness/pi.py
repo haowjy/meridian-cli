@@ -233,7 +233,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         store = resolve_pi_spawn_session_root(env=child_env)
         if not store.is_absolute():
             store = child_cwd / store
-        source_store = session.source_pi_session_dir
+        source_store = session.source_native_store
         source_path = None
         if plan.operation != "create":
             if session.continue_source_tracked and not source_store:
