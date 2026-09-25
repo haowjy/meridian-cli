@@ -31,6 +31,7 @@ def _v2_index(tmp_path: Path) -> tuple[HistoryIndex, str, str]:
     index = HistoryIndex(tmp_path)
     index.rebuild()
     with sqlite3.connect(index.path) as db:
+        db.execute("UPDATE meta SET version=2")
         history_id = str(db.execute("SELECT history_id FROM records").fetchone()[0])
         db.execute("INSERT INTO previews VALUES ('probe', ?, NULL, 'cached')", (history_id,))
         db.execute("INSERT INTO cursors VALUES ('sessions', '1:2', 12, 'tail')")

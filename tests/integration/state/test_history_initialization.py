@@ -174,6 +174,40 @@ def test_schema_classification_is_read_only_and_upgrade_is_automatic(tmp_path: P
     assert not index.failure_path.exists()
 
 
+def test_old_record_projection_schema_rebuilds_and_newer_schema_is_not_hydrated(
+    tmp_path: Path,
+) -> None:
+    import sqlite3
+
+    from meridian.lib.state import spawn_store
+
+    key = spawn_store.start_spawn(
+        tmp_path, chat_id="c1", prompt="hello", model="test", agent="coder", harness="codex"
+    )
+    spawn_store.finalize_spawn(tmp_path, key, status="succeeded", exit_code=0, origin="runner")
+    index = HistoryIndex(tmp_path)
+    original_build = index.rebuild().build
+    with sqlite3.connect(index.path) as db:
+        db.execute("PRAGMA journal_mode=DELETE")
+        db.execute("UPDATE meta SET version=2")
+
+    status = index.inspect()
+    assert status.baseline == "outdated" and status.upgrade == "reproject"
+    assert [spawn.id for spawn in index.spawns()] == [key]
+    assert index.inspect().schema == 3
+    assert index.inspect().build != original_build
+
+    with sqlite3.connect(index.path) as db:
+        db.execute("UPDATE meta SET version=999")
+    status = index.classify(deadline=time.monotonic() + 2)
+    assert status.baseline == "incompatible"
+    with pytest.raises(
+        history_index.HistoryIndexIncomplete,
+        match=r"incompatible.*uv run meridian session index rebuild --metadata-only",
+    ):
+        index.spawns()
+
+
 def test_explicit_deadline_does_not_start_implicit_initialization(tmp_path: Path) -> None:
     index = HistoryIndex(tmp_path)
     with (

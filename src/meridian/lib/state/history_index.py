@@ -74,7 +74,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 INITIALIZATION_TIMEOUT = 15.0
 QUERY_TIMEOUT = 2.0
 _REBUILD_COMMAND = "uv run meridian session index rebuild --metadata-only"
