@@ -33,6 +33,7 @@ from meridian.lib.harness.connections.managed_stdio import (
 from meridian.lib.harness.pi_failure import compact_pi_failure_output
 from meridian.lib.harness.pi_lifecycle_events import (
     PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES,
+    PI_PHASE_EVENT_TYPE,
     PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION,
     has_unsupported_pi_lifecycle_schema_version,
     redact_pi_command_for_history,
@@ -56,7 +57,6 @@ _HARNESS_NAME: Final = HarnessId.PI.value
 _STDOUT_READLINE_LIMIT: Final[int] = 10 * 1024 * 1024
 _PARSE_ERROR_RAW_LINE_LIMIT: Final[int] = 2048
 _STDERR_SNIPPET_LIMIT: Final[int] = 4096
-_PI_PHASE_EVENT_TYPE: Final[str] = "meridian.pi.lifecycle.phase"
 _PI_FIRST_EVENT_TIMEOUT_REASON: Final[str] = "pi_rpc_no_response_after_initial_prompt"
 _PI_STREAM_CLOSED_BEFORE_FIRST_EVENT_REASON: Final[str] = (
     "pi_rpc_stream_closed_before_initial_response"
@@ -831,7 +831,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         **data: object,
     ) -> RawHarnessEvent:
         payload: dict[str, object] = {
-            "type": _PI_PHASE_EVENT_TYPE,
+            "type": PI_PHASE_EVENT_TYPE,
             "phase": phase,
             "schema_version": PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION,
         }
@@ -839,7 +839,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         if self._spawn_id:
             payload["spawn_id"] = str(self._spawn_id)
         event = RawHarnessEvent(
-            event_type=_PI_PHASE_EVENT_TYPE,
+            event_type=PI_PHASE_EVENT_TYPE,
             payload=payload,
             harness_id=_HARNESS_NAME,
             raw_text=None,
