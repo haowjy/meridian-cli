@@ -146,11 +146,11 @@ recorded worst case was a spawn that wedged for 2h18m before any liveness signal
 On retry, `_preserve_attempt_artifacts()` in `streaming_runner.py` moves completed
 attempt diagnostics (`stderr.log`, `report.md`, `runner-lifecycle.jsonl`,
 `last-observed-event.json`) into `attempt-N/` under the spawn log directory.
-`history.jsonl` stays canonical and append-only: an attempt-boundary event
-separates retries, and lifecycle extractors read only the current attempt.
+Attempt reports, usage and identity come from `AttemptFacts` folded on live events.
+Each retry gets fresh facts; runner history is not read during finalization.
 Diagnostic rotation commits with `os.replace(staging_dir, attempt_dir)` before
 auxiliary copies and active diagnostic keys are updated. Never rotate or delete
-the canonical history through this path.
+the runner stream through this path.
 
 Runner lifecycle and history diagnostics can execute after async boundaries. Their
 parent-creating writes use the published-spawn artifact mutation seam; never append

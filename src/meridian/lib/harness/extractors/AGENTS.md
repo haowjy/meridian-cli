@@ -2,7 +2,8 @@
 
 One extractor per harness. `fold(facts, event)` updates bounded, attempt-local
 facts synchronously before event persistence. Retries use fresh facts. Extractors
-never read runner history or artifact-store output.
+never read runner history or artifact-store output. Claude `--print` is the
+black-box exception: the runner folds its captured stdout after exit.
 
 `detect_session_id_from_event` remains the live connection identity port.
 Session IDs need owned protocol evidence: assistant prose and nested tool values

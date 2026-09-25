@@ -128,7 +128,7 @@ OpenCode uses `session.idle` for the same semantic. Some harness streams also
 multiplex child work on the same connection, so `connection.primary_event_scope` is
 part of the contract: Codex scopes completion to the main `threadId`; OpenCode scopes
 completion to the launched parent `sessionID`. Child Codex threads and child OpenCode
-task sessions stay in `history.jsonl`, but do not complete/fail the parent, clear
+task sessions reach subscribers, but do not complete/fail the parent, clear
 parent signals, or supply the parent report.
 
 ## Entry Points
@@ -147,14 +147,14 @@ parent signals, or supply the parent report.
   event name and returns raw evidence with its one normalized descriptor; shared
   `semantics.py` contains no harness event names.
 - `pi_failure.py` — Pi failure output formatting (`compact_pi_failure_output`) and
-  history-based failure extraction (`extract_pi_failure_from_history`). Harness-owned;
+  per-event failure extraction (`pi_failure_from_payload`). Harness-owned;
   consumed by `connections/pi_rpc.py` (stderr compaction), `extractors/pi.py` (report
   extraction), and `launch/report.py` (spawn report Pi failure path).
 - `common.py` — shared extraction helpers used by adapters.
 - `transcript.py` — cross-harness session read path. `TranscriptMessage` (with
   `tool_call: ToolCall | None` and `is_tool_result: bool`), `ToolCall` (canonical
-  harness-agnostic tool representation), and three providers
-  (`JsonlTranscriptProvider`, `HistoryJsonlTranscriptProvider`,
+  harness-agnostic tool representation), and two providers
+  (`JsonlTranscriptProvider`,
   `OpenCodeStorageTranscriptProvider`). Independent of the spawn/write paths — reads
   only. See [.context/session-transcripts.md](.context/session-transcripts.md) for the
   normalization table and provider selection rules.

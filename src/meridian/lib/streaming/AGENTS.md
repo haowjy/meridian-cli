@@ -43,14 +43,14 @@ defaults to `None`; resident rearms and Pi waves cannot reset it.
 ## Mental Model
 
 ```
-HarnessConnection  →  drain loop  →  1. persist (HarnessHistoryWriter)
-                                     2. observe (EventObserverRegistry)
+HarnessConnection  →  drain loop  →  1. inline hooks (facts, lifecycle)
+                                     2. optional history write
                                      3. fan-out (subscriber queue)
 ```
 
-The ordering is a contract, not an implementation detail. Observers and the subscriber
-must only see events that are durably written. Breaking the order means a crash between
-steps 1 and 2 could leave observers with data the persistence layer never recorded.
+Hooks run before persistence and errors are isolated. With no writer, delivery
+continues normally. An existing writer's failure withholds fan-out; repeated write
+failures still abort the loop. See the delivery contract in `.context/CONTEXT.md`.
 
 `SpawnManager` is the integration point for everything that touches a live spawn:
 starting, stopping, injecting messages, subscribing to events, and tracking heartbeats.
@@ -141,7 +141,6 @@ orphaned; deletion, normal completion, cancellation, and shutdown stop it intent
 - `drain_wait.py` — generic event/timeout/aux-wake arbitration for drain loops
 - `drain_policy.py` — `DrainPolicy`, `SingleTurnDrainPolicy`, `PersistentDrainPolicy`
 - `control_socket.py` — per-spawn inject endpoint
-- `event_observers.py` — `EventObserverRegistry`, `EventObserver`, `CallbackObserver`
 - `types.py` — `InjectResult`, `ControlMessage`
 
 Resident and Pi completion use the shared reconciled transitive spawn-tree assessment as

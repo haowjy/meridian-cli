@@ -28,7 +28,7 @@ meridian.toml
     <id>/
       state.json                    — authoritative spawn state (schema v3)
       starting-prompt.md            — prompt body (written once)
-      history.jsonl                 — primary output artifact (seq-enveloped events)
+      history.jsonl                 — redundant runner stream, never a transcript source
       attempt-N/                    — preserved retry evidence
       last-observed-event.json      — last harness event and counters
       runner-lifecycle.jsonl        — runner lifecycle breadcrumbs
@@ -36,7 +36,7 @@ meridian.toml
       process_scopes.json           — durable process identities
       reaper_cleanup_claim.json     — pending finalize-first cleanup targets
       heartbeat · report.md · stderr.log · params.json · tokens.json
-  artifacts/<spawn-id>/             — legacy auxiliary history fallback
+  artifacts/<spawn-id>/             — auxiliary artifact storage
 
 <context.work root>/<slug>/         ← context-resolved, not repo-local
   __status.json                     — mutable per-work-item metadata

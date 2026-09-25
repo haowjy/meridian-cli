@@ -12,7 +12,7 @@ Pi/resident modules rather than entering the generic loop or `SpawnManager`.
 SpawnManager
   ├─ _sessions: dict[SpawnId, SpawnSession]   ← live resources per spawn
   ├─ _history_writers: dict[SpawnId, HarnessHistoryWriter]
-  ├─ _observers: EventObserverRegistry
+  ├─ _event_hooks: dict[SpawnId, list[EventHook]]
   └─ _heartbeat_tasks: dict[SpawnId, Task]
 
 DrainPlan
@@ -42,7 +42,7 @@ The implementation is split by responsibility:
 - `spawn_manager.py` — public registry/control API and generic live-spawn lifecycle
 - `drain_plan_factory.py` — plain/resident/Pi plan selection and capability wiring
 - `spawn_dispatch.py` — connection creation/start dispatch
-- `spawn_drain_loop.py` — drain loop, persistence/observer/fan-out ordering, outcome priority
+- `spawn_drain_loop.py` — drain loop, hook/write/fan-out ordering, outcome priority
 - `drain_coordinator.py` — `DrainPlan` plus the narrow `DrainCoordinator` seam
 - `drain_teardown.py` — harness-neutral plan-owned async connection-stop contract
 - `pi_drain_teardown.py` — Pi cleanup-phase connection-stop policy
@@ -57,25 +57,16 @@ The implementation is split by responsibility:
 
 ### Drain Loop Ordering
 
-Each event flows through three stages in strict order:
+`SpawnManager._emit` runs synchronous inline hooks (attempt facts and Pi lifecycle
+sidecar), then the optional history write, then subscriber fan-out. Hooks run even
+without a writer; a hook error is logged and does not block delivery. If a writer
+is present and fails, ordinary drain fan-out and coordinator delivery are withheld; ten
+consecutive failures still abort the drain loop. Absence is not write failure.
 
-1. **Persist** — `HarnessHistoryWriter.write(event)` to `history.jsonl`
-2. **Observe** — `EventObserverRegistry.dispatch(spawn_id, event)` (non-blocking)
-3. **Fan-out** — `subscriber.put_nowait(event)`
-
-Persistence is synchronous and happens before any notification. 10 consecutive
-write failures abort the loop with a `failed` outcome. Do not reorder these stages
-— observers and the subscriber must only see events that are durably written.
-Coordinator post-persistence handling (`note_event_persisted`) is gated the same
-way: a failed write, including the tenth failure that aborts the loop, is not
-delivered to the coordinator, observers, or subscriber.
-
-Terminal classification happens after persistence. The drain loop passes
-`connection.primary_event_scope` into the harness semantic helpers when a connection
-provides one. This matters for multiplexed streams: child Codex threads and child
-OpenCode task sessions are still written to `history.jsonl` and sent to observers,
-but their terminal events do not complete/fail the parent, clear parent signals, or
-drive parent activity transitions.
+Terminal classification follows successful delivery. The loop passes the
+connection's `primary_event_scope` to the harness semantics: child Codex threads
+and OpenCode task sessions reach hooks/subscribers, but cannot complete/fail the
+parent, clear its signals, or drive its activity transitions.
 
 ### DrainPlan Selection
 
@@ -170,7 +161,7 @@ concurrent `start_spawn` calls from different event loops.
 `SpawnManager._publish_terminal()` is the idempotent barrier that owns terminal
 lifecycle publication. It resolves competing terminal sources via
 `resolve_terminal_outcome()` (success > authoritative stop > drain classification),
-runs the plan finalizer, resolves the completion future, notifies observers, and
+runs the plan finalizer, resolves the completion future, emits lifecycle hooks, and
 starts one per-spawn cleanup task. Both the drain loop's natural exit path and
 `stop_spawn()` call it; the `terminal_published` guard ensures exactly one publication.
 
@@ -262,7 +253,7 @@ the connection exposes the needed seam.
 ## Anti-Patterns
 
 - **Don't call `connection.send_user_message()` directly** — always go through `SpawnManager.inject()` so the action coordinator serializes it.
-- **Don't observe events before they're persisted** — the drain loop ordering is the persistence guarantee. Breaking it means observers may see events that weren't written to disk.
+- **Do not gate hooks or delivery on writer existence.** Facts and subscribers must work without runner-history persistence.
 - **Don't share a manager across concurrent event loops** — the session dict is not thread-safe.
 
 ## Related KB
