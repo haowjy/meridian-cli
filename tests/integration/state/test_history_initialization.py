@@ -46,23 +46,24 @@ def test_cold_query_can_exceed_the_warm_two_second_budget(tmp_path: Path, monkey
     assert HistoryIndex(tmp_path).spawns() == ()
 
 
-@pytest.mark.parametrize("invalid_tail", ["private transcript content\n", "[]\n", "null\n"])
-def test_failure_is_sticky_until_manual_rebuild(tmp_path: Path, invalid_tail: str) -> None:
+@pytest.mark.parametrize("invalid_state", ["private state content\n", "[]\n", "null\n"])
+def test_failure_is_sticky_until_manual_rebuild(tmp_path: Path, invalid_state: str) -> None:
     from meridian.lib.state import spawn_store
 
     key = spawn_store.start_spawn(
         tmp_path, chat_id="c1", prompt="hello", model="test", agent="coder", harness="codex"
     )
     spawn_store.finalize_spawn(tmp_path, key, status="succeeded", exit_code=0, origin="runner")
-    transcript = tmp_path / "spawns" / key / "history.jsonl"
-    transcript.write_text(invalid_tail)
+    state = tmp_path / "spawns" / key / "state.json"
+    valid_state = state.read_bytes()
+    state.write_text(invalid_state)
     index = HistoryIndex(tmp_path)
     with pytest.raises(history_index.HistoryIndexIncomplete, match="will not retry"):
         index.spawns()
     failure = index.failure_path.read_bytes()
-    assert b"private transcript content" not in failure
+    assert b"private state content" not in failure
     assert index.inspect().baseline == "failed"
-    transcript.write_text('{"timestamp":"2026-09-15T00:00:00+00:00"}\n')
+    state.write_bytes(valid_state)
     spawn_store.update_spawn(tmp_path, key, work_id="after-failure")
     with pytest.raises(history_index.HistoryIndexIncomplete, match="--metadata-only"):
         index.spawns()
