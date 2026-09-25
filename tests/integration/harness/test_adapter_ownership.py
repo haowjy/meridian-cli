@@ -254,7 +254,7 @@ def test_claude_adapter_uses_claude_config_dir_override(
     assert infer_harness_from_untracked_session_ref(project_root, override_session_id) == "claude"
 
 
-def test_claude_adapter_refuses_ambiguous_tracked_config_roots(
+def test_claude_adapter_pins_legacy_config_root(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -279,12 +279,13 @@ def test_claude_adapter_refuses_ambiguous_tracked_config_roots(
         )
 
     adapter = ClaudeAdapter()
-    with pytest.raises(ValueError, match="ambiguous native transcript"):
-        adapter.resolve_session_file(
-            project_root=project_root,
-            session_id=session_id,
-            config_root_hint=hint_root,
-        )
+    assert adapter.resolve_session_file(
+        project_root=project_root, session_id=session_id, config_root_hint=hint_root,
+    ) == paths[0]
+    paths[0].unlink()
+    assert adapter.resolve_session_file(
+        project_root=project_root, session_id=session_id, config_root_hint=hint_root,
+    ) is None
 
 
 @pytest.mark.parametrize(
@@ -552,7 +553,7 @@ def test_codex_transcript_resolution_refuses_duplicate_exact_ids(
 
 
 def test_claude_transcript_resolution_is_pinned_to_recorded_project_store(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -563,17 +564,22 @@ def test_claude_transcript_resolution_is_pinned_to_recorded_project_store(
         store.mkdir(parents=True)
         (store / f"{session_id}.jsonl").write_text("{}\n", encoding="utf-8")
 
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "ambient"))
     adapter = ClaudeAdapter()
-    assert adapter.resolve_session_file(
+    assert adapter.resolve_native_session_file(
         project_root=project_root,
         session_id=session_id,
-        config_root_hint=recorded_store,
+        native_store=recorded_store,
     ) == recorded_store / f"{session_id}.jsonl"
     (recorded_store / f"{session_id}.jsonl").unlink()
-    assert adapter.resolve_session_file(
+    project_root = tmp_path / "another-cwd"
+    decoy = tmp_path / "ambient" / "projects" / project_slug(project_root)
+    decoy.mkdir(parents=True)
+    (decoy / f"{session_id}.jsonl").write_text("{}\n")
+    assert adapter.resolve_native_session_file(
         project_root=project_root,
         session_id=session_id,
-        config_root_hint=recorded_store,
+        native_store=recorded_store,
     ) is None
 
 

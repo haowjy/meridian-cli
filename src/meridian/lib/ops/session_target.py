@@ -101,12 +101,19 @@ def _resolve_adapter_file_target(
     harness_id: HarnessId,
     adapter: SubprocessHarness,
     config_root_hint: Path | None,
+    native_store: Path | None = None,
+    tracked: bool = True,
 ) -> SessionLogTarget | None:
-    candidate = adapter.resolve_session_file(
-        project_root=project_root,
-        session_id=session_id,
-        config_root_hint=config_root_hint,
-    )
+    if native_store is not None:
+        candidate = adapter.resolve_native_session_file(
+            project_root=project_root, session_id=session_id, native_store=native_store,
+        )
+    elif config_root_hint is not None or not tracked:
+        candidate = adapter.resolve_session_file(
+            project_root=project_root, session_id=session_id, config_root_hint=config_root_hint,
+        )
+    else:
+        return None
     if candidate is None or not candidate.is_file():
         return None
     return _target_from_source(
@@ -126,6 +133,8 @@ def _resolve_harness_session_file(
     session_id: str,
     harness: str | None,
     config_root_hint: Path | None,
+    native_store: Path | None = None,
+    tracked: bool = True,
 ) -> SessionLogTarget:
     normalized_session_id = session_id.strip()
     if not normalized_session_id:
@@ -148,7 +157,7 @@ def _resolve_harness_session_file(
             session_id=normalized_session_id,
             harness_id=harness_id,
             adapter=adapter,
-            config_root_hint=config_root_hint,
+            config_root_hint=config_root_hint, native_store=native_store, tracked=tracked,
         )
         if file_target is not None:
             return file_target
@@ -165,13 +174,15 @@ def _resolve_harness_transcript_target_or_none(
     session_id: str,
     harness: str | None,
     config_root_hint: Path | None,
+    native_store: Path | None = None,
+    tracked: bool = True,
 ) -> SessionLogTarget | None:
     try:
         return _resolve_harness_session_file(
             project_root=project_root,
             session_id=session_id,
             harness=harness,
-            config_root_hint=config_root_hint,
+            config_root_hint=config_root_hint, native_store=native_store, tracked=tracked,
         )
     except FileNotFoundError:
         return None
@@ -226,14 +237,15 @@ def _resolve_from_chat_id(
     if session_record is None:
         raise ValueError(f"Chat '{chat_id}' not found")
     session_id = session_record.harness_session_id
-    native_store = session_record.native_store or session_record.claude_config_dir
+    native_store = session_record.native_store
     if not session_id or not session_record.harness:
         raise NativeSessionUnavailable(chat_id, "unbound")
     target = _resolve_harness_transcript_target_or_none(
         project_root=Path(session_record.execution_cwd or session_record.task_cwd or project_root),
         session_id=session_id,
         harness=session_record.harness,
-        config_root_hint=_config_root_hint(native_store),
+        native_store=_config_root_hint(native_store),
+        config_root_hint=_config_root_hint(session_record.claude_config_dir),
     )
     if target is None:
         raise NativeSessionUnavailable(chat_id, "missing")
@@ -293,8 +305,9 @@ def _resolve_from_spawn_id(
             project_root=project_root,
             session_id=next(iter(native_ids)),
             harness=next(iter(harnesses)),
+            native_store=_config_root_hint(session.native_store if session else None),
             config_root_hint=_config_root_hint(
-                (session.native_store or session.claude_config_dir)
+                session.claude_config_dir
                 if session
                 else row.claude_config_dir
             ),
@@ -313,8 +326,9 @@ def _resolve_from_spawn_id(
     target = _resolve_harness_transcript_target_or_none(
         project_root=Path(row.execution_cwd or row.task_cwd or project_root),
         session_id=session_id, harness=harness,
+        native_store=_config_root_hint(record.native_store if record else None),
         config_root_hint=_config_root_hint(
-            (record.native_store or record.claude_config_dir) if record else row.claude_config_dir
+            record.claude_config_dir if record else row.claude_config_dir
         ),
     )
     if target is None:
@@ -336,7 +350,8 @@ def _resolve_from_session_ref(
             project_root=project_root,
             session_id=session_id,
             harness=harness,
-            config_root_hint=_config_root_hint(record.native_store or record.claude_config_dir),
+            native_store=_config_root_hint(record.native_store),
+            config_root_hint=_config_root_hint(record.claude_config_dir),
         )
 
     return _resolve_untracked_session_ref(project_root=project_root, session_ref=session_ref)
@@ -348,7 +363,7 @@ def _resolve_untracked_session_ref(*, project_root: Path, session_ref: str) -> S
         project_root=project_root,
         session_id=session_ref,
         harness=str(inferred) if inferred is not None else None,
-        config_root_hint=None,
+        config_root_hint=None, tracked=False,
     )
 
 

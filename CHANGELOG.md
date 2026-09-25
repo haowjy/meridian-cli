@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Separate recorded native stores from legacy Claude configuration hints; missing tracked stores never fall back to ambient namespaces.
+
 - Bind Codex identities only from owned identity event envelopes, never assistant prose or nested identity-shaped content.
 
 - Carry recorded source stores through continuation and fork requests; pin Codex/OpenCode resume environments and refuse missing native sources.

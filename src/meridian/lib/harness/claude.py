@@ -602,6 +602,12 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
         return reconciled or (current_session_id or "").strip() or None
 
+    def resolve_native_session_file(
+        self, *, project_root: Path, session_id: str, native_store: Path,
+    ) -> Path | None:
+        candidate = native_store / f"{session_id}.jsonl"
+        return candidate if candidate.is_file() else None
+
     def resolve_session_file(
         self,
         *,
@@ -612,22 +618,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         normalized_session_id = session_id.strip()
         if not normalized_session_id:
             return None
-        if (
-            config_root_hint is not None
-            and config_root_hint.parent.name == "projects"
-            and config_root_hint.name == project_slug(project_root)
-        ):
-            project_dirs = [config_root_hint]
-        elif config_root_hint is not None:
-            hinted_session = config_root_hint / f"{normalized_session_id}.jsonl"
-            if hinted_session.is_file():
-                project_dirs = [config_root_hint]
-            else:
-                project_dirs = _candidate_claude_project_dirs(
-                    project_root, config_root_hint
-                )
-        else:
-            project_dirs = _candidate_claude_project_dirs(project_root)
+        project_dirs = _candidate_claude_project_dirs(project_root, config_root_hint)
         matches = [
             directory / f"{normalized_session_id}.jsonl"
             for directory in project_dirs

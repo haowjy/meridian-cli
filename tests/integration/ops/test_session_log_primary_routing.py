@@ -153,7 +153,8 @@ def test_session_log_active_chat_reads_exact_native_transcript(
         harness="codex",
         harness_session_id=session_id,
         model="gpt-5.4",
-        chat_id="c42",
+        chat_id="c42", spawn_id="p42",
+        native_store=str(home_root / ".codex" / "sessions"),
     )
     try:
         spawn_store.start_spawn(

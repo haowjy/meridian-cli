@@ -517,6 +517,10 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
 
     def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None: ...
 
+    def resolve_native_session_file(
+        self, *, project_root: Path, session_id: str, native_store: Path,
+    ) -> Path | None: ...
+
     def resolve_session_file(
         self,
         *,
@@ -850,6 +854,14 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
         _ = artifacts, spawn_id
         return None
+
+    def resolve_native_session_file(
+        self, *, project_root: Path, session_id: str, native_store: Path,
+    ) -> Path | None:
+        """Read only the explicit recorded namespace, never a legacy root hint."""
+        return self.resolve_session_file(
+            project_root=project_root, session_id=session_id, config_root_hint=native_store,
+        )
 
     def resolve_session_file(
         self,

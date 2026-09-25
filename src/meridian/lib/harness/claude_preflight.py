@@ -12,7 +12,7 @@ from typing import cast
 
 import structlog
 
-from meridian.lib.harness.claude_sessions import _dedupe_roots, project_slug
+from meridian.lib.harness.claude_sessions import project_slug
 from meridian.lib.launch.launch_types import PreflightResult
 from meridian.lib.launch.text_utils import dedupe_nonempty
 from meridian.lib.platform import IS_WINDOWS, get_home_path
@@ -235,3 +235,16 @@ __all__ = [
     "project_slug",
     "read_parent_claude_permissions",
 ]
+
+
+def _dedupe_roots(*roots: Path | None) -> tuple[Path, ...]:
+    unique_roots: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        if root is None:
+            continue
+        resolved = root.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            unique_roots.append(root)
+    return tuple(unique_roots)

@@ -113,7 +113,7 @@ def test_session_log_resolves_opencode_db_transcript_when_session_diff_is_empty(
     monkeypatch.setenv("XDG_DATA_HOME", xdg_data_home.as_posix())
     storage_root = xdg_data_home / "opencode" / "storage"
     session_store.start_session(
-        runtime_root,
+        runtime_root, spawn_id="p1",
         harness="opencode",
         harness_session_id=session_id,
         model="gpt-5.3-codex",
@@ -176,7 +176,7 @@ def test_session_log_resolves_opencode_db_without_legacy_session_file(
 
     chat_id = "c1"
     session_store.start_session(
-        runtime_root,
+        runtime_root, spawn_id="p1",
         harness="opencode",
         harness_session_id=session_id,
         model="gpt-5.3-codex",
@@ -252,6 +252,10 @@ def test_session_log_renders_opencode_db_completed_tool_parts(
     )
     monkeypatch.setenv("XDG_DATA_HOME", xdg_data_home.as_posix())
 
+    session_store.start_session(
+        runtime_root, harness="opencode", harness_session_id=session_id, model="test",
+        chat_id="c1", spawn_id="p1", native_store=str(xdg_data_home / "opencode" / "storage"),
+    )
     spawn_store.start_spawn(
         runtime_root,
         chat_id="c1",
@@ -327,6 +331,10 @@ def test_session_log_default_render_shows_completed_opencode_task_result(
     )
     monkeypatch.setenv("XDG_DATA_HOME", xdg_data_home.as_posix())
 
+    session_store.start_session(
+        runtime_root, harness="opencode", harness_session_id=session_id, model="test",
+        chat_id="c1", spawn_id="p1", native_store=str(xdg_data_home / "opencode" / "storage"),
+    )
     spawn_store.start_spawn(
         runtime_root,
         chat_id="c1",
@@ -381,6 +389,10 @@ def test_session_log_renders_opencode_db_compaction_as_segment_handoff(
     )
     monkeypatch.setenv("XDG_DATA_HOME", xdg_data_home.as_posix())
 
+    session_store.start_session(
+        runtime_root, harness="opencode", harness_session_id=session_id, model="test",
+        chat_id="c1", spawn_id="p1", native_store=str(xdg_data_home / "opencode" / "storage"),
+    )
     spawn_store.start_spawn(
         runtime_root,
         chat_id="c1",
@@ -435,6 +447,10 @@ def test_session_log_preserves_positive_empty_opencode_db_over_legacy_json(
     )
     monkeypatch.setenv("XDG_DATA_HOME", xdg_data_home.as_posix())
 
+    session_store.start_session(
+        runtime_root, harness="opencode", harness_session_id=session_id, model="test",
+        chat_id="c1", spawn_id="p1", native_store=str(xdg_data_home / "opencode" / "storage"),
+    )
     spawn_store.start_spawn(
         runtime_root,
         chat_id="c1",
@@ -520,6 +536,7 @@ def test_session_log_falls_back_to_spawn_history_when_opencode_db_has_no_message
         session_store.start_session(
             runtime_root,
             harness="opencode",
+            native_store=str(xdg_data_home / "opencode" / "storage"),
             harness_session_id=session_id,
             model="gpt-5.3-codex",
             chat_id="c1",
@@ -578,6 +595,10 @@ def test_session_log_resolves_codex_session_file_from_codex_home_env(
         assistant_text="codex env override transcript",
     )
 
+    session_store.start_session(
+        runtime_root, harness="codex", harness_session_id=session_id, model="test",
+        chat_id="c1", spawn_id="p1", native_store=str(codex_home / "sessions"),
+    )
     spawn_store.start_spawn(
         runtime_root,
         chat_id="c1",
@@ -624,6 +645,11 @@ def test_session_log_resolves_claude_session_file_from_claude_config_dir_env(
         assistant_text="claude env override transcript",
     )
 
+    session_store.start_session(
+        runtime_root, harness="claude", harness_session_id=session_id, model="test",
+        chat_id="c1", spawn_id="p1",
+        native_store=str(claude_config_dir / "projects" / project_slug(project_root)),
+    )
     spawn_store.start_spawn(
         runtime_root,
         chat_id="c1",
@@ -652,7 +678,7 @@ def test_session_log_resolves_claude_session_file_from_claude_config_dir_env(
 
 
 @pytest.mark.parametrize("ref", ["claude-canonical-session", "c1", "p1"])
-def test_session_log_resolves_tracked_claude_session_from_canonical_root(
+def test_session_log_resolves_tracked_claude_session_refuses_ambient_fallback(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
     ref: str,
@@ -697,12 +723,5 @@ def test_session_log_resolves_tracked_claude_session_from_canonical_root(
         started_at="2026-04-11T00:00:00Z",
     )
 
-    output = session_log_sync(
-        SessionLogInput(ref=ref, project_root=project_root.as_posix(), tail=5)
-    )
-
-    assert output.session_id == session_id
-    assert output.source == "claude transcript"
-    assert [(message.role, message.content) for message in output.messages] == [
-        ("assistant", "claude canonical transcript")
-    ]
+    with pytest.raises((ValueError, FileNotFoundError), match=r"missing|not found"):
+        session_log_sync(SessionLogInput(ref=ref, project_root=project_root.as_posix(), tail=5))

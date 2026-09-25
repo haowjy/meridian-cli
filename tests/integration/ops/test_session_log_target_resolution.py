@@ -121,6 +121,10 @@ def test_resolve_target_spawn_id_uses_read_only_lookup_without_reconciliation(
         assistant_text="spawn transcript",
     )
 
+    session_store.start_session(
+        runtime_root, harness="codex", harness_session_id=session_id, model="test",
+        chat_id="c1", spawn_id="p1", native_store=str(codex_home / "sessions"),
+    )
     spawn_store.start_spawn(
         runtime_root,
         chat_id="c1",
@@ -177,7 +181,7 @@ def test_resolve_target_chat_id_uses_read_only_lookup_without_reconciliation(
         harness="codex",
         harness_session_id=session_id,
         model="gpt-5.4",
-        chat_id="c1",
+        chat_id="c1", spawn_id="p1", native_store=str(codex_home / "sessions"),
     )
     spawn_store.start_spawn(
         runtime_root,
