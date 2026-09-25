@@ -403,32 +403,41 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return NativeIdentityPlan(None, None, None, "create")
 
     def finalize_native_identity(
-        self, plan: NativeIdentityPlan, *, child_env: dict[str, str], child_cwd: Path,
-        session: SessionRequest, spawn_id: SpawnId, interactive: bool,
+        self,
+        plan: NativeIdentityPlan,
+        *,
+        child_env: dict[str, str],
+        child_cwd: Path,
+        session: SessionRequest,
+        spawn_id: SpawnId,
+        interactive: bool,
     ) -> NativeIdentityPlan:
         store = session.source_native_store
         if plan.operation != "create" and store:
             child_env["OPENCODE_DB"] = store
         elif plan.operation != "create" and session.continue_source_tracked:
-            raise ValueError("native_transcript_missing: recorded source store is absent")
+            raise NativeSessionUnavailable(
+                session.continue_source_ref or session.requested_harness_session_id or "source",
+                "unbound",
+            )
         store = self.native_store_for_launch(child_env=child_env, child_cwd=child_cwd)
         locator = None
         if plan.operation != "create" and session.source_native_store:
             source_id = session.requested_harness_session_id or plan.harness_session_id or ""
             source = self.resolve_native_session_file(
-                project_root=child_cwd, session_id=source_id, native_store=Path(store),
+                project_root=child_cwd,
+                session_id=source_id,
+                native_store=Path(store),
             )
             if source is None:
-                raise ValueError(f"native_transcript_missing: {source_id}")
+                raise NativeSessionUnavailable(session.continue_source_ref or source_id, "missing")
             locator = str(source)
         return replace(plan, native_store=store, locator=locator)
 
     def native_store_for_launch(self, *, child_env: dict[str, str], child_cwd: Path) -> str:
         database = resolve_opencode_db_path(child_env)
         if str(database) == ":memory:":
-            raise ValueError(
-                "native_transcript_missing: in-memory OpenCode stores cannot be tracked"
-            )
+            raise NativeSessionUnavailable(":memory:", "unbound")
         if not database.is_absolute():
             database = child_cwd / database
         child_env["OPENCODE_DB"] = str(database.resolve())
@@ -549,11 +558,20 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return "opencode_db" if detect_opencode_db_schema(path) is not None else "native_file"
 
     def resolve_native_session_file(
-        self, *, project_root: Path, session_id: str, native_store: Path,
+        self,
+        *,
+        project_root: Path,
+        session_id: str,
+        native_store: Path,
     ) -> Path | None:
-        return native_store if opencode_db_any_session_exists(
-            session_id=session_id, db_path=native_store,
-        ) else None
+        return (
+            native_store
+            if opencode_db_any_session_exists(
+                session_id=session_id,
+                db_path=native_store,
+            )
+            else None
+        )
 
     def resolve_session_file(
         self,
@@ -567,8 +585,11 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         if not normalized:
             return None
         storage_root = config_root_hint or resolve_opencode_storage_root()
-        database = (storage_root.parent / "opencode.db"
-                    if config_root_hint is not None else resolve_opencode_db_path())
+        database = (
+            storage_root.parent / "opencode.db"
+            if config_root_hint is not None
+            else resolve_opencode_db_path()
+        )
         if opencode_db_any_session_exists(session_id=normalized, db_path=database):
             return database
         matches = [

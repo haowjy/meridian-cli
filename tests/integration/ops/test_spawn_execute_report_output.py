@@ -567,3 +567,45 @@ def test_execute_spawn_background_pre_init_failure_returns_failed_output(
     authority = resolve_runtime_authority_for_write(tmp_path / "repo")
     assert authority.runtime_root is not None
     assert not list((authority.runtime_root / "spawns").glob("*/state.json"))
+
+
+def test_deleted_tracked_native_file_preserves_launch_failure_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    from meridian.lib.launch.request import SessionRequest
+    from meridian.lib.state import session_store
+
+    runtime = _build_test_runtime(tmp_path, monkeypatch)
+    assert runtime.authority.runtime_root is not None
+    prepend_fake_executables(monkeypatch, tmp_path, "codex")
+    stub_bundle_request_and_resolve(monkeypatch, model="gpt-5.4", harness=HarnessId.CODEX)
+    sid = "12345678-1234-4234-8234-123456789abc"
+    store = tmp_path / "recorded" / "sessions"
+    store.mkdir(parents=True)
+    native = store / f"rollout-2026-01-01T00-00-00-{sid}.jsonl"
+    native.write_text('{}\n')
+    chat = session_store.start_session(
+        runtime.authority.runtime_root, harness="codex", harness_session_id=sid,
+        model="gpt-5.4", native_store=str(store),
+    )
+    session_store.stop_session(runtime.authority.runtime_root, chat)
+    native.unlink()
+    result = execute_module.execute_spawn_blocking(
+        payload=SpawnCreateInput(prompt="continue"),
+        request=SpawnRequest(
+            prompt="continue", model="gpt-5.4", harness="codex",
+            session=SessionRequest(
+                requested_harness_session_id=sid, continue_chat_id=chat, continue_harness="codex",
+                continue_source_ref=chat, continue_source_tracked=True,
+                source_native_store=str(store),
+            ),
+        ),
+        runtime=runtime,
+    )
+    row = spawn_store.get_spawn(runtime.authority.runtime_root, result.spawn_id)
+    assert row is not None and row.terminal is not None
+    assert row.terminal.error == "native_transcript_missing"
+    assert result.exit_code == 1
+    output = capsys.readouterr()
+    assert chat in output.out + output.err
+    assert "native_transcript_missing" in output.out + output.err

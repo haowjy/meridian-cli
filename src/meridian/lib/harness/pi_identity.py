@@ -14,7 +14,7 @@ from typing import Literal, cast
 
 import structlog
 
-from meridian.lib.core.native_identity import NativeIdentityPlan
+from meridian.lib.core.native_identity import NativeIdentityPlan, NativeSessionUnavailable
 
 logger = structlog.get_logger(__name__)
 
@@ -65,11 +65,11 @@ def resolve_session_file(store: Path, session_id: str, *, pending: bool = False)
         raise ValueError("entry_mismatch: invalid Pi session ID")
     matches = list(store.glob(f"*_{session_id}.jsonl"))
     if len(matches) > 1:
-        raise ValueError(f"ambiguous_native_file: {session_id} in {store}")
+        raise NativeSessionUnavailable(session_id, "ambiguous_native_file")
     if not matches:
         if pending:
             return None
-        raise ValueError(f"native_transcript_missing: {session_id} in {store}")
+        raise NativeSessionUnavailable(session_id, "missing")
     path = matches[0].absolute()
     if read_header(path).get("id") != session_id:
         raise ValueError(f"entry_mismatch: Pi header ID differs from {session_id}: {path}")

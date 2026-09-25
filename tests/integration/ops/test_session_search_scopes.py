@@ -309,7 +309,7 @@ def test_browse_subset_search_matches_portable_loose_and_zip_history(tmp_path, m
         iter_session_subset_search(project_root=str(project), chat_ids=[chat], query="needle")
     )
     assert len(loose) == 1 and not loose[0].matched
-    assert loose[0].error == f"no verified native session for {chat}"
+    assert loose[0].error == f"unbound: no verified native session for {chat}"
     archived = archive_history(root, destination=tmp_path / "zips", refs=(key,), apply=True)
     assert archived.reclaimed
     steps = list(

@@ -69,7 +69,6 @@ from meridian.lib.harness.semantics import (
     connection_closed_outcome,
     stringify_terminal_error,
 )
-from meridian.lib.launch.claude_session_access import resolve_claude_session_access_source
 from meridian.lib.launch.composition import (
     ComposedLaunchContent,
     ProjectedContent,
@@ -406,35 +405,24 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     ) -> HarnessPrelaunchState:
         _ = runtime_root, spawn_id
 
-        configured_root = child_env.get("CLAUDE_CONFIG_DIR", "").strip()
-        effective_config_root: Path | None = None
-        if configured_root:
-            config_path = Path(configured_root)
-            if configured_root == "~" or configured_root.startswith("~/"):
-                child_home = child_env.get("HOME", "").strip()
-                if child_home:
-                    config_path = Path(child_home) / configured_root.removeprefix("~/")
-            if not config_path.is_absolute():
-                config_path = child_cwd / config_path
-            effective_config_root = config_path.resolve()
-        if effective_config_root is not None:
-            effective_config_dir = str(effective_config_root)
-            if record_effective_config_dir is not None:
-                record_effective_config_dir(effective_config_dir)
+        effective_config_root = Path(
+            self.native_store_for_launch(child_env=child_env, child_cwd=child_cwd)
+        ).parent.parent
+        if record_effective_config_dir is not None:
+            record_effective_config_dir(str(effective_config_root))
 
-        session_access = resolve_claude_session_access_source(
-            session,
-            control_root=child_cwd,
-            materialization_root=effective_config_root,
-            target_config_root=effective_config_root,
-        )
-        if session_access.should_seed:
+        source_id = session.requested_harness_session_id
+        if source_id:
+            source_store = session.source_native_store
+            if session.continue_source_tracked and not source_store:
+                raise NativeSessionUnavailable(session.continue_source_ref or source_id, "unbound")
             ensure_claude_session_accessible(
-                source_session_id=session_access.source_session_id or resolved_harness_session_id,
-                source_cwd=session_access.source_control_root,
-                child_cwd=session_access.target_control_root or child_cwd,
-                source_config_root=session_access.source_config_root,
-                target_config_root=session_access.target_config_root,
+                source_session_id=source_id,
+                child_cwd=child_cwd,
+                source_native_store=Path(source_store) if source_store else Path(
+                    self.native_store_for_launch(child_env=child_env, child_cwd=child_cwd)
+                ),
+                target_config_root=effective_config_root,
             )
 
         return HarnessPrelaunchState()

@@ -70,7 +70,7 @@ def test_reference_store_comes_from_exact_binding_not_primary_metadata(
         "c1" if chat_reference else key,
         runtime_root=tmp_path,
     )
-    assert reference.source_pi_session_dir == store
+    assert reference.source_native_store == store
 
 
 @pytest.mark.parametrize("header", ["", "torn", "[]", '{"type":"session"}'])

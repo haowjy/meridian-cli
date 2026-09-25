@@ -21,7 +21,8 @@ class NativeSessionUnavailable(ValueError):
         self, ref: str, reason: Literal["unbound", "missing", "ambiguous_native_file"]
     ) -> None:
         self.ref = ref
-        self.reason = reason
+        self.reason: Literal["unbound", "missing", "ambiguous_native_file"] = reason
+        self.failure_code = "native_transcript_missing" if reason == "missing" else reason
         message = (
             f"no verified native session for {ref}"
             if reason == "unbound"
@@ -29,7 +30,7 @@ class NativeSessionUnavailable(ValueError):
             if reason == "ambiguous_native_file"
             else f"native transcript missing or pending for {ref}"
         )
-        super().__init__(message)
+        super().__init__(f"{self.failure_code}: {message}")
 
 
 @dataclass(frozen=True)

@@ -10,6 +10,16 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Keep Pi shutdowns with invalidated hook contexts unresolved, not poisoned; version boundary records as v2.
 
+- Remove obsolete source carriers and ambient model readers; verify tracked fork launch and document exact-store preparation. Publish Claude transcript copies atomically.
+
+- Preserve typed missing, ambiguous, and unbound native-session refusals in spawn failure reasons; name the tracked chat in launch diagnostics.
+
+- Resume and fork Pi through the shared recorded-native-store request field.
+
+- Seed Claude from the exact recorded file; refuse missing sources instead of copying ambient decoys.
+
+- Carry one recorded native store through reference, continue, fork, and model reads; preserve Codex fork namespaces.
+
 - Track the remaining OpenCode ambient-database report fallback for the native-history read-path cleanup.
 
 - Preserve reopenable Codex namespaces through symlinked session directories and refuse stores that cannot be selected exactly.

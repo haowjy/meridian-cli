@@ -206,8 +206,6 @@ def run_primary_launch(
     forked_from_history_id: UUID | None = None
     source_control_root: str | None = None
     source_execution_cwd: str | None = None
-    source_claude_config_dir: str | None = None
-    source_pi_session_dir: str | None = None
     source_native_store: str | None = None
     continue_source_tracked = False
     continue_source_ref: str | None = None
@@ -255,8 +253,6 @@ def run_primary_launch(
         continue_warning = resolved_continue.warning
         source_control_root = continue_contract.session.source_control_root
         source_execution_cwd = continue_contract.session.source_execution_cwd
-        source_claude_config_dir = continue_contract.session.source_claude_config_dir
-        source_pi_session_dir = continue_contract.session.source_pi_session_dir
         source_native_store = continue_contract.session.source_native_store
         if requested_work_id is None:
             requested_work_id = continue_contract.work_id
@@ -319,8 +315,6 @@ def run_primary_launch(
         forked_from_history_id = resolved_fork.source_history_id
         source_control_root = resolved_fork.source_control_root
         source_execution_cwd = resolved_fork.source_execution_cwd
-        source_claude_config_dir = resolved_fork.source_claude_config_dir
-        source_pi_session_dir = resolved_fork.source_pi_session_dir
         source_native_store = resolved_fork.source_native_store
         continue_source_tracked = resolved_fork.tracked
         continue_source_ref = selected_fork_target
@@ -380,8 +374,6 @@ def run_primary_launch(
                 "forked_from_history_id": forked_from_history_id,
                 "source_control_root": source_control_root,
                 "source_execution_cwd": source_execution_cwd,
-                "source_claude_config_dir": source_claude_config_dir,
-                "source_pi_session_dir": source_pi_session_dir,
                 "source_native_store": source_native_store,
                 "continue_source_tracked": continue_source_tracked,
                 "continue_source_ref": continue_source_ref,
