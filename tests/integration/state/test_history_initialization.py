@@ -378,7 +378,9 @@ def test_corpus_shares_one_cold_budget_and_does_not_latch_skipped_roots(
         return original_project(self, db, source)
 
     monkeypatch.setattr(HistoryIndex, "_project", slow_project)
-    output = session_search.session_search_sync(session_search.SessionSearchInput(query="missing"))
+    output = session_search.session_search_sync(
+        session_search.SessionSearchInput(query="missing", work_id="work")
+    )
     assert not output.complete
     assert HistoryIndex(roots[0]).path.exists()
     assert HistoryIndex(roots[1]).failure_path.exists()  # This root owned an exhausted build.
@@ -395,8 +397,11 @@ def test_all_warm_corpus_does_not_reset_its_deadline_after_classification(
     from meridian.lib.ops.session_corpus import SessionCorpusScope
 
     roots = [tmp_path / str(number) for number in range(2)]
+    from meridian.lib.state.native_search_index import NativeSearchIndex
+
     for root in roots:
         HistoryIndex(root).rebuild()
+        NativeSearchIndex.for_runtime(root)
     scopes = tuple(SessionCorpusScope(tmp_path, root, str(root)) for root in roots)
     monkeypatch.setattr(
         session_search,
@@ -419,6 +424,8 @@ def test_all_warm_corpus_does_not_reset_its_deadline_after_classification(
         return result
 
     monkeypatch.setattr(HistoryIndex, "classify", slow_classify)
-    output = session_search.session_search_sync(session_search.SessionSearchInput(query="missing"))
-    assert not output.complete and output.truncated
+    output = session_search.session_search_sync(
+        session_search.SessionSearchInput(query="missing", work_id="work")
+    )
+    assert not output.complete and not output.truncated
     assert all(not HistoryIndex(root).failure_path.exists() for root in roots)

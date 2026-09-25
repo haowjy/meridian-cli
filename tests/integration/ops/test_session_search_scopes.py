@@ -121,7 +121,8 @@ def test_session_search_workspace_scope_uses_runtime_evidence_not_repo_markers(
     assert match.corpus == workspace_root.as_posix()
     assert (workspace_root / "meridian.toml").is_file()
     assert not (workspace_root / ".git").exists()
-    assert match.open_command.startswith("meridian session log --file ")
+    assert f"meridian session log {workspace_chat_id} " in match.open_command
+    assert "--file" not in match.open_command
     assert "--segment 0 --around 1 --context 5" in match.open_command
 
 
@@ -222,9 +223,7 @@ def test_session_search_corpus_resolves_tracked_claude_canonical_transcript(
     assert output.matches[0].corpus == "runtime:orphan-one"
 
 
-def test_large_loose_transcript_returns_early_matches_before_budget_exhaustion(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_large_native_transcript_is_rebuild_only(tmp_path: Path, monkeypatch) -> None:
     from meridian.lib.state import spawn_store
     from meridian.lib.state.history import ingest_portable_history
     from meridian.lib.state.history_index import HistoryIndex
@@ -280,8 +279,9 @@ def test_large_loose_transcript_returns_early_matches_before_budget_exhaustion(
     assert path.stat().st_size > 64 * 1024 * 1024
     HistoryIndex(root).rebuild()
     result = session_search_sync(SessionSearchInput(query="needle", project_root=str(project)))
-    assert result.matches and "early [[needle]]" in result.matches[0].content_preview
-    assert result.truncated and not result.complete
+    assert not result.matches
+    assert not result.truncated and not result.complete
+    assert result.sources_not_searched == 1
     assert "incomplete" in result.format_text()
 
 
@@ -348,7 +348,7 @@ def test_browse_subset_search_keeps_unbound_legacy_history_loose(tmp_path, monke
 
 
 @pytest.mark.parametrize("recorded_harness_id", [True, False])
-def test_damaged_index_reports_incomplete_search_but_exact_launch_ref_still_resolves(
+def test_damaged_metadata_index_only_affects_work_scoped_search(
     tmp_path, monkeypatch, recorded_harness_id
 ):
     from meridian.lib.ops.reference import resolve_session_reference
@@ -389,7 +389,7 @@ def test_damaged_index_reports_incomplete_search_but_exact_launch_ref_still_reso
     index.path.write_bytes(b"not a sqlite database")  # offline: no live connections
     assert resolve_session_reference(project, chat, runtime_root=root) == expected
     result = session_search_sync(SessionSearchInput(query="needle", project_root=str(project)))
-    assert not result.complete and result.errors
+    assert result.complete  # Corpus keys come from the store, not metadata.
     index.rebuild(reset=True)
     (index.directory / "pending/GENERATION").write_text("invalid generation")
     result = session_search_sync(

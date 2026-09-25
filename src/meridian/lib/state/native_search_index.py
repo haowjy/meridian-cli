@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable
+import time
+from collections.abc import Generator, Iterable
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -17,13 +19,20 @@ from typing import Literal
 from meridian.lib.core.native_identity import NativeKey
 
 SCHEMA_VERSION = 1
-PARSER_VERSION = 1
+PARSER_VERSION = 2
 INDEX_FILENAME = "native-search-v1.sqlite3"
 MINIMUM_SQLITE_VERSION = (3, 43, 0)
 
 
 class NativeSearchUnavailable(RuntimeError):
     """The local SQLite build cannot create the contentless FTS projection."""
+
+
+def discard_native_search_index(runtime_root: Path) -> None:
+    """Delete only the disposable projection and its SQLite sidecars."""
+    path = runtime_root / "history-index" / INDEX_FILENAME
+    for suffix in ("", "-wal", "-shm"):
+        Path(str(path) + suffix).unlink(missing_ok=True)
 
 
 def sqlite_search_supported() -> bool:
@@ -55,6 +64,16 @@ class SearchRow:
     role: str | None
     kind: str | None
     content: str
+
+
+@dataclass(frozen=True)
+class SourceRecord:
+    locator: str
+    witness: str
+    parser_version: int
+    activity: int
+    status: str
+    reasons: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -157,14 +176,20 @@ class NativeSearchIndex:
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=self.timeout)
         db.execute("PRAGMA foreign_keys = ON")
+        # This WAL is a disposable projection. NORMAL keeps transactions atomic
+        # without forcing durable-media synchronization for every indexed source.
+        db.execute("PRAGMA synchronous = NORMAL")
         db.execute(f"PRAGMA busy_timeout = {max(0, int(self.timeout * 1000))}")
         return db
 
     def _initialize(self) -> None:
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='meta'").fetchone():
+                return
             db.execute("PRAGMA journal_mode = WAL")
             db.executescript(
                 """
+                BEGIN IMMEDIATE;
                 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS sources(
                   source_id INTEGER PRIMARY KEY,
@@ -187,8 +212,32 @@ class NativeSearchIndex:
                 (str(SCHEMA_VERSION),),
             )
 
+    @contextmanager
+    def write_batch(self) -> Generator[None]:
+        """Keep WAL attached across per-source commits, without holding a read transaction.
+
+        Closing the final connection checkpoints the WAL. Doing that per source
+        repeatedly rewrites the growing FTS index; one refresh needs one lifetime.
+        """
+        with closing(self._connect()) as keeper:
+            keeper.execute("SELECT value FROM meta").fetchall()
+            yield
+
+    def inventory(self) -> dict[NativeKey, SourceRecord]:
+        """Bulk metadata only; callers supply authoritative keys and current witnesses."""
+        with closing(self._connect()) as db:
+            return {
+                NativeKey(row[0], row[1], row[2]): SourceRecord(
+                    row[3], row[4], row[5], row[6], row[7], tuple(json.loads(row[8] or "[]"))
+                )
+                for row in db.execute(
+                    "SELECT harness,native_store,session_id,locator,witness,parser_version,"
+                    "activity,status,reasons FROM sources"
+                )
+            }
+
     def get_witness(self, key: NativeKey) -> tuple[str, int] | None:
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             row = db.execute(
                 "SELECT witness,parser_version FROM sources "
                 "WHERE harness=? AND native_store=? AND session_id=?",
@@ -216,12 +265,15 @@ class NativeSearchIndex:
     ) -> None:
         """Atomically replace a source and its FTS rows; intended to be replayable."""
         witness_value = witness_json(witness)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             source = db.execute(
-                "SELECT source_id FROM sources WHERE harness=? AND native_store=? AND session_id=?",
+                "SELECT source_id,witness,parser_version FROM sources "
+                "WHERE harness=? AND native_store=? AND session_id=?",
                 (key.harness, key.native_store, key.session_id),
             ).fetchone()
+            if source and source[1:] == (witness_value, parser_version):
+                return
             if source:
                 source_id = int(source[0])
                 rowids = [
@@ -293,7 +345,7 @@ class NativeSearchIndex:
 
     def remove_source(self, key: NativeKey) -> None:
         """Drop all projection rows for a no-longer-bound or missing key."""
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT source_id FROM sources WHERE harness=? AND native_store=? AND session_id=?",
@@ -310,7 +362,12 @@ class NativeSearchIndex:
                 db.execute("DELETE FROM sources WHERE source_id=?", (source_id,))
 
     def search(
-        self, query: str, *, keys: Iterable[NativeKey] | None = None, limit: int | None = None
+        self,
+        query: str,
+        *,
+        keys: Iterable[NativeKey] | None = None,
+        limit: int | None = None,
+        deadline: float | None = None,
     ) -> tuple[SearchMode, list[SearchRow]]:
         """Return exact substring hits; trigram FTS only nominates candidates."""
         match = _query_match(query)
@@ -320,30 +377,43 @@ class NativeSearchIndex:
         if key_list is not None:
             if not key_list:
                 return ("fts" if match is not None else "scan", [])
-            alternatives = " OR ".join(
-                "(s.harness=? AND s.native_store=? AND s.session_id=?)" for _ in key_list
+            where.append(
+                "s.source_id IN (SELECT s2.source_id FROM json_each(?) k JOIN sources s2 "
+                "ON s2.harness=json_extract(k.value,'$[0]') "
+                "AND s2.native_store=json_extract(k.value,'$[1]') "
+                "AND s2.session_id=json_extract(k.value,'$[2]'))"
             )
-            where.append("(" + alternatives + ")")
-            for key in key_list:
-                params.extend((key.harness, key.native_store, key.session_id))
+            params.append(
+                json.dumps([(key.harness, key.native_store, key.session_id) for key in key_list])
+            )
         join = "JOIN entries_fts f ON f.rowid=e.rowid " if match is not None else ""
         if match is not None:
             where.append("entries_fts MATCH ?")
             params.append(match)
         sql = (
             "SELECT s.harness,s.native_store,s.session_id,s.locator,s.activity,e.ordinal,e.segment,"
-            "e.seg_start,e.seg_end,e.role,e.kind,e.content "
+            "e.seg_start,e.seg_end,e.role,e.kind,e.rowid "
             "FROM entries e JOIN sources s ON s.source_id=e.source_id "
             + join
             + "WHERE "
             + " AND ".join(where)
-            + " ORDER BY s.activity DESC,e.ordinal ASC"
+            + " ORDER BY s.activity DESC,s.source_id,e.segment,e.ordinal"
         )
         hits: list[SearchRow] = []
         needle = query.lower()
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
+            if deadline is not None:
+                db.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
             for row in db.execute(sql, params):
-                content = str(row[11])
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError("Native search query deadline exceeded")
+                # Sort/navigate only small candidate metadata. Fetch large display
+                # text after nomination, stopping as soon as the verified limit is met.
+                content = str(
+                    db.execute("SELECT content FROM entries WHERE rowid=?", (row[11],)).fetchone()[
+                        0
+                    ]
+                )
                 if needle not in search_text(content):
                     continue
                 hits.append(
@@ -365,7 +435,7 @@ class NativeSearchIndex:
         return ("fts" if match is not None else "scan", hits)
 
     def counts(self) -> tuple[int, int]:
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             return (
                 int(db.execute("SELECT count(*) FROM sources").fetchone()[0]),
                 int(db.execute("SELECT count(*) FROM entries").fetchone()[0]),
@@ -373,7 +443,7 @@ class NativeSearchIndex:
 
     def rebuild(self) -> None:
         """Clear this disposable projection; orchestration repopulates from native sources."""
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             db.execute("DELETE FROM entries_fts")
             db.execute("DELETE FROM entries")

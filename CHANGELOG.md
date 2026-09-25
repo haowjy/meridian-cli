@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 - Archive capture requires an exact native transcript; legacy runner-history archive members stay inert.
+- Keep corpus and direct-search readiness aligned; renderer warnings remain visible without discarding confirmed text.
+- Avoid per-source WAL checkpoints while rebuilding disposable search rows.
+- Search bound native chats with a rebuildable index; show coverage gaps and chat-based open commands. Rebuild warms search, not previews; remove search `--include-archives`.
+- Native search scopes handle thousands of bound sessions; concurrent refreshes skip duplicate writes.
 - Add a disposable native-keyed transcript search projection with exact substring verification.
 
 - Session log, export and previews read bound native chats; label spawn views. Reject legacy runner-history files.
