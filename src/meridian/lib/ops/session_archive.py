@@ -96,8 +96,14 @@ class SessionArchiveOutput(BaseModel):
     def format_text(self, ctx: object = None) -> str:
         if self.runner_history is not None:
             return self.runner_history.format_text()
+        selected = (
+            f"Selected: {len(self.selected)} now, "
+            f"{len(self.selected) + len(self.preparation_required)} after capture"
+            if self.preparation_required
+            else f"Selected: {len(self.selected)}"
+        )
         lines = [
-            f"Selected: {len(self.selected)}; reclaimed: {len(self.reclaimed)}; "
+            f"{selected}; reclaimed: {len(self.reclaimed)}; "
             f"restored: {len(self.restored)}; protected: {len(self.protected)}"
         ]
         lines.extend(f"Selected history: {key}" for key in self.selected)

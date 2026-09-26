@@ -8,7 +8,11 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
-from meridian.lib.ops.session_archive import materialize_native_history, session_stop_maintenance
+from meridian.lib.ops.session_archive import (
+    archive_history,
+    materialize_native_history,
+    session_stop_maintenance,
+)
 from meridian.lib.ops.session_target import resolve_transcript_source
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.native_snapshot import (
@@ -147,6 +151,22 @@ def test_capture_does_not_discover_an_unrecorded_native_session(tmp_path: Path, 
         materialize_native_history(project, root, key)
     assert native.exists()
     _assert_not_captured(root, key)
+
+
+def test_archive_dry_run_counts_snapshots_as_selected_after_capture(tmp_path: Path, monkeypatch):
+    project, root, key, _ = _capture_fixture(tmp_path, monkeypatch)
+
+    output = archive_history(
+        root,
+        destination=tmp_path / "zips",
+        refs=(key,),
+        project_root=project,
+    )
+
+    assert output.preparation_required == (key,)
+    assert output.format_text().splitlines()[0] == (
+        "Selected: 0 now, 1 after capture; reclaimed: 0; restored: 0; protected: 0"
+    )
 
 
 def test_capture_missing_exact_source_never_uses_newer_detection(tmp_path: Path, monkeypatch):
@@ -485,9 +505,7 @@ def test_archive_apply_captures_headless_spawn_and_preserves_native_log(
         native_store=str(native_root),
     )
     session_store.stop_session(root, "c2")
-    (root / "spawns" / key / "history.jsonl").write_text(
-        json.dumps({"type": "runner-only"}) + "\n"
-    )
+    (root / "spawns" / key / "history.jsonl").write_text(json.dumps({"type": "runner-only"}) + "\n")
 
     dry_run = archive_history(
         root,
