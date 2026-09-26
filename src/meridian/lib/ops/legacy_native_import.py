@@ -15,7 +15,8 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+import structlog
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from meridian.lib.core.native_identity import NativeKeyFields
 from meridian.lib.core.types import ChatId
@@ -32,6 +33,7 @@ MARKER = "legacy-native-import-v1.json"
 DEFERRAL_NOTE = "legacy-native-import-deferral.json"
 RETRY_DELAY_SECONDS = 15 * 60
 REASONS = ("imported", "missing", "ambiguous", "ambiguous_id", "no_session_id", "unsupported")
+logger = structlog.get_logger()
 
 
 @dataclass(frozen=True)
@@ -48,7 +50,7 @@ class ImportReport(BaseModel):
     counts: dict[str, dict[str, int]]
     unbound: dict[str, list[str]]
     bindings: dict[str, tuple[str, str]]
-    late_retries: list[str]
+    late_retries: list[str] = Field(default_factory=list)
 
     def record(self, chat: SessionRecord, reason: str) -> None:
         self.counts.setdefault(chat.harness, dict.fromkeys(REASONS, 0))[reason] += 1
@@ -201,7 +203,14 @@ def bind_late_legacy_sessions(runtime_root: Path) -> LateBinding:
     with lock_file(runtime_root / "locks" / "legacy-native-import.lock"):
         try:
             prior = ImportReport.model_validate_json(marker.read_text(encoding="utf-8"))
-        except (OSError, ValidationError):
+        except OSError:
+            return LateBinding()
+        except ValidationError as exc:
+            logger.warning(
+                "Invalid legacy native import marker; skipping late binding",
+                marker_path=str(marker),
+                error=str(exc).splitlines()[0],
+            )
             return LateBinding()
         no_session_id = prior.unbound.get("no_session_id")
         if no_session_id is None:

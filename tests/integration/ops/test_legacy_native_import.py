@@ -148,7 +148,8 @@ def test_refuse_ambiguity_wrong_header_and_disagreeing_ids(homes: tuple[Path, Pa
 
 @pytest.mark.parametrize("interactive", [False, True], ids=["spawn-scoped", "interactive-root"])
 def test_pi_import_matches_spawn_and_interactive_stores(
-    homes: tuple[Path, Path], interactive: bool,
+    homes: tuple[Path, Path],
+    interactive: bool,
 ) -> None:
     home, root = homes
     session_id = "pi-session"
@@ -226,6 +227,8 @@ def test_late_session_id_is_imported_once_after_legacy_marker(
 
     marker = json.loads((root / legacy.MARKER).read_text())
     marker["timestamp"] = "2026-09-25T00:00:00Z"
+    # Previous branch builds wrote the marker before late_retries existed.
+    marker.pop("late_retries")
     (root / legacy.MARKER).write_text(json.dumps(marker))
     session_id = "01a0d525-a4e8-7741-ad00-8cd251adfb11"
     record = session_store.get_session_record(root, chat_id)
@@ -304,7 +307,8 @@ def test_late_binding_ignores_marker_with_wrong_shape(homes: tuple[Path, Path]) 
 
 
 def test_existing_marker_import_does_not_fold_session_journal(
-    homes: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch,
+    homes: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _, root = homes
     _chat(root, 1, "claude", None)
