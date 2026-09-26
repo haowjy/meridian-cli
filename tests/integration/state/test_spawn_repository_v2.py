@@ -87,7 +87,7 @@ def test_dogfood_boundary_rows_quarantine_until_migrated_once(tmp_path: Path) ->
     state.pop("run_boundary", None)
     state["trampoline_successor_id"] = "diagnostic-only"
     state_path.write_text(json.dumps(state), encoding="utf-8")
-    with pytest.raises(SpawnStateQuarantined):
+    with pytest.raises(SpawnStateQuarantined, match="run `meridian doctor` to migrate it"):
         read_state(spawns_dir, "p1", include_prompt=False)
 
     assert migrate_dogfood_spawn_rows(tmp_path).migrated == ("p1",)

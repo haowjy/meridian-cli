@@ -6,6 +6,8 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from meridian.lib.ops.session_archive import (
     SessionArchiveInput,
     session_archive_sync,
@@ -287,3 +289,73 @@ def test_unreleased_live_scope_skips_terminal_spawn(tmp_path: Path) -> None:
     assert (root / "spawns" / key / "history.jsonl").is_file()
     mark_scope_released(root, SpawnId(key), scope.release_id)
     assert [row.spawn_id for row in prune(project).pruned] == [key]
+
+
+def test_one_spawn_failure_is_recorded_and_the_pass_continues(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project, root, store = corpus(tmp_path)
+    blocked = add_spawn(root, store, 1)
+    free = add_spawn(root, store, 2)
+    real_unlink = Path.unlink
+
+    def unlink(self: Path, missing_ok: bool = False) -> None:
+        if blocked in self.parts:
+            raise PermissionError(f"denied: {self.name}")
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    result = prune(project, apply=True)
+
+    assert [row.spawn_id for row in result.pruned] == [free]
+    assert len(result.errors) == 1
+    assert result.errors[0].startswith(f"{blocked}: denied")
+    assert not (root / "spawns" / free / "history.jsonl").exists()
+
+
+def test_apply_rechecks_native_identity_not_just_file_existence(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from meridian.lib.ops import runner_history_prune
+
+    project, root, store = corpus(tmp_path)
+    key = add_spawn(root, store, 1)
+    native = store / "00000001-1111-4111-8111-111111111111.jsonl"
+    real_mutate = runner_history_prune.mutate_published_spawn_artifact
+
+    def swap_native_then_mutate(*args, **kwargs):
+        # Another writer replaces the transcript between planning and the lock.
+        native.write_text(json.dumps({"sessionId": "someone-else"}) + "\n")
+        return real_mutate(*args, **kwargs)
+
+    monkeypatch.setattr(
+        runner_history_prune, "mutate_published_spawn_artifact", swap_native_then_mutate
+    )
+    result = prune(project, apply=True)
+
+    assert result.pruned == ()
+    assert result.errors == (f"{key}: record or native source changed since planning; kept",)
+    assert (root / "spawns" / key / "history.jsonl").is_file()
+
+
+def test_quarantined_rows_are_listed_with_doctor_hint(tmp_path: Path) -> None:
+    from meridian.lib.state.history_index import HistoryIndex
+
+    project, root, store = corpus(tmp_path)
+    key = add_spawn(root, store, 1)
+    HistoryIndex(root).catch_up()  # Dogfood rows predate this build's index.
+    state_path = root / "spawns" / key / "state.json"
+    state = json.loads(state_path.read_text())
+    state.update(entry_chat_id="c1", exit_identity="verified", exit_chat_id="c1")
+    state_path.write_text(json.dumps(state))
+
+    result = prune(project)
+
+    assert result.quarantined == (key,)
+    assert f"Skipped quarantined: {key}; run `meridian doctor`" in result.format_text()
+    with pytest.raises(ValueError, match=f"quarantined: {key}; run `meridian doctor`"):
+        session_archive_sync(
+            SessionArchiveInput(
+                project_root=str(project), eligible=True, destination=str(tmp_path / "zips")
+            )
+        )

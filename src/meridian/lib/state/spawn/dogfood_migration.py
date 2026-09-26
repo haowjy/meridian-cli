@@ -18,13 +18,13 @@ from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
 from meridian.lib.state.spawn.repository import (
+    DOGFOOD_BOUNDARY_FIELDS,
     StoredSpawnState,
     scan_spawn_ids,
     spawn_lock_path,
 )
 
-_DOGFOOD_FIELDS = ("entry_chat_id", "exit_chat_id", "exit_identity", "trampoline_successor_id")
-_DOGFOOD_MARKERS = tuple(f'"{name}"'.encode() for name in _DOGFOOD_FIELDS)
+_DOGFOOD_MARKERS = tuple(f'"{name}"'.encode() for name in DOGFOOD_BOUNDARY_FIELDS)
 
 
 def _translate(raw: dict[str, Any]) -> dict[str, Any]:
@@ -65,7 +65,7 @@ def _migrate_row(changes: HistoryChanges, spawns_dir: Path, spawn_id: str) -> bo
         lock_file(spawn_lock_path(spawns_dir, spawn_id), reentrant=False),
     ):
         raw = json.loads(path.read_text(encoding="utf-8"))
-        if not raw.keys() & set(_DOGFOOD_FIELDS):
+        if not raw.keys() & set(DOGFOOD_BOUNDARY_FIELDS):
             return False
         stored = StoredSpawnState.model_validate(_translate(raw))
         changes.mark(HistorySource(kind="spawn", key=spawn_id))

@@ -131,7 +131,10 @@ def _protected(
 ) -> tuple[dict[str, SpawnRecord], set[str], dict[str, set[str]]]:
     scan = spawn_store.list_spawns(root)
     if scan.quarantines:
-        raise ValueError("Cannot establish retention safety while spawn records are quarantined")
+        raise ValueError(
+            "Cannot establish retention safety while spawn records are quarantined: "
+            + scan.quarantine_hint()
+        )
     records = {record.id: record for record in scan.records}
     sessions = session_store.list_all_session_records(root)
     active_chats = {
@@ -542,7 +545,10 @@ def _require_inactive_native_session(root: Path, harness: str | None, session_id
     """Reject known same-runtime owners; this is not an external-writer fence."""
     scan = spawn_store.list_spawns(root)
     if scan.quarantines:
-        raise ValueError("Cannot establish native capture ownership with quarantined spawn records")
+        raise ValueError(
+            "Cannot establish native capture ownership with quarantined spawn records: "
+            + scan.quarantine_hint()
+        )
     linked = session_records_for_spawns(root, scan.records)
     for row in scan.records:
         if row.record_mode == "historical":

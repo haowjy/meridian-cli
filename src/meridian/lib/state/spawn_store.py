@@ -716,6 +716,11 @@ class SpawnScan:
     records: tuple[SpawnRecord, ...]
     quarantines: tuple[SpawnStateQuarantineReport, ...]
 
+    def quarantine_hint(self) -> str:
+        """Quarantined IDs plus the repair pointer, for commands that refuse on them."""
+        ids = ", ".join(report.spawn_id for report in self.quarantines)
+        return f"{ids}; run `meridian doctor`"
+
 
 def list_spawns(
     runtime_root: Path,
