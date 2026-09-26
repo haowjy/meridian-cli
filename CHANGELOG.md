@@ -35,6 +35,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Rewrite spawn rows from the PR-1 dogfood build (`entry_chat_id`/`exit_identity` fields) once, at startup repairs or `meridian doctor`; they no longer load through a read-time translator.
+- Dogfood row migration skips malformed rows instead of stopping; `meridian doctor` lists them as `dogfood_spawn_rows_failed` rather than crashing.
 - Keep harness-reported cost when unrelated output lines are malformed.
 - Preserve reports across malformed output; flag incomplete facts and truncated attempt text. Finalize streaming runs even when report extraction fails. Keep Pi cleanup diagnostics through shutdown.
 - Unify native identity checks across runners; reject reused fork IDs and verify streaming-serve exits.

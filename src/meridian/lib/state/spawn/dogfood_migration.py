@@ -9,6 +9,7 @@ Remove this module once no dogfood rows remain on user machines.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -44,32 +45,52 @@ def _translate(raw: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-def migrate_dogfood_spawn_rows(runtime_root: Path) -> tuple[str, ...]:
-    """Rewrite dogfood-shaped ``state.json`` rows in place; idempotent."""
+@dataclass(frozen=True)
+class DogfoodMigration:
+    migrated: tuple[str, ...]
+    failed: tuple[tuple[str, str], ...]
+    """``(spawn_id, reason)`` for rows that still quarantine after this pass."""
+
+
+def _migrate_row(changes: HistoryChanges, spawns_dir: Path, spawn_id: str) -> bool:
+    path = spawns_dir / spawn_id / "state.json"
+    try:
+        content = path.read_bytes()
+    except FileNotFoundError:
+        return False
+    if not any(marker in content for marker in _DOGFOOD_MARKERS):
+        return False
+    with (
+        lock_file(changes.mutation_lock, mode="shared"),
+        lock_file(spawn_lock_path(spawns_dir, spawn_id), reentrant=False),
+    ):
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not raw.keys() & set(_DOGFOOD_FIELDS):
+            return False
+        stored = StoredSpawnState.model_validate(_translate(raw))
+        changes.mark(HistorySource(kind="spawn", key=spawn_id))
+        atomic_write_text(path, stored.model_dump_json(indent=2) + "\n")
+    return True
+
+
+def migrate_dogfood_spawn_rows(runtime_root: Path) -> DogfoodMigration:
+    """Rewrite dogfood-shaped ``state.json`` rows in place; idempotent.
+
+    Each row is isolated: a malformed row is reported in ``failed`` and the
+    pass moves on, so one bad row never keeps the rest quarantined.
+    """
 
     spawns_dir = runtime_root / "spawns"
     changes = HistoryChanges(runtime_root)
     migrated: list[str] = []
+    failed: list[tuple[str, str]] = []
     for spawn_id in scan_spawn_ids(spawns_dir):
-        path = spawns_dir / spawn_id / "state.json"
         try:
-            content = path.read_bytes()
-        except FileNotFoundError:
-            continue
-        if not any(marker in content for marker in _DOGFOOD_MARKERS):
-            continue
-        with (
-            lock_file(changes.mutation_lock, mode="shared"),
-            lock_file(spawn_lock_path(spawns_dir, spawn_id), reentrant=False),
-        ):
-            raw = json.loads(path.read_text(encoding="utf-8"))
-            if not raw.keys() & set(_DOGFOOD_FIELDS):
-                continue
-            stored = StoredSpawnState.model_validate(_translate(raw))
-            changes.mark(HistorySource(kind="spawn", key=spawn_id))
-            atomic_write_text(path, stored.model_dump_json(indent=2) + "\n")
-        migrated.append(spawn_id)
-    return tuple(migrated)
+            if _migrate_row(changes, spawns_dir, spawn_id):
+                migrated.append(spawn_id)
+        except Exception as exc:
+            failed.append((spawn_id, f"{type(exc).__name__}: {exc}".splitlines()[0]))
+    return DogfoodMigration(migrated=tuple(migrated), failed=tuple(failed))
 
 
-__all__ = ["migrate_dogfood_spawn_rows"]
+__all__ = ["DogfoodMigration", "migrate_dogfood_spawn_rows"]
