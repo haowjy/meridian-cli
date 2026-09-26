@@ -36,7 +36,7 @@ from meridian.lib.launch.continue_replay import (
     build_continue_replay_contract,
     continue_replay_source_from_reference,
 )
-from meridian.lib.launch.request import SessionRequest
+from meridian.lib.launch.request import SessionRequest, cross_harness_continue_error
 from meridian.lib.ops.mars import mars_agent_subagents, mars_list_subagents
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
 from meridian.lib.ops.runtime import (
@@ -1956,12 +1956,36 @@ def _source_spawn_for_follow_up(
         payload_spawn_id,
         runtime_root=runtime_root,
     )
-    resolved_reference = resolve_session_reference(
-        project_root,
-        resolved_spawn_id,
-        runtime_root=runtime_root,
-        harness_hint=harness_hint,
-    )
+    try:
+        # Resolve tracked chats in their native harness first. A requested
+        # harness is not evidence that the chat belongs to that harness.
+        resolved_reference = resolve_session_reference(
+            project_root,
+            payload_spawn_id,
+            runtime_root=runtime_root,
+        )
+    except ValueError:
+        if harness_hint is None:
+            raise
+        # An untracked native session ID may need the hint to disambiguate it.
+        resolved_reference = resolve_session_reference(
+            project_root,
+            payload_spawn_id,
+            runtime_root=runtime_root,
+            harness_hint=harness_hint,
+        )
+    if (
+        harness_hint is not None
+        and resolved_reference.harness is not None
+        and resolved_reference.harness != harness_hint
+    ):
+        raise ValueError(
+            cross_harness_continue_error(
+                resolved_reference.source_chat_id,
+                resolved_reference.harness,
+                harness_hint,
+            )
+        )
     row = read_spawn_row(project_root, resolved_spawn_id, runtime_root=runtime_root)
     if row is None and resolved_reference.source_spawn_id is not None:
         # Follow the native session's exact spawn provenance, never its owner's

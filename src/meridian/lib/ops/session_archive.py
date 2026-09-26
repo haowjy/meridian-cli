@@ -372,7 +372,7 @@ def archive_history(
                 if refs:
                     if candidate.id in capture_errors:
                         errors.append(f"{candidate.id}: {capture_errors[candidate.id]}")
-                    else:
+                    elif candidate.id not in preparation_required:
                         errors.append(f"{candidate.id}: native snapshot is not captured")
                 continue
             if candidate.history_id is None and apply:

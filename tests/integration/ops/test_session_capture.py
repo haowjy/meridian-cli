@@ -497,6 +497,8 @@ def test_archive_apply_captures_headless_spawn_and_preserves_native_log(
     )
     assert dry_run.preparation_required == (key,)
     assert f"Apply will capture native snapshot: {key}" in dry_run.format_text()
+    assert not dry_run.errors
+    assert "Error:" not in dry_run.format_text()
     assert not _snapshot_path(root, key).exists()
 
     result = archive_history(

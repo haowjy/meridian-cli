@@ -49,6 +49,7 @@ from meridian.lib.launch.launch_types import (
     ResolvedLaunchSpec,
     summarize_composition_warnings,
 )
+from meridian.lib.launch.request import cross_harness_continue_error
 from meridian.lib.launch.workspace_projection import (
     OPENCODE_CONFIG_CONTENT_ENV,
     project_workspace_roots,
@@ -988,8 +989,7 @@ def _resolve_session_continuation(
             or "the source chat"
         )
         raise ValueError(
-            f"Cannot continue chat {chat_ref} from harness '{requested_harness}' "
-            f"with requested harness '{harness.id}'; start a new chat."
+            cross_harness_continue_error(chat_ref, requested_harness, str(harness.id))
         )
     if not harness.capabilities.supports_session_resume:
         raise ValueError(f"{harness.id} cannot resume sessions")

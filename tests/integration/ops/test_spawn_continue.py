@@ -47,6 +47,7 @@ def _seed_spawn(
     work_id: str | None = "w-spawn",
     task_cwd: str | None = None,
     launch_policy_snapshot: LaunchPolicySnapshot | None = None,
+    chat_id: str = "c-seed",
 ) -> None:
     snapshot = launch_policy_snapshot
     harness = snapshot.harness if snapshot is not None else "codex"
@@ -64,17 +65,17 @@ def _seed_spawn(
         )
         (native_store / filename).write_text(json.dumps(native_header) + "\n", encoding="utf-8")
     session_store.start_session(
-        runtime_root, chat_id="c-seed", spawn_id=spawn_id,
+        runtime_root, chat_id=chat_id, spawn_id=spawn_id,
         harness=harness,
         harness_session_id=harness_session_id or "",
         native_store=str(native_store) if harness_session_id else None,
         model=snapshot.model if snapshot is not None else "gpt-5.3-codex",
     )
-    session_store.stop_session(runtime_root, "c-seed")
+    session_store.stop_session(runtime_root, chat_id)
     spawn_store.start_spawn(
         runtime_root,
         spawn_id=spawn_id,
-        chat_id="c-seed",
+        chat_id=chat_id,
         model=snapshot.model if snapshot is not None else "gpt-5.3-codex",
         agent=(snapshot.agent or "coder") if snapshot is not None else "coder",
         skills=snapshot.skills if snapshot is not None else ("skill-c",),
@@ -221,6 +222,54 @@ def test_spawn_continue_maps_source_contract_to_spawn_create(
     assert request.work_id_hint == "w-spawn"
     assert request.task_cwd == source_task_dir.as_posix()
     assert request.session.requested_harness_session_id == "session-28"
+
+
+def test_spawn_continue_cross_harness_refusal_names_both_harnesses_without_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    snapshot = LaunchPolicySnapshot(model="claude-sonnet-4-6", harness="claude")
+    _seed_spawn(
+        runtime_root,
+        spawn_id="p-cross",
+        harness_session_id="claude-native-session",
+        launch_policy_snapshot=snapshot,
+        chat_id="c1",
+    )
+    session_store.update_session_spawn_id(runtime_root, "c1", "p-cross")
+    before_chat = session_store.get_session_record(runtime_root, "c1")
+    before_spawns = spawn_store.list_spawns(runtime_root)
+    reference = spawn_api.resolve_session_reference(
+        project_root, "c1", runtime_root=runtime_root, harness_hint="codex"
+    )
+    assert (reference.harness, reference.source_chat_id, reference.source_spawn_id) == (
+        "claude", "c1", "p-cross"
+    )
+    monkeypatch.setattr(
+        spawn_api,
+        "_resolve_spawn_read_authority",
+        lambda **_: (project_root, runtime_root),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"Cannot continue chat c1 from harness 'claude'.*requested harness 'codex'",
+    ):
+        spawn_api.spawn_continue_sync(
+            SpawnContinueInput(
+                spawn_id="c1",
+                prompt="hi",
+                harness="codex",
+                dry_run=True,
+                project_root=project_root.as_posix(),
+            )
+        )
+
+    assert session_store.get_session_record(runtime_root, "c1") == before_chat
+    assert spawn_store.list_spawns(runtime_root) == before_spawns
 
 
 def test_spawn_continue_does_not_inherit_ambient_work_or_task_dir(
