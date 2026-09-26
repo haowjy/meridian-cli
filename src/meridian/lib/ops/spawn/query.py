@@ -12,7 +12,7 @@ from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.ops.reference import resolve_spawn_ref
 from meridian.lib.ops.run_boundary import run_boundary_summary
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
-from meridian.lib.state import pi_lifecycle, session_identity, session_store, spawn_store
+from meridian.lib.state import pi_lifecycle, session_store, spawn_store
 from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.reaper import (
@@ -259,24 +259,6 @@ def read_spawn_row_read_only(
     if resolved_runtime_root is None:
         return None
     return spawn_store.get_spawn(resolved_runtime_root, spawn_id)
-
-
-def read_latest_primary_spawn_for_chat_read_only(
-    project_root: Path,
-    chat_id: str,
-    *,
-    runtime_root: Path | None = None,
-) -> SpawnRecord | None:
-    """Return the latest primary spawn row for a chat without reconciliation."""
-
-    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
-    if resolved_runtime_root is None:
-        return None
-    spawns = session_identity.list_spawns_for_owner_chat(resolved_runtime_root, chat_id)
-    primary_spawns = [row for row in spawns.records if row.kind == "primary"]
-    if not primary_spawns:
-        return None
-    return primary_spawns[-1]
 
 
 def read_report(

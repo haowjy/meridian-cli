@@ -374,15 +374,32 @@ def _session_repair(
     emit: Emitter,
     ref: Annotated[
         str,
-        Parameter(
-            help=("Session reference: chat id (c123), spawn id (p123), or harness session id.")
-        ),
+        Parameter(help="Chat id (c123) or spawn id (p123) of an unbound chat."),
     ],
+    native: Annotated[
+        str | None,
+        Parameter(
+            name="--native",
+            help=(
+                "Bind the unbound chat to this native session file after validation. "
+                "Without it, repair only lists candidates."
+            ),
+        ),
+    ] = None,
+    force: Annotated[
+        bool,
+        Parameter(
+            name="--force",
+            help="Bind despite a cwd mismatch or a session start outside the chat's time window.",
+        ),
+    ] = False,
 ) -> None:
     emit(
         repair_session_reference_sync(
             SessionRepairInput(
                 ref=ref,
+                native=native,
+                force=force,
                 project_root=cli_project_root_posix(),
             )
         )
@@ -518,8 +535,9 @@ def register_session_commands(app: App, emit: Emitter) -> tuple[set[str], dict[s
             "meridian.session.repair": (
                 "Examples:\n\n"
                 "  meridian session repair c123\n\n"
-                "  meridian session repair p107\n\n"
-                "Repair is explicit and opt-in. Normal session reads do not mutate state.\n"
+                "  meridian session repair c123 --native <native-session-file>\n\n"
+                "Without --native, repair is read-only: it lists candidate native files with\n"
+                "their evidence and the exact bind command. A bound chat is never rebound.\n"
             ),
         },
         emit=emit,
