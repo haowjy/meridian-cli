@@ -23,6 +23,20 @@ native-key import. Even a read command can append bindings on its first run;
 strictly read-only audits use the standalone `legacy_native_import` dev module,
 not runtime resolution. See [state context](../../state/.context/CONTEXT.md).
 
+Legacy Pi recovery (`recover_legacy_pi_sessions`) sits next to the late re-bind
+and runs only from doctor and background repairs, once per marker. Uniqueness is
+not proof: a 0.6.7 chat whose only candidate had a different first message was
+the wrong session. So every automatic bind needs content proof (retained prompt,
+else report body), and primaries, whose sessions shared one root, are manual only.
+`retained_chat_facts` maps chats to spawns through spawn rows, `sessions.jsonl`
+`spawn_id` and archive receipts (reclaimed dirs), reading retained files from the
+ZIP member checked against the catalog's sha256. Old 0.6.7 ZIPs fail whole-archive
+portable-digest verification, so evidence reads do not depend on it.
+
+`session repair` shares those facts and the harness evidence helpers. Without
+`--native` it is read-only; with it, validation precedes one `bind()` under the
+sessions lock, which rechecks that no other chat owns the session ID.
+
 ### ops/spawn/ — The Spawn Policy Layer
 
 The spawn subprocess is the second of three driving adapters into `lib/launch/`.

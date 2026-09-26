@@ -26,6 +26,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Name the history index, its marker queue, locks and init latch by schema (`history-index/history-v6.sqlite3`). The first command builds it from authority and never upgrades 0.6.7's `history.sqlite3`, so 0.6.7 background runs still finalize and 0.6.7 commands keep working. Catch-up rereads active spawns and the session log that an older build's writers change without marking. After rolling back, rebuild the older index.
 
 ### Removed
+- `session repair` no longer writes a bare observed session ID or accepts raw harness IDs; it binds complete native keys only.
 - Stop writing runner `history.jsonl` and `last-observed-event.json`; drop the drain loop's write-failure abort and the retry `meridian.attempt.completed` marker. Orphan evidence no longer carries `last_observed_event`.
 - Reject legacy runner-history files as transcripts; archive ZIP history members restore as inert bytes.
 - Remove search `--include-archives`; `session index rebuild` no longer warms previews.
@@ -33,6 +34,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Remove `_MERIDIAN_GUARDRAIL_OUTPUT_LOG`; guardrail scripts receive `_MERIDIAN_GUARDRAIL_REPORT` and `_MERIDIAN_GUARDRAIL_CHAT_ID` instead.
 
 ### Added
+- Recover old 0.6.7 Pi chats: `meridian doctor` and primary-launch repairs run a one-shot pass that binds a spawned Pi chat only when its own spawn session dir holds exactly one valid Pi session with a recorded cwd, an in-window start, an unclaimed ID, and a first user message equal to the retained prompt (else a final reply equal to the report). Primaries are never bound automatically. Doctor prints `repaired: legacy_pi_sessions` and a `legacy_pi_sessions:` summary.
+- `session repair cN` lists candidate native files with evidence (path, session ID, cwd, start, first user message, cwd/time/prompt/bound-elsewhere matches) and the exact bind command; `--native PATH` binds after validation (source `user_repair`) for any harness. Always refuses bound chats, invalid files and sessions bound elsewhere; needs `--force` for a cwd mismatch or a start outside the time window.
 - `session archive --prune-runner-history [--apply] [--after-days N]` drops redundant runner `history.jsonl` for terminal spawns older than N days (default 14) whose exact native transcript resolves; dry-run by default, never automatic.
 - Runner-history prune records per-spawn failures and keeps going, re-validates the native transcript at apply time, and lists quarantined spawns with a `meridian doctor` hint; archive refusals and dogfood quarantine errors name it too.
 - Import legacy chat native keys once from exact, header-validated stores; keep unresolved chats listed in a durable report. Read-only dev report previews bindings.

@@ -157,6 +157,8 @@ For managed Codex primary startup behavior, see [codex-tui-passthrough.md](codex
 | `meridian session archive --list` | Show current/snapshot ZIPs and their registered locations |
 | `meridian session import ZIP` | Select a verified transferred ZIP snapshot for direct reads |
 | `meridian session restore REF... --archive ZIP_OR_UUID` | Restore only selected histories with fresh inert local aliases; preserve the ZIP |
+| `meridian session repair REF` | Read-only: for an unbound chat (`c123`, or its spawn `p123`), list candidate native session files with evidence and the exact bind command; for a bound chat, show its binding |
+| `meridian session repair REF --native PATH [--force]` | Bind an unbound chat to that native session file after validation; `--force` accepts a cwd mismatch or a start outside the chat's time window |
 
 Archive destinations can also come from configuration. Automation is off by
 default; active records and dependencies cannot be reclaimed. Published ZIPs
@@ -164,6 +166,13 @@ are never automatically deleted. UI visibility archive is separate from ZIP
 retention. Search reports unavailable content or budget exhaustion as incomplete,
 not a clean negative. See [History storage and retention](history.md) for repair,
 configuration, transfer, conflict behavior and archive-integrity limits.
+
+`session repair` never rebinds: bindings are immutable. `--native` always refuses
+a bound chat, a file that is not a valid native session for the chat's harness,
+and a session already bound to another chat. Candidate listing covers Pi (the
+chat's spawn session dir; the shared root for primaries) and Claude (the recorded
+project store); for Codex and OpenCode pass `--native`. An OpenCode database holds
+many sessions, so it binds only a chat that already records its session ID.
 
 Runner-history pruning is never automatic. Only terminal spawns whose exact native
 transcript sources resolve qualify; skipped spawns report their reasons. It deletes

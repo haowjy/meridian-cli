@@ -238,6 +238,30 @@ After upgrading to a version that uses the v2 spawn state format, the first `mer
 
 Once migration completes, `spawns.legacy-v1.jsonl` is safe to delete if you want to reclaim space. It is not read after migration.
 
+## Old Pi chats have no transcript after upgrade
+
+Meridian 0.6.7 never recorded Pi session IDs, so after upgrading, old Pi chats can
+show as unbound (`session log cN` reports no native transcript). `meridian doctor`
+(and the next primary launch, in the background) runs a one-shot recovery. It binds
+a chat only when it can prove which session is the chat's: its own spawn session
+directory holds exactly one Pi session with a recorded cwd, a start within two
+minutes of the chat or spawn run, an ID no other chat has, and a first user message
+equal to the retained starting prompt (or, if none was kept, a final reply equal to
+the spawn report). Doctor then prints `repaired: legacy_pi_sessions` and a
+`legacy_pi_sessions:` line with how many were bound and left unbound.
+
+Primary sessions all shared one Pi directory, so they are never bound
+automatically. Neither are chats whose spawn directory, prompt and report were all
+cleaned up. For those, inspect the candidates and bind the right file yourself:
+
+```bash
+meridian session repair c123                    # read-only: candidates, evidence, bind command
+meridian session repair c123 --native <path>    # bind after validation
+meridian session repair c123 --native <path> --force  # accept a cwd/time mismatch
+```
+
+A bound chat is never rebound, and a session bound to another chat is refused.
+
 ## Spawn state quarantined after upgrade
 
 If you see `Spawn state quarantined: …/state.json; run \`meridian doctor\` to migrate it`,

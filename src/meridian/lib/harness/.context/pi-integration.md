@@ -64,6 +64,17 @@ Pi extensions coordinate through disk files, not a separate lifecycle transport:
 consumes only the private bash and notification files. If a spawn lifecycle event appears
 on stdout, it is diagnostic noise, not persisted-descendant authority.
 
+## Legacy 0.6.7 sessions
+
+0.6.7 headless spawns wrote Pi journals under `<pi root>/<spawn-id>/` (primaries
+used the shared root) but never recorded the session ID. The evidence helpers in
+`legacy_native_stores.py` validate a candidate the same way as live reads (header
+`type: session` with an `id`, version 1 to 3, exact `*_<id>.jsonl` resolution) and
+read its cwd, header time, first user message and final assistant text. What
+counts as proof is decided in `ops/legacy_native_import.py`, not here. 0.6.7 ran
+Pi in the control root, so header cwds often equal `control_root`, not the
+recorded worktree `execution_cwd`.
+
 ## Related Context
 
 - [CONTEXT.md](CONTEXT.md) — shared harness architecture and adapter contracts
