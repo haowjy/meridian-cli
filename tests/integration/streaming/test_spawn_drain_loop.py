@@ -186,7 +186,7 @@ class _Coordinator:
         self._calls.append(("pre_persist", event))
         return False
 
-    def note_event_persisted(self, event: RawHarnessEvent) -> DrainLoopDecision:
+    def note_event_delivered(self, event: RawHarnessEvent) -> DrainLoopDecision:
         self._calls.append(("noted", event))
         return DrainLoopDecision()
 
@@ -246,7 +246,7 @@ class _StabilizingEvidence:
         del event, transition
         return EvidenceEventDecision()
 
-    def note_event_persisted(self, event: RawHarnessEvent) -> EvidenceEventDecision:
+    def note_event_delivered(self, event: RawHarnessEvent) -> EvidenceEventDecision:
         if event.event_type == "message":
             return EvidenceEventDecision(activity=EvidenceActivity(code="persisted_event"))
         return EvidenceEventDecision()
@@ -352,7 +352,7 @@ async def _run_drain(
 ) -> list[Call]:
     calls: list[Call] = []
 
-    def emit_event(_spawn_id: SpawnId, event: RawHarnessEvent) -> None:
+    def run_event_hooks(_spawn_id: SpawnId, event: RawHarnessEvent) -> None:
         calls.append(("hooks", event))
 
     sessions: dict[SpawnId, SpawnSession] = {}
@@ -379,7 +379,7 @@ async def _run_drain(
 
     loop = SpawnDrainLoop(
         sessions=sessions,
-        emit_event=emit_event,
+        run_event_hooks=run_event_hooks,
         publish_terminal=_publish_terminal if outcomes is not None else Mock(),
         fan_out_event=lambda _spawn_id, event: calls.append(("fan_out", event.raw)),
         fan_out_turn_boundary=AsyncMock(),
@@ -443,12 +443,12 @@ async def test_held_descendant_refresh_does_not_block_ordered_event_delivery(
     )
     started = await PiDrainScenario.start(tmp_path, monkeypatch, spawn_id=_SPAWN_ID)
 
-    def emit_event(_spawn_id: SpawnId, event: RawHarnessEvent) -> None:
+    def run_event_hooks(_spawn_id: SpawnId, event: RawHarnessEvent) -> None:
         calls.append(("hooks", event))
 
     loop = SpawnDrainLoop(
         sessions={},
-        emit_event=emit_event,
+        run_event_hooks=run_event_hooks,
         publish_terminal=Mock(),
         fan_out_event=lambda _spawn_id, event: calls.append(("fan_out", event.raw)),
         fan_out_turn_boundary=AsyncMock(),
@@ -504,7 +504,7 @@ async def test_persisted_activity_restarts_elapsed_stabilization_before_concurre
     )
     loop = SpawnDrainLoop(
         sessions={},
-        emit_event=lambda _spawn_id, event: None,
+        run_event_hooks=lambda _spawn_id, event: None,
         publish_terminal=Mock(),
         fan_out_event=Mock(),
         fan_out_turn_boundary=AsyncMock(),

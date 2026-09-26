@@ -237,7 +237,11 @@ def schedule_background_repairs(project_root: Path) -> None:
         from contextlib import suppress
 
         with suppress(Exception):
-            migrate_dogfood_spawn_rows(runtime_root)
+            dogfood = migrate_dogfood_spawn_rows(runtime_root)
+            if dogfood.failed:
+                logger.warning("dogfood_spawn_rows_failed", failed=dict(dogfood.failed))
+            if dogfood.index_rearm_warning:
+                logger.warning("dogfood_index_rearm_failed", warning=dogfood.index_rearm_warning)
         with suppress(Exception):
             _repair_stale_session_locks(project_root, runtime_root=runtime_root)
             gc_orphaned_locks(runtime_root)
@@ -264,7 +268,8 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
 
     repaired: list[str] = []
     killed_orphan_spawns: tuple[str, ...] = ()
-    if migrate_dogfood_spawn_rows(runtime_root):
+    dogfood = migrate_dogfood_spawn_rows(runtime_root)
+    if dogfood.migrated:
         repaired.append("dogfood_spawn_rows")
     stale_locks = _repair_stale_session_locks(project_root)
     if stale_locks > 0:
@@ -350,6 +355,28 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     skills_dirs = [skills_dir] if skills_dir.is_dir() else []
 
     warnings: list[DoctorWarning] = []
+    if dogfood.failed:
+        warnings.append(
+            DoctorWarning(
+                code="dogfood_spawn_rows_failed",
+                message=(
+                    f"{len(dogfood.failed)} dogfood spawn row(s) could not be migrated "
+                    "and stay quarantined: "
+                    + "; ".join(f"{spawn_id} ({reason})" for spawn_id, reason in dogfood.failed)
+                ),
+                payload={
+                    "spawn_ids": [spawn_id for spawn_id, _ in dogfood.failed],
+                    "reasons": dict(dogfood.failed),
+                },
+            )
+        )
+    if dogfood.index_rearm_warning:
+        warnings.append(
+            DoctorWarning(
+                code="dogfood_index_rearm_failed",
+                message=dogfood.index_rearm_warning,
+            )
+        )
     legacy_worktree_temp_warning = _check_legacy_worktree_temp(runtime_root)
     if legacy_worktree_temp_warning is not None:
         warnings.append(legacy_worktree_temp_warning)

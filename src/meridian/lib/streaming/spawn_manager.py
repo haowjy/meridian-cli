@@ -309,7 +309,7 @@ class SpawnManager:
     ) -> None:
         drain_loop = SpawnDrainLoop(
             sessions=self._sessions,
-            emit_event=self._emit,
+            run_event_hooks=self._run_event_hooks,
             publish_terminal=self._publish_terminal,
             fan_out_event=self._fan_out_event,
             fan_out_turn_boundary=self._fan_out_turn_boundary,
@@ -811,7 +811,7 @@ class SpawnManager:
 
     def emit_event(self, spawn_id: SpawnId, event: RawHarnessEvent) -> None:
         """Run hooks for and publish one manager-authored harness event."""
-        self._emit(spawn_id, event)
+        self._run_event_hooks(spawn_id, event)
         session = self._sessions.get(spawn_id)
         scope = session.connection.primary_event_scope if session is not None else None
         self._fan_out_event(spawn_id, normalize_event(event, primary_event_scope=scope))
@@ -824,7 +824,7 @@ class SpawnManager:
                 data=event.payload,
             )
 
-    def _emit(self, spawn_id: SpawnId, event: RawHarnessEvent) -> None:
+    def _run_event_hooks(self, spawn_id: SpawnId, event: RawHarnessEvent) -> None:
         """Run inline hooks; callers own fan-out and delivery policy."""
         run_event_hooks(tuple(self._event_hooks.get(spawn_id, ())), event)
 

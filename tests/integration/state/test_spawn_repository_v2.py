@@ -87,11 +87,11 @@ def test_dogfood_boundary_rows_quarantine_until_migrated_once(tmp_path: Path) ->
     state.pop("run_boundary", None)
     state["trampoline_successor_id"] = "diagnostic-only"
     state_path.write_text(json.dumps(state), encoding="utf-8")
-    with pytest.raises(SpawnStateQuarantined):
+    with pytest.raises(SpawnStateQuarantined, match="run `meridian doctor` to migrate it"):
         read_state(spawns_dir, "p1", include_prompt=False)
 
-    assert migrate_dogfood_spawn_rows(tmp_path) == ("p1",)
-    assert migrate_dogfood_spawn_rows(tmp_path) == ()
+    assert migrate_dogfood_spawn_rows(tmp_path).migrated == ("p1",)
+    assert migrate_dogfood_spawn_rows(tmp_path).migrated == ()
 
     loaded = read_state(spawns_dir, "p1", include_prompt=False)
     assert loaded is not None
@@ -100,6 +100,88 @@ def test_dogfood_boundary_rows_quarantine_until_migrated_once(tmp_path: Path) ->
         status="verified", exit_chat_id="c-exit", trampoline_successor_id="diagnostic-only")
     assert loaded.continue_chat_id == "c-exit"
     assert "exit_identity" not in state_path.read_text(encoding="utf-8")
+
+
+def test_dogfood_migration_isolates_malformed_rows(tmp_path: Path) -> None:
+    spawns_dir = tmp_path / "spawns"
+    for spawn_id in ("p1", "p2"):
+        _seed_state(spawns_dir, _record(spawn_id, status="succeeded"))
+    invalid_path = spawns_dir / "p1" / "state.json"
+    invalid = json.loads(invalid_path.read_text(encoding="utf-8"))
+    invalid.update(exit_identity="bogus-status", exit_chat_id="c9")
+    invalid_path.write_text(json.dumps(invalid), encoding="utf-8")
+    valid_path = spawns_dir / "p2" / "state.json"
+    valid = json.loads(valid_path.read_text(encoding="utf-8"))
+    valid.update(entry_chat_id="c2", exit_identity="verified", exit_chat_id="c3")
+    valid_path.write_text(json.dumps(valid), encoding="utf-8")
+    (spawns_dir / "p0").mkdir()
+    (spawns_dir / "p0" / "state.json").write_text(
+        '{"v":3,"id":"p0","entry_chat_id": "c', encoding="utf-8"
+    )
+
+    first = migrate_dogfood_spawn_rows(tmp_path)
+    second = migrate_dogfood_spawn_rows(tmp_path)
+
+    assert first.migrated == ("p2",)
+    assert [spawn_id for spawn_id, _ in first.failed] == ["p0", "p1"]
+    assert "JSONDecodeError" in first.failed[0][1]
+    assert "ValidationError" in first.failed[1][1]
+    assert second.migrated == ()
+    assert [spawn_id for spawn_id, _ in second.failed] == ["p0", "p1"]
+    loaded = read_state(spawns_dir, "p2", include_prompt=False)
+    assert loaded is not None
+    assert loaded.continue_chat_id == "c3"
+
+
+def test_dogfood_migration_only_clears_authority_failure(tmp_path: Path) -> None:
+    from meridian.lib.state.history_index import SCHEMA_VERSION, HistoryIndex
+
+    spawns_dir = tmp_path / "spawns"
+    _seed_state(spawns_dir, _record(status="succeeded"))
+    state_path = spawns_dir / "p1" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["entry_chat_id"] = "c1"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    index = HistoryIndex(tmp_path)
+    marker = {
+        "format": 1,
+        "target_schema": SCHEMA_VERSION,
+        "generation": None,
+        "code": "timeout",
+        "reason": "keep this failure",
+        "failed_at": "2026-05-01T00:00:00Z",
+    }
+    index.failure_path.write_text(json.dumps(marker), encoding="utf-8")
+
+    assert migrate_dogfood_spawn_rows(tmp_path).migrated == ("p1",)
+    assert json.loads(index.failure_path.read_text(encoding="utf-8")) == marker
+
+    marker["code"] = "authority"
+    index.failure_path.write_text(json.dumps(marker), encoding="utf-8")
+    assert migrate_dogfood_spawn_rows(tmp_path).migrated == ()
+    assert json.loads(index.failure_path.read_text(encoding="utf-8")) == marker
+
+
+def test_dogfood_migration_reports_index_rearm_timeout(tmp_path: Path, monkeypatch) -> None:
+    from meridian.lib.platform.locking import FileLockTimeout
+    from meridian.lib.state.history_index import HistoryIndex
+
+    spawns_dir = tmp_path / "spawns"
+    _seed_state(spawns_dir, _record(status="succeeded"))
+    state_path = spawns_dir / "p1" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["entry_chat_id"] = "c1"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    def timeout(self, *, timeout: float = 5.0) -> tuple[str, ...]:
+        raise FileLockTimeout("catchup lock timed out")
+
+    monkeypatch.setattr(HistoryIndex, "clear_authority_failure", timeout)
+    result = migrate_dogfood_spawn_rows(tmp_path)
+
+    assert result.migrated == ("p1",)
+    assert result.index_rearm_warning is not None
+    assert "timed out" in result.index_rearm_warning
 
 
 def test_run_boundary_rejects_exit_without_verified_status() -> None:

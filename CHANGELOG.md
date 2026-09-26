@@ -27,6 +27,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - `session archive --prune-runner-history [--apply] [--after-days N]` drops redundant runner `history.jsonl` for terminal spawns older than N days (default 14) whose exact native transcript resolves; dry-run by default, never automatic.
+- Runner-history prune records per-spawn failures and keeps going, re-validates the native transcript at apply time, and lists quarantined spawns with a `meridian doctor` hint; archive refusals and dogfood quarantine errors name it too.
 - Import legacy chat native keys once from exact, header-validated stores; keep unresolved chats listed in a durable report. Read-only dev report previews bindings.
 - Include Meridian's unscoped interactive Pi sessions root in exact legacy binding candidates.
 - Validate legacy OpenCode keys through the same in-place exact reader used by live reads.
@@ -34,7 +35,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Managed Pi launches load a bounded, atomic v2 session-boundary observer without writing native journals.
 
 ### Fixed
+- Re-arm automatic history-index initialization after dogfood row migration; quarantined authority failures name the `state.json` path and dogfood failures point to `meridian doctor`.
 - Rewrite spawn rows from the PR-1 dogfood build (`entry_chat_id`/`exit_identity` fields) once, at startup repairs or `meridian doctor`; they no longer load through a read-time translator.
+- Dogfood row migration skips malformed rows instead of stopping; `meridian doctor` lists them as `dogfood_spawn_rows_failed` rather than crashing.
 - Keep harness-reported cost when unrelated output lines are malformed.
 - Preserve reports across malformed output; flag incomplete facts and truncated attempt text. Finalize streaming runs even when report extraction fails. Keep Pi cleanup diagnostics through shutdown.
 - Unify native identity checks across runners; reject reused fork IDs and verify streaming-serve exits.

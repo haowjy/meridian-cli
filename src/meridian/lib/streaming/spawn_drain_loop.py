@@ -40,7 +40,7 @@ PublishTerminal = Callable[
 ]
 FanOutEvent = Callable[[SpawnId, "NormalizedHarnessEvent"], None]
 FanOutTurnBoundary = Callable[[SpawnId, "TerminalEventOutcome"], Awaitable[None]]
-EmitEvent = Callable[[SpawnId, RawHarnessEvent], None]
+RunEventHooks = Callable[[SpawnId, RawHarnessEvent], None]
 
 
 class SpawnDrainLoop:
@@ -50,13 +50,13 @@ class SpawnDrainLoop:
         self,
         *,
         sessions: dict[SpawnId, SpawnSession],
-        emit_event: EmitEvent,
+        run_event_hooks: RunEventHooks,
         publish_terminal: PublishTerminal,
         fan_out_event: FanOutEvent,
         fan_out_turn_boundary: FanOutTurnBoundary,
     ) -> None:
         self._sessions = sessions
-        self._emit_event = emit_event
+        self._run_event_hooks = run_event_hooks
         self._publish_terminal = publish_terminal
         self._fan_out_event = fan_out_event
         self._fan_out_turn_boundary = fan_out_turn_boundary
@@ -163,13 +163,13 @@ class SpawnDrainLoop:
                         direction="inbound",
                         data={"event_type": event.event_type, "harness_id": event.harness_id},
                     )
-                self._emit_event(spawn_id, event)
+                self._run_event_hooks(spawn_id, event)
 
                 event_outcome = normalized_event.semantics.terminal
                 self._fan_out_event(spawn_id, normalized_event)
-                persisted_event_decision = _note_event_persisted(coordinator, event)
-                if persisted_event_decision.recorded_outcome is not None:
-                    recorded_terminal_outcome = persisted_event_decision.recorded_outcome
+                delivered_event_decision = _note_event_delivered(coordinator, event)
+                if delivered_event_decision.recorded_outcome is not None:
+                    recorded_terminal_outcome = delivered_event_decision.recorded_outcome
                     break
                 if disk_change_ready_after_event:
                     # Disk change arrived concurrently with this event; reevaluate now
@@ -317,13 +317,13 @@ async def _observe_event(
     return await coordinator.observe_event(event, transition)
 
 
-def _note_event_persisted(
+def _note_event_delivered(
     coordinator: DrainCoordinator | None,
     event: RawHarnessEvent,
 ) -> DrainLoopDecision:
     if coordinator is None:
         return DrainLoopDecision()
-    return coordinator.note_event_persisted(event)
+    return coordinator.note_event_delivered(event)
 
 
 async def _handle_terminal_event(

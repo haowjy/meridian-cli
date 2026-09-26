@@ -131,7 +131,7 @@ class PiCompletionEvidence:
             profile.after_observed_event(transition)
         return EvidenceEventDecision()
 
-    def note_event_persisted(self, event: RawHarnessEvent) -> EvidenceEventDecision:
+    def note_event_delivered(self, event: RawHarnessEvent) -> EvidenceEventDecision:
         profile = self._profile
         activity = profile.note_persisted_activity(event) if profile is not None else None
         lifecycle_error = self.lifecycle_tracker.lifecycle_tracking_invalidated_error
@@ -447,8 +447,8 @@ class PiDrainCoordinator:
     async def observe_event(self, event: RawHarnessEvent, transition: str | None) -> bool:
         return await self._coordinator.observe_event(event, transition)
 
-    def note_event_persisted(self, event: RawHarnessEvent) -> DrainLoopDecision:
-        return self._coordinator.note_event_persisted(event)
+    def note_event_delivered(self, event: RawHarnessEvent) -> DrainLoopDecision:
+        return self._coordinator.note_event_delivered(event)
 
     async def handle_terminal_event(
         self,
