@@ -1,0 +1,4 @@
+# Harness follow-ups
+
+No open report-namespace items. OpenCode report fallback reads only event-named
+native replies from the recorded store; ambient DB/session-file fallbacks are gone.

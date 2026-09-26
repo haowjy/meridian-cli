@@ -2,40 +2,91 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 
 from meridian.lib.ops.session_archive import archive_history
 from meridian.lib.state import spawn_store
-from meridian.lib.state.history import ingest_portable_history
 from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.history_index import HistoryIndex
-from meridian.lib.state.retention_archive import verify_archive
+from meridian.lib.state.retention_archive import (
+    archive_locations,
+    read_receipts,
+    selected_snapshot_receipts,
+    verify_archive,
+)
 from meridian.lib.state.retention_restore import restore_archive
 
 
+def _selected_archive_locations(index: HistoryIndex, history_id: str, *, destination=None):
+    receipts = selected_snapshot_receipts(read_receipts(index.root), UUID(history_id))
+    return archive_locations(receipts, destination=destination)
+
+
 def _terminal(root: Path) -> str:
+    from meridian.lib.state.history_codec import transcript_header
+    from meridian.lib.state.native_snapshot import (
+        SnapshotHeader,
+        SnapshotObservation,
+        SnapshotRecord,
+        SourceRevision,
+        write_snapshot,
+    )
+
+    native_id = f"native-{root.name}"
     key = str(
         spawn_store.start_spawn(
-            root, chat_id="c1", model="test", agent="coder", harness="codex", prompt="hello"
+            root,
+            chat_id="c1",
+            model="test",
+            agent="coder",
+            harness="codex",
+            harness_session_id=native_id,
+            prompt="hello",
         )
     )
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
-    ingest_portable_history(
-        root,
-        key,
-        iter(
-            [
-                {
-                    "type": "assistant",
-                    "message": {"content": [{"type": "text", "text": "portable needle"}]},
-                }
-            ]
+    events = [
+        {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "portable needle"}]},
+        }
+    ]
+    state = spawn_store.get_spawn(root, key)
+    assert state is not None
+    raw_records = [json.dumps(event, ensure_ascii=False) for event in events]
+    records = tuple(
+        SnapshotRecord(source="codex", ordinal=index, raw=raw)
+        for index, raw in enumerate(raw_records)
+    )
+    header = SnapshotHeader(
+        transcript=transcript_header(state, root.name),
+        session_instance_id=state.session_instance_id,
+        harness="codex",
+        native_session_id=native_id,
+        dialect="codex.rollout.v1",
+        scope="fixture",
+        observed_from=state.started_at or "2026-01-01T00:00:00+00:00",
+    )
+    observation = SnapshotObservation(
+        observed_until=(state.terminal.finished_at if state.terminal else state.started_at)
+        or "2026-01-01T00:00:01+00:00",
+        sources=(
+            SourceRevision(
+                source="codex",
+                sha256=hashlib.sha256("".join(raw_records).encode()).hexdigest(),
+                records=len(records),
+            ),
         ),
     )
+    snapshot = root / "spawns" / key / "native-transcript.jsonl"
+    with snapshot.open("wb") as handle:
+        write_snapshot(handle, header, records, lambda: observation)
     return key
 
 
@@ -72,8 +123,10 @@ def test_zip_transfer_restore_is_inert_repeatable_and_conflict_safe(tmp_path: Pa
     assert state.history_id == original.history_id
     assert state.record_mode == "historical" and state.worker_pid is None
     assert state.runner_pid is None and state.harness_session_id is None
-    history = destination / "spawns" / restored[0] / "history.jsonl"
-    assert json.loads(history.read_text().splitlines()[0])["history_id"] == str(original.history_id)
+    history = destination / "spawns" / restored[0] / "native-transcript.jsonl"
+    assert json.loads(history.read_text().splitlines()[0])["transcript"]["history_id"] == str(
+        original.history_id
+    )
     with (history.parent / "unexpected.txt").open("w") as handle:
         handle.write("conflict")
     with pytest.raises(ValueError, match="content changed"):
@@ -117,7 +170,7 @@ def test_transferred_native_content_renders_without_harness_storage(tmp_path: Pa
     root = tmp_path / "runtime"
     key = _terminal(root)
     copied = tmp_path / "transferred.jsonl"
-    copied.write_bytes((root / "spawns" / key / "history.jsonl").read_bytes())
+    copied.write_bytes((root / "spawns" / key / "native-transcript.jsonl").read_bytes())
     segments, _ = parse_transcript_file(copied)
     assert any("portable needle" in message.content for segment in segments for message in segment)
 
@@ -138,11 +191,11 @@ def test_offline_latest_archive_does_not_hide_available_copy(tmp_path: Path) -> 
     shutil.copyfile(first, second / first.name)
     import_archive(root, second / first.name)
     index = HistoryIndex(root)
-    assert index.read_targets(str(row.history_id))[0].path == second / first.name
+    assert _selected_archive_locations(index, str(row.history_id))[0].path == second / first.name
     second.rename(tmp_path / "unmounted")
-    assert index.read_targets(str(row.history_id))[0].path == first
+    assert _selected_archive_locations(index, str(row.history_id))[0].path == first
     assert index.rebuild().complete
-    assert index.read_targets(str(row.history_id))[0].path == first
+    assert _selected_archive_locations(index, str(row.history_id))[0].path == first
 
 
 def test_fork_history_is_frozen_before_source_chat_resumes(tmp_path: Path) -> None:
@@ -178,7 +231,7 @@ def test_fork_history_is_frozen_before_source_chat_resumes(tmp_path: Path) -> No
         session_store.start_session(
             root,
             harness="codex",
-            harness_session_id="resumed",
+            harness_session_id="first",
             model="test",
             kind="primary",
             chat_id=source,
@@ -205,8 +258,6 @@ def test_fork_history_is_frozen_before_source_chat_resumes(tmp_path: Path) -> No
         state = spawn_store.get_spawn(root, child)
         assert state is not None
         assert state.forked_from_history_id == original.history_id
-        exact = session_store.resolve_session_ref(root, "first")
-        assert exact is not None and exact.history_id == original.history_id
     finally:
         session_store.stop_session(root, source)
         if fork:
@@ -255,7 +306,7 @@ def test_unavailable_current_digest_never_falls_back_to_older_snapshot(tmp_path:
     assert len(index.snapshots()) == 2
     (tmp_path / "current").rename(tmp_path / "offline")
     with pytest.raises(FileNotFoundError):
-        index.read_targets(str(state.history_id))
+        _selected_archive_locations(index, str(state.history_id))
     assert (tmp_path / "older" / first.zip_name).exists()
 
 
@@ -321,7 +372,7 @@ def test_inventory_excludes_reserved_atomic_capture_temps(tmp_path: Path) -> Non
     names = {member.name for member in inventory(directory)}
     assert ".native-transcript.jsonl.deadbeef.tmp" not in names
     assert ".history.jsonl.deadbeef.tmp" not in names
-    assert "history.jsonl" in names and "state.json" in names
+    assert "native-transcript.jsonl" in names and "state.json" in names
     # The exclusion is reserved-name specific, not a blanket .tmp suffix skip.
     assert "notes.tmp" in names
 
@@ -336,11 +387,6 @@ def test_recent_session_activity_protects_old_transcript(tmp_path: Path) -> None
     state["started_at"] = "2020-01-01T00:00:00Z"
     state["terminal"]["finished_at"] = "2020-01-01T00:00:00Z"
     path.write_text(json.dumps(state))
-    history = path.with_name("history.jsonl")
-    lines = [json.loads(line) for line in history.read_text().splitlines()]
-    for line in lines[1:]:
-        line["timestamp"] = "2020-01-01T00:00:00Z"
-    history.write_text("".join(json.dumps(line) + "\n" for line in lines))
     chat = session_store.start_session(
         root, harness="codex", harness_session_id="recent", model="test", spawn_id=key
     )
@@ -420,8 +466,8 @@ def test_mounted_destination_hint_preserves_location_identity(tmp_path: Path) ->
     destination = tmp_path / "mount-one"
     result = archive_history(root, destination=destination, refs=(key,), apply=True)
     destination.rename(tmp_path / "mount-two")
-    targets = HistoryIndex(root).read_targets(
-        str(state.history_id), destination=tmp_path / "mount-two"
+    targets = _selected_archive_locations(
+        HistoryIndex(root), str(state.history_id), destination=tmp_path / "mount-two"
     )
     assert targets[0].path == tmp_path / "mount-two" / Path(result.archives[0]).name
 
@@ -507,8 +553,8 @@ def test_explicit_import_can_reselect_a_previously_imported_snapshot(tmp_path: P
     import_archive(fresh, paths[0])
     import_archive(fresh, paths[1])
     import_archive(fresh, paths[0])
-    target = HistoryIndex(fresh).read_targets(str(record.history_id))[0]
-    assert target.state.work_id == "one"
+    target = _selected_archive_locations(HistoryIndex(fresh), str(record.history_id))[0]
+    assert target.receipt.records[0].state.work_id == "one"
 
 
 def test_selective_restore_does_not_select_unrequested_snapshots(tmp_path: Path) -> None:
@@ -543,7 +589,9 @@ def test_selective_restore_does_not_select_unrequested_snapshots(tmp_path: Path)
     import_archive(fresh, tmp_path / "newer" / newer.zip_name)
     restore_archive(fresh, tmp_path / "older" / older.zip_name, (str(records[0].history_id),))
     assert (
-        HistoryIndex(fresh).read_targets(str(current.history_id))[0].state.work_id
+        _selected_archive_locations(HistoryIndex(fresh), str(current.history_id))[0]
+        .receipt.records[0]
+        .state.work_id
         == "current-second"
     )
 
@@ -567,7 +615,7 @@ def test_missing_manifest_does_not_hide_healthy_equivalent_location(tmp_path: Pa
         for entry in source.infolist():
             if not entry.filename.endswith("manifest.json"):
                 output.writestr(entry, source.read(entry))
-    assert HistoryIndex(root).read_targets(result.reclaimed[0])[0].path == original
+    assert _selected_archive_locations(HistoryIndex(root), result.reclaimed[0])[0].path == original
 
 
 def test_unavailable_prepared_archive_does_not_stall_unrelated_retention(
@@ -611,7 +659,10 @@ def test_interrupted_recursive_reclaim_keeps_verified_zip_readable(
         patch.setattr(spawn_aggregate.shutil, "rmtree", partial_removal)
         result = archive_history(root, destination=tmp_path / "zips", refs=(key,), apply=True)
     assert result.errors
-    assert HistoryIndex(root).read_targets(result.selected[0])[0].archive_id is not None
+    assert (
+        _selected_archive_locations(HistoryIndex(root), result.selected[0])[0].receipt.archive_id
+        is not None
+    )
     assert verify_archive(Path(result.archives[0])).records
     assert not (root / "spawns" / key).exists()
 

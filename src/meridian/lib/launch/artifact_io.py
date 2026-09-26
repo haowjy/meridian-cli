@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+import structlog
+
+from meridian.lib.core.clock import Clock, RealClock
+from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId
 from meridian.lib.launch.composition import (
     ProjectionChannels,
@@ -14,11 +20,97 @@ from meridian.lib.launch.composition import (
     build_inline_file_contributions,
     build_reference_routing,
 )
+from meridian.lib.launch.constants import RUNNER_LIFECYCLE_FILENAME
 from meridian.lib.state.artifact_store import ArtifactStore
-from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.atomic import append_text_line, atomic_write_text
+from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
 if TYPE_CHECKING:
     from meridian.lib.launch.context import LaunchContext
+
+
+logger = structlog.get_logger(__name__)
+
+
+def append_runner_lifecycle_event(
+    runtime_root: Path,
+    spawn_id: SpawnId,
+    path: Path,
+    *,
+    clock: Clock,
+    event: str,
+    phase: str,
+    **details: object,
+) -> None:
+    """Best-effort append of runner-owned crash diagnostics."""
+
+    payload = {
+        "event": event,
+        "timestamp": clock.utc_now_iso(),
+        "pid": os.getpid(),
+        "phase": phase,
+        **details,
+    }
+    try:
+        mutate_published_spawn_artifact(
+            runtime_root,
+            spawn_id,
+            lambda: append_text_line(
+                path,
+                json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n",
+            ),
+        )
+    except Exception:
+        logger.warning("Failed to append runner lifecycle evidence.", exc_info=True)
+
+
+@dataclass(frozen=True)
+class LifecycleLog:
+    """Destination and clock for runner-owned lifecycle evidence."""
+
+    runtime_root: Path
+    spawn_id: SpawnId
+    path: Path
+    clock: Clock
+
+    @classmethod
+    def for_spawn(
+        cls,
+        runtime_root: Path,
+        project_root: Path,
+        spawn_id: SpawnId,
+        *,
+        clock: Clock | None = None,
+    ) -> LifecycleLog:
+        return cls(
+            runtime_root,
+            spawn_id,
+            resolve_spawn_log_dir(project_root, spawn_id, runtime_root=runtime_root)
+            / RUNNER_LIFECYCLE_FILENAME,
+            clock if clock is not None else RealClock(),
+        )
+
+    def __call__(self, *, event: str, phase: str, **details: object) -> None:
+        append_runner_lifecycle_event(
+            self.runtime_root,
+            self.spawn_id,
+            self.path,
+            clock=self.clock,
+            event=event,
+            phase=phase,
+            **details,
+        )
+
+
+def record_identity_failure(
+    error: NativeIdentityError,
+    *,
+    lifecycle: LifecycleLog,
+    phase: str,
+) -> None:
+    """Write the same typed refusal payload at every runner boundary."""
+    lifecycle(event=error.failure_code, phase=phase, **error.lifecycle_fields())
 
 
 ProjectionSurface = Literal["primary", "spawn"]
@@ -101,9 +193,7 @@ def _write_inline_file_reference_byte_accounting(
         return
 
     payload = {
-        "total_inline_file_bytes": sum(
-            contribution.byte_count for contribution in contributions
-        ),
+        "total_inline_file_bytes": sum(contribution.byte_count for contribution in contributions),
         "inline_file_references_by_size": [
             contribution.to_dict() for contribution in contributions
         ],

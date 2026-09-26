@@ -26,6 +26,7 @@ from meridian.lib.ops.runtime import resolve_project_authority, resolve_runtime_
 from meridian.lib.state import spawn_store, work_repository, work_store
 from meridian.lib.state.lock_gc import LockGcStats, gc_orphaned_locks
 from meridian.lib.state.session_store import cleanup_stale_sessions
+from meridian.lib.state.spawn.dogfood_migration import migrate_dogfood_spawn_rows
 from meridian.lib.state.user_paths import get_user_home
 from meridian.lib.telemetry.retention import (
     DEFAULT_MAX_TOTAL_BYTES,
@@ -77,6 +78,7 @@ class DoctorOutput(BaseModel):
     telemetry_cleanup: TelemetryCleanupStats | None = None
     warnings: tuple["DoctorWarning", ...] = ()
     repaired: tuple[str, ...] = ()
+    legacy_pi_sessions: str | None = None
     killed_orphan_spawns: tuple[str, ...] = ()
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
@@ -115,6 +117,8 @@ class DoctorOutput(BaseModel):
                     )
                 )
         result = kv_block(pairs)
+        if self.legacy_pi_sessions:
+            result += f"\nlegacy_pi_sessions: {self.legacy_pi_sessions}"
         for warning in self.warnings:
             result += f"\nwarning: {warning.code}: {warning.message}"
         return result
@@ -236,6 +240,25 @@ def schedule_background_repairs(project_root: Path) -> None:
         from contextlib import suppress
 
         with suppress(Exception):
+            from meridian.lib.ops.legacy_native_import import bind_late_legacy_sessions
+
+            bind_late_legacy_sessions(runtime_root)
+        with suppress(Exception):
+            from meridian.lib.ops.legacy_native_import import (
+                configured_archive_destination,
+                recover_legacy_pi_sessions,
+            )
+
+            recover_legacy_pi_sessions(
+                runtime_root, archive_destination=configured_archive_destination(project_root)
+            )
+        with suppress(Exception):
+            dogfood = migrate_dogfood_spawn_rows(runtime_root)
+            if dogfood.failed:
+                logger.warning("dogfood_spawn_rows_failed", failed=dict(dogfood.failed))
+            if dogfood.index_rearm_warning:
+                logger.warning("dogfood_index_rearm_failed", warning=dogfood.index_rearm_warning)
+        with suppress(Exception):
             _repair_stale_session_locks(project_root, runtime_root=runtime_root)
             gc_orphaned_locks(runtime_root)
             _repair_orphan_runs(project_root, runtime_root=runtime_root)
@@ -261,6 +284,32 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
 
     repaired: list[str] = []
     killed_orphan_spawns: tuple[str, ...] = ()
+    from meridian.lib.ops.legacy_native_import import (
+        bind_late_legacy_sessions,
+        configured_archive_destination,
+        recover_legacy_pi_sessions,
+    )
+
+    late_bindings = bind_late_legacy_sessions(runtime_root)
+    if late_bindings.bound:
+        repaired.append("late_legacy_bindings")
+    pi_recovery = recover_legacy_pi_sessions(
+        runtime_root, archive_destination=configured_archive_destination(project_root)
+    )
+    legacy_pi_summary: str | None = None
+    if pi_recovery.bound:
+        repaired.append("legacy_pi_sessions")
+        legacy_pi_summary = (
+            f"bound {pi_recovery.bound} old Pi chat(s) to their native sessions; "
+            f"{len(pi_recovery.unbound)} left unbound"
+        )
+        if pi_recovery.unbound:
+            legacy_pi_summary += (
+                f"; inspect one with `meridian session repair cN` (e.g. {pi_recovery.unbound[0]})"
+            )
+    dogfood = migrate_dogfood_spawn_rows(runtime_root)
+    if dogfood.migrated:
+        repaired.append("dogfood_spawn_rows")
     stale_locks = _repair_stale_session_locks(project_root)
     if stale_locks > 0:
         repaired.append("stale_session_locks")
@@ -286,9 +335,7 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
 
     spawn_scan = spawn_store.list_spawns(runtime_root)
     spawns = spawn_scan.records
-    active_spawn_ids = {
-        spawn.id for spawn in spawns if is_active_spawn_status(spawn.status)
-    }
+    active_spawn_ids = {spawn.id for spawn in spawns if is_active_spawn_status(spawn.status)}
     protected_spawn_ids = active_spawn_ids | {
         quarantine.spawn_id for quarantine in spawn_scan.quarantines
     }
@@ -345,6 +392,28 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     skills_dirs = [skills_dir] if skills_dir.is_dir() else []
 
     warnings: list[DoctorWarning] = []
+    if dogfood.failed:
+        warnings.append(
+            DoctorWarning(
+                code="dogfood_spawn_rows_failed",
+                message=(
+                    f"{len(dogfood.failed)} dogfood spawn row(s) could not be migrated "
+                    "and stay quarantined: "
+                    + "; ".join(f"{spawn_id} ({reason})" for spawn_id, reason in dogfood.failed)
+                ),
+                payload={
+                    "spawn_ids": [spawn_id for spawn_id, _ in dogfood.failed],
+                    "reasons": dict(dogfood.failed),
+                },
+            )
+        )
+    if dogfood.index_rearm_warning:
+        warnings.append(
+            DoctorWarning(
+                code="dogfood_index_rearm_failed",
+                message=dogfood.index_rearm_warning,
+            )
+        )
     legacy_worktree_temp_warning = _check_legacy_worktree_temp(runtime_root)
     if legacy_worktree_temp_warning is not None:
         warnings.append(legacy_worktree_temp_warning)
@@ -492,6 +561,7 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         telemetry_cleanup=telemetry_cleanup,
         warnings=tuple(warnings),
         repaired=tuple(sorted(set(repaired))),
+        legacy_pi_sessions=legacy_pi_summary,
         killed_orphan_spawns=killed_orphan_spawns,
     )
 

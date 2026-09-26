@@ -11,11 +11,11 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.ops.session_export import SessionExportInput, session_export_sync
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
-from meridian.lib.ops.session_target import spawn_output_path_for_target
 from meridian.lib.ops.spawn.query import detail_from_row
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.artifact_store import LocalStore, make_artifact_key
@@ -71,7 +71,7 @@ def _write_codex_rollout(
     )
 
 
-def test_session_log_spawn_missing_harness_session_id_reads_live_output(
+def test_unbound_spawn_does_not_read_runner_history(
     tmp_path: Path,
 ) -> None:
     project_root = tmp_path / "repo"
@@ -99,15 +99,8 @@ def test_session_log_spawn_missing_harness_session_id_reads_live_output(
         },
     )
 
-    output = session_log_sync(
-        SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
-    )
-
-    assert output.session_id == "p42"
-    assert output.source == "spawn p42 output"
-    assert [(message.role, message.content) for message in output.messages] == [
-        ("assistant", "live progress")
-    ]
+    with pytest.raises(NativeSessionUnavailable, match="unbound"):
+        session_log_sync(SessionLogInput(ref="p42", project_root=project_root.as_posix()))
 
 
 def test_session_log_child_spawn_without_harness_id_does_not_use_parent_chat(
@@ -146,9 +139,7 @@ def test_session_log_child_spawn_without_harness_id_does_not_use_parent_chat(
             prompt="do child thing",
             harness_session_id="",
         )
-        spawn_store.finalize_spawn(
-            runtime_root, "p42", "failed", 1, origin="runner"
-        )
+        spawn_store.finalize_spawn(runtime_root, "p42", "failed", 1, origin="runner")
 
         with pytest.raises(ValueError):
             session_log_sync(
@@ -178,6 +169,7 @@ def test_session_log_child_spawn_uses_authoritative_child_chat_link(
         runtime_root,
         harness="codex",
         harness_session_id="11111111-1111-4111-8111-111111111111",
+        native_store=(codex_home / "sessions").as_posix(),
         model="gpt-5.4",
         chat_id="c-child",
         spawn_id="p42",
@@ -193,9 +185,7 @@ def test_session_log_child_spawn_uses_authoritative_child_chat_link(
             prompt="do child thing",
             harness_session_id="",
         )
-        spawn_store.finalize_spawn(
-            runtime_root, "p42", "failed", 1, origin="runner"
-        )
+        spawn_store.finalize_spawn(runtime_root, "p42", "failed", 1, origin="runner")
 
         output = session_log_sync(
             SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
@@ -210,7 +200,7 @@ def test_session_log_child_spawn_uses_authoritative_child_chat_link(
         session_store.stop_session(runtime_root, child_chat_id)
 
 
-def test_session_log_active_child_spawn_prefers_live_output(tmp_path: Path) -> None:
+def test_unbound_active_child_ignores_live_runner_history(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     runtime_root = resolve_project_runtime_root_for_write(project_root)
@@ -247,18 +237,11 @@ def test_session_log_active_child_spawn_prefers_live_output(tmp_path: Path) -> N
         artifact=True,
     )
 
-    output = session_log_sync(
-        SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
-    )
-
-    assert output.session_id == "p42"
-    assert output.source == "spawn p42 output"
-    assert [(message.role, message.content) for message in output.messages] == [
-        ("assistant", "live child progress")
-    ]
+    with pytest.raises(NativeSessionUnavailable, match="unbound"):
+        session_log_sync(SessionLogInput(ref="p42", project_root=project_root.as_posix()))
 
 
-def test_all_spawn_history_read_paths_agree_on_canonical_content(tmp_path: Path) -> None:
+def test_legacy_runner_artifacts_do_not_authorize_transcript_reads(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     runtime_root = resolve_project_runtime_root_for_write(project_root)
@@ -308,30 +291,20 @@ def test_all_spawn_history_read_paths_agree_on_canonical_content(tmp_path: Path)
         include_report_body=False,
         runtime_root=runtime_root,
     )
-    log = session_log_sync(
-        SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
-    )
-    search = session_search_sync(
-        SessionSearchInput(
-            ref="p42",
-            query="canonical marker",
-            project_root=project_root.as_posix(),
+    with pytest.raises(ValueError, match="not a native transcript"):
+        session_log_sync(SessionLogInput(file_path=str(runtime_root / "spawns/p42/history.jsonl")))
+    with pytest.raises(ValueError, match="not a native transcript"):
+        session_search_sync(
+            SessionSearchInput(
+                file_path=str(runtime_root / "spawns/p42/history.jsonl"),
+                query="canonical marker",
+            )
         )
-    )
 
-    assert spawn_output_path_for_target(runtime_root, "p42") == (
-        runtime_root / "spawns" / "p42" / HISTORY_FILENAME
-    )
-    assert b"canonical marker" in artifacts.get(history_key)
-    assert b"legacy marker" not in artifacts.get(history_key)
+    assert not (runtime_root / "spawns" / "p42" / "native-transcript.jsonl").exists()
     assert artifacts.list_artifacts("p42").count(history_key) == 1
-    assert detail.pi_lifecycle_phase == "canonical_phase"
-    assert [(message.role, message.content) for message in log.messages] == [
-        ("assistant", "canonical marker")
-    ]
-    assert [match.content_preview for match in search.matches] == [
-        "[[canonical marker]]"
-    ]
+    # Pi phases come from the pi-lifecycle.json sidecar, never from runner history.
+    assert detail.pi_lifecycle_phase is None
 
 
 def test_session_log_chat_reads_file_authority_without_harness_session_id(
@@ -371,12 +344,10 @@ def test_session_log_chat_reads_file_authority_without_harness_session_id(
             },
         )
 
-        output = session_log_sync(
-            SessionLogInput(ref=chat_id, project_root=project_root.as_posix(), tail=5)
-        )
-        assert [(message.role, message.content) for message in output.messages] == [
-            ("assistant", "primary live progress")
-        ]
+        with pytest.raises(ValueError, match="no verified native session for c42"):
+            session_log_sync(
+                SessionLogInput(ref=chat_id, project_root=project_root.as_posix(), tail=5)
+            )
     finally:
         session_store.stop_session(runtime_root, chat_id)
 
@@ -415,6 +386,21 @@ def test_session_export_spawn_duration_uses_last_attempt_exited_at(
         },
     )
 
+    session_id = "11111111-1111-4111-8111-111111111111"
+    _write_codex_rollout(
+        sessions_root=tmp_path / "native",
+        project_root=project_root,
+        session_id=session_id,
+        assistant_text="done",
+    )
+    session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id=session_id,
+        native_store=str(tmp_path / "native"),
+        model="test",
+        chat_id="c42",
+    )
     output = session_export_sync(
         SessionExportInput(ref="p42", project_root=project_root.as_posix())
     )
@@ -438,6 +424,7 @@ def test_session_export_include_spawns_groups_by_owner_chat(
         runtime_root,
         harness="codex",
         harness_session_id=primary_session_id,
+        native_store=(codex_home / "sessions").as_posix(),
         model="gpt-5.4",
         chat_id="c-owner",
         kind="primary",

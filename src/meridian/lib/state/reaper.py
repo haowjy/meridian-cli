@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict, cast
+from typing import TYPE_CHECKING, TypedDict
 
 import structlog
 
@@ -21,12 +21,7 @@ from meridian.lib.core.spawn_lifecycle import (
     resolve_reconciled_terminal_state,
 )
 from meridian.lib.core.types import SpawnId
-from meridian.lib.launch.constants import (
-    FINALIZE_EVIDENCE_FILENAME,
-    HISTORY_FILENAME,
-    LAST_OBSERVED_EVENT_FILENAME,
-    OUTPUT_FILENAME,
-)
+from meridian.lib.launch.constants import FINALIZE_EVIDENCE_FILENAME
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope import is_pgid_reachable
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
@@ -74,8 +69,6 @@ SPAWN_HEARTBEAT_WINDOW_SECS = 120
 SPAWN_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS = 5
 _ACTIVITY_ARTIFACTS: tuple[str, ...] = (
     "heartbeat",
-    HISTORY_FILENAME,
-    OUTPUT_FILENAME,
     "bash-records.json",
     "stderr.log",
     "report.md",
@@ -420,19 +413,6 @@ def _log_orphan_primary_diagnostics(
     )
 
 
-def _read_last_observed_event(runtime_root: Path, spawn_id: str) -> dict[str, object] | None:
-    marker_path = (
-        runtime_root / "spawns" / spawn_id / LAST_OBSERVED_EVENT_FILENAME
-    )
-    try:
-        parsed: object = json.loads(marker_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    return cast("dict[str, object]", parsed)
-
-
 def _record_orphan_finalize_evidence(
     runtime_root: Path,
     record: SpawnRecord,
@@ -497,7 +477,6 @@ def _record_orphan_finalize_evidence(
             if snapshot.last_activity_epoch is not None
             else None
         ),
-        "last_observed_event": _read_last_observed_event(runtime_root, record.id),
     }
     evidence_path = runtime_root / "spawns" / record.id / FINALIZE_EVIDENCE_FILENAME
     try:

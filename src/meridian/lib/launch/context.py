@@ -34,7 +34,7 @@ from meridian.lib.core.child_env import validate_child_env_keys
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
-from meridian.lib.core.types import HarnessId, ModelId
+from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.diagnostics import capture_library_diagnostics
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.launch.launch_types import (
@@ -49,6 +49,7 @@ from meridian.lib.launch.launch_types import (
     ResolvedLaunchSpec,
     summarize_composition_warnings,
 )
+from meridian.lib.launch.request import cross_harness_continue_error
 from meridian.lib.launch.workspace_projection import (
     OPENCODE_CONFIG_CONTENT_ENV,
     project_workspace_roots,
@@ -672,13 +673,10 @@ def _enforce_headless_harness_policy(
 
 def _missing_continue_session_error(source_ref: str | None) -> str:
     normalized_source = (source_ref or "").strip()
-    if normalized_source:
-        if normalized_source.startswith("p") and normalized_source[1:].isdigit():
-            return f"Spawn '{normalized_source}' has no recorded session - cannot continue/fork."
-        return (
-            f"Session '{normalized_source}' has no recorded harness session - cannot continue/fork."
-        )
-    return "Source reference has no recorded harness session - cannot continue/fork."
+    return (
+        f"{normalized_source or 'Source reference'} has no verified native session; "
+        "cannot continue/fork."
+    )
 
 
 def _collect_git_context_clone_roots(config: ContextConfig | None) -> tuple[Path, ...]:
@@ -985,22 +983,20 @@ def _resolve_session_continuation(
     if not requested_harness_session_id:
         return ResolvedContinuation(harness_session_id=None, continue_fork=False)
     if requested_harness and requested_harness != str(harness.id):
-        return ResolvedContinuation(
-            harness_session_id=None,
-            continue_fork=False,
-            warning="Continuation session ignored because target harness differs from source run.",
+        chat_ref = (
+            request.session.continue_chat_id
+            or request.session.continue_source_ref
+            or "the source chat"
+        )
+        raise ValueError(
+            cross_harness_continue_error(chat_ref, requested_harness, str(harness.id))
         )
     if not harness.capabilities.supports_session_resume:
-        return ResolvedContinuation(
-            harness_session_id=None,
-            continue_fork=False,
-            warning=f"Harness '{harness.id}' does not support session resume; starting fresh.",
-        )
+        raise ValueError(f"{harness.id} cannot resume sessions")
     if requested_continue_fork and not harness.capabilities.supports_session_fork:
-        return ResolvedContinuation(
-            harness_session_id=requested_harness_session_id,
-            continue_fork=False,
-            warning=f"Harness '{harness.id}' does not support session fork; resuming in-place.",
+        raise ValueError(
+            f"{harness.id} cannot fork sessions; use --continue with the source chat "
+            "or start fresh."
         )
     return ResolvedContinuation(
         harness_session_id=requested_harness_session_id,
@@ -2061,15 +2057,6 @@ def bind_launch_context(
         )
     elif harness.id == HarnessId.CLAUDE:
         spec = spec.model_copy(update={"prompt_file_path": system_prompt_path.as_posix()})
-    argv: tuple[str, ...] = ()
-    if runtime.argv_intent != LaunchArgvIntent.SPEC_ONLY:
-        argv = build_launch_argv(
-            adapter=harness,
-            run_inputs=run_params,
-            perms=perms,
-            projected_spec=spec,
-        )
-
     launch_env_overrides: dict[str, str] = {}
     if opencode_version is not None:
         launch_env_overrides["MERIDIAN_HARNESS_OPENCODE_VERSION"] = opencode_version
@@ -2116,6 +2103,14 @@ def bind_launch_context(
         permission_config=permission_config,
         runtime_env_overrides=bind_env_overrides,
     )
+    intent = harness.plan_native_identity(
+        run_params, preforked_session_id=bindings.forked_harness_session_id)
+    if intent is not None:
+        spec = spec.model_copy(update={"native_identity": harness.finalize_native_identity(
+            intent, child_env=env, child_cwd=child_cwd,
+            session=resolved_request.session, spawn_id=SpawnId(bindings.spawn_id),
+            interactive=run_params.interactive,
+        )})
     environment = ResolvedLaunchEnvironment.build(
         child_context_env=child_context_env,
         plan_env=dict(bindings.plan_overrides),
@@ -2126,6 +2121,15 @@ def bind_launch_context(
         runner_overlay_env={},
         final_env=env,
     )
+    argv: tuple[str, ...] = ()
+    if runtime.argv_intent != LaunchArgvIntent.SPEC_ONLY:
+        argv = build_launch_argv(
+            adapter=harness,
+            run_inputs=run_params,
+            perms=perms,
+            projected_spec=spec,
+        )
+
     binding = ResolvedLaunchBinding(
         work_id=effective_work_id,
         child_cwd=child_cwd,
@@ -2168,6 +2172,7 @@ def _build_launch_context_impl(
     dry_run: bool = False,
     plan_overrides: Mapping[str, str] | None = None,
     runtime_work_id: str | None = None,
+    forked_harness_session_id: str | None = None,
     cache: MarsResultCache | None = None,
 ) -> LaunchContext:
     """Build deterministic launch context from raw request/runtime inputs."""
@@ -2213,6 +2218,7 @@ def _build_launch_context_impl(
     bindings = RuntimeBindings(
         spawn_id=spawn_id,
         runtime_work_id=runtime_work_id,
+        forked_harness_session_id=forked_harness_session_id,
         plan_overrides=dict(plan_overrides or {}),
         dry_run=dry_run,
     )
@@ -2235,6 +2241,7 @@ def build_launch_context(
     dry_run: bool = False,
     plan_overrides: Mapping[str, str] | None = None,
     runtime_work_id: str | None = None,
+    forked_harness_session_id: str | None = None,
     cache: MarsResultCache | None = None,
 ) -> LaunchContext:
     """Build deterministic launch context without leaking library warnings."""
@@ -2248,6 +2255,7 @@ def build_launch_context(
             dry_run=dry_run,
             plan_overrides=plan_overrides,
             runtime_work_id=runtime_work_id,
+            forked_harness_session_id=forked_harness_session_id,
             cache=cache,
         )
 

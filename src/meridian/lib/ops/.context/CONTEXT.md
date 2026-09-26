@@ -16,6 +16,27 @@ ops/          ← policy: access control, input validation, lifecycle sequencing
       └──→ harness/     ← process adapters (indirectly through launch/)
 ```
 
+### Runtime authority and legacy import
+
+Both runtime-authority resolvers in `runtime.py` trigger the once-only legacy
+native-key import. Even a read command can append bindings on its first run;
+strictly read-only audits use the standalone `legacy_native_import` dev module,
+not runtime resolution. See [state context](../../state/.context/CONTEXT.md).
+
+Legacy Pi recovery (`recover_legacy_pi_sessions`) sits next to the late re-bind
+and runs only from doctor and background repairs, once per marker. Uniqueness is
+not proof: a 0.6.7 chat whose only candidate had a different first message was
+the wrong session. So every automatic bind needs content proof (retained prompt,
+else report body), and primaries, whose sessions shared one root, are manual only.
+`retained_chat_facts` maps chats to spawns through spawn rows, `sessions.jsonl`
+`spawn_id` and archive receipts (reclaimed dirs), reading retained files from the
+ZIP member checked against the catalog's sha256. Old 0.6.7 ZIPs fail whole-archive
+portable-digest verification, so evidence reads do not depend on it.
+
+`session repair` shares those facts and the harness evidence helpers. Without
+`--native` it is read-only; with it, validation precedes one `bind()` under the
+sessions lock, which rechecks that no other chat owns the session ID.
+
 ### ops/spawn/ — The Spawn Policy Layer
 
 The spawn subprocess is the second of three driving adapters into `lib/launch/`.
@@ -98,29 +119,22 @@ type (e.g., `{"agents": [...], "skills": [...]}`). This avoids coupling Python
 to the mars JSON report shape — new content types (hooks, MCP servers, etc.) are
 automatically counted without Python model changes.
 
-### session_target.py / session_transcript.py — Ordered Transcript Sources
+### session_target.py / session_transcript.py — Exact Native Sources
 
-Session-log target resolution builds an ordered source plan once, then parsing walks
-that plan. Do not implement fallback by recursively re-entering
-`resolve_session_log_target()` or by fabricating placeholder files for non-file
-sources. `SessionLogTarget.sources` is the durable plan; each `TranscriptSource`
-identifies its kind (`file`, `opencode_db`, or `spawn_history`), session id,
-harness, label, and optional path.
+`resolve_transcript_source` maps ref → chat → accepted `native_key()` → exact
+harness reader. `parse_session_target` parses that one source, including empty
+views. It never falls back to runner history or a different native session.
+The metadata index maps reclaimed spawn references to their chat; it does not
+choose the chat's native binding. Explicit archive/import refs can select a
+sealed native snapshot; legacy ZIP members are bytes only.
 
-OpenCode completed-session precedence is:
-
-1. Indexed canonical transcript (`native-transcript.jsonl` or `history.jsonl`,
-   or the selected ZIP member);
-2. Live/untracked native files (`opencode.db` when a matching `session.id` exists,
-   then `storage/session_diff/...` / legacy JSON).
-
-Display does not attach spawn `history.jsonl` as a second source beside a native
-file. The index names the Meridian transcript; native resolution is only for
-live or untracked harness sessions. Capture still reads the exact native
-identity, never presentation fallbacks.
-
-`parse_session_target()` tries sources in order and stops at the first source with
-usable user/assistant interaction content.
+| Spawn reference | Chat and view label |
+|---|---|
+| Running | Entry chat; run-in-progress label |
+| Terminal, verified boundary | Exit chat; label if different from entry |
+| Unresolved or mismatch boundary | Entry chat; exit-identity reason |
+| No boundary | Entry chat; predates-exit-tracking label |
+| No chat or binding | Unavailable (`unbound`), no legacy hint |
 
 ### session_log_render.py — Session Log Rendering
 

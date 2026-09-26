@@ -5,6 +5,7 @@ integration tests cover only spawn-surface validation, source resolution, and
 the handoff to spawn creation.
 """
 
+import json
 from pathlib import Path
 from typing import Any, cast
 
@@ -12,6 +13,7 @@ import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.ops.reference import ResolvedSessionReference
@@ -45,19 +47,35 @@ def _seed_spawn(
     work_id: str | None = "w-spawn",
     task_cwd: str | None = None,
     launch_policy_snapshot: LaunchPolicySnapshot | None = None,
+    chat_id: str = "c-seed",
 ) -> None:
     snapshot = launch_policy_snapshot
+    harness = snapshot.harness if snapshot is not None else "codex"
+    native_store = runtime_root / "native-store" / "sessions"
+    if harness_session_id:
+        native_store.mkdir(parents=True, exist_ok=True)
+        native_header = (
+            {"type": "agent-setting", "sessionId": harness_session_id}
+            if harness == "claude"
+            else {"type": "session_meta", "payload": {"id": harness_session_id}}
+        )
+        filename = (
+            f"{harness_session_id}.jsonl" if harness == "claude"
+            else f"rollout-2026-01-01T00-00-00-{harness_session_id}.jsonl"
+        )
+        (native_store / filename).write_text(json.dumps(native_header) + "\n", encoding="utf-8")
     session_store.start_session(
-        runtime_root, chat_id="c-seed", spawn_id=spawn_id,
-        harness=snapshot.harness if snapshot is not None else "codex",
+        runtime_root, chat_id=chat_id, spawn_id=spawn_id,
+        harness=harness,
         harness_session_id=harness_session_id or "",
+        native_store=str(native_store) if harness_session_id else None,
         model=snapshot.model if snapshot is not None else "gpt-5.3-codex",
     )
-    session_store.stop_session(runtime_root, "c-seed")
+    session_store.stop_session(runtime_root, chat_id)
     spawn_store.start_spawn(
         runtime_root,
         spawn_id=spawn_id,
-        chat_id="c-seed",
+        chat_id=chat_id,
         model=snapshot.model if snapshot is not None else "gpt-5.3-codex",
         agent=(snapshot.agent or "coder") if snapshot is not None else "coder",
         skills=snapshot.skills if snapshot is not None else ("skill-c",),
@@ -102,7 +120,7 @@ def test_spawn_continue_requires_recorded_session(tmp_path: Path) -> None:
     runtime_root = _state_root(project_root)
     _seed_spawn(runtime_root, spawn_id="p11", harness_session_id=None)
 
-    with pytest.raises(ValueError, match="no recorded session"):
+    with pytest.raises(NativeSessionUnavailable) as exc:
         spawn_api.spawn_continue_sync(
             SpawnContinueInput(
                 spawn_id="p11",
@@ -110,6 +128,7 @@ def test_spawn_continue_requires_recorded_session(tmp_path: Path) -> None:
                 project_root=project_root.as_posix(),
             )
         )
+    assert (exc.value.ref, exc.value.reason) == ("p11", "unbound")
 
 
 @pytest.mark.parametrize(
@@ -203,6 +222,54 @@ def test_spawn_continue_maps_source_contract_to_spawn_create(
     assert request.work_id_hint == "w-spawn"
     assert request.task_cwd == source_task_dir.as_posix()
     assert request.session.requested_harness_session_id == "session-28"
+
+
+def test_spawn_continue_cross_harness_refusal_names_both_harnesses_without_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    snapshot = LaunchPolicySnapshot(model="claude-sonnet-4-6", harness="claude")
+    _seed_spawn(
+        runtime_root,
+        spawn_id="p-cross",
+        harness_session_id="claude-native-session",
+        launch_policy_snapshot=snapshot,
+        chat_id="c1",
+    )
+    session_store.update_session_spawn_id(runtime_root, "c1", "p-cross")
+    before_chat = session_store.get_session_record(runtime_root, "c1")
+    before_spawns = spawn_store.list_spawns(runtime_root)
+    reference = spawn_api.resolve_session_reference(
+        project_root, "c1", runtime_root=runtime_root, harness_hint="codex"
+    )
+    assert (reference.harness, reference.source_chat_id, reference.source_spawn_id) == (
+        "claude", "c1", "p-cross"
+    )
+    monkeypatch.setattr(
+        spawn_api,
+        "_resolve_spawn_read_authority",
+        lambda **_: (project_root, runtime_root),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"Cannot continue chat c1 from harness 'claude'.*requested harness 'codex'",
+    ):
+        spawn_api.spawn_continue_sync(
+            SpawnContinueInput(
+                spawn_id="c1",
+                prompt="hi",
+                harness="codex",
+                dry_run=True,
+                project_root=project_root.as_posix(),
+            )
+        )
+
+    assert session_store.get_session_record(runtime_root, "c1") == before_chat
+    assert spawn_store.list_spawns(runtime_root) == before_spawns
 
 
 def test_spawn_continue_does_not_inherit_ambient_work_or_task_dir(
@@ -339,15 +406,16 @@ def test_spawn_continue_uses_recovered_session_id(
     )
     calls = _record_spawn_create(monkeypatch)
 
-    spawn_api.spawn_continue_sync(
-        SpawnContinueInput(
-            spawn_id="p32",
-            prompt="follow-up prompt",
-            project_root=project_root.as_posix(),
+    with pytest.raises(NativeSessionUnavailable) as exc:
+        spawn_api.spawn_continue_sync(
+            SpawnContinueInput(
+                spawn_id="p32",
+                prompt="follow-up prompt",
+                project_root=project_root.as_posix(),
+            )
         )
-    )
-
-    assert calls[0][0].session.requested_harness_session_id == "recovered-session"
+    assert (exc.value.ref, exc.value.reason) == ("p32", "unbound")
+    assert not calls
 
 
 def test_spawn_fork_uses_recovered_session_id(
@@ -374,12 +442,13 @@ def test_spawn_fork_uses_recovered_session_id(
     )
     calls = _record_spawn_create(monkeypatch)
 
-    spawn_api.spawn_fork_sync(
-        spawn_api.SpawnForkInput(
-            source_ref="p33",
-            prompt="fork prompt",
-            project_root=project_root.as_posix(),
+    with pytest.raises(NativeSessionUnavailable) as exc:
+        spawn_api.spawn_fork_sync(
+            spawn_api.SpawnForkInput(
+                source_ref="p33",
+                prompt="fork prompt",
+                project_root=project_root.as_posix(),
+            )
         )
-    )
-
-    assert calls[0][0].session.requested_harness_session_id == "recovered-session"
+    assert (exc.value.ref, exc.value.reason) == ("p33", "unbound")
+    assert not calls

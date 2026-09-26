@@ -2,13 +2,13 @@
 
 from pathlib import Path
 
-from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     resolve_execution_terminal_outcome,
 )
 from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.adapter import ArtifactStore
+from meridian.lib.harness.attempt_facts import AttemptFacts
+from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 from meridian.lib.launch.constants import HISTORY_FILENAME, REPORT_FILENAME
 from meridian.lib.launch.extract import FinalizeReportKind, enrich_finalize
 from meridian.lib.launch.streaming_runner import StreamingRunConclusion
@@ -17,8 +17,7 @@ from meridian.lib.state.artifact_store import InMemoryStore, make_artifact_key
 # p6491: the OpenCode adapter extracted the agent's streamed narration preamble as
 # the "report"; no turn ever completed.
 _PARTIAL_NARRATION_REPORT = (
-    "# Report\n\n"
-    "I'll start by orienting myself: confirming the host, OS, and available tooling.\n"
+    "# Report\n\nI'll start by orienting myself: confirming the host, OS, and available tooling.\n"
 )
 
 # p6493: the extracted "report" is the raw `permission.asked` event envelope.
@@ -36,20 +35,6 @@ _PERMISSION_HISTORY = (
     '"payload":{"properties":{"permission":"external_directory",'
     '"patterns":["/home/jimyao/.meridian/ref/opencode/*"]}}}\n'
 )
-
-
-class _NoReportExtractor:
-    def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
-        _ = artifacts, spawn_id
-        return TokenUsage()
-
-    def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        _ = artifacts, spawn_id
-        return None
-
-    def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        _ = artifacts, spawn_id
-        return None
 
 
 def _seed_spawn(artifacts: InMemoryStore, spawn_id: SpawnId, *, report_text: str) -> None:
@@ -72,7 +57,8 @@ def test_hung_permission_spawn_resolves_cancelled_not_succeeded(tmp_path: Path) 
 
     extraction = enrich_finalize(
         artifacts=artifacts,
-        extractor=_NoReportExtractor(),
+        extractor=CODEX_EXTRACTOR,
+        facts=AttemptFacts(),
         spawn_id=spawn_id,
         log_dir=tmp_path,
         failure_reason="terminated",
@@ -98,7 +84,8 @@ def test_permission_envelope_report_is_not_durable_completion(tmp_path: Path) ->
 
     extraction = enrich_finalize(
         artifacts=artifacts,
-        extractor=_NoReportExtractor(),
+        extractor=CODEX_EXTRACTOR,
+        facts=AttemptFacts(),
         spawn_id=spawn_id,
         log_dir=tmp_path,
         failure_reason="terminated",
@@ -116,7 +103,8 @@ def test_enrich_finalize_marks_synthetic_failure_report_not_durable(
 
     extraction = enrich_finalize(
         artifacts=artifacts,
-        extractor=_NoReportExtractor(),
+        extractor=CODEX_EXTRACTOR,
+        facts=AttemptFacts(),
         spawn_id=spawn_id,
         log_dir=tmp_path,
         failure_reason="Cursor subprocess exited with code 130.",

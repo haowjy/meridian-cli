@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, NamedTuple, Protocol, cast
@@ -14,14 +14,14 @@ from meridian.lib.harness.opencode_transcript import (
     OpenCodeV2StorageTranscriptProvider,
     interpret_opencode_record,
     interpret_opencode_v2_record,
-    iter_opencode_db_session_events,
 )
+from meridian.lib.harness.pi_journal import is_pi_journal_entry_type, pi_context_edit_annotation
 from meridian.lib.launch.constants import HISTORY_FILENAME
-from meridian.lib.state.history import iter_history_events
 from meridian.lib.state.native_snapshot import (
     HEADER_LIMIT,
     NATIVE_SNAPSHOT_FILENAME,
     SnapshotHeader,
+    SnapshotStream,
     TranscriptReadPaused,
     TranscriptValidation,
     is_snapshot_prefix,
@@ -62,11 +62,6 @@ class TranscriptParseResult(NamedTuple):
     segment_setups: tuple[str | None, ...]
     consumed_setup_event_indexes: tuple[int, ...] = ()
     rendering_reason: str | None = None
-
-    @property
-    def segment_prologues(self) -> tuple[str | None, ...]:
-        """Backward-compatible alias for session setup slots."""
-        return self.segment_setups
 
 
 class NormalizedTranscriptEvent(NamedTuple):
@@ -121,10 +116,6 @@ def text_from_value(value: object) -> str:
     return ""
 
 
-def _text_from_value(value: object) -> str:
-    return text_from_value(value)
-
-
 def _preview(value: str, *, limit: int = _MAX_PREVIEW) -> str:
     compact = " ".join(value.split())
     if len(compact) <= limit:
@@ -133,27 +124,13 @@ def _preview(value: str, *, limit: int = _MAX_PREVIEW) -> str:
 
 
 # Harness tool names that map to shell execution.
-_EXEC_TOOL_NAMES: frozenset[str] = frozenset(
-    {
-        "exec_command",
-        "shell",
-        "terminal",
-        "run_command",
-    }
-)
+_EXEC_TOOL_NAMES = frozenset({"exec_command", "shell", "terminal", "run_command"})
 
 # Harness tool names for stdin interaction.
 _STDIN_TOOL_NAMES: frozenset[str] = frozenset({"write_stdin"})
 
 # Keys that carry the "interesting" payload in a Claude-style tool input dict.
-_TOOL_BODY_KEYS: tuple[str, ...] = (
-    "file_path",
-    "path",
-    "command",
-    "pattern",
-    "description",
-    "skill",
-)
+_TOOL_BODY_KEYS = ("file_path", "path", "command", "pattern", "description", "skill")
 
 
 def _normalize_tool(name: str, body: str) -> ToolCall:
@@ -572,15 +549,33 @@ class JsonlTranscriptProvider(TranscriptProvider):
         yield from _iter_json_events(path, current=current, validation=validation)
 
 
+class _CountedStream:
+    """Charge raw source bytes, including snapshot envelopes, without re-encoding events."""
+
+    def __init__(self, stream: SnapshotStream, consume: Callable[[int], None]) -> None:
+        self.stream = stream
+        self.consume = consume
+
+    def readline(self, size: int | None = -1, /) -> bytes:
+        raw = self.stream.readline(size)
+        self.consume(len(raw))
+        return raw
+
+    def tell(self) -> int:
+        return self.stream.tell()
+
+
 def _iter_json_events(
     path: Path,
     *,
     current: Callable[[], bool] | None = None,
     validation: TranscriptValidation | None = None,
+    consume: Callable[[int], None] | None = None,
 ) -> Iterator[dict[str, object]]:
     with path.open("rb") as handle:
+        stream = _CountedStream(handle, consume) if consume else handle
         while True:
-            raw = read_jsonl_frame(handle, current=current)
+            raw = read_jsonl_frame(stream, current=current)
             if not raw:
                 return
             stripped = raw.strip()
@@ -603,34 +598,7 @@ def _iter_json_events(
                         yield cast("dict[str, object]", item)
 
 
-class HistoryJsonlTranscriptProvider(TranscriptProvider):
-    """History-provider using crash-tolerant history iterators for canonicalized paths."""
-
-    def supports(self, path: Path) -> bool:
-        return path.name == HISTORY_FILENAME
-
-    def iter_events(
-        self,
-        path: Path,
-        *,
-        current: Callable[[], bool] | None = None,
-        validation: TranscriptValidation | None = None,
-    ) -> Iterator[dict[str, object]]:
-        for event in iter_history_events(
-            path,
-            current=current,
-            frame_guard=lambda raw: reject_unframed_storage_frame(raw, validation),
-        ):
-            yield cast("dict[str, object]", event)
-
-
-_OPENCODE_STORAGE_PROVIDER_TYPES = (
-    OpenCodeStorageTranscriptProvider,
-    OpenCodeV2StorageTranscriptProvider,
-)
-
 _TRANSCRIPT_PROVIDERS: tuple[TranscriptProvider, ...] = (
-    HistoryJsonlTranscriptProvider(),
     OpenCodeV2StorageTranscriptProvider(
         iter_json_events=_iter_json_events,
     ),
@@ -645,7 +613,7 @@ def _provider_for_path(path: Path) -> TranscriptProvider:
     for provider in _TRANSCRIPT_PROVIDERS:
         if provider.supports(path):
             return provider
-    return JsonlTranscriptProvider()
+    raise ValueError("not a native transcript")
 
 
 def _unwrap_seq_envelope(event: dict[str, object]) -> dict[str, object]:
@@ -759,90 +727,6 @@ class TranscriptNormalizer:
     rendering_reason: str | None = None
     opencode_user_seen: bool = False
 
-    def _pi_journal(
-        self, event: dict[str, object], messages: list[TranscriptMessage]
-    ) -> NormalizedTranscriptEvent | None:
-        event_type = event.get("type")
-        if event_type == "session" and isinstance(event.get("id"), str) and "cwd" in event:
-            self.pi_session = True
-            self.pi_previous_entry_id = None
-            version = event.get("version", 1)
-            if type(version) is not int or version not in (1, 2, 3):
-                self.rendering_reason = "Unsupported Pi session version; rendering is incomplete."
-            return NormalizedTranscriptEvent([])
-        entry_id = event.get("id")
-        native_entry = isinstance(entry_id, str) and "parentId" in event
-        if not self.pi_session and not (
-            native_entry
-            and event_type
-            in (
-                "message",
-                "compaction",
-                "branch_summary",
-                "custom_message",
-                "model_change",
-                "thinking_level_change",
-                "custom",
-                "label",
-                "session_info",
-            )
-            and (event_type != "message" or isinstance(event.get("message"), dict))
-        ):
-            return None
-        if not native_entry and not isinstance(event_type, str):
-            return None
-        self.pi_session = True
-        annotations: list[TranscriptMessage] = []
-        if event_type == "message" and "message" not in event:
-            self.rendering_reason = "Malformed Pi message; rendering is incomplete."
-        if isinstance(entry_id, str) and len(entry_id) > 128:
-            self.pi_previous_entry_id = None
-            self.rendering_reason = "Unsupported Pi entry identity; rendering is incomplete."
-            native_entry = False
-        if native_entry:
-            if (
-                self.pi_previous_entry_id is not None
-                and event.get("parentId") != self.pi_previous_entry_id
-            ):
-                annotations.append(
-                    TranscriptMessage(
-                        "annotation",
-                        "Pi journal parent changed; continuing a different branch.",
-                        kind="annotation",
-                    )
-                )
-            self.pi_previous_entry_id = cast("str", entry_id)
-        if event_type == "compaction":
-            self.setup = text_from_value(event.get("summary")) or None
-            self.pending_summary = None
-            if not isinstance(event.get("summary"), str):
-                self.rendering_reason = (
-                    "Unsupported Pi compaction summary; rendering is incomplete."
-                )
-            return NormalizedTranscriptEvent(annotations, boundary=True)
-        if event_type == "branch_summary":
-            summary = text_from_value(event.get("summary"))
-            annotations.append(
-                TranscriptMessage(
-                    "annotation",
-                    f"Pi branch summary:\n{summary}",
-                    kind="annotation",
-                )
-            )
-            if not isinstance(event.get("summary"), str):
-                self.rendering_reason = "Unsupported Pi branch summary; rendering is incomplete."
-        elif event_type not in (
-            "message",
-            "custom_message",
-            "model_change",
-            "thinking_level_change",
-            "custom",
-            "label",
-            "session_info",
-        ):
-            self.rendering_reason = "Unsupported Pi journal entry; rendering is incomplete."
-        return NormalizedTranscriptEvent([*annotations, *messages])
-
     def feed(
         self, event: dict[str, object], parser: TranscriptEventParser
     ) -> NormalizedTranscriptEvent:
@@ -871,9 +755,66 @@ class TranscriptNormalizer:
         extracted = parser.parse(event)
         messages, parser_boundary = extracted.messages, extracted.boundary
         self.rendering_reason = extracted.rendering_reason or self.rendering_reason
-        pi_event = self._pi_journal(normalized_event, messages)
-        if pi_event is not None:
-            return pi_event
+        event_type = normalized_event.get("type")
+        if (
+            event_type == "session"
+            and isinstance(normalized_event.get("id"), str)
+            and "cwd" in normalized_event
+        ):
+            self.pi_session = True
+            self.pi_previous_entry_id = None
+            version = normalized_event.get("version", 1)
+            if type(version) is not int or version not in (1, 2, 3):
+                self.rendering_reason = "Unsupported Pi session version; rendering is incomplete."
+            return NormalizedTranscriptEvent([])
+        if self.pi_session and not isinstance(event_type, str):
+            self.rendering_reason = "Unsupported Pi journal entry; rendering is incomplete."
+        entry_id = normalized_event.get("id")
+        pi_entry = self.pi_session and isinstance(event_type, str)
+        native_pi_entry = (
+            isinstance(event_type, str)
+            and is_pi_journal_entry_type(event_type)
+            and isinstance(entry_id, str)
+            and "parentId" in normalized_event
+        )
+        if native_pi_entry and len(cast("str", entry_id)) > 128:
+            self.pi_previous_entry_id = None
+            self.rendering_reason = "Unsupported Pi entry identity; rendering is incomplete."
+        annotations: list[TranscriptMessage] = []
+        if pi_entry:
+            if not is_pi_journal_entry_type(event_type):
+                self.rendering_reason = "Unsupported Pi journal entry; rendering is incomplete."
+            if (
+                isinstance(entry_id, str)
+                and len(entry_id) <= 128
+                and "parentId" in normalized_event
+            ):
+                if (
+                    self.pi_previous_entry_id is not None
+                    and normalized_event.get("parentId") != self.pi_previous_entry_id
+                ):
+                    annotations.append(
+                        TranscriptMessage(
+                            "annotation",
+                            "Pi journal parent changed; continuing a different branch.",
+                            kind="annotation",
+                        )
+                    )
+                self.pi_previous_entry_id = entry_id
+        if event_type == "context_edit" and pi_entry:
+            annotation = pi_context_edit_annotation(normalized_event)
+            annotations.append(TranscriptMessage("annotation", annotation, kind="annotation"))
+        if pi_entry and event_type == "compaction":
+            self.setup = text_from_value(normalized_event.get("summary")) or None
+            self.pending_summary = None
+            return NormalizedTranscriptEvent([], boundary=True)
+        if pi_entry and event_type == "branch_summary":
+            summary = text_from_value(normalized_event.get("summary"))
+            annotations.append(
+                TranscriptMessage("annotation", f"Pi branch summary:\n{summary}", kind="annotation")
+            )
+        if annotations:
+            messages = [*annotations, *messages]
         opencode_boundary = _is_opencode_compaction_boundary(normalized_event)
         claude_boundary = _is_claude_compaction_boundary(normalized_event)
         if parser_boundary or opencode_boundary:
@@ -951,6 +892,19 @@ def parse_transcript_events_with_prologues(
     return _parse_events_with_prologues(events, parser=resolved_parser)
 
 
+def reject_runner_history(path: Path) -> None:
+    """Explicit file reads must not reinterpret retired runner event streams."""
+    _provider_for_path(path)
+    with path.open("rb") as handle:
+        first = handle.readline(HEADER_LIMIT + 1)
+    try:
+        header = json.loads(first)
+    except ValueError:
+        return
+    if isinstance(header, dict) and header.get("record") == "meridian.transcript":
+        raise ValueError("not a native transcript")
+
+
 def is_native_snapshot(path: Path) -> bool:
     """Bounded storage selection only; a true result is not a validated capture."""
     if path.name == NATIVE_SNAPSHOT_FILENAME:
@@ -965,7 +919,8 @@ def iter_transcript_events(
     validation: TranscriptValidation | None = None,
     current: Callable[[], bool] | None = None,
     check_header: Callable[[SnapshotHeader], None] | None = None,
-) -> Iterator[dict[str, object]]:
+    consume: Callable[[int], None] | None = None,
+) -> Generator[dict[str, object]]:
     # A copied/renamed snapshot keeps its storage identity. Sniff only a bounded
     # header; body validation remains incremental and subject to the caller budget.
     if path.is_file():
@@ -979,7 +934,7 @@ def iter_transcript_events(
             if path.name == NATIVE_SNAPSHOT_FILENAME or is_snapshot_prefix(first):
                 handle.seek(0)
                 yield from read_snapshot(
-                    handle,
+                    _CountedStream(handle, consume) if consume else handle,
                     validation=validation or TranscriptValidation(),
                     current=current,
                     check_header=check_header,
@@ -987,7 +942,12 @@ def iter_transcript_events(
                 return
     try:
         provider = _provider_for_path(path)
-        for event in provider.iter_events(path, current=current, validation=validation):
+        events = (
+            _iter_json_events(path, current=current, validation=validation, consume=consume)
+            if isinstance(provider, JsonlTranscriptProvider)
+            else provider.iter_events(path, current=current, validation=validation)
+        )
+        for event in events:
             reject_unframed_storage_record(event, validation)
             yield event
         if validation is not None:
@@ -1022,21 +982,8 @@ def parse_transcript_file_with_prologues(
     return _parse_events_with_prologues(iter_transcript_events(path), parser=resolved_parser)
 
 
-def parse_opencode_db_transcript_with_prologues(
-    session_id: str,
-    *,
-    parser: TranscriptEventParser | None = None,
-) -> TranscriptParseResult:
-    resolved_parser = parser or DefaultTranscriptEventParser()
-    return _parse_events_with_prologues(
-        iter_opencode_db_session_events(session_id=session_id),
-        parser=resolved_parser,
-    )
-
-
 __all__ = [
     "DefaultTranscriptEventParser",
-    "HistoryJsonlTranscriptProvider",
     "JsonlTranscriptProvider",
     "OpenCodeStorageTranscriptProvider",
     "OpenCodeV2StorageTranscriptProvider",
@@ -1045,39 +992,10 @@ __all__ = [
     "TranscriptMessage",
     "TranscriptParseResult",
     "TranscriptProvider",
-    "_text_from_value",
     "iter_transcript_events",
-    "parse_opencode_db_transcript_with_prologues",
     "parse_transcript_events",
     "parse_transcript_events_with_prologues",
     "parse_transcript_file",
     "parse_transcript_file_with_prologues",
     "text_from_value",
 ]
-
-
-def transcript_revision(path: Path | None) -> tuple[tuple[int, ...] | None, ...]:
-    """Cheap provider freshness witness; OpenCode storage may be backed by a mutable DB."""
-    from meridian.lib.harness.opencode_transcript import (
-        opencode_db_for_session_file,
-        resolve_opencode_db_path,
-    )
-
-    paths = [] if path is None else [path]
-    if path is None or isinstance(
-        _provider_for_path(path), _OPENCODE_STORAGE_PROVIDER_TYPES
-    ):
-        database = opencode_db_for_session_file(path) if path else resolve_opencode_db_path()
-        assert database is not None
-        paths.extend((database, Path(str(database) + "-wal")))
-    revisions: list[tuple[int, ...] | None] = []
-    for source in paths:
-        try:
-            info = source.stat()
-        except FileNotFoundError:
-            revisions.append(None)
-        else:
-            revisions.append(
-                (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
-            )
-    return tuple(revisions)

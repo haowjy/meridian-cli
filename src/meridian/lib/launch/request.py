@@ -22,6 +22,17 @@ def _empty_agent_metadata() -> dict[str, str]:
     return {}
 
 
+def cross_harness_continue_error(
+    chat_ref: str | None, source_harness: str, requested_harness: str
+) -> str:
+    """Build the refusal shared by primary and spawned continuation surfaces."""
+    reference = chat_ref or "the source chat"
+    return (
+        f"Cannot continue chat {reference} from harness '{source_harness}' "
+        f"with requested harness '{requested_harness}'; start a new chat."
+    )
+
+
 def _empty_config_snapshot() -> dict[str, object]:
     return {}
 
@@ -46,8 +57,7 @@ class SessionRequest(BaseModel):
     continue_fork: bool = False
     source_control_root: str | None = None
     source_execution_cwd: str | None = None
-    source_claude_config_dir: str | None = None
-    source_pi_session_dir: str | None = None
+    source_native_store: str | None = None
     forked_from_chat_id: str | None = None
     forked_from_history_id: UUID | None = None
     continue_harness: str | None = None
@@ -55,6 +65,10 @@ class SessionRequest(BaseModel):
     continue_source_ref: str | None = None
     primary_session_mode: str | None = None
     conversation_intent: ConversationModelSelection | None = None
+
+    @property
+    def source_ref(self) -> str:
+        return self.continue_source_ref or self.requested_harness_session_id or "source"
 
 
 def is_exact_continue_session(session: SessionRequest) -> bool:

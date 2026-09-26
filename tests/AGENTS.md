@@ -12,6 +12,11 @@ uv run pytest-llm              # Unit tests (token-efficient output)
 uv run meridian                # Smoke test the CLI directly
 ```
 
+Use `uv run pytest --runner-history=off <tests>` to trap implicit reads of legacy
+spawn/artifact runner `history.jsonl` (Meridian no longer writes it). The trap is
+inherited by CLI subprocesses through a test-only `sitecustomize`; legacy archive
+inventory may still hash the bytes, and native Claude history is not trapped.
+
 ## Where Tests Go
 
 ```
@@ -53,8 +58,31 @@ Worked helpers:
 - `tests/support/opencode.py`: `FakeOpenCodeProcess.exit(return_code)` makes backend
   death observable while the OpenCode event iterator is still active.
 
+A fake connection that reports a native session ID must adopt
+`spec.native_identity.session_id` in `start()` when the plan assigns
+one. A fixed ID contradicts the prebound identity and fails the attempt as
+`entry_mismatch` before the scenario under test runs. Fakes that model a missing
+identity signal stay silent; report a different ID only in a deliberate
+mismatch regression.
+
+Native source fixtures for continue/fork tests carry faithful native headers:
+Claude a first-line `sessionId`, Codex a `session_meta.payload.id`, Pi a
+`type: session` header with `id` — each equal to the recorded ID. Exact
+locators validate the header before resume, fork, or reads, so an empty or
+`{}` journal is refused as `missing`, not resumed. Never loosen the validator
+to make a fixture pass; fix the fixture.
+
 Add fidelity only for a real behavior under test. Do not pre-build alternate close,
 timeout, or reader-error scenarios without a contract they protect.
+
+Upgrade fixtures come from the real older build, not from state this build writes.
+`test_history_schema_namespace.py` seeds `history.sqlite3` with tables captured
+from 0.6.7. For a live upgrade probe, run the old build as `uvx --isolated --from
+meridian-cli==X meridian`; without `--isolated`, uvx reuses an installed tool of
+the same name and version, and "old" is the PR build. Confirm it is old before
+trusting a result: 0.6.7 writes `spawns/pN/history.jsonl` and rejects
+`--prune-runner-history`. Also run an old runner across the upgrade: a background
+0.6.7 spawn that is still running while the new build runs.
 
 ## CI Environment
 

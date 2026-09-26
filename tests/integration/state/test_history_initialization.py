@@ -46,23 +46,24 @@ def test_cold_query_can_exceed_the_warm_two_second_budget(tmp_path: Path, monkey
     assert HistoryIndex(tmp_path).spawns() == ()
 
 
-@pytest.mark.parametrize("invalid_tail", ["private transcript content\n", "[]\n", "null\n"])
-def test_failure_is_sticky_until_manual_rebuild(tmp_path: Path, invalid_tail: str) -> None:
+@pytest.mark.parametrize("invalid_state", ["private state content\n", "[]\n", "null\n"])
+def test_failure_is_sticky_until_manual_rebuild(tmp_path: Path, invalid_state: str) -> None:
     from meridian.lib.state import spawn_store
 
     key = spawn_store.start_spawn(
         tmp_path, chat_id="c1", prompt="hello", model="test", agent="coder", harness="codex"
     )
     spawn_store.finalize_spawn(tmp_path, key, status="succeeded", exit_code=0, origin="runner")
-    transcript = tmp_path / "spawns" / key / "history.jsonl"
-    transcript.write_text(invalid_tail)
+    state = tmp_path / "spawns" / key / "state.json"
+    valid_state = state.read_bytes()
+    state.write_text(invalid_state)
     index = HistoryIndex(tmp_path)
     with pytest.raises(history_index.HistoryIndexIncomplete, match="will not retry"):
         index.spawns()
     failure = index.failure_path.read_bytes()
-    assert b"private transcript content" not in failure
+    assert b"private state content" not in failure
     assert index.inspect().baseline == "failed"
-    transcript.write_text('{"timestamp":"2026-09-15T00:00:00+00:00"}\n')
+    state.write_bytes(valid_state)
     spawn_store.update_spawn(tmp_path, key, work_id="after-failure")
     with pytest.raises(history_index.HistoryIndexIncomplete, match="--metadata-only"):
         index.spawns()
@@ -70,6 +71,52 @@ def test_failure_is_sticky_until_manual_rebuild(tmp_path: Path, invalid_tail: st
     assert index.rebuild().complete
     assert not index.failure_path.exists()
     assert [row.id for row in index.spawns(work_id="after-failure")] == [key]
+
+
+def test_dogfood_migration_rearms_authority_failure(tmp_path: Path) -> None:
+    import json
+
+    from meridian.lib.state import spawn_store
+    from meridian.lib.state.spawn.dogfood_migration import migrate_dogfood_spawn_rows
+
+    key = spawn_store.start_spawn(
+        tmp_path, chat_id="c1", prompt="hello", model="test", agent="coder", harness="codex"
+    )
+    spawn_store.finalize_spawn(tmp_path, key, status="succeeded", exit_code=0, origin="runner")
+    state = tmp_path / "spawns" / key / "state.json"
+    data = json.loads(state.read_text(encoding="utf-8"))
+    data["entry_chat_id"] = "c1"
+    state.write_text(json.dumps(data), encoding="utf-8")
+    index = HistoryIndex(tmp_path)
+
+    with pytest.raises(history_index.HistoryIndexIncomplete, match="meridian doctor"):
+        index.spawns()
+    marker = json.loads(index.failure_path.read_text(encoding="utf-8"))
+    assert marker["code"] == "authority"
+    assert "meridian doctor" in marker["reason"]
+
+    migration = migrate_dogfood_spawn_rows(tmp_path)
+    assert migration.migrated == (key,)
+    assert not index.failure_path.exists()
+    assert [row.id for row in index.spawns()] == [key]
+
+
+def test_quarantined_state_authority_failure_names_non_dogfood_row(tmp_path: Path) -> None:
+    from meridian.lib.state import spawn_store
+
+    key = spawn_store.start_spawn(
+        tmp_path, chat_id="c1", prompt="hello", model="test", agent="coder", harness="codex"
+    )
+    spawn_store.finalize_spawn(tmp_path, key, status="succeeded", exit_code=0, origin="runner")
+    state = tmp_path / "spawns" / key / "state.json"
+    state.write_text('{"truncated":', encoding="utf-8")
+    index = HistoryIndex(tmp_path)
+
+    with pytest.raises(history_index.HistoryIndexIncomplete) as failure:
+        index.spawns()
+
+    assert str(state) in str(failure.value)
+    assert "meridian doctor" not in str(failure.value)
 
 
 def test_owned_timeout_is_sticky_but_cancellation_is_not(tmp_path: Path, monkeypatch) -> None:
@@ -95,7 +142,7 @@ def test_owned_timeout_is_sticky_but_cancellation_is_not(tmp_path: Path, monkeyp
     with pytest.raises(KeyboardInterrupt):
         index.spawns()
     assert not index.failure_path.exists()
-    assert not (index.directory / ".build.sqlite3").exists()
+    assert not index.stage.exists()
 
 
 def test_source_contention_is_not_a_sticky_failure(tmp_path: Path) -> None:
@@ -150,28 +197,38 @@ def test_status_and_counts_do_not_build_or_drain(tmp_path: Path, monkeypatch) ->
     assert changes.inspect() == before
 
 
-def test_schema_classification_is_read_only_and_upgrade_is_automatic(tmp_path: Path) -> None:
+@pytest.mark.parametrize("foreign", [2, "next"])
+def test_foreign_schema_in_this_file_is_read_only_and_never_hydrated(
+    tmp_path: Path, foreign: int | str
+) -> None:
+    """Only this schema writes its file: another version is a copy, not an upgrade."""
     import sqlite3
 
+    from meridian.lib.state import spawn_store
+
+    spawn_store.start_spawn(
+        tmp_path, chat_id="c1", prompt="hello", model="test", agent="coder", harness="codex"
+    )
     index = HistoryIndex(tmp_path)
-    old_build = index.rebuild().build
+    index.rebuild()
+    version = history_index.SCHEMA_VERSION + 1 if foreign == "next" else foreign
     with sqlite3.connect(index.path) as db:
         db.execute("PRAGMA journal_mode=DELETE")
-        db.execute("UPDATE meta SET version=1")
+        db.execute("UPDATE meta SET version=?", (version,))
+        db.execute("UPDATE records SET record_json = 'not-json'")
     original = index.path.read_bytes()
-    status = index.inspect()
-    assert status.baseline == "outdated"
-    assert status.upgrade == "reproject"
-    assert status.reason == "metadata rebuild required (reproject)"
-    assert index.path.read_bytes() == original
-    assert index.spawns() == ()
-    assert index.inspect().build != old_build
-    with sqlite3.connect(index.path) as db:
-        db.execute("UPDATE meta SET version=999")
-    assert index.inspect().baseline == "incompatible"
-    with pytest.raises(history_index.HistoryIndexIncomplete, match="incompatible"):
+    status = index.classify(deadline=time.monotonic() + 2)
+    assert status.baseline == "incompatible" and status.schema == version
+    assert status.reason == f"Index schema {version} does not match {index.path.name}."
+    with pytest.raises(
+        history_index.HistoryIndexIncomplete,
+        match=r"incompatible.*meridian session index rebuild --metadata-only",
+    ):
         index.spawns()
+    assert index.path.read_bytes() == original
     assert not index.failure_path.exists()
+    assert index.rebuild().complete
+    assert index.inspect().baseline == "current"
 
 
 def test_explicit_deadline_does_not_start_implicit_initialization(tmp_path: Path) -> None:
@@ -274,7 +331,7 @@ def test_published_build_needs_no_staging_unlink(tmp_path: Path, monkeypatch) ->
     original_unlink = Path.unlink
 
     def fail_cleanup(path, *args, **kwargs):
-        if path.name.startswith(".build.sqlite3") and index.path.exists():
+        if path.name.startswith(index.stage.name) and index.path.exists():
             raise PermissionError("post-publication staging cleanup failed")
         return original_unlink(path, *args, **kwargs)
 
@@ -288,7 +345,7 @@ def test_staging_cleanup_failure_does_not_replace_cancellation(tmp_path: Path, m
     original_unlink = Path.unlink
 
     def fail_cleanup(path, *args, **kwargs):
-        if path.name == ".build.sqlite3" and path.exists():
+        if path == index.stage and path.exists():
             raise PermissionError("pre-publication staging cleanup failed")
         return original_unlink(path, *args, **kwargs)
 
@@ -309,7 +366,7 @@ def test_session_projection_matches_authority_for_nonobject_lines(tmp_path: Path
 
     (tmp_path / "sessions.jsonl").write_text('[]\nnull\n{"event":"unknown"}\n')
     assert session_store.list_session_generations(tmp_path) == ()
-    assert HistoryIndex(tmp_path).candidates() == ()
+    assert HistoryIndex(tmp_path).sessions() == []
 
 
 def test_corpus_shares_one_cold_budget_and_does_not_latch_skipped_roots(
@@ -343,7 +400,9 @@ def test_corpus_shares_one_cold_budget_and_does_not_latch_skipped_roots(
         return original_project(self, db, source)
 
     monkeypatch.setattr(HistoryIndex, "_project", slow_project)
-    output = session_search.session_search_sync(session_search.SessionSearchInput(query="missing"))
+    output = session_search.session_search_sync(
+        session_search.SessionSearchInput(query="missing", work_id="work")
+    )
     assert not output.complete
     assert HistoryIndex(roots[0]).path.exists()
     assert HistoryIndex(roots[1]).failure_path.exists()  # This root owned an exhausted build.
@@ -360,8 +419,11 @@ def test_all_warm_corpus_does_not_reset_its_deadline_after_classification(
     from meridian.lib.ops.session_corpus import SessionCorpusScope
 
     roots = [tmp_path / str(number) for number in range(2)]
+    from meridian.lib.state.native_search_index import NativeSearchIndex
+
     for root in roots:
         HistoryIndex(root).rebuild()
+        NativeSearchIndex.for_runtime(root)
     scopes = tuple(SessionCorpusScope(tmp_path, root, str(root)) for root in roots)
     monkeypatch.setattr(
         session_search,
@@ -384,6 +446,8 @@ def test_all_warm_corpus_does_not_reset_its_deadline_after_classification(
         return result
 
     monkeypatch.setattr(HistoryIndex, "classify", slow_classify)
-    output = session_search.session_search_sync(session_search.SessionSearchInput(query="missing"))
-    assert not output.complete and output.truncated
+    output = session_search.session_search_sync(
+        session_search.SessionSearchInput(query="missing", work_id="work")
+    )
+    assert not output.complete and not output.truncated
     assert all(not HistoryIndex(root).failure_path.exists() for root in roots)

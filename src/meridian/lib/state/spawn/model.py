@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
+from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES, SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import OptionalPersistedChatId, OptionalPersistedHarnessSessionId
 
@@ -76,6 +76,22 @@ class TerminalFacts(BaseModel):
     managed_scopes_pending: bool = False
 
 
+class RunBoundaryOutcome(BaseModel):
+    """Identity verification at the boundary between an entry and exit chat."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    status: Literal["verified", "unresolved", "mismatch"]
+    exit_chat_id: OptionalPersistedChatId = None
+    trampoline_successor_id: str | None = None
+
+    @model_validator(mode="after")
+    def _verified_has_exit_chat(self) -> Self:
+        if (self.status == "verified") != (self.exit_chat_id is not None):
+            raise ValueError("exit_chat_id must be set exactly when status is verified")
+        return self
+
+
 class SpawnStateFields(BaseModel):
     """Fields shared by the stored and prompt-bearing state projections."""
 
@@ -91,6 +107,7 @@ class SpawnStateFields(BaseModel):
     retained_history_ids: tuple[UUID, ...] = ()
     state_revision: int = Field(default=0, ge=0)
     chat_id: OptionalPersistedChatId = None
+    run_boundary: RunBoundaryOutcome | None = None
     owner_chat_id: OptionalPersistedChatId = None
     parent_id: str | None = None
     originating_bash_id: str | None = None
@@ -124,10 +141,20 @@ class SpawnStateFields(BaseModel):
     terminal: TerminalFacts | None = None
     launch_policy_snapshot: LaunchPolicySnapshot | None = None
 
+
 class SpawnRecord(SpawnStateFields):
     """Prompt-bearing state projection assembled from persisted spawn state."""
 
     prompt: str | None = None
+
+    @property
+    def continue_chat_id(self) -> str | None:
+        """Verified terminal exit, otherwise the immutable entry chat."""
+        if self.status in TERMINAL_SPAWN_STATUSES and (
+            self.run_boundary is not None and self.run_boundary.status == "verified"
+        ):
+            return self.run_boundary.exit_chat_id
+        return self.chat_id
 
 
 __all__ = [
@@ -141,6 +168,7 @@ __all__ = [
     "LaunchMode",
     "LaunchPolicySnapshot",
     "PersistedSpawnStatus",
+    "RunBoundaryOutcome",
     "RunnerExitFacts",
     "SpawnKind",
     "SpawnOrigin",

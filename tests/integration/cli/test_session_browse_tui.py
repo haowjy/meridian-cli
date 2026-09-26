@@ -226,9 +226,51 @@ def test_plain_browse_and_bare_continue_are_identical(tmp_path) -> None:
     )
 
     assert browse.returncode == bare.returncode == 0
-    assert browse.stderr == bare.stderr == ""
+    assert "Imported native sessions for 0 of 1 existing chats" in browse.stderr
+    assert bare.stderr == ""
     assert re.sub(r"\b\d+[smhd]\b", "AGE", browse.stdout) == re.sub(
         r"\b\d+[smhd]\b", "AGE", bare.stdout
     )
     assert "C-ID" in browse.stdout
     assert chat_id in browse.stdout
+
+
+def test_plain_browse_keeps_unbound_chat_visible(tmp_path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    project_id = "session-browse-unbound"
+    (project_root / "meridian.toml").write_text(
+        f'[project]\nid = "{project_id}"\n', encoding="utf-8"
+    )
+    meridian_home = tmp_path / "meridian-home"
+    runtime_root = meridian_home / "projects" / project_id
+    runtime_root.mkdir(parents=True)
+    (runtime_root / "legacy-native-import-v1.json").write_text("{}\n", encoding="utf-8")
+    bound = session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id="88888888-8888-4888-8888-888888888888",
+        native_store=(meridian_home / ".codex" / "sessions").as_posix(),
+        model="gpt-5.4",
+        kind="primary",
+    )
+    unbound = session_store.start_session(
+        runtime_root,
+        harness="pi",
+        harness_session_id="99999999-9999-4999-8999-999999999999",
+        model="gpt-5.4",
+        kind="primary",
+    )
+    session_store.stop_session(runtime_root, bound)
+    session_store.stop_session(runtime_root, unbound)
+
+    result = _run_meridian(
+        ["session", "browse", "--plain"],
+        cwd=project_root,
+        meridian_home=meridian_home,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert bound in result.stdout
+    assert unbound in result.stdout
+    assert "unbound" in result.stdout

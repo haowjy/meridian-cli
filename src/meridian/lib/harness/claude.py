@@ -1,17 +1,24 @@
 """Claude CLI harness adapter."""
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, ClassVar, cast
+from typing import ClassVar
 from uuid import uuid4
 
-from meridian.lib.core.conversation import Conversation, ConversationTurn, ToolCall
-from meridian.lib.core.domain import SpawnStatus, TokenUsage
-from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId, TransportId
+from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.native_identity import (
+    LaunchIntent,
+    NativeIdentity,
+    NativeKeyFields,
+    NativeSessionUnavailable,
+    Operation,
+    PostExit,
+)
+from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     CLAUDE_SPAWN_USAGE_VARIANTS,
     ApprovalContract,
-    ArtifactStore,
     BaseHarnessAdapter,
     BootstrapContract,
     BootstrapMode,
@@ -27,35 +34,26 @@ from meridian.lib.harness.adapter import (
     ProjectionMode,
     RecordConfigDirFn,
     RunPromptPolicy,
-    SessionSeedMode,
     SpawnParams,
     TransportContract,
 )
 from meridian.lib.harness.bundle import (
     HarnessBundle,
     HarnessProjectionPorts,
-    project_subprocess_spec,
     register_harness_bundle,
 )
 from meridian.lib.harness.claude_preflight import (
     build_claude_preflight_result,
     ensure_claude_session_accessible,
+    validate_claude_session_file,
 )
 from meridian.lib.harness.claude_sessions import (
     candidate_claude_project_dirs,
-    detect_primary_session_id,
     reconcile_tui_trampoline_session_id,
+    resolve_claude_config_root,
 )
 from meridian.lib.harness.claude_sessions import (
     project_slug as project_slug,
-)
-from meridian.lib.harness.claude_utils import (
-    extract_session_id_from_args,
-    has_session_identity_in_args,
-)
-from meridian.lib.harness.common import (
-    extract_claude_report,
-    extract_session_id_from_artifacts_with_patterns,
 )
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
@@ -70,7 +68,6 @@ from meridian.lib.harness.semantics import (
     connection_closed_outcome,
     stringify_terminal_error,
 )
-from meridian.lib.launch.claude_session_access import resolve_claude_session_access_source
 from meridian.lib.launch.composition import (
     ComposedLaunchContent,
     ProjectedContent,
@@ -82,7 +79,6 @@ from meridian.lib.launch.composition import (
 )
 from meridian.lib.launch.constants import (
     BASE_COMMAND_CLAUDE_SUBPROCESS,
-    OUTPUT_FILENAME,
     PRIMARY_BASE_COMMAND_CLAUDE,
 )
 from meridian.lib.launch.launch_types import (
@@ -128,51 +124,14 @@ def _extract_passthrough_session_id(args: tuple[str, ...]) -> str:
     return ""
 
 
-def _read_artifact_text(artifacts: ArtifactStore, spawn_id: SpawnId, name: str) -> str:
-    key = ArtifactKey(f"{spawn_id}/{name}")
-    if not artifacts.exists(key):
-        return ""
-    return artifacts.get(key).decode("utf-8", errors="ignore")
-
-
-def _read_output_payloads(artifacts: ArtifactStore, spawn_id: SpawnId) -> list[dict[str, object]]:
-    raw_output = _read_artifact_text(artifacts, spawn_id, OUTPUT_FILENAME)
-    payloads: list[dict[str, object]] = []
-    for line in raw_output.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            payload_obj = json.loads(stripped)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload_obj, dict):
-            payloads.append(cast("dict[str, object]", payload_obj))
-    return payloads
-
-
-def _tool_call_from_payload(payload: dict[str, object]) -> ToolCall | None:
-    event_type = str(payload.get("type", payload.get("event", ""))).strip().lower()
-    if event_type != "tool_use":
-        return None
-
-    tool_name = str(payload.get("name", "")).strip()
-    if not tool_name:
-        return None
-
-    raw_input = payload.get("input")
-    tool_input: dict[str, Any] = (
-        cast("dict[str, Any]", raw_input) if isinstance(raw_input, dict) else {}
-    )
-    output_text: str | None = None
-    output_value = payload.get("output")
-    if isinstance(output_value, str):
-        output_text = output_value.strip() or None
-    return ToolCall(tool_name=tool_name, input=tool_input, output=output_text)
-
-
 class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """SubprocessHarness implementation for `claude`."""
+
+    native_identity = True
+    refused_identity_flags = frozenset(
+        ["--session-id", "--resume", "--continue", "--fork-session", "-r", "-c"]
+    )
+    resolves_untracked_source = True
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_CLAUDE_SUBPROCESS
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_CLAUDE
@@ -232,8 +191,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             bootstrap=BootstrapContract(
                 mode=BootstrapMode.SUBPROCESS_ONLY,
                 fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
-                primary_session_seed_mode=SessionSeedMode.PROJECTED_ARGS,
-                streaming_session_seed_mode=SessionSeedMode.PROJECTED_ARGS,
                 prelaunch_bootstrap_mode=PrelaunchBootstrapMode.ENV_OVERLAY_AND_SESSION_ACCESS,
             ),
             capability_limits=(
@@ -276,6 +233,30 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str:
         return build_claude_adhoc_agent_json(name=name, description=description, prompt=prompt)
 
+    def native_store_for_launch(
+        self,
+        *,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+        spawn_id: SpawnId,
+        operation: Operation,
+        interactive: bool,
+    ) -> str:
+        return str(
+            (
+                resolve_claude_config_root(child_env, child_cwd)
+                / "projects"
+                / project_slug(child_cwd)
+            ).resolve()
+        )
+
+    def assign_session_id(self, intent: LaunchIntent, *, store: Path) -> str | None:
+        return (
+            str(uuid4())
+            if intent.operation == "create"
+            else super().assign_session_id(intent, store=store)
+        )
+
     def resolve_launch_spec(
         self, run: SpawnParams, perms: PermissionResolver
     ) -> ResolvedLaunchSpec:
@@ -291,9 +272,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 "max": "max",
             }.get(normalized_value, normalized_value)
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
-        effective_extra_args = run.extra_args
-        if continue_session_id is None and not has_session_identity_in_args(run.extra_args):
-            effective_extra_args = (*run.extra_args, "--session-id", str(uuid4()))
 
         # prompt_file_path is owned by bind_launch_context, which sets it to
         # <spawn-log-dir>/system-prompt.md (the single artifact-dir authority).
@@ -313,7 +291,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             continue_session_id=continue_session_id,
             continue_fork=run.continue_fork and continue_session_id is not None,
             permission_resolver=perms,
-            extra_args=effective_extra_args,
+            extra_args=run.extra_args,
             interactive=run.interactive,
             mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
@@ -338,11 +316,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             passthrough_args=passthrough_args,
         )
 
-    def build_command(self, run: SpawnParams, perms: PermissionResolver) -> list[str]:
-        spec = self.resolve_launch_spec(run, perms)
-        base_command = self.PRIMARY_BASE_COMMAND if spec.interactive else self.BASE_COMMAND
-        return project_subprocess_spec(self.id, spec, base_command=base_command)
-
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:
         # MCP injection is off by default — agents use the CLI instead.
         # Users who want always-on MCP can configure it in their harness settings.
@@ -357,21 +330,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         # sentinel so child Claude spawns can run under Meridian control.
         return frozenset({"CLAUDECODE"})
 
-    def derive_primary_seeded_session_id(
-        self,
-        *,
-        spec: ResolvedLaunchSpec,
-        command: tuple[str, ...],
-    ) -> str | None:
-        return extract_session_id_from_args(command)
-
-    def derive_streaming_seeded_session_id(
-        self,
-        *,
-        spec: ResolvedLaunchSpec,
-    ) -> str | None:
-        return extract_session_id_from_args(spec.extra_args)
-
     def prepare_prelaunch(
         self,
         *,
@@ -385,35 +343,20 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     ) -> HarnessPrelaunchState:
         _ = runtime_root, spawn_id
 
-        configured_root = child_env.get("CLAUDE_CONFIG_DIR", "").strip()
-        effective_config_root: Path | None = None
-        if configured_root:
-            config_path = Path(configured_root)
-            if configured_root == "~" or configured_root.startswith("~/"):
-                child_home = child_env.get("HOME", "").strip()
-                if child_home:
-                    config_path = Path(child_home) / configured_root.removeprefix("~/")
-            if not config_path.is_absolute():
-                config_path = child_cwd / config_path
-            effective_config_root = config_path.resolve()
-        if effective_config_root is not None:
-            effective_config_dir = str(effective_config_root)
-            if record_effective_config_dir is not None:
-                record_effective_config_dir(effective_config_dir)
+        effective_config_root = resolve_claude_config_root(child_env, child_cwd)
+        if record_effective_config_dir is not None:
+            record_effective_config_dir(str(effective_config_root))
 
-        session_access = resolve_claude_session_access_source(
-            session,
-            control_root=child_cwd,
-            materialization_root=effective_config_root,
-            target_config_root=effective_config_root,
-        )
-        if session_access.should_seed:
+        source_id = session.requested_harness_session_id
+        if source_id:
+            source_store = session.source_native_store
             ensure_claude_session_accessible(
-                source_session_id=session_access.source_session_id or resolved_harness_session_id,
-                source_cwd=session_access.source_control_root,
-                child_cwd=session_access.target_control_root or child_cwd,
-                source_config_root=session_access.source_config_root,
-                target_config_root=session_access.target_config_root,
+                source_session_id=source_id,
+                child_cwd=child_cwd,
+                source_native_store=Path(source_store)
+                if source_store
+                else (effective_config_root / "projects" / project_slug(child_cwd)),
+                target_config_root=effective_config_root,
             )
 
         return HarnessPrelaunchState()
@@ -427,59 +370,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         state: HarnessPrelaunchState,
     ) -> None:
         _ = runtime_root, spawn_id, chat_id, state
-
-    def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
-        return CLAUDE_EXTRACTOR.extract_usage(artifacts, spawn_id)
-
-    def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return extract_session_id_from_artifacts_with_patterns(artifacts, spawn_id)
-
-    def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return extract_claude_report(artifacts, spawn_id)
-
-    def extract_conversation(
-        self, artifacts: ArtifactStore, spawn_id: SpawnId
-    ) -> Conversation | None:
-        payloads = _read_output_payloads(artifacts, spawn_id)
-        tool_calls = tuple(
-            tool_call
-            for payload in payloads
-            if (tool_call := _tool_call_from_payload(payload)) is not None
-        )
-
-        # Read user-turn content: prefer starting-prompt.md (new), fall back to prompt.md (legacy)
-        prompt_text = (
-            _read_artifact_text(artifacts, spawn_id, "starting-prompt.md")
-            or _read_artifact_text(artifacts, spawn_id, "prompt.md")
-        ).strip()
-        report_text = _read_artifact_text(artifacts, spawn_id, "report.md").strip()
-        if not report_text:
-            fallback_report = extract_claude_report(artifacts, spawn_id)
-            report_text = fallback_report.strip() if fallback_report else ""
-
-        if not prompt_text and not report_text and not tool_calls:
-            return None
-
-        turns: list[ConversationTurn] = []
-        if prompt_text:
-            turns.append(ConversationTurn(role="user", content=prompt_text))
-        if report_text or tool_calls:
-            turns.append(
-                ConversationTurn(
-                    role="assistant",
-                    content=report_text,
-                    tool_calls=tool_calls,
-                )
-            )
-
-        if not turns:
-            return None
-
-        return Conversation(
-            spawn_id=str(spawn_id),
-            harness=str(self.id),
-            turns=tuple(turns),
-        )
 
     def seed_session(
         self,
@@ -530,56 +420,39 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             ),
         )
 
-    def detect_primary_session_id(
+    def observe_after_exit(
         self,
+        identity: NativeIdentity,
+        entry: NativeKeyFields,
         *,
-        project_root: Path,
-        started_at_epoch: float,
-        started_at_local_iso: str | None,
-        expected_session_id: str | None = None,
-    ) -> str | None:
-        _ = started_at_local_iso
-        return detect_primary_session_id(
-            project_root,
-            started_at_epoch,
-            expected_session_id=expected_session_id,
-        )
-
-    def observe_session_id(
-        self,
-        *,
-        artifacts: ArtifactStore,
-        spawn_id: SpawnId | None = None,
-        current_session_id: str | None = None,
-        connection_session_id: str | None = None,
-        project_root: Path | None = None,
-        started_at_epoch: float | None = None,
-        started_at_local_iso: str | None = None,
-        expected_session_id: str | None = None,
-    ) -> str | None:
-        _ = started_at_local_iso
-
-        live_session_id = (connection_session_id or "").strip()
-        if live_session_id:
-            return live_session_id
-
-        if spawn_id is not None:
-            extracted_session_id = (self.extract_session_id(artifacts, spawn_id) or "").strip()
-            if extracted_session_id:
-                return extracted_session_id
-
-        normalized_current = (current_session_id or expected_session_id or "").strip()
-        if not normalized_current:
-            return None
-        if project_root is None:
-            return (current_session_id or "").strip() or None
-
-        reconciled = reconcile_tui_trampoline_session_id(
-            project_root=project_root,
-            recorded_session_id=normalized_current,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+        pid: int | None,
+        started_at_epoch: float | None,
+    ) -> PostExit:
+        successor = reconcile_tui_trampoline_session_id(
+            project_root=child_cwd,
+            recorded_session_id=entry.session_id or "",
             started_at_epoch=started_at_epoch,
+            native_store=Path(identity.native_store),
         )
-        return reconciled or (current_session_id or "").strip() or None
+        return PostExit(
+            trampoline_successor_id=successor if successor != entry.session_id else None,
+        )
+
+    def resolve_native_session_file(
+        self,
+        *,
+        session_id: str,
+        native_store: Path,
+    ) -> Path | None:
+        if Path(session_id).name != session_id or ".." in session_id:
+            raise NativeSessionUnavailable(session_id, "missing")
+        candidate = native_store / f"{session_id}.jsonl"
+        if not candidate.is_file():
+            return None
+        validate_claude_session_file(candidate, session_id)
+        return candidate
 
     def resolve_session_file(
         self,
@@ -591,11 +464,17 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         normalized_session_id = session_id.strip()
         if not normalized_session_id:
             return None
-        for project_dir in _candidate_claude_project_dirs(project_root, config_root_hint):
-            candidate = project_dir / f"{normalized_session_id}.jsonl"
-            if candidate.is_file():
-                return candidate
-        return None
+        project_dirs = _candidate_claude_project_dirs(project_root, config_root_hint)
+        matches = [
+            directory / f"{normalized_session_id}.jsonl"
+            for directory in project_dirs
+            if (directory / f"{normalized_session_id}.jsonl").is_file()
+        ]
+        if len(matches) > 1:
+            raise NativeSessionUnavailable(normalized_session_id, "ambiguous_native_file")
+        if not matches:
+            return None
+        return matches[0]
 
     def owns_untracked_session(self, *, project_root: Path, session_ref: str) -> bool:
         normalized_session_ref = session_ref.strip()

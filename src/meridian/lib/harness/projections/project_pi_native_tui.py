@@ -6,9 +6,11 @@ import logging
 from collections.abc import Sequence
 
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.pi_identity import project_identity
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
+from meridian.lib.harness.projections._prompt_arg import check_prompt_argument
 from meridian.lib.harness.projections.permission_flags import resolve_permission_flags
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
@@ -16,13 +18,13 @@ logger = logging.getLogger(__name__)
 
 _PROJECTED_FIELDS: frozenset[str] = frozenset(
     {
+        "native_identity",
         "model",
         "effort",
-        "continue_session_id",
-        "continue_fork",
         "permission_resolver",
         "extra_args",
         "interactive",
+        "prompt",
         "appended_system_prompt",
         "pi_extension_entrypoints",
         "load_all_pi_extensions",
@@ -31,17 +33,18 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
 
 _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
+        "continue_session_id",
+        "continue_fork",
         "harness",
         "agent_name",
         "agents_payload",
         "claude_native_agents_enabled",
-        "prompt",
         "prompt_file_path",
+        "user_turn_content",
         "base_instructions",
         "developer_instructions",
         "report_output_path",
         "web_search_enabled",
-        "user_turn_content",
         "skills",
         "reference_items",
         "mcp_tools",
@@ -56,10 +59,7 @@ _MANAGED_FLAG_ALIASES: dict[str, tuple[str, ...]] = {
     "--model": ("--model", "-m"),
     "--thinking": ("--thinking",),
     "--append-system-prompt": ("--append-system-prompt",),
-    "--session": ("--session",),
-    "--fork": ("--fork",),
     "--mode": ("--mode",),
-    "--session-dir": ("--session-dir",),
     "--no-extensions": ("--no-extensions",),
     "-e": ("-e", "--extension"),
 }
@@ -108,32 +108,11 @@ def _reject_mode_collisions(passthrough_tail: tuple[str, ...]) -> None:
             "Pi native primary launches cannot accept --mode from passthrough extra_args; "
             "remove --mode to keep native TUI mode"
         )
-    if any(
-        _has_flag(passthrough_tail, alias) for alias in _MANAGED_FLAG_ALIASES["--session-dir"]
-    ):
-        raise ValueError(
-            "Pi native primary launches cannot accept --session-dir from passthrough extra_args; "
-            "Meridian owns --session-dir for managed session storage"
-        )
-
-
-def _reject_continue_collisions(passthrough_tail: tuple[str, ...]) -> None:
-    if any(_has_flag(passthrough_tail, alias) for alias in _MANAGED_FLAG_ALIASES["--session"]):
-        raise ValueError(
-            "Pi native primary launches cannot accept --session from passthrough extra_args; "
-            "Meridian owns continue-session selection"
-        )
-    if any(_has_flag(passthrough_tail, alias) for alias in _MANAGED_FLAG_ALIASES["--fork"]):
-        raise ValueError(
-            "Pi native primary launches cannot accept --fork from passthrough extra_args; "
-            "Meridian owns continue-fork session selection"
-        )
 
 
 def _reject_extension_collisions(passthrough_tail: tuple[str, ...]) -> None:
     if any(
-        _has_flag(passthrough_tail, alias)
-        for alias in _MANAGED_FLAG_ALIASES["--no-extensions"]
+        _has_flag(passthrough_tail, alias) for alias in _MANAGED_FLAG_ALIASES["--no-extensions"]
     ):
         raise ValueError(
             "Pi native primary launches cannot accept --no-extensions from passthrough extra_args; "
@@ -183,11 +162,7 @@ def project_pi_native_tui_spec_to_cli_args(
     if spec.appended_system_prompt:
         command.extend(("--append-system-prompt", spec.appended_system_prompt))
 
-    continue_session_id = (spec.continue_session_id or "").strip()
-    has_continue_session = bool(continue_session_id)
-    has_continue_fork = has_continue_session and spec.continue_fork
     _reject_mode_collisions(passthrough_tail)
-    _reject_continue_collisions(passthrough_tail)
     _reject_extension_collisions(passthrough_tail)
 
     _log_collision_if_needed(
@@ -211,17 +186,21 @@ def project_pi_native_tui_spec_to_cli_args(
         passthrough_tail=passthrough_tail,
     )
 
-    if has_continue_session:
-        if has_continue_fork:
-            command.extend(("--fork", continue_session_id))
-        else:
-            command.extend(("--session", continue_session_id))
+    command.extend(project_identity(spec.native_identity))
 
     for extension_entrypoint in spec.pi_extension_entrypoints:
         command.extend(("-e", extension_entrypoint))
 
     command.extend(resolve_permission_flags(spec.permission_resolver, HarnessId.PI))
     command.extend(passthrough_tail)
+
+    if spec.interactive and spec.prompt:
+        # Pi treats a leading @ as a file reference even after --; a leading
+        # space keeps the initial user message literal without changing content.
+        prompt = check_prompt_argument(spec.prompt)
+        if prompt.startswith("@"):
+            prompt = f" {prompt}"
+        command.extend(("--", prompt))
 
     return command
 

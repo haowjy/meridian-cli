@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import sqlite3
 import time
-import zipfile
-import zlib
+from collections import Counter
 from collections.abc import Iterator, Sequence
+from pathlib import Path
+from shlex import quote
 from typing import NamedTuple
 
 from pydantic import BaseModel, ConfigDict, computed_field
@@ -20,15 +21,14 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_authority_for_read,
 )
 from meridian.lib.ops.session_corpus import SessionCorpusScope, resolve_session_search_corpus
-from meridian.lib.ops.session_target import resolve_session_log_target
+from meridian.lib.ops.session_search_index import SearchProjection
+from meridian.lib.ops.session_target import native_source_label
 from meridian.lib.ops.session_transcript import (
     AbsoluteTranscriptEntry,
     ParsedSessionTranscript,
-    TranscriptBudget,
+    SessionLogRoute,
     build_session_log_command,
-    parse_session_target,
     read_session_transcript,
-    route_for_corpus_target,
 )
 from meridian.lib.state.history_index import (
     INITIALIZATION_TIMEOUT,
@@ -36,6 +36,7 @@ from meridian.lib.state.history_index import (
     HistoryIndex,
     HistoryIndexIncomplete,
 )
+from meridian.lib.state.native_search_index import SearchRow, discard_native_search_index
 
 _PREVIEW_LIMIT = 200
 _OPEN_CONTEXT = 5
@@ -57,7 +58,6 @@ class SessionSearchInput(BaseModel):
     work_id: str | None = None
     workspace: bool = False
     global_scope: bool = False
-    include_archives: bool = False
 
 
 class SessionSearchMatch(BaseModel):
@@ -66,6 +66,7 @@ class SessionSearchMatch(BaseModel):
     corpus: str
     chat_id: str
     session_id: str
+    chat_ids: tuple[str, ...] = ()
     source: str | None = None
     segment: int
     segment_start_message: int
@@ -82,11 +83,15 @@ class SessionSearchOutput(BaseModel):
     matches: tuple[SessionSearchMatch, ...]
     truncated: bool = False
     errors: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+    sources_total: int = 0
+    sources_not_searched: int = 0
+    sources_pending: int = 0
 
     @computed_field
     @property
     def complete(self) -> bool:
-        return not self.truncated and not self.errors
+        return not self.truncated and not self.errors and not self.sources_not_searched
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
@@ -97,7 +102,38 @@ class SessionSearchOutput(BaseModel):
             headline = f"Session search — {len(self.matches)} {match_label}"
         else:
             headline = "Session search — no matches"
-        lines = [headline]
+        searched = max(0, self.sources_total - self.sources_not_searched)
+        if self.complete:
+            coverage = f"Searched {self.sources_total} sources (complete)."
+            if self.warnings:
+                coverage = (
+                    f"Searched {self.sources_total} sources "
+                    f"(complete; {len(self.warnings)} warnings)."
+                )
+        else:
+            reasons: list[str] = []
+            if self.sources_pending:
+                reasons.append(f"{self.sources_pending} pending")
+            unavailable = max(0, self.sources_not_searched - self.sources_pending)
+            if unavailable:
+                reason_counts = Counter(error.partition(": ")[2] or error for error in self.errors)
+                if reason_counts:
+                    reasons.extend(
+                        f"{count} unavailable ({reason})" for reason, count in reason_counts.items()
+                    )
+                else:
+                    reasons.append(f"{unavailable} unavailable")
+            if self.warnings:
+                reasons.append(f"{len(self.warnings)} warnings")
+            if self.truncated:
+                reasons.append("100-hit cap reached")
+            if not reasons:
+                reasons.append("coverage incomplete")
+            coverage = (
+                f"Searched {searched}/{self.sources_total} sources (incomplete: "
+                f"{'; '.join(reasons)})."
+            )
+        lines = [headline, coverage]
         for match in self.matches:
             lines.append("")
             lines.append(
@@ -106,11 +142,10 @@ class SessionSearchOutput(BaseModel):
                 f"messages {match.segment_start_message}-{match.segment_end_message}] "
                 f"[{match.role}] ---"
             )
+            if len(match.chat_ids) > 1:
+                lines.append("Chats: " + ", ".join(match.chat_ids))
             lines.append(match.content_preview)
             lines.append(f"Open: {match.open_command}")
-        if self.truncated:
-            lines.append("Search truncated by content/time/match budget.")
-        lines.extend(self.errors)
         return "\n".join(lines)
 
 
@@ -133,39 +168,37 @@ def iter_session_subset_search(
             yield SubsetSearchStep(chat_id, False, f"Chat '{chat_id}' not found")
         return
 
-    for chat_id in chat_ids:
-        try:
-            target = resolve_session_log_target(
-                ref=chat_id,
-                file_path=None,
-                project_root=authority.project_root,
-                runtime_root=authority.runtime_root,
+    try:
+        projection = SearchProjection.open(authority.runtime_root, authority.project_root)
+        keys = projection.scope(frozenset(chat_ids))
+        deadline = time.monotonic() + (INITIALIZATION_TIMEOUT if projection.cold else QUERY_TIMEOUT)
+        projection.inspect(keys, deadline=deadline)
+        projection.refresh(keys, deadline=deadline)
+        matched = {
+            chat
+            for row in projection.search(
+                normalized_query, limit=None, deadline=time.monotonic() + QUERY_TIMEOUT
             )
-            transcript = parse_session_target(
-                project_root=authority.project_root,
-                runtime_root=authority.runtime_root,
-                target=target,
-                route=route_for_corpus_target(target),
-            )
-            matched = any(
-                not (entry.kind == "setup" and entry.is_placeholder)
-                and normalized_query in _normalize_content(entry.content).lower()
-                for entry in transcript.all_entries
-            )
-            if not transcript.search_ready:
-                matched = False
-        except (
-            ValueError,
-            OSError,
-            EOFError,
-            zipfile.BadZipFile,
-            zlib.error,
-            HistoryIndexIncomplete,
-            sqlite3.Error,
-        ) as exc:
+            for chat in keys[row.key]
+        }
+    except (ValueError, OSError, sqlite3.Error, TimeoutError) as exc:
+        for chat_id in chat_ids:
             yield SubsetSearchStep(chat_id, False, str(exc))
-            continue
-        yield SubsetSearchStep(chat_id, matched, "; ".join(transcript.read_reasons) or None)
+        return
+    by_chat = {chat: key for key, chats in keys.items() for chat in chats}
+    for chat_id in chat_ids:
+        key = by_chat.get(chat_id)
+        error = (
+            f"unbound: no verified native session for {chat_id}"
+            if key is None
+            else projection.errors.get(key)
+            or (
+                "index refreshing — run meridian session index rebuild"
+                if key not in projection.fresh
+                else None
+            )
+        )
+        yield SubsetSearchStep(chat_id, chat_id in matched, error)
 
 
 def _build_preview(content: str, *, query: str, limit: int = _PREVIEW_LIMIT) -> str:
@@ -222,8 +255,8 @@ def _matches_for_transcript(
             SessionSearchMatch(
                 corpus=corpus,
                 chat_id=chat_id,
-                session_id=transcript.target.session_id,
-                source=transcript.target.source,
+                session_id=transcript.target.source.session_id,
+                source=transcript.target.source.source_label,
                 segment=entry.segment_index,
                 segment_start_message=entry.start_segment_message_index,
                 segment_end_message=entry.end_segment_message_index,
@@ -267,12 +300,82 @@ def _search_single_target(payload: SessionSearchInput, *, query: str) -> Session
         transcript=transcript,
         query=query,
         query_lower=query_lower,
-        corpus=transcript.target.source or "session",
-        chat_id=payload.ref.strip() or transcript.target.session_id,
+        corpus=transcript.target.source.source_label,
+        chat_id=payload.ref.strip() or transcript.target.source.session_id,
     )
     return SessionSearchOutput(
         matches=tuple(matches),
-        errors=transcript.read_reasons,
+        errors=() if transcript.search_ready else transcript.read_reasons,
+        warnings=("; ".join(transcript.read_reasons),)
+        if transcript.search_ready and transcript.read_reasons
+        else (),
+        sources_total=1,
+        sources_not_searched=int(not transcript.search_ready),
+    )
+
+
+def _collect_scope(
+    payload: SessionSearchInput,
+    scope: SessionCorpusScope,
+    *,
+    cold: bool,
+    deadline: float,
+    cold_deadline: float,
+) -> tuple[SessionCorpusScope, SearchProjection, bool]:
+    projection = SearchProjection.open(scope.runtime_root, scope.project_root or scope.runtime_root)
+    cold = cold or projection.cold
+    if work_id := (payload.work_id or "").strip():
+        metadata = HistoryIndex(scope.runtime_root)
+        if metadata.classify(deadline=cold_deadline).baseline == "absent":
+            cold = True
+            metadata.initialize(deadline=cold_deadline)
+        scope = scope._replace(
+            chat_filter=frozenset(
+                metadata.work_chat_ids(work_id, deadline=cold_deadline if cold else deadline)
+            )
+        )
+    keys = projection.scope(scope.chat_filter)
+    until = cold_deadline if cold else deadline
+    projection.inspect(keys, deadline=until)
+    projection.refresh(keys, deadline=until)
+    return scope, projection, cold
+
+
+def _render_match(
+    row: SearchRow,
+    scope: SessionCorpusScope,
+    projection: SearchProjection,
+    *,
+    query: str,
+    runtime_root: Path | None,
+) -> SessionSearchMatch:
+    chats = projection.scope(scope.chat_filter)[row.key]
+    command = build_session_log_command(
+        SessionLogRoute("ref", chats[0]),
+        segment_index=row.segment,
+        from_ordinal=0 if row.kind == "setup" else None,
+        limit=1 if row.kind == "setup" else None,
+        around_ordinal=row.ordinal if row.kind != "setup" else None,
+        context=_OPEN_CONTEXT if row.kind != "setup" else None,
+    )
+    if scope.runtime_root != runtime_root:
+        command = (
+            "env -u MERIDIAN_PROJECT_DIR -u _MERIDIAN_DEPTH "
+            f"_MERIDIAN_RUNTIME_DIR={quote(str(scope.runtime_root))} " + command
+        )
+    return SessionSearchMatch(
+        corpus=scope.label,
+        chat_id=chats[0],
+        chat_ids=chats,
+        session_id=row.key.session_id,
+        source=native_source_label(row.key.harness),
+        segment=row.segment or 0,
+        segment_start_message=row.seg_start or 0,
+        segment_end_message=row.seg_end or 0,
+        entry_ordinal=row.ordinal,
+        role=row.role or "",
+        content_preview=_build_preview(row.content, query=query),
+        open_command=command,
     )
 
 
@@ -286,7 +389,9 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
         else resolve_project_authority(payload.project_root).project_root
     )
     runtime_root = roots.runtime_root if roots is not None else None
-    deadline = time.monotonic() + QUERY_TIMEOUT
+    started = time.monotonic()
+    deadline = started + QUERY_TIMEOUT
+    cold_deadline = started + INITIALIZATION_TIMEOUT
     try:
         scopes = resolve_session_search_corpus(
             project_root=project_root,
@@ -298,101 +403,83 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
     except (ValueError, OSError, HistoryIndexIncomplete, sqlite3.Error) as exc:
         return SessionSearchOutput(matches=(), errors=(f"Corpus discovery: {exc}",))
 
-    matches: list[SessionSearchMatch] = []
+    projections: list[tuple[SessionCorpusScope, SearchProjection]] = []
+    candidates: list[tuple[SearchRow, SessionCorpusScope, SearchProjection]] = []
     errors: list[str] = []
-    # All-warm preflight consumes the same query deadline. Only actual cold
-    # initialization starts a separate phase, shared across every runtime root.
-    initialization_deadline: float | None = None
-    available: list[SessionCorpusScope] = []
-    for scope in scopes:
+    warnings: list[str] = []
+    cold = False
+    total = not_searched = pending = 0
+
+    def query_scope(scope: SessionCorpusScope, projection: SearchProjection, until: float) -> None:
+        if time.monotonic() >= until:
+            errors.append(f"{scope.label}: query deadline exceeded")
+            return
         try:
-            index = HistoryIndex(scope.runtime_root)
-            status = index.classify(
-                deadline=(deadline if initialization_deadline is None else initialization_deadline)
+            candidates.extend(
+                (row, scope, projection) for row in projection.search(query, deadline=until)
             )
-            if status.baseline in {"absent", "outdated"}:
-                if initialization_deadline is None:
-                    initialization_deadline = time.monotonic() + INITIALIZATION_TIMEOUT
-                index.initialize(deadline=initialization_deadline)
-            available.append(scope)
-        except (ValueError, OSError, HistoryIndexIncomplete, sqlite3.Error) as exc:
+        except (sqlite3.DatabaseError, TimeoutError) as exc:
+            if isinstance(exc, sqlite3.DatabaseError) and not any(
+                reason in str(exc) for reason in ("locked", "interrupted")
+            ):
+                discard_native_search_index(scope.runtime_root)
             errors.append(f"{scope.label}: {exc}")
-    if initialization_deadline is not None:
-        deadline = time.monotonic() + QUERY_TIMEOUT
-    query_lower = query.lower()
-    budget = TranscriptBudget(deadline, 64 * 1024 * 1024)
-    truncated = False
-    for scope in available:
-        if time.monotonic() >= deadline:
-            truncated = True
+
+    for position, scope in enumerate(scopes):
+        if time.monotonic() >= (cold_deadline if cold else deadline):
+            errors.append(
+                f"{len(scopes) - position} runtime roots not searched (deadline exceeded)"
+            )
             break
         try:
-            if payload.work_id and payload.work_id.strip():
-                scope = scope._replace(
-                    chat_filter=frozenset(
-                        HistoryIndex(scope.runtime_root).work_chat_ids(
-                            payload.work_id.strip(), deadline=deadline
-                        )
-                    )
-                )
-            rows = HistoryIndex(scope.runtime_root).candidates(
-                include_archives=payload.include_archives, deadline=deadline
+            scope, projection, cold = _collect_scope(
+                payload, scope, cold=cold, deadline=deadline, cold_deadline=cold_deadline
             )
+            keys = projection.scope(scope.chat_filter)
+            total += len(keys)
+            not_searched += len(keys) - len(projection.fresh)
+            pending += len(keys.keys() - projection.fresh - projection.errors.keys())
+            errors.extend(
+                f"{scope.label} {', '.join(keys[key])}: {error}"
+                for key, error in projection.errors.items()
+            )
+            warnings.extend(
+                f"{scope.label} {', '.join(keys[key])}: {warning}"
+                for key, warning in projection.warnings.items()
+            )
+            if retained := [
+                chat
+                for chat in projection.retained
+                if scope.chat_filter is None or chat in scope.chat_filter
+            ]:
+                warnings.append(
+                    f"{scope.label} {', '.join(retained)}: historical snapshots are not "
+                    "in corpus search; search one by ref"
+                )
+            if cold:
+                projections.append((scope, projection))
+            else:
+                query_scope(scope, projection, deadline)
         except (ValueError, OSError, HistoryIndexIncomplete, sqlite3.Error) as exc:
             errors.append(f"{scope.label}: {exc}")
-            continue
-        for row in rows:
-            if scope.chat_filter is not None and row.chat_id not in scope.chat_filter:
-                continue
-            if time.monotonic() >= deadline or len(matches) >= 100:
-                truncated = True
-                break
-            project_root = scope.project_root or scope.runtime_root
-            try:
-                target = resolve_session_log_target(
-                    ref=row.history_id if row.archived else row.local_id,
-                    file_path=None,
-                    project_root=project_root,
-                    runtime_root=scope.runtime_root,
-                    deadline=deadline,
-                )
-                transcript = parse_session_target(
-                    project_root=project_root,
-                    runtime_root=scope.runtime_root,
-                    target=target,
-                    route=route_for_corpus_target(target),
-                    budget=budget,
-                )
-                errors.extend(f"{row.history_id}: {reason}" for reason in transcript.read_reasons)
-                # A partial sealed source has not finished integrity validation;
-                # the matching boundary also withholds loose snapshot matches.
-                if budget.exhausted and row.archived:
-                    truncated = True
-                    break
-                found = _matches_for_transcript(
-                    transcript=transcript,
-                    query=query,
-                    query_lower=query_lower,
-                    corpus=scope.label,
-                    chat_id=row.chat_id or row.local_id,
-                )
-                if len(found) > 100 - len(matches):
-                    truncated = True
-                matches.extend(found[: 100 - len(matches)])
-                if budget.exhausted:
-                    truncated = True
-                    break
-            except (
-                ValueError,
-                OSError,
-                EOFError,
-                zipfile.BadZipFile,
-                zlib.error,
-                HistoryIndexIncomplete,
-                sqlite3.Error,
-            ) as exc:
-                errors.append(f"{row.history_id}: {exc}")
-    return SessionSearchOutput(matches=tuple(matches), truncated=truncated, errors=tuple(errors))
+    if cold:
+        deadline = time.monotonic() + QUERY_TIMEOUT
+        for scope, projection in projections:
+            query_scope(scope, projection, deadline)
+    candidates.sort(key=lambda item: (-item[0].activity, item[0].segment or 0, item[0].ordinal))
+    matches = tuple(
+        _render_match(row, scope, projection, query=query, runtime_root=runtime_root)
+        for row, scope, projection in candidates[:100]
+    )
+    return SessionSearchOutput(
+        matches=tuple(matches),
+        truncated=len(candidates) > 100,
+        errors=tuple(errors),
+        warnings=tuple(warnings),
+        sources_total=total,
+        sources_not_searched=not_searched,
+        sources_pending=pending,
+    )
 
 
 def session_search_sync(

@@ -59,21 +59,6 @@ def _build_spec() -> ResolvedLaunchSpec:
     )
 
 
-def _read_output_event_types(runtime_root: Path, spawn_id: SpawnId) -> list[str]:
-    output_path = runtime_root / "spawns" / str(spawn_id) / "history.jsonl"
-    if not output_path.exists():
-        return []
-    events: list[str] = []
-    for line in output_path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        payload = cast("dict[str, object]", json.loads(line))
-        event_type = payload.get("event_type")
-        if isinstance(event_type, str):
-            events.append(event_type)
-    return events
-
-
 @pytest.mark.asyncio
 async def test_start_spawn_cancellation_during_registration_stops_connection(
     tmp_path: Path,
@@ -260,7 +245,10 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
         status="running",
     )
     manager = SpawnManager(runtime_root=runtime_root, project_root=project_root)
-    await manager.start_spawn(_build_config(spawn_id, project_root), _build_spec())
+    observed: list[RawHarnessEvent] = []
+    await manager.start_spawn(
+        _build_config(spawn_id, project_root), _build_spec(), event_hook=observed.append
+    )
 
     try:
         await cleanup_started.wait()
@@ -278,7 +266,7 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
             success=False,
             error=f"Spawn {spawn_id} is not active",
         )
-        assert "item.completed" in _read_output_event_types(runtime_root, spawn_id)
+        assert "item.completed" in [event.event_type for event in observed]
 
         release_cleanup.set()
         await asyncio.sleep(0)

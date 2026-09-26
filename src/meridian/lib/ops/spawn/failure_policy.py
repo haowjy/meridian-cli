@@ -10,24 +10,32 @@ import asyncio
 from pathlib import Path
 
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
+from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.core.spawn_service import CompleteSpawnOutcome
 from meridian.lib.core.types import SpawnId
+from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
 
 
 async def finalize_launch_failure(
     runtime_root: Path,
     project_root: Path,
     spawn_id: SpawnId,
-    error: str,
+    error: str | Exception,
 ) -> CompleteSpawnOutcome:
     """Finalize a spawn as launch_failure. Owns the fixed tuple."""
+    if isinstance(error, NativeIdentityError):
+        record_identity_failure(
+            error,
+            phase="launch_failure",
+            lifecycle=LifecycleLog.for_spawn(runtime_root, project_root, spawn_id),
+        )
     service = build_spawn_application_service_from_roots(project_root, runtime_root)
     return await service.complete_spawn(
         spawn_id,
         "failed",
         1,
         origin="launch_failure",
-        error=error,
+        error=(error.failure_code if isinstance(error, NativeIdentityError) else str(error)),
     )
 
 
@@ -35,7 +43,7 @@ def finalize_launch_failure_sync(
     runtime_root: Path,
     project_root: Path,
     spawn_id: SpawnId,
-    error: str,
+    error: str | Exception,
 ) -> CompleteSpawnOutcome:
     """Synchronous variant for non-async call sites."""
     return asyncio.run(finalize_launch_failure(runtime_root, project_root, spawn_id, error))

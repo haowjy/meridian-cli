@@ -113,8 +113,13 @@ meridian session log p123 --full --no-truncate     # full selected segment with 
 
 Primary-session metadata from `primary_meta.json` (`kind`, `activity`,
 `managed_backend`, `backend_pid`, `tui_pid`, `backend_port`,
-`harness_session_id`, `session_config_dir`) is available in
-`spawn show --verbose` and structured JSON output, not default moderate text.
+`session_config_dir`) is available in `spawn show --verbose` and structured
+JSON output, not default moderate text. JSON for `spawn show`, `status` and
+`wait` always carries the chat identity: `chat_id` (the entry chat),
+`continue_chat_id` (a finished run's verified exit chat, otherwise the entry
+chat) and `run_boundary` (`null` when absent). The native harness session ID is
+not in JSON; `spawn show --verbose` prints it for primaries. Resolve native
+keys from the chat.
 
 `spawn cancel-all` scopes cancellation to the calling spawn's subtree when invoked
 from inside a nested spawn (e.g., from an orchestrator agent). This prevents
@@ -141,16 +146,19 @@ For managed Codex primary startup behavior, see [codex-tui-passthrough.md](codex
 | ------- | ----------- |
 | `meridian spawn report show ID` | Show one spawn's report |
 | `meridian spawn report search "query"` | Search across all spawn reports |
-| `meridian session browse [--include-archives]` | Browse recent sessions and previews; `/` searches loose content unless ZIPs are explicitly included |
+| `meridian session browse [--include-archives]` | Browse sessions and previews; `/` searches bound native transcripts, excluding archived rows unless requested (the flag does not search ZIP contents) |
 | `meridian session log REF` | Read a chat, spawn, harness session, or ZIP-backed history UUID |
-| `meridian session search "query" [REF]` | Search one session or a scoped corpus (`--workspace`, `--global`, `--work`); add `--include-archives` for ZIP content |
-| `meridian session index status` | Inspect/catch up the disposable history index |
-| `meridian session index rebuild [--reset] [--metadata-only]` | Rebuild from authoritative files and available ZIPs; `--reset` repairs dirty-source coordination; `--metadata-only` skips preview warming |
+| `meridian session search "query" [REF]` | Search one session or a scoped corpus (`--workspace`, `--global`, `--work`); includes bound archived chats by default, never runner history |
+| `meridian session index status` | Inspect metadata and native-search coverage without rebuilding |
+| `meridian session index rebuild [--reset] [--metadata-only]` | Rebuild discovery metadata and native search from authoritative files and available ZIPs; `--reset` repairs dirty-source coordination; `--metadata-only` skips native-search rebuild; previews refresh lazily |
 | `meridian session archive REF... --destination PATH` | Plan retention of selected histories; add `--apply` to verify and reclaim loose copies |
 | `meridian session archive --eligible --destination PATH` | Plan retention by last activity (default 30 days); supports `--after-days` and `--apply` |
+| `meridian session archive --prune-runner-history [--apply] [--after-days N]` | Explicitly prune redundant runner-stream files (dry-run by default; age defaults to 14 days) |
 | `meridian session archive --list` | Show current/snapshot ZIPs and their registered locations |
 | `meridian session import ZIP` | Select a verified transferred ZIP snapshot for direct reads |
 | `meridian session restore REF... --archive ZIP_OR_UUID` | Restore only selected histories with fresh inert local aliases; preserve the ZIP |
+| `meridian session repair REF` | Read-only: for an unbound chat (`c123`, or its spawn `p123`), list candidate native session files with evidence and the exact bind command; for a bound chat, show its binding |
+| `meridian session repair REF --native PATH [--force]` | Bind an unbound chat to that native session file after validation; `--force` accepts a cwd mismatch or a start outside the chat's time window |
 
 Archive destinations can also come from configuration. Automation is off by
 default; active records and dependencies cannot be reclaimed. Published ZIPs
@@ -158,6 +166,18 @@ are never automatically deleted. UI visibility archive is separate from ZIP
 retention. Search reports unavailable content or budget exhaustion as incomplete,
 not a clean negative. See [History storage and retention](history.md) for repair,
 configuration, transfer, conflict behavior and archive-integrity limits.
+
+`session repair` never rebinds: bindings are immutable. `--native` always refuses
+a bound chat, a file that is not a valid native session for the chat's harness,
+and a session already bound to another chat. Candidate listing covers Pi (the
+chat's spawn session dir; the shared root for primaries) and Claude (the recorded
+project store); for Codex and OpenCode pass `--native`. An OpenCode database holds
+many sessions, so it binds only a chat that already records its session ID.
+
+Runner-history pruning is never automatic. Only terminal spawns whose exact native
+transcript sources resolve qualify; skipped spawns report their reasons. It deletes
+only retired runner-stream files, not native transcripts or session state. See
+[History storage and retention](history.md) for Claude transcript-retention caveats.
 
 ## Work Items
 

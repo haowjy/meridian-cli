@@ -28,6 +28,7 @@ def materialize_fork(
     source_session_id: str,
     runtime_root: Path,
     spawn_id: SpawnId,
+    native_store: str | None = None,
 ) -> str:
     """Fork one harness session and record the new session ID on the spawn row.
 
@@ -44,7 +45,10 @@ def materialize_fork(
             "Call start_spawn() before materialize_fork()."
         )
 
-    forked_session_id = adapter.fork_session(source_session_id).strip()
+    forked_session_id = (
+        adapter.fork_session(source_session_id, native_store=native_store)
+        if native_store is not None else adapter.fork_session(source_session_id)
+    ).strip()
     if not forked_session_id:
         raise RuntimeError("Harness adapter.fork_session() returned an empty session ID.")
 

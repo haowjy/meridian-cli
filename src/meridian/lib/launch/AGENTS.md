@@ -69,10 +69,9 @@ prepare/bind entry:
    Foreground and background paths converge at `launch_prepared_spawn()`.
 3. **CLI streaming-serve** (`cli/streaming_serve.py`): resolve-before-persist via
    `SpawnApplicationService.prepare_spawn()`, then `run_streaming_spawn()`. Row
-   created only on successful preparation. A captured session attempt records selection
-   immediately after managed startup returns, before output consumption. Native ID
-   callbacks or post-run artifact observation bind pending selection; row creation
-   alone is not model acceptance.
+   created only on successful preparation. All three runners use `bind_entry()`
+   before exec and `conclude_native_run()` after teardown. Invocation attribution
+   follows successful identity conclusion, never merely row creation or startup.
 
 ## Key Types
 
@@ -89,7 +88,8 @@ prepare/bind entry:
 
 Three concentric layers, each defined by function scope:
 1. **Runner** (`execute_with_streaming`): `finally` handles partial-setup failures.
-2. **Helper** (`launch_prepared_spawn`): `except` writes `launch_failure`; safe
+2. **Helper** (`launch_prepared_spawn`): `except` finalizes a launch failure, preserving
+   typed native-unavailable reasons in the terminal error; safe
    because `complete_spawn()` is idempotent.
 3. **Surface backstop**: last-resort around the entire post-row section.
 
@@ -99,7 +99,7 @@ Three concentric layers, each defined by function scope:
 |---|---|
 | I-1 | All composition inside `build_launch_context()` — no adapter composes independently |
 | I-2 | No driving adapter reconstructs argv, env, or permissions independently |
-| I-4 | `observe_session_id()` called exactly once post-execution (primary path only) |
+| I-4 | `conclude_native_run()` once per attempt after teardown joins: IDs → adapter → boundary → attribution |
 | I-5 | `SpawnRequest`/`LaunchRuntime` carry no derived state; `LaunchContext` complete at construction |
 | I-10 | Fork materialization (`fork.py`) happens only after spawn row exists |
 | I-13 | `LaunchContext.warnings` is the sole channel for composition warnings |
@@ -145,14 +145,14 @@ recorded worst case was a spawn that wedged for 2h18m before any liveness signal
 
 On retry, `_preserve_attempt_artifacts()` in `streaming_runner.py` moves completed
 attempt diagnostics (`stderr.log`, `report.md`, `runner-lifecycle.jsonl`,
-`last-observed-event.json`) into `attempt-N/` under the spawn log directory.
-`history.jsonl` stays canonical and append-only: an attempt-boundary event
-separates retries, and lifecycle extractors read only the current attempt.
+`tokens.json`) into `attempt-N/` under the spawn log directory.
+Attempt reports, usage and identity come from `AttemptFacts` folded on live events.
+Each retry gets fresh facts; runner history is not read during finalization.
 Diagnostic rotation commits with `os.replace(staging_dir, attempt_dir)` before
-auxiliary copies and active diagnostic keys are updated. Never rotate or delete
-the canonical history through this path.
+auxiliary copies and active diagnostic keys are updated. Retired runner-stream files
+are removed only by the explicit session-history prune.
 
-Runner lifecycle and history diagnostics can execute after async boundaries. Their
+Runner lifecycle diagnostics can execute after async boundaries. Their
 parent-creating writes use the published-spawn artifact mutation seam; never append
 late diagnostics directly into a spawn directory that retention may have deleted.
 

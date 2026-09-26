@@ -119,7 +119,10 @@ def _session_browse(
     ] = False,
     include_archives: Annotated[
         bool,
-        Parameter(name="--include-archives", help="Include ZIP content in the picker's / search."),
+        Parameter(
+            name="--include-archives",
+            help="Include archived chats' native transcripts in the picker's / search.",
+        ),
     ] = False,
 ) -> None:
     presentation = resolve_browse_presentation(
@@ -347,7 +350,6 @@ def _session_search(
         bool,
         Parameter(name="--workspace", help="Search current project plus workspace roots."),
     ] = False,
-    include_archives: Annotated[bool, Parameter(name="--include-archives")] = False,
     global_scope: Annotated[
         bool,
         Parameter(name="--global", help="Search all local Meridian runtime roots."),
@@ -357,7 +359,6 @@ def _session_search(
         session_search_sync(
             SessionSearchInput(
                 query=query,
-                include_archives=include_archives,
                 ref=ref,
                 file_path=file_path,
                 work_id=work_id,
@@ -373,15 +374,32 @@ def _session_repair(
     emit: Emitter,
     ref: Annotated[
         str,
-        Parameter(
-            help=("Session reference: chat id (c123), spawn id (p123), or harness session id.")
-        ),
+        Parameter(help="Chat id (c123) or spawn id (p123) of an unbound chat."),
     ],
+    native: Annotated[
+        str | None,
+        Parameter(
+            name="--native",
+            help=(
+                "Bind the unbound chat to this native session file after validation. "
+                "Without it, repair only lists candidates."
+            ),
+        ),
+    ] = None,
+    force: Annotated[
+        bool,
+        Parameter(
+            name="--force",
+            help="Bind despite a cwd mismatch or a session start outside the chat's time window.",
+        ),
+    ] = False,
 ) -> None:
     emit(
         repair_session_reference_sync(
             SessionRepairInput(
                 ref=ref,
+                native=native,
+                force=force,
                 project_root=cli_project_root_posix(),
             )
         )
@@ -396,6 +414,16 @@ def _session_archive(
     list_archives: Annotated[bool, Parameter(name="--list")] = False,
     apply: Annotated[bool, Parameter(name="--apply")] = False,
     after_days: Annotated[int | None, Parameter(name="--after-days")] = None,
+    prune_runner_history: Annotated[
+        bool,
+        Parameter(
+            name="--prune-runner-history",
+            help=(
+                "List (or with --apply, delete) runner history.jsonl of terminal spawns "
+                "older than --after-days (default 14) whose exact native transcript resolves."
+            ),
+        ),
+    ] = False,
 ) -> None:
     emit(
         session_archive_sync(
@@ -407,6 +435,7 @@ def _session_archive(
                 list_archives=list_archives,
                 apply=apply,
                 after_days=after_days,
+                prune_runner_history=prune_runner_history,
             )
         )
     )
@@ -506,8 +535,9 @@ def register_session_commands(app: App, emit: Emitter) -> tuple[set[str], dict[s
             "meridian.session.repair": (
                 "Examples:\n\n"
                 "  meridian session repair c123\n\n"
-                "  meridian session repair p107\n\n"
-                "Repair is explicit and opt-in. Normal session reads do not mutate state.\n"
+                "  meridian session repair c123 --native <native-session-file>\n\n"
+                "Without --native, repair is read-only: it lists candidate native files with\n"
+                "their evidence and the exact bind command. A bound chat is never rebound.\n"
             ),
         },
         emit=emit,

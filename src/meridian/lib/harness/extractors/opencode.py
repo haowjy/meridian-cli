@@ -2,299 +2,111 @@
 
 from __future__ import annotations
 
-import json
-import re
+import sqlite3
 from collections.abc import Mapping
-from datetime import UTC, datetime
-from pathlib import Path
 from typing import cast
 
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.adapter import ArtifactStore
-from meridian.lib.harness.common import (
-    OUTPUT_FILENAME,
-    _coerce_optional_int,  # pyright: ignore[reportPrivateUsage]
-    _iter_json_lines_artifact,  # pyright: ignore[reportPrivateUsage]
-    coerce_optional_float,
-    extract_usage_from_artifacts,
-)
+from meridian.lib.core.native_identity import NativeKey
+from meridian.lib.harness.common import coerce_optional_float, coerce_optional_int
 from meridian.lib.harness.connections.base import RawHarnessEvent
-from meridian.lib.harness.opencode_report import (
-    extract_opencode_report,
-    extract_opencode_session_id_from_artifacts,
-)
-from meridian.lib.harness.opencode_storage import (
-    iter_opencode_session_files,
-    opencode_session_id_from_path,
-    resolve_opencode_home_dir,
-    resolve_opencode_storage_root,
+from meridian.lib.harness.opencode_report import extract_opencode_session_id
+from meridian.lib.harness.opencode_snapshot import (
+    read_opencode_v1_latest_report,
+    read_opencode_v2_turn,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
-from .base import HarnessExtractor, session_from_mapping_with_keys
-
-_SESSION_ID_TEXT_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(
-        r"\bopencode\b[^\n]*?--session(?:=|\s+)([A-Za-z0-9][A-Za-z0-9._:-]{5,})\b",
-        re.IGNORECASE,
-    ),
-)
-_OPENCODE_SESSION_CREATED_RE = re.compile(
-    r"^\w+\s+(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\s+\+\d+ms\s+"
-    r"service=session\s+id=(?P<session_id>\S+)\s+.*?\bdirectory=(?P<directory>\S+)\b.*\bcreated\b"
-)
-_SESSION_MATCH_WINDOW_SECONDS = 15 * 60
-_PATH_HINT_KEYS: frozenset[str] = frozenset(
-    {
-        "directory",
-        "cwd",
-        "project_root",
-        "repoRoot",
-        "state_root",
-        "stateRoot",
-        "project_dir",
-        "projectDir",
-    }
-)
-
-
-def _resolve_logs_root(launch_env: Mapping[str, str]) -> Path:
-    explicit = launch_env.get("OPENCODE_LOG_DIR", "").strip()
-    if explicit:
-        return Path(explicit).expanduser()
-
-    return resolve_opencode_home_dir(launch_env) / "log"
-
-
-def _safe_resolve(path: Path) -> Path:
-    try:
-        return path.expanduser().resolve()
-    except OSError:
-        return path.expanduser().absolute()
-
-
-def _paths_overlap(left: Path, right: Path) -> bool:
-    return left == right or left in right.parents or right in left.parents
-
-
-def _matches_spawn_paths(value: str, targets: tuple[Path, ...]) -> bool:
-    normalized = value.strip()
-    if not normalized:
-        return False
-    try:
-        candidate = _safe_resolve(Path(normalized))
-    except (TypeError, ValueError, OSError):
-        return False
-    return any(_paths_overlap(candidate, target) for target in targets)
-
-
-def _payload_matches_spawn(payload: object, targets: tuple[Path, ...]) -> bool:
-    if isinstance(payload, dict):
-        mapping = cast("dict[str, object]", payload)
-        for key, value in mapping.items():
-            if (
-                isinstance(value, str)
-                and key in _PATH_HINT_KEYS
-                and _matches_spawn_paths(value, targets)
-            ):
-                return True
-            if _payload_matches_spawn(value, targets):
-                return True
-        return False
-
-    if isinstance(payload, list):
-        items = cast("list[object]", payload)
-        return any(_payload_matches_spawn(item, targets) for item in items)
-
-    return False
-
-
-def _parse_start_time(value: object) -> float | None:
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip()
-    if not normalized:
-        return None
-    if normalized.endswith("Z"):
-        normalized = f"{normalized[:-1]}+00:00"
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.timestamp()
-
-
-def _latest_spawn_start_epoch(*, runtime_root: Path, child_cwd: Path) -> float | None:
-    from meridian.lib.state import spawn_store
-
-    resolved_child = _safe_resolve(child_cwd)
-    latest_any: float | None = None
-    latest_matching_child: float | None = None
-
-    try:
-        spawns = spawn_store.list_spawns(runtime_root).records
-    except OSError:
-        return None
-
-    for spawn in spawns:
-        if (spawn.harness or "").strip().lower() != "opencode":
-            continue
-
-        started_at = _parse_start_time(spawn.started_at)
-        if started_at is None:
-            continue
-        if latest_any is None or started_at > latest_any:
-            latest_any = started_at
-
-        if spawn.execution_cwd is None or not spawn.execution_cwd.strip():
-            continue
-        try:
-            resolved_execution_cwd = _safe_resolve(Path(spawn.execution_cwd))
-        except OSError:
-            continue
-        if resolved_execution_cwd != resolved_child:
-            continue
-        if latest_matching_child is None or started_at > latest_matching_child:
-            latest_matching_child = started_at
-
-    return latest_matching_child if latest_matching_child is not None else latest_any
-
-
-def _detect_primary_session_id(
-    *,
-    child_cwd: Path,
-    launch_env: Mapping[str, str],
-) -> str | None:
-    logs_root = _resolve_logs_root(launch_env)
-    if not logs_root.is_dir():
-        return None
-
-    resolved_repo = child_cwd.resolve()
-    matches: list[tuple[str, str]] = []
-    for candidate in logs_root.glob("*.log"):
-        try:
-            lines = candidate.read_text(encoding="utf-8", errors="ignore").splitlines()
-        except OSError:
-            continue
-        for line in lines:
-            match = _OPENCODE_SESSION_CREATED_RE.match(line)
-            if match is None:
-                continue
-            directory = match.group("directory")
-            try:
-                directory_matches = Path(directory).expanduser().resolve() == resolved_repo
-            except OSError:
-                continue
-            if not directory_matches:
-                continue
-            session_id = match.group("session_id").strip()
-            if session_id:
-                matches.append((match.group("ts"), session_id))
-
-    if not matches:
-        return None
-
-    matches.sort(key=lambda item: item[0], reverse=True)
-    return matches[0][1]
-
-
-def _detect_storage_session_id(
-    *,
-    launch_env: Mapping[str, str],
-    child_cwd: Path,
-    runtime_root: Path,
-) -> str | None:
-    storage_root = resolve_opencode_storage_root(launch_env)
-    if not storage_root.is_dir():
-        return None
-
-    spawn_targets = (
-        _safe_resolve(child_cwd),
-        _safe_resolve(runtime_root),
-        _safe_resolve(runtime_root.parent),
-    )
-    matches: list[tuple[float, str]] = []
-    candidates: list[tuple[float, str]] = []
-
-    for candidate in iter_opencode_session_files(storage_root):
-        session_id = opencode_session_id_from_path(candidate)
-        if session_id is None:
-            continue
-        try:
-            modified_at = candidate.stat().st_mtime
-        except OSError:
-            continue
-        candidates.append((modified_at, session_id))
-
-        try:
-            payload = json.loads(candidate.read_text(encoding="utf-8", errors="ignore"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if _payload_matches_spawn(payload, spawn_targets):
-            matches.append((modified_at, session_id))
-
-    if matches:
-        matches.sort(key=lambda item: item[0], reverse=True)
-        return matches[0][1]
-
-    if not candidates:
-        return None
-
-    started_at = _latest_spawn_start_epoch(runtime_root=runtime_root, child_cwd=child_cwd)
-    if started_at is not None:
-        lower = started_at - 5.0
-        upper = started_at + float(_SESSION_MATCH_WINDOW_SECONDS)
-        bounded = [item for item in candidates if item[0] >= lower and item[0] <= upper]
-        if bounded:
-            bounded.sort(key=lambda item: item[0], reverse=True)
-            return bounded[0][1]
-
-    candidates.sort(key=lambda item: item[0], reverse=True)
-    return candidates[0][1]
+from .base import AttemptFold, HarnessExtractor
 
 
 class OpenCodeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
     """Extractor implementation for OpenCode artifacts and events."""
 
     def detect_session_id_from_event(self, event: RawHarnessEvent) -> str | None:
-        return session_from_mapping_with_keys(
-            event.payload,
-            ("session_id", "sessionId", "sessionID", "id"),
-        )
+        return extract_opencode_session_id(dict(event.payload))
 
-    def detect_session_id_from_artifacts(
-        self,
-        *,
-        spec: ResolvedLaunchSpec,
-        launch_env: Mapping[str, str],
-        child_cwd: Path,
-        runtime_root: Path,
-    ) -> str | None:
-        if spec.continue_session_id and spec.continue_session_id.strip():
-            return spec.continue_session_id.strip()
-        detected = _detect_primary_session_id(child_cwd=child_cwd, launch_env=launch_env)
-        if detected:
-            return detected
-        return _detect_storage_session_id(
-            launch_env=launch_env,
-            child_cwd=child_cwd,
-            runtime_root=runtime_root,
-        )
+    def create_fold(self) -> AttemptFold:
+        return OpenCodeFold(self)
 
-    def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
-        specific = _extract_opencode_usage(artifacts, spawn_id)
-        if specific != TokenUsage():
-            return specific
-        return extract_usage_from_artifacts(artifacts, spawn_id)
+    def read_native_turn(self, key: NativeKey, turn_ids: tuple[str, ...]) -> str | None:
+        try:
+            return read_opencode_v2_turn(key, turn_ids) or (
+                read_opencode_v1_latest_report(key) if not turn_ids else None
+            )
+        except sqlite3.Error:
+            # A missing, busy or corrupt native store cannot invalidate live evidence.
+            return None
 
-    def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return extract_opencode_session_id_from_artifacts(artifacts, spawn_id)
 
-    def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return extract_opencode_report(artifacts, spawn_id)
+class OpenCodeFold(AttemptFold):
+    message_id: str | None = None
+
+    def session_id(self, event: RawHarnessEvent) -> str | None:
+        session_id = super().session_id(event)
+        return session_id if session_id and session_id.startswith("ses_") else None
+
+    def accepts(self, kind: str, event: RawHarnessEvent) -> bool:
+        session_id = self.extractor.detect_session_id_from_event(event)
+        scope = self.scope_session_id or self.facts.first_session_id
+        return not scope or session_id == scope
+
+    def fold_event(self, kind: str, payload: Mapping[str, object]) -> None:
+        facts = self.facts
+        if kind in {"session.idle", "message.updated"}:
+            usage = _try_parse_opencode_usage(payload)
+            if usage is not None:
+                self.usage_is_specific = True
+                facts.usage = usage
+        if kind == "session.text.ended":
+            message_id = payload.get("assistantMessageID")
+            if isinstance(message_id, str) and message_id:
+                facts.native_turn_ids = (message_id,)
+            text = payload.get("text")
+            if isinstance(text, str) and text:
+                self.set_text(text, "opencode_v2_text")
+            return
+        properties = payload.get("properties")
+        if not isinstance(properties, dict):
+            return
+        properties = cast("dict[str, object]", properties)
+        info = properties.get("info")
+        if (
+            kind == "message.updated"
+            and isinstance(info, dict)
+            and cast("dict[str, object]", info).get("role") == "assistant"
+        ):
+            info = cast("dict[str, object]", info)
+            message_id = info.get("id")
+            if isinstance(message_id, str) and message_id != self.message_id:
+                self.message_id = message_id
+                facts.final_text = None
+                self.text_source = None
+            parts = info.get("parts")
+            if isinstance(parts, list):
+                text = "".join(
+                    str(cast("dict[str, object]", part).get("text", ""))
+                    for part in cast("list[object]", parts)
+                    if isinstance(part, dict)
+                    and cast("dict[str, object]", part).get("type") == "text"
+                )
+                if text.strip() and self.text_source != "opencode_v1_parts":
+                    self.set_text(text.strip(), "opencode_v1_embedded")
+        part = properties.get("part")
+        if (
+            kind == "message.part.updated"
+            and isinstance(part, dict)
+            and cast("dict[str, object]", part).get("type") == "text"
+            and self.message_id
+            and cast("dict[str, object]", part).get(
+                "messageID", cast("dict[str, object]", part).get("message_id")
+            )
+            == self.message_id
+        ):
+            text = cast("dict[str, object]", part).get("text")
+            if isinstance(text, str) and text.strip():
+                prior = facts.final_text if self.text_source == "opencode_v1_parts" else None
+                self.set_text((prior or "") + text.strip(), "opencode_v1_parts")
 
 
 OPENCODE_EXTRACTOR = OpenCodeHarnessExtractor()
@@ -302,7 +114,7 @@ OPENCODE_EXTRACTOR = OpenCodeHarnessExtractor()
 __all__ = ["OPENCODE_EXTRACTOR", "OpenCodeHarnessExtractor"]
 
 
-def _try_parse_opencode_usage(payload: dict[str, object]) -> TokenUsage | None:
+def _try_parse_opencode_usage(payload: Mapping[str, object]) -> TokenUsage | None:
     properties_obj = payload.get("properties")
     properties = (
         cast("dict[str, object]", properties_obj) if isinstance(properties_obj, dict) else None
@@ -325,11 +137,11 @@ def _try_parse_opencode_usage(payload: dict[str, object]) -> TokenUsage | None:
             else {}
         )
         nested_usage = TokenUsage(
-            input_tokens=_coerce_optional_int(nested_tokens.get("input")),
-            output_tokens=_coerce_optional_int(nested_tokens.get("output")),
-            cache_read_input_tokens=_coerce_optional_int(nested_cache.get("read")),
-            cache_creation_input_tokens=_coerce_optional_int(nested_cache.get("write")),
-            reasoning_tokens=_coerce_optional_int(nested_tokens.get("reasoning")),
+            input_tokens=coerce_optional_int(nested_tokens.get("input")),
+            output_tokens=coerce_optional_int(nested_tokens.get("output")),
+            cache_read_input_tokens=coerce_optional_int(nested_cache.get("read")),
+            cache_creation_input_tokens=coerce_optional_int(nested_cache.get("write")),
+            reasoning_tokens=coerce_optional_int(nested_tokens.get("reasoning")),
             total_cost_usd=coerce_optional_float(
                 nested_info.get("cost") if nested_info is not None else None
             ),
@@ -354,15 +166,15 @@ def _try_parse_opencode_usage(payload: dict[str, object]) -> TokenUsage | None:
     cost_obj = payload.get("cost")
     cost_source = cast("dict[str, object]", cost_obj) if isinstance(cost_obj, dict) else payload
     legacy_usage = TokenUsage(
-        input_tokens=_coerce_optional_int(usage.get("input_tokens") or usage.get("input")),
-        output_tokens=_coerce_optional_int(usage.get("output_tokens") or usage.get("output")),
-        cache_read_input_tokens=_coerce_optional_int(
+        input_tokens=coerce_optional_int(usage.get("input_tokens") or usage.get("input")),
+        output_tokens=coerce_optional_int(usage.get("output_tokens") or usage.get("output")),
+        cache_read_input_tokens=coerce_optional_int(
             usage.get("cache_read_input_tokens") or usage.get("cache_read")
         ),
-        cache_creation_input_tokens=_coerce_optional_int(
+        cache_creation_input_tokens=coerce_optional_int(
             usage.get("cache_creation_input_tokens") or usage.get("cache_write")
         ),
-        reasoning_tokens=_coerce_optional_int(
+        reasoning_tokens=coerce_optional_int(
             usage.get("reasoning_tokens") or usage.get("reasoning")
         ),
         total_cost_usd=coerce_optional_float(cost_source.get("total_cost_usd")),
@@ -379,19 +191,3 @@ def _try_parse_opencode_usage(payload: dict[str, object]) -> TokenUsage | None:
     ):
         return legacy_usage
     return None
-
-
-def _extract_opencode_usage(artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
-    last: TokenUsage | None = None
-    for payload in _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME):
-        event_type = (
-            str(payload.get("event", payload.get("type", payload.get("event_type", ""))))
-            .strip()
-            .lower()
-        )
-        if event_type not in {"session.idle", "message.updated"}:
-            continue
-        usage = _try_parse_opencode_usage(payload)
-        if usage is not None:
-            last = usage
-    return last or TokenUsage()

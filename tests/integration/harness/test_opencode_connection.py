@@ -225,9 +225,7 @@ async def _collect_events_under_fake_clock(
     while not task.done() and advanced < advance_budget:
         await determinism.sleep(step)
         advanced += step
-    assert task.done(), (
-        f"event collection did not finish within fake-clock budget {advance_budget}"
-    )
+    assert task.done(), f"event collection did not finish within fake-clock budget {advance_budget}"
     return await task
 
 
@@ -250,9 +248,7 @@ async def test_opencode_events_fail_after_liveness_timeout_without_events(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     determinism = _install_opencode_determinism(monkeypatch)
-    connection = _LivenessProbeOpenCodeConnection(
-        responses=[_SseResponse() for _ in range(100)]
-    )
+    connection = _LivenessProbeOpenCodeConnection(responses=[_SseResponse() for _ in range(100)])
 
     monkeypatch.setattr(OpenCodeConnection, "_LIVENESS_TIMEOUT_SECONDS", 0.1)
     monkeypatch.setattr(OpenCodeConnection, "_EVENT_RETRY_DELAY_SECONDS", 0.02)
@@ -362,9 +358,7 @@ async def test_opencode_events_surface_activity_transition_events(
 ) -> None:
     connection = _LivenessProbeOpenCodeConnection(
         responses=[
-            _SseResponse(
-                [f'{{"type":"{event_type}","sessionID":"sess-liveness"}}\n'.encode()]
-            ),
+            _SseResponse([f'{{"type":"{event_type}","sessionID":"sess-liveness"}}\n'.encode()]),
             _SseResponse(),
         ]
     )
@@ -432,7 +426,10 @@ async def test_opencode_start_resets_expired_liveness(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("use_start_observer", "expected_initial_messages"),
-    ((False, [("hello from test", "system from test")]), (True, [])),
+    (
+        (False, [("hello from test", "system from test")]),
+        (True, [("hello from test", "system from test")]),
+    ),
 )
 async def test_opencode_start_primary_observer_mode_controls_initial_prompt_post(
     tmp_path: Path,
@@ -596,8 +593,7 @@ async def test_opencode_startup_exit_surfaces_stderr_and_xdg_hint(
         _set_startup_failure(
             connection,
             launch_config,
-            "EACCES: permission denied, mkdir "
-            "'/root/meridian-probe-opencode-no-access/opencode'\n",
+            "EACCES: permission denied, mkdir '/root/meridian-probe-opencode-no-access/opencode'\n",
         )
 
     monkeypatch.setattr(connection, "_launch_process", launch_failure)
@@ -895,8 +891,7 @@ async def test_opencode_native_permission_reply_resolves_pending_request(
 
     assert connection._pending_requests == {}
     assert (
-        opencode_http._permission_liveness_key("per_1")
-        not in connection._liveness._active_requests
+        opencode_http._permission_liveness_key("per_1") not in connection._liveness._active_requests
     )
     assert handler.resolutions == [("per_1", {"decision": "accept", "reply": "once"})]
     assert all(event.event_type != "permission.replied" for event in events)
@@ -1042,4 +1037,3 @@ async def test_opencode_dispatcher_delegates_request_failed_callback() -> None:
     await dispatcher._notify_request_failed("per_1", error="boom")
 
     assert failures == [("per_1", "boom")]
-

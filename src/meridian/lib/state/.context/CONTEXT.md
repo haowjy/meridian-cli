@@ -28,15 +28,15 @@ meridian.toml
     <id>/
       state.json                    — authoritative spawn state (schema v3)
       starting-prompt.md            — prompt body (written once)
-      history.jsonl                 — primary output artifact (seq-enveloped events)
+      history.jsonl                 — legacy runner stream; no longer written, removed by session archive prune
       attempt-N/                    — preserved retry evidence
-      last-observed-event.json      — last harness event and counters
+      last-observed-event.json      — legacy checkpoint; no longer written, removed by session archive prune
       runner-lifecycle.jsonl        — runner lifecycle breadcrumbs
       finalize-evidence.json        — orphan-time liveness snapshot
       process_scopes.json           — durable process identities
       reaper_cleanup_claim.json     — pending finalize-first cleanup targets
       heartbeat · report.md · stderr.log · params.json · tokens.json
-  artifacts/<spawn-id>/             — legacy auxiliary history fallback
+  artifacts/<spawn-id>/             — auxiliary artifact storage
 
 <context.work root>/<slug>/         ← context-resolved, not repo-local
   __status.json                     — mutable per-work-item metadata
@@ -63,6 +63,28 @@ target reads use it directly to avoid global spawn scans; the official SQLite in
 planned in 0.4.0 can reuse the same authority. Until that index becomes the shared
 state-layer read path, browse does not own a separate projection. See `.context/TODO` and
 [ops/.context/CONTEXT.md](../../ops/.context/CONTEXT.md).
+
+### One-time native identity import
+
+Runtime authority resolution invokes `ops/legacy_native_import.py` once for an
+existing sessions journal. Its atomic marker records unresolved chats; ordinary
+reads never repair missing keys afterward. Import binds through the same
+`session_binding.py` lock-scoped path as single-session updates. One replay per
+batch avoids quadratic work; the import lock precedes the history-mutation gate
+and sessions lock. Historical restored records stay inert.
+
+The marker also drives two later, doctor/background-only passes: the late re-bind
+(`late_retries`) for IDs recorded after the import, and the one-shot legacy Pi
+recovery (`pi_recovery_tried`) for 0.6.7 Pi chats that never recorded an ID. Both
+bind through `session_bindings`; new marker fields default for old markers.
+
+The dev report is `python -m meridian.lib.ops.legacy_native_import RUNTIME_ROOT`.
+It deliberately bypasses runtime resolution and telemetry. OpenCode validation
+uses a temporary DB/WAL copy because SQLite read-only connections can mutate
+source WAL shared memory; native source bytes are never written. A changing
+DB/WAL fingerprint or a strict row-query failure defers the import without a
+marker. Native validation happens before taking the sessions lock; identity is
+rechecked inside it and all accepted update lines share one durable append.
 
 ### Conversation model selections
 

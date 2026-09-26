@@ -25,6 +25,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
 
 _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
+        "native_identity",
         "harness",
         "continue_fork",
         "interactive",

@@ -67,6 +67,16 @@ the accounting guard will run on a partial registration set and fail.
 
 ## Contracts
 
+### Pi UUID collision preflight
+
+Fresh UUID minting checks readable headers in the pinned store, warns
+`pi_store_unreadable_header` with the path for unreadable/invalid siblings, and
+skips them. A matching readable ID or store enumeration failure still refuses.
+This favors UUID4 collision improbability over blocking the whole shared store
+on a torn journal; it is not an atomic ID reservation or an absolute absence
+proof. Exact resume/fork source reads and post-execution ID/ancestry verification
+remain fail-closed.
+
 ### SpawnParams Accounting Invariant
 
 Every `SpawnParams` field must appear in each adapter's `consumed_fields` **or**
@@ -94,35 +104,18 @@ field is missing from both sets, it raises `ImportError`. Adding a field to a
 harness-specific `LaunchSpec` without updating the corresponding projection module →
 startup failure.
 
-### `observe_session_id()` Priority Chain
+### Post-exit identity observations
 
-Called exactly once per launch by the driving adapter after the executor returns.
-Must not mutate adapter-instance state. The base implementation uses a simple
-fallback chain; Claude overrides it with harness-specific reconciliation:
+`observe_after_exit(identity, entry, ...) -> PostExit` is pure observation.
+Pi validates the exact assigned source/header and reads the launch-correlated
+boundary sidecar. Claude reads trampoline-successor evidence for diagnostics
+only; that successor never binds a chat or allocates a verified exit.
 
-1. `connection_session_id` — live session ID from transport layer (present for connection-based paths)
-2. `extract_session_id()` — extraction from spawn artifacts (`session_id.txt`, then JSONL history)
-3. `current_session_id` — previously known ID, returned as fallback
-4. `detect_primary_session_id()` — filesystem scan (only when `project_root` and `started_at_epoch` provided)
-
-Callers treat the result as authoritative. Only skip an earlier step if its source is absent (no connection, no artifacts file).
-
-**Claude override.** `ClaudeAdapter.observe_session_id()` replaces the base
-implementation's priority chain with a trampoline-aware path: after steps 1–2,
-it calls `reconcile_tui_trampoline_session_id()` before falling through to
-`current_session_id`. The reconciliation checks `~/.claude/history.jsonl` for
-`/tui fullscreen` evidence tied to the recorded session ID, finds the next
-same-project prompt with a different session ID, and verifies the successor has
-a transcript whose first user message matches. If the recorded ID already has a
-transcript, it is preserved — reconciliation only activates when the transcript
-is missing. Fallback is always the recorded ID rather than `None`, so existing
-behavior is preserved when no trampoline successor exists.
-
-This is a Claude-specific concern. Claude's new TUI creates a transient session
-when entering `/tui fullscreen`, then writes the durable transcript under a
-different session ID. Meridian records the transient ID during launch; the
-override repairs it to the durable ID at finalization time. Codex, OpenCode,
-and Pi do not have this pattern and use the base implementation unchanged.
+`launch/native_run.conclude_native_run` owns ordering: attempt-facts first ID,
+connection-current ID (diagnostic), adapter observation, entry verification,
+exact exit allocation, boundary persistence, then invocation attribution.
+The facts hook observes owned live session IDs. There is no artifact-identity or
+filesystem-discovery fallback.
 
 ### `HarnessContract` as Inspectable Surface
 
@@ -222,29 +215,12 @@ unscoped-looking child task `session.idle` / `session.error` events. If no paren
 scope is known at all, Meridian preserves the legacy behavior and treats OpenCode
 terminal events as parent events.
 
-OpenCode report extraction follows the same boundary and is owned by
-`harness/opencode_report.py`. The OpenCode extractor delegates session-id and report
-parsing there instead of duplicating event-shape logic. `extract_opencode_report()`
-first resolves the parent session from `session_id.txt`, a terminal parent session
-event, or the first parent user `message.updated`, then ignores child-session
-assistant text while building `report.md`. Child task text remains visible through
-`meridian session log`.
-
-The stream extractor matches only the V1 `message.updated` / `message.part.updated`
-shapes and is intentionally left unchanged for V2. Managed OpenCode spawns never write
-`output.jsonl`: the drain loop persists raw events to `history.jsonl`, which the
-reader already falls back to, and V2's `session.text.*` / `session.step.*` frames
-define the live transport only. The real V2 artifacts bear this out — the R5/R8 probes
-(captured under `work/probes/final/` and `work/probes/tmux-interactive/`) record V2
-frames in the manually scraped `/api/event` log and store their finished transcript in
-`opencode.db` via schema-selected native capture, never on `output.jsonl`; every
-Meridian-captured OpenCode spawn used the frozen V1 binary and carries V1 event names.
-V2 report extraction is therefore DB-authoritative: `_extract_opencode_report_from_db`
-dispatches on detected schema (`session_v2` → V2, `session` → V1) through
-`opencode_db_any_session_exists` + `iter_opencode_db_session_events`, and interprets
-V2 rows at the shared `interpret_opencode_v2_record` seam. Adding a stream extractor
-without a V2 primary-session resolver would also risk selecting child task-session
-text, which the session-scoped DB path already excludes.
+OpenCode attempt facts are folded from owned live events by
+`extractors/opencode.py`. V1 uses assistant message/part updates. V2 records the
+assistant message ID from `session.text.ended`; finalization prefers that exact
+reply from the bound DB, then live text. It never reads the ambient DB or chooses
+the latest message. Transcript views independently read the chat's recorded DB
+through the schema-selected native reader; an empty session is an empty view.
 
 ## Rationale
 
@@ -435,13 +411,12 @@ the extensions write disk files, and the Python side watches them. If a lifecycl
 message appears on stdout (e.g., from a misconfigured extension), it is treated as
 diagnostic noise and does not become the source of truth.
 
-### Pi: Session Log Reads Spawn History
+### Pi: Exact Native Identity
 
-For Meridian-managed spawned Pi RPC sessions, `meridian session log <pi-spawn-id>`
-reads the spawn `history.jsonl` and translates Pi `message_end` events into readable
-transcript entries. It renders user prompts, assistant text, Pi tool calls/results,
-and custom follow-up pings. Native Pi session-file lookup may exist as metadata, but
-spawn history is the authoritative session-log source for Meridian-owned Pi spawns.
+Managed Pi reads use the chat's recorded native store and ID. Native entry
+verification and launch planning are described in [Pi integration](pi-integration.md).
+Both primary and child capture snapshot the bound native key. Spawns without an
+exact native source stay loose, with a reason.
 
 ## Session Read Path
 

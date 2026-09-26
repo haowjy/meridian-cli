@@ -6,7 +6,7 @@ import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -63,6 +63,7 @@ class FakePiConnection(HarnessConnection[ResolvedLaunchSpec]):
     def __init__(self, events: list[RawHarnessEvent]) -> None:
         self._events = events
         self._spawn_id = SpawnId("")
+        self._session_id = "ses-pi"
         self._state: ConnectionState = "created"
         self.stop_reasons: list[str | None] = []
 
@@ -90,14 +91,16 @@ class FakePiConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     @property
     def session_id(self) -> str | None:
-        return "ses-pi"
+        return self._session_id
 
     @property
     def subprocess_pid(self) -> int | None:
         return 4242
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        del spec
+        plan = spec.native_identity
+        if plan is not None and plan.session_id is not None:
+            self._session_id = plan.session_id
         self._spawn_id = config.spawn_id
         self._state = "connected"
 
@@ -141,9 +144,7 @@ def pi_process_exit_event(return_code: int) -> RawHarnessEvent:
     )
 
 
-def write_pi_bash_record(
-    runtime_root: Path, spawn_id: SpawnId, *, running: bool = True
-) -> None:
+def write_pi_bash_record(runtime_root: Path, spawn_id: SpawnId, *, running: bool = True) -> None:
     """Write the managed-bash disk evidence used by the Pi extension."""
     path = runtime_root / "pi-bash" / str(spawn_id) / "bash-records.json"
     write_json(
@@ -310,6 +311,7 @@ async def start_pi_manager(
     spawn_id: SpawnId,
     session_role: PiSessionRole = "spawned",
     child_wave_timeout_seconds: float | None = None,
+    observed: list[RawHarnessEvent] | None = None,
 ) -> SpawnManager:
     """Start a SpawnManager around one scripted Pi connection."""
 
@@ -339,54 +341,33 @@ async def start_pi_manager(
             pi_child_wave_timeout_seconds=child_wave_timeout_seconds,
         ),
         _spec(),
+        event_hook=observed.append if observed is not None else None,
     )
     return manager
 
 
-def read_history(runtime_root: Path, spawn_id: SpawnId) -> list[dict[str, Any]]:
-    path = runtime_root / "spawns" / str(spawn_id) / "history.jsonl"
-    from meridian.lib.state.history import iter_history_events
-
-    return list(iter_history_events(path))
-
-
-def read_history_phases(runtime_root: Path, spawn_id: SpawnId) -> list[str]:
+def event_phases(events: list[RawHarnessEvent]) -> list[str]:
     return [
-        cast("str", event.get("payload", {}).get("phase"))
-        for event in read_history(runtime_root, spawn_id)
-        if event.get("event_type") == "meridian.pi.lifecycle.phase"
+        str(event.payload["phase"])
+        for event in events
+        if event.event_type == "meridian.pi.lifecycle.phase"
     ]
 
 
-async def wait_for_history_phase(
-    runtime_root: Path, spawn_id: SpawnId, phase: str, *, count: int = 1
-) -> list[str]:
+async def wait_for_phase(events: list[RawHarnessEvent], phase: str, *, count: int = 1) -> list[str]:
     await wait_until(
-        lambda: read_history_phases(runtime_root, spawn_id).count(phase) >= count,
+        lambda: event_phases(events).count(phase) >= count,
         timeout=5.0,
         description=f"{phase} lifecycle phase",
     )
-    return read_history_phases(runtime_root, spawn_id)
+    return event_phases(events)
 
 
-def history_has_phase(runtime_root: Path, spawn_id: SpawnId, phase: str) -> bool:
-    path = runtime_root / "spawns" / str(spawn_id) / "history.jsonl"
-    return path.exists() and phase in read_history_phases(runtime_root, spawn_id)
-
-
-def history_has_event(runtime_root: Path, spawn_id: SpawnId, event_type: str) -> bool:
-    path = runtime_root / "spawns" / str(spawn_id) / "history.jsonl"
-    return path.exists() and any(
-        event.get("event_type") == event_type for event in read_history(runtime_root, spawn_id)
-    )
-
-
-def read_phase_events(runtime_root: Path, spawn_id: SpawnId, phase: str) -> list[dict[str, Any]]:
+def phase_events(events: list[RawHarnessEvent], phase: str) -> list[RawHarnessEvent]:
     return [
         event
-        for event in read_history(runtime_root, spawn_id)
-        if event.get("event_type") == "meridian.pi.lifecycle.phase"
-        and event.get("payload", {}).get("phase") == phase
+        for event in events
+        if event.event_type == "meridian.pi.lifecycle.phase" and event.payload.get("phase") == phase
     ]
 
 

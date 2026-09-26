@@ -195,8 +195,9 @@ must detect staleness differently than for other harnesses.
 ### Detection Method
 
 The staleness check uses file modification times rather than PID liveness:
-- Reads mtimes of five files: `heartbeat`, `history.jsonl`, `output.jsonl`,
-  `meridian_lifecycle_events.jsonl`, `stderr.log`, `report.md`
+- Reads mtimes of four files (`_NESTED_READ_ACTIVITY_ARTIFACTS` in `query.py`):
+  `heartbeat`, `bash-records.json`, `stderr.log`, `report.md`. It does not read
+  `history.jsonl` or `output.jsonl`.
 - If ANY file has been modified within the last 120 seconds
   (`_NESTED_READ_HEARTBEAT_WINDOW_SECS`), the spawn is considered alive — the
   Pi process may be blocked on lifecycle processing
@@ -230,11 +231,11 @@ activity/grace windows and does actual row mutations.
 
 ### Pi Cleanup Telemetry in `spawn show`
 
-`_pi_cleanup_telemetry()` reads `history.jsonl` for `meridian.pi.lifecycle.phase`
-events with phases starting with `cleanup_`. It extracts cleanup status
+`_pi_cleanup_telemetry()` reads the `spawns/<id>/pi-lifecycle.json` sidecar through
+`state/pi_lifecycle.read()` — not `history.jsonl`. It extracts cleanup status
 (`running → completed → escalated → failed`), reason, and error to display in
-`meridian spawn show` output. The highest-severity cleanup status across all phase
-events is reported.
+`meridian spawn show` output. The highest-severity cleanup status recorded in the
+sidecar is reported.
 
 ## Related .context/
 

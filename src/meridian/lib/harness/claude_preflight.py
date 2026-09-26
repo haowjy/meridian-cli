@@ -9,13 +9,20 @@ import shutil
 from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
+from uuid import uuid4
 
 import structlog
 
-from meridian.lib.harness.claude_sessions import _dedupe_roots, project_slug
+from meridian.lib.core.native_identity import (
+    NativeEntryMismatch,
+    NativeKeyFields,
+    NativeSessionUnavailable,
+)
+from meridian.lib.harness.claude_sessions import project_slug, resolve_claude_config_root
 from meridian.lib.launch.launch_types import PreflightResult
 from meridian.lib.launch.text_utils import dedupe_nonempty
-from meridian.lib.platform import IS_WINDOWS, get_home_path
+from meridian.lib.platform import IS_WINDOWS
+from meridian.lib.platform.atomic import atomic_replace
 
 logger = structlog.get_logger(__name__)
 
@@ -23,111 +30,48 @@ logger = structlog.get_logger(__name__)
 CLAUDE_PARENT_ALLOWED_TOOLS_FLAG = "--meridian-parent-allowed-tools"
 
 
-def _default_canonical_claude_config_root() -> Path:
-    """Canonical Claude config root when no explicit config env is set."""
-
-    return get_home_path() / ".claude"
-
-
-def _claude_config_root() -> Path:
-    """Resolve the user's real Claude config root."""
-
-    configured = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
-    if configured:
-        return Path(configured).expanduser().resolve()
-    return _default_canonical_claude_config_root()
-
-
-def _resolve_source_session_file(
-    *,
-    source_session_id: str,
-    source_slug: str,
-    source_roots: tuple[Path, ...],
-) -> tuple[Path | None, Path | None]:
-    for root in source_roots:
-        candidate = root / "projects" / source_slug / f"{source_session_id}.jsonl"
-        if candidate.exists():
-            return candidate, root
-    return None, None
+def validate_claude_session_file(path: Path, session_id: str) -> None:
+    """Verify the exact native source, not merely its filename."""
+    try:
+        with path.open(encoding="utf-8") as handle:
+            header = json.loads(handle.readline())
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise NativeSessionUnavailable(session_id, "missing") from exc
+    observed = header.get("sessionId") if isinstance(header, dict) else None
+    if not isinstance(observed, str) or not observed:
+        raise NativeSessionUnavailable(session_id, "missing")
+    if observed != session_id:
+        raise NativeEntryMismatch(
+            NativeKeyFields("claude", str(path.parent), session_id),
+            NativeKeyFields("claude", str(path.parent), str(observed)),
+        )
 
 
 def ensure_claude_session_accessible(
     source_session_id: str,
-    source_cwd: Path | None,
     child_cwd: Path,
     *,
-    source_config_root: Path | None = None,
+    source_native_store: Path,
     target_config_root: Path | None = None,
 ) -> None:
-    """Make one source Claude session file accessible in the child's project dir.
-
-    On POSIX, creates a symlink. On Windows, copies the file since symlinks
-    require developer mode or admin privileges.
-    """
-
-    if source_cwd is None:
+    """Seed the child's project from exactly the recorded store/ID pair."""
+    source_file = source_native_store / f"{source_session_id}.jsonl"
+    validate_claude_session_file(source_file, source_session_id)
+    target_root = target_config_root or resolve_claude_config_root(os.environ, Path.cwd())
+    target_file = target_root / "projects" / project_slug(child_cwd) / source_file.name
+    if target_file.exists() and target_file.samefile(source_file):
         return
-
-    source_canonical_root = _claude_config_root()
-    resolved_source_config_root = source_config_root or source_canonical_root
-    resolved_target_config_root = target_config_root or _claude_config_root()
-
-    same_cwd = source_cwd.resolve() == child_cwd.resolve()
-    same_config_root = (
-        resolved_source_config_root.resolve() == resolved_target_config_root.resolve()
-    )
-    if same_cwd and same_config_root:
-        return
-
-    # Validate session ID to prevent path traversal.
-    safe_session_id = Path(source_session_id).name
-    if (
-        safe_session_id != source_session_id
-        or "/" in source_session_id
-        or ".." in source_session_id
-    ):
-        return
-
-    source_slug = project_slug(source_cwd)
-    child_slug = project_slug(child_cwd)
-
-    source_file, source_root_for_copy = _resolve_source_session_file(
-        source_session_id=safe_session_id,
-        source_slug=source_slug,
-        source_roots=_dedupe_roots(source_config_root, source_canonical_root),
-    )
-    if source_file is None or source_root_for_copy is None:
-        return
-
-    target_projects = resolved_target_config_root / "projects"
-    child_project = target_projects / child_slug
-    child_project.mkdir(parents=True, exist_ok=True)
-    target_file = child_project / f"{safe_session_id}.jsonl"
-
-    crosses_config_roots = source_root_for_copy.resolve() != resolved_target_config_root.resolve()
-
-    if IS_WINDOWS or crosses_config_roots:
-        # Windows symlinks require developer mode or admin; copy instead
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    if IS_WINDOWS or source_native_store.parent.parent.resolve() != target_root.resolve():
+        with source_file.open("rb") as source, atomic_replace(target_file, mode="wb") as target:
+            shutil.copyfileobj(source, target)
+    else:
+        temporary = target_file.with_name(f".{target_file.name}.{uuid4().hex}.tmp")
         try:
-            if not target_file.exists():
-                shutil.copy2(source_file, target_file)
-            elif not target_file.samefile(source_file):
-                target_file.unlink()
-                shutil.copy2(source_file, target_file)
-        except OSError:
-            pass
-        return
-
-    # POSIX: use symlinks
-    try:
-        os.symlink(source_file, target_file)
-    except FileExistsError:
-        try:
-            if target_file.resolve() != source_file.resolve():
-                target_file.unlink()
-                os.symlink(source_file, target_file)
-        except OSError:
-            pass
+            temporary.symlink_to(source_file)
+            os.replace(temporary, target_file)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def read_parent_claude_permissions(execution_cwd: Path) -> tuple[list[str], list[str]]:

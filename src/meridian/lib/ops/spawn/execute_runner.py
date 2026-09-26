@@ -12,6 +12,7 @@ from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.domain import Spawn
+from meridian.lib.core.native_identity import NativeIdentityError, NativeSessionUnavailable
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import (
     ForkMaterializationMode,
@@ -29,7 +30,12 @@ from meridian.lib.launch.context import (
     RuntimeBindings,
 )
 from meridian.lib.launch.fork import materialize_fork
-from meridian.lib.launch.request import LaunchArgvIntent, LaunchRuntime, SpawnRequest
+from meridian.lib.launch.request import (
+    LaunchArgvIntent,
+    LaunchRuntime,
+    SessionRequest,
+    SpawnRequest,
+)
 from meridian.lib.launch.streaming_runner import execute_with_streaming
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
@@ -75,13 +81,17 @@ class PreparedExecutionHandoff:
     harness_session_id_observer: Callable[[str], None] | None = None
 
 
+def _with_source_ref(exc: Exception, session: SessionRequest) -> Exception:
+    return exc.for_ref(session.source_ref) if isinstance(exc, NativeSessionUnavailable) else exc
+
+
 def _log_launch_failure_without_traceback(
     *,
     message: str,
     spawn_id: SpawnId,
     exc: Exception,
 ) -> None:
-    if isinstance(exc, LaunchUserInputError):
+    if isinstance(exc, (LaunchUserInputError, NativeIdentityError)):
         logger.warning(message, spawn_id=str(spawn_id), error=str(exc))
         return
     logger.exception(message, spawn_id=str(spawn_id))
@@ -140,11 +150,6 @@ async def _prepare_execution_handoff(
                 runtime_root=runtime_root,
                 metadata=session_metadata,
                 request=resolved_session,
-                harness_session_id=(
-                    resolved_session.requested_harness_session_id
-                    or (spawn_record.harness_session_id if spawn_record else "")
-                    or ""
-                ) if not resolved_session.continue_fork else "",
                 run_agent_name=resolved_agent_name,
                 inherited_work_id=work_id,
                 control_root=runtime_request.resolved_control_root,
@@ -176,9 +181,12 @@ async def _prepare_execution_handoff(
                 forked_session_id = materialize_fork(
                     adapter=harness_adapter,
                     source_session_id=resolved_session.requested_harness_session_id,
+                    native_store=resolved_session.source_native_store,
                     runtime_root=runtime_root,
                     spawn_id=spawn.spawn_id,
                 )
+            except NativeSessionUnavailable:
+                raise
             except ValueError as exc:
                 raise LaunchUserInputError(str(exc)) from exc
             resolved_request = resolved_request.model_copy(
@@ -223,9 +231,8 @@ async def _prepare_execution_handoff(
             plan_overrides=dict(run_env_overrides),
             dry_run=False,
         )
-        needs_recompose = (
-            prepared is None
-            or _spawn_request_needs_recompose(request_before_session, final_request)
+        needs_recompose = prepared is None or _spawn_request_needs_recompose(
+            request_before_session, final_request
         )
         if needs_recompose:
             mars_cache = MarsResultCache()
@@ -364,11 +371,12 @@ async def launch_prepared_spawn(
             prepared=prepared,
         )
     except Exception as exc:
+        exc = _with_source_ref(exc, request.session)
         await finalize_launch_failure(
             runtime_root,
             project_paths.project_root,
             spawn.spawn_id,
-            str(exc),
+            exc,
         )
         _log_launch_failure_without_traceback(
             message="Pre-launch setup failed.",
@@ -433,11 +441,12 @@ async def launch_prepared_spawn(
                     ),
                 )
         except Exception as exc:
+            exc = _with_source_ref(exc, request.session)
             await finalize_launch_failure(
                 runtime_root,
                 project_paths.project_root,
                 spawn.spawn_id,
-                str(exc),
+                exc,
             )
             _log_launch_failure_without_traceback(
                 message="Child harness pre-run setup failed.",

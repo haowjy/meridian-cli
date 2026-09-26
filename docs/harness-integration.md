@@ -165,10 +165,29 @@ Every adapter must implement:
 | `capabilities` | Boolean feature flags (`supports_stream_events`, etc.) |
 | `consumed_fields` / `explicitly_ignored_fields` | `SpawnParams` field accounting |
 | `resolve_launch_spec()` | Map `SpawnParams` → `HarnessLaunchSpec` |
-| `build_command()` | Produce the final argv list |
 | `project_content()` | Map `ComposedLaunchContent` → harness channels |
 | `env_overrides()` | Return child process env overrides |
 | `extract_usage()`, `extract_session_id()`, `extract_report()` | Delegate to extractor |
+
+Native-session adapters additionally opt into the base identity template with
+`native_identity = True`. Supply these primitives and policy flags; do not override
+`plan_native_identity()` or `finalize_native_identity()`:
+
+| Member | Contract |
+|---|---|
+| `native_store_for_launch()` | Pure absolute store resolution from child env/cwd and operation; no writes |
+| `pin_native_store()` | Pin the resolved store in the child env only; no mkdir |
+| `assign_session_id()` | Retain resume/pre-fork IDs; mint owned create/fork IDs, else return `None` |
+| `validate_intent()` | Harness-specific source/ID validation before exec |
+| `refused_identity_flags` | Native selector flags forbidden in passthrough args |
+| `continues_in_source_store` | Operations that retain the source namespace |
+| `resolves_untracked_source` | Whether the template resolves an untracked resume source |
+| `resolve_native_session_file(session_id=, native_store=)` | Resolve exactly within the recorded store, validating native identity |
+| `observe_after_exit()` | Return `PostExit` evidence after teardown; launch owns binding and persistence |
+
+The template constructs `NativeIdentity`, checks passthrough and source rules,
+and pins the store before argv projection. Command projection belongs to the
+harness projection module, not an adapter `build_command()` hook.
 
 **SpawnParams accounting**: Every field in `SpawnParams` must appear in
 `consumed_fields` **or** `explicitly_ignored_fields`. The merge of both sets
@@ -349,36 +368,28 @@ def project_pi_spec_to_cli_args(spec, *, base_command) -> list[str]:
 
 **File: `src/meridian/lib/harness/extractors/pi.py`**
 
-Implement `HarnessExtractor` with three core methods and one detection method:
+The extractor itself is stateless; it implements `create_fold()` and the identity
+ports, and folding state lives on a per-attempt `AttemptFold` subclass:
 
 ```python
 class PiHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
-    def extract_session_id(self, artifacts, spawn_id) -> str | None: ...
-    def extract_usage(self, artifacts, spawn_id) -> TokenUsage: ...
-    def extract_report(self, artifacts, spawn_id) -> str | None: ...
-    def detect_session_id_from_event(self, event) -> str | None: ...
-    def detect_session_id_from_artifacts(self, *, spec, launch_env,
-                                          child_cwd, runtime_root) -> str | None: ...
+    def detect_session_id_from_event(self, event: RawHarnessEvent) -> str | None: ...
+    def create_fold(self) -> AttemptFold:
+        return PiFold(self)
+
+
+class PiFold(AttemptFold):
+    def fold_event(self, kind: str, payload: Mapping[str, object]) -> None: ...
 ```
 
-**Session ID**: Pi emits `{"type":"session","id":"..."}` as the first JSONL line.
-Parse from artifact output. Also scan the harness's session directory
-(`sessions/<cwd-escaped>/*.jsonl`) as a fallback for when stdout capture fails.
-
-**Usage**: Pi puts usage in the last `message_end` with
-`message.role=="assistant"`. Extract `message.usage.input`, `message.usage.output`,
-`message.usage.cacheRead`, `message.usage.cacheWrite`. Cost in USD is available
-at `message.usage.cost.total` if the provider reports it.
-
-**Report**: Pi's final assistant text is in `agent_end.messages[-1].content`
-(where `role=="assistant"` and `content[].type=="text"`). Walk backwards through
-the event list and extract the last assistant text.
-
-**Fallback session ID from files**: If `--continue` was used (resume, not fork),
-the session ID was already known. For fresh spawns where stdout capture fails,
-scan `$PI_CODING_AGENT_SESSION_DIR/<cwd-escaped>/` for the most recently
-modified JSONL file and read its session header. CWD escaping: slashes `/`
-become `--`, directory name ends with `--`.
+Pi's `session` event names its native ID. `PiFold.fold_event()` folds assistant
+`message_end` usage and `message_end`/`agent_end` final text into bounded
+`AttemptFacts`. Retries get a fresh fold. Never scan the latest native file or
+reread runner artifacts to recover identity or a report. Where a harness
+supports a native-turn fallback, the extractor's `read_native_turn(key, ids)`
+may read only replies named by this attempt's events from its recorded store;
+otherwise the fact remains unknown. Claude `--print` is the black-box exception:
+its captured stdout is folded after exit.
 
 ### 1.5 Connection/Streaming Runner
 
@@ -643,52 +654,42 @@ Pi runtime.
 
 ## Phase 3: Session and History Parity
 
-### 3.1 Generic `history.jsonl` Event Persistence
+### 3.1 Live Events, Not a Runner Stream
 
-Every spawn writes `history.jsonl` in the spawn log directory. This is the
-generic event persistence layer — raw JSONL events from the harness, one
-per line, with Meridian-added metadata. This works automatically for any
-harness that uses the streaming runner drain loop.
+Meridian does not persist harness events. The drain loop and primary attach run
+inline hooks (the attempt-facts fold, Pi lifecycle sink) on each live event, then
+fan out to subscribers. Transcripts come from the harness's native store. Spawn
+directories from older builds may still hold a `history.jsonl`; nothing reads it.
 
 ### 3.2 Native Session File Resolution
 
 Harnesses store their own session files independently. For Pi, session files
 live under `$PI_CODING_AGENT_SESSION_DIR/<cwd-escaped>/<timestamp>_<uuid>.jsonl`.
 
-The extractor needs to:
-1. Know where the harness stores session files
-2. Know the file naming convention
-3. Know how to map the Meridian spawn's CWD to the harness's session directory
-
-This is harness-specific and must be implemented in the extractor's
-`detect_session_id_from_artifacts()` method. Pi's CWD encoding: slashes become
-`--`, directory name ends with `--`.
+The adapter's `resolve_native_session_file(session_id, native_store)` resolves
+only the recorded namespace and validates native identity. Live events provide
+session IDs; extractors fold attempt facts rather than discover artifact files.
 
 ### 3.3 Readable `meridian session log` Translation
 
-`meridian session log` renders a human-readable transcript from `history.jsonl`.
-This works through the `TranscriptProvider`/`TranscriptEventParser` system in
+For any tracked `cN` or `pN`, `meridian session log` reads the transcript for the bound native key (harness, native store, and
+session ID) through the exact reader. Pi transcripts are projected onto the
+session's reopen lineage. Incomplete, missing, or ambiguous native identities
+are refused with a typed reason; resolution does not discover a replacement
+transcript.
+
+Old spawns without a boundary use their entry chat with a view label. Unbound
+chats report `unbound`, without a legacy hint. `--file history.jsonl` is rejected
+as "not a native transcript".
+
+Harness-specific transcript providers and parsers live in
 `src/meridian/lib/harness/transcript.py`.
-
-Each harness needs:
-1. A `TranscriptProvider` that knows how to iterate events from its native
-   session files (or falls back to `history.jsonl`)
-2. A `TranscriptEventParser` that extracts `TranscriptMessage(role, content)`
-   from harness-specific event schemas
-
-**Pi current status**: Spawned Pi RPC runs persist canonical `history.jsonl`, and
-`meridian session log <pi-spawn-id>` renders readable transcript entries from Pi
-`message_end` events: user prompts, assistant text, tool calls/results, and custom
-follow-up pings. Native Pi session-file lookup remains best-effort metadata; the
-spawn history is the session-log authority for Meridian-managed Pi RPC spawns.
 
 ### 3.4 Export/Search Implications
 
-Session-log parity means the same transcript parser feeds log, export, and search
-surfaces. For Pi RPC, keep `history.jsonl` event persistence and `message_end`
-translation in sync; if Pi changes its event schema, update
-`src/meridian/lib/harness/transcript.py` and the Pi transcript parser tests before
-trusting search/export output.
+Session log, export, and search use native transcript reads. If a harness changes
+its native transcript schema, update `src/meridian/lib/harness/transcript.py` and
+the corresponding parser checks.
 
 ## Phase 4: Model, Catalog, and Mars Integration
 
@@ -799,9 +800,8 @@ expensive models for reasoning-heavy tasks.
 - [ ] Native session files are discoverable from spawn metadata
 - [ ] Export formats include Pi session content
 
-**Pi status**: Spawned Pi RPC history renders readable transcript entries from
-`message_end` events. Native session files may still exist, but Meridian-managed
-spawn history is the authority for `session log`.
+**Pi status**: `session log` reads the bound native Pi transcript and projects it
+onto the session's reopen lineage. Runner `history.jsonl` is never its source.
 
 ### Packaging / Wheel Smoke
 
@@ -836,7 +836,7 @@ All must pass. The pre-push hook enforces this automatically.
 | Subprocess projection | Done | `pi --mode rpc ...`, inline system prompt, isolation flags |
 | Primary native TUI launch | Done | `pi [--model ...] [--session ...]`, no `--mode`, no extensions |
 | PiConnection (JSONL drain) | Done | Streaming runner drain loop, session ID capture, stderr logging |
-| PiExtractor | Done | Session ID, usage, report from artifacts + events |
+| PiExtractor | Done | Session ID, usage, report from live attempt facts |
 | Event semantics | Done | `agent_end` terminal, activity transitions, signal clearing |
 | Permission flags | Done | Empty tuple (Pi uses extension hooks) |
 | Managed extension build | Done | Extension JS bundles ship as package data; dev-rebuild via Node/npm |
@@ -846,7 +846,7 @@ All must pass. The pre-push hook enforces this automatically.
 
 | Gap | Severity | What's needed |
 |---|---|---|
-| **Native Pi session-file transcript provider** | Low | Spawned Pi RPC `history.jsonl` now renders readable `session log` output from `message_end` events. A native Pi session-file provider may still be useful for non-Meridian Pi sessions, but it is no longer required for Meridian-managed spawn observability. |
+| **Native Pi session-file transcript provider** | Done | Tracked Pi sessions read the bound native transcript, projected onto its reopen lineage. |
 | **Mars model aliases/catalog** | Medium | Mars does not yet include Pi-compatible model paths in its alias resolution. Users must pass explicit `provider/model-id` strings. Need: `harness_candidates` / `runnable_paths` entries in Mars model definitions, provider discovery, and agent profile resolution for `harness: pi`. |
 | **Web extensions/tools** | Deferred | Built-in `web_search` and `web_fetch` extensions. These are Pi-native extensions that need authoring and bundling. |
 | **Notifications** | Done | `meridian-spawn-watch` surfaces spawn completion notifications in Pi and flushes pending notices before shutdown. |

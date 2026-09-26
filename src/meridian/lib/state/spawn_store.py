@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import secrets
 import shutil
+from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -44,6 +45,7 @@ from meridian.lib.state.spawn.model import (
 from meridian.lib.state.spawn.model import (
     LaunchMode as LaunchMode,
 )
+from meridian.lib.state.spawn.model import RunBoundaryOutcome as RunBoundaryOutcome
 from meridian.lib.state.spawn.model import SpawnKind as SpawnKind
 from meridian.lib.state.spawn.model import (
     SpawnOrigin as SpawnOrigin,
@@ -400,6 +402,7 @@ def update_spawn(
     spawn_id: SpawnId | str,
     *,
     chat_id: str | None = None,
+    run_boundary: RunBoundaryOutcome | None = None,
     launch_mode: LaunchMode | None = None,
     worker_pid: int | None = None,
     runner_pid: int | None = None,
@@ -424,6 +427,8 @@ def update_spawn(
 
     def merge(current: SpawnRecord) -> SpawnRecord:
         updates: dict[str, object] = {}
+        if run_boundary is not None:
+            updates["run_boundary"] = run_boundary
         if chat_id is not None:
             updates["chat_id"] = chat_id
         if launch_mode is not None:
@@ -711,6 +716,11 @@ class SpawnScan:
 
     records: tuple[SpawnRecord, ...]
     quarantines: tuple[SpawnStateQuarantineReport, ...]
+
+
+def quarantine_hint(spawn_ids: Sequence[str]) -> str:
+    """Quarantined IDs behind the repair pointer, for commands that skip or refuse them."""
+    return f"{len(spawn_ids)} spawns; run `meridian doctor`: {', '.join(spawn_ids)}"
 
 
 def list_spawns(

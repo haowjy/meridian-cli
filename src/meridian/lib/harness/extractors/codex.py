@@ -2,67 +2,29 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
-from pathlib import Path
 from typing import cast
 
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.adapter import ArtifactStore
-from meridian.lib.harness.codex_rollout import (
-    CODEX_ROLLOUT_FILENAME_RE,
-    resolve_codex_home,
-    resolve_rollout_session_id,
-)
-from meridian.lib.harness.common import (
-    OUTPUT_FILENAME,
-    _coerce_optional_int,  # pyright: ignore[reportPrivateUsage]
-    _iter_json_lines_artifact,  # pyright: ignore[reportPrivateUsage]
-    extract_codex_report,
-    extract_session_id_from_artifacts_with_patterns,
-    extract_usage_from_artifacts,
-)
+from meridian.lib.harness.common import coerce_optional_int, extract_codex_thread_id, extract_text
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
-from .base import HarnessExtractor, session_from_mapping_with_keys
-
-_SESSION_ID_TEXT_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\bcodex\s+resume\s+([A-Za-z0-9][A-Za-z0-9._:-]{5,})\b", re.IGNORECASE),
-    re.compile(r"\bresume\s+([A-Za-z0-9][A-Za-z0-9._:-]{5,})\b", re.IGNORECASE),
-)
+from .base import AttemptFold, HarnessExtractor
 
 
-def _resolve_rollout_session_id(path: Path, project_root: Path) -> str | None:
-    return resolve_rollout_session_id(path, project_root)
-
-
-def _detect_primary_session_id(
-    *,
-    child_cwd: Path,
-    launch_env: Mapping[str, str],
-) -> str | None:
-    sessions_root = resolve_codex_home(launch_env) / "sessions"
-
-    if not sessions_root.is_dir():
+def _owned_session_id(payload: Mapping[str, object], event_type: str) -> str | None:
+    if event_type.replace("/", ".") not in {"thread.started", "session_id"}:
         return None
-
-    project_root = child_cwd.resolve()
-    candidates: list[tuple[float, Path]] = []
-    for candidate in sessions_root.rglob("rollout-*.jsonl"):
-        if CODEX_ROLLOUT_FILENAME_RE.match(candidate.name) is None:
-            continue
-        try:
-            modified_at = candidate.stat().st_mtime
-        except OSError:
-            continue
-        candidates.append((modified_at, candidate))
-
-    for _, candidate in sorted(candidates, key=lambda item: item[0], reverse=True):
-        resolved = _resolve_rollout_session_id(candidate, project_root)
-        if resolved:
-            return resolved
+    for key in ("thread_id", "threadId", "session_id"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    thread = payload.get("thread")
+    if isinstance(thread, dict):
+        value = cast("dict[str, object]", thread).get("id")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
     return None
 
 
@@ -70,56 +32,62 @@ class CodexHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
     """Extractor implementation for Codex artifacts and events."""
 
     def detect_session_id_from_event(self, event: RawHarnessEvent) -> str | None:
-        return session_from_mapping_with_keys(
-            event.payload,
-            (
-                "threadId",
-                "thread_id",
-                "session_id",
-                "sessionId",
-                "sessionID",
-                "conversation_id",
-                "conversationId",
-            ),
-        )
+        return _owned_session_id(event.payload, event.event_type)
 
-    def detect_session_id_from_artifacts(
-        self,
-        *,
-        spec: ResolvedLaunchSpec,
-        launch_env: Mapping[str, str],
-        child_cwd: Path,
-        runtime_root: Path,
-    ) -> str | None:
-        _ = runtime_root
-        if spec.continue_session_id and spec.continue_session_id.strip():
-            return spec.continue_session_id.strip()
-        return _detect_primary_session_id(child_cwd=child_cwd, launch_env=launch_env)
+    def create_fold(self) -> AttemptFold:
+        return CodexFold(self)
 
-    def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
-        specific = _extract_codex_usage(artifacts, spawn_id)
-        if specific != TokenUsage():
-            return specific
-        return extract_usage_from_artifacts(artifacts, spawn_id)
 
-    def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return extract_session_id_from_artifacts_with_patterns(
-            artifacts,
-            spawn_id,
-            json_keys=(
-                "session_id",
-                "sessionId",
-                "sessionID",
-                "conversation_id",
-                "conversationId",
-                "thread_id",
-                "threadId",
-            ),
-            text_patterns=_SESSION_ID_TEXT_PATTERNS,
-        )
+class CodexFold(AttemptFold):
+    main_thread_id: str | None = None
 
-    def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return extract_codex_report(artifacts, spawn_id)
+    def accepts(self, kind: str, event: RawHarnessEvent) -> bool:
+        thread_id = extract_codex_thread_id(event.payload)
+        owners = (self.scope_session_id, self.main_thread_id)
+        return not thread_id or all(not owner or owner == thread_id for owner in owners)
+
+    def fold_event(self, kind: str, payload: Mapping[str, object]) -> None:
+        facts = self.facts
+        if kind == "turn.started" and self.main_thread_id is None:
+            self.main_thread_id = extract_codex_thread_id(dict(payload))
+        item = payload.get("item")
+        if isinstance(item, dict):
+            item = cast("dict[str, object]", item)
+            item_type = str(item.get("type", "")).lower().replace("_", "")
+            if kind == "item.completed" and item_type == "agentmessage":
+                text = extract_text(item.get("text"))
+                if text:
+                    self.set_text(text, "codex_agent_message")
+            elif kind == "item.started" and item_type == "commandexecution":
+                facts.final_text = None
+                self.text_source = None
+        usage: object = None
+        if kind == "thread.tokenusage.updated":
+            token_usage = payload.get("tokenUsage") or _nested_get(payload, "payload", "tokenUsage")
+            if isinstance(token_usage, dict):
+                usage = cast("dict[str, object]", token_usage).get("total")
+        elif kind == "turn.completed":
+            usage = payload.get("usage") or _nested_get(payload, "payload", "usage")
+        if isinstance(usage, dict):
+            usage = cast("dict[str, object]", usage)
+            self.usage_is_specific = True
+            facts.usage = TokenUsage(
+                input_tokens=coerce_optional_int(
+                    usage.get("inputTokens", usage.get("input_tokens"))
+                ),
+                output_tokens=coerce_optional_int(
+                    usage.get("outputTokens", usage.get("output_tokens"))
+                ),
+                cache_read_input_tokens=coerce_optional_int(
+                    usage.get("cachedInputTokens", usage.get("cached_input_tokens"))
+                ),
+                cache_creation_input_tokens=coerce_optional_int(
+                    usage.get("cacheCreationInputTokens", usage.get("cache_creation_input_tokens"))
+                ),
+                reasoning_tokens=coerce_optional_int(
+                    usage.get("reasoningOutputTokens", usage.get("reasoning_output_tokens"))
+                ),
+            )
 
 
 CODEX_EXTRACTOR = CodexHarnessExtractor()
@@ -127,59 +95,10 @@ CODEX_EXTRACTOR = CodexHarnessExtractor()
 __all__ = ["CODEX_EXTRACTOR", "CodexHarnessExtractor"]
 
 
-def _nested_get(payload: dict[str, object], *keys: str) -> object:
+def _nested_get(payload: object, *keys: str) -> object:
     current: object = payload
     for key in keys:
         if not isinstance(current, Mapping):
             return None
         current = cast("Mapping[str, object]", current).get(key)
     return current
-
-
-def _extract_codex_usage(artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
-    last_total_usage: dict[str, object] | None = None
-    for payload in _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME):
-        event_type = (
-            str(payload.get("event_type", payload.get("type", payload.get("event", ""))))
-            .strip()
-            .lower()
-            .replace("/", ".")
-        )
-        # Real Codex events: thread/tokenUsage/updated with tokenUsage.total (camelCase)
-        if event_type == "thread.tokenusage.updated":
-            token_usage_obj = payload.get("tokenUsage") or _nested_get(
-                payload, "payload", "tokenUsage"
-            )
-            if isinstance(token_usage_obj, dict):
-                token_usage = cast("dict[str, object]", token_usage_obj)
-                total_obj = token_usage.get("total")
-                if isinstance(total_obj, dict):
-                    last_total_usage = cast("dict[str, object]", total_obj)
-        # Test fixture / fallback: turn/completed with snake_case usage
-        elif event_type == "turn.completed":
-            usage_obj = payload.get("usage")
-            if not isinstance(usage_obj, dict):
-                usage_obj = _nested_get(payload, "payload", "usage")
-            if isinstance(usage_obj, dict):
-                last_total_usage = cast("dict[str, object]", usage_obj)
-    if last_total_usage is None:
-        return TokenUsage()
-    return TokenUsage(
-        input_tokens=_coerce_optional_int(
-            last_total_usage.get("inputTokens") or last_total_usage.get("input_tokens")
-        ),
-        output_tokens=_coerce_optional_int(
-            last_total_usage.get("outputTokens") or last_total_usage.get("output_tokens")
-        ),
-        cache_read_input_tokens=_coerce_optional_int(
-            last_total_usage.get("cachedInputTokens") or last_total_usage.get("cached_input_tokens")
-        ),
-        cache_creation_input_tokens=_coerce_optional_int(
-            last_total_usage.get("cacheCreationInputTokens")
-            or last_total_usage.get("cache_creation_input_tokens")
-        ),
-        reasoning_tokens=_coerce_optional_int(
-            last_total_usage.get("reasoningOutputTokens")
-            or last_total_usage.get("reasoning_output_tokens")
-        ),
-    )

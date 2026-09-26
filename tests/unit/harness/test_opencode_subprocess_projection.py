@@ -98,6 +98,7 @@ def test_interactive_resume_keeps_model_for_managed_attach() -> None:
 
     assert command[command.index("--model") + 1] == "openai/gpt-5.5"
     assert command[command.index("--session") + 1] == "ses-parent"
+    assert command[-2:] == ["--prompt", "hello"]
 
 
 def test_unresolved_version_forwards_model_on_resume(monkeypatch: pytest.MonkeyPatch) -> None:

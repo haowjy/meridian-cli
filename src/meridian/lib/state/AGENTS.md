@@ -28,16 +28,14 @@ meridian.toml
   spawns/.staging/<unique>/         — unpublished builds and verified-archive retirement buffers
   spawns/<spawn_id>/
     state.json                      — authoritative spawn state (schema v3)
-    history.jsonl                   — primary output artifact
+    history.jsonl                   — legacy runner event stream (no longer written), never read
     attempt-N/                      — preserved retry evidence from prior attempts
-    last-observed-event.json        — diagnostic marker for last harness event + counters
     runner-lifecycle.jsonl          — runner breadcrumb journal (signals, phases, atexit)
     finalize-evidence.json          — orphan-time liveness snapshot before reaper cleanup
     process_scopes.json             — durable process identities + release markers
     reaper_cleanup_claim.json       — pending finalize-first cleanup targets
     heartbeat · report.md · stderr.log · params.json · tokens.json
-  artifacts/<spawn_id>/             — legacy auxiliary store; old history
-                                      copies remain read-compatible
+  artifacts/<spawn_id>/             — auxiliary artifact store, not a transcript source
 
 <context.work root>/<slug>/         ← context-resolved, NOT repo-local
   __status.json                     — mutable per-work-item metadata
@@ -89,6 +87,9 @@ Use `history_index.py` for filtered discovery, not repeated broad authority scan
 Keep lifecycle/control decisions on direct authoritative reads. All new indexed
 writers must publish dirty intent before file mutation; SQLite is never a writer
 dependency. Restored `record_mode="historical"` aggregates are inert and immutable.
+The index file and its sidecars (marker queue, GENERATION, catch-up/database/marker
+locks, init latch) are named by `SCHEMA_VERSION`; a schema bump builds a new file
+from authority and never touches an older build's file. Never migrate in place.
 See [.context/history.md](.context/history.md) before changing locks, projection,
 transcript retry behavior, ZIP retention, or restore.
 
@@ -130,9 +131,10 @@ Use the correct resolver — they have different side effects:
 Using `*_for_write()` on a read path creates `meridian.toml` identity in untouched checkouts,
 triggering project setup side effects in CI.
 
-Spawn-history reads go through `resolve_spawn_history_path()`: the authoritative
-`spawns/<id>/history.jsonl` always wins, with `artifacts/<id>/history.jsonl` as a
-legacy fallback. `LocalStore` uses the same resolver for get/exists/list.
+Transcript reads go through `ops/session_target.resolve_transcript_source`: ref →
+chat → accepted native key → exact harness reader. Artifact storage never redirects
+to spawn transcripts; unbound or missing native sources are unavailable. Restored
+historical records and imported archive refs read a sealed `snapshot` source instead.
 
 ## Reconciliation Behavior
 
@@ -150,6 +152,15 @@ claims for the next doctor pass.
 Both paths share liveness rules in `reaper.py` and completion/cancel precedence in
 `reconciliation.py`.
 
+## Native Chat Identity
+
+A chat keeps one `(harness, native_store, harness_session_id)` binding across
+starts and updates. `update_session_harness_id` atomically returns
+`BindOutcome` (`Bound`/`Same`/`Conflict`) from the one pure rule in
+`native_binding.bind`; callers mirror its accepted ID, not their candidate.
+`session_fold.py` owns event models and replay; `by_native_key(records)`
+inverts accepted chat records without discarding aliases or doing I/O. Historical multi-ID arrays are ignored on read.
+
 ## Entry Points
 
 - `user_paths.py` — `get_user_home()`. Start here for any new user-level storage.
@@ -158,7 +169,8 @@ Both paths share liveness rules in `reaper.py` and completion/cancel precedence 
 - `spawn_aggregate.py` — published-row deletion and spawn-owned artifact lifetime guard.
 - `work_state.py` / `work_store.py` / `work_repository.py` — work-item models and
   codec, pure reads, and the single locked mutation repository, respectively.
-- `session_store.py` — Session event log and read projection.
+- `session_store.py` — Session event I/O and lease ownership.
+- `session_fold.py` — Public event models, pure replay, and accepted-key inversion.
 - `atomic.py` — atomic write primitives. All state writes use these.
 - `reaper.py` — read-only `reconcile_spawns()` projection and root-only
   `reconcile_active_spawn()` repair.

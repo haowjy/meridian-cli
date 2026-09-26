@@ -2,12 +2,11 @@
 
 import math
 from collections.abc import Callable, Collection, Mapping
-from pathlib import Path
 from typing import cast
 
 from meridian.lib.core.child_env import ALLOWED_CHILD_ENV_KEYS
 from meridian.lib.core.overrides import RUNTIME_OVERRIDE_ENV_VARS
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.harness.connections.base import PiSessionRole
 from meridian.lib.safety.permissions import PermissionConfig
@@ -124,28 +123,6 @@ def resolve_pi_session_role(*, interactive: bool) -> PiSessionRole:
 
     return "primary" if interactive else "spawned"
 
-
-def scope_pi_session_dir_for_spawn(
-    *,
-    child_env: dict[str, str],
-    spawn_id: SpawnId,
-) -> str | None:
-    """Scope Pi session storage to one spawn, idempotently."""
-
-    session_root = child_env.get(_PI_SESSION_DIR_ENV, "").strip()
-    if not session_root:
-        return None
-
-    resolved_spawn_id = str(spawn_id).strip()
-    if not resolved_spawn_id:
-        return None
-
-    scoped_root = Path(session_root).expanduser()
-    if scoped_root.name != resolved_spawn_id:
-        scoped_root = scoped_root / resolved_spawn_id
-    scoped_root.mkdir(parents=True, exist_ok=True)
-    child_env[_PI_SESSION_DIR_ENV] = str(scoped_root)
-    return str(scoped_root)
 
 
 def merge_env_overrides(

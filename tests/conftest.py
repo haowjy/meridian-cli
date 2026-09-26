@@ -22,6 +22,19 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "e2e: full CLI invocation")
     config.addinivalue_line("markers", "contract: parity/drift checks")
     config.addinivalue_line("markers", "slow: takes >1s")
+    if config.getoption("--runner-history") == "off":
+        blind_dir = PACKAGE_ROOT / "tests" / "support" / "runner_history_blind"
+        existing = os.environ.get("PYTHONPATH")
+        os.environ["PYTHONPATH"] = str(blind_dir) + (os.pathsep + existing if existing else "")
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--runner-history",
+        choices=("on", "off"),
+        default="on",
+        help="Trap implicit reads of runner history.jsonl, in-process and in subprocesses",
+    )
 
 
 @pytest.fixture
@@ -37,20 +50,49 @@ def _isolate_meridian_home(tmp_path_factory: pytest.TempPathFactory) -> None:
     os.environ["MERIDIAN_HOME"] = str(test_home)
 
 
+_NATIVE_STORE_ENV = frozenset({
+    "CODEX_HOME",
+    "CLAUDE_CONFIG_DIR",
+    "OPENCODE_DB",
+    "OPENCODE_CONFIG",
+    "OPENCODE_CONFIG_DIR",
+    "PI_CODING_AGENT_DIR",
+    "PI_CODING_AGENT_SESSION_DIR",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_STATE_HOME",
+})
+
+
 @pytest.fixture(autouse=True)
 def _clean_meridian_runtime_env(
     monkeypatch: pytest.MonkeyPatch,
     _isolate_meridian_home: None,
 ) -> None:
-    """Isolate tests from parent harness runtime state environment."""
+    """Isolate tests from parent harness runtime state environment.
+
+    Harness store variables are cleared too: a test that swaps HOME must not
+    reach the user's real native stores through an inherited CODEX_HOME etc.
+    """
 
     session_home = os.environ.get("MERIDIAN_HOME")
     for key in tuple(os.environ):
-        if key.upper().startswith(("MERIDIAN_", "_MERIDIAN_")):
+        if key.upper().startswith(("MERIDIAN_", "_MERIDIAN_")) or key in _NATIVE_STORE_ENV:
             monkeypatch.delenv(key, raising=False)
 
     if session_home is not None:
         monkeypatch.setenv("MERIDIAN_HOME", session_home)
+
+
+@pytest.fixture(autouse=True)
+def _runner_history_blind_mode(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if request.config.getoption("--runner-history") == "off":
+        from tests.support.runner_history_blind.patches import install_runner_history_blind
+
+        install_runner_history_blind(monkeypatch)
 
 
 @pytest.fixture(autouse=True)

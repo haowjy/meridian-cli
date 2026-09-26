@@ -1,49 +1,20 @@
-# harness/extractors/ — Result Extraction
+# harness/extractors/ — Attempt Facts
 
-Session ID, token usage, and report extraction from harness output. One extractor
-per harness, serving both the subprocess path (artifacts on disk) and the streaming
-path (live `RawHarnessEvent` objects).
+One stateless extractor per harness. `create_fold()` makes an attempt-local
+fold with its own cursor and bounded facts. Calling it with a `RawHarnessEvent`
+updates facts synchronously before event persistence. Retries use fresh folds. Extractors
+never read runner history or artifact-store output. Claude `--print` is the
+black-box exception: the runner folds its captured stdout after exit.
 
-## Mental Model
+`detect_session_id_from_event` remains the live connection identity port.
+Session IDs need owned protocol evidence: assistant prose and nested tool values
+are not identity evidence. Facts do not rebind chats; `NativeRun` decides identity.
 
-Extractors sit at the end of a spawn: after the process exits or the connection
-closes, something must pull session IDs, cost data, and status reports from what
-the harness produced. Extractors do that work without knowing whether the harness
-ran as a subprocess or a connection.
+`read_native_turn(key, ids)` is the only fallback read: exact event-named replies
+in the recorded native store, never the latest message in a conversation or an
+ambient namespace. OpenCode V2 prefers this read over streamed text.
 
-Two extraction modes:
-- **Live event mode**: `detect_session_id_from_event(event)` — called per event
-  during the drain loop when a session ID is not yet known.
-- **Artifact mode**: `extract_session_id()`, `extract_usage()`, `extract_report()`
-  — called post-exit on `history.jsonl` and output artifacts.
+Access extractors through `get_harness_bundle().extractor`, after harness bootstrap.
+Keep harness-specific parsing here; runners only carry facts and register folds.
 
-## Key Rules
-
-**Extractors are not instantiated by callers directly.** Each adapter registers its
-extractor in `HarnessBundle`. Access via `adapter.extractor` or `bundle.extractor`
-after `ensure_bootstrap()`.
-
-**Session ID key names differ per harness.** Claude writes `sessionId`; Codex uses
-`session_id`; OpenCode uses a different path. The `session_from_mapping_with_keys`
-helper in `base.py` handles the per-harness key lookup.
-
-**Protocol is runtime-checkable.** `HarnessExtractor` extends `SpawnExtractor` as a
-`Protocol` — runtime `isinstance()` checks work. Add new methods to the Protocol
-and to every implementation together.
-
-## Entry Points
-
-- `base.py` — `HarnessExtractor` Protocol, `session_from_mapping_with_keys`,
-  `normalize_harness_event_type`.
-
-## Depth
-
-→ [.context/CONTEXT.md](.context/CONTEXT.md) — two extraction paths in detail,
-   per-harness session ID key names, fallback detection logic.
-
-## Related
-
-- [../.context/CONTEXT.md](../.context/CONTEXT.md) — `observe_session_id()` priority
-  chain that drives when and how extractor methods are called.
-- [../connections/AGENTS.md](../connections/AGENTS.md) — `RawHarnessEvent` that
-  `detect_session_id_from_event` receives.
+→ [.context/CONTEXT.md](.context/CONTEXT.md) — precedence, ownership, usage semantics.

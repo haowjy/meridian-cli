@@ -1,59 +1,103 @@
 """Session-log target resolution helpers.
 
 This module resolves user refs (chat, spawn, harness session id, or explicit file)
-into a concrete transcript file target. Display prefers the history index, then
-live/untracked native files. It is intentionally read-only: no state mutation
-or repair writes happen during resolution.
+into one exact native transcript. The metadata index only supplies reclaimed
+spawn records and aliases; session bindings remain file-authoritative. Resolution
+does not repair or mutate authoritative state.
+
+A sealed retained snapshot (``kind="snapshot"``) is selected only for a restored
+historical record or an explicit archive/import ref with no local binding. A live
+binding whose native source is missing never falls back to a snapshot.
 """
 
 from __future__ import annotations
 
+import json
 import re
-from datetime import datetime
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Literal, NamedTuple
 
+from pydantic import TypeAdapter, ValidationError
+from sqlalchemy import or_, select
+
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
+from meridian.lib.core.native_identity import NativeKey, NativeSessionUnavailable
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.adapter import SubprocessHarness
-from meridian.lib.harness.opencode_transcript import opencode_db_any_session_exists
-from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
+from meridian.lib.harness.transcript import reject_runner_history
+from meridian.lib.ops.run_boundary import spawn_view_label
 from meridian.lib.ops.spawn.query import read_spawn_row_read_only
-from meridian.lib.state import session_identity, session_store
-from meridian.lib.state.history_index import HistoryIndex, indexed_spawn_scan
-from meridian.lib.state.paths import resolve_spawn_output_path
-from meridian.lib.state.primary_meta import (
-    read_primary_harness_session_id,
-    read_primary_metadata,
+from meridian.lib.state import session_identity, session_store, spawn_store
+from meridian.lib.state.history_index import ALIASES, RECORDS, HistoryIndex
+from meridian.lib.state.native_snapshot import NATIVE_SNAPSHOT_FILENAME
+from meridian.lib.state.retention_archive import (
+    archive_locations,
+    read_receipts,
+    reclaimed_locally,
+    selected_snapshot_receipts,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
 
 _CODEX_FILENAME_RE = re.compile(
     r"^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(?P<session_id>[0-9a-fA-F-]{36})\.jsonl$"
 )
-_PRIMARY_TRANSCRIPT_UNAVAILABLE_SUFFIX = (
-    "exists but no transcript is available yet (no harness session id recorded)."
-)
+
+
+def native_source_label(harness: str) -> str:
+    """One label for a native source across log, preview and search."""
+    return f"{harness} transcript"
 
 
 class TranscriptSource(NamedTuple):
-    kind: Literal["file", "native_file", "opencode_db", "spawn_history", "archive"]
+    kind: Literal["file", "native_file", "opencode_db", "snapshot"]
     session_id: str
     harness: str | None
     source_label: str
-    path: Path | None = None
+    path: Path
+    # Snapshot binding. With ``manifest_sha256``, ``path`` is a verified ZIP and the
+    # reader streams this history's member from it; otherwise a local aggregate file.
     history_id: str | None = None
     manifest_sha256: str | None = None
 
+    @classmethod
+    def native(cls, harness: str, session_id: str, path: Path) -> TranscriptSource:
+        """The one native source rule: the adapter names the kind of its own file."""
+        adapter = get_default_harness_registry().get_subprocess_harness(HarnessId(harness))
+        return cls(
+            kind=adapter.native_transcript_kind(path),
+            session_id=session_id,
+            harness=harness,
+            source_label=native_source_label(harness),
+            path=path,
+        )
+
+    @classmethod
+    def retained(
+        cls,
+        row: SpawnRecord,
+        path: Path,
+        manifest_sha256: str | None = None,
+    ) -> TranscriptSource:
+        """A sealed snapshot, rendered as captured and bound to its history identity."""
+        if row.history_id is None:
+            raise NativeSessionUnavailable(row.id, "unbound")
+        harness = row.harness or "native"
+        return cls(
+            kind="snapshot",
+            session_id=str(row.history_id),
+            harness=row.harness,
+            source_label=f"retained {harness} snapshot",
+            path=path,
+            history_id=str(row.history_id),
+            manifest_sha256=manifest_sha256,
+        )
+
 
 class SessionLogTarget(NamedTuple):
-    session_id: str
-    harness: str | None
-    file_path: Path | None
-    source: str
-    sources: tuple[TranscriptSource, ...]
+    source: TranscriptSource
+    view_label: str | None = None
 
 
 def _is_chat_ref(runtime_root: Path, value: str) -> bool:
@@ -73,47 +117,40 @@ def _extract_session_id_from_path(path: Path) -> str:
     return path.name
 
 
-def _target_from_source(source: TranscriptSource) -> SessionLogTarget:
-    return SessionLogTarget(
-        session_id=source.session_id,
-        harness=source.harness,
-        file_path=source.path,
-        source=source.source_label,
-        sources=(source,),
-    )
-
-
-def _source_key(source: TranscriptSource) -> tuple[str, str, str | None, str]:
-    return (
-        source.kind,
-        source.session_id,
-        source.path.as_posix() if source.path is not None else None,
-        source.source_label,
-    )
-
-
-def _with_sources(
-    target: SessionLogTarget,
-    *additional_targets: SessionLogTarget | None,
-) -> SessionLogTarget:
-    sources = list(target.sources)
-    seen = {_source_key(source) for source in sources}
-    for additional_target in additional_targets:
-        if additional_target is None:
-            continue
-        for source in additional_target.sources:
-            key = _source_key(source)
-            if key in seen:
-                continue
-            sources.append(source)
-            seen.add(key)
-    return target._replace(sources=tuple(sources))
-
-
 def _resolve_file_target(file_path: str) -> SessionLogTarget:
     resolved = Path(file_path).expanduser().resolve()
     if not resolved.is_file():
         raise FileNotFoundError(f"Session file '{resolved.as_posix()}' not found")
+
+    reject_runner_history(resolved)
+    with resolved.open("rb") as handle:
+        prefix = handle.read(16)
+    if prefix == b"SQLite format 3\x00":
+        raise ValueError(
+            "OpenCode native history is stored in its database; use `meridian session log cN`."
+        )
+    if resolved.suffix.lower() != ".jsonl":
+        raise ValueError("not a native transcript")
+
+    with resolved.open("rb") as handle:
+        first = handle.readline(64 * 1024 + 1)
+    try:
+        header = TypeAdapter(dict[str, object]).validate_python(json.loads(first))
+    except (UnicodeDecodeError, ValueError, ValidationError):
+        header = None
+    is_claude = (
+        header is not None
+        and isinstance(header.get("sessionId"), str)
+        and isinstance(header.get("type"), str)
+    )
+    is_codex = header is not None and header.get("type") in {
+        "session_meta",
+        "event_msg",
+        "response_item",
+    }
+    is_pi = header is not None and header.get("type") == "session" and bool(header.get("id"))
+    if not (is_claude or is_codex or is_pi):
+        raise ValueError("not a native transcript")
 
     harness: str | None = None
     parts = set(resolved.parts)
@@ -122,467 +159,171 @@ def _resolve_file_target(file_path: str) -> SessionLogTarget:
     elif ".codex" in parts:
         harness = "codex"
 
-    return _target_from_source(
+    return SessionLogTarget(
         TranscriptSource(
             kind="file",
             session_id=_extract_session_id_from_path(resolved),
             harness=harness,
             path=resolved,
             source_label="file",
-        )
+        ),
+        view_label="file",
     )
 
 
-def _resolve_adapter_file_target(
-    *,
-    project_root: Path,
-    session_id: str,
-    harness_id: HarnessId,
-    adapter: SubprocessHarness,
-    config_root_hint: Path | None,
-) -> SessionLogTarget | None:
-    candidate = adapter.resolve_session_file(
-        project_root=project_root,
-        session_id=session_id,
-        config_root_hint=config_root_hint,
+def _native_target(key: NativeKey, record: session_store.SessionRecord) -> SessionLogTarget:
+    adapter = get_default_harness_registry().get_subprocess_harness(HarnessId(key.harness))
+    candidate = adapter.resolve_native_session_file(
+        session_id=key.session_id, native_store=Path(key.native_store)
     )
     if candidate is None or not candidate.is_file():
-        return None
-    return _target_from_source(
-        TranscriptSource(
-            kind="native_file",
-            session_id=session_id,
-            harness=str(harness_id),
-            path=candidate,
-            source_label=f"{harness_id} transcript",
-        )
+        raise NativeSessionUnavailable(record.chat_id, "missing")
+    return SessionLogTarget(TranscriptSource.native(key.harness, key.session_id, candidate))
+
+
+def _target_from_record(record: session_store.SessionRecord) -> SessionLogTarget:
+    key = record.native_key()
+    if key is None:
+        raise NativeSessionUnavailable(record.chat_id, "unbound")
+    return _native_target(key, record)
+
+
+def _resolve_from_chat_id(*, runtime_root: Path, chat_id: str) -> SessionLogTarget:
+    record = session_store.get_session_record(runtime_root, chat_id)
+    if record is None:
+        raise ValueError(f"Chat '{chat_id}' not found")
+    if record.record_mode == "historical" and record.spawn_id:
+        row = spawn_store.get_spawn(runtime_root, record.spawn_id)
+        if row is not None and row.history_id == record.history_id:
+            return _restored_target(runtime_root, row, ref=chat_id)
+    return _target_from_record(record)
+
+
+def _restored_target(runtime_root: Path, row: SpawnRecord, *, ref: str) -> SessionLogTarget:
+    """Read a restored aggregate's own sealed snapshot; restored refs stay inert."""
+    if row.record_mode != "historical":
+        raise ValueError(f"{row.id} is not a historical record")
+    path = runtime_root / "spawns" / row.id / NATIVE_SNAPSHOT_FILENAME
+    if not path.is_file():
+        raise FileNotFoundError(f"{ref} is historical and has no retained native snapshot")
+    return SessionLogTarget(
+        TranscriptSource.retained(row, path), view_label=f"{ref} · historical, read-only"
     )
 
 
-def _opencode_db_target(*, session_id: str) -> SessionLogTarget:
-    return _target_from_source(
-        TranscriptSource(
-            kind="opencode_db",
-            session_id=session_id,
-            harness=HarnessId.OPENCODE.value,
-            source_label="opencode transcript",
-        )
-    )
-
-
-def _resolve_harness_session_file(
-    *,
-    project_root: Path,
-    session_id: str,
-    harness: str | None,
-    config_root_hint: Path | None,
+def _archived_target(
+    runtime_root: Path, row: SpawnRecord, *, ref: str, project_root: Path, deadline: float | None
 ) -> SessionLogTarget:
-    normalized_session_id = session_id.strip()
-    if not normalized_session_id:
-        raise FileNotFoundError("Session ID is required to resolve harness session file")
+    """Stream the catalog-selected ZIP member in place; nothing is extracted."""
+    from meridian.lib.config.settings import load_config
 
-    registry = get_default_harness_registry()
-    normalized_harness = (harness or "").strip().lower() or None
-    if normalized_harness is not None:
-        try:
-            harness_id = HarnessId(normalized_harness)
-            adapter = registry.get_subprocess_harness(harness_id)
-        except (ValueError, KeyError, TypeError) as exc:
-            raise FileNotFoundError(
-                f"Session file for '{normalized_session_id}' "
-                f"(harness={normalized_harness}) not found"
-            ) from exc
-
-        file_target = _resolve_adapter_file_target(
-            project_root=project_root,
-            session_id=normalized_session_id,
-            harness_id=harness_id,
-            adapter=adapter,
-            config_root_hint=config_root_hint,
-        )
-        if harness_id == HarnessId.OPENCODE and opencode_db_any_session_exists(
-            session_id=normalized_session_id
-        ):
-            return _with_sources(
-                _opencode_db_target(session_id=normalized_session_id),
-                file_target,
-            )
-        if file_target is not None:
-            return file_target
-        raise FileNotFoundError(
-            f"Session file for '{normalized_session_id}' (harness={normalized_harness}) not found"
-        )
-
-    checked_harnesses: list[str] = []
-    for harness_id in registry.ids():
-        try:
-            adapter = registry.get_subprocess_harness(harness_id)
-        except TypeError:
-            continue
-        checked_harnesses.append(str(harness_id))
-        file_target = _resolve_adapter_file_target(
-            project_root=project_root,
-            session_id=normalized_session_id,
-            harness_id=harness_id,
-            adapter=adapter,
-            config_root_hint=config_root_hint,
-        )
-        if harness_id == HarnessId.OPENCODE and opencode_db_any_session_exists(
-            session_id=normalized_session_id
-        ):
-            return _with_sources(
-                _opencode_db_target(session_id=normalized_session_id),
-                file_target,
-            )
-        if file_target is not None:
-            return file_target
-
-    checked = ", ".join(checked_harnesses) if checked_harnesses else "<none>"
-    raise FileNotFoundError(
-        f"Session file for '{normalized_session_id}' not found. Checked harnesses: {checked}"
+    if row.history_id is None:
+        raise NativeSessionUnavailable(ref, "unbound")
+    receipts = selected_snapshot_receipts(read_receipts(runtime_root), row.history_id)
+    configured = load_config(project_root).history.archive.destination
+    location = archive_locations(
+        receipts,
+        destination=Path(configured).expanduser() if configured else None,
+        deadline=deadline,
+    )[0]
+    return SessionLogTarget(
+        TranscriptSource.retained(row, location.path, location.receipt.manifest_sha256),
+        view_label=f"{ref} · archived snapshot {location.path}",
     )
 
 
-def _resolve_harness_transcript_target_or_none(
-    *,
-    project_root: Path,
-    session_id: str,
-    harness: str | None,
-    config_root_hint: Path | None,
-) -> SessionLogTarget | None:
-    try:
-        return _resolve_harness_session_file(
-            project_root=project_root,
-            session_id=session_id,
-            harness=harness,
-            config_root_hint=config_root_hint,
+class _IndexedRecord(NamedTuple):
+    row: SpawnRecord
+    archived: bool  # no local aggregate: only archive receipts hold this record
+
+
+def _indexed_spawn(
+    runtime_root: Path, ref: str, *, deadline: float | None = None
+) -> _IndexedRecord | None:
+    """Recover only the record, never a transcript location, from the projection."""
+    with HistoryIndex(runtime_root).query(deadline=deadline) as db:
+        records = (
+            db.execute(
+                select(RECORDS.c.record_json, RECORDS.c.archive_id)
+                .where(
+                    or_(
+                        RECORDS.c.history_id == ref,
+                        RECORDS.c.history_id.in_(
+                            select(ALIASES.c.history_id).where(
+                                ALIASES.c.alias == ref,
+                                ALIASES.c.kind != "harness",
+                            )
+                        ),
+                    )
+                )
+                .distinct()
+            )
+            .tuples()
+            .all()
         )
-    except FileNotFoundError:
+    if len(records) > 1:
+        raise ValueError("Ambiguous archive origin alias; use a portable history UUID")
+    if not records:
         return None
+    record_json, archive_id = records[0]
+    return _IndexedRecord(SpawnRecord.model_validate_json(record_json), archive_id is not None)
 
 
-def _primary_transcript_unavailable_message(ref: str) -> str:
-    return f"Session '{ref}' {_PRIMARY_TRANSCRIPT_UNAVAILABLE_SUFFIX}"
-
-
-def _started_at_observation_window(started_at: str | None) -> tuple[float | None, str | None]:
-    normalized_started_at = (started_at or "").strip()
-    if not normalized_started_at:
-        return (None, None)
-    if normalized_started_at.endswith("Z"):
-        normalized_started_at = f"{normalized_started_at[:-1]}+00:00"
-    try:
-        parsed_started_at = datetime.fromisoformat(normalized_started_at)
-    except ValueError:
-        return (None, None)
-    started_at_epoch = parsed_started_at.timestamp()
-    started_at_local_iso = datetime.fromtimestamp(started_at_epoch).strftime("%Y-%m-%dT%H:%M:%S")
-    return (started_at_epoch, started_at_local_iso)
-
-
-def _detect_primary_harness_session_id(
+def _indexed_target(
+    runtime_root: Path,
+    indexed: _IndexedRecord,
     *,
+    ref: str,
     project_root: Path,
-    spawn_row: SpawnRecord,
-    harness_hint: str | None,
-) -> str | None:
-    if spawn_row.kind != "primary":
-        return None
-    normalized_harness = (harness_hint or spawn_row.harness or "").strip().lower()
-    if not normalized_harness:
-        return None
-    started_at_epoch, started_at_local_iso = _started_at_observation_window(spawn_row.started_at)
-    if started_at_epoch is None:
-        return None
+    deadline: float | None,
+) -> SessionLogTarget:
+    """Pick one source for an indexed record: archive, restored snapshot, or live binding.
 
-    registry = get_default_harness_registry()
-    try:
-        harness_id = HarnessId(normalized_harness)
-        adapter = registry.get_subprocess_harness(harness_id)
-    except (KeyError, TypeError, ValueError):
-        return None
-
-    detected_harness_session_id = (
-        adapter.detect_primary_session_id(
-            project_root=project_root,
-            started_at_epoch=started_at_epoch,
-            started_at_local_iso=started_at_local_iso,
-        )
-        or ""
-    ).strip()
-    if not detected_harness_session_id:
-        return None
-
-    return detected_harness_session_id
-
-
-def spawn_output_path_for_target(
-    runtime_root: Path,
-    spawn_id: str,
-) -> Path | None:
-    return resolve_spawn_output_path(runtime_root, spawn_id)
-
-
-def _target_from_spawn_output(
-    runtime_root: Path,
-    *,
-    display_id: str,
-    spawn_id: str,
-    source: str | None = None,
-) -> SessionLogTarget | None:
-    output_path = spawn_output_path_for_target(runtime_root, spawn_id)
-    if output_path is None:
-        return None
-    return _target_from_source(
-        TranscriptSource(
-            kind="spawn_history",
-            session_id=display_id,
-            harness=None,
-            path=output_path,
-            source_label=source or f"spawn {spawn_id} output",
-        )
-    )
-
-
-def _legacy_spawns_for_chats(
-    runtime_root: Path,
-    chat_ids: set[str],
-) -> tuple[dict[str, SpawnRecord], dict[str, list[SpawnRecord]]]:
-    primary_spawns: dict[str, SpawnRecord] = {}
-    related_spawns: dict[str, list[SpawnRecord]] = {chat_id: [] for chat_id in chat_ids}
-    if not chat_ids:
-        return primary_spawns, related_spawns
-
-    for spawn in indexed_spawn_scan(runtime_root, related_chat_ids=chat_ids).records:
-        raw_owner_chat_id = session_identity.spawn_owner_chat_id(spawn)
-        owner_chat_id = str(raw_owner_chat_id) if raw_owner_chat_id is not None else ""
-        if spawn.kind == "primary" and owner_chat_id in chat_ids:
-            primary_spawns[owner_chat_id] = spawn
-        exact_chat_id = str(spawn.chat_id) if spawn.chat_id is not None else ""
-        for related_chat_id in {exact_chat_id, owner_chat_id} & chat_ids:
-            related_spawns[related_chat_id].append(spawn)
-    return primary_spawns, related_spawns
-
-
-def _latest_harness_session_id(record: session_store.SessionRecord) -> str | None:
-    for candidate in reversed(record.harness_session_ids):
-        normalized = candidate.strip()
-        if normalized:
-            return normalized
-    normalized = (record.harness_session_id or "").strip()
-    return normalized or None
-
-
-def _config_root_hint(value: str | None) -> Path | None:
-    normalized = (value or "").strip()
-    return Path(normalized).expanduser() if normalized else None
-
-
-def _read_chat_session_record(
-    runtime_root: Path, chat_id: str
-) -> session_store.SessionRecord | None:
-    return session_store.get_session_record(runtime_root, chat_id)
-
-
-def _resolve_transcript_from_candidates(
-    *,
-    project_root: Path,
-    harness: str | None,
-    candidate_ids: list[str | None],
-    config_root_hint: Path | None,
-) -> SessionLogTarget | None:
-    seen: set[str] = set()
-    for candidate_id in candidate_ids:
-        normalized_candidate_id = (candidate_id or "").strip()
-        if not normalized_candidate_id or normalized_candidate_id in seen:
-            continue
-        seen.add(normalized_candidate_id)
-        transcript_target = _resolve_harness_transcript_target_or_none(
-            project_root=project_root,
-            session_id=normalized_candidate_id,
-            harness=harness,
-            config_root_hint=config_root_hint,
-        )
-        if transcript_target is not None:
-            return transcript_target
-    return None
-
-
-def _detect_primary_session_id(
-    *,
-    project_root: Path,
-    runtime_root: Path,
-    spawn_row: SpawnRecord | None,
-    harness: str | None,
-) -> str | None:
-    if spawn_row is None:
-        return None
-    if _skip_primary_default_root_detection(
-        runtime_root=runtime_root,
-        spawn_row=spawn_row,
-        harness=harness,
+    An archive-only record that this runtime did not reclaim itself names chats from
+    another runtime; its local chat ids are not its bindings, so read the archive.
+    """
+    row = indexed.row
+    if indexed.archived and (
+        row.record_mode == "historical"
+        or row.history_id is None
+        or not reclaimed_locally(read_receipts(runtime_root), row.history_id)
     ):
-        return None
-    detected_session_id = _detect_primary_harness_session_id(
-        project_root=project_root,
-        spawn_row=spawn_row,
-        harness_hint=harness,
-    )
-    normalized_detected_session_id = (detected_session_id or "").strip()
-    return normalized_detected_session_id or None
-
-
-def _normalized_path_text(path: str | Path) -> str | None:
-    try:
-        normalized = Path(path).expanduser().resolve()
-    except (OSError, RuntimeError, ValueError):
-        try:
-            normalized = Path(path).expanduser().absolute()
-        except (OSError, RuntimeError, ValueError):
-            return None
-    return normalized.as_posix().rstrip("/").lower()
-
-
-def _skip_primary_default_root_detection(
-    *,
-    runtime_root: Path,
-    spawn_row: SpawnRecord,
-    harness: str | None,
-) -> bool:
-    if spawn_row.kind != "primary":
-        return False
-    normalized_harness = (harness or spawn_row.harness or "").strip().lower()
-    if normalized_harness != HarnessId.PI.value:
-        return False
-    metadata = read_primary_metadata(runtime_root, spawn_row.id)
-    if metadata is None:
-        return False
-    if metadata.harness_session_discovery == "never_created":
-        return True
-    session_dir = (metadata.session_dir or "").strip()
-    if not session_dir:
-        return False
-    configured_session_dir = _normalized_path_text(session_dir)
-    default_session_dir = _normalized_path_text(resolve_pi_spawn_session_root())
-    if configured_session_dir is None or default_session_dir is None:
-        return False
-    return configured_session_dir != default_session_dir
-
-
-def _resolve_from_chat_state(
-    *,
-    project_root: Path,
-    runtime_root: Path,
-    chat_id: str,
-    session_record: session_store.SessionRecord,
-    primary_spawn: SpawnRecord | None,
-) -> SessionLogTarget:
-    normalized_harness = session_record.harness.strip() or None
-    if normalized_harness is None and primary_spawn is not None and primary_spawn.harness:
-        normalized_harness = primary_spawn.harness.strip() or None
-    config_root_hint = _config_root_hint(
-        session_record.claude_config_dir
-        or (primary_spawn.claude_config_dir if primary_spawn is not None else None)
-    )
-
-    normalized_session_id = _latest_harness_session_id(session_record)
-    if normalized_session_id is None and primary_spawn is not None:
-        normalized_session_id = (
-            read_primary_harness_session_id(runtime_root, primary_spawn.id) or ""
-        ).strip() or None
-
-    if normalized_session_id is None:
-        if primary_spawn is None:
-            raise ValueError(_primary_transcript_unavailable_message(chat_id))
-        normalized_session_id = _detect_primary_session_id(
-            project_root=project_root,
-            runtime_root=runtime_root,
-            spawn_row=primary_spawn,
-            harness=normalized_harness,
+        return _archived_target(
+            runtime_root, row, ref=ref, project_root=project_root, deadline=deadline
         )
-        if normalized_session_id is None:
-            raise ValueError(_primary_transcript_unavailable_message(chat_id))
-
-    if not normalized_session_id.strip():
-        raise ValueError(f"Chat '{chat_id}' not found")
-
-    if normalized_harness is None:
-        inferred = infer_harness_from_untracked_session_ref(project_root, normalized_session_id)
-        normalized_harness = str(inferred) if inferred is not None else None
-
-    transcript_target = _resolve_transcript_from_candidates(
-        project_root=project_root,
-        harness=normalized_harness,
-        candidate_ids=[normalized_session_id],
-        config_root_hint=config_root_hint,
-    )
-    if transcript_target is not None:
-        return transcript_target
-
-    detected_session_id = _detect_primary_session_id(
-        project_root=project_root,
-        runtime_root=runtime_root,
-        spawn_row=primary_spawn,
-        harness=normalized_harness,
-    )
-    if detected_session_id is not None and detected_session_id != normalized_session_id:
-        transcript_target = _resolve_transcript_from_candidates(
-            project_root=project_root,
-            harness=normalized_harness,
-            candidate_ids=[detected_session_id],
-            config_root_hint=config_root_hint,
-        )
-        if transcript_target is not None:
-            return transcript_target
-
-    return _resolve_harness_session_file(
-        project_root=project_root,
-        session_id=normalized_session_id,
-        harness=normalized_harness,
-        config_root_hint=config_root_hint,
-    )
+    if row.record_mode == "historical":
+        return _restored_target(runtime_root, row, ref=ref)
+    return _spawn_target(row=row, record_for=_stored_record(runtime_root))
 
 
-def _resolve_from_chat_id(
-    *,
-    project_root: Path,
-    runtime_root: Path,
-    chat_id: str,
+def _spawn_target(
+    *, row: SpawnRecord, record_for: Callable[[str], session_store.SessionRecord | None]
 ) -> SessionLogTarget:
-    session_record = _read_chat_session_record(runtime_root, chat_id)
-    if session_record is None:
-        raise ValueError(f"Chat '{chat_id}' not found")
-    primary_spawn = session_identity.get_recorded_primary_spawn_for_owner_chat(
-        runtime_root,
-        chat_id,
-        session_record.spawn_id,
-    )
-    if primary_spawn is None:
-        primary_spawns, _related = _legacy_spawns_for_chats(runtime_root, {chat_id})
-        primary_spawn = primary_spawns.get(chat_id)
-    return _resolve_from_chat_state(
-        project_root=project_root,
-        runtime_root=runtime_root,
-        chat_id=chat_id,
-        session_record=session_record,
-        primary_spawn=primary_spawn,
-    )
+    if row.chat_id is None:
+        raise NativeSessionUnavailable(row.id, "unbound")
+    chat_id = row.continue_chat_id
+    record = record_for(chat_id) if chat_id else None
+    if record is None:
+        raise NativeSessionUnavailable(row.id, "unbound")
+    target = _target_from_record(record)
+    return target._replace(view_label=spawn_view_label(row))
 
 
-def _spawn_linked_chat_session(
-    *,
-    runtime_root: Path,
-    spawn_id: str,
-    chat_id: str | None,
-) -> session_store.SessionRecord | None:
-    from meridian.lib.state.session_identity import get_session_record_for_spawn
+def _stored_record(runtime_root: Path) -> Callable[[str], session_store.SessionRecord | None]:
+    return lambda chat_id: session_store.get_session_record(runtime_root, chat_id)
 
-    _ = chat_id
-    return get_session_record_for_spawn(
-        runtime_root,
-        spawn_id,
-        require_harness_session_id=True,
-    )
+
+def resolve_run_sources(
+    row: SpawnRecord, sessions: Mapping[str, session_store.SessionRecord]
+) -> tuple[TranscriptSource, ...]:
+    """Every exact native source holding a run's turns: its log chat and its entry chat."""
+    sources = [_spawn_target(row=row, record_for=sessions.get).source]
+    if row.chat_id is not None and row.chat_id != row.continue_chat_id:
+        entry = sessions.get(row.chat_id)
+        if entry is None:
+            raise NativeSessionUnavailable(row.id, "unbound")
+        sources.append(_target_from_record(entry).source)
+    return tuple(sources)
 
 
 def _resolve_from_spawn_id(
@@ -591,8 +332,15 @@ def _resolve_from_spawn_id(
     runtime_root: Path,
     spawn_id: str,
     purpose: Literal["display", "capture"] = "display",
+    deadline: float | None = None,
 ) -> SessionLogTarget:
     row = read_spawn_row_read_only(project_root, spawn_id, runtime_root=runtime_root)
+    if row is None and purpose == "display":
+        indexed = _indexed_spawn(runtime_root, spawn_id, deadline=deadline)
+        if indexed is not None:
+            return _indexed_target(
+                runtime_root, indexed, ref=spawn_id, project_root=project_root, deadline=deadline
+            )
     if row is None:
         raise ValueError(f"Spawn '{spawn_id}' not found")
 
@@ -603,111 +351,17 @@ def _resolve_from_spawn_id(
             or row.history_id is None
         ):
             raise ValueError("Capture preparation requires an identified terminal record")
-        if row.kind != "primary":
-            stream = _target_from_spawn_output(runtime_root, display_id=spawn_id, spawn_id=spawn_id)
-            if stream is None:
-                raise FileNotFoundError(f"No retained child stream available for {spawn_id}")
-            return stream
         # Use only this aggregate and its exact session generation. A current chat,
         # inferred harness or post-launch file discovery cannot establish binding.
         session = session_identity.session_records_for_spawns(runtime_root, [row]).get(row.id)
-        harnesses, native_ids = session_identity.native_identity_candidates(
-            runtime_root, row, session
-        )
-        if len(native_ids) > 1 or len(harnesses) > 1:
-            raise ValueError(f"Conflicting native identity for capture: {row.id}")
-        if not native_ids or not harnesses:
-            raise ValueError(f"Native capture requires exact native identity: {row.id}")
-        target = _resolve_harness_session_file(
-            project_root=project_root,
-            session_id=next(iter(native_ids)),
-            harness=next(iter(harnesses)),
-            config_root_hint=_config_root_hint(
-                row.claude_config_dir or (session.claude_config_dir if session else None)
-            ),
-        )
-        # The provider chooses one exact native source, including positive-empty DB
-        # sessions. Capture must not follow presentation's output/legacy fallbacks.
-        return _target_from_source(target.sources[0])
+        key = session.native_key() if session else None
+        if key is None or session is None:
+            raise NativeSessionUnavailable(row.id, "unbound")
+        return _native_target(key, session)
 
-    is_primary_spawn = row.kind == "primary"
-    session_id = (row.harness_session_id or "").strip()
-    harness = (row.harness or "").strip() or None
-    config_root_hint = _config_root_hint(row.claude_config_dir)
-
-    if not session_id and is_primary_spawn:
-        primary_meta_session_id = read_primary_harness_session_id(runtime_root, spawn_id)
-        if primary_meta_session_id is not None:
-            session_id = primary_meta_session_id
-
-    if not session_id:
-        if is_primary_spawn:
-            session_id = (
-                _detect_primary_session_id(
-                    project_root=project_root,
-                    runtime_root=runtime_root,
-                    spawn_row=row,
-                    harness=harness,
-                )
-                or ""
-            )
-        else:
-            record = _spawn_linked_chat_session(
-                runtime_root=runtime_root,
-                spawn_id=spawn_id,
-                chat_id=row.chat_id,
-            )
-            if record is not None:
-                session_id = (record.harness_session_id or "").strip()
-                if record.harness.strip():
-                    harness = record.harness.strip()
-                if config_root_hint is None:
-                    config_root_hint = _config_root_hint(record.claude_config_dir)
-
-    if not session_id:
-        raise ValueError(
-            f"Spawn '{spawn_id}' has no transcript available yet (no harness session id recorded)."
-        )
-
-    if harness is None:
-        record = session_store.resolve_session_ref(runtime_root, session_id)
-        if record is not None and record.harness.strip():
-            harness = record.harness.strip()
-        if record is not None and config_root_hint is None:
-            config_root_hint = _config_root_hint(record.claude_config_dir)
-
-    transcript_target = _resolve_transcript_from_candidates(
-        project_root=project_root,
-        harness=harness,
-        candidate_ids=[session_id],
-        config_root_hint=config_root_hint,
-    )
-    if transcript_target is not None:
-        return transcript_target
-
-    if is_primary_spawn:
-        detected_session_id = _detect_primary_session_id(
-            project_root=project_root,
-            runtime_root=runtime_root,
-            spawn_row=row,
-            harness=harness,
-        )
-        if detected_session_id is not None and detected_session_id != session_id:
-            transcript_target = _resolve_transcript_from_candidates(
-                project_root=project_root,
-                harness=harness,
-                candidate_ids=[detected_session_id],
-                config_root_hint=config_root_hint,
-            )
-            if transcript_target is not None:
-                return transcript_target
-
-    return _resolve_harness_session_file(
-        project_root=project_root,
-        session_id=session_id,
-        harness=harness,
-        config_root_hint=config_root_hint,
-    )
+    if row.record_mode == "historical":
+        return _restored_target(runtime_root, row, ref=spawn_id)
+    return _spawn_target(row=row, record_for=_stored_record(runtime_root))
 
 
 def _resolve_from_session_ref(
@@ -715,63 +369,57 @@ def _resolve_from_session_ref(
     project_root: Path,
     runtime_root: Path,
     session_ref: str,
+    deadline: float | None = None,
 ) -> SessionLogTarget:
-    record = session_store.resolve_session_ref(runtime_root, session_ref)
-    if record is not None:
-        session_id = (record.harness_session_id or "").strip() or session_ref
-        harness = record.harness.strip() or None
-        return _resolve_harness_session_file(
-            project_root=project_root,
-            session_id=session_id,
-            harness=harness,
-            config_root_hint=_config_root_hint(record.claude_config_dir),
+    matches = [
+        record
+        for record in session_store.list_all_session_records(runtime_root)
+        if (key := record.native_key()) is not None and key.session_id == session_ref
+    ]
+    if matches:
+        if len({record.native_key() for record in matches}) > 1:
+            raise NativeSessionUnavailable(session_ref, "ambiguous_native_file")
+        matches.sort(
+            key=lambda record: (
+                int(record.chat_id[1:]) if record.chat_id[1:].isdigit() else float("inf"),
+                record.chat_id,
+            )
         )
+        target = _target_from_record(matches[0])
+        return target._replace(
+            view_label=(
+                "also bound to " + ", ".join(record.chat_id for record in matches[1:])
+                if len(matches) > 1
+                else None
+            )
+        )
+    indexed = _indexed_spawn(runtime_root, session_ref, deadline=deadline)
+    if indexed is not None:
+        return _indexed_target(
+            runtime_root, indexed, ref=session_ref, project_root=project_root, deadline=deadline
+        )
+    return _untracked_target(project_root=project_root, session_ref=session_ref)
 
-    return _resolve_untracked_session_ref(project_root=project_root, session_ref=session_ref)
 
-
-def _resolve_untracked_session_ref(*, project_root: Path, session_ref: str) -> SessionLogTarget:
+def _untracked_target(*, project_root: Path, session_ref: str) -> SessionLogTarget:
     inferred = infer_harness_from_untracked_session_ref(project_root, session_ref)
-    return _resolve_harness_session_file(
-        project_root=project_root,
-        session_id=session_ref,
-        harness=str(inferred) if inferred is not None else None,
-        config_root_hint=None,
+    if inferred is None:
+        raise NativeSessionUnavailable(session_ref, "unbound")
+    adapter = get_default_harness_registry().get_subprocess_harness(inferred)
+    candidate = adapter.resolve_session_file(
+        project_root=project_root, session_id=session_ref, config_root_hint=None
+    )
+    if candidate is None or not candidate.is_file():
+        raise FileNotFoundError(f"Session file for '{session_ref}' (harness={inferred}) not found")
+    return SessionLogTarget(
+        TranscriptSource.native(str(inferred), session_ref, candidate), view_label="untracked"
     )
 
 
-def indexed_history_target(
-    runtime_root: Path, ref: str, project_root: Path, *, deadline: float | None = None
-) -> SessionLogTarget | None:
-    from meridian.lib.config.settings import load_config
-
-    configured = load_config(project_root).history.archive.destination
-    targets = HistoryIndex(runtime_root).read_targets(
-        ref, destination=Path(configured).expanduser() if configured else None, deadline=deadline
-    )
-    if not targets:
-        return None
-    sources = tuple(
-        TranscriptSource(
-            kind="archive" if target.archive_id else "spawn_history",
-            session_id=ref,
-            harness=target.state.harness,
-            source_label="Archived Meridian history"
-            if target.archive_id
-            else f"spawn {target.state.id} output",
-            path=target.path,
-            history_id=str(target.state.history_id) if target.state.history_id else None,
-            manifest_sha256=target.manifest_sha256,
-        )
-        for target in targets
-    )
-    return _target_from_source(sources[0])._replace(sources=sources)
-
-
-def resolve_session_log_target(
-    *,
+def resolve_transcript_source(
     ref: str,
-    file_path: str | None,
+    *,
+    file_path: str | None = None,
     project_root: Path,
     runtime_root: Path | None,
     deadline: float | None = None,
@@ -793,27 +441,19 @@ def resolve_session_log_target(
     if not normalized_ref:
         raise ValueError("Session reference is required unless --file is provided")
 
-    if runtime_root is not None:
-        indexed = indexed_history_target(
-            runtime_root, normalized_ref, project_root, deadline=deadline
+    if runtime_root is not None and _is_chat_ref(runtime_root, normalized_ref):
+        return _resolve_from_chat_id(
+            runtime_root=runtime_root,
+            chat_id=normalized_ref,
         )
-        if indexed is not None:
-            return indexed
 
     if runtime_root is None:
         is_chat_id = normalized_ref.startswith("c") and normalized_ref[1:].isdigit()
         if _is_spawn_ref(normalized_ref) or is_chat_id:
             raise FileNotFoundError(f"Session reference '{normalized_ref}' not found")
-        return _resolve_untracked_session_ref(
+        return _untracked_target(
             project_root=project_root,
             session_ref=normalized_ref,
-        )
-
-    if _is_chat_ref(runtime_root, normalized_ref):
-        return _resolve_from_chat_id(
-            project_root=project_root,
-            runtime_root=runtime_root,
-            chat_id=normalized_ref,
         )
 
     if _is_spawn_ref(normalized_ref):
@@ -821,17 +461,21 @@ def resolve_session_log_target(
             project_root=project_root,
             runtime_root=runtime_root,
             spawn_id=normalized_ref,
+            deadline=deadline,
         )
 
     return _resolve_from_session_ref(
         project_root=project_root,
         runtime_root=runtime_root,
         session_ref=normalized_ref,
+        deadline=deadline,
     )
 
 
 __all__ = [
     "SessionLogTarget",
-    "resolve_session_log_target",
-    "spawn_output_path_for_target",
+    "TranscriptSource",
+    "native_source_label",
+    "resolve_run_sources",
+    "resolve_transcript_source",
 ]

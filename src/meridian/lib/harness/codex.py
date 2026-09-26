@@ -3,20 +3,19 @@
 import json
 import logging
 import os
-import re
 import sqlite3
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from pathlib import Path
 from typing import ClassVar, cast
 from uuid import uuid4
 
-from meridian.lib.core.domain import SpawnStatus, TokenUsage
+from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.native_identity import LaunchIntent, Operation
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     ApprovalContract,
-    ArtifactStore,
     BaseHarnessAdapter,
     BootstrapContract,
     BootstrapMode,
@@ -38,19 +37,13 @@ from meridian.lib.harness.bundle import (
     HarnessBundle,
     HarnessProjectionPorts,
     ManagedPrimaryProjectionPorts,
-    project_subprocess_spec,
     register_harness_bundle,
 )
 from meridian.lib.harness.codex_rollout import (
     CODEX_ROLLOUT_FILENAME_RE,
     materialize_fork_rollout,
-    resolve_rollout_session_id,
 )
-from meridian.lib.harness.common import (
-    extract_codex_report,
-    extract_codex_thread_id,
-    extract_session_id_from_artifacts_with_patterns,
-)
+from meridian.lib.harness.common import extract_codex_thread_id
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
     PrimaryRuntimeRequestPolicy,
@@ -156,10 +149,6 @@ def _reconcile_failed_codex_fork(
     return False
 
 
-def _resolve_rollout_session_id(path: Path, resolved_repo: Path) -> str | None:
-    return resolve_rollout_session_id(path, resolved_repo)
-
-
 def project_codex_spec_to_thread_request_for_project(
     spec: ResolvedLaunchSpec,
     *,
@@ -168,35 +157,6 @@ def project_codex_spec_to_thread_request_for_project(
     """Project Codex managed-primary bootstrap payload for one project root."""
 
     return project_codex_spec_to_thread_request(spec, cwd=str(project_root))
-
-
-def _detect_primary_session_id(project_root: Path, started_at_epoch: float) -> str | None:
-    sessions_root = _codex_home() / "sessions"
-    if not sessions_root.is_dir():
-        return None
-
-    resolved_repo = project_root.resolve()
-    candidates: list[tuple[float, Path]] = []
-    for candidate in sessions_root.rglob("rollout-*.jsonl"):
-        if CODEX_ROLLOUT_FILENAME_RE.match(candidate.name) is None:
-            continue
-        try:
-            modified_at = candidate.stat().st_mtime
-        except OSError:
-            continue
-        if modified_at + 1 < started_at_epoch:
-            continue
-        candidates.append((modified_at, candidate))
-
-    for _, path in sorted(candidates, key=lambda item: item[0], reverse=True):
-        try:
-            resolved = _resolve_rollout_session_id(path, resolved_repo)
-        except OSError:
-            logger.debug("Failed to read codex rollout %s", path, exc_info=True)
-            continue
-        if resolved is not None:
-            return resolved
-    return None
 
 
 def _owns_session(project_root: Path, session_ref: str) -> bool:
@@ -249,21 +209,12 @@ def _owns_session(project_root: Path, session_ref: str) -> bool:
 class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """SubprocessHarness implementation for `codex`."""
 
+    native_identity = True
+    refused_identity_flags = frozenset(["--session-id", "--resume", "--fork"])
+    continues_in_source_store: ClassVar[frozenset[Operation]] = frozenset({"resume", "fork"})
+
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_CODEX_SUBPROCESS
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_CODEX
-    SESSION_ID_KEYS: ClassVar[tuple[str, ...]] = (
-        "session_id",
-        "sessionId",
-        "sessionID",
-        "conversation_id",
-        "conversationId",
-        "thread_id",
-        "threadId",
-    )
-    SESSION_ID_TEXT_PATTERNS: ClassVar[tuple[re.Pattern[str], ...]] = (
-        re.compile(r"\bcodex\s+resume\s+([A-Za-z0-9][A-Za-z0-9._:-]{5,})\b", re.IGNORECASE),
-        re.compile(r"\bresume\s+([A-Za-z0-9][A-Za-z0-9._:-]{5,})\b", re.IGNORECASE),
-    )
     _CONSUMED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             "model",
@@ -368,6 +319,49 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def run_prompt_policy(self) -> RunPromptPolicy:
         return RunPromptPolicy()
 
+    def validate_intent(self, intent: LaunchIntent) -> None:
+        source = intent.source_session_id or intent.preforked_session_id
+        if source:
+            from uuid import UUID
+
+            try:
+                UUID(source)
+            except ValueError as exc:
+                raise ValueError(
+                    "Codex resume/fork requires a stored UUID native session ID"
+                ) from exc
+
+    def pin_native_store(self, child_env: dict[str, str], store: str) -> None:
+        child_env["CODEX_HOME"] = str(Path(store).parent)
+
+    def resolve_native_session_file(self, *, session_id: str, native_store: Path) -> Path | None:
+        from meridian.lib.harness.codex_rollout import resolve_exact_rollout
+
+        matches = [
+            candidate
+            for candidate in native_store.rglob(f"rollout-*-{session_id}.jsonl")
+            if CODEX_ROLLOUT_FILENAME_RE.match(candidate.name) is not None
+        ]
+        return resolve_exact_rollout(session_id, matches)
+
+    def native_store_for_launch(
+        self,
+        *,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+        spawn_id: SpawnId,
+        operation: Operation,
+        interactive: bool,
+    ) -> str:
+        from meridian.lib.harness.codex_rollout import resolve_codex_home
+
+        home = resolve_codex_home(child_env)
+        if not home.is_absolute():
+            home = child_cwd / home
+        # Keep the sessions entry under CODEX_HOME even when that entry is a symlink;
+        # its parent is the namespace needed to reopen this store.
+        return str(home.resolve() / "sessions")
+
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str:
         _ = name, description
         return prompt.strip()
@@ -393,11 +387,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             developer_instructions=run.appended_system_prompt,
             user_turn_content=run.user_turn_content,
         )
-
-    def build_command(self, run: SpawnParams, perms: PermissionResolver) -> list[str]:
-        spec = self.resolve_launch_spec(run, perms)
-        base_command = self.PRIMARY_BASE_COMMAND if spec.interactive else self.BASE_COMMAND
-        return project_subprocess_spec(self.id, spec, base_command=base_command)
 
     def build_primary_runtime_request_handler(
         self,
@@ -442,20 +431,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         _ = config
         return {}
 
-    def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
-        return CODEX_EXTRACTOR.extract_usage(artifacts, spawn_id)
-
-    def detect_primary_session_id(
-        self,
-        *,
-        project_root: Path,
-        started_at_epoch: float,
-        started_at_local_iso: str | None,
-        expected_session_id: str | None = None,
-    ) -> str | None:
-        _ = started_at_local_iso, expected_session_id
-        return _detect_primary_session_id(project_root, started_at_epoch)
-
     def resolve_session_file(
         self,
         *,
@@ -463,45 +438,26 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         session_id: str,
         config_root_hint: Path | None = None,
     ) -> Path | None:
-        _ = project_root, config_root_hint
+        _ = project_root
         normalized_session_id = session_id.strip()
         if not normalized_session_id:
             return None
 
-        sessions_root = _codex_home() / "sessions"
+        sessions_root = config_root_hint or (_codex_home() / "sessions")
         if not sessions_root.is_dir():
             return None
 
-        matches: list[tuple[float, Path]] = []
-        for candidate in sessions_root.rglob(f"rollout-*-{normalized_session_id}.jsonl"):
-            if CODEX_ROLLOUT_FILENAME_RE.match(candidate.name) is None:
-                continue
-            try:
-                modified_at = candidate.stat().st_mtime
-            except OSError:
-                continue
-            matches.append((modified_at, candidate))
-
-        if not matches:
-            return None
-
-        matches.sort(key=lambda item: item[0], reverse=True)
-        return matches[0][1]
-
-    def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return extract_session_id_from_artifacts_with_patterns(
-            artifacts,
-            spawn_id,
-            json_keys=self.SESSION_ID_KEYS,
-            text_patterns=self.SESSION_ID_TEXT_PATTERNS,
+        return self.resolve_native_session_file(
+            session_id=normalized_session_id,
+            native_store=sessions_root,
         )
 
-    def fork_session(self, source_session_id: str) -> str:
+    def fork_session(self, source_session_id: str, *, native_store: str | None = None) -> str:
         normalized_source_session_id = source_session_id.strip()
         if not normalized_source_session_id:
             raise ValueError("source_session_id is required.")
 
-        db_path = _codex_home() / "state_5.sqlite"
+        db_path = (Path(native_store).parent if native_store else _codex_home()) / "state_5.sqlite"
         connection: sqlite3.Connection | None = None
         new_session_id: str | None = None
         target_rollout_path: Path | None = None
@@ -534,6 +490,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 new_session_id=new_session_id,
             )
 
+            # Risk: this private rollout/schema materialization must track Codex's own format.
             # Codex owns this schema. Clone source row and only patch Meridian-relevant
             # fields to reduce coupling to Codex-internal table evolution.
             inserted_values = dict(source_row)
@@ -583,9 +540,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
     def owns_untracked_session(self, *, project_root: Path, session_ref: str) -> bool:
         return _owns_session(project_root, session_ref)
-
-    def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        return extract_codex_report(artifacts, spawn_id)
 
 
 def _resolve_codex_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:

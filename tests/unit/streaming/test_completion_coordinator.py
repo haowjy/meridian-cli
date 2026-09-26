@@ -78,7 +78,7 @@ class _Evidence:
         del event, transition
         return EvidenceEventDecision()
 
-    def note_event_persisted(self, event: RawHarnessEvent) -> EvidenceEventDecision:
+    def note_event_delivered(self, event: RawHarnessEvent) -> EvidenceEventDecision:
         del event
         return self.persisted
 
@@ -396,7 +396,7 @@ async def test_persisted_activity_restarts_stabilization_window() -> None:
     await coordinator.handle_terminal_event(None, _SUCCESS, _TERMINATE)  # type: ignore[arg-type]
 
     clock.advance(1.0)
-    coordinator.note_event_persisted(None)  # type: ignore[arg-type]
+    coordinator.note_event_delivered(None)  # type: ignore[arg-type]
     await coordinator.handle_aux_wake()
 
     assert coordinator.state.phase == "stabilizing"
@@ -414,7 +414,7 @@ async def test_persisted_evidence_failure_overrides_candidate() -> None:
     coordinator, _ = _coordinator(clock, evidence, _Profile(stabilization=2.0))
     await coordinator.handle_terminal_event(None, _SUCCESS, _TERMINATE)  # type: ignore[arg-type]
 
-    decision = coordinator.note_event_persisted(None)  # type: ignore[arg-type]
+    decision = coordinator.note_event_delivered(None)  # type: ignore[arg-type]
 
     assert decision.recorded_outcome == _FAILURE
 

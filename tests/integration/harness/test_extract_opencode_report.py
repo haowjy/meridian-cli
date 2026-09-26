@@ -1,369 +1,242 @@
-"""OpenCode artifact, database, and legacy-session report fallbacks."""
+"""OpenCode reports are attempt-owned; ambient stores and later turns cannot win."""
 
-from __future__ import annotations
-
-import json
-import sqlite3
 from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.types import ArtifactKey, SpawnId
+from meridian.lib.core.native_identity import NativeKey
+from meridian.lib.core.types import SpawnId
+from meridian.lib.harness.attempt_facts import AttemptFacts
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
-from meridian.lib.harness.opencode_report import extract_opencode_report
-from meridian.lib.harness.opencode_storage import resolve_opencode_storage_root
-from meridian.lib.launch.constants import HISTORY_FILENAME
+from meridian.lib.launch.extract import enrich_finalize
+from meridian.lib.state.artifact_store import InMemoryStore
 from tests.support.opencode_db import (
-    write_opencode_db_session_with_parts,
+    write_opencode_db_session,
     write_opencode_v2_db_session,
 )
 
 
-@pytest.mark.parametrize("source", ["db-only", "absent-db", "missing-session", "corrupt-db"])
-def test_report_database_source_selection_without_legacy_file(
-    tmp_path: Path, monkeypatch, source: str
-) -> None:
-    monkeypatch.setenv("OPENCODE_HOME", str(tmp_path))
-    path = tmp_path / "opencode.db"
-    if source in {"db-only", "missing-session"}:
-        write_opencode_db_session_with_parts(
-            db_path=path,
-            session_id="s" if source == "db-only" else "other",
+def test_extract_opencode_report_ignores_child_session_assistant_text():
+    fold = OPENCODE_EXTRACTOR.create_fold()
+    facts = fold.facts
+    for role, session, message in [
+        ("user", "ses_parent", "u"),
+        ("assistant", "ses_child", "child"),
+        ("assistant", "ses_parent", "parent"),
+    ]:
+        _fold(
+            fold,
+            {
+                "type": "message.updated",
+                "properties": {"info": {"role": role, "sessionID": session, "id": message}},
+            },
+        )
+        _fold(
+            fold,
+            {
+                "type": "message.part.updated",
+                "properties": {
+                    "part": {
+                        "sessionID": session,
+                        "messageID": message,
+                        "type": "text",
+                        "text": message,
+                    }
+                },
+            },
+        )
+    assert facts.first_session_id == "ses_parent"
+    assert facts.final_text == "parent"
+
+
+def test_unsupported_fork_is_rejected_instead_of_reusing_native_session():
+    from meridian.lib.launch.context import _resolve_session_continuation
+    from meridian.lib.launch.request import SessionRequest, SpawnRequest
+
+    harness = type("Harness", (), {
+        "id": "opencode",
+        "capabilities": type("Capabilities", (), {
+            "supports_session_resume": True,
+            "supports_session_fork": False,
+        })(),
+    })()
+    request = SpawnRequest(
+        prompt="fork me",
+        prompt_is_composed=False,
+        session=SessionRequest(
+            requested_harness_session_id="ses_source",
+            continue_fork=True,
+        ),
+    )
+    with pytest.raises(ValueError, match=r"opencode cannot fork sessions"):
+        _resolve_session_continuation(request=request, harness=harness)
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"type": "server.connected", "id": "evt_not_a_session"},
+        {"type": "custom", "session_id": "evt_not_a_session"},
+    ],
+)
+def test_extract_session_id_rejects_non_session_value(event):
+    fold = OPENCODE_EXTRACTOR.create_fold()
+    facts = fold.facts
+    _fold(fold, event)
+    assert facts.first_session_id is None
+
+
+def test_extract_opencode_report_reads_v2_db_final_assistant(tmp_path: Path, monkeypatch):
+    """assistantMessageID joins session_message.id, in the recorded store only."""
+    recorded, ambient = tmp_path / "recorded.db", tmp_path / "ambient.db"
+    session = "ses_v2"
+    for db, text in [(recorded, "owned native reply"), (ambient, "WRONG STORE")]:
+        write_opencode_v2_db_session(
+            db_path=db,
+            session_id=session,
             messages=[
-                ("assistant", {}, [{"type": "text", "text": "answer"}]),
-                ("assistant", {"summary": True}, [{"type": "text", "text": "summary only"}]),
+                ("user", {"text": "question"}),
+                ("assistant", {"content": [{"type": "text", "text": text}]}),
+                ("assistant", {"content": [{"type": "text", "text": "LATER UNOWNED TURN"}]}),
             ],
         )
-    elif source == "corrupt-db":
-        path.write_bytes(b"not a database")
-    key = SpawnId("p-db-only")
-    store = _artifact_store_from_history_lines(key, [])
-    store._payloads[f"{key}/session_id.txt"] = b"s"
-    if source == "corrupt-db":
-        with pytest.raises(sqlite3.Error):
-            extract_opencode_report(store, key)
-    else:
-        assert extract_opencode_report(store, key) == ("answer" if source == "db-only" else None)
+    monkeypatch.setenv("OPENCODE_DB", str(ambient))
+    fold = OPENCODE_EXTRACTOR.create_fold()
+    facts = fold.facts
+    _fold(
+        fold,
+        {
+            "type": "session.text.ended",
+            "sessionID": session,
+            "assistantMessageID": f"{session}_msg_1",
+            "text": "stream fallback",
+        },
+    )
+    assert facts.native_turn_ids == (f"{session}_msg_1",)
+    extraction = enrich_finalize(
+        facts=facts,
+        extractor=OPENCODE_EXTRACTOR,
+        native_key=NativeKey("opencode", str(recorded), session),
+        artifacts=InMemoryStore(),
+        spawn_id=SpawnId("p1"),
+        log_dir=tmp_path / "run",
+    )
+    assert extraction.report.content == "owned native reply"
+    assert extraction.harness_session_id == session
 
 
-class _MemoryArtifactStore:
-    def __init__(self, payloads: dict[str, bytes]) -> None:
-        self._payloads = payloads
+def test_opencode_v1_native_store_supplies_report_when_v1_has_no_turn_event(tmp_path: Path):
+    db = tmp_path / "native-v1.db"
+    write_opencode_db_session(
+        db_path=db,
+        session_id="ses_v1",
+        messages=[("user", "question"), ("assistant", "ALPHA-OC-8f31bc")],
+    )
+    extraction = enrich_finalize(
+        facts=AttemptFacts(),
+        extractor=OPENCODE_EXTRACTOR,
+        native_key=NativeKey("opencode", str(db), "ses_v1"),
+        artifacts=InMemoryStore(),
+        spawn_id=SpawnId("p1"),
+        log_dir=tmp_path / "run",
+    )
+    assert extraction.report.content == "ALPHA-OC-8f31bc"
 
-    def get(self, key: ArtifactKey) -> bytes:
-        return self._payloads[str(key)]
 
-    def exists(self, key: ArtifactKey) -> bool:
-        return str(key) in self._payloads
-
-
-def _artifact_store_from_history_lines(
-    spawn_id: SpawnId, lines: list[dict[str, object]]
-) -> _MemoryArtifactStore:
-    encoded = ("\n".join(json.dumps(line) for line in lines) + "\n").encode("utf-8")
-    return _MemoryArtifactStore({f"{spawn_id}/{HISTORY_FILENAME}": encoded})
-
-
-def test_extract_opencode_report_ignores_child_session_assistant_text() -> None:
-    spawn_id = SpawnId("p-opencode-parent-scope")
-    child_message_id = "msg_child_assistant"
-    parent_message_id = "msg_parent_assistant"
-    store = _artifact_store_from_history_lines(
-        spawn_id,
-        [
-            {
-                "event_type": "message.updated",
-                "harness_id": "opencode",
-                "payload": {
-                    "type": "message.updated",
-                    "properties": {
-                        "info": {
-                            "id": "msg_parent_user",
-                            "role": "user",
-                            "sessionID": "ses_parent",
-                            "parts": [{"type": "text", "text": "Parent task"}],
-                        }
-                    },
-                },
-            },
-            {
-                "event_type": "message.updated",
-                "harness_id": "opencode",
-                "payload": {
-                    "type": "message.updated",
-                    "properties": {
-                        "info": {
-                            "id": "msg_child_user",
-                            "role": "user",
-                            "sessionID": "ses_child",
-                            "parts": [{"type": "text", "text": "Child task"}],
-                        }
-                    },
-                },
-            },
-            {
-                "event_type": "message.updated",
-                "harness_id": "opencode",
-                "payload": {
-                    "type": "message.updated",
-                    "properties": {
-                        "info": {
-                            "id": child_message_id,
-                            "role": "assistant",
-                            "sessionID": "ses_child",
-                        }
-                    },
-                },
-            },
-            {
-                "event_type": "message.part.updated",
-                "harness_id": "opencode",
-                "payload": {
-                    "type": "message.part.updated",
-                    "properties": {
-                        "sessionID": "ses_child",
-                        "part": {
-                            "messageID": child_message_id,
-                            "sessionID": "ses_child",
-                            "type": "text",
-                            "text": "Child report must not be parent report.",
-                        },
-                    },
-                },
-            },
-            {
-                "event_type": "message.updated",
-                "harness_id": "opencode",
-                "payload": {
-                    "type": "message.updated",
-                    "properties": {
-                        "info": {
-                            "id": parent_message_id,
-                            "role": "assistant",
-                            "sessionID": "ses_parent",
-                        }
-                    },
-                },
-            },
-            {
-                "event_type": "message.part.updated",
-                "harness_id": "opencode",
-                "payload": {
-                    "type": "message.part.updated",
-                    "properties": {
-                        "sessionID": "ses_parent",
-                        "part": {
-                            "messageID": parent_message_id,
-                            "sessionID": "ses_parent",
-                            "type": "text",
-                            "text": "Parent report.",
-                        },
-                    },
-                },
-            },
-        ],
+@pytest.mark.parametrize("ids", [(), ("missing",), ("ses_other_msg_0",)])
+def test_no_native_report_without_exact_attribution(tmp_path: Path, ids):
+    db = tmp_path / "native.db"
+    for session in ["ses_owned", "ses_other"]:
+        write_opencode_v2_db_session(
+            db_path=db,
+            session_id=session,
+            messages=[
+                ("assistant", {"content": [{"type": "text", "text": "must not leak"}]}),
+            ],
+        )
+    assert (
+        OPENCODE_EXTRACTOR.read_native_turn(NativeKey("opencode", str(db), "ses_owned"), ids)
+        is None
     )
 
-    assert OPENCODE_EXTRACTOR.extract_session_id(store, spawn_id) == "ses_parent"
-    assert extract_opencode_report(store, spawn_id) == "Parent report."
 
-
-def test_extract_session_id_ignores_opencode_event_ids() -> None:
-    """Event envelopes carry ``payload.id`` (``evt_…``), which is not a session."""
-
-    spawn_id = SpawnId("p-opencode-event-id")
-    store = _artifact_store_from_history_lines(
-        spawn_id,
-        [
-            {
-                "byte_offset": 0,
-                "event_type": "server.connected",
-                "harness_id": "opencode",
-                "payload": {
-                    "id": "evt_0c0088f1700164HCGa3tDiPFFT",
-                    "type": "server.connected",
-                    "properties": {},
-                },
-                "seq": 0,
-            },
-            {
-                "byte_offset": 200,
-                "event_type": "server.heartbeat",
-                "harness_id": "opencode",
-                "payload": {
-                    "id": "evt_0c00c8bad001IFPx9v8nb2HG3O",
-                    "type": "server.heartbeat",
-                    "properties": {},
-                },
-                "seq": 1,
-            },
-        ],
+def test_v2_missing_join_falls_back_to_stream(tmp_path: Path):
+    fold = OPENCODE_EXTRACTOR.create_fold()
+    facts = fold.facts
+    _fold(
+        fold,
+        {
+            "type": "session.text.ended",
+            "sessionID": "ses_owned",
+            "assistantMessageID": "missing",
+            "text": "streamed reply",
+        },
     )
-
-    assert OPENCODE_EXTRACTOR.extract_session_id(store, spawn_id) is None
-
-
-def test_extract_session_id_rejects_non_session_value() -> None:
-    """The artifact fallback must not report a non-``ses_`` value as identity."""
-
-    spawn_id = SpawnId("p-opencode-bad-session")
-    store = _artifact_store_from_history_lines(
-        spawn_id,
-        [
-            {
-                "event_type": "custom",
-                "harness_id": "opencode",
-                "payload": {"session_id": "evt_not_a_session"},
-                "seq": 0,
-            }
-        ],
+    extraction = enrich_finalize(
+        facts=facts,
+        extractor=OPENCODE_EXTRACTOR,
+        native_key=NativeKey("opencode", str(tmp_path / "absent.db"), "ses_owned"),
+        artifacts=InMemoryStore(),
+        spawn_id=SpawnId("p1"),
+        log_dir=tmp_path,
     )
+    assert extraction.report.content == "streamed reply"
 
-    assert OPENCODE_EXTRACTOR.extract_session_id(store, spawn_id) is None
 
-
-def test_extract_opencode_report_falls_back_to_opencode_db_session(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    session_id = "ses_fixture_report_db"
-    spawn_id = SpawnId("p-opencode-db-fallback")
-    storage_root = tmp_path / "opencode" / "storage"
-    session_file = storage_root / "session_diff" / f"{session_id}.json"
-    session_file.parent.mkdir(parents=True, exist_ok=True)
-    session_file.write_text("[]\n", encoding="utf-8")
-
-    write_opencode_db_session_with_parts(
-        db_path=tmp_path / "opencode" / "opencode.db",
-        session_id=session_id,
-        messages=[
-            ("assistant", {}, [{"type": "text", "text": "LIVE_OK"}]),
-        ],
+@pytest.mark.parametrize("explicit", [False, True])
+def test_unreadable_native_db_cannot_break_report_precedence(tmp_path: Path, explicit):
+    db = tmp_path / "corrupt.db"
+    db.write_bytes(b"not sqlite")
+    if explicit:
+        (tmp_path / "report.md").write_text("explicit report")
+    facts = AttemptFacts(final_text="stream report", native_turn_ids=("owned",))
+    result = enrich_finalize(
+        facts=facts,
+        extractor=OPENCODE_EXTRACTOR,
+        native_key=NativeKey("opencode", str(db), "ses_owned"),
+        artifacts=InMemoryStore(),
+        spawn_id=SpawnId("p1"),
+        log_dir=tmp_path,
     )
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    assert resolve_opencode_storage_root() == storage_root
+    assert result.report.content == ("explicit report" if explicit else "stream report")
 
-    store = _artifact_store_from_history_lines(
-        spawn_id,
-        [
-            {
-                "byte_offset": 0,
-                "event_type": "session.idle",
-                "harness_id": "opencode",
-                "payload": {
-                    "id": "evt_idle",
-                    "type": "session.idle",
-                    "properties": {"sessionID": session_id},
-                },
-                "seq": 1,
-            }
-        ],
+
+def test_child_events_before_parent_user_do_not_supply_run_facts():
+    fold = OPENCODE_EXTRACTOR.create_fold()
+    fold.bind_scope("ses_parent")
+    facts = fold.facts
+    _fold(
+        fold,
+        {
+            "type": "session.text.ended",
+            "sessionID": "ses_child",
+            "assistantMessageID": "child",
+            "text": "child reply",
+        },
     )
-    store._payloads[f"{spawn_id}/session_id.txt"] = session_id.encode("utf-8")
-
-    assert extract_opencode_report(store, spawn_id) == "LIVE_OK"
-
-
-def test_extract_opencode_report_reads_v2_db_final_assistant(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    """V2-only opencode.db yields the last assistant text through schema dispatch."""
-
-    session_id = "ses_v2_report_db"
-    spawn_id = SpawnId("p-opencode-v2-db")
-    monkeypatch.setenv("OPENCODE_HOME", str(tmp_path))
-    write_opencode_v2_db_session(
-        db_path=tmp_path / "opencode.db",
-        session_id=session_id,
-        messages=[
-            ("user", {"text": "do the thing"}),
-            ("assistant", {"content": [{"type": "text", "text": "V2_FINAL_OK"}]}),
-        ],
+    assert facts.first_session_id is None
+    assert facts.final_text is None
+    assert facts.native_turn_ids == ()
+    _fold(
+        fold,
+        {
+            "type": "session.text.ended",
+            "sessionID": "ses_parent",
+            "assistantMessageID": "parent",
+            "text": "parent reply",
+        },
     )
-    # V2 history frames resolve the session id; the V1-only stream extractor must
-    # ignore them and defer to the schema-dispatched DB path.
-    store = _artifact_store_from_history_lines(
-        spawn_id,
-        [
-            {
-                "event_type": "session.text.ended",
-                "harness_id": "opencode",
-                "payload": {
-                    "type": "session.text.ended",
-                    "sessionID": session_id,
-                    "assistantMessageID": "msg_v2",
-                    "ordinal": 0,
-                    "text": "stream text must not win over the DB",
-                },
-                "seq": 1,
-            }
-        ],
+    assert facts.first_session_id == "ses_parent"
+    assert facts.final_text == "parent reply"
+    assert facts.native_turn_ids == ("parent",)
+
+
+def _fold(fold, payload):
+    fold(
+        RawHarnessEvent(
+            harness_id="fixture",
+            event_type=payload.get("type", payload.get("event_type", "")),
+            payload=payload,
+        )
     )
-
-    assert extract_opencode_report(store, spawn_id) == "V2_FINAL_OK"
-
-
-def test_extract_opencode_report_v2_db_without_assistant_text_is_none(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    session_id = "ses_v2_report_no_text"
-    spawn_id = SpawnId("p-opencode-v2-no-text")
-    monkeypatch.setenv("OPENCODE_HOME", str(tmp_path))
-    write_opencode_v2_db_session(
-        db_path=tmp_path / "opencode.db",
-        session_id=session_id,
-        messages=[("user", {"text": "just a question"})],
-    )
-    store = _artifact_store_from_history_lines(spawn_id, [])
-    store._payloads[f"{spawn_id}/session_id.txt"] = session_id.encode("utf-8")
-
-    assert extract_opencode_report(store, spawn_id) is None
-
-
-def test_extract_opencode_report_ignores_opencode_db_compaction_handoff(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    session_id = "ses_fixture_report_db_compaction"
-    spawn_id = SpawnId("p-opencode-db-compaction")
-    storage_root = tmp_path / "opencode" / "storage"
-    session_file = storage_root / "session_diff" / f"{session_id}.json"
-    session_file.parent.mkdir(parents=True, exist_ok=True)
-    session_file.write_text("[]\n", encoding="utf-8")
-
-    write_opencode_db_session_with_parts(
-        db_path=tmp_path / "opencode" / "opencode.db",
-        session_id=session_id,
-        messages=[
-            ("assistant", {}, [{"type": "text", "text": "FINAL_OK"}]),
-            (
-                "assistant",
-                {"mode": "compaction", "agent": "compaction"},
-                [{"type": "text", "text": "handoff only"}],
-            ),
-        ],
-    )
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    assert resolve_opencode_storage_root() == storage_root
-
-    store = _artifact_store_from_history_lines(
-        spawn_id,
-        [
-            {
-                "byte_offset": 0,
-                "event_type": "session.idle",
-                "harness_id": "opencode",
-                "payload": {
-                    "id": "evt_idle",
-                    "type": "session.idle",
-                    "properties": {"sessionID": session_id},
-                },
-                "seq": 1,
-            }
-        ],
-    )
-    store._payloads[f"{spawn_id}/session_id.txt"] = session_id.encode("utf-8")
-
-    assert extract_opencode_report(store, spawn_id) == "FINAL_OK"
