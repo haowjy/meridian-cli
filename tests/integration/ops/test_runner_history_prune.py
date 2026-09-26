@@ -72,6 +72,7 @@ def add_spawn(
             native_store=str(store),
             model="test",
             chat_id=chat,
+            spawn_id=f"p{n}",
         )
         session_store.stop_session(root, chat)
     key = spawn_store.start_spawn(
@@ -359,3 +360,39 @@ def test_quarantined_rows_are_listed_with_doctor_hint(tmp_path: Path) -> None:
                 project_root=str(project), eligible=True, destination=str(tmp_path / "zips")
             )
         )
+
+
+def test_archive_after_prune_captures_native_and_ships_no_runner_members(
+    tmp_path: Path,
+) -> None:
+    import zipfile
+
+    from meridian.lib.config.settings import HistoryArchiveConfig
+    from meridian.lib.launch.constants import RETIRED_RUNNER_STREAM_FILENAMES
+    from meridian.lib.ops.session_archive import archive_history, materialize_native_history
+    from meridian.lib.state.native_snapshot import NATIVE_SNAPSHOT_FILENAME
+
+    project, root, store = corpus(tmp_path)
+    key = add_spawn(root, store, 1)
+    assert [row.spawn_id for row in prune(project, apply=True).pruned] == [key]
+
+    materialize_native_history(project, root, key)
+    assert (root / "spawns" / key / NATIVE_SNAPSHOT_FILENAME).is_file()
+    out = archive_history(
+        root,
+        destination=tmp_path / "zips",
+        refs=(key,),
+        eligible=False,
+        apply=True,
+        after_days=0,
+        policy=HistoryArchiveConfig(),
+        project_root=project,
+    )
+
+    assert out.errors == ()
+    assert len(out.selected) == 1
+    assert out.reclaimed == out.selected
+    (archive,) = out.archives
+    members = {Path(name).name for name in zipfile.ZipFile(archive).namelist()}
+    assert NATIVE_SNAPSHOT_FILENAME in members
+    assert not members & set(RETIRED_RUNNER_STREAM_FILENAMES)
