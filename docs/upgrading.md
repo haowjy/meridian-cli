@@ -131,6 +131,24 @@ To keep history longer, do either or both:
   each selected chat's exact native transcript into the archive ZIP, and
   those snapshots stay readable after the harness deletes the original.
 
+## Archives made before 0.7
+
+`meridian session import` and `meridian session restore` accept archives
+written by 0.6.7. Those archives hold Meridian's old runner copy
+(`history.jsonl`) rather than the harness transcript, and 0.7 does not read
+that copy. So `session log` on an imported or restored 0.6.7 record says:
+
+```text
+error: c1 is historical and has no retained native snapshot
+```
+
+Most archived chats are also bound to their harness's own transcript. They
+read normally with `meridian session log cN` for as long as the harness keeps
+that file. For the rest, the old copy is still inside the ZIP at
+`meridian-history-v1/records/<history-id>/aggregate/history.jsonl`; extract
+it with `unzip` if you need it. Archives made by 0.7 contain the native
+transcript and read back normally.
+
 ## Reclaim old runner files
 
 Preview what can be removed:
@@ -189,6 +207,8 @@ and never runs automatically. `meridian doctor` does not delete these files.
 - Codex `archived_sessions/` rollouts are not read yet; see
   [#528](https://github.com/haowjy/meridian-cli/issues/528).
 - If the harness has deleted a chat's native file, the chat stays unbound.
+- Archives made by 0.6.7 import and restore, but their runner copy isn't read;
+  see [Archives made before 0.7](#archives-made-before-07).
 - Old Pi chats from 0.6.7 that automatic recovery can't prove stay unbound
   until you repair them with `meridian session repair cN`. That covers every
   Pi primary, and any spawn whose starting prompt and report were both
