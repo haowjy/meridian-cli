@@ -116,13 +116,10 @@ class SessionSearchOutput(BaseModel):
                 reasons.append(f"{self.sources_pending} pending")
             unavailable = max(0, self.sources_not_searched - self.sources_pending)
             if unavailable:
-                reason_counts = Counter(
-                    error.partition(": ")[2] or error for error in self.errors
-                )
+                reason_counts = Counter(error.partition(": ")[2] or error for error in self.errors)
                 if reason_counts:
                     reasons.extend(
-                        f"{count} unavailable ({reason})"
-                        for reason, count in reason_counts.items()
+                        f"{count} unavailable ({reason})" for reason, count in reason_counts.items()
                     )
                 else:
                     reasons.append(f"{unavailable} unavailable")
@@ -249,7 +246,9 @@ def _matches_for_transcript(
     for entry in transcript.all_entries:
         if entry.kind == "setup" and entry.is_placeholder:
             continue
-        normalized_content = _normalize_content(entry.content)
+        normalized_content = _normalize_content(
+            f"{entry.content}\n{entry.search_content}" if entry.search_content else entry.content
+        )
         if not normalized_content:
             continue
         if query_lower not in normalized_content.lower():

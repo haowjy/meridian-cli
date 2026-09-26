@@ -15,7 +15,7 @@ from meridian.lib.harness.opencode_transcript import (
     interpret_opencode_record,
     interpret_opencode_v2_record,
 )
-from meridian.lib.harness.pi_journal import PI_JOURNAL_ENTRY_TYPES
+from meridian.lib.harness.pi_journal import is_pi_journal_entry_type, pi_context_edit_details
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.state.native_snapshot import (
     HEADER_LIMIT,
@@ -54,6 +54,7 @@ class TranscriptMessage(NamedTuple):
     tool_call: ToolCall | None = None
     is_tool_result: bool = False
     kind: Literal["interaction", "annotation"] = "interaction"
+    search_content: str = ""
 
 
 class TranscriptParseResult(NamedTuple):
@@ -773,7 +774,7 @@ class TranscriptNormalizer:
         pi_entry = self.pi_session and isinstance(event_type, str)
         native_pi_entry = (
             isinstance(event_type, str)
-            and event_type in PI_JOURNAL_ENTRY_TYPES
+            and is_pi_journal_entry_type(event_type)
             and isinstance(entry_id, str)
             and "parentId" in normalized_event
         )
@@ -782,7 +783,7 @@ class TranscriptNormalizer:
             self.rendering_reason = "Unsupported Pi entry identity; rendering is incomplete."
         annotations: list[TranscriptMessage] = []
         if pi_entry:
-            if event_type not in PI_JOURNAL_ENTRY_TYPES:
+            if not is_pi_journal_entry_type(event_type):
                 self.rendering_reason = "Unsupported Pi journal entry; rendering is incomplete."
             if (
                 isinstance(entry_id, str)
@@ -801,6 +802,13 @@ class TranscriptNormalizer:
                         )
                     )
                 self.pi_previous_entry_id = entry_id
+        if event_type == "context_edit" and pi_entry:
+            annotation, search_content = pi_context_edit_details(normalized_event)
+            annotations.append(
+                TranscriptMessage(
+                    "annotation", annotation, kind="annotation", search_content=search_content
+                )
+            )
         if pi_entry and event_type == "compaction":
             self.setup = text_from_value(normalized_event.get("summary")) or None
             self.pending_summary = None

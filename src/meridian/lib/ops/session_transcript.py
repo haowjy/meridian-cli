@@ -41,6 +41,7 @@ class AbsoluteTranscriptMessage(NamedTuple):
     tool_call: ToolCall | None = None
     is_tool_result: bool = False
     kind: Literal["interaction", "annotation"] = "interaction"
+    search_content: str = ""
 
 
 class AbsoluteTranscriptEntry(NamedTuple):
@@ -54,6 +55,7 @@ class AbsoluteTranscriptEntry(NamedTuple):
     messages: tuple[AbsoluteTranscriptMessage, ...]
     kind: Literal["setup", "interaction", "annotation"]
     is_placeholder: bool = False
+    search_content: str = ""
 
 
 class SessionLogRoute(NamedTuple):
@@ -97,9 +99,7 @@ class ParsedSessionTranscript(NamedTuple):
         # Ordinary append streams retain their existing partial-result contract.
         # Snapshot prefixes have not proved their enclosing integrity yet.
         return (
-            validation is None
-            or validation.state == "complete"
-            or validation.header is None
+            validation is None or validation.state == "complete" or validation.header is None
         ) and not self.completeness_reasons
 
 
@@ -120,6 +120,7 @@ def flatten_transcript_segments(
                     tool_call=message.tool_call,
                     is_tool_result=message.is_tool_result,
                     kind=message.kind,
+                    search_content=message.search_content,
                 )
             )
             ordinal += 1
@@ -216,6 +217,9 @@ def group_transcript_entries(
                 content="\n\n".join(message.content for message in chunk),
                 messages=tuple(chunk),
                 kind=first.kind,
+                search_content="\n\n".join(
+                    message.search_content for message in chunk if message.search_content
+                ),
             )
         )
 
@@ -282,6 +286,7 @@ def build_segment_entries(
                     messages=interaction.messages,
                     kind=interaction.kind,
                     is_placeholder=False,
+                    search_content=interaction.search_content,
                 )
             )
             global_ordinal += 1

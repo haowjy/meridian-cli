@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Pi session reads support v3 `context_edit` and `usage` journal entries.
+
 ### Changed
 - Validate the completed legacy native-import marker before late binding; malformed markers are left untouched.
 - Refuse session forks for harnesses that cannot create a distinct native session; extract successful OpenCode 1.x reports from the bound native session.

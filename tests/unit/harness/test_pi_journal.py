@@ -121,14 +121,78 @@ def test_linear_pi_journal_keeps_its_existing_normalized_messages() -> None:
     assert projection.view_basis == "reopen-default"
     assert projection.reasons == ()
     messages = [
-        (message.role, message.content)
-        for segment in parsed.segments
-        for message in segment
+        (message.role, message.content) for segment in parsed.segments for message in segment
     ]
     assert messages == [
         ("user", "question"),
         ("assistant", "answer"),
     ]
+
+
+def test_context_edits_and_usage_preserve_pi_chain_and_search_replacement_text() -> None:
+    projection = project_pi_reopen_default(
+        _journal(
+            _header(),
+            {
+                "type": "message",
+                "id": "user",
+                "parentId": None,
+                "message": {"role": "user", "content": "question"},
+            },
+            {
+                "type": "message",
+                "id": "answer",
+                "parentId": "user",
+                "message": {
+                    "role": "assistant",
+                    "provider": "p",
+                    "model": "m",
+                    "content": "original answer",
+                },
+            },
+            {
+                "type": "context_edit",
+                "id": "remove",
+                "parentId": "answer",
+                "targetId": "user",
+                "replacement": None,
+            },
+            {
+                "type": "usage",
+                "id": "usage",
+                "parentId": "remove",
+                "kind": "cache_warm",
+                "provider": "p",
+                "model": "m",
+                "usage": {},
+            },
+            {
+                "type": "context_edit",
+                "id": "replace",
+                "parentId": "usage",
+                "targetId": "answer",
+                "replacement": {"content": [{"type": "text", "text": "replacement needle"}]},
+            },
+        )
+    )
+
+    parsed = parse_transcript_events_with_prologues(projection.events)
+    messages = [message for segment in parsed.segments for message in segment]
+    rendered = "\n".join(message.content for message in messages)
+
+    assert projection.complete is True
+    assert projection.reasons == ()
+    assert parsed.rendering_reason is None
+    assert "rendering is incomplete" not in rendered
+    assert "Pi context edit: removed user from model context" in rendered
+    assert "Pi context edit: replaced content of answer" in rendered
+    assert "original answer" in rendered
+    assert "Pi journal parent changed" not in rendered
+    assert not any("usage" in message.content for message in messages)
+    replacement_annotation = next(
+        message for message in messages if message.content.endswith("replaced content of answer")
+    )
+    assert replacement_annotation.search_content == "replacement needle"
 
 
 def test_reports_missing_parent_and_cycle_without_claiming_complete() -> None:
