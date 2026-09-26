@@ -246,7 +246,13 @@ def test_late_session_id_is_imported_once_after_legacy_marker(
         json.dumps({"type": "session", "id": session_id}) + "\n"
     )
 
+    # Ordinary command-time import is deliberately marker-only; late binding
+    # belongs to the explicit/background repair path.
     assert legacy.import_legacy_native_sessions(root) is None
+    record = session_store.get_session_record(root, chat_id)
+    assert record is not None and record.native_store is None
+    repair = legacy.bind_late_legacy_sessions(root)
+    assert repair.bound == 1 and repair.attempted == 1
     record = session_store.get_session_record(root, chat_id)
     assert record is not None
     assert record.native_store == store.as_posix()
@@ -255,6 +261,22 @@ def test_late_session_id_is_imported_once_after_legacy_marker(
     assert legacy.import_legacy_native_sessions(root) is None
     assert (root / "sessions.jsonl").read_bytes() == after
     assert json.loads((root / legacy.MARKER).read_text())["late_retries"] == [chat_id]
+
+
+def test_existing_marker_import_does_not_fold_session_journal(
+    homes: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, root = homes
+    _chat(root, 1, "claude", None)
+    legacy.import_legacy_native_sessions(root)
+
+    def unexpected(*args: object, **kwargs: object) -> object:
+        raise AssertionError("marker fast path must not read or fold sessions.jsonl")
+
+    monkeypatch.setattr(legacy, "read_events", unexpected)
+    monkeypatch.setattr(legacy, "list_all_session_records", unexpected)
+    monkeypatch.setattr(session_store, "get_session_record", unexpected)
+    assert legacy.import_legacy_native_sessions(root) is None
 
 
 def _waiting_import(root: Path, started: object, finished: object) -> None:

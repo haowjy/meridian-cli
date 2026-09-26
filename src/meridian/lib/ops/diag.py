@@ -237,6 +237,10 @@ def schedule_background_repairs(project_root: Path) -> None:
         from contextlib import suppress
 
         with suppress(Exception):
+            from meridian.lib.ops.legacy_native_import import bind_late_legacy_sessions
+
+            bind_late_legacy_sessions(runtime_root)
+        with suppress(Exception):
             dogfood = migrate_dogfood_spawn_rows(runtime_root)
             if dogfood.failed:
                 logger.warning("dogfood_spawn_rows_failed", failed=dict(dogfood.failed))
@@ -268,6 +272,11 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
 
     repaired: list[str] = []
     killed_orphan_spawns: tuple[str, ...] = ()
+    from meridian.lib.ops.legacy_native_import import bind_late_legacy_sessions
+
+    late_bindings = bind_late_legacy_sessions(runtime_root)
+    if late_bindings.bound:
+        repaired.append("late_legacy_bindings")
     dogfood = migrate_dogfood_spawn_rows(runtime_root)
     if dogfood.migrated:
         repaired.append("dogfood_spawn_rows")
