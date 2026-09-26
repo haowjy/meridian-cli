@@ -2,8 +2,8 @@
 
 ## What changed, and why
 
-Each chat now stays bound to exactly one native Claude, Codex, OpenCode, Pi, or
-Cursor session. Logs, search, and archives use that harness's transcript instead
+Each chat now stays bound to exactly one native Claude, Codex, OpenCode or Pi
+session. Cursor chats are not bound. Logs, search, and archives use that harness's transcript instead
 of a second Meridian copy. Search verifies matches against the transcript and
 reports how many sources it searched. Meridian no longer writes `history.jsonl`;
 those files accounted for 27 GB of 29 GB in one author's runtime.
@@ -162,41 +162,30 @@ and never runs automatically. `meridian doctor` does not delete these files.
 - Codex `archived_sessions/` rollouts are not read yet; see
   [#528](https://github.com/haowjy/meridian-cli/issues/528).
 - If the harness has deleted a chat's native file, the chat stays unbound.
-- Some Pi primary chats created by 0.6.7 still need manual repair. Automatic
-  recovery binds only a match it can prove; inspect candidates before binding.
+- Old Pi chats from 0.6.7 that automatic recovery can't prove stay unbound
+  until you repair them with `meridian session repair cN`. That covers every
+  Pi primary, and any spawn whose starting prompt and report were both
+  cleaned up.
 - Warm search still includes about 0.8 seconds of CLI startup; see
   [#527](https://github.com/haowjy/meridian-cli/issues/527).
 
 ## Rolling back to 0.6.7
 
-Keep using 0.7 if you need to read or search conversations created by it. A
-0.6.7 process cannot read the new build's `run_boundary` and `native_store`
-state rows. In a scratch test, the new build completed a one-turn Claude spawn
-(`p1`, `succeeded`) and reported `ROLLBACK-NEW-067`. With a real isolated
-0.6.7 install, `spawn list` failed with `Invalid authoritative history
-metadata`; `spawn show p1` quarantined the new state row; `session log c1`
-failed with the same history-index initialization error; and `session index
-status` reported `History index: failed`. A 0.6.7 metadata rebuild also stopped
-at the quarantined row. The old
-build therefore cannot list, show, or read that new conversation through
-Meridian. Keep using 0.7 for those rows; their native harness transcript and
-report artifacts remain on disk, but 0.6.7 cannot provide Meridian's new
-identity-aware session view.
+Downgrading is not supported. Once 0.7 has run a spawn in a project, 0.6.7
+cannot read that spawn's state: `spawn list` fails for the whole project with
+`Invalid authoritative history metadata`, and `spawn show` and `session log`
+fail too. A 0.6.7 metadata rebuild stops at the first new row. The native
+harness transcripts and spawn reports stay on disk, but only 0.7 can show them
+through Meridian.
 
-The scratch test used a throwaway git project and runtime. It ran the new
-command with `_MERIDIAN_RUNTIME_DIR` set to the scratch runtime, then ran each
-old command with `uvx --isolated` and `MERIDIAN_PROJECT_DIR` pointed at the
-scratch project. Do not use plain `uvx`: it can reuse the installed PR build.
+What does keep working: a 0.6.7 process that was already running when you
+upgraded can finish its work. 0.7 builds its own `history-v6.sqlite3` and never
+modifies 0.6.7's `history-index/history.sqlite3`.
 
-0.7 leaves 0.6.7's `history-index/history.sqlite3` alone. Deleting
-`history-index/history.sqlite3*` matters only if an earlier prerelease build
-migrated that old index in place; it does not make 0.6.7 understand 0.7 state
-rows. Stop old processes before removing an incompatible index. The rollback
-probe did not have an old index database to remove, so deletion was not part of
-its result.
-
-For a safe test, point both versions at a disposable runtime and project. Never
-use `~/.meridian/projects/*` as rollback-test data.
+If a pre-release build of this change migrated `history-index/history.sqlite3`
+in place, 0.6.7 reports that index as incompatible. With old processes stopped,
+delete `history-index/history.sqlite3*`. That fixes only the index; it does not
+make 0.6.7 understand rows 0.7 wrote.
 
 See also [History storage](history.md), [Commands](commands.md), and
 [Troubleshooting](troubleshooting.md).

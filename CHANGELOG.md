@@ -9,6 +9,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Search verifies native transcript matches and reports coverage.
 - New runs no longer write `history.jsonl`; prune old runner copies explicitly.
 - Before reinstalling, finish or cancel background spawns. Install, run the first command to import chats, then run `meridian doctor`, check `[unbound]` chats, and prune only when ready.
+- No downgrade: once 0.7 runs a spawn in a project, 0.6.7 cannot list or read that project's spawns. Already-running 0.6.7 work still finishes.
 - See [Upgrading to 0.7](docs/upgrading.md) for repair, cleanup, and rollback steps.
 
 ### Changed
