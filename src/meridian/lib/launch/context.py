@@ -982,17 +982,17 @@ def _resolve_session_continuation(
     if not requested_harness_session_id:
         return ResolvedContinuation(harness_session_id=None, continue_fork=False)
     if requested_harness and requested_harness != str(harness.id):
-        return ResolvedContinuation(
-            harness_session_id=None,
-            continue_fork=False,
-            warning="Continuation session ignored because target harness differs from source run.",
+        chat_ref = (
+            request.session.continue_chat_id
+            or request.session.continue_source_ref
+            or "the source chat"
+        )
+        raise ValueError(
+            f"Cannot continue chat {chat_ref} from harness '{requested_harness}' "
+            f"with requested harness '{harness.id}'; start a new chat."
         )
     if not harness.capabilities.supports_session_resume:
-        return ResolvedContinuation(
-            harness_session_id=None,
-            continue_fork=False,
-            warning=f"Harness '{harness.id}' does not support session resume; starting fresh.",
-        )
+        raise ValueError(f"{harness.id} cannot resume sessions")
     if requested_continue_fork and not harness.capabilities.supports_session_fork:
         raise ValueError(
             f"{harness.id} cannot fork sessions; use --continue with the source chat "
