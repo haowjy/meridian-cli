@@ -15,9 +15,10 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from meridian.lib.platform.locking import lock_file
+from meridian.lib.platform.locking import FileLockTimeout, lock_file
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
+from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
 from meridian.lib.state.spawn.repository import (
     DOGFOOD_BOUNDARY_FIELDS,
@@ -52,6 +53,7 @@ class DogfoodMigration:
     migrated: tuple[str, ...]
     failed: tuple[tuple[str, str], ...]
     """``(spawn_id, reason)`` for rows that still quarantine after this pass."""
+    index_rearm_warning: str | None = None
 
 
 def _migrate_row(changes: HistoryChanges, spawns_dir: Path, spawn_id: str) -> bool:
@@ -92,7 +94,19 @@ def migrate_dogfood_spawn_rows(runtime_root: Path) -> DogfoodMigration:
                 migrated.append(spawn_id)
         except Exception as exc:
             failed.append((spawn_id, _reason(exc)))
-    return DogfoodMigration(migrated=tuple(migrated), failed=tuple(failed))
+    index_rearm_warning = None
+    if migrated:
+        try:
+            warnings = HistoryIndex(runtime_root).clear_authority_failure()
+            if warnings:
+                index_rearm_warning = "; ".join(warnings)
+        except FileLockTimeout as exc:
+            index_rearm_warning = f"Could not re-arm history index initialization: {exc}"
+    return DogfoodMigration(
+        migrated=tuple(migrated),
+        failed=tuple(failed),
+        index_rearm_warning=index_rearm_warning,
+    )
 
 
 def _reason(exc: Exception) -> str:

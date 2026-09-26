@@ -35,6 +35,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Managed Pi launches load a bounded, atomic v2 session-boundary observer without writing native journals.
 
 ### Fixed
+- Re-arm automatic history-index initialization after dogfood row migration; authority failures point to `meridian doctor`.
 - Rewrite spawn rows from the PR-1 dogfood build (`entry_chat_id`/`exit_identity` fields) once, at startup repairs or `meridian doctor`; they no longer load through a read-time translator.
 - Dogfood row migration skips malformed rows instead of stopping; `meridian doctor` lists them as `dogfood_spawn_rows_failed` rather than crashing.
 - Keep harness-reported cost when unrelated output lines are malformed.

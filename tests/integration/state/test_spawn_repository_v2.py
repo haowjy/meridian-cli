@@ -133,6 +133,57 @@ def test_dogfood_migration_isolates_malformed_rows(tmp_path: Path) -> None:
     assert loaded.continue_chat_id == "c3"
 
 
+def test_dogfood_migration_only_clears_authority_failure(tmp_path: Path) -> None:
+    from meridian.lib.state.history_index import SCHEMA_VERSION, HistoryIndex
+
+    spawns_dir = tmp_path / "spawns"
+    _seed_state(spawns_dir, _record(status="succeeded"))
+    state_path = spawns_dir / "p1" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["entry_chat_id"] = "c1"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    index = HistoryIndex(tmp_path)
+    marker = {
+        "format": 1,
+        "target_schema": SCHEMA_VERSION,
+        "generation": None,
+        "code": "timeout",
+        "reason": "keep this failure",
+        "failed_at": "2026-05-01T00:00:00Z",
+    }
+    index.failure_path.write_text(json.dumps(marker), encoding="utf-8")
+
+    assert migrate_dogfood_spawn_rows(tmp_path).migrated == ("p1",)
+    assert json.loads(index.failure_path.read_text(encoding="utf-8")) == marker
+
+    marker["code"] = "authority"
+    index.failure_path.write_text(json.dumps(marker), encoding="utf-8")
+    assert migrate_dogfood_spawn_rows(tmp_path).migrated == ()
+    assert json.loads(index.failure_path.read_text(encoding="utf-8")) == marker
+
+
+def test_dogfood_migration_reports_index_rearm_timeout(tmp_path: Path, monkeypatch) -> None:
+    from meridian.lib.platform.locking import FileLockTimeout
+    from meridian.lib.state.history_index import HistoryIndex
+
+    spawns_dir = tmp_path / "spawns"
+    _seed_state(spawns_dir, _record(status="succeeded"))
+    state_path = spawns_dir / "p1" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["entry_chat_id"] = "c1"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    def timeout(self, *, timeout: float = 5.0) -> tuple[str, ...]:
+        raise FileLockTimeout("catchup lock timed out")
+
+    monkeypatch.setattr(HistoryIndex, "clear_authority_failure", timeout)
+    result = migrate_dogfood_spawn_rows(tmp_path)
+
+    assert result.migrated == ("p1",)
+    assert result.index_rearm_warning is not None
+    assert "timed out" in result.index_rearm_warning
+
+
 def test_run_boundary_rejects_exit_without_verified_status() -> None:
     with pytest.raises(ValueError, match="set exactly when status is verified"):
         RunBoundaryOutcome(status="unresolved", exit_chat_id="c-exit")

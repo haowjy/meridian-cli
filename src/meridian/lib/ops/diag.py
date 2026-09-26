@@ -240,6 +240,8 @@ def schedule_background_repairs(project_root: Path) -> None:
             dogfood = migrate_dogfood_spawn_rows(runtime_root)
             if dogfood.failed:
                 logger.warning("dogfood_spawn_rows_failed", failed=dict(dogfood.failed))
+            if dogfood.index_rearm_warning:
+                logger.warning("dogfood_index_rearm_failed", warning=dogfood.index_rearm_warning)
         with suppress(Exception):
             _repair_stale_session_locks(project_root, runtime_root=runtime_root)
             gc_orphaned_locks(runtime_root)
@@ -366,6 +368,13 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
                     "spawn_ids": [spawn_id for spawn_id, _ in dogfood.failed],
                     "reasons": dict(dogfood.failed),
                 },
+            )
+        )
+    if dogfood.index_rearm_warning:
+        warnings.append(
+            DoctorWarning(
+                code="dogfood_index_rearm_failed",
+                message=dogfood.index_rearm_warning,
             )
         )
     legacy_worktree_temp_warning = _check_legacy_worktree_temp(runtime_root)

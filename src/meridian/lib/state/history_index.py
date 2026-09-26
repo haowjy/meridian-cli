@@ -66,7 +66,11 @@ from meridian.lib.state.session_fold import (
     project_session_generation,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.state.spawn.repository import read_state, scan_spawn_ids
+from meridian.lib.state.spawn.repository import (
+    SpawnStateQuarantined,
+    read_state,
+    scan_spawn_ids,
+)
 
 if TYPE_CHECKING:
     from meridian.lib.state.spawn_store import SpawnScan
@@ -76,7 +80,7 @@ logger = logging.getLogger(__name__)
 SCHEMA_VERSION = 6
 INITIALIZATION_TIMEOUT = 15.0
 QUERY_TIMEOUT = 2.0
-_REBUILD_COMMAND = "uv run meridian session index rebuild --metadata-only"
+_REBUILD_COMMAND = "meridian session index rebuild --metadata-only"
 type SchemaClass = Literal["expand", "reshape", "reproject"]
 type SchemaUpgrade = Literal["migrate", "reproject"]
 
@@ -826,7 +830,7 @@ class HistoryIndex:
                         raise
 
     def _clear_initialization_failure(self) -> tuple[str, ...]:
-        """Called under catchup ownership after verifying a compatible published baseline."""
+        """Called under catchup ownership when initialization may safely retry."""
         try:
             self.failure_path.unlink()
             fsync_directory(self.root)
@@ -839,6 +843,23 @@ class HistoryIndex:
             logger.warning(warnings[0])
             return warnings
         return ()
+
+    def clear_authority_failure(self, *, timeout: float = 5.0) -> tuple[str, ...]:
+        """Clear an authority failure after its source was repaired.
+
+        Catch-up ownership orders this behind any initializer that may still
+        publish a failure based on the pre-repair authority.
+        """
+        with lock_file(self.catchup_lock, timeout=timeout):
+            try:
+                failure = _InitializationFailure.model_validate_json(self.failure_path.read_bytes())
+            except FileNotFoundError:
+                return ()
+            except ValueError:
+                return ()
+            if failure.code != "authority":
+                return ()
+            return self._clear_initialization_failure()
 
     def _finish_rebuild(
         self, coverage: IndexCoverage, acknowledged: list[DirtySource]
@@ -1013,6 +1034,11 @@ class HistoryIndex:
                     code, reason = "io", f"Metadata I/O failure ({type(exc).__name__})"
                 elif isinstance(exc, sqlite3.Error):
                     code, reason = "sqlite", "SQLite metadata projection failed"
+                elif isinstance(exc, SpawnStateQuarantined) and (
+                    "; run `meridian doctor` to migrate it" in str(exc)
+                ):
+                    code = "authority"
+                    reason = str(exc).splitlines()[0][:1024]
                 else:
                     code, reason = "authority", "Invalid authoritative history metadata"
                 failure = _InitializationFailure(

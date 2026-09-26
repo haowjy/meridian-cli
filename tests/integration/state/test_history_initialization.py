@@ -73,6 +73,34 @@ def test_failure_is_sticky_until_manual_rebuild(tmp_path: Path, invalid_state: s
     assert [row.id for row in index.spawns(work_id="after-failure")] == [key]
 
 
+def test_dogfood_migration_rearms_authority_failure(tmp_path: Path) -> None:
+    import json
+
+    from meridian.lib.state import spawn_store
+    from meridian.lib.state.spawn.dogfood_migration import migrate_dogfood_spawn_rows
+
+    key = spawn_store.start_spawn(
+        tmp_path, chat_id="c1", prompt="hello", model="test", agent="coder", harness="codex"
+    )
+    spawn_store.finalize_spawn(tmp_path, key, status="succeeded", exit_code=0, origin="runner")
+    state = tmp_path / "spawns" / key / "state.json"
+    data = json.loads(state.read_text(encoding="utf-8"))
+    data["entry_chat_id"] = "c1"
+    state.write_text(json.dumps(data), encoding="utf-8")
+    index = HistoryIndex(tmp_path)
+
+    with pytest.raises(history_index.HistoryIndexIncomplete, match="meridian doctor"):
+        index.spawns()
+    marker = json.loads(index.failure_path.read_text(encoding="utf-8"))
+    assert marker["code"] == "authority"
+    assert "meridian doctor" in marker["reason"]
+
+    migration = migrate_dogfood_spawn_rows(tmp_path)
+    assert migration.migrated == (key,)
+    assert not index.failure_path.exists()
+    assert [row.id for row in index.spawns()] == [key]
+
+
 def test_owned_timeout_is_sticky_but_cancellation_is_not(tmp_path: Path, monkeypatch) -> None:
     index = HistoryIndex(tmp_path)
     original_project = HistoryIndex._project
@@ -205,7 +233,7 @@ def test_old_record_projection_schema_rebuilds_and_newer_schema_is_not_hydrated(
     assert status.baseline == "incompatible"
     with pytest.raises(
         history_index.HistoryIndexIncomplete,
-        match=r"incompatible.*uv run meridian session index rebuild --metadata-only",
+        match=r"incompatible.*meridian session index rebuild --metadata-only",
     ):
         index.spawns()
 

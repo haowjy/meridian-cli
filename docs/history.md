@@ -17,7 +17,7 @@ into SQLite.
 
 A genuine initialization failure is recorded outside the replaceable index directory.
 Later automatic requests report the failure instead of repeatedly starting over.
-Retry explicitly with `uv run meridian session index rebuild --metadata-only`;
+Retry explicitly with `meridian session index rebuild --metadata-only`;
 success clears the failure. Manual metadata projection has a 60-second budget,
 separate from archive import and native-search rebuilding. Cancellation and another
 initializer holding a lock do not create persistent failures.
