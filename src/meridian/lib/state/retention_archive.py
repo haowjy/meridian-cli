@@ -199,11 +199,11 @@ def safe_member_name(name: str) -> str:
 
 
 def _is_reserved_atomic_temp(name: str) -> bool:
-    from meridian.lib.launch.constants import HISTORY_FILENAME
+    from meridian.lib.launch.constants import RETIRED_RUNNER_STREAM_FILENAMES
 
     return any(
         is_atomic_temp_name(name, reserved)
-        for reserved in (NATIVE_SNAPSHOT_FILENAME, HISTORY_FILENAME)
+        for reserved in (NATIVE_SNAPSHOT_FILENAME, *RETIRED_RUNNER_STREAM_FILENAMES)
     )
 
 
@@ -252,7 +252,7 @@ def inventory(directory: Path) -> tuple[Member, ...]:
         if validation.state != "complete":
             raise ValueError("Incomplete or corrupt native snapshot")
     else:
-        with (directory / "history.jsonl").open("rb") as handle:
+        with (directory / transcript).open("rb") as handle:
             handle.seek(0, os.SEEK_END)
             if not handle.tell():
                 raise ValueError("Empty transcript")
