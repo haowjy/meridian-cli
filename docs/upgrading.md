@@ -142,9 +142,9 @@ that copy. So `session log` on an imported or restored 0.6.7 record says:
 error: c1 is historical and has no retained native snapshot
 ```
 
-Most archived chats are also bound to their harness's own transcript. They
-read normally with `meridian session log cN` for as long as the harness keeps
-that file. For the rest, the old copy is still inside the ZIP at
+An archived chat that is still bound to its harness's own transcript reads
+normally with `meridian session log cN` for as long as the harness keeps that
+file. Otherwise, the old copy is still inside the ZIP at
 `meridian-history-v1/records/<history-id>/aggregate/history.jsonl`; extract
 it with `unzip` if you need it. Archives made by 0.7 contain the native
 transcript and read back normally.
