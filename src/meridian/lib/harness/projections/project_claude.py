@@ -10,6 +10,7 @@ from meridian.lib.harness.claude_preflight import CLAUDE_PARENT_ALLOWED_TOOLS_FL
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
+from meridian.lib.harness.projections._prompt_arg import check_prompt_argument
 from meridian.lib.harness.projections.permission_flags import resolve_permission_flags
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.text_utils import dedupe_nonempty, split_csv_entries
@@ -283,7 +284,7 @@ def project_claude_spec_to_cli_args(
     # This routes USER_TASK_PROMPT and TASK_CONTEXT to the user-turn channel
     # instead of --append-system-prompt (spec S-2a)
     if spec.interactive and spec.user_turn_content:
-        command.append(spec.user_turn_content)
+        command.extend(("--", check_prompt_argument(spec.user_turn_content)))
 
     return command
 

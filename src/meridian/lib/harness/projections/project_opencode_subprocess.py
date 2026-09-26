@@ -14,6 +14,7 @@ from meridian.lib.harness.opencode_backend import (
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
+from meridian.lib.harness.projections._prompt_arg import check_prompt_argument
 from meridian.lib.harness.projections.permission_flags import resolve_permission_flags
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -140,9 +141,7 @@ def project_opencode_spec_to_cli_args(
         )
 
     harness_session_id = (spec.continue_session_id or "").strip()
-    resume_with_model = (
-        bool(harness_session_id) and spec.model is not None and not spec.interactive
-    )
+    resume_with_model = bool(harness_session_id) and spec.model is not None and not spec.interactive
     if resume_with_model and _resolve_projection_version(spec.opencode_version) == "v1":
         # ``opencode run --session`` cannot switch the model committed to a
         # resumed session on V1. V2 supports it (``POST /api/session/{id}/model``)
@@ -227,19 +226,17 @@ def project_opencode_spec_to_cli_args(
 
     command.extend(passthrough_tail)
 
-    if spec.interactive:
-        # Interactive TUI launches go through managed attach (opencode serve →
-        # HTTP API → opencode attach).  The system prompt is delivered via the
-        # message system field, and the user types the first message.  Passing
-        # --prompt here would inject boilerplate as a user turn.
-        pass
-    else:
+    if not spec.interactive:
         command.append("-")
 
     if has_continue_session:
         command.extend(("--session", harness_session_id))
         if has_continue_fork:
             command.append("--fork")
+
+    if spec.interactive and spec.prompt:
+        # This is the bare-TUI fallback when managed attach is unavailable.
+        command.extend(("--prompt", check_prompt_argument(spec.prompt)))
 
     return command
 

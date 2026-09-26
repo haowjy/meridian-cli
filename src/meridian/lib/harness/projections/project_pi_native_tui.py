@@ -10,6 +10,7 @@ from meridian.lib.harness.pi_identity import project_identity
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
+from meridian.lib.harness.projections._prompt_arg import check_prompt_argument
 from meridian.lib.harness.projections.permission_flags import resolve_permission_flags
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
@@ -23,6 +24,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "permission_resolver",
         "extra_args",
         "interactive",
+        "prompt",
         "appended_system_prompt",
         "pi_extension_entrypoints",
         "load_all_pi_extensions",
@@ -37,13 +39,12 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "agent_name",
         "agents_payload",
         "claude_native_agents_enabled",
-        "prompt",
         "prompt_file_path",
+        "user_turn_content",
         "base_instructions",
         "developer_instructions",
         "report_output_path",
         "web_search_enabled",
-        "user_turn_content",
         "skills",
         "reference_items",
         "mcp_tools",
@@ -111,8 +112,7 @@ def _reject_mode_collisions(passthrough_tail: tuple[str, ...]) -> None:
 
 def _reject_extension_collisions(passthrough_tail: tuple[str, ...]) -> None:
     if any(
-        _has_flag(passthrough_tail, alias)
-        for alias in _MANAGED_FLAG_ALIASES["--no-extensions"]
+        _has_flag(passthrough_tail, alias) for alias in _MANAGED_FLAG_ALIASES["--no-extensions"]
     ):
         raise ValueError(
             "Pi native primary launches cannot accept --no-extensions from passthrough extra_args; "
@@ -193,6 +193,14 @@ def project_pi_native_tui_spec_to_cli_args(
 
     command.extend(resolve_permission_flags(spec.permission_resolver, HarnessId.PI))
     command.extend(passthrough_tail)
+
+    if spec.interactive and spec.prompt:
+        # Pi treats a leading @ as a file reference even after --; a leading
+        # space keeps the initial user message literal without changing content.
+        prompt = check_prompt_argument(spec.prompt)
+        if prompt.startswith("@"):
+            prompt = f" {prompt}"
+        command.extend(("--", prompt))
 
     return command
 

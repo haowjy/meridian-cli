@@ -40,6 +40,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Managed Pi launches load a bounded, atomic v2 session-boundary observer without writing native journals.
 
 ### Fixed
+- Deliver composed starting prompts as first user turns in interactive Claude, Pi, and OpenCode sessions; guard oversized CLI prompt arguments.
 - Pi session reads support v3 `context_edit` and `usage` journal entries.
 - Name the exact chat in `pN` session-log views, report search coverage in text output, and reject non-native `session log --file` inputs.
 - Capture exact native transcripts during archive apply so terminal headless spawns can be archived without runner-history members; dry-runs distinguish pending capture from capture errors.

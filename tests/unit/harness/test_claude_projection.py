@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.claude_preflight import CLAUDE_PARENT_ALLOWED_TOOLS_FLAG
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
@@ -133,3 +135,24 @@ def test_claude_projection_default_deny_agent_allow_still_denies_builtins() -> N
     assert "Agent(Plan)" in disallowed
     assert "Agent(General-purpose)" in disallowed
     assert "Agent(general-purpose)" in disallowed
+
+
+@pytest.mark.parametrize("continuation", [False, True])
+def test_interactive_prompt_is_unconsumable_after_passthrough(continuation: bool) -> None:
+    prompt = "Reply exactly: hello"
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.CLAUDE,
+        interactive=True,
+        user_turn_content=prompt,
+        continue_session_id="claude-session" if continuation else None,
+        extra_args=("--add-dir", "/tmp"),
+        permission_resolver=TieredPermissionResolver(config=PermissionConfig()),
+    )
+
+    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+
+    assert command[-2:] == ["--", prompt]
+    if continuation:
+        assert command[command.index("--resume") + 1] == "claude-session"
+    else:
+        assert "--resume" not in command
