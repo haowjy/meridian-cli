@@ -101,6 +101,24 @@ def test_dogfood_migration_rearms_authority_failure(tmp_path: Path) -> None:
     assert [row.id for row in index.spawns()] == [key]
 
 
+def test_quarantined_state_authority_failure_names_non_dogfood_row(tmp_path: Path) -> None:
+    from meridian.lib.state import spawn_store
+
+    key = spawn_store.start_spawn(
+        tmp_path, chat_id="c1", prompt="hello", model="test", agent="coder", harness="codex"
+    )
+    spawn_store.finalize_spawn(tmp_path, key, status="succeeded", exit_code=0, origin="runner")
+    state = tmp_path / "spawns" / key / "state.json"
+    state.write_text('{"truncated":', encoding="utf-8")
+    index = HistoryIndex(tmp_path)
+
+    with pytest.raises(history_index.HistoryIndexIncomplete) as failure:
+        index.spawns()
+
+    assert str(state) in str(failure.value)
+    assert "meridian doctor" not in str(failure.value)
+
+
 def test_owned_timeout_is_sticky_but_cancellation_is_not(tmp_path: Path, monkeypatch) -> None:
     index = HistoryIndex(tmp_path)
     original_project = HistoryIndex._project

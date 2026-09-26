@@ -84,7 +84,8 @@ def test_reconciled_descendant_evidence_reports_invalid_rows_as_unknown(
     assert assessment.blockers == ()
     assert assessment.failure is not None
     assert assessment.failure.code == "descendant_evidence_read_failed"
-    assert "Invalid authoritative history metadata" in assessment.failure.detail
+    assert str(invalid_state) in assessment.failure.detail
+    assert "meridian doctor" not in assessment.failure.detail
 
 
 def test_reconciled_descendant_evidence_returns_typed_unknown_on_store_error(

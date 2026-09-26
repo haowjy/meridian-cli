@@ -1034,9 +1034,7 @@ class HistoryIndex:
                     code, reason = "io", f"Metadata I/O failure ({type(exc).__name__})"
                 elif isinstance(exc, sqlite3.Error):
                     code, reason = "sqlite", "SQLite metadata projection failed"
-                elif isinstance(exc, SpawnStateQuarantined) and (
-                    "; run `meridian doctor` to migrate it" in str(exc)
-                ):
+                elif isinstance(exc, SpawnStateQuarantined):
                     code = "authority"
                     reason = str(exc).splitlines()[0][:1024]
                 else:
