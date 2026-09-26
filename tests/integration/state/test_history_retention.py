@@ -310,6 +310,120 @@ def test_unavailable_current_digest_never_falls_back_to_older_snapshot(tmp_path:
     assert (tmp_path / "older" / first.zip_name).exists()
 
 
+def test_067_archive_record_without_run_boundary_remains_readable(tmp_path: Path) -> None:
+    """0.6.7 portable state predates ``run_boundary`` and hashes no such field."""
+    import zipfile
+
+    from meridian.lib.state.retention_archive import (
+        canonical,
+        capture_record,
+        digest,
+        import_archive,
+        publish_archive,
+    )
+
+    root = tmp_path / "runtime"
+    key = _terminal(root)
+    state = spawn_store.get_spawn(root, key)
+    assert state is not None
+    record = capture_record(root / "spawns" / key, state, None, state.started_at or "")
+    receipt = publish_archive(root, tmp_path / "zips", (record,))
+    archive_path = tmp_path / "zips" / receipt.zip_name
+    prefix = f"meridian-history-v1/records/{record.history_id}/"
+
+    # Reproduce the 0.6.7 record shape and digest: run_boundary was not a
+    # SpawnRecord field in that release, so it did not enter the state hash.
+    old_state = record.state.model_dump(mode="json")
+    old_state.pop("run_boundary")
+    portable_state = record.state.model_dump(
+        mode="json",
+        exclude={
+            "id",
+            "chat_id",
+            "owner_chat_id",
+            "parent_id",
+            "state_revision",
+            "session_instance_id",
+            "prompt",
+            "worker_pid",
+            "runner_pid",
+            "runner_created_at_epoch",
+            "control_root",
+            "task_cwd",
+            "execution_cwd",
+            "claude_config_dir",
+            "cancel_intent",
+            "runner_exit",
+            "launch_policy_snapshot",
+            "originating_bash_id",
+            "record_mode",
+            "launch_mode",
+            "harness_session_id",
+            "resident_rearm_count",
+            "run_boundary",
+        },
+    )
+    old_digest = digest(
+        canonical(
+            {
+                "state": portable_state,
+                "session": None,
+                "files": [
+                    member.model_dump()
+                    for member in record.files
+                    if member.name not in {"state.json", "record.json"}
+                ],
+            }
+        )
+    )
+
+    with zipfile.ZipFile(archive_path) as archive:
+        members = {name: archive.read(name) for name in archive.namelist()}
+    legacy_record = json.loads(members[prefix + "record.json"])
+    legacy_record["state"] = old_state
+    legacy_record["portable_digest"] = old_digest
+    members[prefix + "record.json"] = json.dumps(
+        legacy_record, sort_keys=True, separators=(",", ":")
+    ).encode()
+    manifest = json.loads(members["meridian-history-v1/manifest.json"])
+    manifest_record = manifest["records"][0]
+    manifest_record["state"] = old_state
+    manifest_record["portable_digest"] = old_digest
+    for member in manifest["members"]:
+        if member["name"] == prefix + "record.json":
+            member["size"] = len(members[prefix + "record.json"])
+            member["sha256"] = digest(members[prefix + "record.json"])
+    members["meridian-history-v1/manifest.json"] = json.dumps(
+        manifest, sort_keys=True, separators=(",", ":")
+    ).encode()
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, data in members.items():
+            archive.writestr(name, data)
+
+    assert verify_archive(archive_path).records[0].portable_digest == old_digest
+
+    history_id = str(record.history_id)
+    fresh = tmp_path / "fresh"
+    assert import_archive(fresh, archive_path).recorded
+    assert not import_archive(fresh, archive_path).recorded
+    restored = restore_archive(fresh, archive_path, (history_id,))
+    restored_state = spawn_store.get_spawn(fresh, restored[0])
+    assert restored_state is not None
+    assert restored_state.record_mode == "historical"
+    assert restored_state.run_boundary is None
+    # Staged provenance keeps the archived bytes, so a repeat restore verifies.
+    assert restore_archive(fresh, archive_path, (history_id,)) == restored
+    # Re-capture checks facts through current models and hashes what it stores.
+    second = archive_history(fresh, destination=tmp_path / "second", refs=restored, apply=True)
+    second_record = verify_archive(Path(second.archives[0])).records[0]
+    assert second_record.history_id == record.history_id
+    assert second_record.portable_digest == record.portable_digest != old_digest
+    # The legacy and re-captured snapshots are the same history, not a conflict.
+    target = tmp_path / "target"
+    alias = restore_archive(target, archive_path, (history_id,))
+    assert restore_archive(target, Path(second.archives[0]), (history_id,)) == alias
+
+
 def test_published_snapshot_is_reused_after_reclaim_interruption(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -57,6 +57,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Deliver composed starting prompts as first user turns in interactive Claude, Pi, and OpenCode sessions; guard oversized CLI prompt arguments.
 - `session log`/`export` read archived native snapshots again after `session import` (history UUID, streamed from the ZIP) and `session restore` (restored `cN`/`pN`), validating seal and history binding; live chats never fall back to snapshots. Re-importing reports `Already imported`.
+- `session import`/`restore` accept archives written by 0.6.7 and earlier builds again: the portable record digest is verified over the record JSON as stored, not re-serialized through current models, so later fields such as `run_boundary` no longer cause "Portable record digest mismatch". Restore keeps the archived `record.json` bytes as provenance.
 - Pi session reads support v3 `context_edit` and `usage` journal entries.
 - Name the exact chat in `pN` session-log views, report search coverage in text output, and reject non-native `session log --file` inputs.
 - Capture exact native transcripts during archive apply so terminal headless spawns can be archived without runner-history members; dry-runs distinguish pending capture from capture errors.
