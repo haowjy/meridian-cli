@@ -54,7 +54,8 @@ Discovery composes the shared `state/history_index.py` projection; lifecycle/con
 reads stay authoritative. `session_corpus.py` selects search roots and work scope.
 `session_archive.py` owns eligibility, dependency protection and the shared manual/
 automatic retention policy; ZIP bytes and inert restore live in `state/retention_*`.
-Archive does not capture natives — stop-maintenance publishes the seal first.
+Stop-maintenance seals native snapshots; explicit `session archive --apply` captures
+the exact native snapshot of selected records itself, before final selection.
 `runner_history_prune.py` is the explicit `session archive --prune-runner-history`
 rule: terminal, older than N days, exact native source(s) resolve now → drop runner
 stream files. Any doubt skips; automatic maintenance never calls it.
