@@ -115,6 +115,10 @@ to permissive native or append-stream interpretation after a damaged header.
 Early close/budget exhaustion is partial; a valid empty seal is complete, not a
 reason to select another source. Explicit snapshot reads validate the seal; normal chat reads resolve the native
 key. Legacy ZIP stream members can be restored as inert bytes, never decoded.
+The portable record digest (`retention_digest.py`) hashes a record's JSON as
+stored, never a re-serialization through current models, so model growth cannot
+invalidate older ZIPs. Checks of unchanged facts compare both sides through
+current models.
 
 The index keeps current metadata, independent locations, generation aliases and
 session/work projections. Multiple ZIP copies remain candidates even with a

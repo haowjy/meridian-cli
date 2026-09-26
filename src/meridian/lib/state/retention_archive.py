@@ -36,6 +36,12 @@ from meridian.lib.state.native_snapshot import (
     complete_published_snapshot,
     read_snapshot,
 )
+from meridian.lib.state.retention_digest import (
+    canonical,
+    digest,
+    model_record_digest,
+    stored_record_digest,
+)
 from meridian.lib.state.session_store import SessionRecord
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import StoredSpawnState, record_to_stored_state
@@ -175,14 +181,6 @@ class _LocationMarker(BaseModel):
 ARCHIVE_READ_ERRORS = (ValueError, OSError, EOFError, zipfile.BadZipFile, zlib.error)
 
 
-def digest(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def canonical(value: object) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
-
-
 def safe_member_name(name: str) -> str:
     if (
         not name
@@ -267,68 +265,6 @@ def inventory(directory: Path) -> tuple[Member, ...]:
     return tuple(members)
 
 
-def portable_digest(
-    state: SpawnRecord, files: tuple[Member, ...], session: SessionRecord | None
-) -> str:
-    portable_state = state.model_dump(
-        mode="json",
-        exclude={
-            "id",
-            "chat_id",
-            "owner_chat_id",
-            "parent_id",
-            "state_revision",
-            "session_instance_id",
-            "prompt",
-            "worker_pid",
-            "runner_pid",
-            "runner_created_at_epoch",
-            "control_root",
-            "task_cwd",
-            "execution_cwd",
-            "claude_config_dir",
-            "cancel_intent",
-            "runner_exit",
-            "launch_policy_snapshot",
-            "originating_bash_id",
-            "record_mode",
-            "launch_mode",
-            "harness_session_id",
-            "resident_rearm_count",
-        },
-    )
-    return digest(
-        canonical(
-            {
-                "state": portable_state,
-                "session": session.model_dump(
-                    mode="json",
-                    exclude={
-                        "chat_id",
-                        "spawn_id",
-                        "history_id",
-                        "session_instance_id",
-                        "forked_from_chat_id",
-                        "record_mode",
-                        "harness_session_id",
-                        "control_root",
-                        "task_cwd",
-                        "execution_cwd",
-                        "claude_config_dir",
-                    },
-                )
-                if session
-                else None,
-                "files": [
-                    member.model_dump()
-                    for member in files
-                    if member.name not in {"state.json", "record.json"}
-                ],
-            }
-        )
-    )
-
-
 def restored_record(
     directory: Path,
     files: tuple[Member, ...],
@@ -344,11 +280,11 @@ def restored_record(
         or digest(canonical(session.model_dump(mode="json"))) != saved["session_sha256"]
     ):
         raise ValueError(f"Restored metadata changed: {directory.name}")
-    original = ArchivedRecord.model_validate_json((directory / "record.json").read_bytes())
+    provenance = (directory / "record.json").read_bytes()
+    original = ArchivedRecord.model_validate_json(provenance)
     if (
         original.portable_digest != saved["portable_digest"]
-        or portable_digest(original.state, original.files, original.session)
-        != original.portable_digest
+        or stored_record_digest(json.loads(provenance)) != original.portable_digest
     ):
         raise ValueError(f"Restored provenance changed: {directory.name}")
     excluded = {"state.json", "record.json"}
@@ -393,18 +329,23 @@ def capture_record(
                 "session_instance_id": state.session_instance_id or session.session_instance_id,
             }
         )
-    portable = portable_digest(state, files, session)
-    if original is not None and portable != original.portable_digest:
+    # Both sides through current models: the original may predate model fields.
+    if original is not None and model_record_digest(state, files, session) != (
+        model_record_digest(original.state, original.files, original.session)
+    ):
         raise ValueError(f"Restored portable facts changed: {state.history_id}")
-    return ArchivedRecord(
+    draft = ArchivedRecord(
         history_id=state.history_id,
         state=state,
         session=session,
         activity=activity,
         files=files,
         required_files=required,
-        portable_digest=portable,
+        portable_digest="",
     )
+    # Hash exactly the record JSON that publication stores.
+    portable = stored_record_digest(json.loads(draft.model_dump_json()))
+    return draft.model_copy(update={"portable_digest": portable})
 
 
 def _location(destination: Path) -> UUID:
@@ -424,6 +365,11 @@ def _member_bytes(archive: zipfile.ZipFile, name: str, *, limit: int) -> bytes:
         return archive.read(name)
     except KeyError as exc:
         raise ArchiveValidationError(f"Missing required archive member: {name}") from exc
+
+
+def read_record_metadata(archive: zipfile.ZipFile, history_id: UUID) -> bytes:
+    """The bounded ``record.json`` bytes exactly as one record stored them."""
+    return _member_bytes(archive, f"{_PREFIX}records/{history_id}/record.json", limit=_MAX_METADATA)
 
 
 def archive_manifest_digest(path: Path) -> str:
@@ -472,25 +418,27 @@ def verify_archive(
         if manifest_sha256 is not None and digest(metadata) != manifest_sha256:
             raise ArchiveValidationError("Archive manifest does not match its receipt")
         manifest = ArchiveManifest.model_validate_json(metadata)
+        stored_records = json.loads(metadata)["records"]
         if len({record.history_id for record in manifest.records}) != len(manifest.records):
             raise ValueError("Duplicate portable history identity")
         declared = {member.name: member for member in manifest.members}
         if len(declared) != len(manifest.members) or names != set(declared) | {_MANIFEST}:
             raise ValueError("ZIP member coverage does not match manifest")
         planned_names: set[str] = set()
-        for record in manifest.records:
+        for record, stored_record in zip(manifest.records, stored_records, strict=True):
             prefix = f"{_PREFIX}records/{record.history_id}/"
             meta_name = prefix + "record.json"
             planned_names.add(meta_name)
             if len({m.name for m in record.files}) != len(record.files):
                 raise ValueError("Duplicate record inventory member")
-            recovered = ArchivedRecord.model_validate_json(
-                _member_bytes(archive, meta_name, limit=_MAX_METADATA)
-            )
-            if (
-                portable_digest(record.state, record.files, record.session)
-                != record.portable_digest
-            ):
+            provenance = read_record_metadata(archive, record.history_id)
+            recovered = ArchivedRecord.model_validate_json(provenance)
+            # Over the JSON as stored, never re-serialized through today's models.
+            # Restore keeps record.json as provenance, so it must verify too.
+            if {
+                stored_record_digest(stored_record),
+                stored_record_digest(json.loads(provenance)),
+            } != {record.portable_digest}:
                 raise ValueError("Portable record digest mismatch")
             if recovered != record or record.state.history_id != record.history_id:
                 raise ValueError("Record metadata identity mismatch")
