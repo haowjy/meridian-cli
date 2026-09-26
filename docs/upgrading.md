@@ -173,6 +173,10 @@ run source. Unresolved exits, missing transcripts, running spawns, and live
 managed scopes are skipped. Meridian keeps native transcripts, reports,
 lifecycle and control state, and all other spawn files. The command is explicit
 and never runs automatically. `meridian doctor` does not delete these files.
+`meridian doctor --prune` is different: it deletes whole spawn folders idle for
+more than `state.retention_days` (30 by default), including each spawn's
+record, prompt, report and any runner copy. The chats' native transcripts are
+not touched.
 
 ## Behavior changes you'll notice
 
