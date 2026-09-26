@@ -994,10 +994,9 @@ def _resolve_session_continuation(
             warning=f"Harness '{harness.id}' does not support session resume; starting fresh.",
         )
     if requested_continue_fork and not harness.capabilities.supports_session_fork:
-        return ResolvedContinuation(
-            harness_session_id=requested_harness_session_id,
-            continue_fork=False,
-            warning=f"Harness '{harness.id}' does not support session fork; resuming in-place.",
+        raise ValueError(
+            f"{harness.id} cannot fork sessions; use --continue with the source chat "
+            "or start fresh."
         )
     return ResolvedContinuation(
         harness_session_id=requested_harness_session_id,

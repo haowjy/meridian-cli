@@ -100,9 +100,32 @@ def read_opencode_v2_turn(key: NativeKey, turn_ids: tuple[str, ...]) -> str | No
     return None
 
 
+def read_opencode_v1_latest_report(key: NativeKey) -> str | None:
+    """Read the latest assistant response from an exact V1 native session.
+
+    OpenCode 1.x does not emit the V2 assistant-message attribution event. Its
+    session key is still exact, so use that session's final assistant response
+    rather than turning a successful run into ``missing_report``.
+    """
+    if not Path(key.native_store).is_file():
+        return None
+    try:
+        with read_opencode_snapshot(Path(key.native_store), key.session_id) as (
+            witness,
+            events,
+        ):
+            if isinstance(witness, OpenCodeV2Witness):
+                return None
+            return extract_last_assistant_report(events)
+    except ValueError:
+        # A stale or not-yet-persisted session is not report evidence.
+        return None
+
+
 __all__ = [
     "OpenCodeWitness",
     "opencode_session_witnesses",
     "read_opencode_snapshot",
+    "read_opencode_v1_latest_report",
     "read_opencode_v2_turn",
 ]
