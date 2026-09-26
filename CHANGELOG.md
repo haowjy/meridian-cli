@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Name the exact chat in `pN` session-log views, report search coverage in text output, and reject non-native `session log --file` inputs.
+
 ### Changed
 - Session logs read native chats: raw IDs resolve directly, and old `pN` refs show the whole chat with a view label.
 - Search bound native chats with a rebuildable index and exact substring verification; common words fill the 100-hit cap with newest sessions. Rebuild search rows; previews stay lazy.

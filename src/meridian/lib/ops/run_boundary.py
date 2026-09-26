@@ -16,11 +16,12 @@ def run_boundary_summary(row: SpawnRecord) -> str | None:
 
 
 def spawn_view_label(row: SpawnRecord) -> str | None:
+    entry_chat = row.chat_id or "?"
     if row.status not in TERMINAL_SPAWN_STATUSES:
-        return "entry-based view (run in progress)"
+        return f"{row.id} → {entry_chat} (entry chat; run in progress)"
     boundary = row.run_boundary
     if boundary is None:
-        return "entry chat (run predates exit tracking)"
+        return f"{row.id} → {entry_chat} (entry chat; run predates exit tracking)"
     if boundary.status != "verified":
-        return f"entry-based view (exit identity {boundary.status})"
-    return f"exit chat {row.continue_chat_id}" if row.continue_chat_id != row.chat_id else None
+        return f"{row.id} → {entry_chat} (entry chat; exit identity {boundary.status})"
+    return f"{row.id} → {row.continue_chat_id} (verified exit chat)"

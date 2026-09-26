@@ -102,7 +102,41 @@ class SessionSearchOutput(BaseModel):
             headline = f"Session search — {len(self.matches)} {match_label}"
         else:
             headline = "Session search — no matches"
-        lines = [headline]
+        searched = max(0, self.sources_total - self.sources_not_searched)
+        if self.complete:
+            coverage = f"Searched {self.sources_total} sources (complete)."
+            if self.warnings:
+                coverage = (
+                    f"Searched {self.sources_total} sources "
+                    f"(complete; {len(self.warnings)} warnings)."
+                )
+        else:
+            reasons = []
+            if self.sources_pending:
+                reasons.append(f"{self.sources_pending} pending")
+            unavailable = max(0, self.sources_not_searched - self.sources_pending)
+            if unavailable:
+                reason_counts = Counter(
+                    error.partition(": ")[2] or error for error in self.errors
+                )
+                if reason_counts:
+                    reasons.extend(
+                        f"{count} unavailable ({reason})"
+                        for reason, count in reason_counts.items()
+                    )
+                else:
+                    reasons.append(f"{unavailable} unavailable")
+            if self.warnings:
+                reasons.append(f"{len(self.warnings)} warnings")
+            if self.truncated:
+                reasons.append("100-hit cap reached")
+            if not reasons:
+                reasons.append("coverage incomplete")
+            coverage = (
+                f"Searched {searched}/{self.sources_total} sources (incomplete: "
+                f"{'; '.join(reasons)})."
+            )
+        lines = [headline, coverage]
         for match in self.matches:
             lines.append("")
             lines.append(
@@ -115,28 +149,6 @@ class SessionSearchOutput(BaseModel):
                 lines.append("Chats: " + ", ".join(match.chat_ids))
             lines.append(match.content_preview)
             lines.append(f"Open: {match.open_command}")
-        if self.truncated:
-            lines.append("Search truncated at 100 matches.")
-        if self.sources_pending:
-            lines.append(
-                f"{self.sources_pending} of {self.sources_total} sources not searched "
-                "(index refreshing — run `meridian session index rebuild`)"
-            )
-        if unavailable := self.sources_not_searched - self.sources_pending:
-            lines.append(
-                f"{unavailable} of {self.sources_total} sources unavailable (see reasons)."
-            )
-        if self.warnings:
-            lines.append(f"{len(self.warnings)} sources searched with warnings (see --json)")
-        if len(self.errors) <= 3:
-            lines.extend(self.errors)
-        else:
-            lines.extend(
-                f"{count} sources not searched: {reason} (see --json)"
-                for reason, count in Counter(
-                    error.partition(": ")[2] or error for error in self.errors
-                ).items()
-            )
         return "\n".join(lines)
 
 

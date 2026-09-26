@@ -95,8 +95,30 @@ def test_cold_budget_reports_coverage_without_partial_source_hits(tmp_path, monk
     output = session_search_sync(SessionSearchInput(query="needle", project_root=str(project)))
     assert not output.complete
     assert output.sources_not_searched == 1
-    assert "1 of 1 sources not searched" in output.format_text()
+    assert "Searched 0/1 sources (incomplete: 1 pending)." in output.format_text()
     assert not output.truncated
+
+
+def test_text_search_always_reports_single_coverage_line():
+    from meridian.lib.ops.session_search import SessionSearchOutput
+
+    complete = SessionSearchOutput(matches=(), sources_total=4)
+    assert "Searched 4 sources (complete)." in complete.format_text()
+
+    incomplete = SessionSearchOutput(
+        matches=(),
+        sources_total=4,
+        sources_not_searched=2,
+        sources_pending=1,
+        errors=("c2: missing",),
+        truncated=True,
+    )
+    rendered = incomplete.format_text()
+    assert (
+        "Searched 2/4 sources (incomplete: 1 pending; 1 unavailable (missing); "
+        "100-hit cap reached)."
+    ) in rendered
+    assert rendered.count("Searched ") == 1
 
 
 def test_opencode_in_place_update_and_shared_chat_owners(tmp_path, monkeypatch):
@@ -233,7 +255,7 @@ def test_corpus_preserves_ref_search_readiness_when_renderer_warns(tmp_path, mon
     assert projected.complete
     assert projected.warnings and not projected.errors
     assert projected.model_dump()["warnings"]
-    assert "1 sources searched with warnings (see --json)" in projected.format_text()
+    assert "Searched 1 sources (complete; 1 warnings)." in projected.format_text()
     assert "future" not in projected.format_text().split("Open:")[-1]
     assert projected.sources_not_searched == 0
 
@@ -276,6 +298,8 @@ def test_search_warning_and_unavailability_text_json_contract():
     assert not output.complete
     assert output.model_dump()["warnings"] == output.warnings
     assert output.model_dump()["errors"] == output.errors
-    assert "4 sources searched with warnings (see --json)" in output.format_text()
-    assert "4 sources not searched: missing (see --json)" in output.format_text()
+    assert (
+        "Searched 4/8 sources (incomplete: 4 unavailable (missing); 4 warnings)."
+        in output.format_text()
+    )
     assert "project c" not in output.format_text()

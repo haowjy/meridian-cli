@@ -93,13 +93,19 @@ def test_shared_native_id_lists_other_chats(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("status", "boundary", "exit_chat", "label", "selected"),
     [
-        ("running", None, None, "entry-based view (run in progress)", "entry"),
-        ("running", "verified", "c2", "entry-based view (run in progress)", "entry"),
-        ("succeeded", None, None, "entry chat (run predates exit tracking)", "entry"),
-        ("succeeded", "verified", "c1", None, "entry"),
-        ("succeeded", "verified", "c2", "exit chat c2", "exit"),
-        ("succeeded", "unresolved", None, "entry-based view (exit identity unresolved)", "entry"),
-        ("succeeded", "mismatch", None, "entry-based view (exit identity mismatch)", "entry"),
+        ("running", None, None, "p1 → c1 (entry chat; run in progress)", "entry"),
+        ("running", "verified", "c2", "p1 → c1 (entry chat; run in progress)", "entry"),
+        ("succeeded", None, None, "p1 → c1 (entry chat; run predates exit tracking)", "entry"),
+        ("succeeded", "verified", "c1", "p1 → c1 (verified exit chat)", "entry"),
+        ("succeeded", "verified", "c2", "p1 → c2 (verified exit chat)", "exit"),
+        (
+            "succeeded",
+            "unresolved",
+            None,
+            "p1 → c1 (entry chat; exit identity unresolved)",
+            "entry",
+        ),
+        ("succeeded", "mismatch", None, "p1 → c1 (entry chat; exit identity mismatch)", "entry"),
     ],
 )
 def test_spawn_view_matrix(tmp_path, status, boundary, exit_chat, label, selected):
@@ -131,6 +137,27 @@ def test_spawn_view_matrix(tmp_path, status, boundary, exit_chat, label, selecte
     target = resolve_transcript_source(ref="p1", project_root=tmp_path, runtime_root=root)
     assert target.source.path == (native if selected == "entry" else exit_file)
     assert target.view_label == label
+
+
+@pytest.mark.parametrize(
+    ("name", "content", "expected"),
+    [
+        (
+            "opencode.db",
+            b"SQLite format 3\x00rest",
+            "OpenCode native history is stored in its database",
+        ),
+        ("notes.txt", b"just text", "not a native transcript"),
+        ("unknown.jsonl", b'{"hello":"world"}\n', "not a native transcript"),
+    ],
+)
+def test_explicit_file_must_be_supported_native_jsonl(tmp_path, name, content, expected):
+    from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
+
+    path = tmp_path / name
+    path.write_bytes(content)
+    with pytest.raises(ValueError, match=expected):
+        session_log_sync(SessionLogInput(file_path=str(path)))
 
 
 def test_raw_id_in_two_stores_is_ambiguous(tmp_path):
