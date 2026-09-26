@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import secrets
 import shutil
+from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -716,10 +717,10 @@ class SpawnScan:
     records: tuple[SpawnRecord, ...]
     quarantines: tuple[SpawnStateQuarantineReport, ...]
 
-    def quarantine_hint(self) -> str:
-        """Quarantined IDs plus the repair pointer, for commands that refuse on them."""
-        ids = ", ".join(report.spawn_id for report in self.quarantines)
-        return f"{ids}; run `meridian doctor`"
+
+def quarantine_hint(spawn_ids: Sequence[str]) -> str:
+    """Quarantined IDs behind the repair pointer, for commands that skip or refuse them."""
+    return f"{len(spawn_ids)} spawns; run `meridian doctor`: {', '.join(spawn_ids)}"
 
 
 def list_spawns(

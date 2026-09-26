@@ -133,7 +133,7 @@ def _protected(
     if scan.quarantines:
         raise ValueError(
             "Cannot establish retention safety while spawn records are quarantined: "
-            + scan.quarantine_hint()
+            + spawn_store.quarantine_hint([report.spawn_id for report in scan.quarantines])
         )
     records = {record.id: record for record in scan.records}
     sessions = session_store.list_all_session_records(root)
@@ -547,7 +547,7 @@ def _require_inactive_native_session(root: Path, harness: str | None, session_id
     if scan.quarantines:
         raise ValueError(
             "Cannot establish native capture ownership with quarantined spawn records: "
-            + scan.quarantine_hint()
+            + spawn_store.quarantine_hint([report.spawn_id for report in scan.quarantines])
         )
     linked = session_records_for_spawns(root, scan.records)
     for row in scan.records:

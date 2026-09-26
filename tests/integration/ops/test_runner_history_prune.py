@@ -353,8 +353,9 @@ def test_quarantined_rows_are_listed_with_doctor_hint(tmp_path: Path) -> None:
     result = prune(project)
 
     assert result.quarantined == (key,)
-    assert f"Skipped quarantined: {key}; run `meridian doctor`" in result.format_text()
-    with pytest.raises(ValueError, match=f"quarantined: {key}; run `meridian doctor`"):
+    hint = f"1 spawns; run `meridian doctor`: {key}"
+    assert f"Skipped quarantined: {hint}" in result.format_text()
+    with pytest.raises(ValueError, match=f"quarantined: {hint}"):
         session_archive_sync(
             SessionArchiveInput(
                 project_root=str(project), eligible=True, destination=str(tmp_path / "zips")

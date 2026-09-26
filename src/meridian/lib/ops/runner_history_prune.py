@@ -75,9 +75,7 @@ class RunnerHistoryPrune(BaseModel):
             for row in self.pruned
         )
         if self.quarantined:
-            lines.append(
-                f"Skipped quarantined: {', '.join(self.quarantined)}; run `meridian doctor`"
-            )
+            lines.append(f"Skipped quarantined: {spawn_store.quarantine_hint(self.quarantined)}")
         lines.extend(f"Error: {error}" for error in self.errors)
         return "\n".join(lines)
 
