@@ -9,6 +9,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Refuse session forks for harnesses that cannot create a distinct native session; extract successful OpenCode 1.x reports from the bound native session.
+- Keep unbound or unavailable native chats visible in browse without previews; bind late legacy native-session IDs on `meridian doctor` or the next primary launch.
 - Session logs read native chats: raw IDs resolve directly, and old `pN` refs show the whole chat with a view label.
 - Search bound native chats with a rebuildable index and exact substring verification; common words fill the 100-hit cap with newest sessions. Rebuild search rows; previews stay lazy.
 - Keep live event hooks and subscriber delivery active without runner-history persistence. `streaming serve` prints `Transcript: meridian session log pN`.

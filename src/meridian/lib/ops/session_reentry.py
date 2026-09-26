@@ -53,6 +53,8 @@ def resolve_session_reentry(project_root: str, chat_id: str) -> SessionReentryDe
         return Blocked("session is no longer available")
     if record.record_mode == "historical":
         return Blocked("historical record; read-only, cannot resume or fork")
+    if record.native_key() is None:
+        return Blocked("unbound native session; cannot resume or fork")
     return decide_reentry(
         chat_id=chat_id,
         live=is_session_lease_owner_alive(roots.runtime_root, chat_id),

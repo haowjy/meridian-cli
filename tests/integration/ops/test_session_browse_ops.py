@@ -7,6 +7,7 @@ import pytest
 
 import meridian.lib.ops.session_list as session_list_module
 from meridian.lib.ops.session_list import SessionListInput, session_list_sync
+from meridian.lib.ops.session_preview import PreviewIdentity, SessionPreview
 from meridian.lib.ops.session_reentry import Blocked, Fork, Resume, resolve_session_reentry
 from meridian.lib.ops.session_search import iter_session_subset_search
 from meridian.lib.state import primary_meta, session_store, spawn_store, work_repository
@@ -80,6 +81,7 @@ def test_session_list_is_primary_only_live_first_and_capped(tmp_path: Path) -> N
         runtime_root,
         harness="codex",
         harness_session_id="33333333-3333-4333-8333-333333333333",
+        native_store=(tmp_path / "codex-sessions").as_posix(),
         model="gpt-live",
         agent="reviewer",
         kind="primary",
@@ -137,6 +139,7 @@ def test_session_reentry_rechecks_live_lease(tmp_path: Path) -> None:
         runtime_root,
         harness="codex",
         harness_session_id="44444444-4444-4444-8444-444444444444",
+        native_store=(tmp_path / "codex-sessions").as_posix(),
         model="gpt-5.4",
         kind="primary",
     )
@@ -260,12 +263,12 @@ def test_recorded_primary_spawn_without_harness_id_does_not_scan_globally(
         session_store.stop_session(runtime_root, chat_id)
 
 
-def test_list_and_reentry_block_when_all_recorded_ids_are_missing(tmp_path: Path) -> None:
+def test_list_and_reentry_block_when_native_key_is_incomplete(tmp_path: Path) -> None:
     project_root, runtime_root = _project_roots(tmp_path)
     chat_id = session_store.start_session(
         runtime_root,
         harness="codex",
-        harness_session_id="",
+        harness_session_id="77777777-7777-4777-8777-777777777777",
         model="gpt-5.4",
         kind="primary",
     )
@@ -273,9 +276,35 @@ def test_list_and_reentry_block_when_all_recorded_ids_are_missing(tmp_path: Path
         listing = session_list_sync(SessionListInput(project_root=project_root.as_posix()))
         row = next(row for row in listing.rows if row.chat_id == chat_id)
         assert isinstance(row.reentry, Blocked)
+        assert row.native_status == "unbound"
         assert isinstance(resolve_session_reentry(project_root.as_posix(), chat_id), Blocked)
     finally:
         session_store.stop_session(runtime_root, chat_id)
+
+
+def test_preview_resolution_failure_is_row_local_and_has_no_transcript_text(
+    tmp_path: Path,
+) -> None:
+    project_root, runtime_root = _project_roots(tmp_path)
+    (runtime_root / "legacy-native-import-v1.json").write_text("{}\n", encoding="utf-8")
+    chat_id = session_store.start_session(
+        runtime_root,
+        harness="pi",
+        harness_session_id="pi-missing-native-file",
+        model="pi",
+        kind="primary",
+    )
+    record = session_store.get_session_record(runtime_root, chat_id)
+    assert record is not None
+
+    preview = SessionPreview(project_root.as_posix()).refresh(
+        PreviewIdentity(chat_id, generation=record.session_instance_id), lambda: True
+    )
+
+    assert preview is not None
+    assert preview.lines == ()
+    assert preview.status == "unavailable"
+    assert preview.source == "unbound"
 
 
 def test_session_list_uses_index_for_missing_ids(

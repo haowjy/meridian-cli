@@ -40,6 +40,7 @@ class SessionListRow(BaseModel):
     model: str
     work_label: str
     task_cwd: str
+    native_status: str = ""
 
     @property
     def filter_text(self) -> str:
@@ -63,7 +64,7 @@ class SessionListOutput(BaseModel):
         if not self.rows:
             return "no primary sessions"
 
-        rows = [["C-ID", "AGE", "LIVE", "AGENT", "MODEL", "WORK"]]
+        rows = [["C-ID", "AGE", "LIVE", "AGENT", "MODEL", "WORK", "NATIVE"]]
         rows.extend(
             [
                 row.chat_id
@@ -73,6 +74,7 @@ class SessionListOutput(BaseModel):
                 row.agent or "—",
                 row.model or "—",
                 row.work_label or "—",
+                row.native_status or "—",
             ]
             for row in self.rows
         )
@@ -161,12 +163,16 @@ def session_list_sync(
                 else decide_reentry(
                     chat_id=record.chat_id,
                     live=live,
-                    has_harness_session=record.chat_id in recorded_harness_sessions,
+                    has_harness_session=(
+                        record.chat_id in recorded_harness_sessions
+                        and record.native_key() is not None
+                    ),
                 ),
                 agent=record.agent,
                 model=record.model,
                 work_label=work_labels.get(record.active_work_id or "", ""),
                 task_cwd=record.task_cwd or record.execution_cwd or "",
+                native_status="" if record.native_key() is not None else "unbound",
             )
         )
 
