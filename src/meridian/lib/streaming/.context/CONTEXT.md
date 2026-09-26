@@ -57,11 +57,10 @@ The implementation is split by responsibility:
 
 ### Drain Loop Ordering
 
-`SpawnManager._emit` runs synchronous inline hooks (attempt facts and Pi lifecycle
-sidecar), then the optional history write, then subscriber fan-out. Hooks run even
-without a writer; a hook error is logged and does not block delivery. If a writer
-is present and fails, ordinary drain fan-out and coordinator delivery are withheld; ten
-consecutive failures still abort the drain loop. Absence is not write failure.
+`SpawnManager._run_event_hooks` runs synchronous inline hooks (attempt facts and Pi
+lifecycle sidecar); the drain loop then fans the event out to subscribers and calls
+the coordinator's `note_event_delivered`. A hook error is logged and does not block
+delivery. Meridian persists no runner event stream.
 
 Terminal classification follows successful delivery. The loop passes the
 connection's `primary_event_scope` to the harness semantics: child Codex threads
