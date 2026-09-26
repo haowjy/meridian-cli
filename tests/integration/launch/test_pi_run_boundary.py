@@ -217,7 +217,7 @@ def test_primary_post_exit_boundary(pi_runtime: Path, shape: str) -> None:  # no
         )
         expected_id = "switched-id" if shape == "switch" else entry.harness_session_id
         assert target.source.session_id == expected_id
-        assert ("entry-based view" in (target.view_label or "")) == (
+        assert ("entry chat" in (target.view_label or "")) == (
             shape in {"restart", "truncated", "switch-missing"}
         )
 

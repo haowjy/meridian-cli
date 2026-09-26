@@ -8,6 +8,7 @@ does not repair or mutate authoritative state.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -84,6 +85,36 @@ def _resolve_file_target(file_path: str) -> SessionLogTarget:
     if not resolved.is_file():
         raise FileNotFoundError(f"Session file '{resolved.as_posix()}' not found")
 
+    reject_runner_history(resolved)
+    with resolved.open("rb") as handle:
+        prefix = handle.read(16)
+    if prefix == b"SQLite format 3\x00":
+        raise ValueError(
+            "OpenCode native history is stored in its database; use `meridian session log cN`."
+        )
+    if resolved.suffix.lower() != ".jsonl":
+        raise ValueError("not a native transcript")
+
+    with resolved.open("rb") as handle:
+        first = handle.readline(64 * 1024 + 1)
+    try:
+        header = json.loads(first)
+    except (UnicodeDecodeError, ValueError):
+        header = None
+    is_claude = (
+        isinstance(header, dict)
+        and isinstance(header.get("sessionId"), str)
+        and isinstance(header.get("type"), str)
+    )
+    is_codex = isinstance(header, dict) and header.get("type") in {
+        "session_meta",
+        "event_msg",
+        "response_item",
+    }
+    is_pi = isinstance(header, dict) and header.get("type") == "session" and bool(header.get("id"))
+    if not (is_claude or is_codex or is_pi):
+        raise ValueError("not a native transcript")
+
     harness: str | None = None
     parts = set(resolved.parts)
     if ".claude" in parts:
@@ -91,7 +122,6 @@ def _resolve_file_target(file_path: str) -> SessionLogTarget:
     elif ".codex" in parts:
         harness = "codex"
 
-    reject_runner_history(resolved)
     return SessionLogTarget(
         TranscriptSource(
             kind="file",
