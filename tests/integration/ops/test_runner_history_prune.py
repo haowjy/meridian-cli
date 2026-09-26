@@ -99,12 +99,49 @@ def not_authority(name: str) -> bool:
     return name.startswith(("history-index/", "locks/")) or name.endswith(".lock")
 
 
-def tree(root: Path, *, authority_only: bool = False) -> dict[str, tuple[bytes, int]]:
-    """File bytes and mtimes; the disposable index and lock files are not authority."""
-    files: dict[str, tuple[bytes, int]] = {}
+_RUNNER_STREAM_NAMES = ("history.jsonl", "last-observed-event.json")
+
+
+def is_runner_stream_file(name: str) -> bool:
+    """True for runner ``history.jsonl``/``last-observed-event.json`` fixtures.
+
+    Production code never reads these; it only stats and unlinks them. The
+    blind-mode read trap (``tests/support/runner_history_blind``) enforces
+    that for ``history.jsonl``, so ``tree()`` must not call ``read_bytes()``
+    on them either.
+    """
+    parts = tuple(name.split("/"))
+    if parts[-1] not in _RUNNER_STREAM_NAMES:
+        return False
+    if len(parts) == 3 and parts[0] in {"spawns", "artifacts"}:
+        return True
+    return len(parts) == 4 and parts[0] == "spawns" and parts[2].startswith("attempt-")
+
+
+def entry_size(entry: tuple[object, ...]) -> int:
+    """Byte size from a ``tree()`` entry, whether recorded as bytes or as a stat."""
+    content = entry[0]
+    return content if isinstance(content, int) else len(content)  # type: ignore[arg-type]
+
+
+def tree(root: Path, *, authority_only: bool = False) -> dict[str, tuple[object, ...]]:
+    """File contents and mtimes; the disposable index and lock files are not authority.
+
+    Runner-stream fixtures (``history.jsonl``, ``last-observed-event.json``)
+    are recorded by ``(size, st_ino, st_mtime_ns)`` instead of their bytes:
+    production code only stats and unlinks these, so reading their bytes here
+    would trip the blind-mode read trap under ``--runner-history=off``. Any
+    change to size, inode or mtime still fails the dry-run assertion.
+    """
+    files: dict[str, tuple[object, ...]] = {}
     for path in root.rglob("*"):
         name = path.relative_to(root).as_posix()
-        if path.is_file() and not (authority_only and not_authority(name)):
+        if not path.is_file() or (authority_only and not_authority(name)):
+            continue
+        if is_runner_stream_file(name):
+            stat = path.stat()
+            files[name] = (stat.st_size, stat.st_ino, stat.st_mtime_ns)
+        else:
             files[name] = (path.read_bytes(), path.stat().st_mtime_ns)
     return files
 
@@ -148,7 +185,7 @@ def test_qualification_matrix_and_apply_removes_only_runner_files(tmp_path: Path
     assert tree(root) == before, "dry-run must not change bytes or mtimes"
     assert [row.spawn_id for row in planned.pruned] == [prunable]
     assert planned.pruned[0].bytes == sum(
-        len(before[name][0]) for name in runner_paths(root, prunable)
+        entry_size(before[name]) for name in runner_paths(root, prunable)
     )
     assert {reason: rows for reason, rows in planned.skipped.items()} == {
         "recent": (recent,),
