@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
@@ -89,8 +91,18 @@ def migrate_dogfood_spawn_rows(runtime_root: Path) -> DogfoodMigration:
             if _migrate_row(changes, spawns_dir, spawn_id):
                 migrated.append(spawn_id)
         except Exception as exc:
-            failed.append((spawn_id, f"{type(exc).__name__}: {exc}".splitlines()[0]))
+            failed.append((spawn_id, _reason(exc)))
     return DogfoodMigration(migrated=tuple(migrated), failed=tuple(failed))
+
+
+def _reason(exc: Exception) -> str:
+    if isinstance(exc, ValidationError):
+        detail = "; ".join(
+            f"{'.'.join(map(str, error['loc']))}: {error['msg']}" for error in exc.errors()
+        )
+    else:
+        detail = str(exc).splitlines()[0] if str(exc) else ""
+    return f"{type(exc).__name__}: {detail}"
 
 
 __all__ = ["DogfoodMigration", "migrate_dogfood_spawn_rows"]
