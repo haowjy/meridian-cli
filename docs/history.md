@@ -82,8 +82,9 @@ last activity; explicit references select records without the age threshold but
 cannot override activity/dependency protections. Each pass is bounded to 256
 records or approximately 1 GiB (one oversized record may occupy its own ZIP).
 These bounds are configurable. Repeat eligible passes to process a larger backlog.
-Dry runs do not copy native harness transcripts: they report records requiring
-preparation separately. Apply captures those records before final selection.
+Dry runs do not copy native harness transcripts: they list records that apply
+can capture separately. Apply captures exact, inactive native sources into a
+verified snapshot before final selection.
 
 ### Prune redundant runner streams
 
