@@ -44,13 +44,16 @@ defaults to `None`; resident rearms and Pi waves cannot reset it.
 
 ```
 HarnessConnection  →  drain loop  →  1. inline hooks (facts, lifecycle)
-                                     2. optional history write
-                                     3. fan-out (subscriber queue)
+                                     2. fan-out (subscriber queue)
+                                     3. note_event_delivered
+                                     4. terminal handling
 ```
 
-Hooks run before persistence and errors are isolated. With no writer, delivery
-continues normally. An existing writer's failure withholds fan-out; repeated write
-failures still abort the loop. See the delivery contract in `.context/CONTEXT.md`.
+`SpawnManager._run_event_hooks` runs synchronous inline hooks (attempt facts and Pi
+lifecycle sidecar); the drain loop then fans the event out to subscribers and calls
+the coordinator's `note_event_delivered`. A hook error is logged and does not block
+delivery. Meridian persists no runner event stream. Terminal classification follows
+successful delivery. See the delivery contract in `.context/CONTEXT.md`.
 
 `SpawnManager` is the integration point for everything that touches a live spawn:
 starting, stopping, injecting messages, subscribing to events, and tracking heartbeats.

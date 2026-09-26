@@ -149,10 +149,10 @@ attempt diagnostics (`stderr.log`, `report.md`, `runner-lifecycle.jsonl`,
 Attempt reports, usage and identity come from `AttemptFacts` folded on live events.
 Each retry gets fresh facts; runner history is not read during finalization.
 Diagnostic rotation commits with `os.replace(staging_dir, attempt_dir)` before
-auxiliary copies and active diagnostic keys are updated. Never rotate or delete
-the runner stream through this path.
+auxiliary copies and active diagnostic keys are updated. Retired runner-stream files
+are removed only by the explicit session-history prune.
 
-Runner lifecycle and history diagnostics can execute after async boundaries. Their
+Runner lifecycle diagnostics can execute after async boundaries. Their
 parent-creating writes use the published-spawn artifact mutation seam; never append
 late diagnostics directly into a spawn directory that retention may have deleted.
 

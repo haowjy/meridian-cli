@@ -20,6 +20,10 @@ legacy facts quarantine rather than bypassing the strict stored model.
 **`transitions.py`** — pure transitions such as `apply_mark_running()`,
 `apply_finalize()`, and `apply_record_exited()`. They do no I/O or locking.
 
+**`dogfood_migration.py`** — one-time migration of PR 1 dogfood rows, run by
+`meridian doctor` and primary-launch repairs. Delete this module once no dogfood
+rows remain.
+
 ## Locked Mutation Model
 
 All published-state mutations call `write_state_locked()`. The repository acquires

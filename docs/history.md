@@ -85,6 +85,23 @@ These bounds are configurable. Repeat eligible passes to process a larger backlo
 Dry runs do not copy native harness transcripts: they report records requiring
 preparation separately. Apply captures those records before final selection.
 
+### Prune redundant runner streams
+
+Older builds wrote runner `history.jsonl` files alongside native conversations.
+Pruning them is a separate, explicit operation and is a dry run unless `--apply`
+is supplied:
+
+```sh
+meridian session archive --prune-runner-history [--apply] [--after-days N]
+```
+
+The age threshold defaults to 14 days. Only terminal spawns with resolvable exact
+native transcript sources qualify; skipped rows report their reasons. The command
+deletes only retired runner-stream files, never native transcripts, session
+authority, reports, or lifecycle/control state. It is never run automatically.
+Claude's `cleanupPeriodDays` can delete native transcripts independently: after
+pruning, a Claude chat whose native transcript Claude has deleted will be `missing`.
+
 Every ZIP is independently verified against both source selection and member
 bytes before originals can be removed. Changed sources retain their loose copy.
 Interrupted removal leaves the verified ZIP readable; disposable retirement

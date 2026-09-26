@@ -238,6 +238,14 @@ After upgrading to a version that uses the v2 spawn state format, the first `mer
 
 Once migration completes, `spawns.legacy-v1.jsonl` is safe to delete if you want to reclaim space. It is not read after migration.
 
+## Spawn state quarantined after upgrade
+
+If you see `Spawn state quarantined: …/state.json; run \`meridian doctor\` to migrate it`,
+or a history-index initialization failure that names such a row, run `meridian doctor`
+once. It migrates PR 1 dogfood rows, and the history index retries initialization by
+itself afterwards. A quarantined row without the doctor hint is not a dogfood row and
+needs manual repair; see [issue #530](https://github.com/haowjy/meridian-cli/issues/530).
+
 ## Stale state accumulating in `~/.meridian/`
 
 Over time, orphan project directories, old spawn artifacts, and expired telemetry segments accumulate under `~/.meridian/`. Per-project orphan repairs (stale locks, orphaned runs) happen silently in the background on each launch. Use `meridian doctor` to inspect and clean up manually.

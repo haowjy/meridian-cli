@@ -11,7 +11,6 @@ Pi/resident modules rather than entering the generic loop or `SpawnManager`.
 ```
 SpawnManager
   ├─ _sessions: dict[SpawnId, SpawnSession]   ← live resources per spawn
-  ├─ _history_writers: dict[SpawnId, HarnessHistoryWriter]
   ├─ _event_hooks: dict[SpawnId, list[EventHook]]
   └─ _heartbeat_tasks: dict[SpawnId, Task]
 

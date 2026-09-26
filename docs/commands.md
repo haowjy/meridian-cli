@@ -148,6 +148,7 @@ For managed Codex primary startup behavior, see [codex-tui-passthrough.md](codex
 | `meridian session index rebuild [--reset] [--metadata-only]` | Rebuild discovery metadata and native search from authoritative files and available ZIPs; `--reset` repairs dirty-source coordination; `--metadata-only` skips native-search rebuild; previews refresh lazily |
 | `meridian session archive REF... --destination PATH` | Plan retention of selected histories; add `--apply` to verify and reclaim loose copies |
 | `meridian session archive --eligible --destination PATH` | Plan retention by last activity (default 30 days); supports `--after-days` and `--apply` |
+| `meridian session archive --prune-runner-history [--apply] [--after-days N]` | Explicitly prune redundant runner-stream files (dry-run by default; age defaults to 14 days) |
 | `meridian session archive --list` | Show current/snapshot ZIPs and their registered locations |
 | `meridian session import ZIP` | Select a verified transferred ZIP snapshot for direct reads |
 | `meridian session restore REF... --archive ZIP_OR_UUID` | Restore only selected histories with fresh inert local aliases; preserve the ZIP |
@@ -158,6 +159,11 @@ are never automatically deleted. UI visibility archive is separate from ZIP
 retention. Search reports unavailable content or budget exhaustion as incomplete,
 not a clean negative. See [History storage and retention](history.md) for repair,
 configuration, transfer, conflict behavior and archive-integrity limits.
+
+Runner-history pruning is never automatic. Only terminal spawns whose exact native
+transcript sources resolve qualify; skipped spawns report their reasons. It deletes
+only retired runner-stream files, not native transcripts or session state. See
+[History storage and retention](history.md) for Claude transcript-retention caveats.
 
 ## Work Items
 
