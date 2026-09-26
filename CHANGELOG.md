@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- Expose structured chat, run-boundary and harness session ID fields in spawn show/status JSON.
+- Expose structured chat and run-boundary fields in spawn show/status JSON.
 - Report archive dry-run selections after pending native capture.
 - Validate the completed legacy native-import marker before late binding; malformed markers are left untouched.
 - Refuse session forks for harnesses that cannot create a distinct native session; extract successful OpenCode 1.x reports from the bound native session.

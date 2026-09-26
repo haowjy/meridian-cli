@@ -901,7 +901,6 @@ class SpawnDetailOutput(BaseModel):
         wire["run_boundary"] = (
             self.run_boundary.model_dump(mode="json") if self.run_boundary is not None else None
         )
-        wire["harness_session_id"] = self.harness_session_id
         if self.kind is not None:
             wire["kind"] = self.kind
         if self.activity is not None:
