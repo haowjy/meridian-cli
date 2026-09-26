@@ -788,6 +788,43 @@ def archive_locations(
     return tuple(available)
 
 
+def read_archived_member(
+    receipts: tuple[ArchiveReceipt, ...],
+    history_id: UUID,
+    name: str,
+    *,
+    destination: Path | None = None,
+    limit: int = _MAX_METADATA,
+) -> bytes | None:
+    """One small retained file (e.g. ``report.md``) of the catalog-selected snapshot.
+
+    The bytes are checked against the size and sha256 that the local catalog
+    receipt recorded for that file, so the result is exactly what was archived
+    even for older ZIPs whose portable digests no longer recompute. ``None``
+    when the record did not retain the file or no copy is reachable.
+    """
+    for receipt in selected_snapshot_receipts(receipts, history_id):
+        member = next((m for m in receipt.records[0].files if m.name == name), None)
+        if member is None:
+            return None
+        directories = (
+            (destination, Path(receipt.destination))
+            if destination
+            else (Path(receipt.destination),)
+        )
+        for directory in directories:
+            try:
+                with zipfile.ZipFile(archive_path(receipt, directory)) as archive:
+                    data = _member_bytes(
+                        archive, f"{_PREFIX}records/{history_id}/aggregate/{name}", limit=limit
+                    )
+            except ARCHIVE_READ_ERRORS:
+                continue
+            if len(data) == member.size and digest(data) == member.sha256:
+                return data
+    return None
+
+
 class _HashingMemberReader:
     """Hash and count a ZIP member while a streaming codec reads from it."""
 

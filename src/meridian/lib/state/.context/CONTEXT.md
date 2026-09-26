@@ -73,6 +73,11 @@ reads never repair missing keys afterward. Import binds through the same
 batch avoids quadratic work; the import lock precedes the history-mutation gate
 and sessions lock. Historical restored records stay inert.
 
+The marker also drives two later, doctor/background-only passes: the late re-bind
+(`late_retries`) for IDs recorded after the import, and the one-shot legacy Pi
+recovery (`pi_recovery_tried`) for 0.6.7 Pi chats that never recorded an ID. Both
+bind through `session_bindings`; new marker fields default for old markers.
+
 The dev report is `python -m meridian.lib.ops.legacy_native_import RUNTIME_ROOT`.
 It deliberately bypasses runtime resolution and telemetry. OpenCode validation
 uses a temporary DB/WAL copy because SQLite read-only connections can mutate
