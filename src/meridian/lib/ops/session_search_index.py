@@ -213,7 +213,7 @@ class SearchProjection:
                             entries=(
                                 TranscriptEntry(
                                     e.ordinal,
-                                    " ".join(f"{e.content}\n{e.search_content}".split()),
+                                    " ".join(e.content.split()),
                                     e.segment_index,
                                     e.start_segment_message_index,
                                     e.end_segment_message_index,

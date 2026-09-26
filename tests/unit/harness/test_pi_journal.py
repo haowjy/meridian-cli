@@ -129,7 +129,7 @@ def test_linear_pi_journal_keeps_its_existing_normalized_messages() -> None:
     ]
 
 
-def test_context_edits_and_usage_preserve_pi_chain_and_search_replacement_text() -> None:
+def test_context_edits_and_usage_preserve_pi_chain() -> None:
     projection = project_pi_reopen_default(
         _journal(
             _header(),
@@ -189,10 +189,6 @@ def test_context_edits_and_usage_preserve_pi_chain_and_search_replacement_text()
     assert "original answer" in rendered
     assert "Pi journal parent changed" not in rendered
     assert not any("usage" in message.content for message in messages)
-    replacement_annotation = next(
-        message for message in messages if message.content.endswith("replaced content of answer")
-    )
-    assert replacement_annotation.search_content == "replacement needle"
 
 
 def test_reports_missing_parent_and_cycle_without_claiming_complete() -> None:

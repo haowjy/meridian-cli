@@ -246,9 +246,7 @@ def _matches_for_transcript(
     for entry in transcript.all_entries:
         if entry.kind == "setup" and entry.is_placeholder:
             continue
-        normalized_content = _normalize_content(
-            f"{entry.content}\n{entry.search_content}" if entry.search_content else entry.content
-        )
+        normalized_content = _normalize_content(entry.content)
         if not normalized_content:
             continue
         if query_lower not in normalized_content.lower():

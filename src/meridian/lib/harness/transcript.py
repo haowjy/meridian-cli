@@ -15,7 +15,7 @@ from meridian.lib.harness.opencode_transcript import (
     interpret_opencode_record,
     interpret_opencode_v2_record,
 )
-from meridian.lib.harness.pi_journal import is_pi_journal_entry_type, pi_context_edit_details
+from meridian.lib.harness.pi_journal import is_pi_journal_entry_type, pi_context_edit_annotation
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.state.native_snapshot import (
     HEADER_LIMIT,
@@ -54,7 +54,6 @@ class TranscriptMessage(NamedTuple):
     tool_call: ToolCall | None = None
     is_tool_result: bool = False
     kind: Literal["interaction", "annotation"] = "interaction"
-    search_content: str = ""
 
 
 class TranscriptParseResult(NamedTuple):
@@ -803,12 +802,8 @@ class TranscriptNormalizer:
                     )
                 self.pi_previous_entry_id = entry_id
         if event_type == "context_edit" and pi_entry:
-            annotation, search_content = pi_context_edit_details(normalized_event)
-            annotations.append(
-                TranscriptMessage(
-                    "annotation", annotation, kind="annotation", search_content=search_content
-                )
-            )
+            annotation = pi_context_edit_annotation(normalized_event)
+            annotations.append(TranscriptMessage("annotation", annotation, kind="annotation"))
         if pi_entry and event_type == "compaction":
             self.setup = text_from_value(normalized_event.get("summary")) or None
             self.pending_summary = None

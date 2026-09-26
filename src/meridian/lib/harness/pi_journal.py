@@ -34,32 +34,14 @@ def is_pi_journal_entry_type(value: object) -> bool:
     return isinstance(value, str) and value in PI_JOURNAL_ENTRY_TYPES
 
 
-def pi_context_edit_details(row: dict[str, object]) -> tuple[str, str]:
-    """Return a compact display annotation and text searchable from a context edit."""
+def pi_context_edit_annotation(row: dict[str, object]) -> str:
+    """Return a compact display annotation for a context edit."""
     target = row.get("targetId")
     target_id = target if isinstance(target, str) else "unknown entry"
     replacement = row.get("replacement")
     if replacement is None:
-        return f"Pi context edit: removed {target_id} from model context", ""
-    if not isinstance(replacement, dict):
-        return f"Pi context edit: replaced content of {target_id}", ""
-    content = cast("dict[str, object]", replacement).get("content")
-    return f"Pi context edit: replaced content of {target_id}", _context_edit_text(content)
-
-
-def _context_edit_text(value: object) -> str:
-    if isinstance(value, str):
-        return value.strip()
-    if isinstance(value, list):
-        items = cast("list[object]", value)
-        return "\n".join(filter(None, (_context_edit_text(item) for item in items)))
-    if isinstance(value, dict):
-        payload = cast("dict[str, object]", value)
-        if payload.get("type") != "text":
-            return ""
-        text = payload.get("text")
-        return text.strip() if isinstance(text, str) else ""
-    return ""
+        return f"Pi context edit: removed {target_id} from model context"
+    return f"Pi context edit: replaced content of {target_id}"
 
 
 PiViewBasis = Literal["reopen-default"]
