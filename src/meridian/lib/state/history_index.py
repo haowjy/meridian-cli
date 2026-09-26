@@ -39,7 +39,6 @@ from sqlalchemy import (
     select,
     text,
     union_all,
-    update,
 )
 from sqlalchemy.engine import Connection, Engine  # noqa: TC002
 from sqlalchemy.exc import DBAPIError
@@ -51,10 +50,12 @@ from meridian.lib.platform.atomic import fsync_directory
 from meridian.lib.platform.locking import FileLockTimeout, lock_file
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import (
+    SCHEMA_VERSION,
     DirtySource,
     HistoryChanges,
     HistoryCoordinationError,
     HistorySource,
+    versioned,
 )
 from meridian.lib.state.history_codec import canonical_time, last_activity
 from meridian.lib.state.session_fold import (
@@ -77,12 +78,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 6
 INITIALIZATION_TIMEOUT = 15.0
 QUERY_TIMEOUT = 2.0
 _REBUILD_COMMAND = "meridian session index rebuild --metadata-only"
-type SchemaClass = Literal["expand", "reshape", "reproject"]
-type SchemaUpgrade = Literal["migrate", "reproject"]
 
 INDEX_SCHEMA = MetaData()
 META = Table(
@@ -124,6 +122,7 @@ Index("parent_records", RECORDS.c.parent)
 Index("work_records", RECORDS.c.work, RECORDS.c.started)
 Index("status_records", RECORDS.c.status, RECORDS.c.started)
 Index("activity_records", RECORDS.c.activity)
+Index("active_records", RECORDS.c.local_id, sqlite_where=RECORDS.c.active == 1)
 LOCATIONS = Table(
     "locations",
     INDEX_SCHEMA,
@@ -197,17 +196,6 @@ CURSORS = Table(
 )
 
 
-@dataclass(frozen=True)
-class SchemaStep:
-    from_version: int
-    to_version: int
-    schema_class: SchemaClass
-    apply: Callable[[Connection], None]
-
-
-SCHEMA_STEPS: tuple[SchemaStep, ...] = ()
-
-
 class HistoryIndexIncomplete(RuntimeError):
     """Discovery cannot safely promise complete candidate membership."""
 
@@ -224,12 +212,11 @@ class IndexCoverage:
 
 @dataclass(frozen=True)
 class IndexStatus:
-    baseline: Literal["absent", "outdated", "current", "incompatible", "corrupt", "failed"]
+    baseline: Literal["absent", "current", "incompatible", "corrupt", "failed"]
     schema: int | None = None
     generation: str | None = None
     build: str | None = None
     reason: str | None = None
-    upgrade: SchemaUpgrade | None = None
 
 
 class _InitializationFailure(BaseModel):
@@ -256,34 +243,6 @@ def _remaining(deadline: float) -> float:
     if remaining <= 0:
         raise TimeoutError("History index deadline exhausted")
     return remaining
-
-
-def _schema_upgrade(live_version: int) -> tuple[SchemaUpgrade, tuple[SchemaStep, ...]]:
-    """Plan the remaining chain. Missing or untrusted steps reproject."""
-    if live_version < 2:
-        return "reproject", ()
-    ordered: dict[int, SchemaStep] = {}
-    for step in SCHEMA_STEPS:
-        if step.to_version != step.from_version + 1 or step.from_version in ordered:
-            return "reproject", ()
-        ordered[step.from_version] = step
-    chain: list[SchemaStep] = []
-    for version in range(live_version, SCHEMA_VERSION):
-        step = ordered.get(version)
-        if step is None:
-            return "reproject", ()
-        chain.append(step)
-    if any(step.schema_class == "reproject" for step in chain):
-        return "reproject", ()
-    return "migrate", tuple(chain)
-
-
-def _outdated_status(version: int) -> tuple[str, SchemaUpgrade]:
-    upgrade, chain = _schema_upgrade(version)
-    if upgrade == "reproject":
-        return "metadata rebuild required (reproject)", upgrade
-    shown = "reshape" if any(step.schema_class == "reshape" for step in chain) else "expand"
-    return f"in-place migrate ({shown})", upgrade
 
 
 def _reraise_dbapi(exc: DBAPIError) -> NoReturn:
@@ -362,6 +321,13 @@ def _tail(path: Path, extent: int, count: int = 256) -> str:
 
 @dataclass(frozen=True)
 class HistoryIndex:
+    """One schema's projection. Every path it owns is named by ``SCHEMA_VERSION``.
+
+    A schema bump starts a new file built fresh from authority. Older builds keep
+    their own file (0.6.7 and earlier: ``history.sqlite3``), which this build never
+    opens, so there is no in-place migration.
+    """
+
     root: Path
 
     @property
@@ -370,15 +336,20 @@ class HistoryIndex:
 
     @property
     def path(self) -> Path:
-        return self.directory / "history.sqlite3"
+        return self.directory / f"{versioned('history')}.sqlite3"
+
+    @property
+    def stage(self) -> Path:
+        # catchup_lock owns this disposable stage, including crash residue.
+        return self.directory / f".{versioned('build')}.sqlite3"
 
     @property
     def catchup_lock(self) -> Path:
-        return self.root / "locks" / "history-catchup.lock"
+        return self.root / "locks" / f"{versioned('history-catchup')}.lock"
 
     @property
     def database_lock(self) -> Path:
-        return self.root / "locks" / "history-database.lock"
+        return self.root / "locks" / f"{versioned('history-database')}.lock"
 
     def _aliases(
         self,
@@ -470,13 +441,18 @@ class HistoryIndex:
     def _spawn(self, db: Connection, key: str) -> bool:
         source_id = f"spawn:{key}"
         old = db.exec_driver_sql(
-            "SELECT history_id FROM locations WHERE source_id = ?", (source_id,)
+            "SELECT history_id, record_json FROM locations WHERE source_id = ?", (source_id,)
         ).first()
+        record = read_state(self.root / "spawns", key, include_prompt=False)
+        active = record is not None and (
+            record.record_mode != "historical" and record.status not in TERMINAL_SPAWN_STATUSES
+        )
+        if record is not None and old and old[1] == record.model_dump_json():
+            return active  # Unchanged: rewriting would only cost a FULL-sync commit.
         db.exec_driver_sql("DELETE FROM locations WHERE source_id = ?", (source_id,))
         db.exec_driver_sql("DELETE FROM aliases WHERE source_id = ?", (source_id,))
         if old:
             self._refresh(db, old[0])
-        record = read_state(self.root / "spawns", key, include_prompt=False)
         if record is None:
             return False
         history_id = str(record.history_id or uuid5(NAMESPACE_URL, f"{self.root}:{key}"))
@@ -495,7 +471,7 @@ class HistoryIndex:
         )
         self._aliases(db, source_id, history_id, state=record)
         self._refresh(db, history_id)
-        return record.record_mode != "historical" and record.status not in TERMINAL_SPAWN_STATUSES
+        return active
 
     def _sessions(self, db: Connection) -> None:
         path = self.root / "sessions.jsonl"
@@ -518,6 +494,8 @@ class HistoryIndex:
             and cursor["extent"] <= stat.st_size
             and cursor["tail"] == _tail(path, cursor["extent"])
         ):
+            if cursor["extent"] == stat.st_size:
+                return  # Nothing appended since the cursor.
             offset = cursor["extent"]
         else:
             db.execute(delete(SESSIONS))
@@ -726,6 +704,41 @@ class HistoryIndex:
         db.commit()
         return acknowledged, pending, active, busy
 
+    def _reread_unmarked(self, db: Connection, target: tuple[DirtySource, ...]) -> list[str]:
+        """Re-read what an older build's writers change without marking this queue.
+
+        Each schema owns its marker queue. Runners and primaries of an older build
+        that outlive an upgrade still finish spawns and append session events.
+        Active loose spawns are provisional anyway, and the session log keeps a
+        cursor, so both are cheap. Busy sources wait for the next catch-up. Spawns
+        an older build creates after this projection was built need a rebuild.
+        """
+        marked = {marker.source.name for marker in target}
+        sources = [
+            HistorySource(kind="spawn", key=key)
+            for (key,) in db.execute(
+                select(RECORDS.c.local_id).where(
+                    RECORDS.c.active == 1, RECORDS.c.archive_id.is_(None)
+                )
+            )
+            if key
+        ]
+        sources.append(HistorySource(kind="sessions"))
+        active: list[str] = []
+        for source in sources:
+            if source.name in marked:
+                continue
+            try:
+                with lock_file(source.lock_path(self.root), timeout=0):
+                    if source.kind == "sessions":
+                        self._sessions(db)  # Returns at once when nothing was appended.
+                    elif self._spawn(db, source.key):
+                        active.append(source.key)
+            except FileLockTimeout:
+                continue
+        db.commit()
+        return active
+
     def _rebuild_locked(
         self, *, reset: bool, deadline: float
     ) -> tuple[IndexCoverage, list[DirtySource]]:
@@ -739,8 +752,7 @@ class HistoryIndex:
                     path.unlink()
         generation, _ = changes.capture(timeout=_remaining(deadline))
         self.directory.mkdir(parents=True, exist_ok=True)
-        # catchup_lock owns this disposable stage, including crash residue.
-        stage = self.directory / ".build.sqlite3"
+        stage = self.stage
         for suffix in ("", "-journal"):
             Path(str(stage) + suffix).unlink(missing_ok=True)
         try:
@@ -804,31 +816,6 @@ class HistoryIndex:
             generation, build, True, activity_provisional=tuple(active)
         ), acknowledged
 
-    def _migrate_locked(self, *, deadline: float) -> None:
-        """Apply expand/reshape steps on the live WAL DB. Caller owns catchup/root."""
-        with lock_file(self.database_lock, timeout=_remaining(deadline)):
-            status = self.classify(deadline=deadline)
-            if (
-                status.baseline != "outdated"
-                or status.upgrade != "migrate"
-                or status.schema is None
-            ):
-                return
-            _, chain = _schema_upgrade(status.schema)
-            if not chain:
-                return
-            with _connect(self.path, timeout=_remaining(deadline), autocommit=True) as db:
-                for step in chain:
-                    _remaining(deadline)
-                    db.exec_driver_sql("BEGIN IMMEDIATE")
-                    try:
-                        step.apply(db)
-                        db.execute(update(META).values(version=step.to_version))
-                        db.commit()
-                    except BaseException:
-                        db.rollback()
-                        raise
-
     def _clear_initialization_failure(self) -> tuple[str, ...]:
         """Called under catchup ownership when initialization may safely retry."""
         try:
@@ -891,7 +878,7 @@ class HistoryIndex:
 
     @property
     def failure_path(self) -> Path:
-        return self.root / "history-index-init-failure.json"
+        return self.root / f"{versioned('history-index-init-failure')}.json"
 
     def classify(self, *, deadline: float) -> IndexStatus:
         """Read schema/identity only; never create SQLite or alter its journal mode."""
@@ -906,23 +893,11 @@ class HistoryIndex:
                     if row is None or not isinstance(row[0], int):
                         return IndexStatus("corrupt", reason="Missing or invalid index metadata")
                     version, generation, build = row
-                    baseline = (
-                        "current"
-                        if version == SCHEMA_VERSION
-                        else "outdated"
-                        if version < SCHEMA_VERSION
-                        else "incompatible"
-                    )
-                    reason: str | None = None
-                    upgrade: SchemaUpgrade | None = None
-                    if baseline == "incompatible":
-                        reason = (
-                            "Index schema "
-                            f"{version} is newer than supported schema {SCHEMA_VERSION}."
-                        )
-                    elif baseline == "outdated":
-                        reason, upgrade = _outdated_status(version)
-                    return IndexStatus(baseline, version, generation, build, reason, upgrade)
+                    if version == SCHEMA_VERSION:
+                        return IndexStatus("current", version, generation, build)
+                    # Only this schema writes this file; anything else is a foreign copy.
+                    reason = f"Index schema {version} does not match {self.path.name}."
+                    return IndexStatus("incompatible", version, generation, build, reason)
             except sqlite3.DatabaseError as exc:
                 code = getattr(exc, "sqlite_errorcode", 0) & 0xFF
                 if code not in {
@@ -979,9 +954,7 @@ class HistoryIndex:
         generation, _ = HistoryChanges(self.root).inspect(timeout=_remaining(deadline))
         if status.baseline == "current":
             self._check_current(status)
-        elif status.baseline in {"absent", "outdated"} and (
-            reason := self._failure_reason(generation)
-        ):
+        elif status.baseline == "absent" and (reason := self._failure_reason(generation)):
             return IndexStatus(
                 "failed",
                 status.schema,
@@ -1001,21 +974,13 @@ class HistoryIndex:
             if status.baseline == "current":
                 self._check_current(status)
                 return None  # A peer already published while we waited.
-            if status.baseline not in {"absent", "outdated"}:
+            if status.baseline != "absent":
                 self._check_current(status)
             generation = changes.read_generation()
             if reason := self._failure_reason(generation):
                 raise self._initialization_error(reason)
             # Initialize absent coordination only under the normal protected gate.
             try:
-                if (
-                    status.baseline == "outdated"
-                    and status.upgrade == "migrate"
-                    and status.generation == generation
-                ):
-                    self._migrate_locked(deadline=deadline)
-                    self._clear_initialization_failure()
-                    return None
                 generation, _ = changes.capture(timeout=_remaining(deadline))
                 coverage, acknowledged = self._rebuild_locked(reset=False, deadline=deadline)
             except (FileLockTimeout, HistoryCoordinationError):
@@ -1056,7 +1021,7 @@ class HistoryIndex:
     def _operation_deadline(self, deadline: float | None) -> float:
         ordinary = time.monotonic() + QUERY_TIMEOUT if deadline is None else deadline
         status = self.classify(deadline=ordinary)
-        if status.baseline in {"absent", "outdated"} and deadline is None:
+        if status.baseline == "absent" and deadline is None:
             self.initialize(deadline=time.monotonic() + INITIALIZATION_TIMEOUT)
             return time.monotonic() + QUERY_TIMEOUT
         self._check_current(status)
@@ -1088,6 +1053,7 @@ class HistoryIndex:
                     raise HistoryIndexIncomplete("History index schema changed after preflight")
                 warnings = self._clear_initialization_failure()
                 acknowledged, pending, active, _ = self._drain(db, target, deadline)
+                active += self._reread_unmarked(db, target)
                 for marker in acknowledged:
                     changes.acknowledge(marker)
                 return IndexCoverage(

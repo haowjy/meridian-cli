@@ -4,6 +4,10 @@ This module resolves user refs (chat, spawn, harness session id, or explicit fil
 into one exact native transcript. The metadata index only supplies reclaimed
 spawn records and aliases; session bindings remain file-authoritative. Resolution
 does not repair or mutate authoritative state.
+
+A sealed retained snapshot (``kind="snapshot"``) is selected only for a restored
+historical record or an explicit archive/import ref with no local binding. A live
+binding whose native source is missing never falls back to a snapshot.
 """
 
 from __future__ import annotations
@@ -25,8 +29,15 @@ from meridian.lib.harness.session_detection import infer_harness_from_untracked_
 from meridian.lib.harness.transcript import reject_runner_history
 from meridian.lib.ops.run_boundary import spawn_view_label
 from meridian.lib.ops.spawn.query import read_spawn_row_read_only
-from meridian.lib.state import session_identity, session_store
+from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.history_index import ALIASES, RECORDS, HistoryIndex
+from meridian.lib.state.native_snapshot import NATIVE_SNAPSHOT_FILENAME
+from meridian.lib.state.retention_archive import (
+    archive_locations,
+    read_receipts,
+    reclaimed_locally,
+    selected_snapshot_receipts,
+)
 from meridian.lib.state.spawn.model import SpawnRecord
 
 _CODEX_FILENAME_RE = re.compile(
@@ -40,11 +51,15 @@ def native_source_label(harness: str) -> str:
 
 
 class TranscriptSource(NamedTuple):
-    kind: Literal["file", "native_file", "opencode_db"]
+    kind: Literal["file", "native_file", "opencode_db", "snapshot"]
     session_id: str
     harness: str | None
     source_label: str
     path: Path
+    # Snapshot binding. With ``manifest_sha256``, ``path`` is a verified ZIP and the
+    # reader streams this history's member from it; otherwise a local aggregate file.
+    history_id: str | None = None
+    manifest_sha256: str | None = None
 
     @classmethod
     def native(cls, harness: str, session_id: str, path: Path) -> TranscriptSource:
@@ -56,6 +71,27 @@ class TranscriptSource(NamedTuple):
             harness=harness,
             source_label=native_source_label(harness),
             path=path,
+        )
+
+    @classmethod
+    def retained(
+        cls,
+        row: SpawnRecord,
+        path: Path,
+        manifest_sha256: str | None = None,
+    ) -> TranscriptSource:
+        """A sealed snapshot, rendered as captured and bound to its history identity."""
+        if row.history_id is None:
+            raise NativeSessionUnavailable(row.id, "unbound")
+        harness = row.harness or "native"
+        return cls(
+            kind="snapshot",
+            session_id=str(row.history_id),
+            harness=row.harness,
+            source_label=f"retained {harness} snapshot",
+            path=path,
+            history_id=str(row.history_id),
+            manifest_sha256=manifest_sha256,
         )
 
 
@@ -156,17 +192,59 @@ def _resolve_from_chat_id(*, runtime_root: Path, chat_id: str) -> SessionLogTarg
     record = session_store.get_session_record(runtime_root, chat_id)
     if record is None:
         raise ValueError(f"Chat '{chat_id}' not found")
+    if record.record_mode == "historical" and record.spawn_id:
+        row = spawn_store.get_spawn(runtime_root, record.spawn_id)
+        if row is not None and row.history_id == record.history_id:
+            return _restored_target(runtime_root, row, ref=chat_id)
     return _target_from_record(record)
+
+
+def _restored_target(runtime_root: Path, row: SpawnRecord, *, ref: str) -> SessionLogTarget:
+    """Read a restored aggregate's own sealed snapshot; restored refs stay inert."""
+    if row.record_mode != "historical":
+        raise ValueError(f"{row.id} is not a historical record")
+    path = runtime_root / "spawns" / row.id / NATIVE_SNAPSHOT_FILENAME
+    if not path.is_file():
+        raise FileNotFoundError(f"{ref} is historical and has no retained native snapshot")
+    return SessionLogTarget(
+        TranscriptSource.retained(row, path), view_label=f"{ref} · historical, read-only"
+    )
+
+
+def _archived_target(
+    runtime_root: Path, row: SpawnRecord, *, ref: str, project_root: Path, deadline: float | None
+) -> SessionLogTarget:
+    """Stream the catalog-selected ZIP member in place; nothing is extracted."""
+    from meridian.lib.config.settings import load_config
+
+    if row.history_id is None:
+        raise NativeSessionUnavailable(ref, "unbound")
+    receipts = selected_snapshot_receipts(read_receipts(runtime_root), row.history_id)
+    configured = load_config(project_root).history.archive.destination
+    location = archive_locations(
+        receipts,
+        destination=Path(configured).expanduser() if configured else None,
+        deadline=deadline,
+    )[0]
+    return SessionLogTarget(
+        TranscriptSource.retained(row, location.path, location.receipt.manifest_sha256),
+        view_label=f"{ref} · archived snapshot {location.path}",
+    )
+
+
+class _IndexedRecord(NamedTuple):
+    row: SpawnRecord
+    archived: bool  # no local aggregate: only archive receipts hold this record
 
 
 def _indexed_spawn(
     runtime_root: Path, ref: str, *, deadline: float | None = None
-) -> SpawnRecord | None:
+) -> _IndexedRecord | None:
     """Recover only the record, never a transcript location, from the projection."""
     with HistoryIndex(runtime_root).query(deadline=deadline) as db:
         records = (
             db.execute(
-                select(RECORDS.c.record_json)
+                select(RECORDS.c.record_json, RECORDS.c.archive_id)
                 .where(
                     or_(
                         RECORDS.c.history_id == ref,
@@ -180,12 +258,42 @@ def _indexed_spawn(
                 )
                 .distinct()
             )
-            .scalars()
+            .tuples()
             .all()
         )
     if len(records) > 1:
         raise ValueError("Ambiguous archive origin alias; use a portable history UUID")
-    return SpawnRecord.model_validate_json(records[0]) if records else None
+    if not records:
+        return None
+    record_json, archive_id = records[0]
+    return _IndexedRecord(SpawnRecord.model_validate_json(record_json), archive_id is not None)
+
+
+def _indexed_target(
+    runtime_root: Path,
+    indexed: _IndexedRecord,
+    *,
+    ref: str,
+    project_root: Path,
+    deadline: float | None,
+) -> SessionLogTarget:
+    """Pick one source for an indexed record: archive, restored snapshot, or live binding.
+
+    An archive-only record that this runtime did not reclaim itself names chats from
+    another runtime; its local chat ids are not its bindings, so read the archive.
+    """
+    row = indexed.row
+    if indexed.archived and (
+        row.record_mode == "historical"
+        or row.history_id is None
+        or not reclaimed_locally(read_receipts(runtime_root), row.history_id)
+    ):
+        return _archived_target(
+            runtime_root, row, ref=ref, project_root=project_root, deadline=deadline
+        )
+    if row.record_mode == "historical":
+        return _restored_target(runtime_root, row, ref=ref)
+    return _spawn_target(row=row, record_for=_stored_record(runtime_root))
 
 
 def _spawn_target(
@@ -228,7 +336,11 @@ def _resolve_from_spawn_id(
 ) -> SessionLogTarget:
     row = read_spawn_row_read_only(project_root, spawn_id, runtime_root=runtime_root)
     if row is None and purpose == "display":
-        row = _indexed_spawn(runtime_root, spawn_id, deadline=deadline)
+        indexed = _indexed_spawn(runtime_root, spawn_id, deadline=deadline)
+        if indexed is not None:
+            return _indexed_target(
+                runtime_root, indexed, ref=spawn_id, project_root=project_root, deadline=deadline
+            )
     if row is None:
         raise ValueError(f"Spawn '{spawn_id}' not found")
 
@@ -247,6 +359,8 @@ def _resolve_from_spawn_id(
             raise NativeSessionUnavailable(row.id, "unbound")
         return _native_target(key, session)
 
+    if row.record_mode == "historical":
+        return _restored_target(runtime_root, row, ref=spawn_id)
     return _spawn_target(row=row, record_for=_stored_record(runtime_root))
 
 
@@ -279,9 +393,11 @@ def _resolve_from_session_ref(
                 else None
             )
         )
-    row = _indexed_spawn(runtime_root, session_ref, deadline=deadline)
-    if row is not None:
-        return _spawn_target(row=row, record_for=_stored_record(runtime_root))
+    indexed = _indexed_spawn(runtime_root, session_ref, deadline=deadline)
+    if indexed is not None:
+        return _indexed_target(
+            runtime_root, indexed, ref=session_ref, project_root=project_root, deadline=deadline
+        )
     return _untracked_target(project_root=project_root, session_ref=session_ref)
 
 

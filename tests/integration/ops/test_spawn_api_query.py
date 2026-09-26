@@ -127,7 +127,7 @@ def test_spawn_show_json_exposes_structured_entry_and_boundary_identity(tmp_path
         "exit_chat_id": "c-pi-exit",
         "trampoline_successor_id": "succ-1",
     }
-    assert verified["harness_session_id"] == "native-entry"
+    assert "harness_session_id" not in verified
     assert unresolved["chat_id"] == "c-pi-unresolved"
     assert unresolved["continue_chat_id"] == "c-pi-unresolved"
     assert unresolved["run_boundary"] == {

@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- Expose structured chat, run-boundary and harness session ID fields in spawn show/status JSON.
+- Expose structured chat and run-boundary fields in spawn show/status JSON.
 - Report archive dry-run selections after pending native capture.
 - Validate the completed legacy native-import marker before late binding; malformed markers are left untouched.
 - Refuse session forks for harnesses that cannot create a distinct native session; extract successful OpenCode 1.x reports from the bound native session.
@@ -23,11 +23,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Archive capture requires an exact native transcript; legacy runner-history archive members stay inert.
 - Read Pi lifecycle telemetry from an atomic sidecar and drop history-based staleness checks.
 - Rename diagnostic Claude successor events to `claude_trampoline_successor`; exit hints show verified chat IDs without repeating native IDs.
+- Name the history index, its marker queue, locks and init latch by schema (`history-index/history-v6.sqlite3`). The first command builds it from authority and never upgrades 0.6.7's `history.sqlite3`, so 0.6.7 background runs still finalize and 0.6.7 commands keep working. Catch-up rereads active spawns and the session log that an older build's writers change without marking. After rolling back, rebuild the older index.
 
 ### Removed
 - Stop writing runner `history.jsonl` and `last-observed-event.json`; drop the drain loop's write-failure abort and the retry `meridian.attempt.completed` marker. Orphan evidence no longer carries `last_observed_event`.
 - Reject legacy runner-history files as transcripts; archive ZIP history members restore as inert bytes.
 - Remove search `--include-archives`; `session index rebuild` no longer warms previews.
+- Remove in-place history-index schema migration: each schema builds its own file.
 - Remove `_MERIDIAN_GUARDRAIL_OUTPUT_LOG`; guardrail scripts receive `_MERIDIAN_GUARDRAIL_REPORT` and `_MERIDIAN_GUARDRAIL_CHAT_ID` instead.
 
 ### Added
@@ -41,6 +43,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Deliver composed starting prompts as first user turns in interactive Claude, Pi, and OpenCode sessions; guard oversized CLI prompt arguments.
+- `session log`/`export` read archived native snapshots again after `session import` (history UUID, streamed from the ZIP) and `session restore` (restored `cN`/`pN`), validating seal and history binding; live chats never fall back to snapshots. Re-importing reports `Already imported`.
 - Pi session reads support v3 `context_edit` and `usage` journal entries.
 - Name the exact chat in `pN` session-log views, report search coverage in text output, and reject non-native `session log --file` inputs.
 - Capture exact native transcripts during archive apply so terminal headless spawns can be archived without runner-history members; dry-runs distinguish pending capture from capture errors.

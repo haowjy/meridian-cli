@@ -17,9 +17,7 @@ markers remain pending; active stream appends may coalesce them. Terminal writes
 and late events replace the token. Active activity is explicitly provisional.
 
 Lock order: catchup -> root mutation -> database -> source -> markers. Plain
-SQLite readers hold only the database gate. Compatible outdated schemas migrate
-in place under the exclusive database gate on the live WAL; they do not stage
-or replace. Rebuild holds catchup/root gates, uses a fresh rollback-journal
+SQLite readers hold only the database gate. Rebuild holds catchup/root gates, uses a fresh rollback-journal
 stage, drains all pending sources, then checkpoints and closes the old WAL
 under the exclusive database gate before replacement. Reset takes root
 exclusively, writes a new generation before dropping markers, and rebuilds
@@ -30,14 +28,45 @@ index rebuild`; damaged coordination requires `--reset`. Offline deletion of
 `history-index/` is safe only after its runtime's users stop. Leave `locks/` alone.
 Busy, disk-full, permissions and ordinary I/O errors are not corruption recovery.
 
+## Schema namespace and mixed-version overlap
+
+`SCHEMA_VERSION` (in `history_changes.py`) names one projection namespace:
+`history-index/history-v<N>.sqlite3`, its `.build-v<N>` stage, the
+`history-index/pending-v<N>/` queue with its GENERATION,
+`locks/history-{catchup,database,markers}-v<N>.lock` and the init latch.
+A schema bump builds a fresh file from authority; there is no in-place migration,
+because an older build that is still running (a background runner that outlives
+an upgrade) must keep reading the file it understands. 0.6.7 and earlier use the
+unversioned `history.sqlite3`, `pending/`, locks and latch. This build never opens
+them and does not delete them.
+
+Authority and its locks stay shared: `locks/history-mutation.lock` and source
+locks. Each schema's writers mark only that schema's queue, so neither build
+consumes, clears or resets the other's markers or GENERATION, and neither waits on
+the other's catch-up or database gate. An older runner reads descendants through
+its own index; that is what finalizes it (0.6.7's Pi drain treats any index error
+as unknown evidence and does not complete while the error persists).
+
+Writers of an older build still mutate shared authority during the overlap. Catch-up
+re-reads every active loose spawn and the session-log cursor without a marker, so
+runners that finish and primaries that stop after an upgrade still project. Spawns
+an older build creates after this projection was built, or archive changes it
+makes, need `session index rebuild`. The older index misses this build's writes.
+
+Rollback: the older build's index is stale after any use of a newer build, and a
+pre-release build of this branch migrated `history.sqlite3` to schema 6 in place.
+After rolling back, run the older build's `meridian session index rebuild
+--metadata-only`, or delete `history-index/history.sqlite3*` while no older process
+uses the runtime.
+
 ## Initialization and read budgets
 
 `history_index.py` classifies schema through read-only SQLite before entering the
-existing catch-up gate. Missing indexes rebuild. Compatible older schemas migrate
-in place on the live WAL; untrusted older schemas, corrupt files, generation
-mismatch and `--reset` rebuild. Both share the 15-second automatic metadata
-phase and an under-lock recheck. A genuine owned-build failure is latched
-in `history-index-init-failure.json`; manual publication clears it. Failed marker cleanup warns; warm catch-up retries it under the
+existing catch-up gate. A missing index builds automatically within the 15-second
+metadata phase, with an under-lock recheck. Corrupt files, a foreign schema in
+this schema's file, generation mismatch and `--reset` need an explicit rebuild.
+A genuine owned-build failure is latched in
+`history-index-init-failure-v<schema>.json`; manual publication clears it. Failed marker cleanup warns; warm catch-up retries it under the
 same gate after verifying schema/generation. Status and cache-only reads never
 perform this cleanup. Contention and cancellation are not persistent failures.
 
@@ -92,6 +121,13 @@ session/work projections. Multiple ZIP copies remain candidates even with a
 loose copy present. Only copies matching the selected portable digest are interchangeable; an
 offline current snapshot never falls back to different older content. Published
 snapshots remain separate until reclaim intent or explicit import selects them. Corrupt authority refuses complete coverage; it is never an empty result.
+
+Snapshot reads use one resolver source kind, `snapshot`, selected in two cases only:
+a restored historical record reads its local aggregate snapshot, and an archive-only
+record this runtime did not reclaim itself (an import) streams the catalog-selected
+ZIP member in place. Both bind the header to the history UUID and verify the seal.
+A record this runtime reclaimed keeps reading its live binding, and a missing live
+native source stays missing. Corpus search covers live native bindings only.
 
 ## Retention and restore
 

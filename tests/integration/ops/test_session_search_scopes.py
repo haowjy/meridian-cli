@@ -10,6 +10,7 @@ import pytest
 from meridian.lib.harness.claude import project_slug
 from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
 from meridian.lib.state import session_store
+from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.user_paths import get_project_home
 
 
@@ -371,7 +372,7 @@ def test_damaged_metadata_index_only_affects_work_scoped_search(
     result = session_search_sync(SessionSearchInput(query="needle", project_root=str(project)))
     assert result.complete  # Corpus keys come from the store, not metadata.
     index.rebuild(reset=True)
-    (index.directory / "pending/GENERATION").write_text("invalid generation")
+    (HistoryChanges(root).directory / "GENERATION").write_text("invalid generation")
     result = session_search_sync(
         SessionSearchInput(query="needle", work_id="work", project_root=str(project))
     )

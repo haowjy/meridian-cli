@@ -326,7 +326,7 @@ def _collect_scope(
     cold = cold or projection.cold
     if work_id := (payload.work_id or "").strip():
         metadata = HistoryIndex(scope.runtime_root)
-        if metadata.classify(deadline=cold_deadline).baseline in {"absent", "outdated"}:
+        if metadata.classify(deadline=cold_deadline).baseline == "absent":
             cold = True
             metadata.initialize(deadline=cold_deadline)
         scope = scope._replace(
@@ -447,6 +447,15 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
                 f"{scope.label} {', '.join(keys[key])}: {warning}"
                 for key, warning in projection.warnings.items()
             )
+            if retained := [
+                chat
+                for chat in projection.retained
+                if scope.chat_filter is None or chat in scope.chat_filter
+            ]:
+                warnings.append(
+                    f"{scope.label} {', '.join(retained)}: historical snapshots are not "
+                    "in corpus search; search one by ref"
+                )
             if cold:
                 projections.append((scope, projection))
             else:

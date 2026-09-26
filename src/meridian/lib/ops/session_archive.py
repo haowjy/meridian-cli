@@ -87,6 +87,7 @@ class SessionArchiveOutput(BaseModel):
     archives: tuple[str, ...] = ()
     restored: tuple[str, ...] = ()
     restored_histories: tuple[RestoredHistory, ...] = ()
+    already_imported: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
     preparation_required: tuple[str, ...] = ()
     limited: bool = False
@@ -107,6 +108,7 @@ class SessionArchiveOutput(BaseModel):
             f"restored: {len(self.restored)}; protected: {len(self.protected)}"
         ]
         lines.extend(f"Selected history: {key}" for key in self.selected)
+        lines.extend(f"Already imported: {key}" for key in self.already_imported)
         lines.extend(f"Archive: {path}" for path in self.archives)
         lines.extend(
             f"Restored history: {row.history_id} -> {row.spawn_id} / "
@@ -567,10 +569,12 @@ def session_import_sync(payload: SessionImportInput) -> SessionArchiveOutput:
     roots = resolve_roots_for_read(payload.project_root)
     if roots is None:
         raise ValueError("Initialize the destination project before importing history")
-    receipt = import_archive(roots.runtime_root, Path(payload.archive))
+    receipt, recorded = import_archive(roots.runtime_root, Path(payload.archive))
     HistoryIndex(roots.runtime_root).catch_up()
+    histories = tuple(str(row.history_id) for row in receipt.records)
     return SessionArchiveOutput(
-        selected=tuple(str(row.history_id) for row in receipt.records),
+        selected=histories if recorded else (),
+        already_imported=() if recorded else histories,
         archives=(str(Path(receipt.destination) / receipt.zip_name),),
     )
 
