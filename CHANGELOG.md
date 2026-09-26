@@ -11,6 +11,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Before reinstalling, finish or cancel background spawns. Install, run the first command to import chats, then run `meridian doctor`, check `[unbound]` chats, and prune only when ready.
 - No downgrade: once 0.7 runs a spawn in a project, 0.6.7 cannot list or read that project's spawns. Already-running 0.6.7 work still finishes.
 - Old 0.6.7 Pi chats never recorded a session ID. `meridian doctor` binds the provable ones (exact first-prompt match); `meridian session repair cN` lists candidates for the rest and `--native PATH` binds one.
+- Meridian keeps no transcript copy now. Harnesses may delete theirs (Claude: `cleanupPeriodDays`, default 30). Raise that, or archive regularly: archive captures the native transcript.
 - See [Upgrading to 0.7](docs/upgrading.md) for repair, cleanup, and rollback steps.
 
 ### Changed

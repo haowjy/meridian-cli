@@ -115,6 +115,22 @@ meridian session repair c123 --native /path/to/native-session --force
 
 Bindings are immutable: `--force` does not let you replace an existing binding.
 
+## Keep transcripts you care about
+
+Meridian no longer keeps its own copy of a conversation; the harness's
+transcript is the only one. Harnesses can delete their own transcripts:
+Claude removes sessions older than `cleanupPeriodDays`, which defaults to 30
+days. Once a harness deletes a file, that chat reads as
+`native_transcript_missing`.
+
+To keep history longer, do either or both:
+
+- Raise Claude's retention in `~/.claude/settings.json`, for example
+  `{"cleanupPeriodDays": 365}`.
+- Archive regularly. `meridian session archive --eligible --apply` captures
+  each selected chat's exact native transcript into the archive ZIP, and
+  those snapshots stay readable after the harness deletes the original.
+
 ## Reclaim old runner files
 
 Preview what can be removed:
