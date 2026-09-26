@@ -33,7 +33,7 @@ MARKER = "legacy-native-import-v1.json"
 DEFERRAL_NOTE = "legacy-native-import-deferral.json"
 RETRY_DELAY_SECONDS = 15 * 60
 REASONS = ("imported", "missing", "ambiguous", "ambiguous_id", "no_session_id", "unsupported")
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -206,10 +206,12 @@ def bind_late_legacy_sessions(runtime_root: Path) -> LateBinding:
         except OSError:
             return LateBinding()
         except ValidationError as exc:
+            first = exc.errors()[0]
             logger.warning(
-                "Invalid legacy native import marker; skipping late binding",
+                "legacy_import_marker_invalid",
                 marker_path=str(marker),
-                error=str(exc).splitlines()[0],
+                field=".".join(str(part) for part in first["loc"]),
+                error=first["msg"],
             )
             return LateBinding()
         no_session_id = prior.unbound.get("no_session_id")
