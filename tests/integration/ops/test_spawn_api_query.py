@@ -27,6 +27,8 @@ from meridian.lib.ops.spawn.models import (
 )
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.session_store import start_session
+from meridian.lib.state.spawn.model import RunBoundaryOutcome
 from meridian.lib.state.spawn.repository import Applied
 
 
@@ -58,6 +60,85 @@ def _write_primary_meta(
         + "\n",
         encoding="utf-8",
     )
+
+
+def test_spawn_show_json_exposes_structured_entry_and_boundary_identity(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    verified_id = spawn_store.start_spawn(
+        runtime_root,
+        chat_id="c-pi-entry",
+        model="test",
+        agent="coder",
+        harness="pi",
+        harness_session_id="native-entry",
+        prompt="finished",
+    )
+    start_session(
+        runtime_root,
+        "pi",
+        "native-entry",
+        "test",
+        chat_id="c-pi-entry",
+        kind="spawn",
+        spawn_id=verified_id,
+    )
+    spawn_store.finalize_spawn(
+        runtime_root, verified_id, status="succeeded", exit_code=0, origin="runner"
+    )
+    spawn_store.update_spawn(
+        runtime_root,
+        verified_id,
+        run_boundary=RunBoundaryOutcome(
+            status="verified",
+            exit_chat_id="c-pi-exit",
+            trampoline_successor_id="succ-1",
+        ),
+    )
+    unresolved_id = spawn_store.start_spawn(
+        runtime_root,
+        chat_id="c-pi-unresolved",
+        model="test",
+        agent="coder",
+        harness="pi",
+        prompt="finished",
+    )
+    spawn_store.finalize_spawn(
+        runtime_root, unresolved_id, status="succeeded", exit_code=0, origin="runner"
+    )
+    spawn_store.update_spawn(
+        runtime_root,
+        unresolved_id,
+        run_boundary=RunBoundaryOutcome(status="unresolved"),
+    )
+
+    verified = spawn_api.spawn_show_sync(
+        SpawnShowInput(project_root=project_root.as_posix(), spawn_id=verified_id)
+    ).to_cli_wire()
+    unresolved = spawn_api.spawn_show_sync(
+        SpawnShowInput(project_root=project_root.as_posix(), spawn_id=unresolved_id)
+    ).to_cli_wire()
+
+    assert verified["chat_id"] == "c-pi-entry"
+    assert verified["continue_chat_id"] == "c-pi-exit"
+    assert verified["run_boundary"] == {
+        "status": "verified",
+        "exit_chat_id": "c-pi-exit",
+        "trampoline_successor_id": "succ-1",
+    }
+    assert verified["entry_native_key"] == {
+        "harness": "pi",
+        "native_store": None,
+        "session_id": "native-entry",
+    }
+    assert unresolved["chat_id"] == "c-pi-unresolved"
+    assert unresolved["continue_chat_id"] == "c-pi-unresolved"
+    assert unresolved["run_boundary"] == {
+        "status": "unresolved",
+        "exit_chat_id": None,
+        "trampoline_successor_id": None,
+    }
 
 
 def test_spawn_stats_includes_finalizing_bucket(tmp_path: Path) -> None:

@@ -10,6 +10,7 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status, is_terminal_spawn_status
 from meridian.lib.core.util import FormatContext
 from meridian.lib.launch.request import SessionRequest
+from meridian.lib.state.spawn.model import RunBoundaryOutcome
 
 
 def _empty_template_vars() -> dict[str, str]:
@@ -409,12 +410,7 @@ class SpawnActionOutput(BaseModel):
         return "\n".join(lines)
 
     def _format_default_text(self) -> str:
-        if (
-            self.background
-            and self.status == "running"
-            and self.spawn_id
-            and not self.message
-        ):
+        if self.background and self.status == "running" and self.spawn_id and not self.message:
             return _background_wait_note(self.spawn_id)
 
         lines: list[str] = []
@@ -725,6 +721,7 @@ class SpawnSignalInput(BaseModel):
     spawn_id: str | None = None
     project_root: str | None = None
 
+
 class SpawnStatusInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -784,6 +781,10 @@ class SpawnDetailOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     boundary_summary: str | None = None
+    chat_id: str | None = None
+    continue_chat_id: str | None = None
+    run_boundary: RunBoundaryOutcome | None = None
+    entry_native_key: dict[str, str | None] | None = None
     spawn_id: str
     status: str
     model: str
@@ -896,6 +897,12 @@ class SpawnDetailOutput(BaseModel):
         }
         if self.boundary_summary is not None:
             wire["boundary_summary"] = self.boundary_summary
+        wire["chat_id"] = self.chat_id
+        wire["continue_chat_id"] = self.continue_chat_id
+        wire["run_boundary"] = (
+            self.run_boundary.model_dump(mode="json") if self.run_boundary is not None else None
+        )
+        wire["entry_native_key"] = self.entry_native_key
         if self.kind is not None:
             wire["kind"] = self.kind
         if self.activity is not None:
@@ -974,8 +981,11 @@ class SpawnDetailOutput(BaseModel):
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         effective_ctx = ctx or FormatContext()
-        text = (self._format_verbose_text(always_show_transcript=True)
-                if effective_ctx.verbosity > 0 else self._format_moderate_text())
+        text = (
+            self._format_verbose_text(always_show_transcript=True)
+            if effective_ctx.verbosity > 0
+            else self._format_moderate_text()
+        )
         return f"{self.boundary_summary}\n{text}" if self.boundary_summary else text
 
     def format_wait_text(self, ctx: FormatContext | None = None) -> str:
@@ -1279,18 +1289,13 @@ class SpawnWaitMultiOutput(BaseModel):
             return self._format_checkpoint_text()
         if self.fail_fast:
             failed_ids = ", ".join(
-                spawn.spawn_id
-                for spawn in self.spawns
-                if spawn.status in {"failed", "timed_out"}
+                spawn.spawn_id for spawn in self.spawns if spawn.status in {"failed", "timed_out"}
             )
             pending_ids = ", ".join(self.pending_ids)
-            details = self.model_copy(
-                update={"fail_fast": False, "pending_ids": ()}
-            ).format_text(effective_ctx)
-            summary = (
-                f"Fail-fast: {failed_ids} failed or timed out. "
-                f"Still pending: {pending_ids}."
+            details = self.model_copy(update={"fail_fast": False, "pending_ids": ()}).format_text(
+                effective_ctx
             )
+            summary = f"Fail-fast: {failed_ids} failed or timed out. Still pending: {pending_ids}."
             return f"{summary}\n\n{details}" if details else summary
         if not self.spawns:
             return ""
