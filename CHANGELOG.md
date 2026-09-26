@@ -4,9 +4,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Fixed
-- Name the exact chat in `pN` session-log views, report search coverage in text output, and reject non-native `session log --file` inputs.
-
 ### Changed
 - Refuse session forks for harnesses that cannot create a distinct native session; extract successful OpenCode 1.x reports from the bound native session.
 - Keep unbound or unavailable native chats visible in browse without previews; bind late legacy native-session IDs on `meridian doctor` or the next primary launch.
@@ -40,6 +37,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Managed Pi launches load a bounded, atomic v2 session-boundary observer without writing native journals.
 
 ### Fixed
+- Name the exact chat in `pN` session-log views, report search coverage in text output, and reject non-native `session log --file` inputs.
 - Capture exact native transcripts during archive apply so terminal headless spawns can be archived without runner-history members.
 - Re-arm automatic history-index initialization after dogfood row migration; quarantined authority failures name the `state.json` path and dogfood failures point to `meridian doctor`.
 - Rewrite spawn rows from the PR-1 dogfood build (`entry_chat_id`/`exit_identity` fields) once, at startup repairs or `meridian doctor`; preserve the old runner-readable shape for live runs, and do not load them through a read-time translator.
