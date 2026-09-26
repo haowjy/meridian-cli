@@ -11,7 +11,10 @@ from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.launch.extract import enrich_finalize
 from meridian.lib.state.artifact_store import InMemoryStore
-from tests.support.opencode_db import write_opencode_v2_db_session
+from tests.support.opencode_db import (
+    write_opencode_db_session,
+    write_opencode_v2_db_session,
+)
 
 
 def test_extract_opencode_report_ignores_child_session_assistant_text():
@@ -45,6 +48,29 @@ def test_extract_opencode_report_ignores_child_session_assistant_text():
         )
     assert facts.first_session_id == "ses_parent"
     assert facts.final_text == "parent"
+
+
+def test_unsupported_fork_is_rejected_instead_of_reusing_native_session():
+    from meridian.lib.launch.context import _resolve_session_continuation
+    from meridian.lib.launch.request import SessionRequest, SpawnRequest
+
+    harness = type("Harness", (), {
+        "id": "opencode",
+        "capabilities": type("Capabilities", (), {
+            "supports_session_resume": True,
+            "supports_session_fork": False,
+        })(),
+    })()
+    request = SpawnRequest(
+        prompt="fork me",
+        prompt_is_composed=False,
+        session=SessionRequest(
+            requested_harness_session_id="ses_source",
+            continue_fork=True,
+        ),
+    )
+    with pytest.raises(ValueError, match=r"opencode cannot fork sessions"):
+        _resolve_session_continuation(request=request, harness=harness)
 
 
 @pytest.mark.parametrize(
@@ -98,6 +124,24 @@ def test_extract_opencode_report_reads_v2_db_final_assistant(tmp_path: Path, mon
     )
     assert extraction.report.content == "owned native reply"
     assert extraction.harness_session_id == session
+
+
+def test_opencode_v1_native_store_supplies_report_when_v1_has_no_turn_event(tmp_path: Path):
+    db = tmp_path / "native-v1.db"
+    write_opencode_db_session(
+        db_path=db,
+        session_id="ses_v1",
+        messages=[("user", "question"), ("assistant", "ALPHA-OC-8f31bc")],
+    )
+    extraction = enrich_finalize(
+        facts=AttemptFacts(),
+        extractor=OPENCODE_EXTRACTOR,
+        native_key=NativeKey("opencode", str(db), "ses_v1"),
+        artifacts=InMemoryStore(),
+        spawn_id=SpawnId("p1"),
+        log_dir=tmp_path / "run",
+    )
+    assert extraction.report.content == "ALPHA-OC-8f31bc"
 
 
 @pytest.mark.parametrize("ids", [(), ("missing",), ("ses_other_msg_0",)])

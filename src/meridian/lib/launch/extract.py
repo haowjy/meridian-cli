@@ -160,7 +160,7 @@ def enrich_finalize(
         spawn_id,
         facts=facts,
         load_native_text=partial(extractor.read_native_turn, native_key, facts.native_turn_ids)
-        if native_key is not None and facts.native_turn_ids
+        if native_key is not None
         else None,
         failure_reason=failure_reason,
     )

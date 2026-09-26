@@ -177,6 +177,86 @@ def test_primary_continue_maps_source_contract_to_launch_request(
     assert request.passthrough_args == snapshot.extra_args
 
 
+def test_continue_to_different_harness_fails_without_changing_source_chat(
+    tmp_path: Path,
+) -> None:
+    """A native chat cannot be silently replaced by a fresh cross-harness run."""
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    native_store = runtime_root / "native-pi" / "sessions"
+    native_store.mkdir(parents=True)
+    session_id = "pi-native-session"
+    (native_store / f"{session_id}.jsonl").write_text(
+        json.dumps({"type": "session", "id": session_id}) + "\n",
+        encoding="utf-8",
+    )
+    chat_id = session_store.start_session(
+        runtime_root,
+        harness="pi",
+        harness_session_id=session_id,
+        native_store=str(native_store),
+        model="pi/coding-agent",
+        kind="primary",
+    )
+    source_spawn = spawn_store.start_spawn(
+        runtime_root,
+        chat_id=chat_id,
+        model="pi/coding-agent",
+        agent="",
+        harness="pi",
+        prompt="source prompt",
+        kind="primary",
+        harness_session_id=session_id,
+    )
+    session_store.update_session_spawn_id(runtime_root, chat_id, source_spawn)
+    session_store.stop_session(runtime_root, chat_id)
+    before_chat = session_store.get_session_record(runtime_root, chat_id)
+    before_spawns = spawn_store.list_spawns(runtime_root)
+
+    request = launch_context.SpawnRequest(
+        prompt="continue prompt",
+        prompt_is_composed=False,
+        session=SessionRequest(
+            requested_harness_session_id=session_id,
+            continue_harness="pi",
+            continue_chat_id=chat_id,
+            continue_source_ref=chat_id,
+            continue_source_tracked=True,
+            source_native_store=str(native_store),
+        ),
+    )
+    with pytest.raises(ValueError, match=rf"chat {chat_id}.*'pi'.*'claude'.*start a new chat"):
+        launch_context._resolve_session_continuation(
+            request=request,
+            harness=get_default_harness_registry().get(HarnessId.CLAUDE),
+        )
+
+    assert session_store.get_session_record(runtime_root, chat_id) == before_chat
+    assert spawn_store.list_spawns(runtime_root) == before_spawns
+
+
+def test_continue_fails_when_adapter_cannot_resume() -> None:
+    request = launch_context.SpawnRequest(
+        prompt="continue prompt",
+        prompt_is_composed=False,
+        session=SessionRequest(requested_harness_session_id="native-session"),
+    )
+    harness = type(
+        "Harness",
+        (),
+        {
+            "id": "test-harness",
+            "capabilities": type(
+                "Capabilities", (), {"supports_session_resume": False}
+            )(),
+        },
+    )()
+
+    with pytest.raises(ValueError, match="test-harness cannot resume sessions"):
+        launch_context._resolve_session_continuation(request=request, harness=harness)
+
+
 def test_primary_continue_spawn_session_ref_uses_linked_spawn_snapshot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

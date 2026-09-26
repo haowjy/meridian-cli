@@ -8,11 +8,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Name the exact chat in `pN` session-log views, report search coverage in text output, and reject non-native `session log --file` inputs.
 
 ### Changed
+- Refuse session forks for harnesses that cannot create a distinct native session; extract successful OpenCode 1.x reports from the bound native session.
 - Session logs read native chats: raw IDs resolve directly, and old `pN` refs show the whole chat with a view label.
 - Search bound native chats with a rebuildable index and exact substring verification; common words fill the 100-hit cap with newest sessions. Rebuild search rows; previews stay lazy.
 - Keep live event hooks and subscriber delivery active without runner-history persistence. `streaming serve` prints `Transcript: meridian session log pN`.
 - Finalize reports, usage and identity from live attempt facts; read only event-named native replies.
-- Preserve accepted native bindings across resumes; metadata rebuilds ignore runner history.
+- Preserve accepted native bindings across resumes; refuse mismatched or unresumable continuations instead of silently starting fresh; metadata rebuilds ignore runner history.
 - Keep corpus and direct-search readiness aligned; renderer warnings remain visible without discarding confirmed text.
 - Search counts searchable renderer warnings separately; complete results no longer fail on warnings. Rebuild recreates the disposable search database.
 - Avoid per-source WAL checkpoints while rebuilding disposable search rows; concurrent refreshes skip duplicate writes.
