@@ -14,6 +14,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Literal, NamedTuple
 
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import or_, select
 
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
@@ -98,20 +99,20 @@ def _resolve_file_target(file_path: str) -> SessionLogTarget:
     with resolved.open("rb") as handle:
         first = handle.readline(64 * 1024 + 1)
     try:
-        header = json.loads(first)
-    except (UnicodeDecodeError, ValueError):
+        header = TypeAdapter(dict[str, object]).validate_python(json.loads(first))
+    except (UnicodeDecodeError, ValueError, ValidationError):
         header = None
     is_claude = (
-        isinstance(header, dict)
+        header is not None
         and isinstance(header.get("sessionId"), str)
         and isinstance(header.get("type"), str)
     )
-    is_codex = isinstance(header, dict) and header.get("type") in {
+    is_codex = header is not None and header.get("type") in {
         "session_meta",
         "event_msg",
         "response_item",
     }
-    is_pi = isinstance(header, dict) and header.get("type") == "session" and bool(header.get("id"))
+    is_pi = header is not None and header.get("type") == "session" and bool(header.get("id"))
     if not (is_claude or is_codex or is_pi):
         raise ValueError("not a native transcript")
 

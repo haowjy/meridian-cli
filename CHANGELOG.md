@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Validate the completed legacy native-import marker before late binding; malformed markers are left untouched.
 - Refuse session forks for harnesses that cannot create a distinct native session; extract successful OpenCode 1.x reports from the bound native session.
 - Keep unbound or unavailable native chats visible in browse without previews; bind late legacy native-session IDs on `meridian doctor` or the next primary launch.
 - Session logs read native chats: raw IDs resolve directly, and old `pN` refs show the whole chat with a view label.

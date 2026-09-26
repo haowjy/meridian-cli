@@ -12,8 +12,10 @@ import sys
 import time
 from collections import defaultdict
 from contextlib import suppress
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
+
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from meridian.lib.core.native_identity import NativeKeyFields
 from meridian.lib.core.types import ChatId
@@ -38,22 +40,23 @@ class LateBinding:
     attempted: int = 0
 
 
-@dataclass
-class ImportReport:
-    schema_version: int = 1
-    timestamp: str = field(default_factory=utc_now_iso)
-    counts: dict[str, dict[str, int]] = field(default_factory=dict)
-    unbound: dict[str, list[str]] = field(default_factory=dict)
-    bindings: dict[str, tuple[str, str]] = field(default_factory=dict)
-    late_retries: list[str] = field(default_factory=list)
+class ImportReport(BaseModel):
+    model_config = ConfigDict(extra="allow", strict=True)
+
+    schema_version: int
+    timestamp: str
+    counts: dict[str, dict[str, int]]
+    unbound: dict[str, list[str]]
+    bindings: dict[str, tuple[str, str]]
+    late_retries: list[str]
 
     def record(self, chat: SessionRecord, reason: str) -> None:
         self.counts.setdefault(chat.harness, dict.fromkeys(REASONS, 0))[reason] += 1
         if reason != "imported":
             self.unbound.setdefault(reason, []).append(chat.chat_id)
 
-    def json(self) -> str:
-        return json.dumps(asdict(self), indent=2, sort_keys=True) + "\n"
+    def to_json(self) -> str:
+        return json.dumps(self.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"
 
 
 def report_legacy_native_import(
@@ -62,7 +65,14 @@ def report_legacy_native_import(
     records: list[SessionRecord] | None = None,
 ) -> ImportReport:
     """Compute exact bindings without locks, state writes, or native-store writes."""
-    report = ImportReport()
+    report = ImportReport(
+        schema_version=1,
+        timestamp=utc_now_iso(),
+        counts={},
+        unbound={},
+        bindings={},
+        late_retries=[],
+    )
     chats = records if records is not None else list_all_session_records(runtime_root)
     ids: dict[str, set[str]] = defaultdict(set)
     cwds: dict[str, set[Path]] = defaultdict(set)
@@ -173,7 +183,7 @@ def import_legacy_native_sessions(runtime_root: Path) -> ImportReport | None:
                     del report.bindings[chat_id]
                     report.counts[original.harness]["imported"] -= 1
                     report.record(original, "ambiguous_id")
-        atomic_write_text(marker, report.json())
+        atomic_write_text(marker, report.to_json())
         deferral.unlink(missing_ok=True)
         imported = sum(counts["imported"] for counts in report.counts.values())
         total = sum(sum(counts.values()) for counts in report.counts.values())
@@ -190,21 +200,13 @@ def bind_late_legacy_sessions(runtime_root: Path) -> LateBinding:
     marker = runtime_root / MARKER
     with lock_file(runtime_root / "locks" / "legacy-native-import.lock"):
         try:
-            prior = json.loads(marker.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            prior = ImportReport.model_validate_json(marker.read_text(encoding="utf-8"))
+        except (OSError, ValidationError):
             return LateBinding()
-        if not isinstance(prior, dict):
+        no_session_id = prior.unbound.get("no_session_id")
+        if no_session_id is None:
             return LateBinding()
-        unbound = prior.get("unbound")
-        no_session_id = unbound.get("no_session_id") if isinstance(unbound, dict) else None
-        raw_attempted = prior.get("late_retries", [])
-        attempted: set[str] = (
-            {value for value in raw_attempted if isinstance(value, str)}
-            if isinstance(raw_attempted, list)
-            else set()
-        )
-        if not isinstance(no_session_id, list):
-            return LateBinding()
+        attempted = set(prior.late_retries)
         try:
             if (runtime_root / "sessions.jsonl").stat().st_mtime_ns <= marker.stat().st_mtime_ns:
                 return LateBinding()
@@ -217,8 +219,7 @@ def bind_late_legacy_sessions(runtime_root: Path) -> LateBinding:
         candidates: dict[str, SessionRecord] = {
             chat_id: records[chat_id]
             for chat_id in no_session_id
-            if isinstance(chat_id, str)
-            and chat_id not in attempted
+            if chat_id not in attempted
             and chat_id in records
             and records[chat_id].native_key() is None
             and bool(records[chat_id].harness_session_id)
@@ -256,14 +257,12 @@ def bind_late_legacy_sessions(runtime_root: Path) -> LateBinding:
                         )
                         if not isinstance(result, Conflict):
                             no_session_id.remove(chat_id)
-                            if not isinstance(prior.get("bindings"), dict):
-                                prior["bindings"] = {}
-                            prior["bindings"][chat_id] = [session_id, store]
+                            prior.bindings[chat_id] = (session_id, store)
                             bound += 1
                 attempted.add(chat_id)
 
-        prior["late_retries"] = sorted(attempted)
-        atomic_write_text(marker, json.dumps(prior, indent=2, sort_keys=True) + "\n")
+        prior.late_retries = sorted(attempted)
+        atomic_write_text(marker, prior.to_json())
         return LateBinding(bound=bound, attempted=len(candidates))
 
 
@@ -306,4 +305,4 @@ if __name__ == "__main__":
     import structlog
 
     structlog.configure(logger_factory=structlog.PrintLoggerFactory(file=sys.stderr))
-    print(report_legacy_native_import(args.runtime_root).json(), end="")
+    print(report_legacy_native_import(args.runtime_root).to_json(), end="")

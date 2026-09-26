@@ -263,6 +263,46 @@ def test_late_session_id_is_imported_once_after_legacy_marker(
     assert json.loads((root / legacy.MARKER).read_text())["late_retries"] == [chat_id]
 
 
+def test_late_binding_ignores_marker_with_wrong_shape(homes: tuple[Path, Path]) -> None:
+    home, root = homes
+    chat_id = session_store.start_session(
+        root,
+        chat_id="c89",
+        harness="pi",
+        harness_session_id="",
+        model="test",
+        kind="primary",
+    )
+    assert legacy.import_legacy_native_sessions(root) is not None
+    marker_path = root / legacy.MARKER
+    marker = json.loads(marker_path.read_text())
+    marker["counts"] = []
+    marker_path.write_text(json.dumps(marker))
+
+    session_id = "01a0d525-a4e8-7741-ad00-8cd251adfb12"
+    record = session_store.get_session_record(root, chat_id)
+    assert record is not None
+    with (root / "sessions.jsonl").open("a") as events:
+        events.write(
+            session_store.SessionUpdateEvent(
+                chat_id=chat_id,
+                harness_session_id=session_id,
+                session_instance_id=record.session_instance_id,
+            ).model_dump_json(exclude_none=True)
+            + "\n"
+        )
+    session_store.stop_session(root, chat_id)
+    store = home / ".meridian/meridian-pi/sessions"
+    store.mkdir(parents=True)
+    (store / f"2026-09-24T20-40-09-193Z_{session_id}.jsonl").write_text(
+        json.dumps({"type": "session", "id": session_id}) + "\n"
+    )
+
+    assert legacy.bind_late_legacy_sessions(root) == legacy.LateBinding()
+    record = session_store.get_session_record(root, chat_id)
+    assert record is not None and record.native_store is None
+
+
 def test_existing_marker_import_does_not_fold_session_journal(
     homes: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch,
 ) -> None:

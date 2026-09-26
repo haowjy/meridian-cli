@@ -111,7 +111,7 @@ class SessionSearchOutput(BaseModel):
                     f"(complete; {len(self.warnings)} warnings)."
                 )
         else:
-            reasons = []
+            reasons: list[str] = []
             if self.sources_pending:
                 reasons.append(f"{self.sources_pending} pending")
             unavailable = max(0, self.sources_not_searched - self.sources_pending)
