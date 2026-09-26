@@ -784,7 +784,6 @@ class SpawnDetailOutput(BaseModel):
     chat_id: str | None = None
     continue_chat_id: str | None = None
     run_boundary: RunBoundaryOutcome | None = None
-    entry_native_key: dict[str, str | None] | None = None
     spawn_id: str
     status: str
     model: str
@@ -902,7 +901,7 @@ class SpawnDetailOutput(BaseModel):
         wire["run_boundary"] = (
             self.run_boundary.model_dump(mode="json") if self.run_boundary is not None else None
         )
-        wire["entry_native_key"] = self.entry_native_key
+        wire["harness_session_id"] = self.harness_session_id
         if self.kind is not None:
             wire["kind"] = self.kind
         if self.activity is not None:

@@ -536,25 +536,11 @@ def detail_from_row(
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
 
     terminal = row.terminal
-    entry_session = (
-        session_store.get_session_record(resolved_runtime_root, row.chat_id)
-        if resolved_runtime_root is not None and row.chat_id is not None
-        else None
-    )
-    native_key: dict[str, str | None] | None = {
-        "harness": row.harness or (entry_session.harness if entry_session else None),
-        "native_store": entry_session.native_store if entry_session else None,
-        "session_id": row.harness_session_id
-        or (entry_session.harness_session_id if entry_session else None),
-    }
-    if not any(native_key.values()):
-        native_key = None
     return SpawnDetailOutput(
         boundary_summary=run_boundary_summary(row),
         chat_id=row.chat_id,
         continue_chat_id=row.continue_chat_id,
         run_boundary=row.run_boundary,
-        entry_native_key=native_key,
         spawn_id=row.id,
         status=row.status,
         model=row.model or "",
