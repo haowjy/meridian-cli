@@ -368,21 +368,28 @@ def project_pi_spec_to_cli_args(spec, *, base_command) -> list[str]:
 
 **File: `src/meridian/lib/harness/extractors/pi.py`**
 
-Implement the live facts and identity ports:
+The extractor itself is stateless; it implements `create_fold()` and the identity
+ports, and folding state lives on a per-attempt `AttemptFold` subclass:
 
 ```python
 class PiHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
-    def fold(self, facts: AttemptFacts, event: Mapping[str, object]) -> None: ...
     def detect_session_id_from_event(self, event: RawHarnessEvent) -> str | None: ...
+    def create_fold(self) -> AttemptFold:
+        return PiFold(self)
+
+
+class PiFold(AttemptFold):
+    def fold_event(self, kind: str, payload: Mapping[str, object]) -> None: ...
 ```
 
-Pi's `session` event names its native ID. Fold assistant `message_end` usage and
-`message_end`/`agent_end` final text into bounded `AttemptFacts`. Retries get a
-fresh fold. Never scan the latest native file or reread runner artifacts to
-recover identity or a report. Where a harness supports a native-turn fallback,
-`read_native_turn(key, ids)` may read only replies named by this attempt's events
-from its recorded store; otherwise the fact remains unknown. Claude `--print`
-is the black-box exception: its captured stdout is folded after exit.
+Pi's `session` event names its native ID. `PiFold.fold_event()` folds assistant
+`message_end` usage and `message_end`/`agent_end` final text into bounded
+`AttemptFacts`. Retries get a fresh fold. Never scan the latest native file or
+reread runner artifacts to recover identity or a report. Where a harness
+supports a native-turn fallback, the extractor's `read_native_turn(key, ids)`
+may read only replies named by this attempt's events from its recorded store;
+otherwise the fact remains unknown. Claude `--print` is the black-box exception:
+its captured stdout is folded after exit.
 
 ### 1.5 Connection/Streaming Runner
 
