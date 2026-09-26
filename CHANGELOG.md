@@ -10,6 +10,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - New runs no longer write `history.jsonl`; prune old runner copies explicitly.
 - Before reinstalling, finish or cancel background spawns. Install, run the first command to import chats, then run `meridian doctor`, check `[unbound]` chats, and prune only when ready.
 - No downgrade: once 0.7 runs a spawn in a project, 0.6.7 cannot list or read that project's spawns. Already-running 0.6.7 work still finishes.
+- Old 0.6.7 Pi chats never recorded a session ID. `meridian doctor` binds the provable ones (exact first-prompt match); `meridian session repair cN` lists candidates for the rest and `--native PATH` binds one.
 - See [Upgrading to 0.7](docs/upgrading.md) for repair, cleanup, and rollback steps.
 
 ### Changed
@@ -48,8 +49,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Runner-history prune records per-spawn failures and keeps going, re-validates the native transcript at apply time, and lists quarantined spawns with a `meridian doctor` hint; archive refusals and dogfood quarantine errors name it too.
 - Import legacy chat native keys once from exact, header-validated stores; keep unresolved chats listed in a durable report. Read-only dev report previews bindings.
 - Include Meridian's unscoped interactive Pi sessions root in exact legacy binding candidates.
-- Recover provable old unbound Pi chats during `meridian doctor` and primary-launch repairs with binding source `legacy_pi_recovery`; report bound and unbound counts.
-- Add read-only `meridian session repair cN` candidate inspection with native path, session ID, header cwd/time, first-message excerpt, and cwd/time/prompt/other-binding evidence. Bind with `--native PATH`; cwd or time-window mismatches require `--force`, while an existing chat binding, invalid session, or session bound elsewhere always refuses. User repairs use source `user_repair`.
 - Validate legacy OpenCode keys through the same in-place exact reader used by live reads.
 - Runs retain immutable entry chats; verified Pi exits resolve to their own chats. Missing or uncertain exits stay explicit; session logs label entry-based views.
 - Managed Pi launches load a bounded, atomic v2 session-boundary observer without writing native journals.

@@ -60,9 +60,20 @@ meridian doctor
 Doctor catches chats that an older process was still writing during the
 upgrade. Doctor and primary-launch background repairs also run a one-shot
 recovery pass over old unbound Pi chats and bind only matches they can prove.
-When doctor binds any, it prints
-`repaired: legacy_pi_sessions` and a summary of how many it bound and left
-unbound, with a pointer to `meridian session repair cN`.
+A spawned Pi chat is bound only when its own
+spawn session directory holds exactly one matching session and that session's
+first message equals the spawn's recorded prompt (or its last reply equals the
+report). Primaries shared one session directory in 0.6.7, so they are never
+bound automatically. When doctor binds any, it prints a line like:
+
+```text
+repaired: legacy_pi_sessions
+legacy_pi_sessions: bound 63 old Pi chat(s) to their native sessions; 513 left unbound; inspect one with meridian session repair cN (e.g. c668)
+```
+
+On copies of the author's runtimes, this bound 155 of 770 old Pi chats. Most
+of the rest had no recorded link to a spawn, or were primaries. The pass runs
+once per chat; a second `doctor` reports nothing new.
 
 Check for chats still unbound:
 
