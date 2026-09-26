@@ -108,7 +108,7 @@ class SessionArchiveOutput(BaseModel):
             for row in self.restored_histories
         )
         lines.extend(
-            f"Requires native capture (--apply): {key}" for key in self.preparation_required
+            f"Apply will capture native snapshot: {key}" for key in self.preparation_required
         )
         if self.limited:
             lines.append("Pass reached the configured bundle limit; repeat for remaining records.")
@@ -259,6 +259,61 @@ def archive_history(
         with lock_file(changes.mutation_lock, mode="shared"):
             _, protected, edges = _protected(root)
             sessions = session_records_for_spawns(root, candidates)
+        # The published snapshot is the archive source of truth. Explicitly
+        # selected records (and age-eligible records during maintenance)
+        # must be captured before selection can verify/archive their members.
+        cutoff = datetime.now(UTC) - timedelta(days=after_days)
+        preparation_required: list[str] = []
+        capture_errors: dict[str, str] = {}
+        for candidate in candidates:
+            if candidate.id in protected or candidate.status not in TERMINAL_SPAWN_STATUSES:
+                continue
+            if refs and not set(refs) & {
+                candidate.id,
+                str(candidate.history_id),
+                candidate.chat_id,
+                candidate.owner_chat_id,
+            }:
+                continue
+            if eligible:
+                activity = last_activity(candidate, None, "")
+                if datetime.fromisoformat(activity) > cutoff:
+                    continue
+            try:
+                ready = _capture_ready(root, candidate, sessions.get(candidate.id))
+            except ValueError as exc:
+                capture_errors[candidate.id] = str(exc)
+                continue
+            if ready:
+                continue
+            harnesses, native_ids = native_identity_candidates(
+                root, candidate, sessions.get(candidate.id)
+            )
+            if not harnesses or not native_ids:
+                capture_errors[candidate.id] = (
+                    "no exact native source is bound; record remains loose"
+                )
+                continue
+            if not apply:
+                from meridian.lib.ops.session_target import resolve_transcript_source
+
+                try:
+                    resolve_transcript_source(
+                        ref=candidate.id,
+                        file_path=None,
+                        project_root=project_root or root,
+                        runtime_root=root,
+                        purpose="capture",
+                    )
+                except (ValueError, OSError, RuntimeError) as exc:
+                    capture_errors[candidate.id] = str(exc)
+                    continue
+                preparation_required.append(candidate.id)
+                continue
+            try:
+                materialize_native_history(project_root or root, root, candidate.id)
+            except (ValueError, OSError, RuntimeError) as exc:
+                capture_errors[candidate.id] = str(exc)
         all_candidates = candidates
         by_id = {row.id: row for row in candidates if row.id not in protected}
         dependents: dict[str, set[str]] = {key: set() for key in by_id}
@@ -295,7 +350,6 @@ def archive_history(
                 )
         if refs and set(refs) - matched:
             raise ValueError(f"History references not found: {sorted(set(refs) - matched)}")
-        cutoff = datetime.now(UTC) - timedelta(days=after_days)
         for candidate in candidates:
             if refs and not set(refs) & {
                 candidate.id,
@@ -312,11 +366,14 @@ def archive_history(
             try:
                 ready = _capture_ready(root, candidate, sessions.get(candidate.id))
             except ValueError as exc:
-                errors.append(f"{candidate.id}: {exc}")
+                errors.append(f"{candidate.id}: {capture_errors.get(candidate.id, str(exc))}")
                 continue
             if not ready:
                 if refs:
-                    errors.append(f"{candidate.id}: native snapshot is not captured")
+                    if candidate.id in capture_errors:
+                        errors.append(f"{candidate.id}: {capture_errors[candidate.id]}")
+                    else:
+                        errors.append(f"{candidate.id}: native snapshot is not captured")
                 continue
             if candidate.history_id is None and apply:
                 write_state_locked(
@@ -347,6 +404,7 @@ def archive_history(
                 selected=tuple(str(row.history_id) for row in selected),
                 protected=tuple(sorted(protected)),
                 errors=tuple(errors),
+                preparation_required=tuple(preparation_required),
                 limited=limited,
             )
         receipt = publish_archive(root, destination, tuple(selected))

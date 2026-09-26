@@ -208,8 +208,11 @@ def _is_reserved_atomic_temp(name: str) -> bool:
 
 
 def inventory(directory: Path) -> tuple[Member, ...]:
+    from meridian.lib.launch.constants import RETIRED_RUNNER_STREAM_FILENAMES
+
     if directory.is_symlink():
         raise ValueError("Retained record directory must not be a symlink")
+    has_native_snapshot = (directory / NATIVE_SNAPSHOT_FILENAME).is_file()
     members: list[Member] = []
     for path in sorted(directory.rglob("*")):
         relative = path.relative_to(directory).as_posix()
@@ -223,6 +226,7 @@ def inventory(directory: Path) -> tuple[Member, ...]:
             raise ValueError(f"Non-regular or hard-linked retained file: {path}")
         if (
             path.name in _EXCLUDED
+            or (has_native_snapshot and path.name in RETIRED_RUNNER_STREAM_FILENAMES)
             or path.suffix in {".lock", ".sock", ".sentinel"}
             or _is_reserved_atomic_temp(path.name)
         ):

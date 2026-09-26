@@ -438,6 +438,87 @@ def test_child_archive_uses_native_snapshot_not_runner_history(tmp_path: Path, m
     assert all(event.get("type") != "runner-only" for event in retained)
 
 
+def test_archive_apply_captures_headless_spawn_and_preserves_native_log(
+    tmp_path: Path, monkeypatch
+):
+    import zipfile
+
+    from meridian.lib.ops.session_archive import archive_history
+    from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
+
+    project, root, _, _ = _capture_fixture(tmp_path, monkeypatch)
+    native_root = resolve_pi_spawn_session_root()
+    native_id = "headless-native"
+    native = native_root / f"timestamp_{native_id}.jsonl"
+    native.write_text(
+        json.dumps({"type": "session", "version": 3, "id": native_id})
+        + "\n"
+        + json.dumps(
+            {
+                "type": "message",
+                "id": "headless-answer",
+                "parentId": None,
+                "message": {"role": "assistant", "content": "native answer"},
+            }
+        )
+        + "\n"
+    )
+    key = spawn_store.start_spawn(
+        root,
+        chat_id="c2",
+        harness="pi",
+        harness_session_id=native_id,
+        kind="child",
+        prompt="headless prompt",
+        model="test",
+        agent="coder",
+    )
+    spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
+    session_store.start_session(
+        root,
+        "pi",
+        native_id,
+        "test",
+        chat_id="c2",
+        kind="spawn",
+        spawn_id=key,
+        native_store=str(native_root),
+    )
+    session_store.stop_session(root, "c2")
+    (root / "spawns" / key / "history.jsonl").write_text(
+        json.dumps({"type": "runner-only"}) + "\n"
+    )
+
+    dry_run = archive_history(
+        root,
+        destination=tmp_path / "archives",
+        refs=(key,),
+        project_root=project,
+    )
+    assert dry_run.preparation_required == (key,)
+    assert f"Apply will capture native snapshot: {key}" in dry_run.format_text()
+    assert not _snapshot_path(root, key).exists()
+
+    result = archive_history(
+        root,
+        destination=tmp_path / "archives",
+        refs=(key,),
+        apply=True,
+        project_root=project,
+    )
+
+    assert not result.errors
+    assert result.archives
+    with zipfile.ZipFile(result.archives[0]) as archive:
+        names = archive.namelist()
+        assert any(name.endswith("native-transcript.jsonl") for name in names)
+        assert not any(name.endswith("history.jsonl") for name in names)
+        assert not any(name.endswith("last-observed-event.json") for name in names)
+    output = session_log_sync(SessionLogInput(ref=key, project_root=str(project), full=True))
+    assert "native answer" in output.format_text()
+    assert "runner-only" not in output.format_text()
+
+
 def test_archive_refuses_legacy_runner_history_as_transcript(tmp_path: Path, monkeypatch):
     from meridian.lib.ops.session_archive import archive_history
     from meridian.lib.state.retention_archive import (
