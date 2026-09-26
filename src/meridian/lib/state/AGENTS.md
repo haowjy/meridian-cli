@@ -130,7 +130,8 @@ triggering project setup side effects in CI.
 
 Transcript reads go through `ops/session_target.resolve_transcript_source`: ref →
 chat → accepted native key → exact harness reader. Artifact storage never redirects
-to spawn transcripts; unbound or missing native sources are unavailable.
+to spawn transcripts; unbound or missing native sources are unavailable. Restored
+historical records and imported archive refs read a sealed `snapshot` source instead.
 
 ## Reconciliation Behavior
 

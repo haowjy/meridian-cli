@@ -8,6 +8,7 @@ from typing import NamedTuple
 
 from meridian.lib.ops.session_target import (
     NativeSessionUnavailable,
+    SessionLogTarget,
     _is_chat_ref,
     _is_spawn_ref,
     _resolve_from_chat_id,
@@ -23,27 +24,42 @@ class SessionRepairTarget(NamedTuple):
 
 
 def _resolve_repair_from_chat_id(
-    *, runtime_root: Path, chat_id: str,
+    *,
+    runtime_root: Path,
+    chat_id: str,
 ) -> SessionRepairTarget:
     try:
         target = _resolve_from_chat_id(
-            runtime_root=runtime_root, chat_id=chat_id,
+            runtime_root=runtime_root,
+            chat_id=chat_id,
         )
     except NativeSessionUnavailable as exc:
         return SessionRepairTarget(None, None, str(exc))
+    return _native_repair_target(target, chat_id)
+
+
+def _native_repair_target(target: SessionLogTarget, ref: str) -> SessionRepairTarget:
+    # A retained snapshot is read-only provenance, never a native binding to repair.
+    if target.source.kind == "snapshot":
+        return SessionRepairTarget(None, None, str(NativeSessionUnavailable(ref, "unbound")))
     return SessionRepairTarget(target.source.session_id, target.source.source_label)
 
 
 def _resolve_repair_from_spawn_id(
-    *, project_root: Path, runtime_root: Path, spawn_id: str,
+    *,
+    project_root: Path,
+    runtime_root: Path,
+    spawn_id: str,
 ) -> SessionRepairTarget:
     try:
         target = _resolve_from_spawn_id(
-            project_root=project_root, runtime_root=runtime_root, spawn_id=spawn_id,
+            project_root=project_root,
+            runtime_root=runtime_root,
+            spawn_id=spawn_id,
         )
     except NativeSessionUnavailable as exc:
         return SessionRepairTarget(None, None, str(exc))
-    return SessionRepairTarget(target.source.session_id, target.source.source_label)
+    return _native_repair_target(target, spawn_id)
 
 
 def _resolve_repair_from_session_ref(

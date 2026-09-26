@@ -14,7 +14,7 @@ import time
 import unicodedata
 import zipfile
 import zlib
-from collections.abc import Callable, Generator, Iterable, Iterator
+from collections.abc import Callable, Generator, Iterable
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import IO, Any, Literal, NamedTuple
@@ -30,6 +30,7 @@ from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.history_codec import TranscriptHeader
 from meridian.lib.state.native_snapshot import (
     NATIVE_SNAPSHOT_FILENAME,
+    SnapshotHeader,
     TranscriptValidation,
     canonical_transcript_member,
     complete_published_snapshot,
@@ -574,7 +575,8 @@ def verify_archive(
         return manifest
 
 
-def append_receipt(root: Path, receipt: ArchiveReceipt) -> None:
+def append_receipt(root: Path, receipt: ArchiveReceipt) -> bool:
+    """Append once; False when this exact selection is already current."""
     changes = HistoryChanges(root)
     source = HistorySource(kind="catalog")
     with lock_file(changes.mutation_lock, mode="shared"), lock_file(source.lock_path(root)):
@@ -591,11 +593,12 @@ def append_receipt(root: Path, receipt: ArchiveReceipt) -> None:
                 heads.get(str(record.history_id)) == record.portable_digest
                 for record in receipt.records
             ):
-                return
+                return False
         changes.mark(source)
         append_durable_jsonl_line(
             root / "history-archives/catalog.jsonl", receipt.model_dump_json() + "\n"
         )
+        return True
 
 
 def read_receipts(root: Path) -> tuple[ArchiveReceipt, ...]:
@@ -619,6 +622,28 @@ def catalog_heads(receipts: tuple[ArchiveReceipt, ...]) -> dict[str, str]:
             for record in receipt.records:
                 heads[str(record.history_id)] = record.portable_digest
     return heads
+
+
+def selected_snapshot_receipts(
+    receipts: tuple[ArchiveReceipt, ...], history_id: UUID
+) -> tuple[ArchiveReceipt, ...]:
+    """Newest-first copies of the catalog-selected snapshot; never an older digest."""
+    head = catalog_heads(receipts).get(str(history_id))
+    return tuple(
+        receipt.model_copy(update={"records": (record,)})
+        for receipt in reversed(receipts)
+        for record in receipt.records
+        if record.history_id == history_id and record.portable_digest == head
+    )
+
+
+def reclaimed_locally(receipts: tuple[ArchiveReceipt, ...], history_id: UUID) -> bool:
+    """Only this runtime's own reclaim writes these events; imports never do."""
+    return any(
+        receipt.event in {"reclaim_prepared", "reclaimed"}
+        and any(record.history_id == history_id for record in receipt.records)
+        for receipt in receipts
+    )
 
 
 def publish_archive(
@@ -766,8 +791,9 @@ def archive_locations(
 class _HashingMemberReader:
     """Hash and count a ZIP member while a streaming codec reads from it."""
 
-    def __init__(self, handle: IO[bytes]) -> None:
+    def __init__(self, handle: IO[bytes], consume: Callable[[int], None] | None = None) -> None:
         self._handle = handle
+        self._consume = consume
         self.checksum = hashlib.sha256()
         self.size = 0
 
@@ -776,6 +802,8 @@ class _HashingMemberReader:
         if chunk:
             self.checksum.update(chunk)
             self.size += len(chunk)
+            if self._consume is not None:
+                self._consume(len(chunk))
         return chunk
 
     def tell(self) -> int:
@@ -783,9 +811,21 @@ class _HashingMemberReader:
 
 
 def iter_archived_events(
-    path: Path, history_id: UUID, manifest_sha256: str | None = None
-) -> Iterator[dict[str, object]]:
-    """Stream one verified member without reading/extracting other transcript bodies."""
+    path: Path,
+    history_id: UUID,
+    manifest_sha256: str | None = None,
+    *,
+    validation: TranscriptValidation | None = None,
+    current: Callable[[], bool] | None = None,
+    consume: Callable[[int], None] | None = None,
+    check_header: Callable[[SnapshotHeader], None] | None = None,
+) -> Generator[dict[str, object]]:
+    """Stream one verified member without reading/extracting other transcript bodies.
+
+    Yielded prefixes are unverified until EOF. A paused read (``current``) leaves
+    ``validation`` partial; corruption or a checksum mismatch raises.
+    """
+    validation = validation if validation is not None else TranscriptValidation()
     manifest = verify_archive(path, full=False, manifest_sha256=manifest_sha256)
     record = next((r for r in manifest.records if r.history_id == history_id), None)
     if record is None:
@@ -797,8 +837,6 @@ def iter_archived_events(
     expected = next((member for member in manifest.members if member.name == name), None)
     if expected is None:
         raise ValueError(f"Archive has no transcript for {history_id}")
-    checksum = hashlib.sha256()
-    size = 0
     with zipfile.ZipFile(path) as archive:
         if (
             manifest_sha256
@@ -806,19 +844,29 @@ def iter_archived_events(
         ):
             raise ValueError("Archive manifest does not match published receipt")
         with archive.open(name) as handle:
-            reader = _HashingMemberReader(handle)
-            validation = TranscriptValidation()
-            yield from read_snapshot(reader, validation=validation)
-            if validation.state != "complete":
-                raise ValueError(validation.reason or "Archived native snapshot is incomplete")
-            checksum = reader.checksum
-            size = reader.size
-        if size != expected.size or checksum.hexdigest() != expected.sha256:
-            raise ValueError("Archived transcript checksum mismatch")
+            reader = _HashingMemberReader(handle, consume)
+            yield from read_snapshot(
+                reader, validation=validation, current=current, check_header=check_header
+            )
+    if validation.state != "complete":
+        return
+    if reader.size != expected.size or reader.checksum.hexdigest() != expected.sha256:
+        validation.state = "corrupt"
+        validation.reason = "Archived transcript checksum mismatch"
+        validation.descriptor = None
+        raise ValueError(validation.reason)
 
 
-def import_archive(root: Path, path: Path, *, select: bool = True) -> ArchiveReceipt:
-    """Register a verified ZIP for direct reads; never extract or start anything."""
+class ArchiveImport(NamedTuple):
+    receipt: ArchiveReceipt
+    recorded: bool
+
+
+def import_archive(root: Path, path: Path, *, select: bool = True) -> ArchiveImport:
+    """Register a verified ZIP for direct reads; never extract or start anything.
+
+    ``recorded`` is False when the same selection was already current (idempotent).
+    """
     path = path.expanduser().resolve()
     with lock_file(root / "history-archives/archive.lock"):
         manifest_hash = archive_manifest_digest(path)
@@ -833,8 +881,7 @@ def import_archive(root: Path, path: Path, *, select: bool = True) -> ArchiveRec
             manifest_sha256=manifest_hash,
             records=manifest.records,
         )
-        append_receipt(root, receipt)
-        return receipt
+        return ArchiveImport(receipt, append_receipt(root, receipt))
 
 
 def recover_archives(root: Path, destination: Path) -> tuple[str, ...]:

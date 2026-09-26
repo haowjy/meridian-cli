@@ -6,6 +6,7 @@ import hashlib
 import json
 import sqlite3
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 
@@ -13,20 +14,17 @@ from meridian.lib.ops.session_archive import archive_history
 from meridian.lib.state import spawn_store
 from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.history_index import HistoryIndex
-from meridian.lib.state.retention_archive import archive_locations, read_receipts, verify_archive
+from meridian.lib.state.retention_archive import (
+    archive_locations,
+    read_receipts,
+    selected_snapshot_receipts,
+    verify_archive,
+)
 from meridian.lib.state.retention_restore import restore_archive
 
 
 def _selected_archive_locations(index: HistoryIndex, history_id: str, *, destination=None):
-    digest = index.selected_archive_digest(history_id)
-    receipts = [
-        receipt
-        for receipt in reversed(read_receipts(index.root))
-        if any(
-            str(row.history_id) == history_id and row.portable_digest == digest
-            for row in receipt.records
-        )
-    ]
+    receipts = selected_snapshot_receipts(read_receipts(index.root), UUID(history_id))
     return archive_locations(receipts, destination=destination)
 
 

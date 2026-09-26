@@ -93,6 +93,13 @@ loose copy present. Only copies matching the selected portable digest are interc
 offline current snapshot never falls back to different older content. Published
 snapshots remain separate until reclaim intent or explicit import selects them. Corrupt authority refuses complete coverage; it is never an empty result.
 
+Snapshot reads use one resolver source kind, `snapshot`, selected in two cases only:
+a restored historical record reads its local aggregate snapshot, and an archive-only
+record this runtime did not reclaim itself (an import) streams the catalog-selected
+ZIP member in place. Both bind the header to the history UUID and verify the seal.
+A record this runtime reclaimed keeps reading its live binding, and a missing live
+native source stays missing. Corpus search covers live native bindings only.
+
 ## Retention and restore
 
 `retention_archive.py` owns inventory, ZIP bytes, independent verification and

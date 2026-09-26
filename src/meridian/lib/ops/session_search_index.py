@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 import time
 from collections import defaultdict
+from collections.abc import Iterable
 from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,15 +36,19 @@ from meridian.lib.state.native_search_index import (
     search_text,
 )
 from meridian.lib.state.session_fold import by_native_key
-from meridian.lib.state.session_store import list_all_session_records
+from meridian.lib.state.session_store import SessionRecord, list_all_session_records
 
 LAZY_SOURCE_BYTES = 64 * 1024 * 1024
 
 
-def native_bindings(runtime_root: Path) -> dict[NativeKey, tuple[str, ...]]:
+def native_bindings(
+    runtime_root: Path, records: Iterable[SessionRecord] | None = None
+) -> dict[NativeKey, tuple[str, ...]]:
     """Invert authoritative bindings, preserving newest-first chat aliases."""
     records = sorted(
-        list_all_session_records(runtime_root), key=lambda record: record.started_at, reverse=True
+        list_all_session_records(runtime_root) if records is None else records,
+        key=lambda record: record.started_at,
+        reverse=True,
     )
     return {
         key: tuple(record.chat_id for record in aliases)
@@ -77,6 +82,8 @@ class SearchProjection:
     index: NativeSearchIndex | None
     stored: dict[NativeKey, SourceRecord]
     cold: bool = False
+    # Historical chats read retained snapshots only by explicit ref; never indexed.
+    retained: tuple[str, ...] = ()
     sources: dict[NativeKey, NativeSource] = field(default_factory=dict[NativeKey, NativeSource])
     fresh: set[NativeKey] = field(default_factory=set[NativeKey])
     errors: dict[NativeKey, str] = field(default_factory=dict[NativeKey, str])
@@ -87,7 +94,9 @@ class SearchProjection:
 
     @classmethod
     def open(cls, runtime_root: Path, project_root: Path) -> SearchProjection:
-        bindings = native_bindings(runtime_root)
+        records = list_all_session_records(runtime_root)
+        bindings = native_bindings(runtime_root, records)
+        retained = tuple(r.chat_id for r in records if r.record_mode == "historical")
         path = native_search_index_path(runtime_root)
         cold = not path.exists()
         try:
@@ -108,7 +117,9 @@ class SearchProjection:
                 cold = True
         except NativeSearchUnavailable:
             index, stored, cold = None, {}, False
-        return cls(runtime_root, project_root, bindings, index, stored, cold=cold)
+        return cls(
+            runtime_root, project_root, bindings, index, stored, cold=cold, retained=retained
+        )
 
     def scope(self, chat_filter: frozenset[str] | None) -> dict[NativeKey, tuple[str, ...]]:
         if chat_filter is None:

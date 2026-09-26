@@ -8,6 +8,7 @@ from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, NamedTuple
+from uuid import UUID
 
 from meridian.lib.core.command_strings import format_command_for_display
 from meridian.lib.harness.native_witness import Witness, file_witness
@@ -26,7 +27,12 @@ from meridian.lib.ops.session_target import (
     TranscriptSource,
     resolve_transcript_source,
 )
-from meridian.lib.state.native_snapshot import TranscriptValidation, snapshot_binding
+from meridian.lib.state.native_snapshot import (
+    SnapshotHeader,
+    TranscriptValidation,
+    snapshot_binding,
+)
+from meridian.lib.state.retention_archive import iter_archived_events
 
 _PROLOGUE_PLACEHOLDER = "[prologue slot reserved: no extractable system prompt]"
 _HANDOFF_PLACEHOLDER = "[compaction handoff slot reserved: no extractable handoff]"
@@ -343,6 +349,42 @@ class NativeRead:
     witness: Witness | None = None
 
 
+def _source_binding(source: TranscriptSource) -> Callable[[SnapshotHeader], None]:
+    """Header binding: a live file names its native session; a retained one its history."""
+    if source.kind == "native_file":
+        return snapshot_binding(harness=source.harness, native_session_id=source.session_id)
+    if source.kind == "snapshot":
+        return snapshot_binding(history_id=source.history_id, harness=source.harness)
+    return snapshot_binding()
+
+
+def _source_events(
+    source: TranscriptSource, validation: TranscriptValidation, budget: TranscriptBudget | None
+) -> Generator[dict[str, object]]:
+    current = budget.current if budget else None
+    consume = budget.consume if budget else None
+    check_header = _source_binding(source)
+    if source.kind == "snapshot" and source.manifest_sha256 is not None:
+        if source.history_id is None:
+            raise ValueError("Archived snapshot source requires its history identity")
+        return iter_archived_events(
+            source.path,
+            UUID(source.history_id),
+            source.manifest_sha256,
+            validation=validation,
+            current=current,
+            consume=consume,
+            check_header=check_header,
+        )
+    return iter_transcript_events(
+        source.path,
+        validation=validation,
+        current=current,
+        consume=consume,
+        check_header=check_header,
+    )
+
+
 def read_native_source(
     source: TranscriptSource, *, budget: TranscriptBudget | None = None
 ) -> NativeRead:
@@ -350,6 +392,7 @@ def read_native_source(
 
     The iterator owns the read-only connection; callers must exhaust or close it.
     Validation, Pi view metadata and the before witness belong to these same bytes.
+    Retained snapshots stream through the same codec and render as captured.
     """
 
     def events() -> Generator[dict[str, object]]:
@@ -364,26 +407,17 @@ def read_native_source(
                 validation.state, validation.reason = "complete", None
                 return
             read.witness = file_witness(source.path)
-            raw = iter_transcript_events(
-                source.path,
-                validation=validation,
-                current=budget.current if budget else None,
-                consume=budget.consume if budget else None,
-                check_header=snapshot_binding(
-                    harness=source.harness if source.kind == "native_file" else None,
-                    native_session_id=source.session_id if source.kind == "native_file" else None,
-                ),
-            )
+            raw = _source_events(source, validation, budget)
             try:
-                if source.kind == "native_file" and source.harness == "pi":
-                    if is_native_snapshot(source.path):
-                        text = "".join(json.dumps(event) + "\n" for event in raw)
-                    else:
+                if source.harness == "pi":
+                    if source.kind == "native_file" and not is_native_snapshot(source.path):
                         data = source.path.read_bytes()
                         if budget:
                             budget.consume(len(data))
                         text = data.decode("utf-8")
                         validation.state, validation.reason = "complete", None
+                    else:
+                        text = "".join(json.dumps(event) + "\n" for event in raw)
                     if budget and not budget.current():
                         return
                     projection = project_pi_reopen_default(text)
