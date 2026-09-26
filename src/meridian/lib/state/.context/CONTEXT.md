@@ -80,10 +80,10 @@ bind through `session_bindings`; new marker fields default for old markers.
 
 The dev report is `python -m meridian.lib.ops.legacy_native_import RUNTIME_ROOT`.
 It deliberately bypasses runtime resolution and telemetry. OpenCode validation
-uses a temporary DB/WAL copy because SQLite read-only connections can mutate
-source WAL shared memory; native source bytes are never written. A changing
-DB/WAL fingerprint or a strict row-query failure defers the import without a
-marker. Native validation happens before taking the sessions lock; identity is
+uses the adapter's exact `mode=ro` reader on the live database, in place; like any
+SQLite reader it touches WAL shared-memory read marks, but native source bytes are
+never written. A `sqlite3.Error` raises rather than reading as absent, and defers
+the import without a marker. Native validation happens before taking the sessions lock; identity is
 rechecked inside it and all accepted update lines share one durable append.
 
 ### Conversation model selections

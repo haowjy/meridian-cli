@@ -21,6 +21,19 @@ to `main` skip auto-release because there is no associated PR to inspect.
 Put `release:skip` in the pushed head commit message to skip auto-release even
 when a release label is present.
 
+### Changes to on-disk state
+
+A release that changes on-disk state (state or session file fields, index schema,
+archive format, a one-time import or repair) must ship upgrade guidance, usually
+with a `release:minor` label:
+
+- a `### Upgrade notes` block under `CHANGELOG.md` `[Unreleased]`: what users must
+  do or will notice, one line each, linking the guide;
+- a section in [upgrading.md](upgrading.md) for that version: what changed and why,
+  steps before and after installing, one-time imports and repairs and their output,
+  data the harness or Meridian no longer keeps, and whether rollback works. Probe
+  the rollback against a real previous release on a copy before writing it.
+
 ## What CI does
 
 On push to `main`, `.github/workflows/release-on-merge.yml`:

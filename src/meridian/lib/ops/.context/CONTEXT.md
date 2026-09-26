@@ -29,9 +29,9 @@ not proof: a 0.6.7 chat whose only candidate had a different first message was
 the wrong session. So every automatic bind needs content proof (retained prompt,
 else report body), and primaries, whose sessions shared one root, are manual only.
 `retained_chat_facts` maps chats to spawns through spawn rows, `sessions.jsonl`
-`spawn_id` and archive receipts (reclaimed dirs), reading retained files from the
-ZIP member checked against the catalog's sha256. Old 0.6.7 ZIPs fail whole-archive
-portable-digest verification, so evidence reads do not depend on it.
+`spawn_id` and archive receipts (reclaimed dirs), reading a retained prompt or
+report from one ZIP member checked against the catalog receipt's per-file sha256
+(`read_archived_member`), not a whole-archive verification per chat.
 
 `session repair` shares those facts and the harness evidence helpers. Without
 `--native` it is read-only; with it, validation precedes one `bind()` under the
