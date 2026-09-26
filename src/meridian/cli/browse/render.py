@@ -99,6 +99,8 @@ def render_list(model: BrowseModel, width: int) -> StyleAndTextTuples:
                 f"{_cell(row.agent or '—', _AGENT_WIDTH)} "
                 f"{_cell(row.model or '—', _MODEL_WIDTH)} {row.work_label or '—'}"
             )
+        if row.native_status:
+            line += f" [{row.native_status}]"
         style = "class:selected" if selected else "class:row"
         clipped_line = _clip(line, width)
         fragments.append((style, clipped_line[:2]))

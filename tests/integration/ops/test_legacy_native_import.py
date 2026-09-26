@@ -209,6 +209,54 @@ def test_crash_before_marker_retries_without_duplicate_events(
     assert (root / legacy.MARKER).is_file()
 
 
+def test_late_session_id_is_imported_once_after_legacy_marker(
+    homes: tuple[Path, Path],
+) -> None:
+    home, root = homes
+    chat_id = session_store.start_session(
+        root,
+        chat_id="c88",
+        harness="pi",
+        harness_session_id="",
+        model="test",
+        kind="primary",
+    )
+    first = legacy.import_legacy_native_sessions(root)
+    assert first is not None and first.unbound == {"no_session_id": [chat_id]}
+
+    marker = json.loads((root / legacy.MARKER).read_text())
+    marker["timestamp"] = "2026-09-25T00:00:00Z"
+    (root / legacy.MARKER).write_text(json.dumps(marker))
+    session_id = "01a0d525-a4e8-7741-ad00-8cd251adfb11"
+    record = session_store.get_session_record(root, chat_id)
+    assert record is not None
+    with (root / "sessions.jsonl").open("a") as events:
+        events.write(
+            session_store.SessionUpdateEvent(
+                chat_id=chat_id,
+                harness_session_id=session_id,
+                session_instance_id=record.session_instance_id,
+            ).model_dump_json(exclude_none=True)
+            + "\n"
+        )
+    session_store.stop_session(root, chat_id)
+    store = home / ".meridian/meridian-pi/sessions"
+    store.mkdir(parents=True)
+    (store / f"2026-09-24T20-40-09-193Z_{session_id}.jsonl").write_text(
+        json.dumps({"type": "session", "id": session_id}) + "\n"
+    )
+
+    assert legacy.import_legacy_native_sessions(root) is None
+    record = session_store.get_session_record(root, chat_id)
+    assert record is not None
+    assert record.native_store == store.as_posix()
+    assert record.harness_session_id == session_id
+    after = (root / "sessions.jsonl").read_bytes()
+    assert legacy.import_legacy_native_sessions(root) is None
+    assert (root / "sessions.jsonl").read_bytes() == after
+    assert json.loads((root / legacy.MARKER).read_text())["late_retries"] == [chat_id]
+
+
 def _waiting_import(root: Path, started: object, finished: object) -> None:
     started.set()  # type: ignore[attr-defined]
     legacy.import_legacy_native_sessions(root)

@@ -13,6 +13,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.harness.native_witness import file_witness
 from meridian.lib.harness.transcript_preview import (
     TRANSCRIPT_PREVIEW_VERSION,
@@ -251,13 +252,10 @@ class SessionPreview:
             zipfile.BadZipFile,
             zlib.error,
         ) as exc:
+            if isinstance(exc, NativeSessionUnavailable):
+                return PreviewView((), "unavailable", source=exc.reason)
             fallback = self._cached(identity)
             old = fallback[2] if fallback else None
-            if old is not None:
-                state = (
-                    "offline"
-                    if old.archive_digest and isinstance(exc, FileNotFoundError)
-                    else "unavailable"
-                )
-                return old.view(state, cached=True)
-            return PreviewView((str(exc) or "Preview unavailable",), "unavailable")
+            if old is not None and old.archive_digest and isinstance(exc, FileNotFoundError):
+                return old.view("offline", cached=True)
+            return PreviewView((), "unavailable", source="preview unavailable")
