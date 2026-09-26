@@ -73,7 +73,7 @@ def _migrate_row(changes: HistoryChanges, spawns_dir: Path, spawn_id: str) -> bo
             return False
         stored = StoredSpawnState.model_validate(_translate(raw))
         changes.mark(HistorySource(kind="spawn", key=spawn_id))
-        atomic_write_text(path, stored.model_dump_json(indent=2) + "\n")
+        atomic_write_text(path, stored.model_dump_json(indent=2, exclude_unset=True) + "\n")
     return True
 
 

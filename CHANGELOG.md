@@ -36,7 +36,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Re-arm automatic history-index initialization after dogfood row migration; quarantined authority failures name the `state.json` path and dogfood failures point to `meridian doctor`.
-- Rewrite spawn rows from the PR-1 dogfood build (`entry_chat_id`/`exit_identity` fields) once, at startup repairs or `meridian doctor`; they no longer load through a read-time translator.
+- Rewrite spawn rows from the PR-1 dogfood build (`entry_chat_id`/`exit_identity` fields) once, at startup repairs or `meridian doctor`; preserve the old runner-readable shape for live runs, and do not load them through a read-time translator.
 - Dogfood row migration skips malformed rows instead of stopping; `meridian doctor` lists them as `dogfood_spawn_rows_failed` rather than crashing.
 - Keep harness-reported cost when unrelated output lines are malformed.
 - Preserve reports across malformed output; flag incomplete facts and truncated attempt text. Finalize streaming runs even when report extraction fails. Keep Pi cleanup diagnostics through shutdown.
