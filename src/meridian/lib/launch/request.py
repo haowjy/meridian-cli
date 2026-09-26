@@ -22,6 +22,17 @@ def _empty_agent_metadata() -> dict[str, str]:
     return {}
 
 
+def cross_harness_continue_error(
+    chat_ref: str | None, source_harness: str, requested_harness: str
+) -> str:
+    """Build the refusal shared by primary and spawned continuation surfaces."""
+    reference = chat_ref or "the source chat"
+    return (
+        f"Cannot continue chat {reference} from harness '{source_harness}' "
+        f"with requested harness '{requested_harness}'; start a new chat."
+    )
+
+
 def _empty_config_snapshot() -> dict[str, object]:
     return {}
 
