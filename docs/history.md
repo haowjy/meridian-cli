@@ -7,10 +7,13 @@ content. A bare JSONL file remains readable without the original harness.
 
 ## Index initialization and repair
 
-The first indexed operation builds a missing or older-schema index automatically,
-with a 15-second metadata budget and no progress bar. Workspace/global search shares
-one initialization budget across its roots. These cooperative deadlines cannot
-interrupt a blocked filesystem call. Search returns complete results rather than
+Each index schema has its own file, `history-index/history-v<N>.sqlite3`, with its
+own pending markers, locks and failure record. The first indexed operation builds a
+missing index automatically from the authoritative files, with a 15-second metadata
+budget and no progress bar. It never upgrades or removes another schema's file, so
+background runs started by an older Meridian keep working through an upgrade.
+Workspace/global search shares one initialization budget across its roots. These
+cooperative deadlines cannot interrupt a blocked filesystem call. Search returns complete results rather than
 stopping at a query-time scan budget; common words can fill the 100-hit cap with
 the newest sessions. Automatic initialization does not warm previews or move history
 into SQLite.
@@ -25,8 +28,8 @@ initializer holding a lock do not create persistent failures.
 `session index status` inspects the schema, failure state and pending work without
 initializing or catching up the index. A current schema does not prove complete
 coverage. Native search status also reports fresh, stale, unindexed and unavailable
-sources plus projection size. Newer unsupported schemas require an explicit decision to rebuild;
-they are never silently queried or automatically downgraded.
+sources plus projection size. A file whose schema does not match its name requires an
+explicit rebuild; it is never silently queried.
 
 ```sh
 meridian session index status
@@ -47,6 +50,16 @@ restore write access and run a normal history read or rebuild before deleting th
 index. Warm reads retry cleanup; read-only status does not.
 Use the coordinated command for online rebuild. An offline archive location does
 not erase locally retained archive metadata.
+
+### Rolling back to an older Meridian
+
+Meridian 0.6.7 and earlier use `history-index/history.sqlite3`. Newer builds leave
+that file alone, so it misses everything they recorded. Unreleased development
+builds before this layout converted it in place to schema 6, which 0.6.7 reports as
+incompatible. After
+rolling back, run the older `meridian session index rebuild --metadata-only`, or
+stop its processes and delete `history-index/history.sqlite3*`. Once no older build
+uses the runtime, those files can be deleted to reclaim space.
 
 ## Opt-in ZIP retention
 

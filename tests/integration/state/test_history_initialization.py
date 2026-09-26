@@ -142,7 +142,7 @@ def test_owned_timeout_is_sticky_but_cancellation_is_not(tmp_path: Path, monkeyp
     with pytest.raises(KeyboardInterrupt):
         index.spawns()
     assert not index.failure_path.exists()
-    assert not (index.directory / ".build.sqlite3").exists()
+    assert not index.stage.exists()
 
 
 def test_source_contention_is_not_a_sticky_failure(tmp_path: Path) -> None:
@@ -197,63 +197,38 @@ def test_status_and_counts_do_not_build_or_drain(tmp_path: Path, monkeypatch) ->
     assert changes.inspect() == before
 
 
-def test_schema_classification_is_read_only_and_upgrade_is_automatic(tmp_path: Path) -> None:
-    import sqlite3
-
-    index = HistoryIndex(tmp_path)
-    old_build = index.rebuild().build
-    with sqlite3.connect(index.path) as db:
-        db.execute("PRAGMA journal_mode=DELETE")
-        db.execute("UPDATE meta SET version=1")
-    original = index.path.read_bytes()
-    status = index.inspect()
-    assert status.baseline == "outdated"
-    assert status.upgrade == "reproject"
-    assert status.reason == "metadata rebuild required (reproject)"
-    assert index.path.read_bytes() == original
-    assert index.spawns() == ()
-    assert index.inspect().build != old_build
-    with sqlite3.connect(index.path) as db:
-        db.execute("UPDATE meta SET version=999")
-    assert index.inspect().baseline == "incompatible"
-    with pytest.raises(history_index.HistoryIndexIncomplete, match="incompatible"):
-        index.spawns()
-    assert not index.failure_path.exists()
-
-
-def test_old_record_projection_schema_rebuilds_and_newer_schema_is_not_hydrated(
-    tmp_path: Path,
+@pytest.mark.parametrize("foreign", [2, "next"])
+def test_foreign_schema_in_this_file_is_read_only_and_never_hydrated(
+    tmp_path: Path, foreign: int | str
 ) -> None:
+    """Only this schema writes its file: another version is a copy, not an upgrade."""
     import sqlite3
 
     from meridian.lib.state import spawn_store
 
-    key = spawn_store.start_spawn(
+    spawn_store.start_spawn(
         tmp_path, chat_id="c1", prompt="hello", model="test", agent="coder", harness="codex"
     )
-    spawn_store.finalize_spawn(tmp_path, key, status="succeeded", exit_code=0, origin="runner")
     index = HistoryIndex(tmp_path)
-    original_build = index.rebuild().build
+    index.rebuild()
+    version = history_index.SCHEMA_VERSION + 1 if foreign == "next" else foreign
     with sqlite3.connect(index.path) as db:
         db.execute("PRAGMA journal_mode=DELETE")
-        db.execute("UPDATE meta SET version=2")
-
-    status = index.inspect()
-    assert status.baseline == "outdated" and status.upgrade == "reproject"
-    assert [spawn.id for spawn in index.spawns()] == [key]
-    assert index.inspect().schema == history_index.SCHEMA_VERSION
-    assert index.inspect().build != original_build
-
-    with sqlite3.connect(index.path) as db:
-        db.execute("UPDATE meta SET version=?", (history_index.SCHEMA_VERSION + 1,))
+        db.execute("UPDATE meta SET version=?", (version,))
         db.execute("UPDATE records SET record_json = 'not-json'")
+    original = index.path.read_bytes()
     status = index.classify(deadline=time.monotonic() + 2)
-    assert status.baseline == "incompatible"
+    assert status.baseline == "incompatible" and status.schema == version
+    assert status.reason == f"Index schema {version} does not match {index.path.name}."
     with pytest.raises(
         history_index.HistoryIndexIncomplete,
         match=r"incompatible.*meridian session index rebuild --metadata-only",
     ):
         index.spawns()
+    assert index.path.read_bytes() == original
+    assert not index.failure_path.exists()
+    assert index.rebuild().complete
+    assert index.inspect().baseline == "current"
 
 
 def test_explicit_deadline_does_not_start_implicit_initialization(tmp_path: Path) -> None:
@@ -356,7 +331,7 @@ def test_published_build_needs_no_staging_unlink(tmp_path: Path, monkeypatch) ->
     original_unlink = Path.unlink
 
     def fail_cleanup(path, *args, **kwargs):
-        if path.name.startswith(".build.sqlite3") and index.path.exists():
+        if path.name.startswith(index.stage.name) and index.path.exists():
             raise PermissionError("post-publication staging cleanup failed")
         return original_unlink(path, *args, **kwargs)
 
@@ -370,7 +345,7 @@ def test_staging_cleanup_failure_does_not_replace_cancellation(tmp_path: Path, m
     original_unlink = Path.unlink
 
     def fail_cleanup(path, *args, **kwargs):
-        if path.name == ".build.sqlite3" and path.exists():
+        if path == index.stage and path.exists():
             raise PermissionError("pre-publication staging cleanup failed")
         return original_unlink(path, *args, **kwargs)
 

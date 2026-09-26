@@ -23,11 +23,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Archive capture requires an exact native transcript; legacy runner-history archive members stay inert.
 - Read Pi lifecycle telemetry from an atomic sidecar and drop history-based staleness checks.
 - Rename diagnostic Claude successor events to `claude_trampoline_successor`; exit hints show verified chat IDs without repeating native IDs.
+- Name the history index, its marker queue, locks and init latch by schema (`history-index/history-v6.sqlite3`). The first command builds it from authority and never upgrades 0.6.7's `history.sqlite3`, so 0.6.7 background runs still finalize and 0.6.7 commands keep working. Catch-up rereads active spawns and the session log that an older build's writers change without marking. After rolling back, rebuild the older index.
 
 ### Removed
 - Stop writing runner `history.jsonl` and `last-observed-event.json`; drop the drain loop's write-failure abort and the retry `meridian.attempt.completed` marker. Orphan evidence no longer carries `last_observed_event`.
 - Reject legacy runner-history files as transcripts; archive ZIP history members restore as inert bytes.
 - Remove search `--include-archives`; `session index rebuild` no longer warms previews.
+- Remove in-place history-index schema migration: each schema builds its own file.
 - Remove `_MERIDIAN_GUARDRAIL_OUTPUT_LOG`; guardrail scripts receive `_MERIDIAN_GUARDRAIL_REPORT` and `_MERIDIAN_GUARDRAIL_CHAT_ID` instead.
 
 ### Added

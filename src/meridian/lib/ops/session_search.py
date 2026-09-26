@@ -326,7 +326,7 @@ def _collect_scope(
     cold = cold or projection.cold
     if work_id := (payload.work_id or "").strip():
         metadata = HistoryIndex(scope.runtime_root)
-        if metadata.classify(deadline=cold_deadline).baseline in {"absent", "outdated"}:
+        if metadata.classify(deadline=cold_deadline).baseline == "absent":
             cold = True
             metadata.initialize(deadline=cold_deadline)
         scope = scope._replace(
