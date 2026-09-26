@@ -163,6 +163,10 @@ parent signals, or supply the parent report.
   DB schema and reads through the version dispatcher. Does not own dialect completeness.
 - `capture_qualify.py` — per-harness `CaptureObserver` (`observe` / `incomplete_reason`).
   New dialect = one observer + `observer_for` entry, not a patch to `NativeCapture`.
+- `native_witness.py` — freshness witnesses (`FileWitness`, `OpenCodeV1Witness`,
+  `OpenCodeV2Witness`) for native sources, independent of disposable projections.
+- `opencode_snapshot.py` — read-only OpenCode snapshots: session witnesses, raw
+  session events, and exact-turn reads over the version-dispatched DB connection.
 
 ## Subpackages
 
