@@ -113,8 +113,13 @@ meridian session log p123 --full --no-truncate     # full selected segment with 
 
 Primary-session metadata from `primary_meta.json` (`kind`, `activity`,
 `managed_backend`, `backend_pid`, `tui_pid`, `backend_port`,
-`harness_session_id`, `session_config_dir`) is available in
-`spawn show --verbose` and structured JSON output, not default moderate text.
+`session_config_dir`) is available in `spawn show --verbose` and structured
+JSON output, not default moderate text. JSON for `spawn show`, `status` and
+`wait` always carries the chat identity: `chat_id` (the entry chat),
+`continue_chat_id` (a finished run's verified exit chat, otherwise the entry
+chat) and `run_boundary` (`null` when absent). The native harness session ID is
+not in JSON; `spawn show --verbose` prints it for primaries. Resolve native
+keys from the chat.
 
 `spawn cancel-all` scopes cancellation to the calling spawn's subtree when invoked
 from inside a nested spawn (e.g., from an orchestrator agent). This prevents

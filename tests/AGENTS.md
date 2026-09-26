@@ -75,6 +75,15 @@ to make a fixture pass; fix the fixture.
 Add fidelity only for a real behavior under test. Do not pre-build alternate close,
 timeout, or reader-error scenarios without a contract they protect.
 
+Upgrade fixtures come from the real older build, not from state this build writes.
+`test_history_schema_namespace.py` seeds `history.sqlite3` with tables captured
+from 0.6.7. For a live upgrade probe, run the old build as `uvx --isolated --from
+meridian-cli==X meridian`; without `--isolated`, uvx reuses an installed tool of
+the same name and version, and "old" is the PR build. Confirm it is old before
+trusting a result: 0.6.7 writes `spawns/pN/history.jsonl` and rejects
+`--prune-runner-history`. Also run an old runner across the upgrade: a background
+0.6.7 spawn that is still running while the new build runs.
+
 ## CI Environment
 
 Tests that spawn the real CLI (e.g. `test_spawn_prompt_input.py`) need a stub
