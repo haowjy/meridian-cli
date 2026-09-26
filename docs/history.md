@@ -1,5 +1,8 @@
 # History storage and retention
 
+For the 0.7 upgrade, import behavior, old-chat repair, rollback limits, and
+runner-history cleanup steps, see [Upgrading to 0.7](upgrading.md).
+
 Meridian keeps readable JSONL transcripts and lifecycle metadata as files. A
 rebuildable SQLite index accelerates discovery; it is not the only copy of history.
 Copy a complete record bundle to preserve lifecycle facts as well as transcript
@@ -53,13 +56,14 @@ not erase locally retained archive metadata.
 
 ### Rolling back to an older Meridian
 
-Meridian 0.6.7 and earlier use `history-index/history.sqlite3`. Newer builds leave
-that file alone, so it misses everything they recorded. Unreleased development
-builds before this layout converted it in place to schema 6, which 0.6.7 reports as
-incompatible. After
-rolling back, run the older `meridian session index rebuild --metadata-only`, or
-stop its processes and delete `history-index/history.sqlite3*`. Once no older build
-uses the runtime, those files can be deleted to reclaim space.
+Meridian 0.6.7 and earlier use `history-index/history.sqlite3`; 0.7 builds a
+separate `history-v6.sqlite3` and leaves the old index alone. A 0.6.7 process
+cannot read 0.7 state rows such as `run_boundary` and `native_store`. Keep using
+0.7 to inspect new records. Deleting `history-index/history.sqlite3*` only
+applies if an earlier prerelease migrated the old index in place; it does not
+make 0.6.7 understand new state rows. Stop old processes before deleting an
+incompatible index. See [Upgrading to 0.7](upgrading.md) for a scratch rollback
+probe and its results.
 
 ## Opt-in ZIP retention
 

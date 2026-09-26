@@ -4,6 +4,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Upgrade notes
+- Chats keep one immutable native session; Meridian reads transcripts from the harness.
+- Search verifies native transcript matches and reports coverage.
+- New runs no longer write `history.jsonl`; prune old runner copies explicitly.
+- Before reinstalling, finish or cancel background spawns. Install, run the first command to import chats, then run `meridian doctor`, check `[unbound]` chats, and prune only when ready.
+- See [Upgrading to 0.7](docs/upgrading.md) for repair, cleanup, and rollback steps.
+
 ### Changed
 - Expose structured chat and run-boundary fields in spawn show/status JSON.
 - Report archive dry-run selections after pending native capture.
@@ -23,7 +30,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Archive capture requires an exact native transcript; legacy runner-history archive members stay inert.
 - Read Pi lifecycle telemetry from an atomic sidecar and drop history-based staleness checks.
 - Rename diagnostic Claude successor events to `claude_trampoline_successor`; exit hints show verified chat IDs without repeating native IDs.
-- Name the history index, its marker queue, locks and init latch by schema (`history-index/history-v6.sqlite3`). The first command builds it from authority and never upgrades 0.6.7's `history.sqlite3`, so 0.6.7 background runs still finalize and 0.6.7 commands keep working. Catch-up rereads active spawns and the session log that an older build's writers change without marking. After rolling back, rebuild the older index.
+- Name the history index, its marker queue, locks and init latch by schema (`history-index/history-v6.sqlite3`). The first command builds it from authority and never upgrades 0.6.7's `history.sqlite3`, so already-running 0.6.7 background runs can still finalize. 0.6.7 cannot read new rows containing `run_boundary` or `native_store`; keep using 0.7 to inspect them. Catch-up rereads active spawns and the session log that an older build's writers change without marking.
 
 ### Removed
 - Stop writing runner `history.jsonl` and `last-observed-event.json`; drop the drain loop's write-failure abort and the retry `meridian.attempt.completed` marker. Orphan evidence no longer carries `last_observed_event`.
@@ -37,6 +44,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Runner-history prune records per-spawn failures and keeps going, re-validates the native transcript at apply time, and lists quarantined spawns with a `meridian doctor` hint; archive refusals and dogfood quarantine errors name it too.
 - Import legacy chat native keys once from exact, header-validated stores; keep unresolved chats listed in a durable report. Read-only dev report previews bindings.
 - Include Meridian's unscoped interactive Pi sessions root in exact legacy binding candidates.
+- Recover provable old unbound Pi chats during `meridian doctor` and primary-launch repairs with binding source `legacy_pi_recovery`; report bound and unbound counts.
+- Add read-only `meridian session repair cN` candidate inspection with native path, session ID, header cwd/time, first-message excerpt, and cwd/time/prompt/other-binding evidence. Bind with `--native PATH`; cwd or time-window mismatches require `--force`, while an existing chat binding, invalid session, or session bound elsewhere always refuses. User repairs use source `user_repair`.
 - Validate legacy OpenCode keys through the same in-place exact reader used by live reads.
 - Runs retain immutable entry chats; verified Pi exits resolve to their own chats. Missing or uncertain exits stay explicit; session logs label entry-based views.
 - Managed Pi launches load a bounded, atomic v2 session-boundary observer without writing native journals.
@@ -71,7 +80,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Keep malformed native Pi entry types visibly incomplete in preview normalization.
 - Join streaming teardown before reading native exit boundaries; a Pi quit published after turn completion now resolves its exit chat.
 - Chats bind one immutable `(harness, native_store, id)`; assigned keys bind before exec, and owned observations can confirm but never repoint them.
-- Rebuild old history-index projections for schema 5's serialized record shapes; refuse newer schemas without hydration.
 - Claude, Codex, OpenCode, and Pi continue/fork use recorded native stores and exact targets. Tracked operations refuse incomplete, missing, ambiguous, or contradictory sources instead of discovering replacements.
 - Validate Claude first-line session IDs and Codex session-meta IDs before exact reads or source preparation; malformed and torn journals fail closed.
 - Fail contradictory initial owned identities and detected post-exit native contradictions as `entry_mismatch`, retaining expected/observed evidence. Unavailable sources retain separate typed refusal codes.

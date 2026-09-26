@@ -128,6 +128,7 @@ graph TB
 ## Docs
 
 - [Getting Started](docs/getting-started.md) — prerequisites, harness setup, tool integration
+- [Upgrading to 0.7](docs/upgrading.md) — upgrade steps, chat repair, rollback limits
 - [Commands](docs/commands.md) — full CLI reference
 - [Configuration](docs/configuration.md) — config keys, state layout, environment variables
 - [History](docs/history.md) — indexed discovery, ZIP retention, transfer and restore

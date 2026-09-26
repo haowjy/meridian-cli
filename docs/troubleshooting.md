@@ -1,5 +1,8 @@
 # Troubleshooting
 
+For 0.7 upgrade and unbound-chat repair steps, see
+[Upgrading to 0.7](upgrading.md).
+
 ## Spawns waste tokens on cache misses
 
 If long-running spawns feel expensive or slow to resume, the harness prompt cache may be going cold while Meridian waits.

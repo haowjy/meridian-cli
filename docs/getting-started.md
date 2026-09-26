@@ -138,6 +138,7 @@ Existing roots are projected to harness launches automatically — `--add-dir` f
 
 ## Next Steps
 
+- [upgrading.md](upgrading.md) — upgrade to 0.7, repair old chats, and understand rollback limits
 - [commands.md](commands.md) — full CLI reference
 - [configuration.md](configuration.md) — `mars.toml` vs `meridian.toml`, config keys, model routing, environment variables
 - [agent-profiles.md](agent-profiles.md) — agent profile format, `model-policies`, `no-fallback`, and `mode`
