@@ -23,8 +23,8 @@ Launch projection resolves these stable bundle paths for each managed launch.
 ## Verify (every implementation pass)
 
 ```bash
-npm run verify:extensions          # build + vitest + bundle smoke
-npm run verify:extensions:loop     # repeat on interval (local)
+pnpm run verify:extensions          # build + vitest + bundle smoke
+pnpm run verify:extensions:loop     # repeat on interval (local)
 ```
 
 The boundary bundle smoke runs the built extension in an isolated Node process,

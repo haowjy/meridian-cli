@@ -9,15 +9,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Search verifies native transcript matches and reports coverage.
 - New runs no longer write `history.jsonl`; prune old runner copies explicitly.
 - Before reinstalling, finish or cancel background spawns. Install, run the first command to import chats, then run `meridian doctor`, check `[unbound]` chats, and prune only when ready.
-- No downgrade: once 0.7 runs a spawn in a project, 0.6.7 cannot list or read that project's spawns. Already-running 0.6.7 work still finishes.
-- Old 0.6.7 Pi chats never recorded a session ID. `meridian doctor` binds the provable ones (exact first-prompt match); `meridian session repair cN` lists candidates for the rest and `--native PATH` binds one.
+- No downgrade: once 0.7 runs a spawn in a project, 0.6.7 cannot list or read that project's spawns. 0.6.7 runs that survive the reinstall still finalize.
+- Old 0.6.7 Pi chats never recorded a session ID. `meridian doctor` binds the provable ones (exact prompt or report match); `meridian session repair cN` lists candidates for the rest, and `--native PATH` binds one.
 - Meridian keeps no transcript copy now. Harnesses may delete theirs (Claude: `cleanupPeriodDays`, default 30). Raise that, or archive regularly: archive captures the native transcript.
 - See [Upgrading to 0.7](docs/upgrading.md) for repair, cleanup, and rollback steps.
 
 ### Changed
 - Expose structured chat and run-boundary fields in spawn show/status JSON.
 - Report archive dry-run selections after pending native capture.
-- Validate the completed legacy native-import marker before late binding; malformed markers are left untouched.
 - Refuse session forks for harnesses that cannot create a distinct native session; extract successful OpenCode 1.x reports from the bound native session.
 - Keep unbound or unavailable native chats visible in browse without previews; bind late legacy native-session IDs on `meridian doctor` or the next primary launch.
 - Session logs read native chats: raw IDs resolve directly, and old `pN` refs show the whole chat with a view label.
@@ -33,7 +32,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Archive capture requires an exact native transcript; legacy runner-history archive members stay inert.
 - Read Pi lifecycle telemetry from an atomic sidecar and drop history-based staleness checks.
 - Rename diagnostic Claude successor events to `claude_trampoline_successor`; exit hints show verified chat IDs without repeating native IDs.
-- Name the history index, its marker queue, locks and init latch by schema (`history-index/history-v6.sqlite3`). The first command builds it from authority and never upgrades 0.6.7's `history.sqlite3`, so already-running 0.6.7 background runs can still finalize. 0.6.7 cannot read new rows containing `run_boundary` or `native_store`; keep using 0.7 to inspect them. Catch-up rereads active spawns and the session log that an older build's writers change without marking.
+- History index named by schema (`history-index/history-v6.sqlite3`); built from authority on first use; 0.6.7's `history-index/history.sqlite3` never touched.
 
 ### Removed
 - `session repair` no longer writes a bare observed session ID or accepts raw harness IDs; it binds complete native keys only.
@@ -45,10 +44,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - Recover old 0.6.7 Pi chats: `meridian doctor` and primary-launch repairs run a one-shot pass that binds a spawned Pi chat only when its own spawn session dir holds exactly one valid Pi session with a recorded cwd, an in-window start, an unclaimed ID, and a first user message equal to the retained prompt (else a final reply equal to the report). Primaries are never bound automatically. Doctor prints `repaired: legacy_pi_sessions` and a `legacy_pi_sessions:` summary.
-- `session repair cN` lists candidate native files with evidence (path, session ID, cwd, start, first user message, cwd/time/prompt/bound-elsewhere matches) and the exact bind command; `--native PATH` binds after validation (source `user_repair`) for any harness. Always refuses bound chats, invalid files and sessions bound elsewhere; needs `--force` for a cwd mismatch or a start outside the time window.
+- `session repair cN` lists candidate native files with evidence (path, session ID, cwd, start, first user message, cwd/time/prompt/bound-elsewhere matches) and the exact bind command; `--native PATH` binds after validation (source `user_repair`) for Claude, Codex, OpenCode and Pi. Always refuses bound chats, invalid files and sessions bound elsewhere; needs `--force` for a cwd mismatch or a start outside the time window.
 - `session archive --prune-runner-history [--apply] [--after-days N]` drops redundant runner `history.jsonl` for terminal spawns older than N days (default 14) whose exact native transcript resolves; dry-run by default, never automatic.
 - Runner-history prune records per-spawn failures and keeps going, re-validates the native transcript at apply time, and lists quarantined spawns with a `meridian doctor` hint; archive refusals and dogfood quarantine errors name it too.
-- Import legacy chat native keys once from exact, header-validated stores; keep unresolved chats listed in a durable report. Read-only dev report previews bindings.
+- Import legacy chat native keys once from exact, header-validated stores; keep unresolved chats listed in a durable report.
 - Include Meridian's unscoped interactive Pi sessions root in exact legacy binding candidates.
 - Validate legacy OpenCode keys through the same in-place exact reader used by live reads.
 - Runs retain immutable entry chats; verified Pi exits resolve to their own chats. Missing or uncertain exits stay explicit; session logs label entry-based views.
@@ -57,12 +56,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Deliver composed starting prompts as first user turns in interactive Claude, Pi, and OpenCode sessions; guard oversized CLI prompt arguments.
 - `session log`/`export` read archived native snapshots again after `session import` (history UUID, streamed from the ZIP) and `session restore` (restored `cN`/`pN`), validating seal and history binding; live chats never fall back to snapshots. Re-importing reports `Already imported`.
-- `session import`/`restore` accept archives written by 0.6.7 and earlier builds again: the portable record digest is verified over the record JSON as stored, not re-serialized through current models, so later fields such as `run_boundary` no longer cause "Portable record digest mismatch". Restore keeps the archived `record.json` bytes as provenance.
+- `session import`/`restore` accept archives written by 0.6.7 and earlier.
 - Pi session reads support v3 `context_edit` and `usage` journal entries.
 - Name the exact chat in `pN` session-log views, report search coverage in text output, and reject non-native `session log --file` inputs.
 - Capture exact native transcripts during archive apply so terminal headless spawns can be archived without runner-history members; dry-runs distinguish pending capture from capture errors.
 - Re-arm automatic history-index initialization after dogfood row migration; quarantined authority failures name the `state.json` path and dogfood failures point to `meridian doctor`.
-- Rewrite spawn rows from the PR-1 dogfood build (`entry_chat_id`/`exit_identity` fields) once, at startup repairs or `meridian doctor`; preserve the old runner-readable shape for live runs, and do not load them through a read-time translator.
 - Dogfood row migration skips malformed rows instead of stopping; `meridian doctor` lists them as `dogfood_spawn_rows_failed` rather than crashing.
 - Keep harness-reported cost when unrelated output lines are malformed.
 - Preserve reports across malformed output; flag incomplete facts and truncated attempt text. Finalize streaming runs even when report extraction fails. Keep Pi cleanup diagnostics through shutdown.
@@ -74,7 +72,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Refuse non-canonical recorded OpenCode/Pi stores before exec.
 - Include complete native keys in rejected-binding diagnostics.
 - Report native identity refusals with consistent structured expected/observed keys.
-- Exercise Pi CLI exit hints and continue/fork dry-runs against verified and unresolved exits.
 - Require tracked continue/fork references to include the full recorded native key.
 - Report native-binding conflicts on rejected writes, not during historical replay.
 - Batch legacy binding writes; damaged source state defers import without disabling runtime commands.
@@ -98,9 +95,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Record the effective OpenCode database, including `OPENCODE_DB`; never infer its kind from a basename.
 - Carry one recorded source store through references, continuation, forks, and model reads. Missing tracked stores never fall back to Claude config hints or ambient namespaces.
 - Accept IDs only from owned event envelopes, never assistant prose or nested tool/assistant content.
-- Remove obsolete discovery metadata and source carriers; document validation order and Pi's fail-closed stale-context error-prefix dependency.
-- Keep continuation and missing-source fixtures faithful to native keys; model terminal teardown as a join, not another cancellation.
-- Build locked Pi extension bundles before full preflight tests and packaging; missing pnpm fails loudly.
 
 ## [0.6.7] - 2026-09-25
 

@@ -6,9 +6,13 @@ Each chat now stays bound to exactly one native Claude, Codex, OpenCode or Pi
 session. Cursor chats are not bound. Logs, search, and archives use that harness's transcript instead
 of a second Meridian copy. Search verifies matches against the transcript and
 reports how many sources it searched. Meridian no longer writes `history.jsonl`;
-those files accounted for 27 GB of 29 GB in one author's runtime.
+those files accounted for 27 GB of the 29 GB in the author's
+`~/.meridian/projects`.
 
 ## Before you upgrade
+
+Upgrading is one-way. Once 0.7 runs a spawn in a project, 0.6.7 can no longer
+list or read that project's spawns (see [Rolling back](#rolling-back-to-067)).
 
 Check for work still running:
 
@@ -35,8 +39,8 @@ uv tool install --force . --no-cache --reinstall
 
 ## The first run
 
-The first command imports existing chats once. Meridian writes the import report
-under the runtime and prints a line like this to stderr:
+The first command in each project imports its existing chats once. Meridian
+writes the import report under the runtime and prints a line like this to stderr:
 
 ```text
 Imported native sessions for N of M existing chats; K left unbound (details: …)
@@ -45,9 +49,11 @@ Imported native sessions for N of M existing chats; K left unbound (details: …
 Only chats with exactly one provable native session are bound. The rest stay
 `[unbound]`; Meridian will not guess. On first indexed use, Meridian also builds
 the schema-specific `history-index/history-v6.sqlite3` from authoritative files.
-On large runtimes this takes about 1–5 seconds. The 0.6.7 index,
-`history-index/history.sqlite3`, is left alone. A 0.6.7 process already running
-can keep using it and finish its work.
+It takes a second or two, up to about 5 s on a 5.5 GB runtime. The 0.6.7 index,
+`history-index/history.sqlite3`, is left alone, so a 0.6.7 process that survived
+the reinstall can still finish. A spawn started by a still-running 0.6.7 process
+after 0.7 built `history-v6.sqlite3` may not appear in `spawn list` or
+`session browse` until you run `meridian session index rebuild` once.
 
 ## After upgrading
 
@@ -58,33 +64,39 @@ meridian doctor
 ```
 
 Doctor catches chats that an older process was still writing during the
-upgrade. Doctor and primary-launch background repairs also run a one-shot
-recovery pass over old unbound Pi chats and bind only matches they can prove.
-A spawned Pi chat is bound only when its own
-spawn session directory holds exactly one matching session and that session's
-first message equals the spawn's recorded prompt (or its last reply equals the
-report). Primaries shared one session directory in 0.6.7, so they are never
-bound automatically. When doctor binds any, it prints a line like:
+upgrade. `doctor` also binds old Pi chats once, when it can prove a match. (The
+next interactive `meridian` launch does the same in the background.) A spawned
+Pi chat is bound only when its spawn's session directory holds exactly one
+matching session, with a matching cwd and a start within two minutes of the chat
+or spawn run, and its first message equals the spawn's prompt or, if no prompt
+was retained, its last reply equals the report. Primaries shared one session
+directory in 0.6.7, so they are never bound automatically. When doctor binds
+any, it prints a line like:
 
 ```text
 repaired: legacy_pi_sessions
-legacy_pi_sessions: bound 63 old Pi chat(s) to their native sessions; 513 left unbound; inspect one with meridian session repair cN (e.g. c668)
+legacy_pi_sessions: bound 63 old Pi chat(s) to their native sessions; 513 left unbound; inspect one with `meridian session repair cN` (e.g. c668)
 ```
 
 On copies of the author's runtimes, this bound 155 of 770 old Pi chats. Most
 of the rest had no recorded link to a spawn, or were primaries. The pass runs
 once per chat; a second `doctor` reports nothing new.
 
-Check for chats still unbound:
+Find chats that are still unbound. Primary chats show `unbound` in the `NATIVE`
+column of:
 
 ```sh
-meridian session browse
+meridian session browse --plain --limit 1000
 ```
 
-`[unbound]` means Meridian cannot prove which native conversation belongs to
-that chat. If you know the native transcript path, it may still be readable
-directly with `meridian session log --file PATH`; an unbound chat is never
-resumable or forkable.
+Spawned chats do not appear there. The import report named in the first-run line
+(`details: …`) lists every chat the import left unbound, and `doctor`'s
+`legacy_pi_sessions:` line names one to start with.
+
+Unbound means Meridian cannot prove which native conversation belongs to that
+chat. If you know the native transcript path, you may still be able to read it
+with `meridian session log --file PATH`. An unbound chat can never be resumed or
+forked.
 
 Inspect a chat and its candidate native sessions:
 
@@ -104,10 +116,11 @@ Bind only after checking the evidence:
 meridian session repair c123 --native /path/to/native-session
 ```
 
-This binds with source `user_repair`. It works for any harness. Meridian refuses
-if the chat is already bound, the file is not a valid native session for that
-harness, or another chat already owns the native session. A cwd mismatch or a
-session outside the time window requires `--force`:
+This binds with source `user_repair`. It supports native sessions from Claude,
+Codex, OpenCode, and Pi. Meridian refuses if the chat is already bound, the file
+is not a valid native session for that harness, another chat already owns the
+native session, or the chat already records a different session ID. A cwd
+mismatch or a session outside the time window requires `--force`:
 
 ```sh
 meridian session repair c123 --native /path/to/native-session --force
@@ -181,7 +194,8 @@ not touched.
 ## Behavior changes you'll notice
 
 - `meridian session log` reads the native transcript. A `pN` view names its
-  chat; for example: `p3 → c3 (entry chat; exit identity unresolved)`.
+  chat; for example: `p3 → c3 (entry chat; run predates exit tracking)` for a
+  0.6.7 run.
 - Session-search text output includes coverage. A complete run can say
   `Searched 1 sources (complete).`; incomplete sources are called out.
 - `--fork` on a harness that cannot create a new native session now refuses.
@@ -207,18 +221,14 @@ not touched.
 
 - Claude `/clear` can change sessions without a verified exit; see
   [#533](https://github.com/haowjy/meridian-cli/issues/533).
-- Exits on non-Pi harnesses remain `unresolved`; `pN` views use the entry chat.
-- Codex `archived_sessions/` rollouts are not read yet; see
+- Codex rollouts that Codex moved to `archived_sessions/` are not read yet, so
+  those chats stay unbound; see
   [#528](https://github.com/haowjy/meridian-cli/issues/528).
-- If the harness has deleted a chat's native file, the chat stays unbound.
-- Archives made by 0.6.7 import and restore, but their runner copy isn't read;
-  see [Archives made before 0.7](#archives-made-before-07).
-- Old Pi chats from 0.6.7 that automatic recovery can't prove stay unbound
-  until you repair them with `meridian session repair cN`. That covers every
-  Pi primary, and any spawn whose starting prompt and report were both
-  cleaned up.
-- Warm search still includes about 0.8 seconds of CLI startup; see
-  [#527](https://github.com/haowjy/meridian-cli/issues/527).
+- If the harness had already deleted an old chat's native file, the chat stays
+  unbound and Meridian cannot display it. Its 0.6.7 runner copy,
+  `spawns/pN/history.jsonl` under the project runtime, stays on disk (the prune
+  skips it) until `meridian doctor --prune` removes the spawn folder. Read it
+  with `jq` if you need it.
 
 ## Rolling back to 0.6.7
 
@@ -229,14 +239,10 @@ fail too. A 0.6.7 metadata rebuild stops at the first new row. The native
 harness transcripts and spawn reports stay on disk, but only 0.7 can show them
 through Meridian.
 
-What does keep working: a 0.6.7 process that was already running when you
-upgraded can finish its work. 0.7 builds its own `history-v6.sqlite3` and never
-modifies 0.6.7's `history-index/history.sqlite3`.
-
-If a pre-release build of this change migrated `history-index/history.sqlite3`
-in place, 0.6.7 reports that index as incompatible. With old processes stopped,
-delete `history-index/history.sqlite3*`. That fixes only the index; it does not
-make 0.6.7 understand rows 0.7 wrote.
+Only if you ran a 0.7 pre-release build: it may have migrated
+`history-index/history.sqlite3` in place, making that index incompatible with
+0.6.7. With old processes stopped, delete `history-index/history.sqlite3*`.
+That fixes only the index; it does not make 0.6.7 understand rows 0.7 wrote.
 
 See also [History storage](history.md), [Commands](commands.md), and
 [Troubleshooting](troubleshooting.md).

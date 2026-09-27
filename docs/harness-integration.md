@@ -659,7 +659,9 @@ Pi runtime.
 Meridian does not persist harness events. The drain loop and primary attach run
 inline hooks (the attempt-facts fold, Pi lifecycle sink) on each live event, then
 fan out to subscribers. Transcripts come from the harness's native store. Spawn
-directories from older builds may still hold a `history.jsonl`; nothing reads it.
+directories from older builds may still hold a `history.jsonl`; nothing reads it
+as a transcript, and `meridian session archive --prune-runner-history --apply`
+removes eligible files.
 
 ### 3.2 Native Session File Resolution
 
@@ -834,7 +836,7 @@ All must pass. The pre-push hook enforces this automatically.
 | Runtime resolution | Done | Resolves `pi` from `MERIDIAN_PI_BINARY` / `PATH`; no bundled fallback |
 | Compatibility probe | Done | `pi --version` + `pi --help` surface check; fail-fast with install/update guidance |
 | Subprocess projection | Done | `pi --mode rpc ...`, inline system prompt, isolation flags |
-| Primary native TUI launch | Done | `pi [--model ...] [--session ...]`, no `--mode`, no extensions |
+| Primary native TUI launch | Done | `pi [--model ...] [--session ...]`, no `--mode`; loads Meridian's managed extensions, including session-boundary |
 | PiConnection (JSONL drain) | Done | Streaming runner drain loop, session ID capture, stderr logging |
 | PiExtractor | Done | Session ID, usage, report from live attempt facts |
 | Event semantics | Done | `agent_end` terminal, activity transitions, signal clearing |

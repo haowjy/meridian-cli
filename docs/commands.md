@@ -174,10 +174,8 @@ chat's spawn session dir; the shared root for primaries) and Claude (the recorde
 project store); for Codex and OpenCode pass `--native`. An OpenCode database holds
 many sessions, so it binds only a chat that already records its session ID.
 
-Runner-history pruning is never automatic. Only terminal spawns whose exact native
-transcript sources resolve qualify; skipped spawns report their reasons. It deletes
-only retired runner-stream files, not native transcripts or session state. See
-[History storage and retention](history.md) for Claude transcript-retention caveats.
+Runner-history pruning is explicit, never automatic; see
+[Prune redundant runner streams](history.md#prune-redundant-runner-streams).
 
 ## Work Items
 

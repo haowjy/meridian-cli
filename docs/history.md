@@ -3,10 +3,11 @@
 For the 0.7 upgrade, import behavior, old-chat repair, rollback limits, and
 runner-history cleanup steps, see [Upgrading to 0.7](upgrading.md).
 
-Meridian keeps readable JSONL transcripts and lifecycle metadata as files. A
-rebuildable SQLite index accelerates discovery; it is not the only copy of history.
-Copy a complete record bundle to preserve lifecycle facts as well as transcript
-content. A bare JSONL file remains readable without the original harness.
+Each chat's conversation lives in its harness's native session file; Meridian
+binds the chat to that file and keeps lifecycle metadata (spawn records, reports,
+bindings) as its own files. A rebuildable SQLite index accelerates discovery and
+search, but the files remain authoritative. Archive ZIPs capture the exact native
+transcript alongside lifecycle facts.
 
 ## Index initialization and repair
 
@@ -14,12 +15,10 @@ Each index schema has its own file, `history-index/history-v<N>.sqlite3`, with i
 own pending markers, locks and failure record. The first indexed operation builds a
 missing index automatically from the authoritative files, with a 15-second metadata
 budget and no progress bar. It never upgrades or removes another schema's file, so
-background runs started by an older Meridian keep working through an upgrade.
+an older background process that survives the reinstall can keep using its index.
 Workspace/global search shares one initialization budget across its roots. These
-cooperative deadlines cannot interrupt a blocked filesystem call. Search returns complete results rather than
-stopping at a query-time scan budget; common words can fill the 100-hit cap with
-the newest sessions. Automatic initialization does not warm previews or move history
-into SQLite.
+cooperative deadlines cannot interrupt a blocked filesystem call. Automatic
+initialization does not warm previews or move history into SQLite.
 
 A genuine initialization failure is recorded outside the replaceable index directory.
 Later automatic requests report the failure instead of repeatedly starting over.
@@ -56,14 +55,10 @@ not erase locally retained archive metadata.
 
 ### Rolling back to an older Meridian
 
-Meridian 0.6.7 and earlier use `history-index/history.sqlite3`; 0.7 builds a
-separate `history-v6.sqlite3` and leaves the old index alone. A 0.6.7 process
-cannot read 0.7 state rows such as `run_boundary` and `native_store`. Keep using
-0.7 to inspect new records. Deleting `history-index/history.sqlite3*` only
-applies if an earlier prerelease migrated the old index in place; it does not
-make 0.6.7 understand new state rows. Stop old processes before deleting an
-incompatible index. See [Upgrading to 0.7](upgrading.md) for a scratch rollback
-probe and its results.
+Downgrading is not supported. 0.7 builds `history-index/history-v6.sqlite3` and
+never modifies 0.6.7's `history-index/history.sqlite3`, so a 0.6.7 process
+that survives the reinstall can finish. After 0.7 writes new spawn rows, 0.6.7
+cannot read them. See [Rolling back to 0.6.7](upgrading.md#rolling-back-to-067).
 
 ## Opt-in ZIP retention
 
@@ -99,9 +94,9 @@ last activity; explicit references select records without the age threshold but
 cannot override activity/dependency protections. Each pass is bounded to 256
 records or approximately 1 GiB (one oversized record may occupy its own ZIP).
 These bounds are configurable. Repeat eligible passes to process a larger backlog.
-Dry runs do not copy native harness transcripts: they list records that apply
-can capture separately. Apply captures exact, inactive native sources into a
-verified snapshot before final selection.
+Dry runs copy nothing; they list records whose native transcripts apply would
+capture. Apply copies each exact, inactive native source into a verified snapshot
+before final selection.
 
 ### Prune redundant runner streams
 
@@ -115,10 +110,13 @@ meridian session archive --prune-runner-history [--apply] [--after-days N]
 
 The age threshold defaults to 14 days. Only terminal spawns with resolvable exact
 native transcript sources qualify; skipped rows report their reasons. The command
-deletes only retired runner-stream files, never native transcripts, session
-authority, reports, or lifecycle/control state. It is never run automatically.
-Claude's `cleanupPeriodDays` can delete native transcripts independently: after
-pruning, a Claude chat whose native transcript Claude has deleted will be `missing`.
+deletes only retired runner streams (`history.jsonl` and
+`last-observed-event.json`, including attempt copies), never native transcripts,
+session authority, reports, or lifecycle/control state. It is never run
+automatically. Claude deletes its own transcripts older than `cleanupPeriodDays`
+(default 30) whether or not you prune; such a chat then reads as
+`native_transcript_missing`. To keep them, raise that setting or archive them
+(see [Keep transcripts you care about](upgrading.md#keep-transcripts-you-care-about)).
 
 Every ZIP is independently verified against both source selection and member
 bytes before originals can be removed. Changed sources retain their loose copy.
@@ -140,7 +138,6 @@ meridian session restore HISTORY_UUID --archive /mnt/history/meridian/meridian-h
 The browser always lists archived metadata and can preview a selected ZIP row.
 Its `/` content search excludes archived rows unless started with
 `--include-archives`; the flag includes archived rows, not ZIP content.
-Corpus `session search` includes all bound chats by default and has no such flag.
 
 Import explicitly selects a verified ZIP snapshot for direct reads without extracting it.
 Rebuild and automatic recovery discover orphan ZIPs as snapshot-only metadata;
@@ -156,9 +153,13 @@ conflicting changed content or session metadata is rejected rather than overwrit
 Unchanged restored records can be archived again without changing portable snapshot
 identity. Synthetic local session metadata is not promoted into portable facts.
 
-Corpus content search includes bound archived chats by default. There is no
-ZIP-content search. Search coverage warnings and unavailable sources are reported
-alongside results; they do not turn confirmed matches into false negatives.
+Search returns complete results rather than stopping at a query-time scan budget;
+common words can fill the 100-hit cap with the newest sessions. Corpus
+`session search` includes bound archived chats whose native file is still on
+disk. Historical ZIP snapshots are left out of corpus search and reported as a
+warning; search one by reference (`meridian session search "phrase" HISTORY_UUID`).
+Coverage warnings and unavailable sources are reported alongside results; they
+never turn confirmed matches into false negatives.
 The existing `spawn archive` visibility flag is separate from ZIP retention.
 
 ## Browser previews
