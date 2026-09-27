@@ -361,8 +361,8 @@ def project_pi_spec_to_cli_args(spec, *, base_command) -> list[str]:
   Log collisions at debug level so they're visible during integration testing.
 - **Projection split**: RPC and native-primary projections are separate files.
   `project_pi_rpc.py` owns spawned RPC (`--mode rpc`, `--session-dir`, managed
-  extensions). `project_pi_native_tui.py` owns primary launches (no `--mode`,
-  no managed extension flags).
+  extensions). `project_pi_native_tui.py` owns primary launches (no `--mode`;
+  managed extensions loaded with `-e`; passthrough `-e`/`--no-extensions` refused).
 
 ### 1.4 Extraction
 
@@ -604,7 +604,8 @@ MERIDIAN_SPAWN_ID=<primary-spawn-id>
 PI_CODING_AGENT_SESSION_DIR=<user_home>/meridian-pi/sessions
 ```
 
-Primary must not pass `--mode rpc`, managed extensions, or any wrapper-only flags.
+Primary must not pass `--mode rpc` or any wrapper-only flags. It loads Meridian's
+managed extensions with `-e` and refuses passthrough `-e` or `--no-extensions`.
 
 ### 2.4 Spawned RPC
 

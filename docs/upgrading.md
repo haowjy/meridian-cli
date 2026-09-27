@@ -67,11 +67,11 @@ Doctor catches chats that an older process was still writing during the
 upgrade. `doctor` also binds old Pi chats once, when it can prove a match. (The
 next interactive `meridian` launch does the same in the background.) A spawned
 Pi chat is bound only when its spawn's session directory holds exactly one
-matching session, with a matching cwd and a start within two minutes of the chat
-or spawn run, and its first message equals the spawn's prompt or, if no prompt
-was retained, its last reply equals the report. Primaries shared one session
-directory in 0.6.7, so they are never bound automatically. When doctor binds
-any, it prints a line like:
+session that matches the spawn's cwd and start time, and whose first message is
+the spawn's prompt. When the prompt was not kept, the session's last reply must
+match the report instead. Primaries shared one session directory in 0.6.7, so
+they are never bound automatically. When doctor binds any, it prints a line
+like:
 
 ```text
 repaired: legacy_pi_sessions
