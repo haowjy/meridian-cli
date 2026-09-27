@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-27
+
 ### Upgrade notes
 - Chats keep one immutable native session; Meridian reads transcripts from the harness.
 - Search verifies native transcript matches and reports coverage.
