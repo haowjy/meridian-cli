@@ -15,13 +15,12 @@ from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import StreamEvent
-from meridian.lib.launch.constants import OUTPUT_FILENAME, STDERR_FILENAME
+from meridian.lib.launch.constants import STDERR_FILENAME
 from meridian.lib.platform.terminate import terminate_tree as _terminate_tree
 from meridian.lib.safety.budget import BudgetBreach
 from meridian.lib.safety.guardrails import GuardrailFailure
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import ArtifactStore, make_artifact_key
-from meridian.lib.state.atomic import atomic_write_bytes
 
 logger = structlog.get_logger(__name__)
 DEFAULT_KILL_GRACE_SECONDS = MeridianConfig().kill_grace_minutes * 60.0
@@ -77,38 +76,6 @@ def append_text_to_stderr_artifact(
     prefix = "\n" if existing and not existing.endswith("\n") else ""
     combined = f"{existing}{prefix}{text}\n"
     artifacts.put(key, combined.encode("utf-8"))
-
-
-def artifact_is_zero_bytes(
-    *,
-    artifacts: ArtifactStore,
-    spawn_id: SpawnId,
-    filename: str,
-) -> bool:
-    key = make_artifact_key(spawn_id, filename)
-    if not artifacts.exists(key):
-        return True
-    return len(artifacts.get(key)) == 0
-
-
-def write_structured_failure_artifact(
-    *,
-    artifacts: ArtifactStore,
-    spawn_id: SpawnId,
-    output_log_path: Path,
-    exit_code: int,
-    failure_reason: str | None,
-    timed_out: bool,
-) -> None:
-    payload = {
-        "error_code": "harness_empty_output",
-        "failure_reason": failure_reason or "empty_output",
-        "exit_code": exit_code,
-        "timed_out": timed_out,
-    }
-    encoded = f"{json.dumps(payload, sort_keys=True)}\n".encode()
-    artifacts.put(make_artifact_key(spawn_id, OUTPUT_FILENAME), encoded)
-    atomic_write_bytes(output_log_path, encoded)
 
 
 def _extract_tokens_payload(raw_line: bytes) -> bytes | None:
@@ -282,7 +249,6 @@ __all__ = [
     "SpawnTimeoutError",
     "append_budget_exceeded_event",
     "append_text_to_stderr_artifact",
-    "artifact_is_zero_bytes",
     "capture_stderr_stream",
     "capture_stdout_stream",
     "extract_latest_tokens_payload",
@@ -291,5 +257,4 @@ __all__ = [
     "terminate_process",
     "wait_for_process_exit",
     "wait_for_process_returncode",
-    "write_structured_failure_artifact",
 ]

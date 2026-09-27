@@ -52,9 +52,7 @@ async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
     monkeypatch: pytest.MonkeyPatch,
     timeout_source: str,
 ) -> None:
-    async def _abort_tail_exit_failure(
-        _coordinator: object, _recorded_outcome: object
-    ) -> object:
+    async def _abort_tail_exit_failure(_coordinator: object, _recorded_outcome: object) -> object:
         raise RuntimeError("Pi abort tail failed while classifying stream exit")
 
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
@@ -141,40 +139,20 @@ async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
     assert row.status == "timed_out"
     assert row.terminal.exit_code == 3
     assert row.terminal.error == "timeout"
-    history_path = runtime_root / "spawns" / str(run.spawn_id) / "history.jsonl"
-    from meridian.lib.state.history import iter_history_events
-
-    history = list(iter_history_events(history_path))
-    finalized = [
-        event
-        for event in history
-        if event.get("event_type") == "meridian.pi.lifecycle.phase"
-        and event["payload"].get("phase") == "finalized"
-    ]
-    assert finalized[-1]["payload"]["status"] == "timed_out"
-    assert finalized[-1]["payload"]["exit_code"] == 3
-    assert finalized[-1]["payload"]["error"] == "timeout"
     report = (runtime_root / "spawns" / str(run.spawn_id) / "report.md").read_text()
     assert report == "# Spawn failed\n\ntimeout\n"
-    cleanup_phases = [
-        event["payload"]["phase"]
-        for event in history
-        if event.get("event_type") == "meridian.pi.lifecycle.phase"
-        and str(event["payload"].get("phase", "")).startswith("cleanup_")
-    ]
-    assert cleanup_phases == ["cleanup_running", "cleanup_completed"]
-    assert all(
-        re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3,6}Z", event["timestamp"])
-        for event in history
+    lifecycle = json.loads(
+        (runtime_root / "spawns" / str(run.spawn_id) / "pi-lifecycle.json").read_text()
     )
+    assert lifecycle["phase"] == "cleanup_completed"
+    assert lifecycle["cleanup_status"] == "completed"
 
-    state = json.loads(
-        (runtime_root / "spawns" / str(run.spawn_id) / "state.json").read_text()
-    )
+    state = json.loads((runtime_root / "spawns" / str(run.spawn_id) / "state.json").read_text())
     assert re.fullmatch(
         r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3,6}Z",
         state["terminal"]["published_at"],
     )
+
 
 @pytest.mark.asyncio
 async def test_execute_with_streaming_finalizes_resident_deadline_without_retry(
@@ -264,10 +242,24 @@ async def test_execute_with_streaming_finalizes_resident_deadline_without_retry(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("different_ids", [False, True])
 async def test_execute_with_streaming_keeps_resident_rearm_budget_across_retry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    different_ids: bool,
 ) -> None:
+    from structlog.testing import capture_logs
+
+    from meridian.lib.state import session_store
+
+    original_start = _ResidentRearmRetryConnection.start
+
+    async def start(connection, config, spec):
+        await original_start(connection, config, spec)
+        if different_ids:
+            connection._session_id = f"thread-{connection._attempt_index}"
+
+    monkeypatch.setattr(_ResidentRearmRetryConnection, "start", start)
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
@@ -278,9 +270,7 @@ async def test_execute_with_streaming_keeps_resident_rearm_budget_across_retry(
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id, _transport_id=TransportId.STREAMING: (
-            _ResidentRearmRetryConnection
-        ),
+        lambda _harness_id, _transport_id=TransportId.STREAMING: _ResidentRearmRetryConnection,
     )
 
     run = Spawn(
@@ -314,21 +304,22 @@ async def test_execute_with_streaming_keeps_resident_rearm_budget_across_retry(
         encoding="utf-8",
     )
 
-    exit_code = await asyncio.wait_for(
-        _execute_with_context(
-            run,
-            request=request,
-            project_root=tmp_path,
-            runtime_root=runtime_root,
-            artifacts=artifacts,
-            registry=registry,
-            clock=fake_clock,
-            heartbeat_touch=fake_heartbeat.touch,
-            heartbeat_interval_secs=0.001,
-            guardrails=(guardrail,),
-        ),
-        timeout=15.0,
-    )
+    with capture_logs() as logs:
+        exit_code = await asyncio.wait_for(
+            _execute_with_context(
+                run,
+                request=request,
+                project_root=tmp_path,
+                runtime_root=runtime_root,
+                artifacts=artifacts,
+                registry=registry,
+                clock=fake_clock,
+                heartbeat_touch=fake_heartbeat.touch,
+                heartbeat_interval_secs=0.001,
+                guardrails=(guardrail,),
+            ),
+            timeout=15.0,
+        )
 
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
     assert exit_code == 0
@@ -337,6 +328,11 @@ async def test_execute_with_streaming_keeps_resident_rearm_budget_across_retry(
     assert row.status == "succeeded"
     assert row.resident_rearm_count == 1
 
+    if different_ids:
+        assert row.chat_id is not None
+        entry = session_store.get_session_record(runtime_root, row.chat_id)
+        assert entry.harness_session_id == "thread-1"
+        assert len([log for log in logs if log["event"] == "native_binding_conflict"]) == 1
 
 
 @pytest.mark.asyncio
@@ -417,10 +413,12 @@ async def test_execute_with_streaming_does_not_retry_authoritative_terminal_fail
     assert row.terminal.error == "connection reset by peer"
 
 
+@pytest.mark.parametrize("first_attempt_has_facts", [False, True])
 @pytest.mark.asyncio
 async def test_execute_with_streaming_retries_single_turn_close_without_terminal_frame(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    first_attempt_has_facts: bool,
 ) -> None:
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
@@ -429,8 +427,27 @@ async def test_execute_with_streaming_retries_single_turn_close_without_terminal
     fake_heartbeat = FakeHeartbeat()
     fake_heartbeat.set_clock(fake_clock)
     _ScriptedRetryOpenCodeConnection.reset(
-        first_attempt_events=(),
-        session_id="session-close-without-terminal-opencode",
+        first_attempt_events=(
+            RawHarnessEvent(
+                event_type="message.updated",
+                harness_id="opencode",
+                payload={
+                    "type": "message.updated",
+                    "properties": {
+                        "info": {
+                            "sessionID": "ses_retry",
+                            "id": "old-message",
+                            "role": "assistant",
+                            "tokens": {"input": 456, "output": 42},
+                            "parts": [{"type": "text", "text": "old attempt report"}],
+                        }
+                    },
+                },
+            ),
+        )
+        if first_attempt_has_facts
+        else (),
+        session_id="ses_retry",
         subprocess_pid=8484,
     )
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
@@ -482,3 +499,7 @@ async def test_execute_with_streaming_retries_single_turn_close_without_terminal
     assert row is not None
     assert row.status == "succeeded"
     assert row.terminal.exit_code == 0
+
+    assert row.terminal.input_tokens is None
+    assert row.terminal.output_tokens is None
+    assert not (runtime_root / "spawns" / run.spawn_id / "report.md").exists()

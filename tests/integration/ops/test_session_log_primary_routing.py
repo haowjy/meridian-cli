@@ -4,9 +4,12 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
+from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.launch.constants import HISTORY_FILENAME, PRIMARY_META_FILENAME
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
-from meridian.lib.ops.session_target import resolve_session_log_target
+from meridian.lib.ops.session_target import resolve_transcript_source
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
@@ -76,7 +79,7 @@ def _write_codex_rollout(
     return rollout_path
 
 
-def test_session_log_active_managed_primary_prefers_live_output_over_native_transcript(
+def test_active_managed_primary_reads_bound_native_transcript(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -95,6 +98,14 @@ def test_session_log_active_managed_primary_prefers_live_output_over_native_tran
         assistant_text="native managed primary transcript",
     )
 
+    session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id=session_id,
+        model="test",
+        native_store=str(home_root / ".codex" / "sessions"),
+        chat_id="c42",
+    )
     spawn_store.start_spawn(
         runtime_root,
         spawn_id="p42",
@@ -122,14 +133,14 @@ def test_session_log_active_managed_primary_prefers_live_output_over_native_tran
         SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
     )
 
-    assert output.session_id == "p42"
-    assert output.source == "spawn p42 output"
+    assert output.session_id == session_id
+    assert output.source == "codex transcript"
     assert [(message.role, message.content) for message in output.messages] == [
-        ("assistant", "managed live progress")
+        ("assistant", "native managed primary transcript")
     ]
 
 
-def test_session_log_active_managed_primary_chat_matches_spawn_live_output(
+def test_session_log_active_chat_reads_exact_native_transcript(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -154,6 +165,8 @@ def test_session_log_active_managed_primary_chat_matches_spawn_live_output(
         harness_session_id=session_id,
         model="gpt-5.4",
         chat_id="c42",
+        spawn_id="p42",
+        native_store=str(home_root / ".codex" / "sessions"),
     )
     try:
         spawn_store.start_spawn(
@@ -179,13 +192,13 @@ def test_session_log_active_managed_primary_chat_matches_spawn_live_output(
             },
         )
 
-        chat_target = resolve_session_log_target(
+        chat_target = resolve_transcript_source(
             ref=chat_id,
             file_path=None,
             project_root=project_root,
             runtime_root=runtime_root,
         )
-        spawn_target = resolve_session_log_target(
+        spawn_target = resolve_transcript_source(
             ref="p42",
             file_path=None,
             project_root=project_root,
@@ -195,16 +208,17 @@ def test_session_log_active_managed_primary_chat_matches_spawn_live_output(
             SessionLogInput(ref=chat_id, project_root=project_root.as_posix(), tail=5)
         )
 
-        assert chat_target.file_path == spawn_target.file_path
-        assert chat_target.source == spawn_target.source == "spawn p42 output"
+        assert chat_target.source.path == spawn_target.source.path
+        assert chat_target.source.source_label == "codex transcript"
+        assert spawn_target.source.source_label == "codex transcript"
         assert [(message.role, message.content) for message in chat_output.messages] == [
-            ("assistant", "same live output")
+            ("assistant", "native chat transcript should wait")
         ]
     finally:
         session_store.stop_session(runtime_root, chat_id)
 
 
-def test_session_log_completed_spawn_uses_indexed_history(tmp_path: Path) -> None:
+def test_unbound_completed_spawn_ignores_indexed_history(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     runtime_root = resolve_project_runtime_root_for_write(project_root)
@@ -234,12 +248,5 @@ def test_session_log_completed_spawn_uses_indexed_history(tmp_path: Path) -> Non
         artifact=True,
     )
 
-    output = session_log_sync(
-        SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
-    )
-
-    assert output.session_id == "p42"
-    assert output.source == "spawn p42 output"
-    assert [(message.role, message.content) for message in output.messages] == [
-        ("assistant", "managed artifact transcript")
-    ]
+    with pytest.raises(NativeSessionUnavailable, match="unbound"):
+        session_log_sync(SessionLogInput(ref="p42", project_root=project_root.as_posix()))

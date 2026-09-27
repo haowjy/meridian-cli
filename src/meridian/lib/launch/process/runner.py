@@ -9,6 +9,7 @@ import time
 import uuid
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -17,11 +18,14 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
 from meridian.lib.catalog.model_aliases import MarsResultCache
-from meridian.lib.core.domain import SpawnStatus, TokenUsage
+from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.native_identity import (
+    NativeIdentityError,
+    NativeKey,
+)
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     SpawnReservation,
-    has_durable_report_completion,
 )
 from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -32,6 +36,7 @@ from meridian.lib.harness.adapter import (
     NativePrimaryRuntimeMetadata,
     SubprocessHarness,
 )
+from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.connections import get_connection_class
 from meridian.lib.harness.connections.base import (
@@ -40,32 +45,32 @@ from meridian.lib.harness.connections.base import (
     PrimaryRuntimeRequestPolicy,
     RawHarnessEvent,
 )
-from meridian.lib.harness.cost import estimate_usage_cost
 from meridian.lib.harness.passthrough import get_passthrough
 from meridian.lib.harness.passthrough.base import PassthroughError
 from meridian.lib.harness.registry import HarnessRegistry
-from meridian.lib.launch.artifact_io import write_projection_artifacts
+from meridian.lib.launch.artifact_io import (
+    LifecycleLog,
+    record_identity_failure,
+    write_projection_artifacts,
+)
 from meridian.lib.launch.constants import (
-    HISTORY_FILENAME,
     OUTPUT_FILENAME,
     PRIMARY_META_FILENAME,
 )
+from meridian.lib.launch.extract import enrich_finalize
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.native_run import NativeRun, bind_entry, conclude_native_run
 from meridian.lib.state import spawn_store
-from meridian.lib.state.artifact_store import InMemoryStore, LocalStore, make_artifact_key
+from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.primary_meta import (
     ActivityState,
-    HarnessSessionDiscovery,
     PrimaryMetadata,
     write_primary_metadata,
 )
 from meridian.lib.state.session_store import (
     get_session_active_work_id,
-    start_session,
-    stop_session,
     update_session_claude_config_dir,
-    update_session_harness_id,
     update_session_spawn_id,
     update_session_work_id,
 )
@@ -80,7 +85,7 @@ from ..context import (
 )
 from ..fork import materialize_fork
 from ..request import LaunchCompositionSurface
-from ..session_scope import bind_harness_session_id, session_scope
+from ..session_scope import session_scope
 from ..types import SessionMode
 from .ports import (
     PRIMARY_STDERR_LOG_PATH_ENV,
@@ -134,8 +139,6 @@ def _write_native_primary_metadata(
     exit_code: int | None,
     harness_session_id: str | None,
     runtime_metadata: NativePrimaryRuntimeMetadata | None = None,
-    harness_session_discovery: HarnessSessionDiscovery | None = None,
-    harness_session_discovery_detail: str | None = None,
 ) -> None:
     """Best-effort metadata projection for native/black-box primary launches."""
 
@@ -150,10 +153,6 @@ def _write_native_primary_metadata(
                 backend_port=None,
                 activity=activity,
                 harness_session_id=(harness_session_id or "").strip() or None,
-                harness_session_discovery=harness_session_discovery,
-                harness_session_discovery_detail=(
-                    (harness_session_discovery_detail or "").strip() or None
-                ),
                 command=command,
                 launch_cwd=str(launch_cwd),
                 started_at_epoch=started_at_epoch,
@@ -187,6 +186,7 @@ RunPrimaryAttach = Callable[
         ResolvedLaunchSpec,
         ProcessLauncher,
         Callable[[int], None] | None,
+        Callable[[str], None],
     ],
     PrimaryAttachOutcome,
 ]
@@ -325,11 +325,10 @@ def _execute_via_managed_attach(
     task_cwd: Path | None,
     child_env: dict[str, str],
     launch_spec: ResolvedLaunchSpec,
-    managed: Any,
-    runtime_root: Path,
+    native_run: NativeRun,
     run_primary_attach_fn: RunPrimaryAttach,
     on_running: Callable[[int], None],
-) -> tuple[int, str | None, bool]:
+) -> tuple[int, str | None, bool, AttemptFacts]:
     """Run managed attach path and persist managed session id when available."""
 
     managed_outcome = run_primary_attach_fn(
@@ -342,18 +341,13 @@ def _execute_via_managed_attach(
         launch_spec,
         select_process_launcher(None),
         on_running,
-    )
-    managed_session_id = bind_harness_session_id(
-        runtime_root=runtime_root,
-        spawn_id=primary_spawn_id,
-        record_session_id=managed.record_harness_session_id,
-        session_id=managed_outcome.session_id,
-        source="connection",
+        native_run.observe,
     )
     return (
         managed_outcome.exit_code,
-        managed_session_id or None,
+        native_run.entry.session_id,
         managed_outcome.cancelled,
+        managed_outcome.facts,
     )
 
 
@@ -378,26 +372,6 @@ def _execute_via_blackbox(
     return exit_code
 
 
-def _persist_blackbox_output_artifact(
-    *,
-    artifacts: LocalStore,
-    spawn_id: SpawnId | None,
-    log_dir: Path,
-) -> None:
-    """Mirror captured primary black-box output into the artifact store."""
-
-    if spawn_id is None:
-        return
-    output_path = log_dir / OUTPUT_FILENAME
-    if not output_path.is_file():
-        return
-    with suppress(OSError):
-        artifacts.put(
-            make_artifact_key(spawn_id, OUTPUT_FILENAME),
-            output_path.read_bytes(),
-        )
-
-
 def _execute_primary_process(
     *,
     harness_id: HarnessId,
@@ -410,18 +384,17 @@ def _execute_primary_process(
     launch_spec: ResolvedLaunchSpec,
     command: tuple[str, ...],
     harness_contract: HarnessContract,
-    managed: Any,
-    runtime_root: Path,
+    native_run: NativeRun,
     run_primary_process_with_capture_fn: RunPrimaryProcessWithCapture,
     run_primary_attach_fn: RunPrimaryAttach,
     on_running: Callable[[int], None],
-) -> tuple[int, str | None, bool]:
+) -> tuple[int, str | None, bool, AttemptFacts]:
     """Run managed attach when eligible, otherwise fall back to black-box launch."""
 
     use_managed_backend = harness_contract.bootstrap.mode.value == "managed_primary_attach"
     if use_managed_backend:
         try:
-            exit_code, managed_session_id, cancelled = _execute_via_managed_attach(
+            return _execute_via_managed_attach(
                 harness_id=harness_id,
                 primary_spawn_id=primary_spawn_id,
                 log_dir=log_dir,
@@ -429,12 +402,10 @@ def _execute_primary_process(
                 task_cwd=task_cwd,
                 child_env=child_env,
                 launch_spec=launch_spec,
-                managed=managed,
-                runtime_root=runtime_root,
+                native_run=native_run,
                 run_primary_attach_fn=run_primary_attach_fn,
                 on_running=on_running,
             )
-            return exit_code, managed_session_id, cancelled
         except PrimaryAttachError as exc:
             if harness_contract.bootstrap.primary_attach_failure_policy == "raise":
                 raise
@@ -450,78 +421,72 @@ def _execute_primary_process(
 
     output_log_path = (
         log_dir / OUTPUT_FILENAME
-        if (
-            harness_contract.capabilities.captures_blackbox_output
-            and "--print" in command
-        )
+        if (harness_contract.capabilities.captures_blackbox_output and "--print" in command)
         else None
     )
     blackbox_env = dict(child_env)
     if harness_contract.bootstrap.primary_stderr_log:
         blackbox_env[PRIMARY_STDERR_LOG_PATH_ENV] = str(log_dir / "stderr.log")
-    return (
-        _execute_via_blackbox(
-            command=command,
-            launch_cwd=launch_cwd,
-            child_env=blackbox_env,
-            output_log_path=output_log_path,
-            run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
-            on_running=on_running,
-        ),
-        None,
-        False,
+    exit_code = _execute_via_blackbox(
+        command=command,
+        launch_cwd=launch_cwd,
+        child_env=blackbox_env,
+        output_log_path=output_log_path,
+        run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
+        on_running=on_running,
     )
+    fold = get_harness_bundle(harness_id).extractor.create_fold()
+    if output_log_path is not None and output_log_path.is_file():
+        fold.fold_stdout(output_log_path, harness_id)
+    return exit_code, None, False, fold.facts
 
 
-def _finalize_lifecycle_and_observe_session(
+def _finalize_lifecycle(
     *,
     primary_spawn_id: SpawnId | None,
     exit_code: int,
-    resolved_harness_session_id: str,
-    expected_harness_session_id: str,
     harness_adapter: Any,
-    artifacts: LocalStore,
     project_root: Path,
-    launch_child_cwd: Path,
     model_id: str | None,
     runtime_root: Path,
     primary_started: float,
-    primary_started_epoch: float,
-    primary_started_local_iso: str | None,
-    managed: Any,
     spawn_service: SpawnApplicationService,
-    observe_adapter_session_id: bool = True,
+    facts: AttemptFacts,
+    native_key: NativeKey | None = None,
     cancellation_observed: bool = False,
-) -> tuple[int, str]:
-    """Finalize lifecycle, discover identity, and durably bind accepted selections."""
+    native_identity_error: str | None = None,
+) -> int:
+    """Complete execution after native identity validation and attribution."""
 
     resolved_exit_code = exit_code
     if primary_spawn_id is not None:
-        log_dir = resolve_spawn_log_dir(
-            project_root, primary_spawn_id, runtime_root=runtime_root
-        )
-        report_path = log_dir / "report.md"
-        try:
-            report_text = report_path.read_text(encoding="utf-8") if report_path.is_file() else None
-        except OSError:
-            report_text = None
-        duration = max(0.0, time.monotonic() - primary_started) if primary_started > 0.0 else None
-        durable_report_completion = has_durable_report_completion(report_text)
-        usage = _extract_primary_usage(
-            harness_adapter=harness_adapter,
-            primary_spawn_id=primary_spawn_id,
-            project_root=project_root,
-            model_id=model_id,
+        log_dir = resolve_spawn_log_dir(project_root, primary_spawn_id, runtime_root=runtime_root)
+        extraction = enrich_finalize(
+            artifacts=LocalStore(root_dir=runtime_root / "artifacts"),
+            extractor=get_harness_bundle(harness_adapter.id).extractor,
+            facts=facts,
+            native_key=native_key,
+            spawn_id=primary_spawn_id,
             log_dir=log_dir,
+            model_id=model_id,
+            harness_id=harness_adapter.id,
+            project_root=project_root,
         )
+        duration = max(0.0, time.monotonic() - primary_started) if primary_started > 0.0 else None
+        durable_report_completion = extraction.durable_report_completion
+        usage = extraction.usage
         execution_outcome = asyncio.run(
             spawn_service.complete_execution(
                 primary_spawn_id,
                 ExecutionTerminalFacts(
                     exit_code=exit_code,
-                    failure_reason="cancelled" if cancellation_observed else None,
+                    failure_reason=(
+                        native_identity_error or ("cancelled" if cancellation_observed else None)
+                    ),
                     cancellation_observed=cancellation_observed,
-                    durable_report_completion=durable_report_completion,
+                    durable_report_completion=(
+                        durable_report_completion and native_identity_error is None
+                    ),
                 ),
                 origin="launcher",
                 duration_secs=duration,
@@ -535,80 +500,7 @@ def _finalize_lifecycle_and_observe_session(
                 "Launcher finalize skipped; spawn already terminal or missing: %s",
                 primary_spawn_id,
             )
-    observed_harness_session_id = None
-    try:
-        if observe_adapter_session_id and primary_started_epoch > 0.0:
-            observed_harness_session_id = harness_adapter.observe_session_id(
-                artifacts=artifacts,
-                spawn_id=primary_spawn_id,
-                current_session_id=resolved_harness_session_id,
-                project_root=launch_child_cwd,
-                started_at_epoch=primary_started_epoch,
-                started_at_local_iso=primary_started_local_iso,
-                expected_session_id=expected_harness_session_id,
-            )
-    except Exception:
-        logger.debug("Best-effort harness session observation failed", exc_info=True)
-    resolved_harness_session_id = bind_harness_session_id(
-        runtime_root=runtime_root,
-        spawn_id=primary_spawn_id,
-        record_session_id=managed.record_harness_session_id,
-        session_id=observed_harness_session_id,
-        source="observation",
-        current_session_id=resolved_harness_session_id,
-    )
-    return resolved_exit_code, resolved_harness_session_id
-
-
-def _extract_primary_usage(
-    *,
-    harness_adapter: Any,
-    primary_spawn_id: SpawnId,
-    project_root: Path,
-    model_id: str | None,
-    log_dir: Path,
-) -> TokenUsage | None:
-    """Best-effort usage extraction for primary-session finalization."""
-
-    try:
-        usage_artifacts = InMemoryStore()
-        for filename in (HISTORY_FILENAME, OUTPUT_FILENAME):
-            source = log_dir / filename
-            if not source.is_file():
-                continue
-            try:
-                usage_artifacts.put(
-                    make_artifact_key(primary_spawn_id, filename),
-                    source.read_bytes(),
-                )
-            except Exception:
-                logger.debug(
-                    "Failed to mirror primary artifact for usage extraction",
-                    exc_info=True,
-                )
-        raw_usage = harness_adapter.extract_usage(usage_artifacts, primary_spawn_id)
-        usage = estimate_usage_cost(
-            model_id=(model_id or "").strip() or None,
-            usage=raw_usage,
-            project_root=project_root,
-            harness_id=str(harness_adapter.id),
-        )
-        if all(
-            value is None
-            for value in (
-                usage.input_tokens,
-                usage.output_tokens,
-                usage.cache_read_input_tokens,
-                usage.cache_creation_input_tokens,
-                usage.reasoning_tokens,
-                usage.total_cost_usd,
-            )
-        ):
-            return None
-        return usage
-    except Exception:
-        logger.debug("Best-effort primary usage extraction failed", exc_info=True)
-        return None
+    return resolved_exit_code
 
 
 def _create_managed_primary_connection(
@@ -661,6 +553,7 @@ async def _run_primary_attach(
     spec: ResolvedLaunchSpec,
     process_launcher: ProcessLauncher,
     on_running: Callable[[int], None] | None = None,
+    session_id_observer: Callable[[str], None] | None = None,
 ) -> PrimaryAttachOutcome:
     """Launch managed backend + primary TUI attach flow for supported harnesses."""
 
@@ -685,6 +578,8 @@ async def _run_primary_attach(
             task_cwd=task_cwd,
             env=env,
         )
+        fold = harness_bundle.extractor.create_fold()
+
         launcher = PrimaryAttachLauncher(
             spawn_id=spawn_id,
             spawn_dir=spawn_dir,
@@ -693,6 +588,8 @@ async def _run_primary_attach(
             process_launcher=process_launcher,
             runtime_root=spawn_dir.parent.parent,
             on_running=on_running,
+            session_id_observer=session_id_observer,
+            fold=fold,
         )
         return await launcher.run(
             config=config,
@@ -700,7 +597,7 @@ async def _run_primary_attach(
             cwd=control_root,
             env=env,
         )
-    except PrimaryAttachError:
+    except (PrimaryAttachError, NativeIdentityError):
         raise
     except PassthroughError as exc:
         raise PrimaryAttachError(str(exc)) from exc
@@ -720,6 +617,7 @@ def run_primary_attach(
     spec: ResolvedLaunchSpec,
     process_launcher: ProcessLauncher,
     on_running: Callable[[int], None] | None = None,
+    session_id_observer: Callable[[str], None] | None = None,
 ) -> PrimaryAttachOutcome:
     """Run managed primary attach lifecycle from sync runner code."""
 
@@ -737,6 +635,7 @@ def run_primary_attach(
                 spec=spec,
                 process_launcher=process_launcher,
                 on_running=on_running,
+                session_id_observer=session_id_observer,
             )
         )
     raise PrimaryAttachError("Managed primary attach cannot run inside an active event loop")
@@ -752,9 +651,6 @@ def run_harness_process(
         run_primary_process_with_capture
     ),
     run_primary_attach_fn: RunPrimaryAttach = run_primary_attach,
-    start_session_fn: Callable[..., str] = start_session,
-    stop_session_fn: Callable[..., None] = stop_session,
-    update_session_harness_id_fn: Callable[..., None] = update_session_harness_id,
     update_session_spawn_id_fn: Callable[..., None] = update_session_spawn_id,
     update_session_work_id_fn: Callable[..., None] = update_session_work_id,
     get_session_active_work_id_fn: Callable[[Path, str], str | None] = get_session_active_work_id,
@@ -767,17 +663,17 @@ def run_harness_process(
     execution_cwd = launch_context.execution_cwd
     runtime_root = launch_context.runtime_root
     preview_context = launch_context
+    runtime_context = launch_context
     command = preview_context.binding.argv
     spawn_request = preview_context.request
     preview_request = preview_context.resolved_request
-    requested_harness_session_id = (
-        preview_request.session.requested_harness_session_id or ""
-    ).strip()
     session_mode = resolve_primary_session_mode(preview_context)
     session_metadata = build_session_metadata(preview_request)
     expected_harness_session_id = (
-        preview_context.binding.effective_harness_session_id or ""
-    ) if session_mode != SessionMode.FORK else ""
+        (preview_context.binding.effective_harness_session_id or "")
+        if session_mode != SessionMode.FORK
+        else ""
+    )
     resolved_harness_session_id = (
         expected_harness_session_id if session_mode == SessionMode.RESUME else ""
     )
@@ -790,7 +686,7 @@ def run_harness_process(
     primary_started_local_iso: str | None = None
     launch_child_cwd = control_root
     prelaunch_state = HarnessPrelaunchState()
-    artifacts = LocalStore(root_dir=runtime_root / "artifacts")
+    native_run: NativeRun | None = None
     spawn_service = build_spawn_application_service_from_roots(config_root, runtime_root)
     lifecycle_service = spawn_service.lifecycle
 
@@ -799,6 +695,7 @@ def run_harness_process(
     )
     exit_code = 2
     managed_cancelled = False
+    facts = AttemptFacts()
     native_primary_tui_pid: int | None = None
     write_native_primary_metadata = False
     native_primary_metadata_command: tuple[str, ...] = command
@@ -810,16 +707,12 @@ def run_harness_process(
             runtime_root=runtime_root,
             metadata=session_metadata,
             request=preview_request.session,
-            harness_session_id=resolved_harness_session_id,
             chat_id=resume_chat_id,
             control_root=str(control_root),
             task_cwd=task_cwd.as_posix() if task_cwd is not None else None,
             execution_cwd=str(execution_cwd),
             kind="primary",
             startup_attempt_id=startup_attempt_id,
-            _start_session=start_session_fn,
-            _stop_session=stop_session_fn,
-            _update_session_harness_id=update_session_harness_id_fn,
         ) as managed:
             chat_id = managed.chat_id
             attached_work_id = resolve_attached_work_id(
@@ -830,6 +723,9 @@ def run_harness_process(
                 get_session_active_work_id_fn=get_session_active_work_id_fn,
                 update_session_work_id_fn=update_session_work_id_fn,
             )
+            identity_error: NativeIdentityError | None = None
+            identity_error_phase = "pre_exec"
+            lifecycle: LifecycleLog | None = None
             try:
                 write_native_primary_metadata = False
                 should_fork = (
@@ -863,6 +759,7 @@ def run_harness_process(
                     chat_id,
                     str(primary_spawn_id),
                 )
+                lifecycle = LifecycleLog.for_spawn(runtime_root, config_root, primary_spawn_id)
                 forked_session_id: str | None = None
                 if should_fork:
                     source_session_id = (
@@ -871,6 +768,7 @@ def run_harness_process(
                     forked_session_id = materialize_fork(
                         adapter=harness_adapter,
                         source_session_id=source_session_id,
+                        native_store=preview_request.session.source_native_store,
                         runtime_root=runtime_root,
                         spawn_id=primary_spawn_id,
                     )
@@ -948,6 +846,7 @@ def run_harness_process(
                         harness_registry=harness_registry,
                         plan_overrides=plan_overrides,
                         runtime_work_id=attached_work_id,
+                        forked_harness_session_id=forked_session_id,
                         cache=cache,
                     )
                 write_projection_artifacts(
@@ -957,8 +856,10 @@ def run_harness_process(
                 )
                 command = runtime_context.binding.argv
                 resolved_harness_session_id = (
-                    runtime_context.binding.effective_harness_session_id or ""
-                ) if session_mode == SessionMode.RESUME or forked_session_id else ""
+                    (runtime_context.binding.effective_harness_session_id or "")
+                    if session_mode == SessionMode.RESUME or forked_session_id
+                    else ""
+                )
                 persisted_launch_policy_snapshot = (
                     runtime_context.resolved_request.launch_policy_snapshot
                 )
@@ -990,19 +891,10 @@ def run_harness_process(
                 )
                 lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
                 launch_spec = runtime_context.binding.spec
-                if not expected_harness_session_id and session_mode != SessionMode.FORK:
-                    generated_session_id = harness_adapter.derive_primary_seeded_session_id(
-                        spec=launch_spec,
-                        command=command,
-                    )
-                    if generated_session_id:
-                        expected_harness_session_id = generated_session_id
-                        spawn_store.update_spawn(
-                            runtime_root,
-                            primary_spawn_id,
-                            harness_session_id=generated_session_id,
-                        )
-                        lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
+                managed = replace(managed, spawn_id=primary_spawn_id)
+                native_run = bind_entry(managed, launch_spec, harness=str(harness_adapter.id))
+                resolved_harness_session_id = native_run.entry.session_id or ""
+                lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
 
                 def _record_effective_config_dir(config_dir: str) -> None:
                     spawn_store.update_spawn(
@@ -1033,8 +925,8 @@ def run_harness_process(
                     state=prelaunch_state,
                 )
                 write_native_primary_metadata = harness_adapter.uses_native_primary_metadata()
-                native_primary_runtime_metadata = (
-                    harness_adapter.native_primary_runtime_metadata(prelaunch_state)
+                native_primary_runtime_metadata = harness_adapter.native_primary_runtime_metadata(
+                    prelaunch_state
                 )
                 native_primary_metadata_command = (
                     harness_adapter.redact_primary_command(command)
@@ -1066,10 +958,6 @@ def run_harness_process(
                         launch_mode=FOREGROUND_LAUNCH_MODE,
                         worker_pid=child_pid,
                     )
-                    assert managed.attempt is not None
-                    managed.attempt.record_started(
-                        runtime_context, str(primary_spawn_id), resolved_harness_session_id,
-                    )
                     if write_native_primary_metadata:
                         _write_native_primary_metadata(
                             runtime_root=runtime_root,
@@ -1087,10 +975,12 @@ def run_harness_process(
                             runtime_metadata=native_primary_runtime_metadata,
                         )
 
+                identity_error_phase = "running"
                 (
                     exit_code,
                     managed_session_id,
                     managed_cancelled,
+                    facts,
                 ) = _execute_primary_process(
                     harness_id=harness_id,
                     primary_spawn_id=primary_spawn_id,
@@ -1102,70 +992,69 @@ def run_harness_process(
                     launch_spec=launch_spec,
                     command=command,
                     harness_contract=harness_adapter.contract,
-                    managed=managed,
-                    runtime_root=runtime_root,
+                    native_run=native_run,
                     run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
                     run_primary_attach_fn=run_primary_attach_fn,
                     on_running=_record_primary_started,
                 )
                 if managed_session_id is not None:
                     resolved_harness_session_id = managed_session_id
-                _persist_blackbox_output_artifact(
-                    artifacts=artifacts,
-                    spawn_id=primary_spawn_id,
-                    log_dir=log_dir,
-                )
                 with suppress(Exception):
                     lifecycle_service.record_exited(
                         primary_spawn_id,
                         exit_code=exit_code,
                     )
+            except NativeIdentityError as exc:
+                identity_error = exc
+                exit_code = 1
             finally:
                 try:
-                    (
-                        exit_code,
-                        resolved_harness_session_id,
-                    ) = _finalize_lifecycle_and_observe_session(
+                    if (
+                        native_run is not None
+                        and primary_spawn_id is not None
+                        and lifecycle is not None
+                    ):
+                        outcome = conclude_native_run(
+                            native_run,
+                            harness_adapter,
+                            context=runtime_context,
+                            spawn_id=primary_spawn_id,
+                            child_env=child_env,
+                            child_cwd=launch_child_cwd,
+                            pid=native_primary_tui_pid,
+                            started=native_primary_tui_pid is not None,
+                            started_at_epoch=primary_started_epoch or None,
+                            prior_error=identity_error,
+                            prior_error_phase=identity_error_phase,
+                            facts=facts,
+                            connection_session_id=None,
+                            lifecycle=lifecycle,
+                        )
+                        identity_error = outcome.error
+                        resolved_harness_session_id = outcome.harness_session_id or ""
+                    elif identity_error is not None and lifecycle is not None:
+                        record_identity_failure(
+                            identity_error, phase="pre_exec", lifecycle=lifecycle
+                        )
+                    if identity_error is not None:
+                        exit_code = 1
+                    exit_code = _finalize_lifecycle(
                         primary_spawn_id=primary_spawn_id,
                         exit_code=exit_code,
-                        resolved_harness_session_id=resolved_harness_session_id,
-                        expected_harness_session_id=expected_harness_session_id,
                         harness_adapter=harness_adapter,
-                        artifacts=artifacts,
                         project_root=control_root,
-                        launch_child_cwd=launch_child_cwd,
                         model_id=session_metadata.model,
                         runtime_root=runtime_root,
                         primary_started=primary_started,
-                        primary_started_epoch=primary_started_epoch,
-                        primary_started_local_iso=primary_started_local_iso,
-                        managed=managed,
                         spawn_service=spawn_service,
-                        observe_adapter_session_id=not write_native_primary_metadata,
+                        facts=facts,
+                        native_key=native_run.entry.complete() if native_run else None,
                         cancellation_observed=managed_cancelled,
+                        native_identity_error=identity_error.failure_code
+                        if identity_error
+                        else None,
                     )
                     if write_native_primary_metadata and primary_spawn_id is not None:
-                        observation = harness_adapter.observe_primary_session_id(
-                            command=command,
-                            child_env=child_env,
-                            launch_child_cwd=launch_child_cwd,
-                            started_at_epoch=(
-                                primary_started_epoch if primary_started_epoch > 0.0 else None
-                            ),
-                            expected_session_id=expected_harness_session_id,
-                            requested_session_id=requested_harness_session_id,
-                            resolved_session_id=resolved_harness_session_id,
-                            exit_code=exit_code,
-                        )
-                        if observation.session_id:
-                            resolved_harness_session_id = bind_harness_session_id(
-                                runtime_root=runtime_root,
-                                spawn_id=primary_spawn_id,
-                                record_session_id=managed.record_harness_session_id,
-                                session_id=observation.session_id,
-                                source="discovery",
-                                current_session_id=resolved_harness_session_id,
-                            )
                         _write_native_primary_metadata(
                             runtime_root=runtime_root,
                             spawn_id=primary_spawn_id,
@@ -1184,8 +1073,6 @@ def run_harness_process(
                             exit_code=exit_code,
                             harness_session_id=resolved_harness_session_id,
                             runtime_metadata=native_primary_runtime_metadata,
-                            harness_session_discovery=observation.discovery,
-                            harness_session_discovery_detail=observation.detail,
                         )
                 finally:
                     if primary_spawn_id is not None:

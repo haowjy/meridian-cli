@@ -262,6 +262,13 @@ class _BrowseController:
             return
         request = PreviewRequest(row.chat_id, row.history_id, row.session_generation)
         self._preview_request = request
+        if row.native_status:
+            self.model.apply_preview(row.chat_id, ())
+            self.model.preview_status = row.native_status
+            self.model.preview_detail = ""
+            self._preview_refresh_at = float("inf")
+            self._preview_lane.clear()
+            return
         self.model.preview_loading = True
         self.model.preview_status = ""
         self.model.preview_detail = ""

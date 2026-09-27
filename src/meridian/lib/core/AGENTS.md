@@ -35,6 +35,7 @@ deliberate exception that wires policy surfaces to launch and persistence.
 - `depth.py` — `is_root_side_effect_process()`, `child_meridian_depth()`
 - `clock.py` — `Clock` protocol, `RealClock` (injectable time for tests)
 - `domain.py` — `Spawn` domain model
+- `event_hooks.py` — `run_event_hooks()` (shared fold-hook dispatch over one raw event)
 
 ## Spawn Lifecycle Transitions
 

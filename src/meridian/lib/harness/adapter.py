@@ -3,16 +3,35 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Generic,
+    Literal,
+    Protocol,
+    TypeVar,
+    final,
+    runtime_checkable,
+)
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.config.settings import PiHarnessProfileConfig
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.types import ArtifactKey, HarnessId, ModelId, SpawnId, TransportId
+from meridian.lib.core.native_identity import (
+    LaunchIntent,
+    NativeIdentity,
+    NativeKey,
+    NativeKeyFields,
+    NativeSessionUnavailable,
+    Operation,
+    PostExit,
+)
+from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
     PrimaryRuntimeRequestPolicy,
@@ -34,7 +53,9 @@ from meridian.lib.launch.launch_types import (
 )
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.permissions import PermissionConfig
-from meridian.lib.state.primary_meta import HarnessSessionDiscovery
+
+if TYPE_CHECKING:
+    from meridian.lib.harness.extractors.base import AttemptFold
 
 AdapterSpecT = TypeVar("AdapterSpecT", bound=ResolvedLaunchSpec, covariant=True)
 
@@ -78,13 +99,6 @@ class ForkMaterializationMode(StrEnum):
 
     NATIVE_CONTINUE_FORK = "native_continue_fork"
     MERIDIAN_MATERIALIZED_FORK = "meridian_materialized_fork"
-
-
-class SessionSeedMode(StrEnum):
-    """How one harness derives a seeded session id before runtime events begin."""
-
-    NONE = "none"
-    PROJECTED_ARGS = "projected_args"
 
 
 class PrelaunchBootstrapMode(StrEnum):
@@ -190,8 +204,6 @@ class BootstrapContract(BaseModel):
     fork_materialization: ForkMaterializationMode = ForkMaterializationMode.NATIVE_CONTINUE_FORK
     primary_attach_failure_policy: Literal["raise", "fallback_to_blackbox"] = "raise"
     seeds_resume_metadata: bool = True
-    primary_session_seed_mode: SessionSeedMode = SessionSeedMode.NONE
-    streaming_session_seed_mode: SessionSeedMode = SessionSeedMode.NONE
     prelaunch_bootstrap_mode: PrelaunchBootstrapMode = PrelaunchBootstrapMode.NONE
     #: Whether the black-box primary child needs the stderr log path env var
     #: injected so its runtime writes stderr to the spawn dir.
@@ -353,37 +365,18 @@ class NativePrimaryRuntimeMetadata(BaseModel):
     auth_policy: str | None = None
 
 
-class PrimarySessionObservation(BaseModel):
-    """Post-exit native session discovery result for one primary launch."""
-
-    model_config = ConfigDict(frozen=True)
-
-    session_id: str | None = None
-    discovery: HarnessSessionDiscovery | None = None
-    detail: str | None = None
-
-
 RecordConfigDirFn = Callable[[str], None]
 
 
 @runtime_checkable
-class ArtifactStore(Protocol):
-    """Artifact access used for usage/session extraction."""
-
-    def get(self, key: ArtifactKey) -> bytes: ...
-
-    def exists(self, key: ArtifactKey) -> bool: ...
-
-
-@runtime_checkable
 class SpawnExtractor(Protocol):
-    """Artifact extraction interface for spawn finalization."""
+    """Attempt-local extraction interface for spawn finalization."""
 
-    def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage: ...
+    def create_fold(self) -> AttemptFold: ...
 
-    def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None: ...
+    def detect_session_id_from_event(self, event: RawHarnessEvent) -> str | None: ...
 
-    def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None: ...
+    def read_native_turn(self, key: NativeKey, turn_ids: tuple[str, ...]) -> str | None: ...
 
 
 @runtime_checkable
@@ -404,6 +397,42 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
 
     @property
     def handled_fields(self) -> frozenset[str]: ...
+
+    def plan_native_identity(
+        self, run: SpawnParams, *, preforked_session_id: str | None = None
+    ) -> LaunchIntent | None: ...
+
+    def native_store_for_launch(
+        self,
+        *,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+        spawn_id: SpawnId,
+        operation: Operation,
+        interactive: bool,
+    ) -> str: ...
+
+    def finalize_native_identity(
+        self,
+        intent: LaunchIntent,
+        *,
+        child_env: dict[str, str],
+        child_cwd: Path,
+        session: SessionRequest,
+        spawn_id: SpawnId,
+        interactive: bool,
+    ) -> NativeIdentity: ...
+
+    def observe_after_exit(
+        self,
+        identity: NativeIdentity,
+        entry: NativeKeyFields,
+        *,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+        pid: int | None,
+        started_at_epoch: float | None,
+    ) -> PostExit: ...
 
     def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> AdapterSpecT: ...
 
@@ -427,26 +456,11 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
 
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str: ...
 
-    def build_command(self, run: SpawnParams, perms: PermissionResolver) -> list[str]: ...
-
     def mcp_config(self, run: SpawnParams) -> McpConfig | None: ...
 
     def env_overrides(self, config: PermissionConfig) -> dict[str, str]: ...
 
     def blocked_child_env_vars(self) -> frozenset[str]: ...
-
-    def derive_primary_seeded_session_id(
-        self,
-        *,
-        spec: ResolvedLaunchSpec,
-        command: tuple[str, ...],
-    ) -> str | None: ...
-
-    def derive_streaming_seeded_session_id(
-        self,
-        *,
-        spec: ResolvedLaunchSpec,
-    ) -> str | None: ...
 
     def prepare_prelaunch(
         self,
@@ -493,21 +507,6 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         """Project prelaunch state into primary_meta.json runtime fields."""
         ...
 
-    def observe_primary_session_id(
-        self,
-        *,
-        command: tuple[str, ...],
-        child_env: dict[str, str],
-        launch_child_cwd: Path,
-        started_at_epoch: float | None,
-        expected_session_id: str,
-        requested_session_id: str,
-        resolved_session_id: str,
-        exit_code: int,
-    ) -> PrimarySessionObservation:
-        """Discover a native primary session id from on-disk session files."""
-        ...
-
     def build_primary_runtime_request_handler(
         self,
         *,
@@ -517,11 +516,14 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         """Build a managed-primary runtime request handler for this harness."""
         ...
 
-    def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage: ...
+    def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]: ...
 
-    def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None: ...
-
-    def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None: ...
+    def resolve_native_session_file(
+        self,
+        *,
+        session_id: str,
+        native_store: Path,
+    ) -> Path | None: ...
 
     def resolve_session_file(
         self,
@@ -547,46 +549,7 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         """
         ...
 
-    def detect_primary_session_id(
-        self,
-        *,
-        project_root: Path,
-        started_at_epoch: float,
-        started_at_local_iso: str | None,
-        expected_session_id: str | None = None,
-    ) -> str | None: ...
-
-    def observe_session_id(
-        self,
-        *,
-        artifacts: ArtifactStore,
-        spawn_id: SpawnId | None = None,
-        current_session_id: str | None = None,
-        connection_session_id: str | None = None,
-        project_root: Path | None = None,
-        started_at_epoch: float | None = None,
-        started_at_local_iso: str | None = None,
-        expected_session_id: str | None = None,
-    ) -> str | None:
-        """Return the best available session ID observed after one execution.
-
-        Priority order (each step falls through only if the result is empty):
-        1. *connection_session_id* — live session id from the transport
-           layer (e.g. HTTP/WS adapters that know the session id at
-           connection time).
-        2. Artifact extraction via ``extract_session_id()``.
-        3. *current_session_id* — previously known id, returned as fallback
-           so callers can treat the result as authoritative.
-        4. Primary-session detection via ``detect_primary_session_id()``
-           (only when *project_root* and *started_at_epoch* are supplied).
-
-        I-4 contract: called exactly once per launch, by the driving adapter
-        after the executor returns.  MUST NOT read or write adapter-instance
-        singleton state shared across launches.
-        """
-        ...
-
-    def fork_session(self, source_session_id: str) -> str: ...
+    def fork_session(self, source_session_id: str, *, native_store: str | None = None) -> str: ...
 
     def owns_untracked_session(self, *, project_root: Path, session_ref: str) -> bool:
         """Return True if this harness owns the given untracked session reference."""
@@ -624,6 +587,136 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     def handled_fields(self) -> frozenset[str]:
         return self.consumed_fields | self.explicitly_ignored_fields
 
+    native_identity: ClassVar[bool] = False
+    refused_identity_flags: ClassVar[frozenset[str]] = frozenset()
+    continues_in_source_store: ClassVar[frozenset[Operation]] = frozenset()
+    resolves_untracked_source: ClassVar[bool] = False
+
+    @final
+    def plan_native_identity(
+        self,
+        run: SpawnParams,
+        *,
+        preforked_session_id: str | None = None,
+    ) -> LaunchIntent | None:
+        if not self.native_identity:
+            return None
+        for token in run.extra_args:
+            if token.split("=", 1)[0] in self.refused_identity_flags:
+                raise ValueError(
+                    f"{self.id} managed identity refuses {token} in passthrough extra_args"
+                )
+        source = (run.continue_harness_session_id or "").strip() or None
+        if preforked_session_id:
+            intent = LaunchIntent("fork", preforked_session_id=preforked_session_id)
+        else:
+            intent = LaunchIntent(
+                "fork" if source and run.continue_fork else "resume" if source else "create", source
+            )
+        self.validate_intent(intent)
+        return intent
+
+    @final
+    def finalize_native_identity(
+        self,
+        intent: LaunchIntent,
+        *,
+        child_env: dict[str, str],
+        child_cwd: Path,
+        session: SessionRequest,
+        spawn_id: SpawnId,
+        interactive: bool,
+    ) -> NativeIdentity:
+        op, ref = intent.operation, session.source_ref
+        source: Path | None = None
+        if op != "create":
+            wanted = intent.source_session_id or intent.preforked_session_id
+            source_store = session.source_native_store
+            if source_store is None and session.continue_source_tracked:
+                raise NativeSessionUnavailable(ref, "unbound")
+            if source_store is not None and op in self.continues_in_source_store:
+                self.pin_native_store(child_env, source_store)
+                if self._store(child_env, child_cwd, spawn_id, op, interactive) != source_store:
+                    raise NativeSessionUnavailable(ref, "missing")
+            if source_store is not None or self.resolves_untracked_source:
+                lookup = source_store or self._store(
+                    child_env, child_cwd, spawn_id, "resume", interactive
+                )
+                source = self._require_source(wanted, Path(lookup), ref=ref)
+        store = self._store(child_env, child_cwd, spawn_id, op, interactive)
+        self.pin_native_store(child_env, store)
+        return NativeIdentity(
+            str(self.id),
+            op,
+            store,
+            self.assign_session_id(intent, store=Path(store)),
+            intent.source_session_id,
+            source,
+        )
+
+    def _store(
+        self,
+        env: Mapping[str, str],
+        cwd: Path,
+        spawn_id: SpawnId,
+        operation: Operation,
+        interactive: bool,
+    ) -> str:
+        return self.native_store_for_launch(
+            child_env=env,
+            child_cwd=cwd,
+            spawn_id=spawn_id,
+            operation=operation,
+            interactive=interactive,
+        )
+
+    def _require_source(self, session_id: str | None, store: Path, *, ref: str) -> Path:
+        if session_id is None:
+            raise NativeSessionUnavailable(ref, "unbound")
+        try:
+            source = self.resolve_native_session_file(session_id=session_id, native_store=store)
+        except NativeSessionUnavailable as exc:
+            raise exc.for_ref(ref) from exc
+        if source is None:
+            raise NativeSessionUnavailable(ref, "missing")
+        return source
+
+    def validate_intent(self, intent: LaunchIntent) -> None:
+        pass
+
+    def native_store_for_launch(
+        self,
+        *,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+        spawn_id: SpawnId,
+        operation: Operation,
+        interactive: bool,
+    ) -> str:
+        raise NotImplementedError
+
+    def pin_native_store(self, child_env: dict[str, str], store: str) -> None:
+        pass
+
+    def assign_session_id(self, intent: LaunchIntent, *, store: Path) -> str | None:
+        return (
+            intent.source_session_id
+            if intent.operation == "resume"
+            else intent.preforked_session_id
+        )
+
+    def observe_after_exit(
+        self,
+        identity: NativeIdentity,
+        entry: NativeKeyFields,
+        *,
+        child_env: Mapping[str, str],
+        child_cwd: Path,
+        pid: int | None,
+        started_at_epoch: float | None,
+    ) -> PostExit:
+        return PostExit()
+
     @abstractmethod
     def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> SpecT:
         """Resolve typed launch spec from generic spawn parameters."""
@@ -646,7 +739,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         _ = name, description, prompt
         return ""
 
-    def fork_session(self, source_session_id: str) -> str:
+    def fork_session(self, source_session_id: str, *, native_store: str | None = None) -> str:
         """Fork one harness session and return the new session ID."""
 
         _ = source_session_id
@@ -658,23 +751,6 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
 
     def blocked_child_env_vars(self) -> frozenset[str]:
         return frozenset()
-
-    def derive_primary_seeded_session_id(
-        self,
-        *,
-        spec: ResolvedLaunchSpec,
-        command: tuple[str, ...],
-    ) -> str | None:
-        _ = spec, command
-        return None
-
-    def derive_streaming_seeded_session_id(
-        self,
-        *,
-        spec: ResolvedLaunchSpec,
-    ) -> str | None:
-        _ = spec
-        return None
 
     def prepare_prelaunch(
         self,
@@ -731,30 +807,6 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         _ = state
         return NativePrimaryRuntimeMetadata()
 
-    def observe_primary_session_id(
-        self,
-        *,
-        command: tuple[str, ...],
-        child_env: dict[str, str],
-        launch_child_cwd: Path,
-        started_at_epoch: float | None,
-        expected_session_id: str,
-        requested_session_id: str,
-        resolved_session_id: str,
-        exit_code: int,
-    ) -> PrimarySessionObservation:
-        _ = (
-            command,
-            child_env,
-            launch_child_cwd,
-            started_at_epoch,
-            expected_session_id,
-            requested_session_id,
-            resolved_session_id,
-            exit_code,
-        )
-        return PrimarySessionObservation()
-
     def build_primary_runtime_request_handler(
         self,
         *,
@@ -782,85 +834,19 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         """
         return project_inline_content(content)
 
-    def detect_primary_session_id(
-        self,
-        *,
-        project_root: Path,
-        started_at_epoch: float,
-        started_at_local_iso: str | None,
-        expected_session_id: str | None = None,
-    ) -> str | None:
-        _ = project_root, started_at_epoch, started_at_local_iso, expected_session_id
-        return None
-
-    def observe_session_id(
-        self,
-        *,
-        artifacts: ArtifactStore,
-        spawn_id: SpawnId | None = None,
-        current_session_id: str | None = None,
-        connection_session_id: str | None = None,
-        project_root: Path | None = None,
-        started_at_epoch: float | None = None,
-        started_at_local_iso: str | None = None,
-        expected_session_id: str | None = None,
-    ) -> str | None:
-        """Return the best observed session ID after one execution.
-
-        Default priority: connection_session_id > extract_session_id >
-        current_session_id > detect_primary_session_id.
-
-        Concrete adapters may override for harness-specific extraction.
-        """
-
-        def _norm(v: str | None) -> str | None:
-            if not v:
-                return None
-            stripped = v.strip()
-            return stripped or None
-
-        live = _norm(connection_session_id)
-        if live:
-            return live
-
-        if spawn_id is not None:
-            extracted = _norm(self.extract_session_id(artifacts, spawn_id))
-            if extracted:
-                return extracted
-
-        current = _norm(current_session_id)
-        if current:
-            return current
-
-        if project_root is not None and started_at_epoch is not None:
-            detected = _norm(
-                self.detect_primary_session_id(
-                    project_root=project_root,
-                    started_at_epoch=started_at_epoch,
-                    started_at_local_iso=started_at_local_iso,
-                    expected_session_id=expected_session_id,
-                )
-            )
-            if detected:
-                return detected
-
-        return None
-
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:
         _ = run
         return None
 
-    def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        """Return the harness session ID from spawn artifacts, if available.
+    def native_transcript_kind(self, path: Path) -> Literal["native_file", "opencode_db"]:
+        return "native_file"
 
-        Default returns None; concrete adapters that support session extraction override this.
-        """
-
-        _ = artifacts, spawn_id
-        return None
-
-    def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        _ = artifacts, spawn_id
+    def resolve_native_session_file(
+        self,
+        *,
+        session_id: str,
+        native_store: Path,
+    ) -> Path | None:
         return None
 
     def resolve_session_file(

@@ -17,27 +17,13 @@ from meridian.lib.harness.connections.base import (
 from tests.support.pi import (
     FakePiConnection as _FakePiConnection,
 )
-from tests.support.pi import (
-    history_has_event,
-    history_has_phase,
-    read_history,
-    read_history_phases,
-    read_phase_events,
-    wait_for_history_phase,
-)
+from tests.support.pi import event_phases, phase_events, wait_for_phase
 from tests.support.pi import (
     pi_event as _pi_event,
 )
 from tests.support.pi import (
     start_pi_manager as _start_pi_manager,
 )
-
-_read_history = read_history
-_read_history_phases = read_history_phases
-_wait_for_history_phase = wait_for_history_phase
-_history_has_phase = history_has_phase
-_history_has_event = history_has_event
-_read_phase_events = read_phase_events
 
 
 @pytest.mark.asyncio
@@ -68,7 +54,10 @@ async def test_spawn_manager_pi_attempt_timeout_keeps_terminal_truth_through_cle
 
     spawn_id = SpawnId("p-pi-attempt-timeout-cleanup")
     connection = _TimeoutStopConnection([])
-    manager = await _start_pi_manager(tmp_path, connection, spawn_id=spawn_id)
+    observed: list[RawHarnessEvent] = []
+    manager = await _start_pi_manager(
+        tmp_path, connection, spawn_id=spawn_id, observed=observed
+    )
 
     outcome = await manager.stop_spawn(
         spawn_id,
@@ -79,17 +68,15 @@ async def test_spawn_manager_pi_attempt_timeout_keeps_terminal_truth_through_cle
 
     assert outcome is not None
     assert (outcome.status, outcome.exit_code, outcome.error) == ("timed_out", 3, "timeout")
-    finalized = _read_phase_events(tmp_path, spawn_id, "finalized")
-    assert finalized[-1]["payload"]["status"] == "timed_out"
-    assert finalized[-1]["payload"]["exit_code"] == 3
-    assert finalized[-1]["payload"]["error"] == "timeout"
+    finalized = phase_events(observed, "finalized")
+    assert finalized[-1].payload["status"] == "timed_out"
+    assert finalized[-1].payload["exit_code"] == 3
+    assert finalized[-1].payload["error"] == "timeout"
     assert connection.stop_reasons == ["stop_spawn", "quiescent"]
-    assert _read_history_phases(tmp_path, spawn_id)[-2:] == [
+    assert event_phases(observed)[-2:] == [
         "cleanup_running",
         "cleanup_completed",
     ]
-
-
 
 
 @pytest.mark.asyncio
@@ -182,10 +169,12 @@ async def test_spawn_manager_pi_cleanup_escalation_does_not_block_terminal_succe
     fake_connection = _EscalatedButSuccessfulStopConnection(events)
 
     spawn_id = SpawnId("p-pi-quiescent-stop-escalated-success")
+    observed: list[RawHarnessEvent] = []
     manager = await _start_pi_manager(
         tmp_path,
         fake_connection,
         spawn_id=spawn_id,
+        observed=observed,
     )
 
     try:
@@ -195,26 +184,24 @@ async def test_spawn_manager_pi_cleanup_escalation_does_not_block_terminal_succe
         assert outcome.error is None
         assert fake_connection.stop_reasons == []
 
-        await _wait_for_history_phase(tmp_path, spawn_id, "cleanup_completed")
-        history = _read_history(tmp_path, spawn_id)
-        cleanup_escalated_phases = _read_phase_events(
-            tmp_path,
-            spawn_id,
+        await wait_for_phase(observed, "cleanup_completed")
+        history = observed
+        cleanup_escalated_phases = phase_events(
+            observed,
             "cleanup_escalated",
         )
-        cleanup_running_phases = _read_phase_events(
-            tmp_path,
-            spawn_id,
+        cleanup_running_phases = phase_events(
+            observed,
             "cleanup_running",
         )
         assert cleanup_running_phases
         assert cleanup_escalated_phases
-        assert cleanup_escalated_phases[-1]["payload"].get("reason") == "abort_grace_expired"
+        assert cleanup_escalated_phases[-1].payload.get("reason") == "abort_grace_expired"
         cleanup_phases = [
-            event["payload"]["phase"]
+            event.payload["phase"]
             for event in history
-            if event["event_type"] == "meridian.pi.lifecycle.phase"
-            and str(event["payload"]["phase"]).startswith("cleanup_")
+            if event.event_type == "meridian.pi.lifecycle.phase"
+            and str(event.payload["phase"]).startswith("cleanup_")
         ]
         assert cleanup_phases == [
             "cleanup_running",
@@ -267,7 +254,10 @@ async def test_spawn_manager_pi_cleanup_publishes_terminal_before_async_teardown
         ]
     )
     spawn_id = SpawnId(f"p-pi-cleanup-{'failed' if stop_error else 'completed'}")
-    manager = await _start_pi_manager(tmp_path, fake_connection, spawn_id=spawn_id)
+    observed: list[RawHarnessEvent] = []
+    manager = await _start_pi_manager(
+        tmp_path, fake_connection, spawn_id=spawn_id, observed=observed
+    )
 
     try:
         outcome = await manager.wait_for_completion(spawn_id)
@@ -278,26 +268,20 @@ async def test_spawn_manager_pi_cleanup_publishes_terminal_before_async_teardown
 
         allow_stop.set()
         final_phase = expected_phases[-1]
-        await _wait_for_history_phase(tmp_path, spawn_id, final_phase)
-        history = _read_history(tmp_path, spawn_id)
+        await wait_for_phase(observed, final_phase)
+        history = observed
         cleanup_events = [
             event
             for event in history
-            if event["event_type"] == "meridian.pi.lifecycle.phase"
-            and str(event["payload"]["phase"]).startswith("cleanup_")
+            if event.event_type == "meridian.pi.lifecycle.phase"
+            and str(event.payload["phase"]).startswith("cleanup_")
         ]
-        assert [event["payload"]["phase"] for event in cleanup_events] == expected_phases
+        assert [event.payload["phase"] for event in cleanup_events] == expected_phases
         if stop_error is not None:
-            assert cleanup_events[-1]["payload"]["error"] == stop_error
+            assert cleanup_events[-1].payload["error"] == stop_error
     finally:
         allow_stop.set()
         await manager.stop_spawn(spawn_id)
-
-
-
-
-
-
 
 
 @pytest.mark.asyncio
@@ -317,10 +301,12 @@ async def test_spawn_manager_pi_micro_drain_resolves_with_bounded_timeout(
     fake_connection = _OpenAfterTerminalConnection([])
 
     spawn_id = SpawnId("p-pi-micro-drain-bounded-timeout")
+    observed: list[RawHarnessEvent] = []
     manager = await _start_pi_manager(
         tmp_path,
         fake_connection,
         spawn_id=spawn_id,
+        observed=observed,
     )
 
     try:
@@ -329,8 +315,8 @@ async def test_spawn_manager_pi_micro_drain_resolves_with_bounded_timeout(
         assert outcome.status == "succeeded"
         assert outcome.error is None
 
-        await _wait_for_history_phase(tmp_path, spawn_id, "finalized")
-        phases = _read_history_phases(tmp_path, spawn_id)
+        await wait_for_phase(observed, "finalized")
+        phases = event_phases(observed)
         assert "quiescence_micro_drain_started" in phases
         assert "finalized" in phases
     finally:

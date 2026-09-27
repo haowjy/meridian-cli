@@ -7,11 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.harness.pi import PiAdapter
 from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
-from meridian.lib.ops.session_archive import materialize_native_history, session_stop_maintenance
-from meridian.lib.ops.session_target import resolve_session_log_target
+from meridian.lib.ops.session_archive import (
+    archive_history,
+    materialize_native_history,
+    session_stop_maintenance,
+)
+from meridian.lib.ops.session_target import resolve_transcript_source
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.native_snapshot import (
     NATIVE_SNAPSHOT_FILENAME,
     TranscriptValidation,
@@ -44,7 +48,7 @@ def _assert_not_captured(root: Path, key: str) -> None:
     assert not (root / "spawns" / key / "history.jsonl").exists()
 
 
-def test_stop_maintenance_captures_completed_spawn_after_chat_reuse(
+def test_stop_maintenance_captures_completed_spawn_with_another_chat(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "home"))
@@ -54,10 +58,10 @@ def test_stop_maintenance_captures_completed_spawn_after_chat_reuse(
     native_root = resolve_pi_spawn_session_root()
     native_root.mkdir(parents=True)
     keys: list[str] = []
-    for native_id in ("old-native", "new-native"):
+    for chat_id, native_id in (("c1", "old-native"), ("c2", "new-native")):
         key = spawn_store.start_spawn(
             root,
-            chat_id="c1",
+            chat_id=chat_id,
             prompt="question",
             harness="pi",
             model="test",
@@ -71,11 +75,12 @@ def test_stop_maintenance_captures_completed_spawn_after_chat_reuse(
             "pi",
             native_id,
             "test",
-            chat_id="c1",
+            chat_id=chat_id,
             kind="primary",
             spawn_id=key,
+            native_store=str(native_root),
         )
-        session_store.stop_session(root, "c1")
+        session_store.stop_session(root, chat_id)
         spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
         events = [
             {"type": "session", "version": 3, "id": native_id, "cwd": str(project)},
@@ -89,7 +94,7 @@ def test_stop_maintenance_captures_completed_spawn_after_chat_reuse(
         (native_root / f"timestamp_{native_id}.jsonl").write_text(
             "".join(json.dumps(event) + "\n" for event in events)
         )
-    latest = session_store.get_session_record(root, "c1")
+    latest = session_store.get_session_record(root, "c2")
     assert latest is not None and latest.spawn_id == keys[1]
     assert session_stop_maintenance(project, keys[0]) is None
     captured = _snapshot_path(root, keys[0])
@@ -124,6 +129,18 @@ def _capture_fixture(tmp_path: Path, monkeypatch, *, native_id: str | None = "ex
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
     native_root = resolve_pi_spawn_session_root()
     native_root.mkdir(parents=True)
+    if native_id is not None:
+        session_store.start_session(
+            root,
+            "pi",
+            native_id,
+            "test",
+            chat_id="c1",
+            kind="primary",
+            spawn_id=key,
+            native_store=str(native_root),
+        )
+        session_store.stop_session(root, "c1")
     native = native_root / "timestamp_exact-native.jsonl"
     native.write_text(json.dumps({"type": "session", "version": 3, "id": "exact-native"}) + "\n")
     return project, root, key, native
@@ -131,17 +148,31 @@ def _capture_fixture(tmp_path: Path, monkeypatch, *, native_id: str | None = "ex
 
 def test_capture_does_not_discover_an_unrecorded_native_session(tmp_path: Path, monkeypatch):
     project, root, key, native = _capture_fixture(tmp_path, monkeypatch, native_id=None)
-    monkeypatch.setattr(PiAdapter, "detect_primary_session_id", lambda *a, **kw: "exact-native")
-    with pytest.raises(ValueError, match="exact native identity"):
+    with pytest.raises(ValueError, match="unbound"):
         materialize_native_history(project, root, key)
     assert native.exists()
     _assert_not_captured(root, key)
 
 
+def test_archive_dry_run_counts_snapshots_as_selected_after_capture(tmp_path: Path, monkeypatch):
+    project, root, key, _ = _capture_fixture(tmp_path, monkeypatch)
+
+    output = archive_history(
+        root,
+        destination=tmp_path / "zips",
+        refs=(key,),
+        project_root=project,
+    )
+
+    assert output.preparation_required == (key,)
+    assert output.format_text().splitlines()[0] == (
+        "Selected: 0 now, 1 after capture; reclaimed: 0; restored: 0; protected: 0"
+    )
+
+
 def test_capture_missing_exact_source_never_uses_newer_detection(tmp_path: Path, monkeypatch):
     project, root, key, _ = _capture_fixture(tmp_path, monkeypatch, native_id="missing-native")
-    monkeypatch.setattr(PiAdapter, "detect_primary_session_id", lambda *a, **kw: "exact-native")
-    with pytest.raises(FileNotFoundError, match="missing-native"):
+    with pytest.raises(ValueError, match="native_transcript_missing"):
         materialize_native_history(project, root, key)
     _assert_not_captured(root, key)
 
@@ -150,24 +181,21 @@ def test_capture_resolution_bypasses_owned_stream_and_disposable_index(tmp_path:
     project, root, key, native = _capture_fixture(tmp_path, monkeypatch)
     stream = root / "spawns" / key / "history.jsonl"
     stream.write_bytes(b'partial original stream\n{"torn":')
-    before = stream.read_bytes()
-    target = resolve_session_log_target(
+    before = stream.stat()
+    target = resolve_transcript_source(
         ref=key,
         file_path=None,
         project_root=project,
         runtime_root=root,
         purpose="capture",
     )
-    assert len(target.sources) == 1
-    assert target.sources[0].kind == "native_file" and target.file_path == native
-    assert target.session_id == "exact-native"
-    assert stream.read_bytes() == before
-    assert not (root / "history-index" / "history.sqlite3").exists()
+    assert target.source.kind == "native_file" and target.source.path == native
+    assert target.source.session_id == "exact-native"
+    assert stream.stat() == before
+    assert not HistoryIndex(root).path.exists()
 
 
-def test_capture_conflicting_sidecar_identity_is_not_a_precedence_choice(
-    tmp_path: Path, monkeypatch
-):
+def test_capture_uses_bound_generation_not_sidecar_identity(tmp_path: Path, monkeypatch):
     project, root, key, _ = _capture_fixture(tmp_path, monkeypatch)
     write_primary_metadata(
         root / "spawns" / key,
@@ -175,9 +203,10 @@ def test_capture_conflicting_sidecar_identity_is_not_a_precedence_choice(
         runtime_root=root,
         spawn_id=key,
     )
-    with pytest.raises(ValueError, match="Conflicting native identity"):
-        materialize_native_history(project, root, key)
-    _assert_not_captured(root, key)
+    target = resolve_transcript_source(
+        ref=key, project_root=project, runtime_root=root, purpose="capture"
+    )
+    assert target.source.session_id == "exact-native"
 
 
 def test_capture_rejects_active_same_native_owner_then_retries(tmp_path: Path, monkeypatch):
@@ -224,9 +253,11 @@ def test_capture_exact_generation_supplies_identity_not_newer_chat(tmp_path: Pat
         chat_id="c1",
         kind="primary",
         spawn_id=key,
+        native_store=str(resolve_pi_spawn_session_root()),
     )
     session_store.stop_session(root, "c1")
-    session_store.start_session(root, "pi", "new-native", "test", chat_id="c1", kind="primary")
+    session_store.start_session(root, "pi", "", "test", chat_id="c1", kind="primary")
+    session_store.stop_session(root, "c1")
     try:
         materialize_native_history(project, root, key)
         _assert_sealed_snapshot(
@@ -365,32 +396,55 @@ def test_capture_joins_native_identity_to_exact_linked_live_lease(
         session_store.stop_session(root, "c2")
 
 
-def test_archive_packs_existing_child_stream_without_native_capture(
-    tmp_path: Path, monkeypatch
-):
+def test_child_archive_uses_native_snapshot_not_runner_history(tmp_path: Path, monkeypatch):
     from meridian.lib.ops.session_archive import archive_history
     from meridian.lib.state.retention_archive import iter_archived_events
 
     project, root, _, _ = _capture_fixture(tmp_path, monkeypatch)
+    native_root = resolve_pi_spawn_session_root()
+    child_native_id = "child-native"
+    child = native_root / f"timestamp_{child_native_id}.jsonl"
+    child.write_text(
+        json.dumps({"type": "session", "version": 3, "id": child_native_id})
+        + "\n"
+        + json.dumps(
+            {
+                "type": "message",
+                "id": "native-child-turn",
+                "parentId": None,
+                "message": {"role": "assistant", "content": "native child answer"},
+            }
+        )
+        + "\n"
+    )
     key = spawn_store.start_spawn(
         root,
         chat_id="c2",
         harness="pi",
+        harness_session_id=child_native_id,
         kind="child",
         prompt="child",
         model="test",
         agent="coder",
     )
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
+    session_store.start_session(
+        root,
+        "pi",
+        child_native_id,
+        "test",
+        chat_id="c2",
+        kind="spawn",
+        spawn_id=key,
+        native_store=str(native_root),
+    )
+    session_store.stop_session(root, "c2")
     state = spawn_store.get_spawn(root, key)
     assert state is not None and state.history_id is not None
     stream = root / "spawns" / key / "history.jsonl"
-    events = [
-        {"type": "message", "message": {"role": "assistant", "content": "first attempt"}},
-        {"event_type": "meridian.attempt.completed", "attempt": 1},
-        {"type": "message", "message": {"role": "assistant", "content": "retry answer"}},
-    ]
-    stream.write_text("".join(json.dumps(event) + "\n" for event in events))
+    stream.write_text(json.dumps({"type": "runner-only"}) + "\n")
+    materialize_native_history(project, root, key)
+    _assert_sealed_snapshot(_snapshot_path(root, key), contains="native child answer")
     result = archive_history(
         root,
         destination=tmp_path / "archives",
@@ -401,22 +455,104 @@ def test_archive_packs_existing_child_stream_without_native_capture(
     assert not result.errors
     assert result.reclaimed == (str(state.history_id),)
     retained = list(iter_archived_events(Path(result.archives[0]), state.history_id))
-    assert retained == events
-    assert not (root / "spawns" / key / "native-transcript.jsonl").exists()
+    assert any(event.get("id") == "native-child-turn" for event in retained)
+    assert all(event.get("type") != "runner-only" for event in retained)
 
 
-def test_mixed_archive_reads_native_snapshot_and_legacy_history(tmp_path: Path, monkeypatch):
+def test_archive_apply_captures_headless_spawn_and_preserves_native_log(
+    tmp_path: Path, monkeypatch
+):
+    import zipfile
+
     from meridian.lib.ops.session_archive import archive_history
-    from meridian.lib.state.retention_archive import iter_archived_events
+    from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 
-    project, root, native_key, _ = _capture_fixture(tmp_path, monkeypatch)
-    materialize_native_history(project, root, native_key)
-    native_state = spawn_store.get_spawn(root, native_key)
-    assert native_state is not None and native_state.history_id is not None
-    _assert_sealed_snapshot(_snapshot_path(root, native_key), contains="exact-native")
-    legacy_key = spawn_store.start_spawn(
+    project, root, _, _ = _capture_fixture(tmp_path, monkeypatch)
+    native_root = resolve_pi_spawn_session_root()
+    native_id = "headless-native"
+    native = native_root / f"timestamp_{native_id}.jsonl"
+    native.write_text(
+        json.dumps({"type": "session", "version": 3, "id": native_id})
+        + "\n"
+        + json.dumps(
+            {
+                "type": "message",
+                "id": "headless-answer",
+                "parentId": None,
+                "message": {"role": "assistant", "content": "native answer"},
+            }
+        )
+        + "\n"
+    )
+    key = spawn_store.start_spawn(
         root,
         chat_id="c2",
+        harness="pi",
+        harness_session_id=native_id,
+        kind="child",
+        prompt="headless prompt",
+        model="test",
+        agent="coder",
+    )
+    spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
+    session_store.start_session(
+        root,
+        "pi",
+        native_id,
+        "test",
+        chat_id="c2",
+        kind="spawn",
+        spawn_id=key,
+        native_store=str(native_root),
+    )
+    session_store.stop_session(root, "c2")
+    (root / "spawns" / key / "history.jsonl").write_text(json.dumps({"type": "runner-only"}) + "\n")
+
+    dry_run = archive_history(
+        root,
+        destination=tmp_path / "archives",
+        refs=(key,),
+        project_root=project,
+    )
+    assert dry_run.preparation_required == (key,)
+    assert f"Apply will capture native snapshot: {key}" in dry_run.format_text()
+    assert not dry_run.errors
+    assert "Error:" not in dry_run.format_text()
+    assert not _snapshot_path(root, key).exists()
+
+    result = archive_history(
+        root,
+        destination=tmp_path / "archives",
+        refs=(key,),
+        apply=True,
+        project_root=project,
+    )
+
+    assert not result.errors
+    assert result.archives
+    with zipfile.ZipFile(result.archives[0]) as archive:
+        names = archive.namelist()
+        assert any(name.endswith("native-transcript.jsonl") for name in names)
+        assert not any(name.endswith("history.jsonl") for name in names)
+        assert not any(name.endswith("last-observed-event.json") for name in names)
+    output = session_log_sync(SessionLogInput(ref=key, project_root=str(project), full=True))
+    assert "native answer" in output.format_text()
+    assert "runner-only" not in output.format_text()
+
+
+def test_archive_refuses_legacy_runner_history_as_transcript(tmp_path: Path, monkeypatch):
+    from meridian.lib.ops.session_archive import archive_history
+    from meridian.lib.state.retention_archive import (
+        capture_record,
+        iter_archived_events,
+        publish_archive,
+    )
+    from meridian.lib.state.retention_restore import restore_archive
+
+    _, root, _, _ = _capture_fixture(tmp_path, monkeypatch)
+    legacy_key = spawn_store.start_spawn(
+        root,
+        chat_id=None,
         harness="pi",
         kind="child",
         prompt="child",
@@ -428,7 +564,7 @@ def test_mixed_archive_reads_native_snapshot_and_legacy_history(tmp_path: Path, 
     assert legacy_state is not None and legacy_state.history_id is not None
     events = [
         {"type": "message", "message": {"role": "assistant", "content": "first attempt"}},
-        {"event_type": "meridian.attempt.completed", "attempt": 1},
+        {"event_type": "legacy.runner.boundary", "attempt": 1},
         {"type": "message", "message": {"role": "assistant", "content": "retry answer"}},
     ]
     legacy = root / "spawns" / legacy_key / "history.jsonl"
@@ -436,19 +572,38 @@ def test_mixed_archive_reads_native_snapshot_and_legacy_history(tmp_path: Path, 
     result = archive_history(
         root,
         destination=tmp_path / "archives",
-        refs=(native_key, legacy_key),
+        refs=(legacy_key,),
         apply=True,
-        project_root=project,
     )
-    assert not result.errors
-    assert set(result.reclaimed) == {str(native_state.history_id), str(legacy_state.history_id)}
-    assert len(result.archives) == 1
-    archive = Path(result.archives[0])
-    native_events = list(iter_archived_events(archive, native_state.history_id))
-    assert native_events
-    assert any(row.get("id") == "exact-native" for row in native_events)
-    retained = list(iter_archived_events(archive, legacy_state.history_id))
-    assert retained == events
+    assert not result.reclaimed
+    assert not result.archives
+    assert any("no exact native source is bound" in error for error in result.errors)
+    legacy_record = capture_record(
+        root / "spawns" / legacy_key,
+        legacy_state,
+        None,
+        "2025-01-01T00:00:00+00:00",
+    )
+    old_archive = publish_archive(
+        root,
+        tmp_path / "old-archive",
+        (legacy_record,),
+    )
+    archive_path = Path(old_archive.destination) / old_archive.zip_name
+    restored_ids = restore_archive(
+        tmp_path / "restored-runtime", archive_path, (str(legacy_state.history_id),)
+    )
+    restored_history = tmp_path / "restored-runtime" / "spawns" / restored_ids[0] / "history.jsonl"
+    from meridian.lib.state.retention_archive import inventory
+
+    # Byte inventory is the only supported interpretation of legacy members.
+    original_member = next(m for m in inventory(legacy.parent) if m.name == "history.jsonl")
+    restored_member = next(
+        m for m in inventory(restored_history.parent) if m.name == "history.jsonl"
+    )
+    assert restored_member == original_member
+    with pytest.raises(ValueError, match="members are inert"):
+        list(iter_archived_events(archive_path, legacy_state.history_id))
 
 
 @pytest.mark.parametrize("owner_harness", ["pi", " PI "])
@@ -515,11 +670,10 @@ def test_history_jsonl_existence_is_not_capture_complete(tmp_path: Path, monkeyp
     project, root, key, _native = _capture_fixture(tmp_path, monkeypatch)
     stream = root / "spawns" / key / "history.jsonl"
     stream.write_bytes(b'{"partial":true}\n')
-    before = stream.read_bytes()
+    before = stream.stat()
     materialize_native_history(project, root, key)
     _assert_sealed_snapshot(_snapshot_path(root, key), contains="exact-native")
-    assert stream.read_bytes() == before
-    assert "retained/native" not in stream.read_text()
+    assert stream.stat() == before
 
 
 def test_known_incomplete_pi_tail_does_not_publish(tmp_path: Path, monkeypatch):
@@ -622,15 +776,11 @@ def test_pi_normal_stop_publishes(tmp_path: Path, monkeypatch):
 
 def test_capture_retry_removes_stale_atomic_temps(tmp_path: Path, monkeypatch):
     project, root, key, _native = _capture_fixture(tmp_path, monkeypatch)
-    spawn_dir = root / "spawns" / key
-    stale_snapshot = spawn_dir / ".native-transcript.jsonl.deadbeef.tmp"
-    stale_history = spawn_dir / ".history.jsonl.deadbeef.tmp"
+    stale_snapshot = root / "spawns" / key / ".native-transcript.jsonl.deadbeef.tmp"
     stale_snapshot.write_text("partial snapshot")
-    stale_history.write_text("partial history")
     materialize_native_history(project, root, key)
     _assert_sealed_snapshot(_snapshot_path(root, key), contains="exact-native")
     assert not stale_snapshot.exists()
-    assert not stale_history.exists()
 
 
 def _native_file_capture(tmp_path: Path, harness: str, events: list[dict[str, object]]):
@@ -746,9 +896,22 @@ def _opencode_capture_fixture(
         messages=messages,
     )
     monkeypatch.setenv("OPENCODE_HOME", str(opencode_home))
+    storage_root = opencode_home / "storage"
+    session_file = storage_root / "session" / f"{session_id}.json"
+    session_file.parent.mkdir(parents=True, exist_ok=True)
+    session_file.write_text("{}", encoding="utf-8")
     project = tmp_path / "repo"
     project.mkdir()
     root = resolve_project_runtime_root_for_write(project)
+    session_store.start_session(
+        root,
+        harness="opencode",
+        harness_session_id=session_id,
+        native_store=(storage_root.parent / "opencode.db").as_posix(),
+        model="test",
+        chat_id="c1",
+        kind="primary",
+    )
     key = spawn_store.start_spawn(
         root,
         chat_id="c1",
@@ -760,6 +923,7 @@ def _opencode_capture_fixture(
         harness_session_id=session_id,
     )
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
+    session_store.stop_session(root, "c1")
     return project, root, key
 
 
@@ -815,9 +979,22 @@ def _opencode_v2_capture_fixture(
         idle_outcome=idle_outcome,
     )
     monkeypatch.setenv("OPENCODE_HOME", str(opencode_home))
+    storage_root = opencode_home / "storage"
+    session_file = storage_root / "session" / f"{session_id}.json"
+    session_file.parent.mkdir(parents=True, exist_ok=True)
+    session_file.write_text("{}", encoding="utf-8")
     project = tmp_path / "repo"
     project.mkdir()
     root = resolve_project_runtime_root_for_write(project)
+    session_store.start_session(
+        root,
+        harness="opencode",
+        harness_session_id=session_id,
+        native_store=(storage_root.parent / "opencode.db").as_posix(),
+        model="test",
+        chat_id="c1",
+        kind="primary",
+    )
     key = spawn_store.start_spawn(
         root,
         chat_id="c1",
@@ -829,6 +1006,7 @@ def _opencode_v2_capture_fixture(
         harness_session_id=session_id,
     )
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
+    session_store.stop_session(root, "c1")
     return project, root, key
 
 
@@ -887,9 +1065,7 @@ def test_v2_opencode_pending_tool_tail_does_not_publish(tmp_path: Path, monkeypa
     _assert_not_captured(root, key)
 
 
-def test_v2_opencode_missing_completion_outcome_does_not_publish(
-    tmp_path: Path, monkeypatch
-):
+def test_v2_opencode_missing_completion_outcome_does_not_publish(tmp_path: Path, monkeypatch):
     project, root, key = _opencode_v2_capture_fixture(
         tmp_path,
         monkeypatch,

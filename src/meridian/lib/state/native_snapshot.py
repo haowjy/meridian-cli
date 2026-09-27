@@ -429,19 +429,9 @@ def read_snapshot(
 
 
 def canonical_transcript_path(spawn_dir: Path) -> Path | None:
-    """Select the authoritative conversation file for a spawn directory.
-
-    A sealed native snapshot wins over the managed append stream. This helper
-    owns only the ``snapshot else history`` precedence; callers that need to
-    validate the selection (identity, seal, or tail) do so on the result.
-    """
+    """Return a sealed native snapshot if one exists for this spawn."""
     snapshot = spawn_dir / NATIVE_SNAPSHOT_FILENAME
-    if snapshot.is_file():
-        return snapshot
-    history = spawn_dir / HISTORY_FILENAME
-    if history.is_file():
-        return history
-    return None
+    return snapshot if snapshot.is_file() else None
 
 
 def canonical_transcript_member(names: Iterable[str]) -> str:

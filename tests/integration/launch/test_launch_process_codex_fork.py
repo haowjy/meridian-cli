@@ -7,6 +7,7 @@ and that the native-continue-fork contract skips the fork call.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,7 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from meridian.lib.launch.types import SessionMode
+from meridian.lib.state import session_store
 from meridian.lib.state.spawn_store import list_spawns
 from tests.support.launch import stub_bundle_request_and_resolve
 
@@ -104,7 +106,7 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
             model="gpt-5.4",
             harness=HarnessId.CODEX.value,
             session=SessionRequest(
-                requested_harness_session_id="source-session",
+                requested_harness_session_id="00000000-0000-4000-8000-000000000001",
                 continue_chat_id="c7",
                 forked_from_chat_id="c7",
                 continue_fork=True,
@@ -133,11 +135,15 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
     ) -> list[str]:
         assert harness_id is HarnessId.CODEX
         captured["build_continue_session"] = spec.continue_session_id
+        if captured.get("fork_source_session"):
+            assert spec.native_identity is not None
+            assert spec.native_identity.operation == "fork"
+            assert spec.native_identity.session_id == captured["build_continue_session"]
         return [*base_command, "resume", spec.continue_session_id or ""]
 
     def fake_fork_session(source_session_id: str) -> str:
         captured["fork_source_session"] = source_session_id
-        return "forked-session"
+        return "00000000-0000-4000-8000-000000000002"
 
     def fake_run_primary_attach(
         harness_id: Any,
@@ -149,6 +155,7 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
+        session_id_observer: Any = None,
     ) -> PrimaryAttachOutcome:
         _ = (
             harness_id,
@@ -161,25 +168,12 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
             on_running,
         )
         captured["env_chat_id"] = dict(env).get("MERIDIAN_CHAT_ID")
+        session_id_observer("00000000-0000-4000-8000-000000000002")
         return PrimaryAttachOutcome(
             exit_code=0,
-            session_id="forked-session",
+            session_id="00000000-0000-4000-8000-000000000002",
             tui_pid=111,
         )
-
-    def fake_start_session(
-        runtime_root: Path,
-        harness: str,
-        harness_session_id: str | None,
-        model: str,
-        chat_id: str | None = None,
-        **kwargs: Any,
-    ) -> str:
-        _ = (runtime_root, harness, model)
-        captured["chat_id_arg"] = chat_id
-        captured["start_harness_session_id"] = harness_session_id
-        captured["forked_from_chat_id"] = kwargs.get("forked_from_chat_id")
-        return "c999"
 
     monkeypatch.setattr(
         launch_command,
@@ -187,25 +181,27 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
         fake_project_subprocess_spec,
     )
     monkeypatch.setattr(codex_adapter, "fork_session", fake_fork_session)
-    monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: "forked-session")
 
     outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_attach_fn=fake_run_primary_attach,
-        stop_session_fn=lambda *args, **kwargs: None,
-        update_session_harness_id_fn=lambda *args, **kwargs: None,
-        start_session_fn=fake_start_session,
     )
 
-    assert captured["fork_source_session"] == "source-session"
-    assert captured["build_continue_session"] == "forked-session"
-    assert captured["chat_id_arg"] is None
+    assert captured["fork_source_session"] == "00000000-0000-4000-8000-000000000001"
+    assert captured["build_continue_session"] == "00000000-0000-4000-8000-000000000002"
     # I-10: fork happens after the row exists; the parent is not the child identity.
-    assert captured["start_harness_session_id"] == ""
-    assert captured["forked_from_chat_id"] == "c7"
-    assert captured["env_chat_id"] == "c999"
-    assert outcome.chat_id == "c999"
+    assert captured["env_chat_id"] == outcome.chat_id
+    assert outcome.chat_id is not None and outcome.chat_id != "c7"
+    chat = session_store.get_session_record(launch_context.runtime_root, outcome.chat_id)
+    assert chat is not None and chat.forked_from_chat_id == "c7"
+    starts = [
+        json.loads(line)
+        for line in (launch_context.runtime_root / "sessions.jsonl").read_text().splitlines()
+        if json.loads(line).get("event") == "start"
+    ]
+    assert len(starts) == 1
+    assert starts[0]["harness_session_id"] is None
     spawns = list_spawns(launch_context.runtime_root)
     assert len(spawns.records) == 1
     assert spawns.records[0].terminal.origin == "launcher"
@@ -242,7 +238,7 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
             model="gpt-5.4",
             harness=HarnessId.CODEX.value,
             session=SessionRequest(
-                requested_harness_session_id="source-session",
+                requested_harness_session_id="00000000-0000-4000-8000-000000000001",
                 continue_chat_id="c7",
                 forked_from_chat_id="c7",
                 continue_fork=True,
@@ -286,6 +282,7 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
+        session_id_observer: Any = None,
     ) -> PrimaryAttachOutcome:
         _ = (
             harness_id,
@@ -298,9 +295,10 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
             on_running,
         )
         captured["env_chat_id"] = dict(env).get("MERIDIAN_CHAT_ID")
+        session_id_observer("00000000-0000-4000-8000-000000000001")
         return PrimaryAttachOutcome(
             exit_code=0,
-            session_id="source-session",
+            session_id="00000000-0000-4000-8000-000000000001",
             tui_pid=111,
         )
 
@@ -310,17 +308,156 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
         fake_project_subprocess_spec,
     )
     monkeypatch.setattr(codex_adapter, "fork_session", fail_if_forked)
-    monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: "source-session")
 
     outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_attach_fn=fake_run_primary_attach,
-        stop_session_fn=lambda *args, **kwargs: None,
-        update_session_harness_id_fn=lambda *args, **kwargs: None,
-        start_session_fn=lambda *args, **kwargs: "c999",
     )
 
-    assert captured["build_continue_session"] == "source-session"
-    assert captured["env_chat_id"] == "c999"
-    assert outcome.chat_id == "c999"
+    assert captured["build_continue_session"] == "00000000-0000-4000-8000-000000000001"
+    assert captured["env_chat_id"] == outcome.chat_id
+    assert outcome.chat_id is not None
+
+    assert outcome.exit_code == 1
+    row = list_spawns(launch_context.runtime_root).records[0]
+    assert row.terminal.error == "entry_mismatch"
+    assert row.run_boundary.status == "mismatch"
+    facts = [
+        json.loads(line)
+        for line in (launch_context.runtime_root / "spawns" / row.id / "runner-lifecycle.jsonl")
+        .read_text()
+        .splitlines()
+    ]
+    mismatch = [fact for fact in facts if fact["event"] == "entry_mismatch"]
+    assert len(mismatch) == 1 and mismatch[0]["reason"] == "fork_reused_source"
+    assert mismatch[0]["expected"]["session_id"] is None
+
+
+def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+    import sqlite3
+    import subprocess
+
+    from meridian.lib.ops.reference import ResolvedSessionReference
+    from meridian.lib.ops.spawn.api import _build_fork_create_input
+    from meridian.lib.ops.spawn.models import SpawnForkInput
+
+    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
+    monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "meridian-home"))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "ambient-decoy"))
+    sid = "12345678-1234-4234-8234-123456789abc"
+    store = tmp_path / "recorded" / "sessions"
+    store.mkdir(parents=True)
+    source = store / f"rollout-2026-01-01T00-00-00-{sid}.jsonl"
+    source.write_text(json.dumps({"type": "session_meta", "payload": {"id": sid}}) + "\n")
+    with sqlite3.connect(store.parent / "state_5.sqlite") as db:
+        db.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT)")
+        db.execute("INSERT INTO threads VALUES (?, ?)", (sid, str(source)))
+    reference = ResolvedSessionReference(
+        harness_session_id=sid,
+        harness="codex",
+        source_chat_id="c-source",
+        source_model="gpt-5.4",
+        source_agent=None,
+        source_skills=(),
+        source_work_id=None,
+        tracked=True,
+        source_native_store=str(store),
+    )
+    fork = _build_fork_create_input(
+        payload=SpawnForkInput(source_ref="c-source", prompt="fork"),
+        normalized_source_ref="c-source",
+        resolved_reference=reference,
+        requested_model="gpt-5.4",
+        requested_agent=None,
+        inherited_skills=(),
+        requested_work="",
+        requested_task_dir=None,
+        requested_goal=None,
+        harness="codex",
+    )
+    context, registry = _build_primary_launch_context(
+        project_root=tmp_path,
+        harness_id=HarnessId.CODEX,
+        model="gpt-5.4",
+        session=fork.session.model_copy(update={"primary_session_mode": "fork"}),
+    )
+    shim = tmp_path / "codex-shim"
+    shim.write_text('#!/bin/sh\nprintf "%s\\n%s\\n" "$CODEX_HOME" "$1"\n')
+    observed: list[str] = []
+
+    def attach(
+        harness_id,
+        spawn_id,
+        log_dir,
+        control_root,
+        task_cwd,
+        env,
+        spec,
+        launcher,
+        on_running,
+        session_id_observer,
+    ):
+        assert spec.native_identity is not None
+        target_id = spec.native_identity.session_id
+        assert target_id and target_id != sid
+        result = subprocess.run(
+            ["sh", str(shim), target_id],
+            env=env,
+            cwd=control_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert result.stdout.splitlines() == [str(store.parent), target_id]
+        target = registry.get(HarnessId.CODEX).resolve_native_session_file(
+            session_id=target_id,
+            native_store=store,
+        )
+        assert target is not None and target != source
+        assert json.loads(target.read_text().splitlines()[0])["payload"]["id"] == target_id
+        session_id_observer(target_id)
+        observed.append(target_id)
+        return PrimaryAttachOutcome(exit_code=0, session_id=target_id, tui_pid=None)
+
+    outcome = run_harness_process(context, registry, run_primary_attach_fn=attach)
+    assert outcome.exit_code == 0
+    assert len(observed) == 1
+    chat = session_store.get_session_record(context.runtime_root, outcome.chat_id)
+    assert chat is not None and chat.harness_session_id == observed[0]
+    assert chat.native_store == str(store)
+    assert json.loads(source.read_text())["payload"]["id"] == sid
+
+
+def test_prelaunch_identity_refusal_keeps_pre_exec_phase(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from meridian.lib.core.native_identity import NativeEntryMismatch, NativeKeyFields
+
+    ctx, registry = _build_primary_launch_context(
+        project_root=tmp_path,
+        harness_id=HarnessId.CODEX,
+        model="gpt-5.4",
+    )
+    error = NativeEntryMismatch(NativeKeyFields(session_id="a"), NativeKeyFields(session_id="b"))
+
+    def refuse(**kwargs):
+        raise error
+
+    monkeypatch.setattr(registry.get(HarnessId.CODEX), "prepare_prelaunch", refuse)
+    outcome = run_harness_process(ctx, registry)
+    assert outcome.exit_code == 1
+    row = list_spawns(ctx.runtime_root).records[0]
+    facts = [
+        json.loads(line)
+        for line in (ctx.runtime_root / "spawns" / row.id / "runner-lifecycle.jsonl")
+        .read_text()
+        .splitlines()
+    ]
+    mismatch = [fact for fact in facts if fact["event"] == "entry_mismatch"]
+    assert len(mismatch) == 1 and mismatch[0]["phase"] == "pre_exec"

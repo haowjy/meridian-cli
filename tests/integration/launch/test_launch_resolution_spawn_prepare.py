@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -386,6 +387,11 @@ def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
     )
 
     harness_session_id = "claude-session-123"
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / f"{harness_session_id}.jsonl").write_text(
+        json.dumps({"sessionId": harness_session_id}) + "\n"
+    )
     preview = build_launch_context(
         spawn_id="dry-run-claude-spawn-prepare-continue",
         request=SpawnRequest(
@@ -395,7 +401,7 @@ def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
             harness="claude",
             agent="dev-orchestrator",
             session=SessionRequest(
-                requested_harness_session_id=harness_session_id,
+                requested_harness_session_id=harness_session_id, source_native_store=str(source),
                 continue_harness="claude",
                 continue_fork=True,
             ),

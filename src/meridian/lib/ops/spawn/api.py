@@ -18,6 +18,7 @@ from meridian.lib.bootstrap.services import (
 from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import max_depth_reached
+from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.core.spawn_lifecycle import (
     ACTIVE_SPAWN_STATUSES,
@@ -35,7 +36,7 @@ from meridian.lib.launch.continue_replay import (
     build_continue_replay_contract,
     continue_replay_source_from_reference,
 )
-from meridian.lib.launch.request import SessionRequest
+from meridian.lib.launch.request import SessionRequest, cross_harness_continue_error
 from meridian.lib.ops.mars import mars_agent_subagents, mars_list_subagents
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
 from meridian.lib.ops.runtime import (
@@ -225,13 +226,6 @@ def _forked_from_output(payload: SpawnCreateInput) -> str | None:
     if source_ref:
         return source_ref
     return None
-
-
-def _missing_follow_up_session_error(source_ref: str) -> str:
-    normalized = source_ref.strip()
-    if normalized.startswith("p") and normalized[1:].isdigit():
-        return f"Spawn '{normalized}' has no recorded session — cannot continue/fork."
-    return f"Session '{normalized}' has no recorded harness session — cannot continue/fork."
 
 
 def _validate_exact_work_id(work_id: str) -> str:
@@ -1962,12 +1956,36 @@ def _source_spawn_for_follow_up(
         payload_spawn_id,
         runtime_root=runtime_root,
     )
-    resolved_reference = resolve_session_reference(
-        project_root,
-        resolved_spawn_id,
-        runtime_root=runtime_root,
-        harness_hint=harness_hint,
-    )
+    try:
+        # Resolve tracked chats in their native harness first. A requested
+        # harness is not evidence that the chat belongs to that harness.
+        resolved_reference = resolve_session_reference(
+            project_root,
+            payload_spawn_id,
+            runtime_root=runtime_root,
+        )
+    except ValueError:
+        if harness_hint is None:
+            raise
+        # An untracked native session ID may need the hint to disambiguate it.
+        resolved_reference = resolve_session_reference(
+            project_root,
+            payload_spawn_id,
+            runtime_root=runtime_root,
+            harness_hint=harness_hint,
+        )
+    if (
+        harness_hint is not None
+        and resolved_reference.harness is not None
+        and resolved_reference.harness != harness_hint
+    ):
+        raise ValueError(
+            cross_harness_continue_error(
+                resolved_reference.source_chat_id,
+                resolved_reference.harness,
+                harness_hint,
+            )
+        )
     row = read_spawn_row(project_root, resolved_spawn_id, runtime_root=runtime_root)
     if row is None and resolved_reference.source_spawn_id is not None:
         # Follow the native session's exact spawn provenance, never its owner's
@@ -2144,8 +2162,7 @@ def _build_fork_create_input(
             forked_from_chat_id=resolved_reference.source_chat_id,
             source_control_root=resolved_reference.source_control_root,
             source_execution_cwd=resolved_reference.source_execution_cwd,
-            source_claude_config_dir=resolved_reference.source_claude_config_dir,
-            source_pi_session_dir=resolved_reference.source_pi_session_dir,
+            source_native_store=resolved_reference.source_native_store,
         ),
         **launch_options,
     )
@@ -2196,7 +2213,7 @@ def spawn_fork_sync(
         runtime_root=runtime_root,
     )
     if resolved_reference.missing_harness_session_id:
-        raise ValueError(_missing_follow_up_session_error(normalized_source_ref))
+        raise NativeSessionUnavailable(normalized_source_ref, "unbound")
 
     requested_model = payload.model.strip()
     requested_agent = payload.agent
@@ -2289,9 +2306,7 @@ def spawn_continue_sync(
         harness_hint=payload.harness,
     )
     if resolved_reference.missing_harness_session_id:
-        raise ValueError(
-            f"Spawn '{resolved_spawn_id}' has no recorded session — cannot continue/fork."
-        )
+        raise NativeSessionUnavailable(resolved_spawn_id, "unbound")
 
     _reject_continue_policy_overrides(payload)
     create_input = _build_continue_create_input(

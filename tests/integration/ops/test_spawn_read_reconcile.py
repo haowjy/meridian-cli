@@ -117,32 +117,52 @@ def test_read_spawn_row_nested_recent_disk_activity_keeps_running(
     runtime_root = _state_root(project_root)
     monkeypatch.setenv("_MERIDIAN_DEPTH", "1")
 
-    for spawn_id, activity_file in [
-        ("p-heartbeat", "heartbeat"),
-        ("p-history", "history.jsonl"),
-    ]:
-        spawn_store.start_spawn(
-            runtime_root,
-            spawn_id=spawn_id,
-            chat_id="c1",
-            model="gpt-5.3-codex",
-            agent="coder",
-            harness="codex",
-            prompt="hello",
-            runner_pid=999_999_999,
-            started_at=_OLD_TIMESTAMP,
-        )
-        path = runtime_root / "spawns" / spawn_id / activity_file
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.touch(exist_ok=True)
-        now = time.time()
-        os.utime(path, (now, now))
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-heartbeat",
+        chat_id="c1",
+        model="gpt-5.3-codex",
+        agent="coder",
+        harness="codex",
+        prompt="hello",
+        runner_pid=999_999_999,
+        started_at=_OLD_TIMESTAMP,
+    )
+    heartbeat = runtime_root / "spawns" / "p-heartbeat" / "heartbeat"
+    heartbeat.parent.mkdir(parents=True, exist_ok=True)
+    heartbeat.touch(exist_ok=True)
+    now = time.time()
+    os.utime(heartbeat, (now, now))
 
-        result = spawn_query.read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
+    result = spawn_query.read_spawn_row(project_root, "p-heartbeat", runtime_root=runtime_root)
 
-        assert result is not None
-        assert result.status == "running"
-        assert result.terminal is None
+    assert result is not None
+    assert result.status == "running"
+    assert result.terminal is None
+
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-history-only",
+        chat_id="c2",
+        model="gpt-5.3-codex",
+        agent="coder",
+        harness="codex",
+        prompt="hello",
+        runner_pid=999_999_999,
+        started_at=_OLD_TIMESTAMP,
+    )
+    history = runtime_root / "spawns" / "p-history-only" / "history.jsonl"
+    history.parent.mkdir(parents=True, exist_ok=True)
+    history.touch(exist_ok=True)
+    now = time.time()
+    os.utime(history, (now, now))
+
+    result = spawn_query.read_spawn_row(project_root, "p-history-only", runtime_root=runtime_root)
+
+    assert result is not None
+    assert result.status == "failed"
+    assert result.terminal is not None
+    assert result.terminal.error == "stale_nested_read"
 
 
 def test_read_spawn_row_nested_stale_missing_runner_pid_returns_synthetic_failed(

@@ -681,6 +681,10 @@ def test_opencode_named_primary_continue_preserves_explicit_model(
         harness=HarnessId.OPENCODE,
     )
 
+    from tests.support.opencode_db import write_opencode_v2_db_session
+    native_db = tmp_path / "opencode.db"
+    write_opencode_v2_db_session(db_path=native_db, session_id="ses_abc")
+
     preview = build_launch_context(
         spawn_id="dry-run-opencode-named-continue",
         request=SpawnRequest(
@@ -694,6 +698,7 @@ def test_opencode_named_primary_continue_preserves_explicit_model(
                 continue_harness="opencode",
                 continue_source_ref="p123",
                 continue_source_tracked=True,
+                source_native_store=str(native_db),
             ),
         ),
         runtime=build_primary_launch_runtime(project_root=tmp_path),

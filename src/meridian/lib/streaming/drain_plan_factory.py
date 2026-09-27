@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         HarnessConnection,
     )
 
+
 class SerializedInject(Protocol):
     """Manager-owned serialized injection capability."""
 

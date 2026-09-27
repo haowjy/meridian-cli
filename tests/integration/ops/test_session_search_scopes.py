@@ -10,6 +10,7 @@ import pytest
 from meridian.lib.harness.claude import project_slug
 from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
 from meridian.lib.state import session_store
+from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.user_paths import get_project_home
 
 
@@ -81,12 +82,14 @@ def test_session_search_workspace_scope_uses_runtime_evidence_not_repo_markers(
         current_runtime,
         harness="codex",
         harness_session_id="11111111-1111-1111-1111-111111111111",
+        native_store=(home_root / ".codex" / "sessions").as_posix(),
         model="gpt-5.4-mini",
     )
     workspace_chat_id = session_store.start_session(
         workspace_runtime,
         harness="codex",
         harness_session_id="22222222-2222-2222-2222-222222222222",
+        native_store=(home_root / ".codex" / "sessions").as_posix(),
         model="gpt-5.4-mini",
     )
     try:
@@ -119,7 +122,8 @@ def test_session_search_workspace_scope_uses_runtime_evidence_not_repo_markers(
     assert match.corpus == workspace_root.as_posix()
     assert (workspace_root / "meridian.toml").is_file()
     assert not (workspace_root / ".git").exists()
-    assert match.open_command.startswith("meridian session log --file ")
+    assert f"meridian session log {workspace_chat_id} " in match.open_command
+    assert "--file" not in match.open_command
     assert "--segment 0 --around 1 --context 5" in match.open_command
 
 
@@ -138,6 +142,7 @@ def test_session_search_global_scope_includes_runtime_root(tmp_path: Path, monke
         runtime_root,
         harness="codex",
         harness_session_id="33333333-3333-3333-3333-333333333333",
+        native_store=((tmp_path / "home") / ".codex" / "sessions").as_posix(),
         model="gpt-5.4-mini",
     )
     try:
@@ -202,6 +207,7 @@ def test_session_search_corpus_resolves_tracked_claude_canonical_transcript(
         harness_session_id=session_id,
         model="claude-opus",
         claude_config_dir=(tmp_path / "recorded-overlay").as_posix(),
+        native_store=str(project_dir),
     )
     try:
         output = session_search_sync(
@@ -218,11 +224,8 @@ def test_session_search_corpus_resolves_tracked_claude_canonical_transcript(
     assert output.matches[0].corpus == "runtime:orphan-one"
 
 
-def test_large_loose_transcript_returns_early_matches_before_budget_exhaustion(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_large_native_transcript_is_rebuild_only(tmp_path: Path, monkeypatch) -> None:
     from meridian.lib.state import spawn_store
-    from meridian.lib.state.history import ingest_portable_history
     from meridian.lib.state.history_index import HistoryIndex
 
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
@@ -234,19 +237,32 @@ def test_large_loose_transcript_returns_early_matches_before_budget_exhaustion(
         root, chat_id="c1", harness="codex", model="test", agent="", prompt="query"
     )
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
-    ingest_portable_history(
-        root,
-        key,
-        iter(
-            [
-                {
-                    "type": "assistant",
-                    "message": {"content": [{"type": "text", "text": "early needle"}]},
-                }
-            ]
-        ),
+    (root / "spawns" / key / "history.jsonl").write_text(
+        json.dumps({"payload": {"text": "early needle"}}) + "\n"
     )
-    path = root / "spawns" / key / "history.jsonl"
+    store = tmp_path / "native"
+    store.mkdir()
+    sid = "11111111-1111-4111-8111-111111111111"
+    path = store / f"{sid}.jsonl"
+    path.write_text(
+        json.dumps({"sessionId": sid})
+        + "\n"
+        + json.dumps(
+            {
+                "type": "assistant",
+                "message": {"content": "early needle"},
+            }
+        )
+        + "\n"
+    )
+    session_store.start_session(
+        root,
+        harness="claude",
+        harness_session_id=sid,
+        native_store=str(store),
+        model="test",
+        chat_id="c1",
+    )
     padding = json.dumps({"type": "padding", "data": "x" * 4096}) + "\n"
     with path.open("a") as handle:
         for _ in range(16640):
@@ -254,16 +270,16 @@ def test_large_loose_transcript_returns_early_matches_before_budget_exhaustion(
     assert path.stat().st_size > 64 * 1024 * 1024
     HistoryIndex(root).rebuild()
     result = session_search_sync(SessionSearchInput(query="needle", project_root=str(project)))
-    assert result.matches and "early [[needle]]" in result.matches[0].content_preview
-    assert result.truncated and not result.complete
+    assert not result.matches
+    assert not result.truncated and not result.complete
+    assert result.sources_not_searched == 1
     assert "incomplete" in result.format_text()
 
 
-def test_browse_subset_search_matches_portable_loose_and_zip_history(tmp_path, monkeypatch):
+def test_browse_subset_search_keeps_unbound_legacy_history_loose(tmp_path, monkeypatch):
     from meridian.lib.ops.session_archive import archive_history
     from meridian.lib.ops.session_search import iter_session_subset_search
     from meridian.lib.state import spawn_store
-    from meridian.lib.state.history import ingest_portable_history
 
     monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "home"))
     project = tmp_path / "project"
@@ -286,17 +302,8 @@ def test_browse_subset_search_matches_portable_loose_and_zip_history(tmp_path, m
     )
     session_store.update_session_spawn_id(root, chat, key)
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
-    ingest_portable_history(
-        root,
-        key,
-        iter(
-            [
-                {
-                    "type": "assistant",
-                    "message": {"content": [{"type": "text", "text": "portable needle"}]},
-                },
-            ]
-        ),
+    (root / "spawns" / key / "history.jsonl").write_text(
+        json.dumps({"payload": {"text": "portable needle"}}) + "\n"
     )
     session_store.stop_session(root, chat)
     row = spawn_store.get_spawn(root, key)
@@ -304,9 +311,12 @@ def test_browse_subset_search_matches_portable_loose_and_zip_history(tmp_path, m
     loose = list(
         iter_session_subset_search(project_root=str(project), chat_ids=[chat], query="needle")
     )
-    assert len(loose) == 1 and loose[0].matched and loose[0].error is None
+    assert len(loose) == 1 and not loose[0].matched
+    assert loose[0].error == f"unbound: no verified native session for {chat}"
     archived = archive_history(root, destination=tmp_path / "zips", refs=(key,), apply=True)
-    assert archived.reclaimed
+    assert not archived.reclaimed
+    assert not archived.archives
+    assert any("no exact native source is bound" in error for error in archived.errors)
     steps = list(
         iter_session_subset_search(
             project_root=str(project),
@@ -314,12 +324,12 @@ def test_browse_subset_search_matches_portable_loose_and_zip_history(tmp_path, m
             query="needle",
         )
     )
-    assert steps[0].matched and steps[0].error is None
+    assert not steps[0].matched and "unbound" in (steps[0].error or "")
     assert not steps[1].matched and steps[1].error
 
 
 @pytest.mark.parametrize("recorded_harness_id", [True, False])
-def test_damaged_index_reports_incomplete_search_but_exact_launch_ref_still_resolves(
+def test_damaged_metadata_index_only_affects_work_scoped_search(
     tmp_path, monkeypatch, recorded_harness_id
 ):
     from meridian.lib.ops.reference import resolve_session_reference
@@ -360,9 +370,9 @@ def test_damaged_index_reports_incomplete_search_but_exact_launch_ref_still_reso
     index.path.write_bytes(b"not a sqlite database")  # offline: no live connections
     assert resolve_session_reference(project, chat, runtime_root=root) == expected
     result = session_search_sync(SessionSearchInput(query="needle", project_root=str(project)))
-    assert not result.complete and result.errors
+    assert result.complete  # Corpus keys come from the store, not metadata.
     index.rebuild(reset=True)
-    (index.directory / "pending/GENERATION").write_text("invalid generation")
+    (HistoryChanges(root).directory / "GENERATION").write_text("invalid generation")
     result = session_search_sync(
         SessionSearchInput(query="needle", work_id="work", project_root=str(project))
     )

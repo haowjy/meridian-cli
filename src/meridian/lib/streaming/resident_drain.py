@@ -95,7 +95,7 @@ class _ResidentCompletionEvidence:
         del event, transition
         return EvidenceEventDecision()
 
-    def note_event_persisted(self, event: RawHarnessEvent) -> EvidenceEventDecision:
+    def note_event_delivered(self, event: RawHarnessEvent) -> EvidenceEventDecision:
         del event
         return EvidenceEventDecision()
 
@@ -476,8 +476,8 @@ class ResidentDrainCoordinator:
         self._profile.observe_activity_transition(transition)
         return await self._coordinator.observe_event(event, transition)
 
-    def note_event_persisted(self, event: RawHarnessEvent) -> DrainLoopDecision:
-        return self._coordinator.note_event_persisted(event)
+    def note_event_delivered(self, event: RawHarnessEvent) -> DrainLoopDecision:
+        return self._coordinator.note_event_delivered(event)
 
     async def handle_terminal_event(
         self,

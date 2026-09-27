@@ -77,7 +77,8 @@ def _build_primary_launch_context(
             session=session or SessionRequest(),
             launch_policy_snapshot=(
                 LaunchPolicySnapshot(model=model, harness=harness_id.value)
-                if session is not None else None
+                if session is not None
+                else None
             ),
         ),
         runtime=LaunchRuntime(
@@ -151,7 +152,7 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
             primary_session_mode=SessionMode.RESUME.value,
         ),
     )
-    opencode_adapter = harness_registry.get_subprocess_harness(HarnessId.OPENCODE)
+    harness_registry.get_subprocess_harness(HarnessId.OPENCODE)
     managed_calls = 0
     black_box_calls = 0
     captured_spawn_dir: Path | None = None
@@ -167,6 +168,7 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
+        session_id_observer: Any = None,
     ) -> PrimaryAttachOutcome:
         _ = harness_id, spawn_id, control_root, task_cwd, env, spec, process_launcher, on_running
         nonlocal managed_calls
@@ -201,15 +203,11 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
         on_child_started(9494)
         return (0, 9494)
 
-    monkeypatch.setattr(opencode_adapter, "observe_session_id", lambda **kwargs: None)
-
     outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_attach_fn=failing_managed,
         run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
-        stop_session_fn=lambda *args, **kwargs: None,
-        update_session_harness_id_fn=lambda *args, **kwargs: None,
     )
 
     assert managed_calls == 1
@@ -288,8 +286,7 @@ def test_project_config_opencode_version_selects_v2_without_env(
 
     monkeypatch.delenv("MERIDIAN_HARNESS_OPENCODE_VERSION", raising=False)
     (tmp_path / "meridian.toml").write_text(
-        '[project]\nid = "opencode-version-config"\n\n'
-        "[harness.opencode]\nversion = \"v2\"\n",
+        '[project]\nid = "opencode-version-config"\n\n[harness.opencode]\nversion = "v2"\n',
         encoding="utf-8",
     )
     launch_context, _ = _build_primary_launch_context(

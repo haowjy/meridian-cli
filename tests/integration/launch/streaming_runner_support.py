@@ -116,7 +116,9 @@ class _ReportThenHangConnection:
         return self._resident_backend
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        _ = spec
+        plan = spec.native_identity
+        if plan is not None and plan.session_id is not None:
+            self._session_id = plan.session_id
         self._spawn_id = config.spawn_id
         self._project_root = config.control_root
         self.state = "connected"
@@ -233,7 +235,9 @@ class _OpenCodeTerminalWithScopeConnection:
         return self._scope_snapshot
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        _ = spec
+        plan = spec.native_identity
+        if plan is not None and plan.session_id is not None:
+            self._session_id = plan.session_id
         self._spawn_id = config.spawn_id
         self._project_root = config.control_root
         current_scope = self._scope_snapshot
@@ -351,7 +355,9 @@ class _ResidentDeadlineConnection:
         return self._resident_backend
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        _ = spec
+        plan = spec.native_identity
+        if plan is not None and plan.session_id is not None:
+            self._session_id = plan.session_id
         type(self).starts += 1
         self._spawn_id = config.spawn_id
         self.state = "connected"
@@ -458,6 +464,7 @@ class _ScriptedRetryOpenCodeConnection:
         self.state = "created"
         self._spawn_id = SpawnId("")
         self._attempt_index = 0
+        self._session_id = type(self).session_id_value
         self._resident_backend = _IdleResidentBackend()
         self.capabilities = ConnectionCapabilities(
             mid_turn_injection="http_post",
@@ -477,7 +484,7 @@ class _ScriptedRetryOpenCodeConnection:
 
     @property
     def session_id(self) -> str | None:
-        return type(self).session_id_value
+        return self._session_id
 
     @property
     def subprocess_pid(self) -> int | None:
@@ -485,7 +492,7 @@ class _ScriptedRetryOpenCodeConnection:
 
     @property
     def primary_event_scope(self) -> PrimaryEventScope | None:
-        session_id = type(self).session_id_value
+        session_id = self.session_id
         return PrimaryEventScope(HarnessId.OPENCODE, session_id) if session_id else None
 
     def observe_event_semantics(self, semantics: object) -> None:
@@ -496,7 +503,9 @@ class _ScriptedRetryOpenCodeConnection:
         return self._resident_backend
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        _ = spec
+        plan = spec.native_identity
+        if plan is not None and plan.session_id is not None:
+            self._session_id = plan.session_id
         type(self).starts += 1
         self._attempt_index = type(self).starts
         self._spawn_id = config.spawn_id
@@ -576,8 +585,6 @@ class _TimeoutAbortPiConnection(FakePiConnection):
             yield pi_event("message_update", {"abort_tail_frame": index})
 
 
-
-
 def _build_request() -> SpawnRequest:
     return SpawnRequest(
         model="gpt-5.3-codex",
@@ -617,6 +624,19 @@ async def _execute_with_context(
         ),
         harness_registry=registry,
     )
+    from meridian.lib.launch.session_scope import SessionAttempt
+    from meridian.lib.state import session_store, spawn_store
+
+    if "session_attempt" not in kwargs:
+        chat_id = session_store.start_session(
+            runtime_root, str(launch_context.harness.id), "", "", spawn_id=str(run.spawn_id)
+        )
+        record = session_store.get_session_record(runtime_root, chat_id)
+        assert record is not None
+        spawn_store.update_spawn(runtime_root, run.spawn_id, chat_id=chat_id)
+        kwargs["session_attempt"] = SessionAttempt(
+            runtime_root, chat_id, record.session_instance_id, "attempt-1", run.spawn_id
+        )
     return await streaming_runner_module.execute_with_streaming(
         run,
         request=request,

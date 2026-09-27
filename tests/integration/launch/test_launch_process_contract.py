@@ -12,20 +12,24 @@ import os
 import sys
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
+from meridian.lib.core.native_identity import NativeKeyFields
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import BootstrapMode
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.native_run import NativeRun
 from meridian.lib.launch.process import runner as process_runner
 from meridian.lib.launch.process.ports import PRIMARY_STDERR_LOG_PATH_ENV, LaunchedProcess
 from meridian.lib.launch.process.primary_attach import PrimaryAttachError
 from meridian.lib.launch.process.subprocess_launcher import SubprocessProcessLauncher
+from meridian.lib.launch.session_scope import SessionAttempt
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
-from meridian.lib.state.artifact_store import LocalStore
+from meridian.lib.state import session_store
+from meridian.lib.state.native_binding import Bound, Conflict
 
 
 def test_subprocess_launcher_captures_output_log(tmp_path: Path) -> None:
@@ -105,10 +109,6 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
     )
     black_box_calls = 0
 
-    class _Managed:
-        def record_harness_session_id(self, _session_id: str) -> None:
-            return None
-
     def _black_box(
         command: tuple[str, ...],
         cwd: Path,
@@ -123,28 +123,29 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
             on_child_started(111)
         return (0, 111)
 
-    exit_code, managed_session_id, managed_cancelled = process_runner._execute_primary_process(
-        harness_id=HarnessId.CODEX,
-        primary_spawn_id=SpawnId("p-contract-blackbox"),
-        log_dir=tmp_path,
-        control_root=tmp_path,
-        launch_cwd=tmp_path,
-        task_cwd=None,
-        child_env={},
-        launch_spec=ResolvedLaunchSpec(
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-            interactive=True,
-        ),
-        command=("codex",),
-        harness_contract=harness_contract,
-        managed=_Managed(),
-        runtime_root=tmp_path,
-        run_primary_process_with_capture_fn=_black_box,
-        run_primary_attach_fn=lambda *args, **kwargs: (_ for _ in ()).throw(
-            AssertionError("subprocess_only contract should bypass managed attach")
-        ),
-        on_running=lambda _pid: None,
+    exit_code, managed_session_id, managed_cancelled, _facts = (
+        process_runner._execute_primary_process(
+            harness_id=HarnessId.CODEX,
+            primary_spawn_id=SpawnId("p-contract-blackbox"),
+            log_dir=tmp_path,
+            control_root=tmp_path,
+            launch_cwd=tmp_path,
+            task_cwd=None,
+            child_env={},
+            launch_spec=ResolvedLaunchSpec(
+                prompt="hello",
+                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+                interactive=True,
+            ),
+            command=("codex",),
+            harness_contract=harness_contract,
+            native_run=_native_run(tmp_path),
+            run_primary_process_with_capture_fn=_black_box,
+            run_primary_attach_fn=lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("subprocess_only contract should bypass managed attach")
+            ),
+            on_running=lambda _pid: None,
+        )
     )
 
     assert black_box_calls == 1
@@ -169,10 +170,6 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
     )
     black_box_calls = 0
 
-    class _Managed:
-        def record_harness_session_id(self, _session_id: str) -> None:
-            return None
-
     def _black_box(
         command: tuple[str, ...],
         cwd: Path,
@@ -187,28 +184,29 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
             on_child_started(222)
         return (0, 222)
 
-    exit_code, managed_session_id, managed_cancelled = process_runner._execute_primary_process(
-        harness_id=HarnessId.CLAUDE,
-        primary_spawn_id=SpawnId("p-contract-fallback"),
-        log_dir=tmp_path,
-        control_root=tmp_path,
-        launch_cwd=tmp_path,
-        task_cwd=None,
-        child_env={},
-        launch_spec=ResolvedLaunchSpec(
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-            interactive=True,
-        ),
-        command=("claude",),
-        harness_contract=harness_contract,
-        managed=_Managed(),
-        runtime_root=tmp_path,
-        run_primary_process_with_capture_fn=_black_box,
-        run_primary_attach_fn=lambda *args, **kwargs: (_ for _ in ()).throw(
-            PrimaryAttachError("fallback please")
-        ),
-        on_running=lambda _pid: None,
+    exit_code, managed_session_id, managed_cancelled, _facts = (
+        process_runner._execute_primary_process(
+            harness_id=HarnessId.CLAUDE,
+            primary_spawn_id=SpawnId("p-contract-fallback"),
+            log_dir=tmp_path,
+            control_root=tmp_path,
+            launch_cwd=tmp_path,
+            task_cwd=None,
+            child_env={},
+            launch_spec=ResolvedLaunchSpec(
+                prompt="hello",
+                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+                interactive=True,
+            ),
+            command=("claude",),
+            harness_contract=harness_contract,
+            native_run=_native_run(tmp_path),
+            run_primary_process_with_capture_fn=_black_box,
+            run_primary_attach_fn=lambda *args, **kwargs: (_ for _ in ()).throw(
+                PrimaryAttachError("fallback please")
+            ),
+            on_running=lambda _pid: None,
+        )
     )
 
     assert black_box_calls == 1
@@ -217,83 +215,33 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
     assert managed_cancelled is False
 
 
-class _ObservingAdapter:
-    """Minimal adapter whose post-execution observation returns a fixed id."""
-
-    def __init__(self, observed: str | None) -> None:
-        self._observed = observed
-
-    def observe_session_id(self, **_kwargs: Any) -> str | None:
-        return self._observed
-
-
-class _RecordingManaged:
-    def __init__(self) -> None:
-        self.recorded: list[str] = []
-
-    def record_harness_session_id(self, session_id: str) -> None:
-        self.recorded.append(session_id)
-
-
-def _finalize_with_observation(
+@pytest.mark.parametrize("source", ["assigned", "observed"])
+def test_binding_mirrors_only_the_first_identity(
     tmp_path: Path,
-    *,
-    resolved: str,
-    observed: str | None,
-) -> tuple[str, _RecordingManaged]:
-    managed = _RecordingManaged()
-    exit_code, resolved_session_id = process_runner._finalize_lifecycle_and_observe_session(
-        primary_spawn_id=None,
-        exit_code=0,
-        resolved_harness_session_id=resolved,
-        expected_harness_session_id=resolved,
-        harness_adapter=_ObservingAdapter(observed),
-        artifacts=LocalStore(root_dir=tmp_path / "artifacts"),
-        project_root=tmp_path,
-        launch_child_cwd=tmp_path,
-        model_id=None,
-        runtime_root=tmp_path,
-        primary_started=0.0,
-        primary_started_epoch=1.0,
-        primary_started_local_iso="2026-01-01T00:00:00",
-        managed=managed,
-        spawn_service=None,  # type: ignore[arg-type]
-        observe_adapter_session_id=True,
-    )
-    assert exit_code == 0
-    return resolved_session_id, managed
-
-
-def test_finalize_keeps_authoritative_id_over_differing_observation(
-    tmp_path: Path,
+    source: Literal["assigned", "observed"],
 ) -> None:
-    resolved_session_id, managed = _finalize_with_observation(
-        tmp_path,
-        resolved="ses_known_conversation",
-        observed="evt_bogus_event_id",
-    )
+    from structlog.testing import capture_logs
 
-    assert resolved_session_id == "ses_known_conversation"
-    assert managed.recorded == []
-
-
-def test_finalize_binds_observation_when_no_known_id(tmp_path: Path) -> None:
-    resolved_session_id, managed = _finalize_with_observation(
-        tmp_path,
-        resolved="",
-        observed="ses_discovered",
-    )
-
-    assert resolved_session_id == "ses_discovered"
-    assert managed.recorded == ["ses_discovered"]
+    chat_id = session_store.start_session(tmp_path, "claude", "", "sonnet")
+    record = session_store.get_session_record(tmp_path, chat_id)
+    assert record is not None
+    attempt = SessionAttempt(tmp_path, chat_id, record.session_instance_id, None)
+    try:
+        first = attempt.bind(NativeKeyFields(session_id="first"), source)
+        assert isinstance(first, Bound)
+        with capture_logs() as logs:
+            conflict = attempt.bind(NativeKeyFields(session_id="other"), "observed")
+            assert isinstance(conflict, Conflict)
+            assert conflict.kept.session_id == "first"
+        assert len([log for log in logs if log["event"] == "native_binding_conflict"]) == 1
+        assert session_store.get_session_harness_id(tmp_path, chat_id) == "first"
+    finally:
+        session_store.stop_session(tmp_path, chat_id)
 
 
-def test_finalize_does_not_rebind_matching_observation(tmp_path: Path) -> None:
-    resolved_session_id, managed = _finalize_with_observation(
-        tmp_path,
-        resolved="ses_known_conversation",
-        observed="ses_known_conversation",
-    )
-
-    assert resolved_session_id == "ses_known_conversation"
-    assert managed.recorded == []
+def _native_run(root: Path) -> NativeRun:
+    chat_id = session_store.start_session(root, "codex", "", "")
+    record = session_store.get_session_record(root, chat_id)
+    assert record is not None
+    attempt = SessionAttempt(root, chat_id, record.session_instance_id, None)
+    return NativeRun(attempt, None, NativeKeyFields("codex"), None, None)

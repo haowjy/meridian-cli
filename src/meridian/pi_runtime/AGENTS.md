@@ -13,6 +13,12 @@ transport or make command-line parsing the source of spawn authority.
 `managed-bash` owns shell-task execution and task records.
 `meridian-spawn-watch` owns child-spawn observation and follow-up notifications.
 Keep that mechanism/policy boundary intact.
+`session-boundary` owns bounded native lifecycle observations; only a final
+shutdown/quit qualifies the run exit, never the entry or last-seen session.
+Its v2 record is nonce/PID-correlated and bounded. A shutdown with an invalidated
+Pi context clears quit and stays unresolved. The stale-context exception depends
+on Pi's exact error-text prefix; a changed prefix poisons the record fail-closed.
+See README for that dependency.
 
 ## Key Rules
 

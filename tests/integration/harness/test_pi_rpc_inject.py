@@ -35,7 +35,7 @@ _PI_BUSY_REJECTION = (
     "to queue the message."
 )
 _PI_HELP_SURFACE = (
-    "--mode rpc --model --append-system-prompt --session --fork "
+    "--mode rpc --model --append-system-prompt --session --session-id --fork "
     "--session-dir --no-extensions --no-skills "
     "--no-context-files --no-prompt-templates -e --extension "
     "PI_CODING_AGENT_SESSION_DIR"
@@ -58,7 +58,7 @@ def _configure_pi_runtime(
     error: str | None,
 ) -> Path:
     source_root = root / "dist" / "extensions"
-    for extension_name in ("managed-bash", "meridian-spawn-watch"):
+    for extension_name in ("managed-bash", "meridian-spawn-watch", "session-boundary"):
         extension_dir = source_root / extension_name
         extension_dir.mkdir(parents=True, exist_ok=True)
         (extension_dir / "index.js").write_text("export default {}\n", encoding="utf-8")

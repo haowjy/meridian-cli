@@ -6,7 +6,7 @@ import logging
 from collections.abc import Sequence
 
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
+from meridian.lib.harness.pi_identity import project_identity
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
@@ -17,10 +17,9 @@ logger = logging.getLogger(__name__)
 
 _PROJECTED_FIELDS: frozenset[str] = frozenset(
     {
+        "native_identity",
         "model",
         "effort",
-        "continue_session_id",
-        "continue_fork",
         "permission_resolver",
         "extra_args",
         "interactive",
@@ -34,6 +33,8 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
 
 _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
+        "continue_session_id",
+        "continue_fork",
         "harness",
         "agent_name",
         "agents_payload",
@@ -57,15 +58,12 @@ _MANAGED_FLAG_ALIASES: dict[str, tuple[str, ...]] = {
     "--model": ("--model", "-m"),
     "--thinking": ("--thinking",),
     "--append-system-prompt": ("--append-system-prompt",),
-    "--session": ("--session",),
-    "--fork": ("--fork",),
     "--no-extensions": ("--no-extensions",),
     "--mode": ("--mode",),
     "-e": ("-e", "--extension"),
     "--no-skills": ("--no-skills",),
     "--no-context-files": ("--no-context-files",),
     "--no-prompt-templates": ("--no-prompt-templates",),
-    "--session-dir": ("--session-dir",),
 }
 
 _EFFORT_TO_THINKING: dict[str, str] = {
@@ -130,17 +128,6 @@ def _reject_extension_collisions(passthrough_tail: tuple[str, ...]) -> None:
         )
 
 
-def _reject_session_dir_collisions(passthrough_tail: tuple[str, ...]) -> None:
-    if any(
-        _has_flag(passthrough_tail, alias)
-        for alias in _MANAGED_FLAG_ALIASES["--session-dir"]
-    ):
-        raise ValueError(
-            "Pi harness owns --session-dir for Meridian-managed session isolation; "
-            "remove --session-dir from passthrough extra_args"
-        )
-
-
 def _project_model_arg(spec: ResolvedLaunchSpec) -> str | None:
     model = (spec.model or "").strip()
     if not model:
@@ -151,10 +138,6 @@ def _project_model_arg(spec: ResolvedLaunchSpec) -> str | None:
 
 def _project_thinking_level(spec: ResolvedLaunchSpec) -> str | None:
     return _EFFORT_TO_THINKING.get((spec.effort or "").strip().lower())
-
-
-def _default_pi_session_dir() -> str:
-    return str(resolve_pi_spawn_session_root())
 
 
 def project_pi_spec_to_cli_args(
@@ -182,12 +165,8 @@ def project_pi_spec_to_cli_args(
     if spec.appended_system_prompt:
         command.extend(("--append-system-prompt", spec.appended_system_prompt))
 
-    continue_session_id = (spec.continue_session_id or "").strip()
-    has_continue_session = bool(continue_session_id)
-    has_continue_fork = has_continue_session and spec.continue_fork
     _reject_mode_collisions(passthrough_tail)
     _reject_extension_collisions(passthrough_tail)
-    _reject_session_dir_collisions(passthrough_tail)
 
     _log_collision_if_needed(
         managed_flag="--model",
@@ -204,16 +183,8 @@ def project_pi_spec_to_cli_args(
         has_managed_value=bool(spec.appended_system_prompt),
         passthrough_tail=passthrough_tail,
     )
-    _log_collision_if_needed(
-        managed_flag="--session",
-        has_managed_value=has_continue_session,
-        passthrough_tail=passthrough_tail,
-    )
-    _log_collision_if_needed(
-        managed_flag="--fork",
-        has_managed_value=has_continue_fork,
-        passthrough_tail=passthrough_tail,
-    )
+
+
     _log_collision_if_needed(
         managed_flag="--no-extensions",
         has_managed_value=not spec.load_all_pi_extensions,
@@ -239,19 +210,8 @@ def project_pi_spec_to_cli_args(
         has_managed_value=True,
         passthrough_tail=passthrough_tail,
     )
-    _log_collision_if_needed(
-        managed_flag="--session-dir",
-        has_managed_value=True,
-        passthrough_tail=passthrough_tail,
-    )
 
-    if has_continue_session:
-        if has_continue_fork:
-            command.extend(("--fork", continue_session_id))
-        else:
-            command.extend(("--session", continue_session_id))
-
-    command.extend(("--session-dir", _default_pi_session_dir()))
+    command.extend(project_identity(spec.native_identity))
 
     if not spec.load_all_pi_extensions:
         command.append("--no-extensions")

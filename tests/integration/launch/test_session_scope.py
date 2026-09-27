@@ -15,6 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.session_scope import SessionAttempt
 from meridian.lib.state.session_store import (
@@ -77,8 +78,10 @@ def _record(
         binding=SimpleNamespace(spec=SimpleNamespace(model=spec_model)),
         harness=SimpleNamespace(id="opencode"),
     )
-    attempt = SessionAttempt(runtime_root, chat_id, record.session_instance_id, "attempt-1")
-    attempt.record_started(context, "p1", "ses_source")  # type: ignore[arg-type]
+    attempt = SessionAttempt(
+        runtime_root, chat_id, record.session_instance_id, "attempt-1", SpawnId("p1")
+    )
+    attempt.record_started(context, "ses_source")  # type: ignore[arg-type]
     selection = get_model_selection(runtime_root, "opencode", "ses_source")
     assert selection is not None
     return selection

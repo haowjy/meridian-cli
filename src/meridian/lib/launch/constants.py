@@ -5,8 +5,16 @@ from __future__ import annotations
 from typing import Final
 
 OUTPUT_FILENAME: Final[str] = "output.jsonl"
+# Legacy runner event stream. Meridian no longer writes it; the name remains so
+# explicit reads are rejected and legacy archive members restore as bytes.
 HISTORY_FILENAME: Final[str] = "history.jsonl"
-LAST_OBSERVED_EVENT_FILENAME: Final[str] = "last-observed-event.json"
+# Every file the removed runner writer produced. Owners: the ``--file`` rejection
+# guard (harness/transcript.py, history only), the legacy ZIP inventory
+# (state/retention_archive.py) and runner-history prune (ops/runner_history_prune.py).
+RETIRED_RUNNER_STREAM_FILENAMES: Final[tuple[str, ...]] = (
+    HISTORY_FILENAME,
+    "last-observed-event.json",
+)
 RUNNER_LIFECYCLE_FILENAME: Final[str] = "runner-lifecycle.jsonl"
 FINALIZE_EVIDENCE_FILENAME: Final[str] = "finalize-evidence.json"
 PRIMARY_META_FILENAME: Final[str] = "primary_meta.json"
@@ -86,7 +94,6 @@ __all__ = [
     "DRY_RUN_REPORT_PATH",
     "FINALIZE_EVIDENCE_FILENAME",
     "HISTORY_FILENAME",
-    "LAST_OBSERVED_EVENT_FILENAME",
     "OUTPUT_FILENAME",
     "PI_RUNTIME_META_FILENAME",
     "POST_EXIT_PIPE_DRAIN_TIMEOUT_SECONDS",
@@ -98,6 +105,7 @@ __all__ = [
     "REPORT_FILENAME",
     "REPORT_WATCHDOG_GRACE_SECONDS",
     "REPORT_WATCHDOG_POLL_SECONDS",
+    "RETIRED_RUNNER_STREAM_FILENAMES",
     "RUNNER_LIFECYCLE_FILENAME",
     "STDERR_FILENAME",
     "SUBPROCESS_REPORT_WATCHDOG_POLL_SECONDS",

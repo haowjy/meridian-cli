@@ -285,3 +285,24 @@ def test_doctor_warns_when_legacy_worktree_temp_dir_exists(
 
     warning = _warning_by_code(result, "legacy_worktree_temp_dir")
     assert warning.payload == {"path": (runtime_root / "worktree-temp").as_posix()}
+
+
+def test_doctor_reports_malformed_dogfood_rows_without_crashing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _create_project_root(tmp_path)
+    _create_agent_skill_dirs(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
+    _write_text(
+        runtime_root / "spawns" / "p0" / "state.json",
+        '{"v":3,"id":"p0","entry_chat_id": "c',
+    )
+
+    result = _run_doctor_without_upgrade_noise(project_root, monkeypatch)
+
+    warning = _warning_by_code(result, "dogfood_spawn_rows_failed")
+    assert warning.payload is not None
+    assert warning.payload["spawn_ids"] == ["p0"]
+    assert "p0" in warning.message
+    assert "dogfood_spawn_rows" not in result.repaired

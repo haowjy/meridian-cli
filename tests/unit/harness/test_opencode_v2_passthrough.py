@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import ObserverEndpoint
 from meridian.lib.harness.connections.opencode_http import OpenCodeV1Connection
@@ -15,10 +17,12 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 
 
-def _spec() -> ResolvedLaunchSpec:
-    return ResolvedLaunchSpec(
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-    )
+def _spec(**overrides: object) -> ResolvedLaunchSpec:
+    values: dict[str, object] = {
+        "permission_resolver": UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    }
+    values.update(overrides)
+    return ResolvedLaunchSpec(**values)
 
 
 class _StubConnection:
@@ -39,6 +43,16 @@ def test_v1_attach_command_shape_is_unchanged() -> None:
     )
 
 
+@pytest.mark.parametrize("continuation", [False, True])
+def test_server_attach_delivers_prompt_without_overwriting_session(continuation: bool) -> None:
+    prompt = "Reply exactly: hello"
+    session_id = "ses_1" if continuation else "ses_new"
+    command = build_opencode_server_attach_command(session_id, "http://127.0.0.1:4000", prompt)
+
+    assert command[-2:] == ("--prompt", prompt)
+    assert command[command.index("--session") + 1] == session_id
+
+
 def test_v2_server_attach_command_shape_uses_bare_tui() -> None:
     assert build_opencode_server_attach_command("ses_1", "http://127.0.0.1:4000") == (
         "opencode",
@@ -51,7 +65,7 @@ def test_v2_server_attach_command_shape_uses_bare_tui() -> None:
 
 def test_passthrough_selects_attach_style_from_the_observer_endpoint() -> None:
     passthrough = OpenCodePassthrough()
-    spec = _spec()
+    spec = _spec(prompt="hello")
 
     v1_builder = passthrough.build_tui_command(
         _StubConnection(  # type: ignore[arg-type]
@@ -84,6 +98,8 @@ def test_passthrough_selects_attach_style_from_the_observer_endpoint() -> None:
         "http://127.0.0.1:4200",
         "--session",
         "ses_2",
+        "--prompt",
+        "hello",
     )
 
 

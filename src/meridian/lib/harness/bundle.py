@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Generic, Protocol, TypeVar, cast
 
-from meridian.lib.core.types import HarnessId, TransportId
+from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import BootstrapMode, HarnessAdapter, HarnessContract
-from meridian.lib.harness.connections.base import HarnessConnection
+from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
 from meridian.lib.harness.extractors.base import HarnessExtractor
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.semantics import HarnessSemantics
@@ -65,6 +65,15 @@ class HarnessProjectionPorts(Generic[SpecT]):
     managed_primary: ManagedPrimaryProjectionPorts[SpecT, object] | None = None
 
 
+EventSinks = Callable[[Path, SpawnId], tuple[Callable[[RawHarnessEvent], None], ...]]
+
+
+def _no_event_sinks(
+    runtime_root: Path, spawn_id: SpawnId
+) -> tuple[Callable[[RawHarnessEvent], None], ...]:
+    return ()
+
+
 @dataclass(frozen=True)
 class HarnessBundle(Generic[SpecT]):
     """Bundle binding one harness adapter to spec, extractor, transports, and projections."""
@@ -76,6 +85,7 @@ class HarnessBundle(Generic[SpecT]):
     connections: Mapping[TransportId, type[HarnessConnection[SpecT]]]
     projections: HarnessProjectionPorts[SpecT]
     semantics: HarnessSemantics
+    event_sinks: EventSinks = _no_event_sinks
 
 
 _REGISTRY: dict[HarnessId, HarnessBundle[Any]] = {}
@@ -160,6 +170,7 @@ def register_harness_bundle(bundle: HarnessBundle[Any]) -> None:
         connections=frozen_connections,
         projections=bundle.projections,
         semantics=bundle.semantics,
+        event_sinks=bundle.event_sinks,
     )
 
 

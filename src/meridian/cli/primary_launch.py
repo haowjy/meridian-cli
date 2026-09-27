@@ -11,9 +11,9 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 from meridian.cli.argv_normalization import validate_fork_mode
-from meridian.cli.utils import missing_fork_session_error_with_discovery
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.registry import get_default_harness_registry
@@ -27,13 +27,16 @@ from meridian.lib.launch.continue_replay import (
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.resolve import resolve_agent_launch_input
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
+from meridian.lib.ops.run_boundary import run_boundary_summary
 from meridian.lib.ops.spawn.models import normalize_goal
+from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
 
 
 class PrimaryLaunchOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    boundary_summary: str | None = None
     message: str
     exit_code: int
     command: tuple[str, ...] = ()
@@ -47,7 +50,7 @@ class PrimaryLaunchOutput(BaseModel):
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
-        lines: list[str] = []
+        lines: list[str] = [self.boundary_summary] if self.boundary_summary else []
         if self.warning:
             lines.append(f"warning: {self.warning}")
         if self.launch_plan:
@@ -204,8 +207,7 @@ def run_primary_launch(
     forked_from_history_id: UUID | None = None
     source_control_root: str | None = None
     source_execution_cwd: str | None = None
-    source_claude_config_dir: str | None = None
-    source_pi_session_dir: str | None = None
+    source_native_store: str | None = None
     continue_source_tracked = False
     continue_source_ref: str | None = None
     continue_launch_policy_snapshot: LaunchPolicySnapshot | None = None
@@ -230,14 +232,7 @@ def run_primary_launch(
             project_root=project_root, continue_ref=resume_target, harness_hint=harness,
         )
         if resolved_continue.missing_harness_session_id:
-            raise ValueError(
-                missing_fork_session_error_with_discovery(
-                    source_ref=resume_target,
-                    project_root=project_root,
-                    source_harness=resolved_continue.harness,
-                    source_chat_id=resolved_continue.source_chat_id,
-                )
-            )
+            raise NativeSessionUnavailable(resume_target, "unbound")
         continue_contract = build_continue_replay_contract(
             source=continue_replay_source_from_reference(
                 source_ref=resume_target,
@@ -257,8 +252,7 @@ def run_primary_launch(
         continue_warning = resolved_continue.warning
         source_control_root = continue_contract.session.source_control_root
         source_execution_cwd = continue_contract.session.source_execution_cwd
-        source_claude_config_dir = continue_contract.session.source_claude_config_dir
-        source_pi_session_dir = continue_contract.session.source_pi_session_dir
+        source_native_store = continue_contract.session.source_native_store
         if requested_work_id is None:
             requested_work_id = continue_contract.work_id
         launch_task_dir = continue_contract.task_dir
@@ -284,14 +278,7 @@ def run_primary_launch(
             project_root=project_root, continue_ref=selected_fork_target
         )
         if resolved_fork.missing_harness_session_id:
-            raise ValueError(
-                missing_fork_session_error_with_discovery(
-                    source_ref=selected_fork_target,
-                    project_root=project_root,
-                    source_harness=resolved_fork.harness,
-                    source_chat_id=resolved_fork.source_chat_id,
-                )
-            )
+            raise NativeSessionUnavailable(selected_fork_target, "unbound")
 
         source_harness = (
             resolved_fork.harness.strip()
@@ -325,8 +312,7 @@ def run_primary_launch(
         forked_from_history_id = resolved_fork.source_history_id
         source_control_root = resolved_fork.source_control_root
         source_execution_cwd = resolved_fork.source_execution_cwd
-        source_claude_config_dir = resolved_fork.source_claude_config_dir
-        source_pi_session_dir = resolved_fork.source_pi_session_dir
+        source_native_store = resolved_fork.source_native_store
         continue_source_tracked = resolved_fork.tracked
         continue_source_ref = selected_fork_target
         output_forked_from = resolved_fork.source_chat_id or selected_fork_target
@@ -385,8 +371,7 @@ def run_primary_launch(
                 "forked_from_history_id": forked_from_history_id,
                 "source_control_root": source_control_root,
                 "source_execution_cwd": source_execution_cwd,
-                "source_claude_config_dir": source_claude_config_dir,
-                "source_pi_session_dir": source_pi_session_dir,
+                "source_native_store": source_native_store,
                 "continue_source_tracked": continue_source_tracked,
                 "continue_source_ref": continue_source_ref,
             }),
@@ -394,13 +379,21 @@ def run_primary_launch(
         harness_registry=harness_registry,
     )
 
-    continue_chat_id = getattr(launch_result, "continue_chat_id", None)
+    continue_chat_id = launch_result.continue_chat_id
+    row = None
+    if not dry_run and launch_result.primary_spawn_id:
+        runtime_root = resolve_project_runtime_root(project_root)
+        row = spawn_store.get_spawn(runtime_root, launch_result.primary_spawn_id)
+        if row is not None:
+            continue_chat_id = row.continue_chat_id
     history_warning = None
     if not dry_run and launch_result.primary_spawn_id:
         from meridian.lib.ops.session_archive import session_stop_maintenance
 
         history_warning = session_stop_maintenance(project_root, launch_result.primary_spawn_id)
     return PrimaryLaunchOutput(
+        boundary_summary=(run_boundary_summary(row)
+                          if not dry_run and launch_result.primary_spawn_id and row else None),
         message=_result_message(exit_code=launch_result.exit_code),
         exit_code=launch_result.exit_code,
         command=launch_result.command if dry_run else (),

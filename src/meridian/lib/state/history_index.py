@@ -17,8 +17,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, NoReturn, cast
-from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, cast
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import (
@@ -28,7 +28,6 @@ from sqlalchemy import (
     MetaData,
     Table,
     Text,
-    and_,
     create_engine,
     delete,
     event,
@@ -40,7 +39,6 @@ from sqlalchemy import (
     select,
     text,
     union_all,
-    update,
 )
 from sqlalchemy.engine import Connection, Engine  # noqa: TC002
 from sqlalchemy.exc import DBAPIError
@@ -52,34 +50,37 @@ from meridian.lib.platform.atomic import fsync_directory
 from meridian.lib.platform.locking import FileLockTimeout, lock_file
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import (
+    SCHEMA_VERSION,
     DirtySource,
     HistoryChanges,
     HistoryCoordinationError,
     HistorySource,
+    versioned,
 )
 from meridian.lib.state.history_codec import canonical_time, last_activity
-from meridian.lib.state.session_store import (
+from meridian.lib.state.session_fold import (
     SessionHistoricalEvent,
     SessionRecord,
     SessionStartEvent,
     SessionUpdateEvent,
-    _parse_event,
-    project_session_event,
+    parse_event,
+    project_session_generation,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.state.spawn.repository import read_state, scan_spawn_ids
+from meridian.lib.state.spawn.repository import (
+    SpawnStateQuarantined,
+    read_state,
+    scan_spawn_ids,
+)
 
 if TYPE_CHECKING:
     from meridian.lib.state.spawn_store import SpawnScan
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
 INITIALIZATION_TIMEOUT = 15.0
 QUERY_TIMEOUT = 2.0
-_REBUILD_COMMAND = "uv run meridian session index rebuild --metadata-only"
-type SchemaClass = Literal["expand", "reshape", "reproject"]
-type SchemaUpgrade = Literal["migrate", "reproject"]
+_REBUILD_COMMAND = "meridian session index rebuild --metadata-only"
 
 INDEX_SCHEMA = MetaData()
 META = Table(
@@ -121,6 +122,7 @@ Index("parent_records", RECORDS.c.parent)
 Index("work_records", RECORDS.c.work, RECORDS.c.started)
 Index("status_records", RECORDS.c.status, RECORDS.c.started)
 Index("activity_records", RECORDS.c.activity)
+Index("active_records", RECORDS.c.local_id, sqlite_where=RECORDS.c.active == 1)
 LOCATIONS = Table(
     "locations",
     INDEX_SCHEMA,
@@ -168,6 +170,16 @@ SESSIONS = Table(
 )
 Index("session_recency", SESSIONS.c.kind, SESSIONS.c.activity.desc())
 Index("session_history", SESSIONS.c.history_id, SESSIONS.c.activity.desc())
+# The accepted chat can differ from its generation bucket (raw vs normalized
+# generation spelling). Keep it independently, with the blank-bucket pointer.
+SESSION_CHATS = Table(
+    "session_chats",
+    INDEX_SCHEMA,
+    Column("chat", Text, primary_key=True),
+    Column("ordinal", Integer, nullable=False),
+    Column("latest_blank", Text),
+    Column("record_json", Text, nullable=False),
+)
 WORK_CHATS = Table(
     "work_chats",
     INDEX_SCHEMA,
@@ -182,17 +194,6 @@ CURSORS = Table(
     Column("extent", Integer),
     Column("tail", Text),
 )
-
-
-@dataclass(frozen=True)
-class SchemaStep:
-    from_version: int
-    to_version: int
-    schema_class: SchemaClass
-    apply: Callable[[Connection], None]
-
-
-SCHEMA_STEPS: tuple[SchemaStep, ...] = ()
 
 
 class HistoryIndexIncomplete(RuntimeError):
@@ -211,12 +212,11 @@ class IndexCoverage:
 
 @dataclass(frozen=True)
 class IndexStatus:
-    baseline: Literal["absent", "outdated", "current", "incompatible", "corrupt", "failed"]
+    baseline: Literal["absent", "current", "incompatible", "corrupt", "failed"]
     schema: int | None = None
     generation: str | None = None
     build: str | None = None
     reason: str | None = None
-    upgrade: SchemaUpgrade | None = None
 
 
 class _InitializationFailure(BaseModel):
@@ -238,54 +238,11 @@ class HistorySnapshot(BaseModel):
     path: str
 
 
-class HistoryReadTarget(NamedTuple):
-    state: SpawnRecord
-    path: Path
-    archive_id: UUID | None = None
-    manifest_sha256: str | None = None
-
-
-class HistoryCandidate(NamedTuple):
-    history_id: str
-    local_id: str
-    chat_id: str | None
-    archived: bool
-    activity: str
-
-
 def _remaining(deadline: float) -> float:
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise TimeoutError("History index deadline exhausted")
     return remaining
-
-
-def _schema_upgrade(live_version: int) -> tuple[SchemaUpgrade, tuple[SchemaStep, ...]]:
-    """Plan the remaining chain. Missing or untrusted steps reproject."""
-    if live_version < 2:
-        return "reproject", ()
-    ordered: dict[int, SchemaStep] = {}
-    for step in SCHEMA_STEPS:
-        if step.to_version != step.from_version + 1 or step.from_version in ordered:
-            return "reproject", ()
-        ordered[step.from_version] = step
-    chain: list[SchemaStep] = []
-    for version in range(live_version, SCHEMA_VERSION):
-        step = ordered.get(version)
-        if step is None:
-            return "reproject", ()
-        chain.append(step)
-    if any(step.schema_class == "reproject" for step in chain):
-        return "reproject", ()
-    return "migrate", tuple(chain)
-
-
-def _outdated_status(version: int) -> tuple[str, SchemaUpgrade]:
-    upgrade, chain = _schema_upgrade(version)
-    if upgrade == "reproject":
-        return "metadata rebuild required (reproject)", upgrade
-    shown = "reshape" if any(step.schema_class == "reshape" for step in chain) else "expand"
-    return f"in-place migrate ({shown})", upgrade
 
 
 def _reraise_dbapi(exc: DBAPIError) -> NoReturn:
@@ -362,41 +319,15 @@ def _tail(path: Path, extent: int, count: int = 256) -> str:
         return hashlib.sha256(handle.read(min(extent, count))).hexdigest()
 
 
-def transcript_activity(path: Path, fallback: str) -> str:
-    """Read the last complete event, expanding for large events rather than guessing age."""
-    if not path.exists():
-        return canonical_time(fallback)
-    with path.open("rb") as handle:
-        handle.seek(0, os.SEEK_END)
-        end = handle.tell()
-        window = min(end, 1024 * 1024)
-        while True:
-            handle.seek(end - window)
-            chunk = handle.read(window)
-            finish = chunk.rfind(b"\n")
-            start = chunk.rfind(b"\n", 0, finish) + 1 if finish >= 0 else 0
-            if finish >= 0 and (start or window == end):
-                break
-            if window == end:
-                raise ValueError(f"Incomplete transcript tail: {path}")
-            window = min(end, window * 2)
-    event = json.loads(chunk[start:finish])
-    if not isinstance(event, dict):
-        raise ValueError(f"Transcript event is not an object: {path}")
-    event = cast("dict[str, object]", event)
-    stamp = event.get("timestamp", event.get("created_at", fallback))
-    stamps = [value for value in (fallback, stamp) if isinstance(value, str) and value]
-    return (
-        max(datetime.fromisoformat(value).astimezone(UTC) for value in stamps).isoformat(
-            timespec="microseconds"
-        )
-        if stamps
-        else ""
-    )
-
-
 @dataclass(frozen=True)
 class HistoryIndex:
+    """One schema's projection. Every path it owns is named by ``SCHEMA_VERSION``.
+
+    A schema bump starts a new file built fresh from authority. Older builds keep
+    their own file (0.6.7 and earlier: ``history.sqlite3``), which this build never
+    opens, so there is no in-place migration.
+    """
+
     root: Path
 
     @property
@@ -405,15 +336,20 @@ class HistoryIndex:
 
     @property
     def path(self) -> Path:
-        return self.directory / "history.sqlite3"
+        return self.directory / f"{versioned('history')}.sqlite3"
+
+    @property
+    def stage(self) -> Path:
+        # catchup_lock owns this disposable stage, including crash residue.
+        return self.directory / f".{versioned('build')}.sqlite3"
 
     @property
     def catchup_lock(self) -> Path:
-        return self.root / "locks" / "history-catchup.lock"
+        return self.root / "locks" / f"{versioned('history-catchup')}.lock"
 
     @property
     def database_lock(self) -> Path:
-        return self.root / "locks" / "history-database.lock"
+        return self.root / "locks" / f"{versioned('history-database')}.lock"
 
     def _aliases(
         self,
@@ -453,7 +389,6 @@ class HistoryIndex:
             names.add((session.chat_id, "chat"))
             if session.spawn_id:
                 names.add((session.spawn_id, "spawn"))
-            names.update((name, "harness") for name in session.harness_session_ids)
             if session.harness_session_id:
                 names.add((session.harness_session_id, "harness"))
         return [(source_id, name, kind, history_id) for name, kind in names]
@@ -477,17 +412,11 @@ class HistoryIndex:
         record = SpawnRecord.model_validate_json(location["record_json"])
         receipt = json.loads(location["receipt_json"]) if location["receipt_json"] else None
         active = record.record_mode != "historical" and record.status not in TERMINAL_SPAWN_STATUSES
-        session = None
-        if location["kind"] == "spawn":
-            related = db.exec_driver_sql(
-                "SELECT record_json FROM sessions "
-                "WHERE history_id = ? OR (chat = ? AND generation = ?) "
-                "ORDER BY activity DESC LIMIT 1",
-                (history_id, record.chat_id, record.session_instance_id),
-            ).first()
-            if related:
-                session = SessionRecord.model_validate_json(related[0])
-        activity = last_activity(record, session, location["activity"])
+        activity = (
+            location["activity"]
+            if location["kind"] == "spawn"
+            else last_activity(record, None, location["activity"])
+        )
         db.exec_driver_sql(
             "INSERT INTO records (history_id, local_id, chat, owner, parent, work, status, "
             "kind, started, activity, active, archive_id, record_json) "
@@ -512,13 +441,18 @@ class HistoryIndex:
     def _spawn(self, db: Connection, key: str) -> bool:
         source_id = f"spawn:{key}"
         old = db.exec_driver_sql(
-            "SELECT history_id FROM locations WHERE source_id = ?", (source_id,)
+            "SELECT history_id, record_json FROM locations WHERE source_id = ?", (source_id,)
         ).first()
+        record = read_state(self.root / "spawns", key, include_prompt=False)
+        active = record is not None and (
+            record.record_mode != "historical" and record.status not in TERMINAL_SPAWN_STATUSES
+        )
+        if record is not None and old and old[1] == record.model_dump_json():
+            return active  # Unchanged: rewriting would only cost a FULL-sync commit.
         db.exec_driver_sql("DELETE FROM locations WHERE source_id = ?", (source_id,))
         db.exec_driver_sql("DELETE FROM aliases WHERE source_id = ?", (source_id,))
         if old:
             self._refresh(db, old[0])
-        record = read_state(self.root / "spawns", key, include_prompt=False)
         if record is None:
             return False
         history_id = str(record.history_id or uuid5(NAMESPACE_URL, f"{self.root}:{key}"))
@@ -526,8 +460,7 @@ class HistoryIndex:
             "SELECT 1 FROM locations WHERE history_id = ? AND kind = 'spawn'", (history_id,)
         ).first():
             raise ValueError(f"Conflicting loose copies of history {history_id}")
-        activity = transcript_activity(
-            self.root / "spawns" / key / "history.jsonl",
+        activity = canonical_time(
             record.terminal.finished_at if record.terminal else record.started_at or "",
         )
         db.exec_driver_sql(
@@ -538,12 +471,13 @@ class HistoryIndex:
         )
         self._aliases(db, source_id, history_id, state=record)
         self._refresh(db, history_id)
-        return record.record_mode != "historical" and record.status not in TERMINAL_SPAWN_STATUSES
+        return active
 
     def _sessions(self, db: Connection) -> None:
         path = self.root / "sessions.jsonl"
         if not path.exists():
             db.execute(delete(SESSIONS))
+            db.execute(delete(SESSION_CHATS))
             db.execute(delete(WORK_CHATS))
             db.execute(delete(ALIASES).where(ALIASES.c.source_id.like("session:%")))
             db.execute(delete(CURSORS).where(CURSORS.c.source == "sessions"))
@@ -560,37 +494,36 @@ class HistoryIndex:
             and cursor["extent"] <= stat.st_size
             and cursor["tail"] == _tail(path, cursor["extent"])
         ):
+            if cursor["extent"] == stat.st_size:
+                return  # Nothing appended since the cursor.
             offset = cursor["extent"]
         else:
             db.execute(delete(SESSIONS))
+            db.execute(delete(SESSION_CHATS))
             db.execute(delete(WORK_CHATS))
             db.execute(delete(ALIASES).where(ALIASES.c.source_id.like("session:%")))
-        # Project the append-only log into an in-memory working set and publish it
-        # in bulk. Per-event SELECT/INSERT round-trips through the ORM dominated
-        # cold builds; reads now hit the mirror, writes/aliases/refreshes flush
-        # once. A history's refresh is idempotent per evaluation and only the last
-        # pass survives, so evaluating each affected history once after the final
-        # session state is published is equivalent to refreshing it inline.
-        sessions: dict[tuple[str, str], dict[str, Any]] = {}
-        for row in (
-            db.exec_driver_sql(
-                "SELECT chat, generation, ordinal, kind, stopped, activity, history_id, "
-                "record_json FROM sessions"
-            )
-            .mappings()
-            .all()
+        # Replay with the authority's working sets, then publish only changed rows.
+        # Metadata is derived once per changed generation, not mirrored per event.
+        records: dict[str, SessionRecord] = {}
+        latest_blank: dict[str, str] = {}
+        chat_ordinals: dict[str, int] = {}
+        for chat, ordinal, blank, raw in db.exec_driver_sql(
+            "SELECT chat, ordinal, latest_blank, record_json FROM session_chats"
         ):
-            sessions[(row["chat"], row["generation"])] = dict(row)
-        legacy_latest: dict[str, tuple[int, str]] = {}
-        for (chat, generation), row in sessions.items():
-            if generation.startswith("legacy:") and (
-                chat not in legacy_latest or row["ordinal"] > legacy_latest[chat][0]
-            ):
-                legacy_latest[chat] = (row["ordinal"], generation)
+            records[chat] = SessionRecord.model_validate_json(raw)
+            chat_ordinals[chat] = ordinal
+            if blank is not None:
+                latest_blank[chat] = blank
+        generations: dict[tuple[str, str], dict[str, SessionRecord]] = {}
+        ordinals: dict[tuple[str, str], int] = {}
+        for chat, generation, ordinal, raw in db.exec_driver_sql(
+            "SELECT chat, generation, ordinal, record_json FROM sessions"
+        ):
+            generations[(chat, generation)] = {chat: SessionRecord.model_validate_json(raw)}
+            ordinals[(chat, generation)] = ordinal
         dirty: set[tuple[str, str]] = set()
+        dirty_chats: set[str] = set()
         work_chats: set[tuple[str, str]] = set()
-        aliases: dict[str, list[tuple[str, str, str, str]]] = {}
-        refreshed: set[str] = set()
         with path.open("rb") as handle:
             handle.seek(offset)
             while line := handle.readline():
@@ -601,7 +534,7 @@ class HistoryIndex:
                     payload = json.loads(line)
                     # Match the authoritative event reader's tolerant line policy.
                     event = (
-                        _parse_event(cast("dict[str, Any]", payload))
+                        parse_event(cast("dict[str, Any]", payload))
                         if isinstance(payload, dict)
                         else None
                     )
@@ -611,82 +544,67 @@ class HistoryIndex:
                 if isinstance(event, SessionUpdateEvent) and event.active_work_id:
                     work_chats.add((event.active_work_id.strip(), event.chat_id))
                 if event is not None:
-                    generation = event.session_instance_id
-                    if not generation:
-                        if isinstance(event, (SessionStartEvent, SessionHistoricalEvent)):
-                            generation = f"legacy:{offset}"
-                        else:
-                            latest = legacy_latest.get(event.chat_id)
-                            generation = latest[1] if latest else ""
-                    found = sessions.get((event.chat_id, generation))
-                    records: dict[str, SessionRecord] = {}
-                    if found:
-                        records[event.chat_id] = SessionRecord.model_validate_json(
-                            found["record_json"]
-                        )
-                    project_session_event(records, event)
-                    if record := records.get(event.chat_id):
-                        history_id = str(record.history_id) if record.history_id else None
-                        if history_id is None and record.spawn_id:
-                            linked = db.exec_driver_sql(
-                                "SELECT history_id FROM locations WHERE source_id = ?",
-                                (f"spawn:{record.spawn_id}",),
-                            ).first()
-                            history_id = linked[0] if linked else None
-                        if history_id is None and generation:
-                            linked = db.exec_driver_sql(
-                                "SELECT history_id FROM records WHERE chat = ? "
-                                "AND archive_id IS NULL "
-                                "AND json_extract(record_json, '$.session_instance_id') = ? "
-                                "LIMIT 1",
-                                (record.chat_id, generation),
-                            ).first()
-                            history_id = linked[0] if linked else None
-                        ordinal = (
-                            offset
-                            if isinstance(event, (SessionStartEvent, SessionHistoricalEvent))
-                            else (found["ordinal"] if found else offset)
-                        )
-                        key = (record.chat_id, generation)
-                        sessions[key] = {
-                            "chat": record.chat_id,
-                            "generation": generation,
-                            "ordinal": ordinal,
-                            "kind": record.kind,
-                            "stopped": record.stopped_at,
-                            "activity": canonical_time(record.stopped_at or record.started_at),
-                            "history_id": history_id,
-                            "record_json": record.model_dump_json(),
-                        }
+                    prior = records.get(event.chat_id)
+                    key = project_session_generation(
+                        records, generations, latest_blank, event, ordinal=offset
+                    )
+                    started = isinstance(event, (SessionStartEvent, SessionHistoricalEvent))
+                    if records.get(event.chat_id) is not prior:
+                        dirty_chats.add(event.chat_id)
+                        if started:
+                            chat_ordinals[event.chat_id] = offset
+                    if key is not None:
                         dirty.add(key)
-                        if generation.startswith("legacy:") and (
-                            record.chat_id not in legacy_latest
-                            or ordinal > legacy_latest[record.chat_id][0]
-                        ):
-                            legacy_latest[record.chat_id] = (ordinal, generation)
-                        if history_id:
-                            source_id = f"session:{record.chat_id}:{generation}"
-                            aliases[source_id] = self._alias_rows(
-                                source_id, history_id, session=record
-                            )
-                            refreshed.add(history_id)
+                        if started:
+                            ordinals[key] = offset
                 offset = end
-        if dirty:
+        for chat, generation in dirty:
+            record = generations[(chat, generation)][chat]
+            history_id = str(record.history_id) if record.history_id else None
+            if history_id is None and record.spawn_id:
+                linked = db.exec_driver_sql(
+                    "SELECT history_id FROM locations WHERE source_id = ?",
+                    (f"spawn:{record.spawn_id}",),
+                ).first()
+                history_id = linked[0] if linked else None
+            if history_id is None and generation:
+                linked = db.exec_driver_sql(
+                    "SELECT history_id FROM records WHERE chat = ? AND archive_id IS NULL "
+                    "AND json_extract(record_json, '$.session_instance_id') = ? LIMIT 1",
+                    (chat, generation),
+                ).first()
+                history_id = linked[0] if linked else None
             db.exec_driver_sql(
                 "INSERT OR REPLACE INTO sessions (chat, generation, ordinal, kind, stopped, "
                 "activity, history_id, record_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    chat,
+                    generation,
+                    ordinals[(chat, generation)],
+                    record.kind,
+                    record.stopped_at,
+                    canonical_time(record.stopped_at or record.started_at),
+                    history_id,
+                    record.model_dump_json(),
+                ),
+            )
+            source_id = f"session:{chat}:{generation}"
+            if history_id:
+                self._aliases(db, source_id, history_id, session=record)
+            else:
+                db.exec_driver_sql("DELETE FROM aliases WHERE source_id = ?", (source_id,))
+        if dirty_chats:
+            db.exec_driver_sql(
+                "INSERT OR REPLACE INTO session_chats (chat, ordinal, latest_blank, record_json) "
+                "VALUES (?, ?, ?, ?)",
                 [
                     (
-                        key[0],
-                        key[1],
-                        sessions[key]["ordinal"],
-                        sessions[key]["kind"],
-                        sessions[key]["stopped"],
-                        sessions[key]["activity"],
-                        sessions[key]["history_id"],
-                        sessions[key]["record_json"],
+                        chat,
+                        chat_ordinals[chat],
+                        latest_blank.get(chat),
+                        records[chat].model_dump_json(),
                     )
-                    for key in dirty
+                    for chat in dirty_chats
                 ],
             )
         if work_chats:
@@ -694,18 +612,6 @@ class HistoryIndex:
                 "INSERT OR IGNORE INTO work_chats (work, chat) VALUES (?, ?)",
                 list(work_chats),
             )
-        if aliases:
-            db.exec_driver_sql(
-                "DELETE FROM aliases WHERE source_id = ?",
-                [(source_id,) for source_id in aliases],
-            )
-            db.exec_driver_sql(
-                "INSERT OR IGNORE INTO aliases (source_id, alias, kind, history_id) "
-                "VALUES (?, ?, ?, ?)",
-                [row for rows in aliases.values() for row in rows],
-            )
-        for history_id in refreshed:
-            self._refresh(db, history_id)
         db.exec_driver_sql(
             "INSERT OR REPLACE INTO cursors (source, inode, extent, tail) VALUES "
             "('sessions', ?, ?, ?)",
@@ -798,6 +704,41 @@ class HistoryIndex:
         db.commit()
         return acknowledged, pending, active, busy
 
+    def _reread_unmarked(self, db: Connection, target: tuple[DirtySource, ...]) -> list[str]:
+        """Re-read what an older build's writers change without marking this queue.
+
+        Each schema owns its marker queue. Runners and primaries of an older build
+        that outlive an upgrade still finish spawns and append session events.
+        Active loose spawns are provisional anyway, and the session log keeps a
+        cursor, so both are cheap. Busy sources wait for the next catch-up. Spawns
+        an older build creates after this projection was built need a rebuild.
+        """
+        marked = {marker.source.name for marker in target}
+        sources = [
+            HistorySource(kind="spawn", key=key)
+            for (key,) in db.execute(
+                select(RECORDS.c.local_id).where(
+                    RECORDS.c.active == 1, RECORDS.c.archive_id.is_(None)
+                )
+            )
+            if key
+        ]
+        sources.append(HistorySource(kind="sessions"))
+        active: list[str] = []
+        for source in sources:
+            if source.name in marked:
+                continue
+            try:
+                with lock_file(source.lock_path(self.root), timeout=0):
+                    if source.kind == "sessions":
+                        self._sessions(db)  # Returns at once when nothing was appended.
+                    elif self._spawn(db, source.key):
+                        active.append(source.key)
+            except FileLockTimeout:
+                continue
+        db.commit()
+        return active
+
     def _rebuild_locked(
         self, *, reset: bool, deadline: float
     ) -> tuple[IndexCoverage, list[DirtySource]]:
@@ -811,8 +752,7 @@ class HistoryIndex:
                     path.unlink()
         generation, _ = changes.capture(timeout=_remaining(deadline))
         self.directory.mkdir(parents=True, exist_ok=True)
-        # catchup_lock owns this disposable stage, including crash residue.
-        stage = self.directory / ".build.sqlite3"
+        stage = self.stage
         for suffix in ("", "-journal"):
             Path(str(stage) + suffix).unlink(missing_ok=True)
         try:
@@ -876,33 +816,8 @@ class HistoryIndex:
             generation, build, True, activity_provisional=tuple(active)
         ), acknowledged
 
-    def _migrate_locked(self, *, deadline: float) -> None:
-        """Apply expand/reshape steps on the live WAL DB. Caller owns catchup/root."""
-        with lock_file(self.database_lock, timeout=_remaining(deadline)):
-            status = self.classify(deadline=deadline)
-            if (
-                status.baseline != "outdated"
-                or status.upgrade != "migrate"
-                or status.schema is None
-            ):
-                return
-            _, chain = _schema_upgrade(status.schema)
-            if not chain:
-                return
-            with _connect(self.path, timeout=_remaining(deadline), autocommit=True) as db:
-                for step in chain:
-                    _remaining(deadline)
-                    db.exec_driver_sql("BEGIN IMMEDIATE")
-                    try:
-                        step.apply(db)
-                        db.execute(update(META).values(version=step.to_version))
-                        db.commit()
-                    except BaseException:
-                        db.rollback()
-                        raise
-
     def _clear_initialization_failure(self) -> tuple[str, ...]:
-        """Called under catchup ownership after verifying a compatible published baseline."""
+        """Called under catchup ownership when initialization may safely retry."""
         try:
             self.failure_path.unlink()
             fsync_directory(self.root)
@@ -915,6 +830,23 @@ class HistoryIndex:
             logger.warning(warnings[0])
             return warnings
         return ()
+
+    def clear_authority_failure(self, *, timeout: float = 5.0) -> tuple[str, ...]:
+        """Clear an authority failure after its source was repaired.
+
+        Catch-up ownership orders this behind any initializer that may still
+        publish a failure based on the pre-repair authority.
+        """
+        with lock_file(self.catchup_lock, timeout=timeout):
+            try:
+                failure = _InitializationFailure.model_validate_json(self.failure_path.read_bytes())
+            except FileNotFoundError:
+                return ()
+            except ValueError:
+                return ()
+            if failure.code != "authority":
+                return ()
+            return self._clear_initialization_failure()
 
     def _finish_rebuild(
         self, coverage: IndexCoverage, acknowledged: list[DirtySource]
@@ -946,7 +878,7 @@ class HistoryIndex:
 
     @property
     def failure_path(self) -> Path:
-        return self.root / "history-index-init-failure.json"
+        return self.root / f"{versioned('history-index-init-failure')}.json"
 
     def classify(self, *, deadline: float) -> IndexStatus:
         """Read schema/identity only; never create SQLite or alter its journal mode."""
@@ -961,23 +893,11 @@ class HistoryIndex:
                     if row is None or not isinstance(row[0], int):
                         return IndexStatus("corrupt", reason="Missing or invalid index metadata")
                     version, generation, build = row
-                    baseline = (
-                        "current"
-                        if version == SCHEMA_VERSION
-                        else "outdated"
-                        if version < SCHEMA_VERSION
-                        else "incompatible"
-                    )
-                    reason: str | None = None
-                    upgrade: SchemaUpgrade | None = None
-                    if baseline == "incompatible":
-                        reason = (
-                            "Index schema "
-                            f"{version} is newer than supported schema {SCHEMA_VERSION}."
-                        )
-                    elif baseline == "outdated":
-                        reason, upgrade = _outdated_status(version)
-                    return IndexStatus(baseline, version, generation, build, reason, upgrade)
+                    if version == SCHEMA_VERSION:
+                        return IndexStatus("current", version, generation, build)
+                    # Only this schema writes this file; anything else is a foreign copy.
+                    reason = f"Index schema {version} does not match {self.path.name}."
+                    return IndexStatus("incompatible", version, generation, build, reason)
             except sqlite3.DatabaseError as exc:
                 code = getattr(exc, "sqlite_errorcode", 0) & 0xFF
                 if code not in {
@@ -1034,9 +954,7 @@ class HistoryIndex:
         generation, _ = HistoryChanges(self.root).inspect(timeout=_remaining(deadline))
         if status.baseline == "current":
             self._check_current(status)
-        elif status.baseline in {"absent", "outdated"} and (
-            reason := self._failure_reason(generation)
-        ):
+        elif status.baseline == "absent" and (reason := self._failure_reason(generation)):
             return IndexStatus(
                 "failed",
                 status.schema,
@@ -1056,21 +974,13 @@ class HistoryIndex:
             if status.baseline == "current":
                 self._check_current(status)
                 return None  # A peer already published while we waited.
-            if status.baseline not in {"absent", "outdated"}:
+            if status.baseline != "absent":
                 self._check_current(status)
             generation = changes.read_generation()
             if reason := self._failure_reason(generation):
                 raise self._initialization_error(reason)
             # Initialize absent coordination only under the normal protected gate.
             try:
-                if (
-                    status.baseline == "outdated"
-                    and status.upgrade == "migrate"
-                    and status.generation == generation
-                ):
-                    self._migrate_locked(deadline=deadline)
-                    self._clear_initialization_failure()
-                    return None
                 generation, _ = changes.capture(timeout=_remaining(deadline))
                 coverage, acknowledged = self._rebuild_locked(reset=False, deadline=deadline)
             except (FileLockTimeout, HistoryCoordinationError):
@@ -1089,6 +999,9 @@ class HistoryIndex:
                     code, reason = "io", f"Metadata I/O failure ({type(exc).__name__})"
                 elif isinstance(exc, sqlite3.Error):
                     code, reason = "sqlite", "SQLite metadata projection failed"
+                elif isinstance(exc, SpawnStateQuarantined):
+                    code = "authority"
+                    reason = str(exc).splitlines()[0][:1024]
                 else:
                     code, reason = "authority", "Invalid authoritative history metadata"
                 failure = _InitializationFailure(
@@ -1108,7 +1021,7 @@ class HistoryIndex:
     def _operation_deadline(self, deadline: float | None) -> float:
         ordinary = time.monotonic() + QUERY_TIMEOUT if deadline is None else deadline
         status = self.classify(deadline=ordinary)
-        if status.baseline in {"absent", "outdated"} and deadline is None:
+        if status.baseline == "absent" and deadline is None:
             self.initialize(deadline=time.monotonic() + INITIALIZATION_TIMEOUT)
             return time.monotonic() + QUERY_TIMEOUT
         self._check_current(status)
@@ -1140,6 +1053,7 @@ class HistoryIndex:
                     raise HistoryIndexIncomplete("History index schema changed after preflight")
                 warnings = self._clear_initialization_failure()
                 acknowledged, pending, active, _ = self._drain(db, target, deadline)
+                active += self._reread_unmarked(db, target)
                 for marker in acknowledged:
                     changes.acknowledge(marker)
                 return IndexCoverage(
@@ -1346,118 +1260,6 @@ class HistoryIndex:
                 db.rollback()
                 raise
 
-    def read_targets(
-        self, ref: str, *, destination: Path | None = None, deadline: float | None = None
-    ) -> tuple[HistoryReadTarget, ...]:
-        from meridian.lib.state.retention_archive import ArchiveReceipt, archive_locations
-
-        deadline = self._operation_deadline(deadline)
-        with self.query(deadline=deadline) as db:
-            direct = db.execute(
-                select(RECORDS.c.history_id).where(RECORDS.c.history_id == ref)
-            ).first()
-            if direct:
-                history_id = direct[0]
-            else:
-                kind = (
-                    "spawn"
-                    if ref.startswith("p") and ref[1:].isdigit()
-                    else ("chat" if ref.startswith("c") and ref[1:].isdigit() else "harness")
-                )
-                matches = (
-                    db.execute(
-                        select(
-                            RECORDS.c.history_id,
-                            func.max(ALIASES.c.source_id.not_like("archive:%")).label("local"),
-                        )
-                        .select_from(
-                            ALIASES.join(RECORDS, ALIASES.c.history_id == RECORDS.c.history_id)
-                        )
-                        .where(ALIASES.c.alias == ref, ALIASES.c.kind == kind)
-                        .group_by(RECORDS.c.history_id)
-                        .order_by(
-                            func.max(ALIASES.c.source_id.not_like("archive:%")).desc(),
-                            (RECORDS.c.kind == "primary").desc(),
-                            RECORDS.c.started.desc(),
-                        )
-                    )
-                    .mappings()
-                    .all()
-                )
-                if not matches:
-                    return ()
-                if len(matches) > 1 and not matches[0]["local"]:
-                    raise ValueError("Ambiguous archive origin alias; use a portable history UUID")
-                history_id = matches[0]["history_id"]
-            head_digest = (
-                select(ARCHIVE_HEADS.c.portable_digest)
-                .where(ARCHIVE_HEADS.c.history_id == LOCATIONS.c.history_id)
-                .scalar_subquery()
-            )
-            locations = (
-                db.execute(
-                    select(LOCATIONS)
-                    .join(RECORDS, RECORDS.c.history_id == LOCATIONS.c.history_id)
-                    .where(
-                        LOCATIONS.c.history_id == history_id,
-                        or_(
-                            LOCATIONS.c.kind == "spawn",
-                            and_(
-                                RECORDS.c.archive_id.is_not(None),
-                                LOCATIONS.c.portable_digest == head_digest,
-                            ),
-                        ),
-                    )
-                    .order_by(
-                        (LOCATIONS.c.kind == "spawn").desc(),
-                        LOCATIONS.c.ordinal.desc(),
-                    )
-                )
-                .mappings()
-                .all()
-            )
-        receipts: list[ArchiveReceipt] = []
-        for location in locations:
-            state = SpawnRecord.model_validate_json(location["record_json"])
-            if location["kind"] == "spawn":
-                from meridian.lib.state.native_snapshot import NATIVE_SNAPSHOT_FILENAME
-                from meridian.lib.state.paths import resolve_spawn_output_path
-
-                transcript = resolve_spawn_output_path(self.root, state.id)
-                if transcript is not None and transcript.name == NATIVE_SNAPSHOT_FILENAME:
-                    return (HistoryReadTarget(state, transcript),)
-                if transcript is not None:
-                    from meridian.lib.state.history_codec import TranscriptHeader
-
-                    with transcript.open("rb") as handle:
-                        first = handle.readline(1024 * 1024)
-                    try:
-                        header = json.loads(first)
-                    except ValueError:
-                        header = None
-                    if (
-                        isinstance(header, dict)
-                        and header.get("record") == "meridian.transcript"
-                        and TranscriptHeader.model_validate(header).history_id != state.history_id
-                    ):
-                        raise ValueError("Transcript identity does not match its record")
-                    return (HistoryReadTarget(state, transcript),)
-                if state.status not in TERMINAL_SPAWN_STATUSES:
-                    return ()
-                continue
-            receipts.append(ArchiveReceipt.model_validate_json(location["receipt_json"]))
-        if not receipts:
-            return ()
-        return tuple(
-            HistoryReadTarget(
-                location.receipt.records[0].state,
-                location.path,
-                location.receipt.archive_id,
-                location.receipt.manifest_sha256,
-            )
-            for location in archive_locations(receipts, destination=destination, deadline=deadline)
-        )
-
     def snapshots(self, *, destination: Path | None = None) -> tuple[HistorySnapshot, ...]:
         from meridian.lib.state.retention_archive import ArchiveReceipt, archive_display_path
 
@@ -1496,41 +1298,6 @@ class HistoryIndex:
             )
         return tuple(result)
 
-    def candidates(
-        self, *, include_archives: bool = False, deadline: float | None = None
-    ) -> tuple[HistoryCandidate, ...]:
-        with self.query(deadline=deadline) as db:
-            record_rows = select(
-                RECORDS.c.history_id,
-                RECORDS.c.local_id,
-                RECORDS.c.chat,
-                RECORDS.c.archive_id,
-                RECORDS.c.activity,
-            )
-            if not include_archives:
-                record_rows = record_rows.where(RECORDS.c.archive_id.is_(None))
-            newer = SESSIONS.alias("newer")
-            session_rows = select(
-                SESSIONS.c.chat.label("history_id"),
-                SESSIONS.c.chat.label("local_id"),
-                SESSIONS.c.chat.label("chat"),
-                literal(None).label("archive_id"),
-                SESSIONS.c.activity,
-            ).where(
-                ~exists().where(RECORDS.c.chat == SESSIONS.c.chat),
-                ~exists().where(
-                    newer.c.chat == SESSIONS.c.chat, newer.c.ordinal > SESSIONS.c.ordinal
-                ),
-            )
-            rows = db.execute(
-                union_all(record_rows, session_rows).order_by(
-                    text("activity DESC"), text("history_id")
-                )
-            )
-            return tuple(
-                HistoryCandidate(row[0], row[1], row[2], row[3] is not None, row[4]) for row in rows
-            )
-
     def spawns(
         self,
         *,
@@ -1567,9 +1334,7 @@ class HistoryIndex:
         with self.query() as db:
             return tuple(SpawnRecord.model_validate_json(row[0]) for row in db.execute(stmt))
 
-    def descendant_projection(
-        self, root_spawn_id: str
-    ) -> tuple[tuple[str, str | None, bool], ...]:
+    def descendant_projection(self, root_spawn_id: str) -> tuple[tuple[str, str | None, bool], ...]:
         """Return the indexed transitive subtree, retaining archived ancestry.
 
         The query context performs one bounded catch-up before taking the shared
@@ -1664,13 +1429,10 @@ class HistoryIndex:
     ) -> list[SessionRecord]:
         if chat_ids is not None and not chat_ids:
             return []
-        newer = SESSIONS.alias("newer")
-        stmt = select(SESSIONS.c.record_json).where(
-            ~exists().where(newer.c.chat == SESSIONS.c.chat, newer.c.ordinal > SESSIONS.c.ordinal)
-        )
+        stmt = select(SESSION_CHATS.c.record_json)
         if chat_ids is not None:
-            stmt = stmt.where(SESSIONS.c.chat.in_(sorted(chat_ids)))
-        stmt = stmt.order_by(SESSIONS.c.ordinal.desc())
+            stmt = stmt.where(SESSION_CHATS.c.chat.in_(sorted(chat_ids)))
+        stmt = stmt.order_by(SESSION_CHATS.c.ordinal.desc())
         if limit is not None:
             if limit <= 0:
                 raise ValueError("Session limit must be positive")

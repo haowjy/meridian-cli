@@ -75,6 +75,14 @@ connection's `observer_endpoint.attach_style` selects the dialect:
   V2 removed the `attach` subcommand; `opencode attach ...` falls through to the
   top-level help and attaches nothing. The bare TUI is the attach surface.
 
+**Starting prompt.** V2 appends `--prompt <spec.prompt>` to the bare-TUI command,
+checked by the 128 KiB argv guard (`projections/_prompt_arg.py`). The V1 `attach`
+subcommand has no `--prompt`, so `OpenCodeV1Connection` posts the prompt through the
+native message API before the TUI attaches, the same way headless launches do. The
+connection skips that post only when the attach command carries the prompt
+(observer mode with `attach_style="server"`). Skipping it in any other case drops
+the prompt silently: before this fix, no OpenCode primary delivered one.
+
 The HTTP URL comes from `connection.observer_endpoint` (transport must be `"http"`).
 OpenCode does not use `--add-dir` — workspace roots are injected through the env
 override in `ConnectionConfig.env_overrides`, not via CLI flags.

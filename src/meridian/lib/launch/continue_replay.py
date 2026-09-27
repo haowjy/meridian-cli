@@ -53,10 +53,9 @@ class ContinueReplaySource:
     source_work_id: str | None
     source_execution_cwd: str | None
     source_control_root: str | None
-    source_claude_config_dir: str | None
-    source_pi_session_dir: str | None
     source_launch_policy_snapshot: LaunchPolicySnapshot | None
     tracked: bool
+    source_native_store: str | None = None
     source_history_id: UUID | None = None
     source_model: str | None = None
     source_agent: str | None = None
@@ -115,10 +114,7 @@ class ContinueReplayReference(Protocol):
     def source_control_root(self) -> str | None: ...
 
     @property
-    def source_claude_config_dir(self) -> str | None: ...
-
-    @property
-    def source_pi_session_dir(self) -> str | None: ...
+    def source_native_store(self) -> str | None: ...
 
     @property
     def source_launch_policy_snapshot(self) -> LaunchPolicySnapshot | None: ...
@@ -147,8 +143,7 @@ def continue_replay_source_from_reference(
         source_work_id=resolved_reference.source_work_id,
         source_execution_cwd=resolved_reference.source_execution_cwd,
         source_control_root=resolved_reference.source_control_root,
-        source_claude_config_dir=resolved_reference.source_claude_config_dir,
-        source_pi_session_dir=resolved_reference.source_pi_session_dir,
+        source_native_store=resolved_reference.source_native_store,
         source_launch_policy_snapshot=resolved_reference.source_launch_policy_snapshot,
         tracked=resolved_reference.tracked,
     )
@@ -293,10 +288,9 @@ def _observed_last_executed_model(
         harness_session_id,
         context=NativeModelReadContext(
             project_root=source.source_control_root,
-            claude_config_dir=source.source_claude_config_dir,
-            pi_session_dir=source.source_pi_session_dir,
+            native_store=source.source_native_store,
         ),
-    )
+    ) if source.source_native_store is not None else None
     token = live if live is not None else get_last_executed_model(
         runtime_root, replay_harness, harness_session_id
     )
@@ -435,8 +429,7 @@ def build_continue_replay_contract(
         forked_from_history_id=source.source_history_id if fork else None,
         source_control_root=source.source_control_root,
         source_execution_cwd=source.source_execution_cwd,
-        source_claude_config_dir=source.source_claude_config_dir,
-        source_pi_session_dir=source.source_pi_session_dir,
+        source_native_store=source.source_native_store,
     )
 
     return ContinueReplayContract(

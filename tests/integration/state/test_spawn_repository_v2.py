@@ -3,11 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.state.spawn.model import SpawnRecord, TerminalFacts
+from meridian.lib.state.spawn.dogfood_migration import migrate_dogfood_spawn_rows
+from meridian.lib.state.spawn.model import RunBoundaryOutcome, SpawnRecord, TerminalFacts
 from meridian.lib.state.spawn.repository import (
     Applied,
     Decline,
     Declined,
+    SpawnStateQuarantined,
     read_prompt,
     read_state,
     record_to_stored_state,
@@ -71,6 +73,165 @@ def _seed_state(spawns_dir: Path, record: SpawnRecord) -> None:
         stored.model_dump_json(indent=2) + "\n",
         encoding="utf-8",
     )
+
+
+def test_running_dogfood_migration_preserves_old_runner_row_shape(tmp_path: Path) -> None:
+    spawns_dir = tmp_path / "spawns"
+    spawn_dir = spawns_dir / "p1"
+    spawn_dir.mkdir(parents=True)
+    # Field names from the PR 1 model at 77b8bc58:src/meridian/lib/state/spawn/model.py.
+    pr1_field_names = frozenset(
+        {
+            "id", "history_id", "record_mode", "session_instance_id", "parent_history_id",
+            "owner_history_id", "forked_from_history_id", "retained_history_ids",
+            "state_revision", "chat_id", "entry_chat_id", "exit_chat_id", "exit_identity",
+            "owner_chat_id", "parent_id", "originating_bash_id", "model", "agent",
+            "agent_path", "skills", "skill_paths", "harness", "kind", "desc", "work_id",
+            "goal", "display_label", "harness_session_id", "trampoline_successor_id",
+            "control_root", "task_cwd", "execution_cwd", "claude_config_dir", "launch_mode",
+            "worker_pid", "runner_pid", "runner_created_at_epoch", "resident_rearm_count",
+            "status", "started_at", "last_attempt_exited_at", "last_attempt_exit_code",
+            "runner_exit", "cancel_intent", "terminal", "launch_policy_snapshot", "prompt",
+        }
+    )
+    raw = {
+        "v": 3,
+        "id": "p1",
+        "entry_chat_id": "c-entry",
+        "exit_chat_id": None,
+        "exit_identity": None,
+        "trampoline_successor_id": None,
+        "kind": "child",
+        "status": "running",
+    }
+    state_path = spawn_dir / "state.json"
+    state_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    assert migrate_dogfood_spawn_rows(tmp_path).migrated == ("p1",)
+
+    migrated = json.loads(state_path.read_text(encoding="utf-8"))
+    assert migrated.keys() == (raw.keys() - {
+        "entry_chat_id", "exit_chat_id", "exit_identity", "trampoline_successor_id"
+    }) | {"chat_id"}
+    assert migrated["chat_id"] == "c-entry"
+    assert migrated["kind"] == "child"
+    assert "run_boundary" not in migrated
+    # ``v`` belongs to the persisted-row envelope, not PR 1's SpawnStateFields.
+    assert (migrated.keys() - {"v"}) <= pr1_field_names
+
+
+def test_dogfood_boundary_rows_quarantine_until_migrated_once(tmp_path: Path) -> None:
+    spawns_dir = tmp_path / "spawns"
+    _seed_state(spawns_dir, _record(status="succeeded"))
+    _seed_state(spawns_dir, _record("p2", status="succeeded"))
+    state_path = spawns_dir / "p1" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["entry_chat_id"] = "c-entry"
+    state["exit_chat_id"] = "c-exit"
+    state["exit_identity"] = "verified"
+    state.pop("run_boundary", None)
+    state["trampoline_successor_id"] = "diagnostic-only"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    with pytest.raises(SpawnStateQuarantined, match="run `meridian doctor` to migrate it"):
+        read_state(spawns_dir, "p1", include_prompt=False)
+
+    assert migrate_dogfood_spawn_rows(tmp_path).migrated == ("p1",)
+    assert migrate_dogfood_spawn_rows(tmp_path).migrated == ()
+
+    loaded = read_state(spawns_dir, "p1", include_prompt=False)
+    assert loaded is not None
+    assert loaded.chat_id == "c1"
+    assert loaded.run_boundary == RunBoundaryOutcome(
+        status="verified", exit_chat_id="c-exit", trampoline_successor_id="diagnostic-only")
+    assert loaded.continue_chat_id == "c-exit"
+    assert "exit_identity" not in state_path.read_text(encoding="utf-8")
+
+
+def test_dogfood_migration_isolates_malformed_rows(tmp_path: Path) -> None:
+    spawns_dir = tmp_path / "spawns"
+    for spawn_id in ("p1", "p2"):
+        _seed_state(spawns_dir, _record(spawn_id, status="succeeded"))
+    invalid_path = spawns_dir / "p1" / "state.json"
+    invalid = json.loads(invalid_path.read_text(encoding="utf-8"))
+    invalid.update(exit_identity="bogus-status", exit_chat_id="c9")
+    invalid_path.write_text(json.dumps(invalid), encoding="utf-8")
+    valid_path = spawns_dir / "p2" / "state.json"
+    valid = json.loads(valid_path.read_text(encoding="utf-8"))
+    valid.update(entry_chat_id="c2", exit_identity="verified", exit_chat_id="c3")
+    valid_path.write_text(json.dumps(valid), encoding="utf-8")
+    (spawns_dir / "p0").mkdir()
+    (spawns_dir / "p0" / "state.json").write_text(
+        '{"v":3,"id":"p0","entry_chat_id": "c', encoding="utf-8"
+    )
+
+    first = migrate_dogfood_spawn_rows(tmp_path)
+    second = migrate_dogfood_spawn_rows(tmp_path)
+
+    assert first.migrated == ("p2",)
+    assert [spawn_id for spawn_id, _ in first.failed] == ["p0", "p1"]
+    assert "JSONDecodeError" in first.failed[0][1]
+    assert "ValidationError" in first.failed[1][1]
+    assert second.migrated == ()
+    assert [spawn_id for spawn_id, _ in second.failed] == ["p0", "p1"]
+    loaded = read_state(spawns_dir, "p2", include_prompt=False)
+    assert loaded is not None
+    assert loaded.continue_chat_id == "c3"
+
+
+def test_dogfood_migration_only_clears_authority_failure(tmp_path: Path) -> None:
+    from meridian.lib.state.history_index import SCHEMA_VERSION, HistoryIndex
+
+    spawns_dir = tmp_path / "spawns"
+    _seed_state(spawns_dir, _record(status="succeeded"))
+    state_path = spawns_dir / "p1" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["entry_chat_id"] = "c1"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    index = HistoryIndex(tmp_path)
+    marker = {
+        "format": 1,
+        "target_schema": SCHEMA_VERSION,
+        "generation": None,
+        "code": "timeout",
+        "reason": "keep this failure",
+        "failed_at": "2026-05-01T00:00:00Z",
+    }
+    index.failure_path.write_text(json.dumps(marker), encoding="utf-8")
+
+    assert migrate_dogfood_spawn_rows(tmp_path).migrated == ("p1",)
+    assert json.loads(index.failure_path.read_text(encoding="utf-8")) == marker
+
+    marker["code"] = "authority"
+    index.failure_path.write_text(json.dumps(marker), encoding="utf-8")
+    assert migrate_dogfood_spawn_rows(tmp_path).migrated == ()
+    assert json.loads(index.failure_path.read_text(encoding="utf-8")) == marker
+
+
+def test_dogfood_migration_reports_index_rearm_timeout(tmp_path: Path, monkeypatch) -> None:
+    from meridian.lib.platform.locking import FileLockTimeout
+    from meridian.lib.state.history_index import HistoryIndex
+
+    spawns_dir = tmp_path / "spawns"
+    _seed_state(spawns_dir, _record(status="succeeded"))
+    state_path = spawns_dir / "p1" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["entry_chat_id"] = "c1"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    def timeout(self, *, timeout: float = 5.0) -> tuple[str, ...]:
+        raise FileLockTimeout("catchup lock timed out")
+
+    monkeypatch.setattr(HistoryIndex, "clear_authority_failure", timeout)
+    result = migrate_dogfood_spawn_rows(tmp_path)
+
+    assert result.migrated == ("p1",)
+    assert result.index_rearm_warning is not None
+    assert "timed out" in result.index_rearm_warning
+
+
+def test_run_boundary_rejects_exit_without_verified_status() -> None:
+    with pytest.raises(ValueError, match="set exactly when status is verified"):
+        RunBoundaryOutcome(status="unresolved", exit_chat_id="c-exit")
 
 
 def test_v3_state_round_trips_without_prompt_body(tmp_path: Path) -> None:
@@ -144,6 +305,7 @@ def test_mutating_legacy_row_rewrites_it_as_v3(tmp_path: Path) -> None:
         "owner_history_id",
         "forked_from_history_id",
         "retained_history_ids",
+        "run_boundary",
     ):
         legacy.pop(key)
     state_path.write_text(json.dumps(legacy), encoding="utf-8")

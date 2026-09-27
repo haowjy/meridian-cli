@@ -8,7 +8,7 @@ import pytest
 
 from meridian.lib.harness.pi_failure import (
     compact_pi_failure_output,
-    extract_pi_failure_from_history,
+    pi_failure_from_payload,
 )
 from meridian.lib.launch.errors import should_retry
 
@@ -23,7 +23,18 @@ def test_extract_pi_failure_from_prompt_rejection() -> None:
         )
     )
 
-    assert extract_pi_failure_from_history(history) == "No API key configured"
+    assert (
+        next(
+            failure
+            for line in history.splitlines()
+            if (
+                failure := pi_failure_from_payload(
+                    {**json.loads(line)["payload"], "type": json.loads(line)["event_type"]}
+                )
+            )
+        )
+        == "No API key configured"
+    )
 
 
 def test_extract_pi_failure_ignores_inject_rejection() -> None:
@@ -41,7 +52,7 @@ def test_extract_pi_failure_ignores_inject_rejection() -> None:
         }
     )
 
-    assert extract_pi_failure_from_history(history) is None
+    assert pi_failure_from_payload(json.loads(history)) is None
 
 
 def test_compact_pi_failure_output_strips_extension_js_stack() -> None:

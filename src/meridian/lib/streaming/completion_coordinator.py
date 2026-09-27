@@ -156,8 +156,8 @@ class CompletionCoordinator:
             self._refresh_profile_deadline()
         return decision.duplicate_canonical_event
 
-    def note_event_persisted(self, event: RawHarnessEvent) -> DrainLoopDecision:
-        decision = self._evidence.note_event_persisted(event)
+    def note_event_delivered(self, event: RawHarnessEvent) -> DrainLoopDecision:
+        decision = self._evidence.note_event_delivered(event)
         self._latch_evidence_decision(decision)
         if decision.activity is not None and self._phase == "stabilizing":
             self._phase = "waiting"

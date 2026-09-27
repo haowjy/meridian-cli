@@ -1,4 +1,4 @@
-"""Durable event drain loop for one streaming spawn."""
+"""Live event drain loop for one streaming spawn."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import RawHarnessEvent
-from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
 from meridian.lib.streaming.drain_coordinator import (
     DrainCoordinator,
@@ -27,7 +26,6 @@ from meridian.lib.streaming.drain_wait import (
     DrainInputWaiter,
     DrainTimeoutWake,
 )
-from meridian.lib.streaming.event_observers import EventObserverRegistry
 from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 
 if TYPE_CHECKING:
@@ -42,6 +40,7 @@ PublishTerminal = Callable[
 ]
 FanOutEvent = Callable[[SpawnId, "NormalizedHarnessEvent"], None]
 FanOutTurnBoundary = Callable[[SpawnId, "TerminalEventOutcome"], Awaitable[None]]
+RunEventHooks = Callable[[SpawnId, RawHarnessEvent], None]
 
 
 class SpawnDrainLoop:
@@ -51,15 +50,13 @@ class SpawnDrainLoop:
         self,
         *,
         sessions: dict[SpawnId, SpawnSession],
-        history_writers: dict[SpawnId, HarnessHistoryWriter],
-        observers: EventObserverRegistry,
+        run_event_hooks: RunEventHooks,
         publish_terminal: PublishTerminal,
         fan_out_event: FanOutEvent,
         fan_out_turn_boundary: FanOutTurnBoundary,
     ) -> None:
         self._sessions = sessions
-        self._history_writers = history_writers
-        self._observers = observers
+        self._run_event_hooks = run_event_hooks
         self._publish_terminal = publish_terminal
         self._fan_out_event = fan_out_event
         self._fan_out_turn_boundary = fan_out_turn_boundary
@@ -72,13 +69,11 @@ class SpawnDrainLoop:
         drain_plan: DrainPlan,
         tracer: DebugTracer | None,
     ) -> None:
-        """Durably append each harness event and fan out to the active subscriber."""
+        """Run inline hooks for each harness event and fan out to the active subscriber."""
 
         # Import at runtime to avoid circular import during module initialization.
         from meridian.lib.harness.semantics import normalize_event
 
-        consecutive_write_failures = 0
-        max_consecutive_failures = 10
         drain_cancelled = False
         drain_error: Exception | None = None
         recorded_terminal_outcome: TerminalEventOutcome | None = None
@@ -117,10 +112,7 @@ class SpawnDrainLoop:
                     break
                 wake = await drain_waiter.wait(_next_timeout(coordinator))
                 if isinstance(wake, DrainClosedWake):
-                    if (
-                        should_defer_close is not None
-                        and should_defer_close()
-                    ):
+                    if should_defer_close is not None and should_defer_close():
                         continue
                     session = self._sessions.get(spawn_id)
                     close_outcome = (
@@ -171,63 +163,17 @@ class SpawnDrainLoop:
                         direction="inbound",
                         data={"event_type": event.event_type, "harness_id": event.harness_id},
                     )
-                history_writer = self._history_writers.get(spawn_id)
-                if history_writer is not None:
-                    try:
-                        write_result = history_writer.write(event)
-                        if not write_result.success:
-                            raise RuntimeError(write_result.error or "history write failed")
-                        consecutive_write_failures = 0
-                        if tracer is not None:
-                            tracer.emit(
-                                "drain",
-                                "event_persisted",
-                                data={"event_type": event.event_type},
-                            )
-                        self._observers.dispatch(spawn_id, event)
-                    except Exception as persist_exc:
-                        consecutive_write_failures += 1
-                        if tracer is not None:
-                            tracer.emit(
-                                "drain",
-                                "persist_error",
-                                data={
-                                    "event_type": event.event_type,
-                                    "error": str(persist_exc),
-                                    "consecutive_failures": consecutive_write_failures,
-                                },
-                            )
-                        logger.warning(
-                            "Failed to persist event for spawn %s (%d/%d consecutive failures)",
-                            spawn_id,
-                            consecutive_write_failures,
-                            max_consecutive_failures,
-                            exc_info=True,
-                        )
-                        if consecutive_write_failures >= max_consecutive_failures:
-                            logger.error(
-                                (
-                                    "Aborting drain loop for spawn %s after %d "
-                                    "consecutive write failures"
-                                ),
-                                spawn_id,
-                                max_consecutive_failures,
-                            )
-                            drain_error = RuntimeError(
-                                "Aborted drain loop after repeated output persistence failures"
-                            )
-                            break
-                        continue
+                self._run_event_hooks(spawn_id, event)
 
                 event_outcome = normalized_event.semantics.terminal
                 self._fan_out_event(spawn_id, normalized_event)
-                persisted_event_decision = _note_event_persisted(coordinator, event)
-                if persisted_event_decision.recorded_outcome is not None:
-                    recorded_terminal_outcome = persisted_event_decision.recorded_outcome
+                delivered_event_decision = _note_event_delivered(coordinator, event)
+                if delivered_event_decision.recorded_outcome is not None:
+                    recorded_terminal_outcome = delivered_event_decision.recorded_outcome
                     break
                 if disk_change_ready_after_event:
                     # Disk change arrived concurrently with this event; reevaluate now
-                    # that the event has been persisted and observers notified.
+                    # that hooks have run and observers were notified.
                     aux_wake_outcome = await _handle_aux_wake(drain_plan)
                     if aux_wake_outcome.recorded_outcome is not None:
                         recorded_terminal_outcome = aux_wake_outcome.recorded_outcome
@@ -280,9 +226,7 @@ class SpawnDrainLoop:
                             0.0,
                             time.monotonic() - session.started_monotonic,
                         ),
-                        authoritative=(
-                            not drain_plan.raw_terminal_frames_authoritative
-                        ),
+                        authoritative=(not drain_plan.raw_terminal_frames_authoritative),
                     )
                 elif drain_cancelled:
                     outcome = DrainOutcome(
@@ -317,9 +261,7 @@ class SpawnDrainLoop:
                         exit_code=recorded_terminal_outcome.exit_code,
                         error=recorded_terminal_outcome.error,
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
-                        authoritative=(
-                            not drain_plan.raw_terminal_frames_authoritative
-                        ),
+                        authoritative=(not drain_plan.raw_terminal_frames_authoritative),
                     )
                 else:
                     outcome = DrainOutcome(
@@ -375,13 +317,13 @@ async def _observe_event(
     return await coordinator.observe_event(event, transition)
 
 
-def _note_event_persisted(
+def _note_event_delivered(
     coordinator: DrainCoordinator | None,
     event: RawHarnessEvent,
 ) -> DrainLoopDecision:
     if coordinator is None:
         return DrainLoopDecision()
-    return coordinator.note_event_persisted(event)
+    return coordinator.note_event_delivered(event)
 
 
 async def _handle_terminal_event(

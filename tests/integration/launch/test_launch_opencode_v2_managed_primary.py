@@ -172,8 +172,7 @@ def test_project_config_v2_drives_managed_primary_attach(
 ) -> None:
     monkeypatch.delenv("MERIDIAN_HARNESS_OPENCODE_VERSION", raising=False)
     (tmp_path / "meridian.toml").write_text(
-        '[project]\nid = "opencode-v2-managed-primary"\n\n'
-        '[harness.opencode]\nversion = "v2"\n',
+        '[project]\nid = "opencode-v2-managed-primary"\n\n[harness.opencode]\nversion = "v2"\n',
         encoding="utf-8",
     )
 
@@ -241,6 +240,8 @@ def test_project_config_v2_drives_managed_primary_attach(
             cast("str", endpoint.url),
             "--session",
             _V2_SESSION_ID,
+            "--prompt",
+            "primary prompt",
         )
     ]
     assert process_launcher.launch_envs[0]["OPENCODE_PASSWORD"] == _SERVER_PASSWORD

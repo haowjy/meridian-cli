@@ -17,3 +17,9 @@
   a returned env_overrides — handled differently by spawned vs primary callers.
   Make child_env a read-only Mapping and env_overrides the sole output, applied
   once via a shared launch helper. (A2)
+- native_run.py: group post-exit process facts (`pid`, start time, child env/cwd)
+  into an `ExitFacts` value if the pipeline grows; keep serve's started-connection
+  distinction rather than inferring every caller's start solely from pid.
+- process/runner.py: replace the remaining `managed` local and post-scope spawn-ID
+  injection when session-attempt construction is next revised; these names no
+  longer describe a separate managed-session abstraction.

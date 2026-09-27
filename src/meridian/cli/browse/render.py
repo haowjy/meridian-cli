@@ -46,7 +46,7 @@ def _cell(value: str, width: int) -> str:
 
 def render_status(model: BrowseModel, width: int) -> StyleAndTextTuples:
     if model.mode in {"search-input", "searching", "search-results"}:
-        scope = "+ZIP" if model.include_archives else "loose"
+        scope = "+archived" if model.include_archives else "loose"
         label = f"search ({scope}): {model.search_query}"
         if model.mode == "searching":
             progress = f"scanned {model.search_scanned}/{model.search_total}"
@@ -99,6 +99,8 @@ def render_list(model: BrowseModel, width: int) -> StyleAndTextTuples:
                 f"{_cell(row.agent or '—', _AGENT_WIDTH)} "
                 f"{_cell(row.model or '—', _MODEL_WIDTH)} {row.work_label or '—'}"
             )
+        if row.native_status:
+            line += f" [{row.native_status}]"
         style = "class:selected" if selected else "class:row"
         clipped_line = _clip(line, width)
         fragments.append((style, clipped_line[:2]))

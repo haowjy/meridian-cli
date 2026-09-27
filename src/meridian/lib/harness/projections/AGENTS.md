@@ -36,6 +36,14 @@ by `adapter.resolve_launch_spec()` — that's the only intended callsite.
 `_DELEGATED_FIELDS` in the corresponding projector.** Missing either → `ImportError`
 at startup.
 
+**An interactive starting prompt is argv's last item, after `--`.** Claude's
+`--add-dir <directories...>` is variadic: with no terminator it swallows a trailing
+positional prompt, and the TUI opens with an empty composer. Claude and Pi end with
+`-- <prompt>`; the bare OpenCode TUI takes `--prompt <prompt>`. Pass every prompt
+argument through `_prompt_arg.check_prompt_argument` (rejects ≥ 128 KiB, the Linux
+per-argument limit). Pi reads a leading `@` as a file reference even after `--`, so
+its projector prefixes one space. Tests assert position, not just presence.
+
 ## Entry Points
 
 Each `project_<harness>_<mode>.py` exports one top-level function:

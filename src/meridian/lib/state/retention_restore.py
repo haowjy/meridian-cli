@@ -31,13 +31,14 @@ from meridian.lib.state.retention_archive import (
     canonical,
     digest,
     inventory,
-    portable_digest,
+    read_record_metadata,
     restored_record,
     safe_member_name,
     source_witness,
     verified_source,
     verify_archive,
 )
+from meridian.lib.state.retention_digest import model_record_digest, stored_record_digest
 from meridian.lib.state.session_identity import session_records_for_spawns
 from meridian.lib.state.session_store import (
     SessionRecord,
@@ -71,7 +72,6 @@ def _historical_session(
                 "session_instance_id": generation,
                 "stopped_at": record.session.stopped_at or record.activity,
                 "harness_session_id": None,
-                "harness_session_ids": (),
                 "control_root": None,
                 "task_cwd": None,
                 "execution_cwd": None,
@@ -86,7 +86,6 @@ def _historical_session(
         kind="primary" if state.kind == "primary" else "spawn",
         harness=state.harness or "",
         harness_session_id=None,
-        harness_session_ids=(),
         model=state.model or "",
         agent=state.agent or "",
         agent_path=state.agent_path or "",
@@ -109,14 +108,14 @@ def _verify_existing(
     assert current is not None
     session = session_records_for_spawns(directory.parent.parent, (current,)).get(current.id)
     if current.record_mode != "historical":
-        if (
-            actual != record.files
-            or portable_digest(current, actual, session) != record.portable_digest
-        ):
+        if actual != record.files:
             raise ValueError(f"History identity conflict: {record.history_id}")
-        return
-    original = restored_record(directory, actual, session or pending_session)
-    if original.portable_digest != record.portable_digest:
+        facts = model_record_digest(current, actual, session)
+    else:
+        original = restored_record(directory, actual, session or pending_session)
+        facts = model_record_digest(original.state, original.files, original.session)
+    # Both sides through current models: either archive may predate model fields.
+    if facts != model_record_digest(record.state, record.files, record.session):
         raise ValueError(f"History identity conflict: {record.history_id}")
 
 
@@ -126,6 +125,8 @@ def _stage_record(
     """Copy and hash external bytes without holding the root mutation gate."""
     stage.mkdir(parents=True, mode=0o700)
     with zipfile.ZipFile(archive_path) as archive:
+        # Provenance keeps the archived bytes, whose stored digest verified.
+        provenance = read_record_metadata(archive, record.history_id)
         for member in record.files:
             relative = safe_member_name(member.name)
             if relative in {"state.json", "record.json", "restored-from.json"}:
@@ -183,7 +184,12 @@ def _stage_record(
             update={"prompt_length": len((stage / "starting-prompt.md").read_text())}
         )
     atomic_write_text(stage / "state.json", stored.model_dump_json())
-    atomic_write_text(stage / "record.json", record.model_dump_json())
+    if (
+        ArchivedRecord.model_validate_json(provenance) != record
+        or stored_record_digest(json.loads(provenance)) != record.portable_digest
+    ):
+        raise ValueError("Archive changed during restore extraction")
+    atomic_write_text(stage / "record.json", provenance.decode())
     atomic_write_text(
         stage / "restored-from.json",
         json.dumps(

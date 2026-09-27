@@ -11,12 +11,17 @@ from pydantic import BaseModel, ConfigDict, Field
 from meridian.lib.config.settings import HistoryArchiveConfig, load_config
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
+from meridian.lib.ops.runner_history_prune import (
+    PRUNE_AFTER_DAYS,
+    RunnerHistoryPrune,
+    prune_runner_history,
+)
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.history_codec import last_activity
-from meridian.lib.state.history_index import HistoryIndex, HistorySnapshot, transcript_activity
+from meridian.lib.state.history_index import HistoryIndex, HistorySnapshot
 from meridian.lib.state.process_scope_projection import read_scope_projection
 from meridian.lib.state.reaper import scope_liveness
 from meridian.lib.state.retention_archive import (
@@ -51,6 +56,7 @@ class SessionArchiveInput(BaseModel):
     list_archives: bool = False
     apply: bool = False
     after_days: int | None = Field(default=None, ge=0)
+    prune_runner_history: bool = False
 
 
 class SessionRestoreInput(BaseModel):
@@ -81,17 +87,28 @@ class SessionArchiveOutput(BaseModel):
     archives: tuple[str, ...] = ()
     restored: tuple[str, ...] = ()
     restored_histories: tuple[RestoredHistory, ...] = ()
+    already_imported: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
     preparation_required: tuple[str, ...] = ()
     limited: bool = False
     snapshots: tuple[HistorySnapshot, ...] = ()
+    runner_history: RunnerHistoryPrune | None = None
 
     def format_text(self, ctx: object = None) -> str:
+        if self.runner_history is not None:
+            return self.runner_history.format_text()
+        selected = (
+            f"Selected: {len(self.selected)} now, "
+            f"{len(self.selected) + len(self.preparation_required)} after capture"
+            if self.preparation_required
+            else f"Selected: {len(self.selected)}"
+        )
         lines = [
-            f"Selected: {len(self.selected)}; reclaimed: {len(self.reclaimed)}; "
+            f"{selected}; reclaimed: {len(self.reclaimed)}; "
             f"restored: {len(self.restored)}; protected: {len(self.protected)}"
         ]
         lines.extend(f"Selected history: {key}" for key in self.selected)
+        lines.extend(f"Already imported: {key}" for key in self.already_imported)
         lines.extend(f"Archive: {path}" for path in self.archives)
         lines.extend(
             f"Restored history: {row.history_id} -> {row.spawn_id} / "
@@ -99,7 +116,7 @@ class SessionArchiveOutput(BaseModel):
             for row in self.restored_histories
         )
         lines.extend(
-            f"Requires native capture (--apply): {key}" for key in self.preparation_required
+            f"Apply will capture native snapshot: {key}" for key in self.preparation_required
         )
         if self.limited:
             lines.append("Pass reached the configured bundle limit; repeat for remaining records.")
@@ -122,7 +139,10 @@ def _protected(
 ) -> tuple[dict[str, SpawnRecord], set[str], dict[str, set[str]]]:
     scan = spawn_store.list_spawns(root)
     if scan.quarantines:
-        raise ValueError("Cannot establish retention safety while spawn records are quarantined")
+        raise ValueError(
+            "Cannot establish retention safety while spawn records are quarantined: "
+            + spawn_store.quarantine_hint([report.spawn_id for report in scan.quarantines])
+        )
     records = {record.id: record for record in scan.records}
     sessions = session_store.list_all_session_records(root)
     active_chats = {
@@ -247,6 +267,61 @@ def archive_history(
         with lock_file(changes.mutation_lock, mode="shared"):
             _, protected, edges = _protected(root)
             sessions = session_records_for_spawns(root, candidates)
+        # The published snapshot is the archive source of truth. Explicitly
+        # selected records (and age-eligible records during maintenance)
+        # must be captured before selection can verify/archive their members.
+        cutoff = datetime.now(UTC) - timedelta(days=after_days)
+        preparation_required: list[str] = []
+        capture_errors: dict[str, str] = {}
+        for candidate in candidates:
+            if candidate.id in protected or candidate.status not in TERMINAL_SPAWN_STATUSES:
+                continue
+            if refs and not set(refs) & {
+                candidate.id,
+                str(candidate.history_id),
+                candidate.chat_id,
+                candidate.owner_chat_id,
+            }:
+                continue
+            if eligible:
+                activity = last_activity(candidate, None, "")
+                if datetime.fromisoformat(activity) > cutoff:
+                    continue
+            try:
+                ready = _capture_ready(root, candidate, sessions.get(candidate.id))
+            except ValueError as exc:
+                capture_errors[candidate.id] = str(exc)
+                continue
+            if ready:
+                continue
+            harnesses, native_ids = native_identity_candidates(
+                root, candidate, sessions.get(candidate.id)
+            )
+            if not harnesses or not native_ids:
+                capture_errors[candidate.id] = (
+                    "no exact native source is bound; record remains loose"
+                )
+                continue
+            if not apply:
+                from meridian.lib.ops.session_target import resolve_transcript_source
+
+                try:
+                    resolve_transcript_source(
+                        ref=candidate.id,
+                        file_path=None,
+                        project_root=project_root or root,
+                        runtime_root=root,
+                        purpose="capture",
+                    )
+                except (ValueError, OSError, RuntimeError) as exc:
+                    capture_errors[candidate.id] = str(exc)
+                    continue
+                preparation_required.append(candidate.id)
+                continue
+            try:
+                materialize_native_history(project_root or root, root, candidate.id)
+            except (ValueError, OSError, RuntimeError) as exc:
+                capture_errors[candidate.id] = str(exc)
         all_candidates = candidates
         by_id = {row.id: row for row in candidates if row.id not in protected}
         dependents: dict[str, set[str]] = {key: set() for key in by_id}
@@ -283,7 +358,6 @@ def archive_history(
                 )
         if refs and set(refs) - matched:
             raise ValueError(f"History references not found: {sorted(set(refs) - matched)}")
-        cutoff = datetime.now(UTC) - timedelta(days=after_days)
         for candidate in candidates:
             if refs and not set(refs) & {
                 candidate.id,
@@ -297,15 +371,17 @@ def archive_history(
             if len(selected) >= policy.max_records:
                 limited = True
                 break
-            path = root / "spawns" / candidate.id / "history.jsonl"
             try:
                 ready = _capture_ready(root, candidate, sessions.get(candidate.id))
             except ValueError as exc:
-                errors.append(f"{candidate.id}: {exc}")
+                errors.append(f"{candidate.id}: {capture_errors.get(candidate.id, str(exc))}")
                 continue
             if not ready:
                 if refs:
-                    errors.append(f"{candidate.id}: native snapshot is not captured")
+                    if candidate.id in capture_errors:
+                        errors.append(f"{candidate.id}: {capture_errors[candidate.id]}")
+                    elif candidate.id not in preparation_required:
+                        errors.append(f"{candidate.id}: native snapshot is not captured")
                 continue
             if candidate.history_id is None and apply:
                 write_state_locked(
@@ -317,7 +393,7 @@ def archive_history(
                     state = witness.state
                     if state is None:
                         continue
-                    activity = last_activity(state, witness.session, transcript_activity(path, ""))
+                    activity = last_activity(state, witness.session, "")
                     if eligible and datetime.fromisoformat(activity) > cutoff:
                         continue
                     record = capture_record(directory, state, witness.session, activity)
@@ -336,6 +412,7 @@ def archive_history(
                 selected=tuple(str(row.history_id) for row in selected),
                 protected=tuple(sorted(protected)),
                 errors=tuple(errors),
+                preparation_required=tuple(preparation_required),
                 limited=limited,
             )
         receipt = publish_archive(root, destination, tuple(selected))
@@ -413,6 +490,19 @@ def session_archive_sync(payload: SessionArchiveInput) -> SessionArchiveOutput:
     roots = resolve_roots_for_read(payload.project_root)
     if roots is None:
         raise ValueError("No project history")
+    if payload.prune_runner_history:
+        if payload.refs or payload.eligible or payload.list_archives or payload.destination:
+            raise ValueError(
+                "--prune-runner-history cannot be combined with refs, --eligible, --list "
+                "or --destination"
+            )
+        return SessionArchiveOutput(
+            runner_history=prune_runner_history(
+                roots.runtime_root,
+                apply=payload.apply,
+                after_days=PRUNE_AFTER_DAYS if payload.after_days is None else payload.after_days,
+            )
+        )
     if payload.list_archives:
         configured = (
             payload.destination or load_config(roots.project_root).history.archive.destination
@@ -479,10 +569,12 @@ def session_import_sync(payload: SessionImportInput) -> SessionArchiveOutput:
     roots = resolve_roots_for_read(payload.project_root)
     if roots is None:
         raise ValueError("Initialize the destination project before importing history")
-    receipt = import_archive(roots.runtime_root, Path(payload.archive))
+    receipt, recorded = import_archive(roots.runtime_root, Path(payload.archive))
     HistoryIndex(roots.runtime_root).catch_up()
+    histories = tuple(str(row.history_id) for row in receipt.records)
     return SessionArchiveOutput(
-        selected=tuple(str(row.history_id) for row in receipt.records),
+        selected=histories if recorded else (),
+        already_imported=() if recorded else histories,
         archives=(str(Path(receipt.destination) / receipt.zip_name),),
     )
 
@@ -508,18 +600,23 @@ def _capture_ready(root: Path, candidate: SpawnRecord, session: object) -> bool:
             return True
         raise ValueError("published native snapshot is corrupt")
     linked = session if isinstance(session, session_store.SessionRecord) else None
-    if candidate.kind == "primary":
-        harnesses, native_ids = native_identity_candidates(root, candidate, linked)
-        if harnesses and native_ids:
-            return False
-    return transcript is not None
+    harnesses, native_ids = native_identity_candidates(root, candidate, linked)
+    # A runner stream is neither proof of native binding nor an archive source.
+    # Native-bound records become eligible only after stop maintenance seals the
+    # exact source as a snapshot above.
+    if not harnesses or not native_ids:
+        raise ValueError("no exact native source is bound; record remains loose")
+    return False
 
 
 def _require_inactive_native_session(root: Path, harness: str | None, session_id: str) -> None:
     """Reject known same-runtime owners; this is not an external-writer fence."""
     scan = spawn_store.list_spawns(root)
     if scan.quarantines:
-        raise ValueError("Cannot establish native capture ownership with quarantined spawn records")
+        raise ValueError(
+            "Cannot establish native capture ownership with quarantined spawn records: "
+            + spawn_store.quarantine_hint([report.spawn_id for report in scan.quarantines])
+        )
     linked = session_records_for_spawns(root, scan.records)
     for row in scan.records:
         if row.record_mode == "historical":
@@ -564,12 +661,9 @@ def _require_inactive_native_session(root: Path, harness: str | None, session_id
 
 def materialize_native_history(project_root: Path, root: Path, spawn_id: str) -> None:
     from meridian.lib.harness.transcript_capture import native_capture
-    from meridian.lib.launch.constants import HISTORY_FILENAME
-    from meridian.lib.ops.session_target import resolve_session_log_target
-    from meridian.lib.ops.session_transcript import iter_source_events
+    from meridian.lib.ops.session_target import resolve_transcript_source
     from meridian.lib.platform.atomic import atomic_replace, iter_atomic_temp_paths
     from meridian.lib.state.event_store import utc_now_iso
-    from meridian.lib.state.history import write_retained_child_stream
     from meridian.lib.state.history_codec import transcript_header
     from meridian.lib.state.native_snapshot import (
         NATIVE_SNAPSHOT_FILENAME,
@@ -592,21 +686,17 @@ def materialize_native_history(project_root: Path, root: Path, spawn_id: str) ->
             raise ValueError("Published native snapshot is corrupt")
         # Remove stale staging temps left by a previous interrupted capture.
         spawn_dir = root / "spawns" / spawn_id
-        for reserved in (NATIVE_SNAPSHOT_FILENAME, HISTORY_FILENAME):
-            for stale in iter_atomic_temp_paths(spawn_dir, reserved):
-                stale.unlink(missing_ok=True)
+        for stale in iter_atomic_temp_paths(spawn_dir, NATIVE_SNAPSHOT_FILENAME):
+            stale.unlink(missing_ok=True)
         # Deferred until the published-aggregate guard: select from current authority.
-        target = resolve_session_log_target(
+        target = resolve_transcript_source(
             ref=spawn_id,
             file_path=None,
             project_root=project_root,
             runtime_root=root,
             purpose="capture",
         )
-        source = target.sources[0]
-        if source.kind == "spawn_history":
-            write_retained_child_stream(root, spawn_id, iter_source_events(source))
-            return
+        source = target.source
         observation = native_capture(
             kind=source.kind,
             harness=source.harness,

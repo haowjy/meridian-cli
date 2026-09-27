@@ -538,7 +538,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
     ExtensionCommandSpec.from_op(
         extension_id="meridian.session",
         command_id="repair",
-        summary="Repair stored session metadata with an explicitly detected harness session id.",
+        summary="Inspect or bind an unbound chat's native session.",
         handler=session_repair,
         sync_handler=repair_session_reference_sync,
         input_type=SessionRepairInput,

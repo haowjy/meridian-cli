@@ -20,13 +20,17 @@ from typing import Any
 import psutil
 import structlog
 
+from meridian.lib.core.event_hooks import run_event_hooks
 from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.connections.base import (
     ConnectionConfig,
     HarnessConnection,
     RawHarnessEvent,
 )
 from meridian.lib.harness.connections.errors import PortBindError
+from meridian.lib.harness.extractors.base import AttemptFold
+from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.signals import SignalCallbackReceiver, signal_coordinator
@@ -36,9 +40,9 @@ from meridian.lib.platform.process_scope.base import (
     PROCESS_BIRTH_UNKNOWN_EPOCH,
     ProcessScopeSnapshot,
 )
-from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.state.primary_meta import ActivityState, PrimaryMetadata, write_primary_metadata
 from meridian.lib.state.process_scope_projection import record_scope
+from meridian.lib.streaming.heartbeat import heartbeat_loop
 
 from .ports import LaunchedProcess, ProcessLauncher, RunningProcess
 
@@ -175,6 +179,7 @@ class PrimaryAttachOutcome:
     session_id: str | None
     tui_pid: int | None
     cancelled: bool = False
+    facts: AttemptFacts = field(default_factory=AttemptFacts)
 
 
 class _StartupTelemetry:
@@ -227,6 +232,8 @@ class PrimaryAttachLauncher:
         process_launcher: ProcessLauncher,
         runtime_root: Path | None = None,
         on_running: Callable[[int], None] | None = None,
+        fold: AttemptFold | None = None,
+        session_id_observer: Callable[[str], None] | None = None,
     ) -> None:
         self._spawn_id = spawn_id
         self._spawn_dir = spawn_dir
@@ -235,10 +242,18 @@ class PrimaryAttachLauncher:
         self._process_launcher = process_launcher
         self._runtime_root = runtime_root
         self._on_running = on_running
+        self._fold = fold or get_harness_bundle(connection.harness_id).extractor.create_fold()
+        self._event_hooks = (self._fold,)
+        if runtime_root is not None:
+            self._event_hooks += get_harness_bundle(connection.harness_id).event_sinks(
+                runtime_root, spawn_id
+            )
+        self._facts = self._fold.facts
+        self._session_id_observer = session_id_observer
         self._metadata = _LauncherMetadata()
         self._metadata_lock = Lock()
-        self._history_writer: HarnessHistoryWriter | None = None
-        self._event_writer_task: asyncio.Task[None] | None = None
+        self._event_consumer_task: asyncio.Task[None] | None = None
+        self._heartbeat_task: asyncio.Task[None] | None = None
         self._tui_scope_snapshot: ProcessScopeSnapshot | None = None
         self._running_process: RunningProcess | None = None
         self._signal_cancel_requested = False
@@ -263,11 +278,10 @@ class PrimaryAttachLauncher:
 
         if self._runtime_root is None:
             self._spawn_dir.mkdir(parents=True, exist_ok=True)
-        self._history_writer = HarnessHistoryWriter(
-            self._spawn_dir / "history.jsonl",
-            runtime_root=self._runtime_root,
-            spawn_id=str(self._spawn_id) if self._runtime_root is not None else None,
-        )
+        if self._runtime_root is not None:
+            self._heartbeat_task = asyncio.create_task(
+                heartbeat_loop(self._runtime_root, self._spawn_id)
+            )
         self._signal_cancel_requested = False
         cancel_receiver = SignalCallbackReceiver(
             target_signals=(signal.SIGTERM, signal.SIGHUP),
@@ -302,10 +316,10 @@ class PrimaryAttachLauncher:
                 self._metadata.backend_port = self._resolve_backend_port()
             self._write_metadata()
 
-            self._record_backend_scope_from_connection(session_id)
-
-            self._event_writer_task = asyncio.create_task(self._run_event_writer())
+            self._fold.bind_scope(session_id)
             self._set_harness_session_id(session_id)
+            self._record_backend_scope_from_connection(session_id)
+            self._event_consumer_task = asyncio.create_task(self._consume_live_events())
             self._set_activity("idle")
 
             if session_id is None or not session_id.strip():
@@ -344,21 +358,22 @@ class PrimaryAttachLauncher:
             launch_task = _start_process_wait(running_process)
             telemetry.clear()
 
-            writer_task = self._event_writer_task
+            consumer_task = self._event_consumer_task
             done, _pending = await asyncio.wait(
-                {launch_task, writer_task},
+                {launch_task, consumer_task},
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            if writer_task in done and not launch_task.done():
+            if consumer_task in done and not launch_task.done():
                 with suppress(asyncio.CancelledError, Exception):
-                    writer_task.result()
-                self._event_writer_task = None
+                    consumer_task.result()
+                self._event_consumer_task = None
                 if self._connection.harness_id is HarnessId.CODEX:
                     # Codex TUI takes over the observer endpoint after attach;
                     # the displaced observer stream closing is normal.
                     launched = await asyncio.shield(launch_task)
                     tui_lifecycle_finished = True
                     return PrimaryAttachOutcome(
+                        facts=self._facts,
                         exit_code=launched.exit_code,
                         session_id=session_id,
                         tui_pid=launched.pid,
@@ -371,6 +386,7 @@ class PrimaryAttachLauncher:
                 )
                 tui_lifecycle_finished = True
                 return PrimaryAttachOutcome(
+                    facts=self._facts,
                     exit_code=1,
                     session_id=session_id,
                     tui_pid=running_process.pid,
@@ -392,6 +408,7 @@ class PrimaryAttachLauncher:
             tui_lifecycle_finished = True
 
             return PrimaryAttachOutcome(
+                facts=self._facts,
                 exit_code=launched.exit_code,
                 session_id=session_id,
                 tui_pid=launched.pid,
@@ -408,6 +425,7 @@ class PrimaryAttachLauncher:
                     spawn_id=str(self._spawn_id),
                 )
                 return PrimaryAttachOutcome(
+                    facts=self._facts,
                     exit_code=130,
                     session_id=session_id,
                     tui_pid=None,
@@ -419,11 +437,17 @@ class PrimaryAttachLauncher:
             self._running_process = None
             if connection_started:
                 self._set_activity("finalizing")
-            writer_task = self._event_writer_task
-            if writer_task is not None:
-                writer_task.cancel()
+            consumer_task = self._event_consumer_task
+            if consumer_task is not None:
+                consumer_task.cancel()
                 with suppress(asyncio.CancelledError):
-                    await writer_task
+                    await consumer_task
+            heartbeat_task = self._heartbeat_task
+            if heartbeat_task is not None:
+                heartbeat_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await heartbeat_task
+                self._heartbeat_task = None
             if (
                 running_process is not None
                 and launch_task is not None
@@ -477,18 +501,12 @@ class PrimaryAttachLauncher:
             spawn_id=str(self._spawn_id) if self._runtime_root is not None else None,
         )
 
-    async def _run_event_writer(self) -> None:
-        """Stream connection events to history.jsonl."""
+    async def _consume_live_events(self) -> None:
+        """Update activity and run inline hooks (fold, sinks) for each live event."""
 
-        writer = self._history_writer
-        if writer is None:
-            raise RuntimeError("primary attach history writer is not initialized")
-        try:
-            async for event in self._connection.events():
-                self._update_activity_from_event(event)
-                writer.write(event)
-        finally:
-            self._history_writer = None
+        async for event in self._connection.events():
+            self._update_activity_from_event(event)
+            run_event_hooks(self._event_hooks, event)
 
     def _update_activity_from_event(self, event: RawHarnessEvent) -> None:
         """Update activity state based on connection events."""
@@ -516,8 +534,15 @@ class PrimaryAttachLauncher:
     def _set_harness_session_id(self, session_id: str | None) -> None:
         if session_id is None:
             return
+        if self._session_id_observer is not None:
+            self._session_id_observer(session_id)
         should_write = False
         with self._metadata_lock:
+            if (
+                self._metadata.harness_session_id
+                and self._metadata.harness_session_id != session_id
+            ):
+                return
             if self._metadata.harness_session_id != session_id:
                 self._metadata.harness_session_id = session_id
                 should_write = True

@@ -8,7 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.types import HarnessId
-from meridian.lib.launch.request import SessionRequest, SpawnRequest
+from meridian.lib.launch.request import SessionRequest, SpawnRequest, is_exact_continue_session
 from meridian.lib.launch.session_scope import SessionAttempt, session_scope
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state.session_store import get_session_active_work_id, update_session_work_id
@@ -76,7 +76,6 @@ def _session_execution_context(
     runtime_root: Path,
     metadata: PrimarySessionMetadata,
     request: SessionRequest,
-    harness_session_id: str,
     run_agent_name: str | None,
     inherited_work_id: str | None = None,
     control_root: str | None = None,
@@ -88,7 +87,7 @@ def _session_execution_context(
         runtime_root=runtime_root,
         metadata=metadata,
         request=request,
-        harness_session_id=harness_session_id,
+        chat_id=request.continue_chat_id if is_exact_continue_session(request) else None,
         control_root=control_root,
         task_cwd=task_cwd,
         execution_cwd=execution_cwd,
@@ -100,12 +99,11 @@ def _session_execution_context(
             attached_work_id = (inherited_work_id or "").strip() or None
             if attached_work_id is not None:
                 update_session_work_id(runtime_root, managed.chat_id, attached_work_id)
-        assert managed.attempt is not None
         yield _SessionExecutionContext(
             chat_id=managed.chat_id,
             work_id=attached_work_id,
             resolved_agent_name=run_agent_name,
-            attempt=managed.attempt,
+            attempt=managed,
         )
 
 

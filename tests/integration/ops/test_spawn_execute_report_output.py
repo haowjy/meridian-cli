@@ -13,6 +13,7 @@ import meridian.lib.ops.spawn.execute_runner as execute_runner_module
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.lifecycle import LifecycleEvent, SpawnLifecycleService
+from meridian.lib.core.native_identity import NativeKeyFields
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.request import SpawnRequest
@@ -22,7 +23,7 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_authority_for_write,
 )
 from meridian.lib.ops.spawn.models import SpawnCreateInput
-from meridian.lib.state import spawn_store, work_repository, work_store
+from meridian.lib.state import session_store, spawn_store, work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths
 from tests.support.executables import prepend_fake_executables
 from tests.support.launch import stub_bundle_request_and_resolve
@@ -114,6 +115,9 @@ def test_execute_spawn_blocking_reads_report_and_does_not_print_running_preamble
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     runtime = _build_test_runtime(tmp_path, monkeypatch)
+    runtime_root = runtime.authority.runtime_root
+    assert runtime_root is not None
+    native_store = runtime_root / "fake-native-store"
 
     async def _fake_launch_prepared_spawn(**kwargs: object) -> int:
         spawn = cast("Any", kwargs["spawn"])
@@ -122,8 +126,22 @@ def test_execute_spawn_blocking_reads_report_and_does_not_print_running_preamble
         report_path = runtime_root / "spawns" / spawn_id / "report.md"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text("fake report body\n", encoding="utf-8")
-        history_path = runtime_root / "spawns" / spawn_id / "history.jsonl"
-        history_path.write_text('{"event_type":"session.idle"}\n', encoding="utf-8")
+        chat_id = session_store.start_session(
+            runtime_root,
+            harness="codex",
+            harness_session_id="",
+            model="gpt-5.4",
+            native_store=str(native_store),
+            kind="spawn",
+            spawn_id=spawn_id,
+        )
+        session_store.update_session_harness_id(
+            runtime_root,
+            chat_id,
+            NativeKeyFields(session_id="fake-native-session"),
+            source="observed",
+        )
+        session_store.stop_session(runtime_root, chat_id)
         spawn_store.finalize_spawn(
             runtime_root,
             spawn_id,
@@ -157,6 +175,47 @@ def test_execute_spawn_blocking_reads_report_and_does_not_print_running_preamble
     assert result.format_text().endswith(
         "fake report body\n\nTranscript: meridian session log " + str(result.spawn_id)
     )
+
+
+def test_execute_spawn_blocking_without_native_key_omits_transcript_hint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _build_test_runtime(tmp_path, monkeypatch)
+
+    async def _fake_launch_prepared_spawn(**kwargs: object) -> int:
+        spawn = cast("Any", kwargs["spawn"])
+        runtime_root = Path(cast("Path", kwargs["runtime_root"]))
+        spawn_id = str(spawn.spawn_id)
+        report_path = runtime_root / "spawns" / spawn_id / "report.md"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text("fake report body\n", encoding="utf-8")
+        spawn_store.finalize_spawn(
+            runtime_root,
+            spawn_id,
+            "succeeded",
+            0,
+            origin="runner",
+            duration_secs=1.25,
+        )
+        return 0
+
+    monkeypatch.setattr(execute_module, "launch_prepared_spawn", _fake_launch_prepared_spawn)
+
+    result = execute_module.execute_spawn_blocking(
+        payload=SpawnCreateInput(prompt="run"),
+        request=SpawnRequest(
+            prompt="run",
+            model="gpt-5.4",
+            harness="codex",
+            agent="coder",
+        ),
+        runtime=runtime,
+    )
+
+    assert result.status == "succeeded"
+    assert result.report == "fake report body"
+    assert "Transcript: meridian session log" not in result.format_text()
 
 
 def test_execute_spawn_blocking_notifies_spawn_id_before_launch(
@@ -567,3 +626,85 @@ def test_execute_spawn_background_pre_init_failure_returns_failed_output(
     authority = resolve_runtime_authority_for_write(tmp_path / "repo")
     assert authority.runtime_root is not None
     assert not list((authority.runtime_root / "spawns").glob("*/state.json"))
+
+
+def test_deleted_tracked_native_file_preserves_launch_failure_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    from meridian.lib.launch.request import SessionRequest
+    from meridian.lib.state import session_store
+
+    runtime = _build_test_runtime(tmp_path, monkeypatch)
+    assert runtime.authority.runtime_root is not None
+    prepend_fake_executables(monkeypatch, tmp_path, "codex")
+    stub_bundle_request_and_resolve(monkeypatch, model="gpt-5.4", harness=HarnessId.CODEX)
+    sid = "12345678-1234-4234-8234-123456789abc"
+    store = tmp_path / "recorded" / "sessions"
+    store.mkdir(parents=True)
+    native = store / f"rollout-2026-01-01T00-00-00-{sid}.jsonl"
+    native.write_text('{}\n')
+    chat = session_store.start_session(
+        runtime.authority.runtime_root, harness="codex", harness_session_id=sid,
+        model="gpt-5.4", native_store=str(store),
+    )
+    session_store.stop_session(runtime.authority.runtime_root, chat)
+    native.unlink()
+    result = execute_module.execute_spawn_blocking(
+        payload=SpawnCreateInput(prompt="continue"),
+        request=SpawnRequest(
+            prompt="continue", model="gpt-5.4", harness="codex",
+            session=SessionRequest(
+                requested_harness_session_id=sid, continue_chat_id=chat, continue_harness="codex",
+                continue_source_ref=chat, continue_source_tracked=True,
+                source_native_store=str(store),
+            ),
+        ),
+        runtime=runtime,
+    )
+    row = spawn_store.get_spawn(runtime.authority.runtime_root, result.spawn_id)
+    assert row is not None and row.terminal is not None
+    assert row.terminal.error == "native_transcript_missing"
+    assert result.exit_code == 1
+    output = capsys.readouterr()
+    assert chat in output.out + output.err
+    assert "native_transcript_missing" in output.out + output.err
+
+
+def test_tracked_pi_without_store_preserves_unbound_launch_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    from meridian.lib.launch.request import SessionRequest
+    from meridian.lib.state import session_store
+
+    runtime = _build_test_runtime(tmp_path, monkeypatch)
+    assert runtime.authority.runtime_root is not None
+    prepend_fake_executables(monkeypatch, tmp_path, "pi")
+    stub_bundle_request_and_resolve(monkeypatch, model="gpt-5.4", harness=HarnessId.PI)
+    sid = "12345678-1234-4234-8234-123456789abc"
+    chat = session_store.start_session(
+        runtime.authority.runtime_root, harness="pi", harness_session_id=sid,
+        model="gpt-5.4",
+    )
+    session_store.stop_session(runtime.authority.runtime_root, chat)
+    result = execute_module.execute_spawn_blocking(
+        payload=SpawnCreateInput(prompt="continue"),
+        request=SpawnRequest(
+            prompt="continue", model="gpt-5.4", harness="pi",
+            session=SessionRequest(
+                requested_harness_session_id=sid, continue_chat_id=chat, continue_harness="pi",
+                continue_source_ref=chat, continue_source_tracked=True,
+            ),
+        ),
+        runtime=runtime,
+    )
+    row = spawn_store.get_spawn(runtime.authority.runtime_root, result.spawn_id)
+    assert row is not None and row.terminal is not None
+    assert row.terminal.error == "unbound"
+    assert result.status == "failed"
+    assert result.exit_code == 1
+    source = session_store.get_session_record(runtime.authority.runtime_root, chat)
+    assert source is not None and source.native_store is None
+    assert source.harness_session_id == sid
+    output = capsys.readouterr()
+    assert chat in output.out + output.err
+    assert "unbound" in output.out + output.err

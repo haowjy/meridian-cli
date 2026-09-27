@@ -89,9 +89,38 @@ without updating all adapters → startup failure.
 `_PROJECTED_FIELDS` and `_DELEGATED_FIELDS`. Missing a spec field from both →
 startup failure.
 
-**`observe_session_id()` called exactly once post-execution** (primary path only).
-Priority: connection session ID → artifact extraction → known ID → filesystem scan.
-Must not mutate adapter-instance state.
+**Native identity is planned, not discovered.** A chat binds one immutable
+`(harness, native_store, id)`. `plan_native_identity()` picks the operation and
+source. `SessionRequest.source_native_store` is the sole source-namespace carrier
+for all harnesses; it always comes from the recorded chat, never config hints.
+`finalize_native_identity()` pins store/ID against the final child env
+before argv projection, so the bound key, env and argv agree. The runner binds
+nonempty identities as `assigned` before exec. `observe_after_exit()` returns
+`PostExit`: typed entry errors, owned entry/exit keys, and separate diagnostics.
+It never binds or persists. `launch/native_run.py` owns the observation order,
+entry decision, exact exit allocation and invocation attribution for every runner.
+Cwd, timestamps, logs, and newest-file or prefix scans never establish tracked
+chat identity.
+
+`legacy_native_stores.py` derives one-time import candidates from recorded facts,
+using these same store formats and exact validators. Store or header-contract
+changes must preserve that import seam; it is not a runtime repair fallback.
+
+**Native transcript resolution is exact.** Use the recorded store and full native
+ID; multiple matching files fail as `ambiguous_native_file`, rather than selecting
+a winner. `resolve_native_session_file()` takes an explicit native store;
+`resolve_session_file()` accepts legacy config hints or untracked raw references.
+Never reinterpret a recorded Claude project store as a config root. Claude
+store derives from the final child environment without a Meridian
+`CLAUDE_CONFIG_DIR` override. Finalization validates the exact native header (including dry-run); preparation
+seeds `<store>/<id>.jsonl` from `<source_native_store>/<id>.jsonl`: atomic symlink
+replacement within the same config root, otherwise atomic copy. Missing sources refuse
+before exec, including when an ambient same-ID file exists. Model reads use the
+same exact adapter resolver, with no ambient-store fallback. OpenCode's
+newly recorded store is its resolved database path, including `OPENCODE_DB`.
+Claude trampoline successors travel in `PostExit` and persist in `run_boundary`,
+never through the entry-ID return, chat binding, or exit
+allocator. Claude exit identity stays unresolved without launch-correlated evidence.
 
 **Terminal event classification is harness- and parent-scope-aware.** `event_type`
 is NOT globally unique — always check `event.harness_id`. `turn/completed` is Codex;
@@ -99,7 +128,7 @@ OpenCode uses `session.idle` for the same semantic. Some harness streams also
 multiplex child work on the same connection, so `connection.primary_event_scope` is
 part of the contract: Codex scopes completion to the main `threadId`; OpenCode scopes
 completion to the launched parent `sessionID`. Child Codex threads and child OpenCode
-task sessions stay in `history.jsonl`, but do not complete/fail the parent, clear
+task sessions reach subscribers, but do not complete/fail the parent, clear
 parent signals, or supply the parent report.
 
 ## Entry Points
@@ -118,14 +147,14 @@ parent signals, or supply the parent report.
   event name and returns raw evidence with its one normalized descriptor; shared
   `semantics.py` contains no harness event names.
 - `pi_failure.py` — Pi failure output formatting (`compact_pi_failure_output`) and
-  history-based failure extraction (`extract_pi_failure_from_history`). Harness-owned;
+  per-event failure extraction (`pi_failure_from_payload`). Harness-owned;
   consumed by `connections/pi_rpc.py` (stderr compaction), `extractors/pi.py` (report
   extraction), and `launch/report.py` (spawn report Pi failure path).
 - `common.py` — shared extraction helpers used by adapters.
 - `transcript.py` — cross-harness session read path. `TranscriptMessage` (with
   `tool_call: ToolCall | None` and `is_tool_result: bool`), `ToolCall` (canonical
-  harness-agnostic tool representation), and three providers
-  (`JsonlTranscriptProvider`, `HistoryJsonlTranscriptProvider`,
+  harness-agnostic tool representation), and two providers
+  (`JsonlTranscriptProvider`,
   `OpenCodeStorageTranscriptProvider`). Independent of the spawn/write paths — reads
   only. See [.context/session-transcripts.md](.context/session-transcripts.md) for the
   normalization table and provider selection rules.
@@ -134,6 +163,10 @@ parent signals, or supply the parent report.
   DB schema and reads through the version dispatcher. Does not own dialect completeness.
 - `capture_qualify.py` — per-harness `CaptureObserver` (`observe` / `incomplete_reason`).
   New dialect = one observer + `observer_for` entry, not a patch to `NativeCapture`.
+- `native_witness.py` — freshness witnesses (`FileWitness`, `OpenCodeV1Witness`,
+  `OpenCodeV2Witness`) for native sources, independent of disposable projections.
+- `opencode_snapshot.py` — read-only OpenCode snapshots: session witnesses, raw
+  session events, and exact-turn reads over the version-dispatched DB connection.
 
 ## Subpackages
 

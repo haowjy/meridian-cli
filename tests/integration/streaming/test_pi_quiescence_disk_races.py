@@ -12,7 +12,11 @@ from typing import Any
 import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
+from meridian.lib.harness.connections.base import (
+    ConnectionConfig,
+    HarnessConnection,
+    RawHarnessEvent,
+)
 from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
@@ -297,8 +301,6 @@ async def test_pi_non_spawn_background_only_nudges_after_idle_delay(
         await coordinator.stop()
 
 
-
-
 @pytest.mark.asyncio
 async def test_pi_reconciled_terminal_child_allows_done_nudge_for_private_work(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -403,8 +405,6 @@ async def test_pi_spawn_child_outstanding_waits_without_done_nudge(
         assert sent_messages == []
     finally:
         await coordinator.stop()
-
-
 
 
 @pytest.mark.asyncio
@@ -616,6 +616,8 @@ async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
 
+    observed: list[RawHarnessEvent] = []
+    manager.register_event_hook(spawn_id, observed.append)
     await manager.start_spawn(
         ConnectionConfig(
             spawn_id=spawn_id,
@@ -646,31 +648,15 @@ async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
         outcome = await completion
         assert outcome is not None
         assert outcome.status == "succeeded"
-        history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
-
-        def _history_has_micro_drain_phase() -> bool:
-            return history_path.exists() and any(
-                json.loads(line).get("payload", {}).get("phase") == "quiescence_micro_drain_started"
-                for line in history_path.read_text(encoding="utf-8").splitlines()
-                if line
-            )
-
         await wait_until(
-            _history_has_micro_drain_phase,
+            lambda: any(
+                event.event_type == "meridian.pi.lifecycle.phase"
+                and event.payload.get("phase") == "quiescence_micro_drain_started"
+                for event in observed
+            ),
             timeout=5.0,
             description="quiescence_micro_drain_started lifecycle phase",
         )
-        history = [
-            json.loads(line)
-            for line in history_path.read_text(encoding="utf-8").splitlines()
-            if line
-        ]
-        phases = [
-            event.get("payload", {}).get("phase")
-            for event in history
-            if event.get("event_type") == "meridian.pi.lifecycle.phase"
-        ]
-        assert "quiescence_micro_drain_started" in phases
     finally:
         await manager.stop_spawn(spawn_id)
 

@@ -46,6 +46,15 @@ class StoredSpawnState(SpawnStateFields):
         return self
 
 
+# Flat run-boundary fields of the PR-1 dogfood build; retire with dogfood_migration.
+DOGFOOD_BOUNDARY_FIELDS = (
+    "entry_chat_id",
+    "exit_chat_id",
+    "exit_identity",
+    "trampoline_successor_id",
+)
+
+
 @dataclass(frozen=True)
 class SpawnStateQuarantineReport:
     """Observable report for a persisted row that cannot be interpreted."""
@@ -54,13 +63,25 @@ class SpawnStateQuarantineReport:
     state_path: Path
     validation_errors: tuple[object, ...]
 
+    @property
+    def dogfood_row(self) -> bool:
+        """True when the row carries dogfood boundary fields ``meridian doctor`` migrates."""
+        return any(
+            isinstance(error, dict)
+            and cast("dict[str, Any]", error).get("type") == "extra_forbidden"
+            and cast("dict[str, Any]", error).get("loc", ())[:1]
+            in {(name,) for name in DOGFOOD_BOUNDARY_FIELDS}
+            for error in self.validation_errors
+        )
+
 
 class SpawnStateQuarantined(ValueError):
     """Raised consistently by single-row and collection reads for invalid state."""
 
     def __init__(self, report: SpawnStateQuarantineReport) -> None:
         self.report = report
-        super().__init__(f"Spawn state quarantined: {report.state_path}")
+        hint = "; run `meridian doctor` to migrate it" if report.dogfood_row else ""
+        super().__init__(f"Spawn state quarantined: {report.state_path}{hint}")
 
 
 @dataclass(frozen=True)
@@ -306,6 +327,7 @@ def scan_spawn_ids(spawns_dir: Path) -> list[str]:
 
 
 __all__ = [
+    "DOGFOOD_BOUNDARY_FIELDS",
     "Applied",
     "Decline",
     "Declined",

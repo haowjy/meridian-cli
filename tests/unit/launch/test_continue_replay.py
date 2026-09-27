@@ -40,8 +40,7 @@ def test_build_continue_replay_contract_from_snapshot() -> None:
         source_work_id="source-work",
         source_execution_cwd="/tmp/source",
         source_control_root="/tmp/repo",
-        source_claude_config_dir=None,
-        source_pi_session_dir=None,
+        source_native_store="/recorded/store",
         source_launch_policy_snapshot=snapshot,
         tracked=True,
         source_model="ignored-live-model",
@@ -66,7 +65,7 @@ def test_build_continue_replay_contract_from_snapshot() -> None:
     assert contract.session.source_execution_cwd == "/tmp/source"
 
 
-def test_continue_replay_source_from_reference_uses_authoritative_session_id() -> None:
+def test_continue_replay_source_from_reference_ignores_recovered_tracked_id() -> None:
     resolved = ResolvedSessionReference(
         harness_session_id=None,
         harness="claude",
@@ -92,7 +91,7 @@ def test_continue_replay_source_from_reference_uses_authoritative_session_id() -
         ),
     )
 
-    assert contract.session.requested_harness_session_id == "recovered-session"
+    assert contract.session.requested_harness_session_id is None
     assert contract.work_id == "source-work"
     assert contract.task_dir == "/tmp/source"
     assert contract.model == "claude-sonnet-4-6"
@@ -110,8 +109,6 @@ def test_build_continue_replay_contract_legacy_empty_model_override() -> None:
         source_work_id=None,
         source_execution_cwd=None,
         source_control_root=None,
-        source_claude_config_dir=None,
-        source_pi_session_dir=None,
         source_launch_policy_snapshot=snapshot,
         tracked=True,
     )
@@ -132,8 +129,6 @@ def test_build_continue_replay_contract_uses_snapshot_harness_when_reference_has
         source_work_id=None,
         source_execution_cwd=None,
         source_control_root=None,
-        source_claude_config_dir=None,
-        source_pi_session_dir=None,
         source_launch_policy_snapshot=snapshot,
         tracked=True,
     )
@@ -153,8 +148,6 @@ def test_build_continue_replay_contract_rejects_harness_conflict() -> None:
         source_work_id=None,
         source_execution_cwd=None,
         source_control_root=None,
-        source_claude_config_dir=None,
-        source_pi_session_dir=None,
         source_launch_policy_snapshot=snapshot,
         tracked=True,
     )
@@ -172,8 +165,6 @@ def test_build_continue_replay_contract_rejects_agent_opt_out() -> None:
         source_work_id=None,
         source_execution_cwd=None,
         source_control_root=None,
-        source_claude_config_dir=None,
-        source_pi_session_dir=None,
         source_launch_policy_snapshot=None,
         tracked=True,
     )
@@ -191,8 +182,7 @@ def _continue_source() -> ContinueReplaySource:
         source_work_id=None,
         source_execution_cwd="/tmp/source",
         source_control_root="/tmp/repo",
-        source_claude_config_dir=None,
-        source_pi_session_dir=None,
+        source_native_store="/recorded/store",
         source_launch_policy_snapshot=_snapshot(),
         tracked=True,
     )

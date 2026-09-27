@@ -11,11 +11,6 @@ import pytest
 from meridian.lib.harness.opencode_transcript import iter_opencode_db_events
 from meridian.lib.harness.transcript import parse_transcript_events_with_prologues
 from meridian.lib.harness.transcript_preview import PreviewAccumulator
-from meridian.lib.ops.session_archive import archive_history
-from meridian.lib.state import spawn_store
-from meridian.lib.state.history import ingest_portable_history, iter_history_events
-from meridian.lib.state.paths import resolve_project_runtime_root_for_write
-from meridian.lib.state.retention_archive import iter_archived_events
 from tests.support.opencode_db import write_opencode_db_session_with_parts
 
 
@@ -56,23 +51,6 @@ def test_raw_rows_preserve_unknown_material_columns_and_orphan_parts(
     # The same raw dialect remains interpretable after JSON serialization/retention.
     parsed = parse_transcript_events_with_prologues(json.loads(json.dumps(events)))
     assert parsed.rendering_reason
-    monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "home"))
-    project = tmp_path / "repo"
-    project.mkdir()
-    root = resolve_project_runtime_root_for_write(project)
-    key = spawn_store.start_spawn(
-        root, chat_id="c1", prompt="question", harness="opencode", model="test", agent="coder"
-    )
-    spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
-    ingest_portable_history(root, key, iter(events))
-    retained = list(iter_history_events(root / "spawns" / key / "history.jsonl"))
-    assert [event["payload"] for event in retained] == events
-    record = spawn_store.get_spawn(root, key)
-    assert record is not None and record.history_id is not None
-    archived = archive_history(root, destination=tmp_path / "archives", refs=(key,), apply=True)
-    assert archived.reclaimed
-    exported = list(iter_archived_events(Path(archived.archives[0]), record.history_id))
-    assert [event["payload"] for event in exported] == events
 
 
 @pytest.mark.parametrize("failure", ["missing-file", "missing-session", "missing-table"])

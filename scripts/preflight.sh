@@ -19,6 +19,11 @@ case "$MODE" in
     cd "$ROOT_DIR"
     run_step uv run --extra dev ruff check .
     run_step uv run --extra dev python -m pyright
+    (
+      cd "$ROOT_DIR/src/meridian/pi_runtime"
+      run_step pnpm install --frozen-lockfile
+      run_step pnpm run build:extensions
+    )
     run_step uv run --extra dev pytest -x -q
     run_step uv build --no-sources
     ;;

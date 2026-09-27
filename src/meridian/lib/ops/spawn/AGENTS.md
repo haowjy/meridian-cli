@@ -56,7 +56,8 @@ raises before any state is created.
 spawn/session, allows explicit model overrides but rejects other launch-identity,
 policy, work, and task-dir mutations, then
 delegates exact-continue normalization to `launch/continue_replay.py`'s
-`ContinueReplayContract`. Agent opt-out is treated as a launch-identity mutation,
+`ContinueReplayContract`. Exact continue passes its verified source chat into the
+spawn session scope; fresh and fork launches allocate separate chats. Agent opt-out is treated as a launch-identity mutation,
 not as a harmless absence.
 
 Native-ID continuation resolves the harness namespace before reading the session's

@@ -37,6 +37,36 @@ from meridian.lib.state.spawn_store import start_spawn
 _BACKEND_SCOPE_EPOCH = 12_345.0
 
 
+@pytest.mark.asyncio
+async def test_primary_attach_live_consumer_runs_hooks(tmp_path: Path) -> None:
+    event = RawHarnessEvent(event_type="test.noop", harness_id="codex", payload={})
+
+    class FiniteConnection:
+        harness_id = HarnessId.CODEX
+        primary_event_scope = None
+
+        def observe_event_semantics(self, _semantics: object) -> None:
+            return None
+
+        async def events(self):  # type: ignore[no-untyped-def]
+            yield event
+
+    launcher = PrimaryAttachLauncher(
+        spawn_id=SpawnId("p-no-writer"),
+        spawn_dir=tmp_path,
+        connection=cast("Any", FiniteConnection()),
+        tui_command_builder=lambda session_id: ("codex", session_id),
+        process_launcher=cast("ProcessLauncher", object()),
+    )
+    seen: list[RawHarnessEvent] = []
+    launcher._event_hooks = (seen.append,)
+    launcher._update_activity_from_event = lambda _event: None  # type: ignore[method-assign]
+
+    await launcher._consume_live_events()
+
+    assert seen == [event]
+
+
 def _publish_spawn(spawn_dir: Path) -> None:
     start_spawn(
         spawn_dir.parent.parent,
@@ -338,11 +368,6 @@ def _read_metadata(spawn_dir: Path) -> dict[str, object]:
     )
 
 
-def _read_history_lines(spawn_dir: Path) -> list[dict[str, object]]:
-    lines = (spawn_dir / HISTORY_FILENAME).read_text(encoding="utf-8").splitlines()
-    return [cast("dict[str, object]", json.loads(line)) for line in lines if line.strip()]
-
-
 def test_primary_attach_scope_snapshot_records_unknown_birth_sentinel_when_create_time_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -619,7 +644,7 @@ def test_primary_attach_cancellation_after_codex_observer_displacement_cleans_tu
         )
         await stream_closed.wait()
         async with asyncio.timeout(1.0):
-            while launcher._event_writer_task is not None:
+            while launcher._event_consumer_task is not None:
                 await asyncio.sleep(0)
         run_task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -718,6 +743,7 @@ async def test_primary_attach_writes_metadata_before_tui_launch(tmp_path: Path) 
             requested_sessions.append(session_id) or ("codex", "resume", session_id)
         ),
         process_launcher=process_launcher,
+        runtime_root=tmp_path,
     )
 
     await launcher.run(
@@ -736,6 +762,7 @@ async def test_primary_attach_writes_metadata_before_tui_launch(tmp_path: Path) 
     assert launch_meta["backend_port"] == 7811
     assert launch_meta["harness_session_id"] == "thread-123"
     assert process_launcher.output_log_paths == [None]
+    assert (spawn_dir / "heartbeat").is_file()
 
 
 @pytest.mark.asyncio
@@ -775,9 +802,7 @@ async def test_primary_attach_merges_observer_client_env_into_tui(tmp_path: Path
         env={"PATH": "/usr/bin"},
     )
 
-    assert process_launcher.launch_envs == [
-        {"PATH": "/usr/bin", "OPENCODE_PASSWORD": "s3cret"}
-    ]
+    assert process_launcher.launch_envs == [{"PATH": "/usr/bin", "OPENCODE_PASSWORD": "s3cret"}]
     assert process_launcher.launch_commands == [
         ("opencode", "--server", "http://127.0.0.1:7812", "--session", "thread-123")
     ]
@@ -819,7 +844,7 @@ async def test_primary_attach_upgrades_provisional_backend_scope_without_duplica
 
 
 @pytest.mark.asyncio
-async def test_primary_attach_writes_valid_jsonl_events(tmp_path: Path) -> None:
+async def test_primary_attach_writes_no_runner_history(tmp_path: Path) -> None:
     spawn_dir = tmp_path / "spawns" / "p902"
     connection = FakeManagedConnection(
         events=[
@@ -851,18 +876,7 @@ async def test_primary_attach_writes_valid_jsonl_events(tmp_path: Path) -> None:
         env={},
     )
 
-    rows = _read_history_lines(spawn_dir)
-    assert [row["event_type"] for row in rows] == ["turn/started", "turn/completed"]
-    assert [row["turn_id"] for row in rows] == ["t1", "t1"]
-    for row in rows:
-        assert isinstance(row["payload"], dict)
-        assert row["harness_id"] == "codex"
-        assert isinstance(row["seq"], int)
-        assert isinstance(row["byte_offset"], int)
-        assert "item_id" not in row
-        assert "request_id" not in row
-        assert row["interrupt_epoch"] == 0
-        assert "stale_after_interrupt" not in row
+    assert not (spawn_dir / HISTORY_FILENAME).exists()
 
 
 @pytest.mark.asyncio
@@ -1093,3 +1107,133 @@ async def test_primary_attach_signal_during_failed_startup_returns_cancelled(
     assert outcome.cancelled is True
     assert outcome.exit_code == 130
     assert process_launcher.launch_commands == []
+
+
+@pytest.mark.asyncio
+async def test_primary_attach_initial_id_mismatch_is_typed(tmp_path: Path) -> None:
+    from meridian.lib.core.native_identity import (
+        NativeEntryMismatch,
+        NativeIdentity,
+        NativeKeyFields,
+    )
+
+    spawn_id = SpawnId("p900-mismatch")
+    spawn_dir = tmp_path / "spawns" / spawn_id
+    connection = FakeManagedConnection(events=[], session_id="observed-other")
+    process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir)
+    from meridian.lib.launch.native_run import bind_entry
+    from meridian.lib.launch.session_scope import SessionAttempt
+    from meridian.lib.state import session_store
+
+    chat_id = session_store.start_session(tmp_path, "codex", "", "")
+    record = session_store.get_session_record(tmp_path, chat_id)
+    assert record is not None
+    spec = _build_spec().model_copy(
+        update={
+            "native_identity": NativeIdentity(
+                "codex",
+                "resume",
+                "/store",
+                "assigned-id",
+                "assigned-id",
+                None,
+            )
+        }
+    )
+    native_run = bind_entry(
+        SessionAttempt(tmp_path, chat_id, record.session_instance_id, None), spec, harness="codex"
+    )
+    launcher = PrimaryAttachLauncher(
+        spawn_id=spawn_id,
+        spawn_dir=spawn_dir,
+        connection=connection,
+        tui_command_builder=lambda sid: ("codex", "resume", sid),
+        process_launcher=process_launcher,
+        session_id_observer=native_run.observe,
+    )
+    spec = _build_spec().model_copy(
+        update={
+            "native_identity": NativeIdentity(
+                "codex",
+                "resume",
+                "/store",
+                "assigned-id",
+                "assigned-id",
+                None,
+            )
+        }
+    )
+    with pytest.raises(NativeEntryMismatch) as caught:
+        await launcher.run(
+            config=_build_config(spawn_id=spawn_id, control_root=tmp_path),
+            spec=spec,
+            cwd=tmp_path,
+            env={},
+        )
+    assert caught.value.expected == NativeKeyFields("codex", "/store", "assigned-id")
+    assert caught.value.observed == NativeKeyFields("codex", "/store", "observed-other")
+    assert process_launcher.output_log_paths == []
+
+
+@pytest.mark.asyncio
+async def test_pi_primary_folds_and_persists_phase_without_history(tmp_path: Path):
+    from meridian.lib.harness.extractors.pi import PI_EXTRACTOR
+
+    spawn_id = SpawnId("p-pi-facts")
+    start_spawn(
+        tmp_path,
+        spawn_id=spawn_id,
+        chat_id="c1",
+        model="test",
+        agent="test",
+        harness="pi",
+        prompt="test",
+        status="running",
+    )
+    events = [
+        RawHarnessEvent(
+            harness_id="pi",
+            event_type="message_end",
+            payload={
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "primary report"}],
+                    "usage": {"input": 7, "output": 9},
+                },
+            },
+        ),
+        RawHarnessEvent(
+            harness_id="pi",
+            event_type="meridian.pi.lifecycle.phase",
+            payload={"phase": "cleanup_completed"},
+        ),
+    ]
+
+    class Connection:
+        harness_id = HarnessId.PI
+        primary_event_scope = None
+
+        def observe_event_semantics(self, _semantics):
+            pass
+
+        async def events(self):
+            for event in events:
+                yield event
+
+    fold = PI_EXTRACTOR.create_fold()
+    facts = fold.facts
+    launcher = PrimaryAttachLauncher(
+        spawn_id=spawn_id,
+        spawn_dir=tmp_path / "spawns" / spawn_id,
+        connection=Connection(),
+        tui_command_builder=lambda _: (),
+        process_launcher=object(),
+        runtime_root=tmp_path,
+        fold=fold,
+    )
+    await launcher._consume_live_events()
+    assert facts.final_text == "primary report"
+    assert facts.usage.input_tokens == 7
+    phase = json.loads((tmp_path / "spawns" / spawn_id / "pi-lifecycle.json").read_text())
+    assert phase["phase"] == "cleanup_completed"

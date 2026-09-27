@@ -17,10 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.launch.constants import (
-    FINALIZE_EVIDENCE_FILENAME,
-    LAST_OBSERVED_EVENT_FILENAME,
-)
+from meridian.lib.launch.constants import FINALIZE_EVIDENCE_FILENAME
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_boundary import (
     EVENT_PARENT_LAUNCH_SPAWNED,
@@ -236,7 +233,7 @@ def test_reconcile_active_spawn_with_dead_runner_and_no_exit_or_report_fails(
     assert latest.terminal.error == "orphan_run"
 
 
-def test_reaped_orphan_records_runner_child_and_last_event_evidence(
+def test_reaped_orphan_records_runner_child_and_heartbeat_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -252,19 +249,6 @@ def test_reaped_orphan_records_runner_child_and_last_event_evidence(
         spawn_id,
         "heartbeat",
         age_secs=300,
-    )
-    marker = {
-        "event_kind": "item/started",
-        "timestamp": "2026-04-16T16:46:39Z",
-        "seq": 93,
-        "turn_started": 1,
-        "turn_completed": 0,
-        "item_started": 94,
-        "item_completed": 93,
-    }
-    (spawn_dir / LAST_OBSERVED_EVENT_FILENAME).write_text(
-        json.dumps(marker),
-        encoding="utf-8",
     )
     fixed_now = heartbeat_path.stat().st_mtime + 300
     monkeypatch.setattr("meridian.lib.state.reaper.time.time", lambda: fixed_now)
@@ -282,7 +266,6 @@ def test_reaped_orphan_records_runner_child_and_last_event_evidence(
     assert evidence["worker"] == {"pid": 456, "alive": True}
     assert evidence["worker_or_backend_alive"] is True
     assert evidence["heartbeat_age_secs"] == pytest.approx(300)
-    assert evidence["last_observed_event"] == marker
 
 
 def test_reconcile_active_spawn_with_cancel_intent_and_dead_runner_cancels(

@@ -111,8 +111,8 @@ idle/terminal anchor used by Pi's done-nudge delay.
 ### Pi Phase Events
 
 The drain loop emits `meridian.pi.lifecycle.phase` events for Pi-specific milestones.
-These are written to `history.jsonl` alongside harness events and are visible in
-`meridian spawn show` output:
+An inline phase sink atomically updates `spawns/<id>/pi-lifecycle.json`;
+`meridian spawn show` reads its latest phase and bounded cleanup status:
 
 | Phase | When |
 |---|---|

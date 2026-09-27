@@ -2,6 +2,12 @@
 
 Lock order: catchup, root mutation gate, database, source, marker gate.
 Markers contain no history facts. A lost acknowledgement only causes replay.
+
+``SCHEMA_VERSION`` names one projection namespace: its SQLite file, this marker
+queue with its GENERATION, the catch-up/database/marker locks and the
+initialization latch. Builds with different schemas never share any of them, so an
+older build that outlives an upgrade keeps a self-consistent projection. Authority
+and its locks (root mutation gate, source locks) stay shared.
 """
 
 from __future__ import annotations
@@ -18,6 +24,13 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
+
+SCHEMA_VERSION = 6
+
+
+def versioned(stem: str) -> str:
+    """Name a file in this schema's projection namespace."""
+    return f"{stem}-v{SCHEMA_VERSION}"
 
 
 class HistoryCoordinationError(ValueError):
@@ -60,16 +73,17 @@ class HistoryChanges:
 
     @property
     def mutation_lock(self) -> Path:
+        # Gates authority, which every build shares: not versioned.
         return self.root / "locks" / "history-mutation.lock"
 
     @property
     def directory(self) -> Path:
-        return self.root / "history-index" / "pending"
+        return self.root / "history-index" / versioned("pending")
 
     @property
     def marker_lock(self) -> Path:
         # Stable and outside the replaceable database / pending namespace.
-        return self.root / "locks" / "history-markers.lock"
+        return self.root / "locks" / f"{versioned('history-markers')}.lock"
 
     def mark(self, source: HistorySource, *, coalesce: bool = False) -> None:
         """Called BEFORE authority changes, under root and source locks."""

@@ -23,6 +23,7 @@ from meridian.lib.harness.connections.base import (
     HarnessConnection,
     ObserverEndpoint,
 )
+from meridian.lib.harness.projections._prompt_arg import check_prompt_argument
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 from .base import PassthroughError, TuiCommandBuilder
@@ -50,14 +51,14 @@ def build_opencode_attach_command(
     session_id: str,
     http_url: str,
 ) -> tuple[str, ...]:
-    """Build the V1 `opencode attach {http_url} --session {session_id}` command."""
-
+    """Build the V1 attach command (the attach subcommand has no --prompt)."""
     return ("opencode", "attach", http_url, "--session", session_id)
 
 
 def build_opencode_server_attach_command(
     session_id: str,
     http_url: str,
+    prompt: str | None = None,
 ) -> tuple[str, ...]:
     """Build the V2 `opencode --server {http_url} --session {session_id}` command.
 
@@ -65,7 +66,8 @@ def build_opencode_server_attach_command(
     Authentication is supplied separately via ``OPENCODE_PASSWORD``.
     """
 
-    return ("opencode", "--server", http_url, "--session", session_id)
+    command = ("opencode", "--server", http_url, "--session", session_id)
+    return (*command, "--prompt", check_prompt_argument(prompt)) if prompt else command
 
 
 class OpenCodePassthrough:
@@ -95,8 +97,6 @@ class OpenCodePassthrough:
         connection: HarnessConnection[Any],
         spec: ResolvedLaunchSpec,
     ) -> TuiCommandBuilder:
-        _ = spec
-
         def _build(session_id: str) -> tuple[str, ...]:
             # Resolve at invocation time: the observer endpoint only exists once
             # the managed backend has started.
@@ -105,6 +105,7 @@ class OpenCodePassthrough:
                 return build_opencode_server_attach_command(
                     session_id=session_id,
                     http_url=endpoint.url,
+                    prompt=spec.prompt,
                 )
             return build_opencode_attach_command(
                 session_id=session_id,

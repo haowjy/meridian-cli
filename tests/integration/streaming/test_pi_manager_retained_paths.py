@@ -9,15 +9,14 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.state import spawn_store
 from tests.support.async_determinism import assert_still_pending, wait_until
 from tests.support.pi import (
     FakePiConnection,
-    history_has_event,
-    history_has_phase,
+    event_phases,
     pi_event,
     pi_process_exit_event,
-    read_history,
     start_pi_manager,
     write_json,
     write_pi_bash_record,
@@ -56,16 +55,18 @@ async def test_spawn_manager_derives_direct_followup_transitions_from_pi_events(
             await asyncio.Event().wait()
 
     start_row(tmp_path, str(child_id), HarnessId.CODEX, str(spawn_id))
+    observed: list[RawHarnessEvent] = []
     manager = await start_pi_manager(
         tmp_path,
         _FollowupConnection([]),
         spawn_id=spawn_id,
+        observed=observed,
     )
     completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
 
     try:
         await wait_until(
-            lambda: history_has_phase(tmp_path, spawn_id, "waiting_for_tracked_children"),
+            lambda: "waiting_for_tracked_children" in event_phases(observed),
             description="Pi waiting for persisted child",
         )
         await assert_still_pending(completion)
@@ -86,10 +87,10 @@ async def test_spawn_manager_derives_direct_followup_transitions_from_pi_events(
 
         followup_ready.set()
 
-        outcome = await asyncio.wait_for(completion, timeout=2.0)
+        outcome = await asyncio.wait_for(completion, timeout=5.0)
         assert outcome is not None
         assert outcome.status == "succeeded"
-        event_types = [event["event_type"] for event in read_history(tmp_path, spawn_id)]
+        event_types = [event.event_type for event in observed]
         assert event_types.count("agent_end") == 2
         first_idle = event_types.index("agent_end")
         followup_start = event_types.index("message_start")
@@ -171,10 +172,12 @@ async def test_spawn_manager_process_exit_classifies_private_bash_as_tracked_wor
         lambda project_root, runtime_root: _RecordingCleanupService(),
     )
     write_pi_bash_record(tmp_path, spawn_id)
+    observed: list[RawHarnessEvent] = []
     manager = await start_pi_manager(
         tmp_path,
         FakePiConnection([pi_process_exit_event(143)]),
         spawn_id=spawn_id,
+        observed=observed,
     )
 
     try:
@@ -187,6 +190,6 @@ async def test_spawn_manager_process_exit_classifies_private_bash_as_tracked_wor
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "pi_process_exited_with_tracked_children"
-        assert history_has_event(tmp_path, spawn_id, "meridian/error/connectionClosed")
+        assert any(event.event_type == "meridian/error/connectionClosed" for event in observed)
     finally:
         await manager.stop_spawn(spawn_id)

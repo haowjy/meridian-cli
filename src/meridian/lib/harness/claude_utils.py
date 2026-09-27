@@ -8,6 +8,7 @@ _SESSION_IDENTITY_LONG_FLAGS = frozenset(
         "--session-id",
         "--resume",
         "--continue",
+        "--fork-session",
     }
 )
 _SESSION_IDENTITY_SHORT_FLAGS = frozenset({"-r", "-c"})

@@ -1,16 +1,9 @@
 """Shared helpers for harness adapters."""
 
 import json
-import re
 from typing import cast
 
-from pydantic import BaseModel, ConfigDict
-
-from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.types import ArtifactKey, SpawnId
-from meridian.lib.harness.adapter import ArtifactStore, StreamEvent
-from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
-from meridian.lib.state.history_codec import current_attempt_lines
+from meridian.lib.harness.adapter import StreamEvent
 
 # ---------------------------------------------------------------------------
 # Shared helpers (from _common.py)
@@ -153,22 +146,6 @@ def _category_from_event_type(
     return "progress"
 
 
-def _read_json_artifact(
-    artifacts: ArtifactStore, spawn_id: SpawnId, filename: str
-) -> dict[str, object] | None:
-    artifact_key = ArtifactKey(f"{spawn_id}/{filename}")
-    if not artifacts.exists(artifact_key):
-        return None
-    raw = artifacts.get(artifact_key)
-    try:
-        payload_obj = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return None
-    if isinstance(payload_obj, dict):
-        return cast("dict[str, object]", payload_obj)
-    return None
-
-
 def unwrap_event_payload(line: dict[str, object]) -> dict[str, object]:
     """Extract the effective payload from a harness JSONL artifact line.
 
@@ -181,31 +158,7 @@ def unwrap_event_payload(line: dict[str, object]) -> dict[str, object]:
     return line
 
 
-class _UsageCandidate(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-    total_cost_usd: float | None = None
-
-
-TOKEN_KEY_PAIRS: tuple[tuple[str, str], ...] = (
-    ("input_tokens", "output_tokens"),
-    ("input", "output"),
-    ("prompt_tokens", "completion_tokens"),
-    ("prompt_token_count", "completion_token_count"),
-    ("inputTokenCount", "outputTokenCount"),
-)
-COST_KEYS: tuple[str, ...] = (
-    "total_cost_usd",
-    "cost_usd",
-    "cost",
-    "total_cost",
-    "totalCostUsd",
-)
-
-
-def _coerce_optional_int(value: object) -> int | None:
+def coerce_optional_int(value: object) -> int | None:
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, int):
@@ -254,72 +207,6 @@ def iter_nested_dicts(value: object) -> list[dict[str, object]]:
     return found
 
 
-def _extract_cost(payload: dict[str, object]) -> float | None:
-    for key in COST_KEYS:
-        value = coerce_optional_float(payload.get(key))
-        if value is not None:
-            return value
-    return None
-
-
-def _candidate_from_payload(payload: dict[str, object]) -> _UsageCandidate:
-    for input_key, output_key in TOKEN_KEY_PAIRS:
-        if input_key not in payload and output_key not in payload:
-            continue
-        input_tokens = _coerce_optional_int(payload.get(input_key))
-        output_tokens = _coerce_optional_int(payload.get(output_key))
-        cost = _extract_cost(payload)
-        return _UsageCandidate(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_cost_usd=cost,
-        )
-
-    return _UsageCandidate(total_cost_usd=_extract_cost(payload))
-
-
-def _candidate_token_score(candidate: _UsageCandidate) -> int:
-    score = 0
-    if candidate.input_tokens is not None:
-        score += 1
-    if candidate.output_tokens is not None:
-        score += 1
-    return score
-
-
-def _iter_json_lines_artifact(
-    artifacts: ArtifactStore, spawn_id: SpawnId, filename: str
-) -> list[dict[str, object]]:
-    artifact_key = ArtifactKey(f"{spawn_id}/{filename}")
-    if not artifacts.exists(artifact_key):
-        if filename == OUTPUT_FILENAME:
-            artifact_key = ArtifactKey(f"{spawn_id}/{HISTORY_FILENAME}")
-            if not artifacts.exists(artifact_key):
-                return []
-        else:
-            return []
-
-    raw = artifacts.get(artifact_key)
-    decoded = raw.decode("utf-8", errors="ignore")
-    payloads: list[dict[str, object]] = []
-    for line in current_attempt_lines(decoded):
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            payload_obj = json.loads(stripped)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload_obj, dict):
-            line_payload = cast("dict[str, object]", payload_obj)
-            payload = unwrap_event_payload(line_payload)
-            if "event_type" in line_payload and "event_type" not in payload:
-                payload = dict(payload)
-                payload["event_type"] = line_payload["event_type"]
-            payloads.append(payload)
-    return payloads
-
-
 def _extract_text(value: object) -> str:
     if isinstance(value, str):
         return value.strip()
@@ -345,21 +232,6 @@ def extract_text(value: object) -> str:
     return _extract_text(value)
 
 
-def iter_json_lines_artifact(
-    artifacts: ArtifactStore, spawn_id: SpawnId, filename: str
-) -> list[dict[str, object]]:
-    return _iter_json_lines_artifact(artifacts, spawn_id, filename)
-
-
-def read_session_id_artifact(artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-    key = ArtifactKey(f"{spawn_id}/session_id.txt")
-    if not artifacts.exists(key):
-        return None
-    raw = artifacts.get(key)
-    session_id = raw.decode("utf-8", errors="ignore").strip()
-    return session_id or None
-
-
 def extract_codex_thread_id(payload: dict[str, object]) -> str | None:
     """Read a Codex thread id from a turn/item notification payload."""
 
@@ -373,193 +245,4 @@ def extract_codex_thread_id(payload: dict[str, object]) -> str | None:
         thread_id = _extract_text(payload.get(key))
         if thread_id:
             return thread_id
-    return None
-
-
-def _codex_item_type(payload: dict[str, object]) -> str:
-    item = payload.get("item")
-    if not isinstance(item, dict):
-        return ""
-    item_payload = cast("dict[str, object]", item)
-    return str(item_payload.get("type", "")).strip().lower().replace("_", "")
-
-
-def _codex_work_started_after(payloads: list[dict[str, object]], index: int) -> bool:
-    for payload in payloads[index + 1 :]:
-        event_type = (
-            str(payload.get("event_type", payload.get("event", payload.get("type", ""))))
-            .strip()
-            .lower()
-            .replace("/", ".")
-        )
-        if event_type == "item.started" and _codex_item_type(payload) == "commandexecution":
-            return True
-    return False
-
-
-def _resolve_codex_main_thread_id(payloads: list[dict[str, object]]) -> str | None:
-    for payload in payloads:
-        event_type = (
-            str(payload.get("event_type", payload.get("event", payload.get("type", ""))))
-            .strip()
-            .lower()
-            .replace("/", ".")
-        )
-        if event_type != "turn.started":
-            continue
-        thread_id = extract_codex_thread_id(payload)
-        if thread_id:
-            return thread_id
-    return None
-
-
-def extract_codex_report(artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-    last_message: str | None = None
-    last_message_index: int | None = None
-    payloads = _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME)
-    main_thread_id = _resolve_codex_main_thread_id(payloads)
-    for index, payload in enumerate(payloads):
-        event_type = (
-            str(payload.get("event_type", payload.get("event", payload.get("type", ""))))
-            .strip()
-            .lower()
-            .replace("/", ".")
-        )
-        if event_type != "item.completed":
-            continue
-
-        if main_thread_id is not None:
-            event_thread_id = extract_codex_thread_id(payload)
-            if event_thread_id is not None and event_thread_id != main_thread_id:
-                continue
-
-        item = payload.get("item")
-        if not isinstance(item, dict):
-            continue
-
-        item_payload = cast("dict[str, object]", item)
-        item_type = str(item_payload.get("type", "")).strip().lower().replace("_", "")
-        if item_type != "agentmessage":
-            continue
-
-        text = _extract_text(item_payload.get("text"))
-        if text:
-            last_message = text
-            last_message_index = index
-    if last_message_index is not None and _codex_work_started_after(payloads, last_message_index):
-        return None
-    return last_message
-
-
-def _extract_claude_assistant_content(payload: dict[str, object]) -> str:
-    content = _extract_text(payload.get("content"))
-    if content:
-        return content
-
-    message = payload.get("message")
-    if isinstance(message, dict):
-        return _extract_text(cast("dict[str, object]", message).get("content"))
-    return ""
-
-
-def extract_claude_report(artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-    result_text: str | None = None
-    assistant_text: str | None = None
-
-    for payload in _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME):
-        event_type = str(payload.get("type", payload.get("event", ""))).strip().lower()
-        if event_type == "result":
-            candidate = _extract_text(payload.get("result"))
-            if candidate:
-                result_text = candidate
-            continue
-
-        if event_type == "assistant":
-            candidate = _extract_claude_assistant_content(payload)
-            if candidate:
-                assistant_text = candidate
-
-    return result_text or assistant_text
-
-
-def extract_usage_from_artifacts(artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
-    candidates: list[_UsageCandidate] = []
-
-    for filename in ("tokens.json", "usage.json"):
-        payload = _read_json_artifact(artifacts, spawn_id, filename)
-        if payload is None:
-            continue
-        for nested in iter_nested_dicts(payload):
-            candidates.append(_candidate_from_payload(nested))
-
-    for payload in _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME):
-        for nested in iter_nested_dicts(payload):
-            candidates.append(_candidate_from_payload(nested))
-
-    if not candidates:
-        return TokenUsage()
-
-    best_tokens = max(candidates, key=_candidate_token_score)
-    best_cost = next(
-        (
-            candidate.total_cost_usd
-            for candidate in candidates
-            if candidate.total_cost_usd is not None
-        ),
-        None,
-    )
-
-    if _candidate_token_score(best_tokens) == 0 and best_cost is None:
-        return TokenUsage()
-
-    return TokenUsage(
-        input_tokens=best_tokens.input_tokens,
-        output_tokens=best_tokens.output_tokens,
-        total_cost_usd=best_cost,
-    )
-
-
-def extract_session_id_from_artifacts_with_patterns(
-    artifacts: ArtifactStore,
-    spawn_id: SpawnId,
-    *,
-    json_keys: tuple[str, ...] = ("session_id", "sessionId"),
-    text_patterns: tuple[re.Pattern[str], ...] = (),
-) -> str | None:
-    session_id = read_session_id_artifact(artifacts, spawn_id)
-    if session_id:
-        return session_id
-
-    history_key = ArtifactKey(f"{spawn_id}/{HISTORY_FILENAME}")
-    output_key = ArtifactKey(f"{spawn_id}/{OUTPUT_FILENAME}")
-    if artifacts.exists(history_key):
-        artifact_name = HISTORY_FILENAME
-        raw_output = artifacts.get(history_key).decode("utf-8", errors="ignore")
-    elif artifacts.exists(output_key):
-        artifact_name = OUTPUT_FILENAME
-        raw_output = artifacts.get(output_key).decode("utf-8", errors="ignore")
-    else:
-        return None
-
-    for payload in _iter_json_lines_artifact(artifacts, spawn_id, artifact_name):
-        for nested in iter_nested_dicts(payload):
-            for key_name in json_keys:
-                value = nested.get(key_name)
-                if not isinstance(value, str):
-                    continue
-                session_id = value.strip()
-                if session_id:
-                    return session_id
-
-    if not text_patterns:
-        return None
-
-    for line in raw_output.splitlines():
-        for pattern in text_patterns:
-            match = pattern.search(line)
-            if match is None:
-                continue
-            session_id = match.group(1).strip()
-            if session_id:
-                return session_id
     return None

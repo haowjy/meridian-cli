@@ -43,14 +43,17 @@ defaults to `None`; resident rearms and Pi waves cannot reset it.
 ## Mental Model
 
 ```
-HarnessConnection  →  drain loop  →  1. persist (HarnessHistoryWriter)
-                                     2. observe (EventObserverRegistry)
-                                     3. fan-out (subscriber queue)
+HarnessConnection  →  drain loop  →  1. inline hooks (facts, lifecycle)
+                                     2. fan-out (subscriber queue)
+                                     3. note_event_delivered
+                                     4. terminal handling
 ```
 
-The ordering is a contract, not an implementation detail. Observers and the subscriber
-must only see events that are durably written. Breaking the order means a crash between
-steps 1 and 2 could leave observers with data the persistence layer never recorded.
+`SpawnManager._run_event_hooks` runs synchronous inline hooks (attempt facts and Pi
+lifecycle sidecar); the drain loop then fans the event out to subscribers and calls
+the coordinator's `note_event_delivered`. A hook error is logged and does not block
+delivery. Meridian persists no runner event stream. Terminal classification follows
+successful delivery. See the delivery contract in `.context/CONTEXT.md`.
 
 `SpawnManager` is the integration point for everything that touches a live spawn:
 starting, stopping, injecting messages, subscribing to events, and tracking heartbeats.
@@ -76,10 +79,9 @@ time, including after awaited dispatches. Never append directly after an async b
 classification, but `stop_spawn()` must still publish the finalized lifecycle row,
 resolve completion, and start that spawn's cleanup when a bounded drain is cancelled.
 
-**Drain loop ordering is not negotiable: persist → observe → fan-out.** A failed
-write — including the tenth consecutive failure that aborts the loop with a
-`failed` outcome — is never delivered to the coordinator, observers, or the
-subscriber. If you add a new stage, it goes after successful persistence.
+**Drain loop ordering is not negotiable: inline hooks → fan-out → coordinator note.**
+Hooks (attempt fold, Pi lifecycle sink) see each event before any subscriber does.
+Meridian persists no runner event stream; do not reintroduce one.
 
 **Capture `subprocess_pid` and `scope_snapshot` before `connection.stop()`.** Both
 are cleared inside `stop()`. The safety pass that force-kills surviving processes
@@ -141,7 +143,6 @@ orphaned; deletion, normal completion, cancellation, and shutdown stop it intent
 - `drain_wait.py` — generic event/timeout/aux-wake arbitration for drain loops
 - `drain_policy.py` — `DrainPolicy`, `SingleTurnDrainPolicy`, `PersistentDrainPolicy`
 - `control_socket.py` — per-spawn inject endpoint
-- `event_observers.py` — `EventObserverRegistry`, `EventObserver`, `CallbackObserver`
 - `types.py` — `InjectResult`, `ControlMessage`
 
 Resident and Pi completion use the shared reconciled transitive spawn-tree assessment as
@@ -163,6 +164,5 @@ freshness check is not an atomic child-admission barrier.
 
 ## Related
 
-- `../state/history.py` — `HarnessHistoryWriter` (persistence target for drain loop)
 - `../harness/connections/` — `HarnessConnection` protocol (event source)
 - `../state/reaper.py` — uses heartbeat sentinel to detect orphaned spawns

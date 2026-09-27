@@ -42,14 +42,23 @@ spawn. The reaper also reads `_MERIDIAN_DEPTH` and skips reaping when nested.
 **Session:** `session_list.py`, `session_reentry.py`, `session_transcript.py`,
 `session_log.py`, `session_log_render.py` (pure rendering — clean/raw modes, tool
 collapsing, content pipeline), `session_render.py`, `session_search.py`,
-`session_target.py`, `session_export.py`, `session_repair.py`, `session_corpus.py`,
-`session_archive.py`, `session_index.py`.
+`session_search_index.py` (`SearchProjection` — rebuildable search rows refreshed
+from authoritative bindings and exact native sources), `session_preview.py`
+(cache-first bounded session previews, canonical reads outside index locks),
+`session_target.py`, `session_export.py`, `session_repair.py` (inspect or bind
+an unbound chat's native session), `session_corpus.py`,
+`session_archive.py`, `runner_history_prune.py` (explicit dry-run-first prune of
+redundant runner history for bound chats), `session_index.py`.
 
 Discovery composes the shared `state/history_index.py` projection; lifecycle/control
 reads stay authoritative. `session_corpus.py` selects search roots and work scope.
 `session_archive.py` owns eligibility, dependency protection and the shared manual/
 automatic retention policy; ZIP bytes and inert restore live in `state/retention_*`.
-Archive does not capture natives — stop-maintenance publishes the seal first.
+Stop-maintenance seals native snapshots; explicit `session archive --apply` captures
+the exact native snapshot of selected records itself, before final selection.
+`runner_history_prune.py` is the explicit `session archive --prune-runner-history`
+rule: terminal, older than N days, exact native source(s) resolve now → drop runner
+stream files. Any doubt skips; automatic maintenance never calls it.
 `session_index.py` coordinates explicit index inspection/rebuild, not another index.
 
 **Work and workspace:** `work_lifecycle.py`, `work_attachment.py`,
@@ -89,6 +98,8 @@ references. All `--from` / `-f` operations route through this.
 Raw native references retain the supplied ID, not a matching chat's later ID.
 Their harness namespace must be unambiguous or explicit. Tracked chat/spawn
 references use their recorded harness; native-file discovery cannot replace it.
+A chat transcript reads only its bound native key. Missing identity or transcript
+is typed unavailable; runner output and primary metadata cannot repair it.
 
 ## Resolve-Before-Persist vs Row-First
 

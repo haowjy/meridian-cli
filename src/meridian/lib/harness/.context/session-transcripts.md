@@ -1,8 +1,9 @@
 # lib/harness/ — Session Transcripts
 
 `transcript.py` is the cross-harness read path for session data. It is independent of
-the spawn/write paths and reads existing provider storage: Meridian history JSONL,
-generic native JSONL, or OpenCode SQLite/legacy JSON storage.
+the spawn/write paths and reads native JSONL or OpenCode SQLite/legacy JSON
+storage. Runner `history.jsonl` is rejected as "not a native transcript", including
+explicit `--file` reads. There is no runner-history decoder or fallback.
 
 ## Canonical Tool Calls
 
@@ -34,12 +35,11 @@ results with `is_tool_result=True`. Text-only messages leave both at their defau
 conversation content from tool use — do not re-parse `content` when `tool_call` is
 available.
 
-Three providers handle different on-disk layouts. `transcript.py` selects the correct
+Two providers handle different on-disk layouts. `transcript.py` selects the correct
 one from the path:
 
 | Provider | When selected | What it reads |
 |---|---|---|
-| `HistoryJsonlTranscriptProvider` | `path.name == HISTORY_FILENAME` | Crash-tolerant history via `iter_history_events()` |
 | `OpenCodeStorageTranscriptProvider` | OpenCode storage paths | Read-only OpenCode SQLite first, then legacy JSON storage; a present empty DB session is authoritative |
 | `JsonlTranscriptProvider` | everything else | Raw JSONL, one event per line |
 

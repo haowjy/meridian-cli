@@ -16,7 +16,7 @@ from meridian.lib.ops.reference_recovery import (
     recover_harness_session_id,
 )
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
-from meridian.lib.state import primary_meta, session_identity, session_store, spawn_store
+from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.spawn.model import SpawnRecord
@@ -41,19 +41,14 @@ class ResolvedSessionReference:
     source_spawn_id: str | None = None
     source_control_root: str | None = None
     source_execution_cwd: str | None = None
-    source_claude_config_dir: str | None = None
-    source_pi_session_dir: str | None = None
+    source_native_store: str | None = None
     source_launch_policy_snapshot: LaunchPolicySnapshot | None = None
     warning: str | None = None
     recovery: RecoveryResult | None = None
 
     @property
     def missing_harness_session_id(self) -> bool:
-        """True when a tracked reference exists but has no harness session id.
-
-        Considers authoritative recovery (session_store, spawn_row, primary_meta)
-        but excludes detected_unverified.
-        """
+        """True when a tracked reference lacks a complete recorded native key."""
 
         return self.tracked and self.authoritative_harness_session_id is None
 
@@ -67,21 +62,14 @@ class ResolvedSessionReference:
 
     @property
     def authoritative_harness_session_id(self) -> str | None:
-        """Return the harness session id, using only authoritative recovery.
-
-        Excludes DETECTED_UNVERIFIED — suitable for continue/fork paths
-        that require verified session identity.
-        """
-
-        if self.harness_session_id:
-            return self.harness_session_id
-        if self.recovery is None:
+        """A tracked ID is usable only as part of its complete recorded native key."""
+        if self.tracked and not (
+            _normalize_optional(self.harness)
+            and _normalize_optional(self.source_native_store)
+            and _normalize_optional(self.harness_session_id)
+        ):
             return None
-        from meridian.lib.ops.reference_recovery import RecoveryProvenance
-
-        if self.recovery.provenance == RecoveryProvenance.DETECTED_UNVERIFIED:
-            return None
-        return self.recovery.harness_session_id
+        return self.harness_session_id if self.tracked else self.effective_harness_session_id
 
 
 def _normalize_optional(value: str | None) -> str | None:
@@ -106,14 +94,6 @@ def resolve_spawn_ref(runtime_root: Path, ref: str) -> SpawnId | None:
         return SpawnId(matches[0].id)
 
     return None
-
-
-def _latest_harness_session_id(record: session_store.SessionRecord) -> str | None:
-    for candidate in reversed(record.harness_session_ids):
-        normalized = candidate.strip()
-        if normalized:
-            return normalized
-    return _normalize_optional(record.harness_session_id)
 
 
 def _latest_primary_spawn_id_for_chat(runtime_root: Path, chat_id: str) -> str | None:
@@ -170,13 +150,6 @@ def _launch_policy_snapshot_for_session(
     )
 
 
-def _read_primary_pi_session_dir(runtime_root: Path, spawn_id: str) -> str | None:
-    metadata = primary_meta.read_primary_metadata(runtime_root, spawn_id)
-    if metadata is None:
-        return None
-    return _normalize_optional(metadata.session_dir)
-
-
 def _resolve_untracked_reference(
     project_root: Path, ref: str, harness_hint: str | None = None,
 ) -> ResolvedSessionReference:
@@ -214,21 +187,12 @@ def _build_tracked_reference(
     source_spawn_id: str | None = None,
     source_control_root: str | None = None,
     source_execution_cwd: str | None = None,
-    source_claude_config_dir: str | None = None,
-    source_pi_session_dir: str | None = None,
+    source_native_store: str | None = None,
     source_launch_policy_snapshot: LaunchPolicySnapshot | None = None,
-    project_root: Path,
 ) -> ResolvedSessionReference:
-    resolved_harness = stored_harness
-    if resolved_harness is None and harness_session_id is not None:
-        inferred = infer_harness_from_untracked_session_ref(
-            project_root,
-            harness_session_id,
-        )
-        resolved_harness = str(inferred) if inferred is not None else None
     return ResolvedSessionReference(
         harness_session_id=harness_session_id,
-        harness=resolved_harness,
+        harness=stored_harness,
         source_chat_id=source_chat_id,
         source_model=source_model,
         source_agent=source_agent,
@@ -238,8 +202,7 @@ def _build_tracked_reference(
         source_spawn_id=source_spawn_id,
         source_control_root=source_control_root,
         source_execution_cwd=source_execution_cwd,
-        source_claude_config_dir=source_claude_config_dir,
-        source_pi_session_dir=source_pi_session_dir,
+        source_native_store=source_native_store,
         source_launch_policy_snapshot=source_launch_policy_snapshot,
         tracked=True,
     )
@@ -267,21 +230,23 @@ def _resolve_spawn_reference(
         ).as_posix()
     elif source_execution_cwd is None:
         source_execution_cwd = project_root.as_posix()
-    source_pi_session_dir: str | None = None
-    if row.harness == "pi":
-        if row.kind == "primary":
-            source_pi_session_dir = _read_primary_pi_session_dir(runtime_root, row.id)
-        elif session_identity.spawn_owner_chat_id(row):
-            primary_spawn_id = _latest_primary_spawn_id_for_chat(
-                runtime_root,
-                session_identity.spawn_owner_chat_id(row) or "",
-            )
-            if primary_spawn_id is not None:
-                source_pi_session_dir = _read_primary_pi_session_dir(runtime_root, primary_spawn_id)
+    bound_session = session_identity.get_session_record_for_spawn(
+        runtime_root, row.id, require_harness_session_id=False,
+    )
+    target_chat_id = row.continue_chat_id
+    target_session = (
+        session_store.get_session_record(runtime_root, target_chat_id)
+        if target_chat_id and target_chat_id != row.chat_id
+        else None
+    )
     return _build_tracked_reference(
-        harness_session_id=harness_session_id,
-        stored_harness=stored_harness,
-        source_chat_id=_normalize_optional(row.chat_id),
+        harness_session_id=(
+            target_session.harness_session_id if target_session else harness_session_id
+        ),
+        stored_harness=(target_session.harness if target_session else stored_harness),
+        source_chat_id=(
+            target_session.chat_id if target_session else _normalize_optional(row.chat_id)
+        ),
         source_model=_normalize_optional(row.model),
         source_agent=_normalize_optional(row.agent),
         source_skills=row.skills,
@@ -290,10 +255,9 @@ def _resolve_spawn_reference(
         source_spawn_id=row.id,
         source_control_root=source_control_root,
         source_execution_cwd=source_execution_cwd,
-        source_claude_config_dir=_normalize_optional(row.claude_config_dir),
-        source_pi_session_dir=source_pi_session_dir,
+        source_native_store=(target_session.native_store if target_session else
+                             bound_session.native_store if bound_session else None),
         source_launch_policy_snapshot=row.launch_policy_snapshot,
-        project_root=project_root,
     )
 
 
@@ -315,15 +279,6 @@ def _reference_from_session(
         ):
             source_history_id = linked.history_id
     stored_harness = _normalize_optional(session.harness)
-    source_pi_session_dir: str | None = None
-    if stored_harness == "pi" and session.kind == "primary" and session.spawn_id:
-        source_pi_session_dir = _read_primary_pi_session_dir(runtime_root, session.spawn_id)
-    elif stored_harness == "pi":
-        owner_chat_id = session_identity.session_owner_chat_id(runtime_root, session)
-        if owner_chat_id is not None:
-            primary_spawn_id = _latest_primary_spawn_id_for_chat(runtime_root, owner_chat_id)
-            if primary_spawn_id is not None:
-                source_pi_session_dir = _read_primary_pi_session_dir(runtime_root, primary_spawn_id)
     return _build_tracked_reference(
         harness_session_id=harness_session_id,
         stored_harness=stored_harness,
@@ -342,13 +297,11 @@ def _reference_from_session(
             or session.execution_cwd
             or project_root.as_posix()
         ),
-        source_claude_config_dir=_normalize_optional(session.claude_config_dir),
-        source_pi_session_dir=source_pi_session_dir,
+        source_native_store=session.native_store,
         source_launch_policy_snapshot=_launch_policy_snapshot_for_session(
             runtime_root,
             session,
         ),
-        project_root=project_root,
     )
 
 
@@ -360,7 +313,7 @@ def _resolve_chat_reference(
         return _resolve_untracked_reference(project_root, ref)
     session = records[0]
     return _reference_from_session(
-        runtime_root, session, project_root, _latest_harness_session_id(session)
+        runtime_root, session, project_root, _normalize_optional(session.harness_session_id)
     )
 
 

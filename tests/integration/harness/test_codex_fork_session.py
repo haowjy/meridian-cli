@@ -94,9 +94,11 @@ def _setup_codex_state(
     return db_path, source_rollout_path
 
 
+@pytest.mark.parametrize("pinned", [False, True])
 def test_codex_fork_session_uses_codex_home_override(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    pinned: bool,
 ) -> None:
     source_session_id = "77777777-7777-4777-8777-777777777777"
     codex_home_override = tmp_path / "codex-home"
@@ -108,7 +110,12 @@ def test_codex_fork_session_uses_codex_home_override(
         codex_home=codex_home_override,
     )
 
-    forked_session_id = CodexAdapter().fork_session(source_session_id)
+    if pinned:
+        monkeypatch.setenv("CODEX_HOME", str(tmp_path / "wrong-home"))
+    forked_session_id = CodexAdapter().fork_session(
+        source_session_id,
+        native_store=str(codex_home_override / "sessions") if pinned else None,
+    )
 
     connection = sqlite3.connect(db_path)
     forked_row = connection.execute(

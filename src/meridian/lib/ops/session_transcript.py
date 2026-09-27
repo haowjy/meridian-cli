@@ -4,18 +4,20 @@ from __future__ import annotations
 
 import json
 import time
-import zipfile
-import zlib
 from collections.abc import Callable, Generator, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, NamedTuple
+from uuid import UUID
 
 from meridian.lib.core.command_strings import format_command_for_display
+from meridian.lib.harness.native_witness import Witness, file_witness
+from meridian.lib.harness.opencode_snapshot import read_opencode_snapshot
+from meridian.lib.harness.pi_journal import project_pi_reopen_default
 from meridian.lib.harness.transcript import (
     ToolCall,
     TranscriptMessage,
-    TranscriptParseResult,
+    is_native_snapshot,
     iter_transcript_events,
     parse_transcript_events_with_prologues,
 )
@@ -23,9 +25,14 @@ from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
 from meridian.lib.ops.session_target import (
     SessionLogTarget,
     TranscriptSource,
-    resolve_session_log_target,
+    resolve_transcript_source,
 )
-from meridian.lib.state.native_snapshot import TranscriptValidation, snapshot_binding
+from meridian.lib.state.native_snapshot import (
+    SnapshotHeader,
+    TranscriptValidation,
+    snapshot_binding,
+)
+from meridian.lib.state.retention_archive import iter_archived_events
 
 _PROLOGUE_PLACEHOLDER = "[prologue slot reserved: no extractable system prompt]"
 _HANDOFF_PLACEHOLDER = "[compaction handoff slot reserved: no extractable handoff]"
@@ -74,6 +81,8 @@ class ParsedSessionTranscript(NamedTuple):
     segment_entries: tuple[tuple[AbsoluteTranscriptEntry, ...], ...]
     rendering_reason: str | None = None
     storage_validation: TranscriptValidation | None = None
+    view_basis: Literal["reopen-default"] | None = None
+    completeness_reasons: tuple[str, ...] = ()
 
     @property
     def read_reasons(self) -> tuple[str, ...]:
@@ -83,6 +92,7 @@ class ParsedSessionTranscript(NamedTuple):
             for reason in (
                 storage.reason if storage is not None and storage.state != "complete" else None,
                 self.rendering_reason,
+                *(f"partial: {reason}" for reason in self.completeness_reasons),
             )
             if reason
         )
@@ -91,15 +101,10 @@ class ParsedSessionTranscript(NamedTuple):
     def search_ready(self) -> bool:
         validation = self.storage_validation
         # Ordinary append streams retain their existing partial-result contract.
-        # Snapshot/ZIP prefixes have not proved their enclosing integrity yet.
+        # Snapshot prefixes have not proved their enclosing integrity yet.
         return (
-            validation is None
-            or validation.state == "complete"
-            or (
-                validation.header is None
-                and not any(source.kind == "archive" for source in self.target.sources)
-            )
-        )
+            validation is None or validation.state == "complete" or validation.header is None
+        ) and not self.completeness_reasons
 
 
 def flatten_transcript_segments(
@@ -140,9 +145,7 @@ def _is_visible_message(message: AbsoluteTranscriptMessage) -> bool:
 def group_transcript_entries(
     messages: tuple[AbsoluteTranscriptMessage, ...],
 ) -> tuple[AbsoluteTranscriptEntry, ...]:
-    interaction_messages = tuple(
-        message for message in messages if _is_visible_message(message)
-    )
+    interaction_messages = tuple(message for message in messages if _is_visible_message(message))
     if not interaction_messages:
         return ()
 
@@ -166,7 +169,8 @@ def group_transcript_entries(
     for index, message in enumerate(interaction_messages):
         if current and (
             message.segment_index != current[-1].segment_index
-            or _is_plain_user_message(message) or message.kind == "annotation"
+            or _is_plain_user_message(message)
+            or message.kind == "annotation"
         ):
             chunks.append(current)
             current = []
@@ -299,16 +303,8 @@ def _route_from_request(
     normalized_file = (file_path or "").strip()
     if normalized_file:
         return SessionLogRoute(mode="file", value=normalized_file)
-    normalized_ref = ref.strip() or target.session_id
+    normalized_ref = ref.strip() or target.source.session_id
     return SessionLogRoute(mode="ref", value=normalized_ref)
-
-
-def route_for_corpus_target(target: SessionLogTarget) -> SessionLogRoute:
-    if any(source.kind == "archive" for source in target.sources):
-        return SessionLogRoute(mode="ref", value=target.sources[0].history_id or target.session_id)
-    if target.file_path is None:
-        return SessionLogRoute(mode="ref", value=target.session_id)
-    return SessionLogRoute(mode="file", value=str(target.file_path))
 
 
 @dataclass
@@ -316,11 +312,19 @@ class TranscriptBudget:
     deadline: float
     remaining_bytes: int
     exhausted: bool = False
+    selected: Callable[[], bool] | None = None
 
     def current(self) -> bool:
-        if self.remaining_bytes <= 0 or time.monotonic() >= self.deadline:
+        if (
+            self.remaining_bytes < 0
+            or time.monotonic() >= self.deadline
+            or (self.selected is not None and not self.selected())
+        ):
             self.exhausted = True
         return not self.exhausted
+
+    def consume(self, size: int) -> None:
+        self.remaining_bytes -= size
 
     def events(self, events: Iterator[dict[str, object]]) -> Iterator[dict[str, object]]:
         while True:
@@ -330,86 +334,109 @@ class TranscriptBudget:
                 event = next(events)
             except StopIteration:
                 return
-            self.remaining_bytes -= len(json.dumps(event, ensure_ascii=False).encode())
             if self.remaining_bytes < 0 or time.monotonic() >= self.deadline:
                 self.exhausted = True
                 return
             yield event
 
 
-def iter_source_events(
-    source: TranscriptSource,
-    *,
-    validation: TranscriptValidation | None = None,
-    current: Callable[[], bool] | None = None,
+@dataclass
+class NativeRead:
+    events: Generator[dict[str, object]]
+    validation: TranscriptValidation = field(default_factory=TranscriptValidation)
+    view_basis: Literal["reopen-default"] | None = None
+    reasons: tuple[str, ...] = ()
+    witness: Witness | None = None
+
+
+def _source_binding(source: TranscriptSource) -> Callable[[SnapshotHeader], None]:
+    """Header binding: a live file names its native session; a retained one its history."""
+    if source.kind == "native_file":
+        return snapshot_binding(harness=source.harness, native_session_id=source.session_id)
+    if source.kind == "snapshot":
+        return snapshot_binding(history_id=source.history_id, harness=source.harness)
+    return snapshot_binding()
+
+
+def _source_events(
+    source: TranscriptSource, validation: TranscriptValidation, budget: TranscriptBudget | None
 ) -> Generator[dict[str, object]]:
-    if source.kind == "archive":
-        from uuid import UUID
-
-        from meridian.lib.state.retention_archive import iter_archived_events
-
-        if source.path is None or source.history_id is None:
-            raise ValueError("Incomplete archive locator")
-        yield from iter_archived_events(
-            source.path, UUID(source.history_id), source.manifest_sha256
-        )
-    elif source.kind == "opencode_db":
-        from meridian.lib.harness.opencode_transcript import iter_opencode_db_session_events
-
-        yield from iter_opencode_db_session_events(session_id=source.session_id)
-    else:
-        if source.path is None:
-            raise FileNotFoundError(f"Session file for '{source.session_id}' not found")
-        yield from iter_transcript_events(
+    current = budget.current if budget else None
+    consume = budget.consume if budget else None
+    check_header = _source_binding(source)
+    if source.kind == "snapshot" and source.manifest_sha256 is not None:
+        if source.history_id is None:
+            raise ValueError("Archived snapshot source requires its history identity")
+        return iter_archived_events(
             source.path,
+            UUID(source.history_id),
+            source.manifest_sha256,
             validation=validation,
             current=current,
-            check_header=snapshot_binding(
-                history_id=source.history_id,
-                harness=source.harness if source.kind == "native_file" else None,
-                native_session_id=source.session_id if source.kind == "native_file" else None,
-            ),
+            consume=consume,
+            check_header=check_header,
         )
-        return
-    if validation is not None:
-        validation.state = "complete"
-        validation.reason = None
-
-
-def _parse_transcript_source(
-    source: TranscriptSource, budget: TranscriptBudget | None = None
-) -> tuple[TranscriptParseResult, TranscriptValidation]:
-    validation = TranscriptValidation()
-    events = iter_source_events(
-        source, validation=validation, current=budget.current if budget else None
-    )
-    try:
-        parsed = parse_transcript_events_with_prologues(budget.events(events) if budget else events)
-    finally:
-        events.close()
-    if budget is not None and budget.exhausted:
-        validation.state = "partial"
-        validation.reason = "Transcript read budget exhausted before complete validation"
-        validation.descriptor = None
-    return parsed, validation
-
-
-def _target_for_source(target: SessionLogTarget, source: TranscriptSource) -> SessionLogTarget:
-    return target._replace(
-        session_id=source.session_id,
-        harness=source.harness,
-        file_path=source.path,
-        source=source.source_label,
-        sources=(source,),
+    return iter_transcript_events(
+        source.path,
+        validation=validation,
+        current=current,
+        consume=consume,
+        check_header=check_header,
     )
 
 
-def _has_usable_interaction_content(parsed: TranscriptParseResult) -> bool:
-    return any(
-        message.role in {"assistant", "user"} and message.content.strip()
-        for segment in parsed.segments
-        for message in segment
-    )
+def read_native_source(
+    source: TranscriptSource, *, budget: TranscriptBudget | None = None
+) -> NativeRead:
+    """One native byte/snapshot read for log, preview and search.
+
+    The iterator owns the read-only connection; callers must exhaust or close it.
+    Validation, Pi view metadata and the before witness belong to these same bytes.
+    Retained snapshots stream through the same codec and render as captured.
+    """
+
+    def events() -> Generator[dict[str, object]]:
+        validation = read.validation
+        try:
+            if budget and not budget.current():
+                return
+            if source.kind == "opencode_db":
+                with read_opencode_snapshot(source.path, source.session_id) as (w, raw):
+                    read.witness = w
+                    yield from budget.events(raw) if budget else raw
+                validation.state, validation.reason = "complete", None
+                return
+            read.witness = file_witness(source.path)
+            raw = _source_events(source, validation, budget)
+            try:
+                if source.harness == "pi":
+                    if source.kind == "native_file" and not is_native_snapshot(source.path):
+                        data = source.path.read_bytes()
+                        if budget:
+                            budget.consume(len(data))
+                        text = data.decode("utf-8")
+                        validation.state, validation.reason = "complete", None
+                    else:
+                        text = "".join(json.dumps(event) + "\n" for event in raw)
+                    if budget and not budget.current():
+                        return
+                    projection = project_pi_reopen_default(text)
+                    read.view_basis, read.reasons = projection.view_basis, projection.reasons
+                    yield from (
+                        budget.events(iter(projection.events)) if budget else projection.events
+                    )
+                else:
+                    yield from budget.events(raw) if budget else raw
+            finally:
+                raw.close()
+        finally:
+            if budget and budget.exhausted:
+                validation.state = "partial"
+                validation.reason = "Transcript read budget exhausted before complete validation"
+                validation.descriptor = None
+
+    read = NativeRead(events())
+    return read
 
 
 def parse_session_target(
@@ -419,32 +446,13 @@ def parse_session_target(
     target: SessionLogTarget,
     route: SessionLogRoute,
     budget: TranscriptBudget | None = None,
+    native_read: NativeRead | None = None,
 ) -> ParsedSessionTranscript:
-    parsed: TranscriptParseResult | None = None
-    resolved_target = target
-    archive_errors: list[Exception] = []
-    validation: TranscriptValidation | None = None
-    for source in target.sources:
-        try:
-            candidate, validation = _parse_transcript_source(source, budget)
-        except (ValueError, OSError, EOFError, zipfile.BadZipFile, zlib.error) as exc:
-            if source.kind != "archive":
-                raise
-            archive_errors.append(exc)
-            continue
-        parsed = candidate
-        resolved_target = _target_for_source(target, source)
-        if (
-            validation.header is not None
-            or validation.state != "complete"
-            or _has_usable_interaction_content(candidate)
-            or candidate.rendering_reason
-        ):
-            break
-    if parsed is None:
-        if archive_errors:
-            raise archive_errors[-1]
-        raise FileNotFoundError(f"Session file for '{target.session_id}' not found")
+    read = native_read or read_native_source(target.source, budget=budget)
+    try:
+        parsed = parse_transcript_events_with_prologues(read.events)
+    finally:
+        read.events.close()
 
     flattened = flatten_transcript_segments(parsed.segments)
     interaction_entries = group_transcript_entries(flattened)
@@ -454,13 +462,11 @@ def parse_session_target(
         interaction_entries=interaction_entries,
     )
     all_entries = tuple(entry for segment in segment_entries for entry in segment)
-    resolved_interaction_entries = tuple(
-        entry for entry in all_entries if entry.kind != "setup"
-    )
+    resolved_interaction_entries = tuple(entry for entry in all_entries if entry.kind != "setup")
     return ParsedSessionTranscript(
         project_root=project_root,
         runtime_root=runtime_root,
-        target=resolved_target,
+        target=target,
         route=route,
         segments=parsed.segments,
         total_compactions=parsed.total_compactions,
@@ -470,7 +476,9 @@ def parse_session_target(
         all_entries=all_entries,
         segment_entries=segment_entries,
         rendering_reason=parsed.rendering_reason,
-        storage_validation=validation,
+        storage_validation=read.validation,
+        view_basis=read.view_basis,
+        completeness_reasons=read.reasons,
     )
 
 
@@ -482,7 +490,7 @@ def read_session_transcript(
 ) -> ParsedSessionTranscript:
     authority = resolve_runtime_authority_for_read(project_root)
     runtime_root = authority.runtime_root
-    target = resolve_session_log_target(
+    target = resolve_transcript_source(
         ref=ref,
         file_path=file_path,
         project_root=authority.project_root,
@@ -552,5 +560,4 @@ __all__ = [
     "group_transcript_entries",
     "parse_session_target",
     "read_session_transcript",
-    "route_for_corpus_target",
 ]

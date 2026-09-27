@@ -614,7 +614,16 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             )
             if config.session_id_observer is not None:
                 config.session_id_observer(self._session_id)
-            if not self._primary_observer_mode:
+            # The V1 ``opencode attach`` subcommand has no ``--prompt`` flag.
+            # Prime managed V1 sessions through the same native message API as
+            # headless launches; V2's bare TUI owns its supported --prompt arg.
+            endpoint = self.observer_endpoint
+            attach_owns_prompt = (
+                self._primary_observer_mode
+                and endpoint is not None
+                and endpoint.attach_style == "server"
+            )
+            if not attach_owns_prompt:
                 await self._post_session_message(
                     config.prompt,
                     system=config.system,
