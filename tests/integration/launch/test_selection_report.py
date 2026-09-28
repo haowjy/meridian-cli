@@ -16,7 +16,7 @@ from meridian.lib.launch.request import SpawnRequest
 
 def report() -> dict[str, object]:
     return {
-        "version": 2,
+        "version": 3,
         "scope": {
             "mode": "only",
             "enabled_harnesses": ["codex"],
@@ -76,7 +76,7 @@ def invoke(
     )
 
 
-def test_report_v2_survives_bundle_and_snapshot(
+def test_report_v3_survives_bundle_and_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     result = invoke(tmp_path, monkeypatch, bundle())
@@ -145,7 +145,7 @@ def test_invalid_report_cannot_authorize_a_bundle(
     routing = payload["routing"]
     trace = routing["route_trace"]
     if mutation == "report-version":
-        trace["version"] = 2.0
+        trace["version"] = 2
     elif mutation == "boolean-index":
         trace["selected"]["attempt_index"] = True
     elif mutation == "past-end":

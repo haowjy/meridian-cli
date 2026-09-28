@@ -43,7 +43,7 @@ class SelectedAssessment(_ReportObject):
 
 
 class RouteDecisionReport(_ReportObject):
-    version: int = Field(ge=2, le=2)
+    version: int = Field(ge=3, le=3)
     scope: ScopeReport
     model_attempts: list[ModelAttemptReport]
     selected: SelectedAssessment | None

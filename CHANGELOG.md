@@ -60,6 +60,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Managed Pi launches load a bounded, atomic v2 session-boundary observer without writing native journals.
 
 ### Fixed
+- Accept the route-trace v3 contract emitted by the pinned Mars 0.15.0 launch-bundle adapter.
 - Deliver composed starting prompts as first user turns in interactive Claude, Pi, and OpenCode sessions; guard oversized CLI prompt arguments.
 - `session log`/`export` read archived native snapshots again after `session import` (history UUID, streamed from the ZIP) and `session restore` (restored `cN`/`pN`), validating seal and history binding; live chats never fall back to snapshots. Re-importing reports `Already imported`.
 - `session import`/`restore` accept archives written by 0.6.7 and earlier.
