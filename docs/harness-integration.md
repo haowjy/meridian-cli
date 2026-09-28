@@ -696,57 +696,36 @@ the corresponding parser checks.
 
 ## Phase 4: Model, Catalog, and Mars Integration
 
-### 4.1 Model Aliases Are Harness-Specific
+### 4.1 Model IDs and Aliases
 
-Do not assume that model aliases from one harness work with another. `sonnet`
-maps to `anthropic/claude-sonnet-4` in Claude; it may map to
-`anthropic/claude-sonnet-4-6` in Pi, or not be recognized at all.
+Each harness has its own model namespace. A model ID accepted by Claude may
+need a provider-qualified form for Pi. Mars can resolve an alias for Pi, but
+the resulting harness-model ID is not necessarily the same as for another
+harness. Meridian passes the selected model string to the installed Pi binary.
 
-Each harness has its own provider registry and model namespace. A model string
-that works with `--harness claude` may need a different format for
-`--harness pi`.
+### 4.2 Mars Listing and Runtime Selection
 
-**Current Pi status**: Pi supports 20+ providers with model resolution built in.
-The harness passes `--model <string>` through to Pi, which handles resolution.
-However, **Mars model aliases do not yet include Pi-compatible model paths**.
-Users must currently pass explicit Pi-compatible model strings
-(e.g. `anthropic/claude-sonnet-4`).
+Mars includes Pi in its harness-model listing and can use Pi routes in the
+launch bundle. The human `meridian mars models list --harness pi` view shows
+Pi model possibilities; `--all` includes hidden rows and `--live` adds current
+eligibility. Neither display curation nor static alias inventory chooses the
+runtime route. The launch bundle makes that decision. See
+[model catalog commands](configuration/model-catalog.md) for the command roles.
 
-### 4.2 What Mars Needs to Support a Harness
+For a new harness, provide Mars with model-listing evidence and a launch route,
+then verify both the human view and the actual launch bundle. Do not infer
+routing from model-name patterns.
 
-For Mars to fully support a harness, the following are needed:
-
-1. **Model alias mapping**: Mars model entries need `harness_candidates` /
-   `runnable_paths` entries for the new harness. Each entry maps a Meridian
-   model alias (e.g. `sonnet`) to a harness-specific model ID string
-   (e.g. `anthropic/claude-sonnet-4`).
-
-2. **Provider discovery**: Mars needs to know which providers the harness
-   supports and how to validate model strings.
-
-3. **Catalog agent profiles**: Agent profiles should be able to specify
-   `harness: pi` and `model: sonnet` and have resolution produce the correct
-   Pi model string.
-
-4. **`meridian mars models list --live`**: Should show current Pi harness-model
-   eligibility; launch-bundle still decides the runtime route.
-
-**Current Pi status**: None of the above is implemented. Pi-compatible model
-aliases, provider discovery, and catalog integration are deferred. Users
-must use explicit model strings with `--harness pi`.
-
-### 4.3 Interim Workaround
-
-Until Mars supports the harness:
+### 4.3 Inspecting Pi Models
 
 ```bash
-# Use explicit provider/model-id strings
-meridian pi -m anthropic/claude-sonnet-4 "task"
-meridian pi -m openai/gpt-5.4-mini "task"
-
-# Or discover available models from the harness directly
-pi --list-models
+meridian mars models list --harness pi --all --live  # Mars view and current eligibility
+pi --list-models                                      # Pi's own model listing
 ```
+
+Use a Pi-native model ID with `meridian pi -m` when you need to select one
+explicitly; a model's appearance in either listing is not a successful-run
+guarantee.
 
 ## Verification Checklist
 
@@ -840,6 +819,7 @@ All must pass. The pre-push hook enforces this automatically.
 | Primary native TUI launch | Done | `pi [--model ...] [--session ...]`, no `--mode`; loads Meridian's managed extensions, including session-boundary |
 | PiConnection (JSONL drain) | Done | Streaming runner drain loop, session ID capture, stderr logging |
 | PiExtractor | Done | Session ID, usage, report from live attempt facts |
+| Mars model inventory and routing | Integrated in the coordinated Mars release | Pi appears in the harness-model view and can be selected by the launch bundle; curation remains display-only. |
 | Event semantics | Done | `agent_end` terminal, activity transitions, signal clearing |
 | Permission flags | Done | Empty tuple (Pi uses extension hooks) |
 | Managed extension build | Done | Extension JS bundles ship as package data; dev-rebuild via Node/npm |
@@ -850,15 +830,9 @@ All must pass. The pre-push hook enforces this automatically.
 | Gap | Severity | What's needed |
 |---|---|---|
 | **Native Pi session-file transcript provider** | Done | Tracked Pi sessions read the bound native transcript, projected onto its reopen lineage. |
-| **Mars model aliases/catalog** | Medium | Mars does not yet include Pi-compatible model paths in its alias resolution. Users must pass explicit `provider/model-id` strings. Need: `harness_candidates` / `runnable_paths` entries in Mars model definitions, provider discovery, and agent profile resolution for `harness: pi`. |
 | **Web extensions/tools** | Deferred | Built-in `web_search` and `web_fetch` extensions. These are Pi-native extensions that need authoring and bundling. |
 | **Notifications** | Done | `meridian-spawn-watch` surfaces spawn completion notifications in Pi and flushes pending notices before shutdown. |
 | **`meridian doctor` integration** | Deferred | Health checks for Pi binary, version, extensions, provider availability. |
-
-### Quickest Next Fixes
-
-1. **Model aliases**: Add `harness_candidates` with Pi runnable paths to Mars
-   model definitions for commonly used models.
 
 ## Reference: Pi Integration Files
 
