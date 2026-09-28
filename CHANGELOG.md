@@ -4,8 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Changed
-- Migrate Meridian's machine consumers to the coordinated Mars `models aliases --json` and `models catalog --json` contracts; raw catalog listings no longer claim harness routes or matched aliases.
+### Breaking
+- Meridian's machine consumers require the coordinated Mars release with `models aliases --json` and `models catalog --json`. Update the exact `mars-agents` dependency pin and lock after that release, before releasing Meridian; published Mars 0.14.2 cannot serve these commands.
+- `meridian.models.list` now exposes raw catalog metadata only. Its `all` and `show_superseded` inputs and unpopulatable `harness`, `aliases`, `name`, `family`, `capabilities`, and `pinned` output fields were removed; its text view no longer shows HARNESS or ALIAS columns.
 
 ## [0.7.0] - 2026-09-27
 

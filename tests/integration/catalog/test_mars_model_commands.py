@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from meridian.lib.catalog import model_aliases
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.models import resolve_model
-from meridian.lib.ops.catalog import ModelsListInput, models_list_sync
+from meridian.lib.ops.catalog import CatalogModel, ModelsListInput, models_list_sync
 
 if TYPE_CHECKING:
     import pytest
@@ -160,10 +160,9 @@ def test_raw_catalog_listing_maps_fields_without_inventing_routing(
             cmd, 0, json.dumps({"catalog": [raw]}), ""
         ),
     )
-    model = models_list_sync(ModelsListInput(project_root=str(tmp_path))).models[0]
+    listing = models_list_sync(ModelsListInput(project_root=str(tmp_path)))
+    model = listing.models[0]
     assert model.model_id == "openai/gpt-test"
-    assert model.harness is None and model.aliases == ()
-    assert model.family is None and model.capabilities == () and not model.pinned
     assert model.context_limit == 250000 and model.output_limit == 80000
     assert model.provider == "OpenAI" and model.description == "Demo model"
     assert model.release_date == "2026-09-01"
@@ -175,5 +174,18 @@ def test_raw_catalog_listing_maps_fields_without_inventing_routing(
         model.cost_reasoning,
     ) == (1.5, 7.5, 0.15, 2.0, 3.0)
     wire = model.to_wire()
-    assert wire["harness"] is None
-    assert "aliases" not in wire and "family" not in wire and "pinned" not in wire
+    assert all(
+        field not in wire
+        for field in ("harness", "aliases", "name", "family", "capabilities", "pinned")
+    )
+    schema_fields = CatalogModel.model_json_schema()["properties"]
+    assert all(
+        field not in schema_fields
+        for field in ("harness", "aliases", "name", "family", "capabilities", "pinned")
+    )
+    assert listing.model_dump() == {"models": [wire]}
+    header = listing.format_text().splitlines()[0]
+    assert "MODEL" in header and "PROVIDER" in header
+    assert "HARNESS" not in header and "ALIAS" not in header
+    details = model.format_text()
+    assert "Harness" not in details and "Aliases" not in details

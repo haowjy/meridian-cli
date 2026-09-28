@@ -105,7 +105,7 @@ def resolve_model(
         )
 
     # Step 1: Try mars resolve (alias + harness in one call) before the
-    # expensive all-models exact-ID guard.
+    # expensive catalog exact-ID guard.
     mars_result = (
         cached_mars_models_resolve(normalized, project_root, cache=cache)
         if cache is not None

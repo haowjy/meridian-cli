@@ -52,13 +52,13 @@ separate CLI invocations and prevent alias updates from being picked up.
 
 ### Resolution Pipeline
 
-`resolve_model(name_or_alias, project_root)` in `models.py`:
+`resolve_model(name_or_alias, project_root)` in `models.py` is a legacy direct
+helper; launches obtain runtime routing from the Mars launch bundle:
 
-1. Call `mars models resolve <name> --json` (via `cached_mars_models_resolve`)
-2. If mars returns a result → return `AliasEntry` from it
-3. If Mars prefix-matched a different ID → check `mars models catalog --json` for the exact literal ID
-4. If found in catalog → return `AliasEntry` with the literal ID, empty alias, and unresolved harness
-5. If not found, keep the Mars resolution; if Mars returned unknown alias, pass the input through with unresolved harness
+1. Call `mars models resolve <name> --json` (via `cached_mars_models_resolve`).
+2. If Mars returned a different ID, check `mars models catalog --json` for the exact literal ID.
+3. If found in catalog, return the literal ID with empty alias and unresolved harness; otherwise keep Mars's resolution.
+4. If Mars returned an unknown alias, pass the input through with unresolved harness.
 
 ### AliasEntry
 

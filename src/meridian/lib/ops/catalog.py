@@ -1,13 +1,12 @@
-"""Catalog discovery operations for models and skills."""
+"""Raw Mars model catalog listing operation."""
 
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, model_serializer
 
 from meridian.lib.catalog.model_aliases import run_mars_models_catalog
-from meridian.lib.catalog.models import AliasEntry
 from meridian.lib.config.project_root import resolve_project_root_resolution
-from meridian.lib.core.types import HarnessId, ModelId
+from meridian.lib.core.types import ModelId
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.runtime import async_from_sync
 
@@ -22,10 +21,6 @@ class CatalogModel(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     model_id: ModelId
-    harness: HarnessId | None
-    aliases: tuple[AliasEntry, ...] = ()
-    name: str | None = None
-    family: str | None = None
     provider: str | None = None
     cost_input: float | None = None
     cost_output: float | None = None
@@ -34,27 +29,13 @@ class CatalogModel(BaseModel):
     cost_reasoning: float | None = None
     context_limit: int | None = None
     output_limit: int | None = None
-    capabilities: tuple[str, ...] = ()
     release_date: str | None = None
     cost_tier: str | None = None
     description: str | None = None
-    pinned: bool = False
 
     def to_wire(self) -> dict[str, object]:
         """Compact JSON projection for model listings."""
-        wire: dict[str, object] = {
-            "model_id": str(self.model_id),
-            "harness": str(self.harness) if self.harness is not None else None,
-        }
-
-        aliases = [alias.model_dump(exclude_none=True) for alias in self.aliases]
-        if aliases:
-            wire["aliases"] = aliases
-
-        if self.name and self.name.strip():
-            wire["name"] = self.name
-        if self.family and self.family.strip():
-            wire["family"] = self.family
+        wire: dict[str, object] = {"model_id": str(self.model_id)}
         if self.provider and self.provider.strip():
             wire["provider"] = self.provider
         if self.cost_input is not None:
@@ -71,36 +52,22 @@ class CatalogModel(BaseModel):
             wire["context_limit"] = self.context_limit
         if self.output_limit is not None:
             wire["output_limit"] = self.output_limit
-        if self.capabilities:
-            wire["capabilities"] = list(self.capabilities)
         if self.release_date and self.release_date.strip():
             wire["release_date"] = self.release_date
         if self.cost_tier and self.cost_tier.strip():
             wire["cost_tier"] = self.cost_tier
         if self.description and self.description.strip():
             wire["description"] = self.description
-        if self.pinned:
-            wire["pinned"] = True
-
         return wire
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
         from meridian.lib.core.formatting import kv_block
 
-        alias_names = ", ".join(alias.alias for alias in self.aliases) or None
-        alias_details = ", ".join(_format_alias_detail(alias) for alias in self.aliases) or None
-        capabilities = ", ".join(self.capabilities) or None
         pairs: list[tuple[str, str | None]] = [
             ("Model", str(self.model_id)),
-            ("Harness", _display_harness(self.harness)),
-            ("Name", self.name),
-            ("Family", self.family),
             ("Provider", self.provider),
-            ("Aliases", alias_names),
-            ("Alias details", alias_details),
             ("Description", self.description),
-            ("Capabilities", capabilities),
             ("Released", self.release_date),
             ("Cost", self.cost_tier),
             ("Cost input", _format_float(self.cost_input)),
@@ -129,20 +96,18 @@ class ModelsListOutput(BaseModel):
             return "(no models)"
         from meridian.lib.core.formatting import tabular
 
-        header = ["MODEL", "HARNESS", "ALIAS", "PROVIDER", "COST", "RELEASED"]
+        header = ["MODEL", "PROVIDER", "COST", "RELEASED"]
         rows: list[list[str]] = []
         for model in self.models:
             rows.append(
                 [
                     str(model.model_id),
-                    _display_harness(model.harness),
-                    ",".join(alias.alias for alias in model.aliases),
                     model.provider or "",
                     model.cost_tier or "",
                     model.release_date or "",
                 ]
             )
-        required_indices = {0, 1}
+        required_indices = {0}
         keep_indices = [
             index
             for index in range(len(header))
@@ -184,14 +149,6 @@ def _format_int(value: int | None) -> str | None:
     if value is None:
         return None
     return str(value)
-
-
-def _format_alias_detail(alias: AliasEntry) -> str:
-    return alias.alias
-
-
-def _display_harness(harness: HarnessId | None) -> str:
-    return str(harness) if harness is not None else "—"
 
 
 def _parse_optional_str(value: object) -> str | None:
@@ -245,7 +202,6 @@ def _mars_catalog_entry_to_model(entry: dict[str, object]) -> CatalogModel | Non
 
     return CatalogModel(
         model_id=ModelId(model_id_value),
-        harness=None,
         provider=_parse_optional_str(entry.get("provider")),
         cost_input=cost_input,
         cost_output=_parse_optional_float(entry.get("cost_output")),

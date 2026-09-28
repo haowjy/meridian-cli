@@ -15,10 +15,13 @@ operation, then discards it. The session holds a `MarsResultCache` scoped to its
 lifetime — this prevents redundant mars subprocess calls within one CLI invocation
 and prevents stale results from leaking across invocations.
 
-The resolution pipeline for a model alias:
-1. `mars models resolve <name>` via subprocess
-2. If Mars prefix-matches a different ID → check `mars models catalog --json` for the exact literal ID
-3. If not found → pass through as raw model ID with unresolved harness
+The legacy direct-resolution pipeline (launch routing uses the bundle):
+1. Call `mars models resolve <name>` via subprocess.
+2. If Mars resolves to a different ID, check `mars models catalog --json` for
+   the exact literal ID. Return that literal ID with an unresolved harness if
+   found; otherwise keep Mars's resolution.
+3. If Mars reports an unknown alias, pass the input through as a raw model ID
+   with an unresolved harness.
 
 ## Key Rules
 
@@ -65,7 +68,7 @@ agent = load_agent_profile(project_root, "coder")
 ## Depth
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — mars subprocess integration, resolve vs
-list asymmetry, `MarsResultCache` scoping contract, and fallback to merged JSON
+inventory asymmetry, `MarsResultCache` scoping contract, and fallback to merged JSON
 
 ## Related
 

@@ -14,7 +14,11 @@ Use `meridian mars models catalog --json` for the raw models.dev cache. Its
 `catalog` entries include model IDs, provider, release date, description,
 context/output limits, and costs. They do not include harness routes,
 matched aliases, or live availability. Meridian's catalog listing projects
-these raw entries without inventing missing routing fields.
+these raw entries without inventing missing routing fields. The
+`meridian.models.list` extension accepts only `project_root` and returns
+`models` with `model_id`, provider, description, release date, context/output
+limits, costs, and a derived cost tier when available. It has no harness,
+alias, name, family, capabilities, or pinned fields.
 
 Use `meridian mars models refresh` to force a models.dev cache refresh.
 `meridian doctor` checks harness installation and health.
