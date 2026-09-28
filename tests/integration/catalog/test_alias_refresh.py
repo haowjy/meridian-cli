@@ -40,4 +40,15 @@ def test_alias_inventory_separates_cache_only_from_normal_refresh(
     assert set(session.alias_map(no_refresh_models=True)) == {"cached"}
     assert set(session.alias_map()) == {"normal"}
     assert set(session.alias_map(no_refresh_models=True)) == {"cached"}
-    assert len(calls) == 2
+    assert calls == [
+        [
+            "/fake/mars",
+            "models",
+            "aliases",
+            "--json",
+            "--no-refresh-models",
+            "--root",
+            str(tmp_path),
+        ],
+        ["/fake/mars", "models", "aliases", "--json", "--root", str(tmp_path)],
+    ]

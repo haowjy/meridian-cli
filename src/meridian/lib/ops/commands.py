@@ -407,7 +407,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
     ExtensionCommandSpec.from_op(
         extension_id="meridian.models",
         command_id="list",
-        summary="List catalog models with routing guidance.",
+        summary="List raw catalog models without runtime routing claims.",
         handler=models_list,
         sync_handler=models_list_sync,
         input_type=ModelsListInput,

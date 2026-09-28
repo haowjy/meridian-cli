@@ -282,7 +282,9 @@ See [extensions.md](extensions.md) for HTTP API and MCP tool details.
 | `meridian config set KEY VALUE` | Set a config value |
 | `meridian config get KEY` | Read a config value |
 | `meridian config reset KEY` | Reset a config value to default |
-| `meridian mars models list` | Inspect the model catalog |
+| `meridian mars models list` | Inspect curated harness-model possibilities (human view) |
+| `meridian mars models aliases --json` | Read the static alias inventory |
+| `meridian mars models catalog --json` | Read raw models.dev catalog metadata |
 | `meridian mars models refresh` | Force-refresh the models.dev cache |
 | `meridian doctor` | Per-project diagnostics and orphan reconciliation (cheap, safe to run anywhere) |
 | `meridian doctor --global` | Adds the machine-wide orphan-project-dir scan (`~/.meridian/projects/*`) to the normal current-project doctor checks; must run from the root process (not inside a spawn) |

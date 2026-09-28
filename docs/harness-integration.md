@@ -728,8 +728,8 @@ For Mars to fully support a harness, the following are needed:
    `harness: pi` and `model: sonnet` and have resolution produce the correct
    Pi model string.
 
-4. **`meridian mars models list --live`**: Should show which models are runnable
-   through the Pi harness.
+4. **`meridian mars models list --live`**: Should show current Pi harness-model
+   eligibility; launch-bundle still decides the runtime route.
 
 **Current Pi status**: None of the above is implemented. Pi-compatible model
 aliases, provider discovery, and catalog integration are deferred. Users

@@ -182,5 +182,8 @@ Local Mars overrides win over project Mars config for overlay values.
 ### Observability
 
 - `meridian mars export --json` shows the compiled package/materialization plan.
-- `meridian mars models list` and `meridian mars models resolve ALIAS` show model aliases.
+- `meridian mars models aliases --json` shows static aliases;
+  `meridian mars models catalog --json` shows raw model metadata.
+  `meridian mars models list` is a curated human view, and
+  `resolve ALIAS` resolves an individual alias.
 - `meridian spawn --dry-run` reflects overlay-aware routing and provenance

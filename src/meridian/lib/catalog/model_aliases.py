@@ -36,7 +36,7 @@ class RunnablePath(BaseModel):
 
 
 class AliasEntry(BaseModel):
-    """Alias entry for model lookup."""
+    """Alias entry for model lookup; an inventory harness is not a runtime route."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -54,10 +54,7 @@ class AliasEntry(BaseModel):
     def harness(self) -> HarnessId:
         if self.resolved_harness is not None:
             return self.resolved_harness
-        raise ValueError(
-            "Model harness is missing from Mars resolution for "
-            f"'{self.model_id}'. This is a bug."
-        )
+        raise ValueError(f"No harness is recorded for model '{self.model_id}'.")
 
     @property
     def mars_provided_harness(self) -> HarnessId | None:
@@ -69,7 +66,7 @@ class AliasEntry(BaseModel):
 
         pairs: list[tuple[str, str | None]] = [
             ("Model", str(self.model_id)),
-            ("Harness", str(self.harness)),
+            ("Harness", str(self.mars_provided_harness) if self.mars_provided_harness else None),
             ("Alias", self.alias or None),
         ]
         return kv_block(pairs)
@@ -179,16 +176,6 @@ def _resolve_cache_key(name: str, project_root: Path | None) -> tuple[str, str]:
     return (name.strip(), _normalize_project_root_key(project_root))
 
 
-def _list_cache_key(project_root: Path | None) -> str:
-    """Build a cache key for mars models list queries."""
-    return _normalize_project_root_key(project_root)
-
-
-def _list_all_cache_key(project_root: Path | None) -> str:
-    """Build a cache key for mars models list --all queries."""
-    return _normalize_project_root_key(project_root)
-
-
 _SENTINEL = object()
 
 
@@ -207,10 +194,10 @@ class MarsResultCache:
     _resolve: dict[tuple[str, str], dict[str, object] | None] = field(
         default_factory=lambda: cast("dict[tuple[str, str], dict[str, object] | None]", {})
     )
-    _list: dict[tuple[str, bool], list[dict[str, object]] | None] = field(
+    _aliases: dict[tuple[str, bool], list[dict[str, object]] | None] = field(
         default_factory=lambda: cast("dict[tuple[str, bool], list[dict[str, object]] | None]", {})
     )
-    _list_all: dict[str, list[dict[str, object]] | None] = field(
+    _catalog: dict[str, list[dict[str, object]] | None] = field(
         default_factory=lambda: cast("dict[str, list[dict[str, object]] | None]", {})
     )
 
@@ -232,35 +219,35 @@ class MarsResultCache:
         key = _resolve_cache_key(name, project_root)
         self._resolve[key] = result
 
-    def get_list(
+    def get_aliases(
         self, project_root: Path | None, *, no_refresh_models: bool = False
     ) -> list[dict[str, object]] | None | object:
-        """Return cached list result, or _SENTINEL if not cached."""
-        key = (_list_cache_key(project_root), no_refresh_models)
-        return self._list.get(key, _SENTINEL)
+        """Return cached aliases result, or _SENTINEL if not cached."""
+        key = (_normalize_project_root_key(project_root), no_refresh_models)
+        return self._aliases.get(key, _SENTINEL)
 
-    def put_list(
+    def put_aliases(
         self,
         project_root: Path | None,
         result: list[dict[str, object]] | None,
         *,
         no_refresh_models: bool = False,
     ) -> None:
-        key = (_list_cache_key(project_root), no_refresh_models)
-        self._list[key] = result
+        key = (_normalize_project_root_key(project_root), no_refresh_models)
+        self._aliases[key] = result
 
-    def get_list_all(self, project_root: Path | None) -> list[dict[str, object]] | None | object:
-        """Return cached list-all result, or _SENTINEL if not cached."""
-        key = _list_all_cache_key(project_root)
-        return self._list_all.get(key, _SENTINEL)
+    def get_catalog(self, project_root: Path | None) -> list[dict[str, object]] | None | object:
+        """Return cached catalog result, or _SENTINEL if not cached."""
+        key = _normalize_project_root_key(project_root)
+        return self._catalog.get(key, _SENTINEL)
 
-    def put_list_all(
+    def put_catalog(
         self,
         project_root: Path | None,
         result: list[dict[str, object]] | None,
     ) -> None:
-        key = _list_all_cache_key(project_root)
-        self._list_all[key] = result
+        key = _normalize_project_root_key(project_root)
+        self._catalog[key] = result
 
 
 # ---------------------------------------------------------------------------
@@ -278,12 +265,12 @@ def _resolve_mars_binary() -> str | None:
     return shutil.which("mars")
 
 
-def run_mars_models_list(
+def run_mars_models_aliases(
     project_root: Path | None = None,
     *,
     no_refresh_models: bool = False,
 ) -> list[dict[str, object]] | None:
-    """Call ``mars models list --json`` and return the alias entries.
+    """Call ``mars models aliases --json`` and return the alias entries.
 
     Returns *None* when the mars binary is unavailable or the command fails,
     so the caller can fall back to reading the cached merged file.
@@ -292,7 +279,7 @@ def run_mars_models_list(
     if mars_bin is None:
         return None
 
-    cmd = [mars_bin, "models", "list", "--json"]
+    cmd = [mars_bin, "models", "aliases", "--json"]
     if no_refresh_models:
         cmd.append("--no-refresh-models")
     if project_root is not None:
@@ -314,23 +301,27 @@ def run_mars_models_list(
         return None
 
     if result.returncode != 0:
-        logger.debug("mars models list failed (rc=%d): %s", result.returncode, result.stderr)
+        logger.debug("mars models aliases failed (rc=%d): %s", result.returncode, result.stderr)
         return None
 
     try:
         payload = json.loads(result.stdout)
     except (json.JSONDecodeError, ValueError):
-        logger.debug("mars models list returned invalid JSON")
+        logger.debug("mars models aliases returned invalid JSON")
         return None
 
-    aliases = payload.get("aliases")
-    if not isinstance(aliases, list):
+    if not isinstance(payload, dict):
+        return None
+    aliases = cast("dict[str, object]", payload).get("aliases")
+    if not isinstance(aliases, list) or not all(
+        isinstance(item, dict) for item in cast("list[object]", aliases)
+    ):
         return None
     return cast("list[dict[str, object]]", aliases)
 
 
-def run_mars_models_list_all(project_root: Path | None = None) -> list[dict[str, object]] | None:
-    """Call ``mars models list --all --json`` and return the model entries.
+def run_mars_models_catalog(project_root: Path | None = None) -> list[dict[str, object]] | None:
+    """Call ``mars models catalog --json`` and return the catalog entries.
 
     Returns *None* when the mars binary is unavailable or the command fails.
     """
@@ -338,7 +329,7 @@ def run_mars_models_list_all(project_root: Path | None = None) -> list[dict[str,
     if mars_bin is None:
         return None
 
-    cmd = [mars_bin, "models", "list", "--all", "--json"]
+    cmd = [mars_bin, "models", "catalog", "--json"]
     if project_root is not None:
         cmd.extend(["--root", str(project_root)])
 
@@ -346,7 +337,7 @@ def run_mars_models_list_all(project_root: Path | None = None) -> list[dict[str,
         # mars may do a cold models.dev fetch in ensure_fresh(Auto); mars caps each HTTP
         # phase at 15s (connect + recv-response + recv-body), so worst-case cold fetch is
         # ~45s. 60s leaves a small headroom for first-boot DNS, slow disks, and startup.
-        # Keep timeout aligned with other mars model list/resolve paths.
+        # Keep timeout aligned with other mars model aliases/resolve paths.
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -358,19 +349,23 @@ def run_mars_models_list_all(project_root: Path | None = None) -> list[dict[str,
         return None
 
     if result.returncode != 0:
-        logger.debug("mars models list --all failed (rc=%d): %s", result.returncode, result.stderr)
+        logger.debug("mars models catalog failed (rc=%d): %s", result.returncode, result.stderr)
         return None
 
     try:
         payload = json.loads(result.stdout)
     except (json.JSONDecodeError, ValueError):
-        logger.debug("mars models list --all returned invalid JSON")
+        logger.debug("mars models catalog returned invalid JSON")
         return None
 
-    models = payload.get("models")
-    if not isinstance(models, list):
+    if not isinstance(payload, dict):
         return None
-    return cast("list[dict[str, object]]", models)
+    catalog = cast("dict[str, object]", payload).get("catalog")
+    if not isinstance(catalog, list) or not all(
+        isinstance(item, dict) for item in cast("list[object]", catalog)
+    ):
+        return None
+    return cast("list[dict[str, object]]", catalog)
 
 
 def _extract_mars_error_message(raw_output: str) -> str | None:
@@ -425,7 +420,7 @@ def run_mars_models_resolve(
         # mars may do a cold models.dev fetch in ensure_fresh(Auto); mars caps each HTTP
         # phase at 15s (connect + recv-response + recv-body), so worst-case cold fetch is
         # ~45s. 60s leaves a small headroom for first-boot DNS, slow disks, and startup.
-        # Use the same timeout as run_mars_models_list since both paths can refresh.
+        # Use the same timeout as run_mars_models_aliases since both paths can refresh.
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     except FileNotFoundError as exc:
         raise RuntimeError(
@@ -484,36 +479,36 @@ def cached_mars_models_resolve(
     return result
 
 
-def cached_mars_models_list(
+def cached_mars_models_aliases(
     project_root: Path | None = None,
     *,
     cache: MarsResultCache | None = None,
     no_refresh_models: bool = False,
 ) -> list[dict[str, object]] | None:
-    """List models through mars, using cache if provided."""
+    """Load aliases through mars, using cache if provided."""
     if cache is not None:
-        cached = cache.get_list(project_root, no_refresh_models=no_refresh_models)
+        cached = cache.get_aliases(project_root, no_refresh_models=no_refresh_models)
         if cached is not _SENTINEL:
             return cast("list[dict[str, object]] | None", cached)
-    result = run_mars_models_list(project_root, no_refresh_models=no_refresh_models)
+    result = run_mars_models_aliases(project_root, no_refresh_models=no_refresh_models)
     if cache is not None:
-        cache.put_list(project_root, result, no_refresh_models=no_refresh_models)
+        cache.put_aliases(project_root, result, no_refresh_models=no_refresh_models)
     return result
 
 
-def cached_mars_models_list_all(
+def cached_mars_models_catalog(
     project_root: Path | None = None,
     *,
     cache: MarsResultCache | None = None,
 ) -> list[dict[str, object]] | None:
-    """List all models through mars, using cache if provided."""
+    """Load the raw catalog through mars, using cache if provided."""
     if cache is not None:
-        cached = cache.get_list_all(project_root)
+        cached = cache.get_catalog(project_root)
         if cached is not _SENTINEL:
             return cast("list[dict[str, object]] | None", cached)
-    result = run_mars_models_list_all(project_root)
+    result = run_mars_models_catalog(project_root)
     if cache is not None:
-        cache.put_list_all(project_root, result)
+        cache.put_catalog(project_root, result)
     return result
 
 
@@ -536,8 +531,8 @@ def _read_mars_merged_file(project_root: Path | None = None) -> dict[str, object
     return {}
 
 
-def _mars_list_to_entries(aliases_list: list[dict[str, object]]) -> list[AliasEntry]:
-    """Convert mars ``models list --json`` alias entries to :class:`AliasEntry` objects."""
+def _mars_aliases_to_entries(aliases_list: list[dict[str, object]]) -> list[AliasEntry]:
+    """Convert mars ``models aliases --json`` entries to :class:`AliasEntry` objects."""
     entries: list[AliasEntry] = []
     for item in aliases_list:
         name = item.get("name")
@@ -551,7 +546,6 @@ def _mars_list_to_entries(aliases_list: list[dict[str, object]]) -> list[AliasEn
         default_autocompact = item.get("autocompact")
         default_autocompact_pct = item.get("autocompact_pct")
         harness_candidates = parse_harness_candidates(item.get("harness_candidates"))
-        runnable_paths = parse_runnable_paths(item.get("runnable_paths"))
 
         # Skip aliases that didn't resolve to a concrete model ID
         if not isinstance(resolved_model, str) or not resolved_model.strip():
@@ -567,7 +561,6 @@ def _mars_list_to_entries(aliases_list: list[dict[str, object]]) -> list[AliasEn
                 default_autocompact=_coerce_optional_int(default_autocompact),
                 default_autocompact_pct=_coerce_optional_int(default_autocompact_pct),
                 harness_candidates=harness_candidates,
-                runnable_paths=runnable_paths,
             )
         )
 
@@ -608,7 +601,7 @@ def _mars_merged_to_entries(merged: dict[str, object]) -> list[AliasEntry]:
             )
         # Auto-resolve aliases without the cache cannot be resolved from the merged file.
         # Use `mars models resolve <alias> --json` for authoritative per-alias routing
-        # or `mars models list --live` for bulk live availability/runnable data.
+        # or the launch bundle for routed availability/runnable data.
 
     return entries
 
@@ -621,18 +614,17 @@ def load_mars_aliases(
 ) -> list[AliasEntry]:
     """Load model aliases from mars.
 
-    Prefers ``mars models list --json`` for the static project alias inventory.
+    Prefers ``mars models aliases --json`` for the static project alias inventory.
     Falls back to reading ``.mars/models-merged.json`` if the mars binary isn't
     available. Use ``mars models resolve <alias> --json`` for authoritative
-    per-alias routing and ``mars models list --live`` for availability/runnable
-    data.
+    per-alias resolution and the launch bundle for routed availability/runnable data.
     """
     # Try mars CLI first — it returns the static project alias inventory.
-    mars_list = cached_mars_models_list(
+    mars_aliases = cached_mars_models_aliases(
         project_root, cache=cache, no_refresh_models=no_refresh_models
     )
-    if mars_list is not None:
-        entries = _mars_list_to_entries(mars_list)
+    if mars_aliases is not None:
+        entries = _mars_aliases_to_entries(mars_aliases)
         if entries:
             return sorted(entries, key=lambda e: e.alias)
 
@@ -654,9 +646,9 @@ def load_mars_descriptions(project_root: Path | None = None) -> dict[str, str]:
     descriptions: dict[str, str] = {}
 
     # Try mars CLI first
-    mars_list = run_mars_models_list(project_root)
-    if mars_list is not None:
-        for item in mars_list:
+    mars_aliases = run_mars_models_aliases(project_root)
+    if mars_aliases is not None:
+        for item in mars_aliases:
             resolved_model = item.get("model_id") or item.get("resolved_model")
             description = item.get("description")
             if (
@@ -691,14 +683,14 @@ __all__ = [
     "AliasEntry",
     "MarsResultCache",
     "RunnablePath",
-    "cached_mars_models_list",
-    "cached_mars_models_list_all",
+    "cached_mars_models_aliases",
+    "cached_mars_models_catalog",
     "cached_mars_models_resolve",
     "load_mars_aliases",
     "load_mars_descriptions",
     "parse_harness_candidates",
     "parse_runnable_paths",
-    "run_mars_models_list",
-    "run_mars_models_list_all",
+    "run_mars_models_aliases",
+    "run_mars_models_catalog",
     "run_mars_models_resolve",
 ]

@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Migrate Meridian's machine consumers to the coordinated Mars `models aliases --json` and `models catalog --json` contracts; raw catalog listings no longer claim harness routes or matched aliases.
+
 ## [0.7.0] - 2026-09-27
 
 ### Upgrade notes

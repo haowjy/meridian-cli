@@ -47,7 +47,7 @@ harness evidence. Check what resolves:
 
 ```bash
 meridian mars models resolve MODEL --json # inspect model/harness resolution
-meridian mars models list --live          # see runnable models and harnesses
+meridian mars models list --live          # inspect current harness-model eligibility
 meridian config show                      # see harness defaults and overrides
 ```
 
