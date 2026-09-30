@@ -57,8 +57,9 @@ with replay-safety evidence; the connection and `SpawnManager` do not decide.
 **Initial-turn progress is typed and monotonic.** A connection starts at
 `not_submitted` only when it can prove no prompt write began, advances to `unknown`
 before an ambiguous write, and reaches `submitted` only after delivery completes.
-`dispatch_start()` preserves this evidence in `ConnectionStartFailure` after cleanup;
-it does not decide retry policy. A returned `start()` means the initial turn was submitted.
+`dispatch_start()` preserves this evidence and typed teardown status in
+`ConnectionStartFailure`; it does not decide retry policy. A returned `start()` means
+the initial turn was submitted.
 
 **New transport = subclass `HarnessConnection[SpecT]`**, declare `_CAPABILITIES`,
 implement all abstract methods, register in the bundle. Missing registration →
@@ -78,8 +79,9 @@ child process can be stranded between owners. `reap_on_ownership_transfer_failur
 in `base.py` catches `BaseException`, shields cleanup from repeated cancellation
 deliveries in a while-not-done loop, and bounds foreground cleanup to 30 seconds.
 Durable `spawn_owned` process scopes and the reaper own any residue beyond that
-bound. The rejected alternative (`with suppress` single-shot) did not survive
-repeated cancellation.
+bound. Its typed result is `quiescent` only when cleanup completed normally;
+abandoned, failed, or unknown cleanup cannot prove replay safety. The rejected
+alternative (`with suppress` single-shot) did not survive repeated cancellation.
 
 **The published spawn directory is a startup precondition.** Connection and process-
 adoption paths never create `spawns/<id>/`. If retention deletes the aggregate across

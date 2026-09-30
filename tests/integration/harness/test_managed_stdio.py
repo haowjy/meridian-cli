@@ -14,6 +14,11 @@ import pytest
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections import managed_stdio
 from meridian.lib.harness.connections.base import ConnectionConfig
+from meridian.lib.harness.connections.errors import (
+    IncompleteStartupTeardown,
+    RetryableConnectionStartupError,
+    TeardownStatus,
+)
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn_store import start_spawn
 
@@ -75,6 +80,65 @@ async def test_launch_managed_stdio_reaps_child_when_registration_raises(
             Path(open_file.path).resolve()
             for open_file in psutil.Process().open_files()
         }
+    finally:
+        for process in launched:
+            if process.returncode is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                await process.wait()
+
+
+@pytest.mark.asyncio
+async def test_launch_managed_stdio_preserves_incomplete_provisional_teardown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spawn_id = SpawnId("stdio-incomplete-registration-cleanup")
+    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
+    start_spawn(
+        runtime_root,
+        spawn_id=spawn_id,
+        chat_id="chat-1",
+        model="test-model",
+        agent="tester",
+        harness="claude",
+        prompt="test",
+        status="running",
+    )
+    launched: list[asyncio.subprocess.Process] = []
+
+    async def fail_registration(**kwargs: object) -> object:
+        launched.append(kwargs["process"])  # type: ignore[arg-type]
+        raise RetryableConnectionStartupError("temporary registration failure")
+
+    async def abandon_cleanup(*_args: object, **_kwargs: object) -> TeardownStatus:
+        return TeardownStatus.ABANDONED
+
+    monkeypatch.setattr(managed_stdio, "register_spawn_owned_process", fail_registration)
+    monkeypatch.setattr(managed_stdio, "reap_on_ownership_transfer_failure", abandon_cleanup)
+
+    try:
+        with pytest.raises(IncompleteStartupTeardown) as raised:
+            await managed_stdio.launch_managed_stdio(
+                config=ConnectionConfig(
+                    spawn_id=spawn_id,
+                    harness_id=HarnessId.CLAUDE,
+                    prompt="test",
+                    control_root=tmp_path,
+                    child_env={},
+                    runtime_root=runtime_root,
+                ),
+                harness_id=HarnessId.CLAUDE,
+                command=(sys.executable, "-c", "import time; time.sleep(60)"),
+                env=os.environ.copy(),
+                cwd=str(tmp_path),
+                stdin=asyncio.subprocess.PIPE,
+                stdout_limit=64 * 1024,
+                kill_grace_seconds=0.1,
+                terminate_reason="test_cleanup",
+            )
+
+        assert raised.value.teardown is TeardownStatus.ABANDONED
+        assert str(raised.value) == "temporary registration failure"
     finally:
         for process in launched:
             if process.returncode is None:

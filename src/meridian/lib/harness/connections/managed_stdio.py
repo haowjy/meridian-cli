@@ -16,6 +16,10 @@ from meridian.lib.harness.connections.base import (
     ConnectionConfig,
     reap_on_ownership_transfer_failure,
 )
+from meridian.lib.harness.connections.errors import (
+    IncompleteStartupTeardown,
+    TeardownStatus,
+)
 from meridian.lib.harness.connections.managed_backend import (
     register_spawn_owned_process,
     spawn_owned_process_handle,
@@ -225,9 +229,10 @@ async def launch_managed_stdio(
             runtime_root=config.runtime_root,
             persist=config.runtime_root is not None,
         )
-    except BaseException:
+    except BaseException as exc:
+        teardown = TeardownStatus.QUIESCENT
         if provisional_scope_handle is not None:
-            await reap_on_ownership_transfer_failure(
+            teardown = await reap_on_ownership_transfer_failure(
                 lambda: provisional_scope_handle.terminate(
                     grace_seconds=kill_grace_seconds,
                     reason=terminate_reason,
@@ -236,6 +241,12 @@ async def launch_managed_stdio(
         with suppress(OSError):
             stderr_handle.flush()
         stderr_handle.close()
+        if (
+            isinstance(exc, Exception)
+            and not isinstance(exc, IncompleteStartupTeardown)
+            and teardown is not TeardownStatus.QUIESCENT
+        ):
+            raise IncompleteStartupTeardown(exc, teardown=teardown) from exc
         raise
 
     return ManagedStdioProcess(

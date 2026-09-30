@@ -50,7 +50,6 @@ from meridian.lib.launch.env import (
     resolve_pi_session_role,
 )
 from meridian.lib.launch.errors import (
-    ErrorCategory,
     classify_error,
 )
 from meridian.lib.launch.extract import (
@@ -68,6 +67,7 @@ from meridian.lib.launch.resolve import (
     resolve_startup_timeout_seconds,
 )
 from meridian.lib.launch.retry import (
+    AttemptFailure,
     ReplayEvidence,
     RetryPermit,
     classify_attempt_failure,
@@ -118,8 +118,6 @@ logger = structlog.get_logger(__name__)
 _HEARTBEAT_INTERVAL_SECS = 30.0
 
 
-
-
 @dataclass
 class StreamingRunConclusion:
     """Accumulates execution outcome across retry attempts."""
@@ -131,15 +129,25 @@ class StreamingRunConclusion:
     authoritative_terminal_status: TerminalSpawnStatus | None = None
     cancellation_observed: bool = False
     retries_attempted: int = 0
+    attempt_failure: AttemptFailure | None = None
 
-    def absorb_attempt(self, attempt: AttemptRuntime) -> None:
-        """Merge one attempt's terminal fields into the run conclusion."""
+    def commit_attempt(
+        self,
+        attempt: AttemptRuntime,
+        *,
+        exit_code: int,
+        failure: AttemptFailure | None,
+        terminal_status: TerminalSpawnStatus | None,
+        cancelled: bool,
+    ) -> None:
+        """Select final reporting and retry cause from one typed record."""
 
-        self.failure_reason = None
-        self.exit_code = attempt.drain_exit_code
+        self.attempt_failure = failure
+        self.failure_reason = None if failure is None else failure.final_message
+        self.exit_code = exit_code
         self.final_attempt_terminal_observed = attempt.terminal_observed
-        self.authoritative_terminal_status = attempt.authoritative_terminal_status
-        self.cancellation_observed = self.cancellation_observed or attempt.cancelled_by_request
+        self.authoritative_terminal_status = terminal_status
+        self.cancellation_observed = self.cancellation_observed or cancelled
 
     def terminal_facts(
         self,
@@ -179,10 +187,6 @@ def _inactivity_terminal_outcome(
     return None, "stalled"
 
 
-
-
-
-
 def _read_cancel_intent(runtime_root: Path, spawn_id: SpawnId) -> CancelIntent | None:
     record = spawn_store.get_spawn(runtime_root, spawn_id)
     return None if record is None else record.cancel_intent
@@ -218,8 +222,6 @@ async def _sleep_retry_backoff_or_cancel(
         if remaining <= 0:
             return False
         await asyncio.sleep(min(0.1, remaining))
-
-
 
 
 async def execute_with_streaming(
@@ -510,7 +512,9 @@ async def execute_with_streaming(
                     event_hook=fold,
                 )
                 runner_phase[0] = "processing_attempt"
-                conclusion.absorb_attempt(attempt)
+                attempt_exit_code = attempt.drain_exit_code
+                attempt_terminal_status = attempt.authoritative_terminal_status
+                attempt_failure_message = attempt.start_error
                 if attempt.start_error is not None:
                     logger.info(
                         "Failed to execute streaming spawn attempt.",
@@ -518,28 +522,30 @@ async def execute_with_streaming(
                         harness_id=str(harness.id),
                         error=attempt.start_error,
                     )
-                    conclusion.failure_reason = attempt.start_error
                     _append_text_to_stderr_artifact(
                         artifacts=artifacts,
                         spawn_id=run.spawn_id,
                         text=attempt.start_error,
                     )
                 attempt_cancelled = False
+                cancellation_message: str | None = None
                 if attempt.timed_out:
-                    conclusion.failure_reason = "timeout"
+                    attempt_failure_message = "timeout"
                 if not attempt.terminal_observed:
                     if attempt.received_signal == signal.SIGINT:
-                        conclusion.failure_reason = "cancelled"
+                        attempt_failure_message = "cancelled"
+                        cancellation_message = "cancelled"
                         attempt_cancelled = True
                     elif attempt.received_signal == signal.SIGTERM:
-                        conclusion.failure_reason = "terminated"
+                        attempt_failure_message = "terminated"
+                        cancellation_message = "terminated"
                         attempt_cancelled = True
                 if (
-                    conclusion.exit_code != 0
-                    and conclusion.failure_reason is None
+                    attempt_exit_code != 0
+                    and attempt_failure_message is None
                     and attempt.drain_error is not None
                 ):
-                    conclusion.failure_reason = attempt.drain_error
+                    attempt_failure_message = attempt.drain_error
 
                 persist_attempt_artifacts(
                     artifacts=artifacts,
@@ -564,6 +570,7 @@ async def execute_with_streaming(
                         attempt.connection.session_id if attempt.connection is not None else None
                     ),
                     lifecycle=lifecycle,
+                    teardown=attempt.teardown,
                 )
                 extraction = enrich_finalize(
                     artifacts=artifacts,
@@ -575,38 +582,36 @@ async def execute_with_streaming(
                     model_id=run.model,
                     harness_id=resolved_harness_id,
                     project_root=project_root,
-                    failure_reason=conclusion.failure_reason,
+                    failure_reason=attempt_failure_message,
                 )
                 conclusion.extracted = extraction
                 terminal_code: str | None = None
+                terminal_message: str | None = None
                 guardrail_failed = False
                 budget_exceeded = False
                 attempt_cancelled = attempt_cancelled or attempt.cancelled_by_request
 
                 if outcome.error is not None:
-                    conclusion.exit_code = 1
-                    conclusion.failure_reason = outcome.error.failure_code
-                    conclusion.authoritative_terminal_status = "failed"
+                    attempt_exit_code = 1
+                    attempt_failure_message = outcome.error.failure_code
+                    attempt_terminal_status = "failed"
                     terminal_code = outcome.error.failure_code
+                    terminal_message = outcome.error.failure_code
 
-                if (
-                    _read_cancel_intent(runtime_root, run.spawn_id) is not None
-                    and not extraction.durable_report_completion
-                ):
-                    _apply_cancel_intent_to_conclusion(
-                        conclusion,
-                        runtime_root=runtime_root,
-                        spawn_id=run.spawn_id,
-                    )
+                cancel_intent = _read_cancel_intent(runtime_root, run.spawn_id)
+                if cancel_intent is not None and not extraction.durable_report_completion:
+                    attempt_exit_code = cancel_intent.exit_code
+                    attempt_failure_message = cancel_intent.error or "cancelled"
+                    cancellation_message = attempt_failure_message
                     attempt_cancelled = True
 
                 if attempt_cancelled and attempt.received_signal is not None:
-                    conclusion.exit_code = signal_to_exit_code(attempt.received_signal) or 130
+                    attempt_exit_code = signal_to_exit_code(attempt.received_signal) or 130
 
                 if attempt.budget_breach is not None:
                     budget_exceeded = True
-                    conclusion.failure_reason = "budget_exceeded"
-                    conclusion.exit_code = DEFAULT_INFRA_EXIT_CODE
+                    attempt_failure_message = "budget_exceeded"
+                    attempt_exit_code = DEFAULT_INFRA_EXIT_CODE
                     _append_budget_exceeded_event(run=run, breach=attempt.budget_breach)
 
                 if (
@@ -617,47 +622,50 @@ async def execute_with_streaming(
                     and budget_tracker.observe_cost(extraction.usage.total_cost_usd) is not None
                 ):
                     budget_exceeded = True
-                    conclusion.failure_reason = "budget_exceeded"
+                    attempt_failure_message = "budget_exceeded"
                     breach = budget_tracker.check()
                     if breach is not None:
                         _append_budget_exceeded_event(run=run, breach=breach)
-                    conclusion.exit_code = DEFAULT_INFRA_EXIT_CODE
+                    attempt_exit_code = DEFAULT_INFRA_EXIT_CODE
 
                 if attempt.terminated_by_inactivity:
                     exit_override, failure_override = _inactivity_terminal_outcome(extraction)
                     if exit_override is not None:
-                        conclusion.exit_code = exit_override
-                    conclusion.failure_reason = failure_override
+                        attempt_exit_code = exit_override
+                    attempt_failure_message = failure_override
                     if failure_override is not None:
                         terminal_code = failure_override
+                        terminal_message = failure_override
 
                 if (
-                    conclusion.exit_code == 0
+                    attempt_exit_code == 0
                     and terminal_code is None
                     and not attempt_cancelled
                     and not budget_exceeded
                     and _spawn_kind(runtime_root, run.spawn_id) == "child"
                     and extraction.report.content is None
                 ):
-                    conclusion.failure_reason = "missing_report"
-                    conclusion.exit_code = 1
+                    attempt_failure_message = "missing_report"
+                    attempt_exit_code = 1
                     terminal_code = "missing_report"
+                    terminal_message = "missing_report"
 
                 if attempt.terminated_by_report_watchdog and extraction.durable_report_completion:
-                    conclusion.exit_code = 0
-                    conclusion.failure_reason = None
+                    attempt_exit_code = 0
+                    attempt_failure_message = None
 
                 if (
                     extraction.output_is_empty
-                    and conclusion.exit_code == 0
+                    and attempt_exit_code == 0
                     and not attempt.terminated_by_report_watchdog
                 ):
-                    conclusion.exit_code = 1
-                    conclusion.failure_reason = "empty_output"
+                    attempt_exit_code = 1
+                    attempt_failure_message = "empty_output"
                     terminal_code = "empty_output"
+                    terminal_message = "empty_output"
 
                 if (
-                    conclusion.exit_code == 0
+                    attempt_exit_code == 0
                     and terminal_code is None
                     and not attempt_cancelled
                     and not budget_exceeded
@@ -673,10 +681,17 @@ async def execute_with_streaming(
                         timeout_seconds=guardrail_timeout_seconds,
                     )
                     if guardrail_result.ok:
+                        conclusion.commit_attempt(
+                            attempt,
+                            exit_code=attempt_exit_code,
+                            failure=None,
+                            terminal_status=attempt_terminal_status,
+                            cancelled=attempt_cancelled,
+                        )
                         break
                     guardrail_failed = True
-                    conclusion.exit_code = 1
-                    conclusion.failure_reason = "guardrail_failed"
+                    attempt_exit_code = 1
+                    attempt_failure_message = "guardrail_failed"
                     _append_text_to_stderr_artifact(
                         artifacts=artifacts,
                         spawn_id=run.spawn_id,
@@ -690,38 +705,46 @@ async def execute_with_streaming(
                     else ""
                 )
                 category = classify_error(
-                    conclusion.exit_code,
+                    attempt_exit_code,
                     stderr_text,
                     timed_out=attempt.timed_out,
                     failure_message=attempt.drain_error,
                 )
-                if attempt.timed_out:
-                    conclusion.failure_reason = "timeout"
-                elif category == ErrorCategory.STRATEGY_CHANGE:
-                    conclusion.failure_reason = "strategy_change"
-                    terminal_code = terminal_code or "strategy_change"
-
+                resolved_terminal_code = terminal_code or (
+                    f"authoritative_{attempt_terminal_status}"
+                    if attempt_terminal_status is not None
+                    else None
+                )
+                resolved_terminal_message = terminal_message
+                if resolved_terminal_message is None and resolved_terminal_code is not None:
+                    resolved_terminal_message = attempt.drain_error or resolved_terminal_code
                 failure = classify_attempt_failure(
                     cancelled=attempt_cancelled or conclusion.cancellation_observed,
+                    cancellation_message=cancellation_message,
                     terminal_outcome=attempt.terminal_outcome,
-                    terminal_code=(
-                        terminal_code
-                        or (
-                            f"authoritative_{attempt.authoritative_terminal_status}"
-                            if attempt.authoritative_terminal_status is not None
-                            else None
-                        )
-                    ),
+                    terminal_code=resolved_terminal_code,
+                    terminal_message=resolved_terminal_message,
                     start_failure=attempt.start_failure,
                     guardrail_failed=guardrail_failed,
                     timed_out=attempt.timed_out,
                     budget_exceeded=budget_exceeded,
-                    legacy_transient=category is ErrorCategory.RETRYABLE,
-                    message=conclusion.failure_reason or attempt.drain_error,
+                    legacy_category=category,
+                    fallback_message=attempt_failure_message or attempt.drain_error,
+                )
+                conclusion.commit_attempt(
+                    attempt,
+                    exit_code=attempt_exit_code,
+                    failure=failure,
+                    terminal_status=attempt_terminal_status,
+                    cancelled=attempt_cancelled,
                 )
                 decision = decide_retry(
                     failure,
-                    ReplayEvidence(attempt.turn_submission, outcome.native_create),
+                    ReplayEvidence(
+                        attempt.turn_submission,
+                        outcome.native_create,
+                        attempt.teardown,
+                    ),
                     attempts_used=attempt_number,
                     max_attempts=request.retry.max_attempts,
                 )
@@ -738,6 +761,7 @@ async def execute_with_streaming(
                     failure_code=assessment.failure.code,
                     turn_submission=assessment.evidence.turn.value,
                     native_create=assessment.evidence.native_create.value,
+                    teardown=assessment.evidence.teardown.value,
                     replay_safety=assessment.replay_safety.value,
                     retry=decision.retry,
                     reason=assessment.reason,

@@ -19,6 +19,7 @@ from meridian.lib.core.native_identity import (
 )
 from meridian.lib.core.types import ChatId, SpawnId
 from meridian.lib.harness.attempt_facts import AttemptFacts
+from meridian.lib.harness.connections.errors import TeardownStatus
 from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
 from meridian.lib.launch.retry import RetryPermit
 from meridian.lib.launch.session_scope import SessionAttempt
@@ -91,6 +92,8 @@ class NativeRun:
             NativeCreateProgress.NOT_APPLICABLE,
         }:
             raise ValueError("retry permit does not prove the native identity reusable")
+        if evidence.teardown is not TeardownStatus.QUIESCENT:
+            raise ValueError("retry permit does not prove attempt teardown quiescent")
         return replace(self, attempt=attempt, _first_seen=False, _noted=set())
 
 
@@ -145,6 +148,7 @@ def conclude_native_run(
     facts: AttemptFacts,
     connection_session_id: str | None,
     lifecycle: LifecycleLog,
+    teardown: TeardownStatus,
     prior_error_phase: str = "post_exit",
 ) -> NativeRunOutcome:
     """Conclude once per attempt, after its child exited and teardown joined."""
@@ -179,6 +183,11 @@ def conclude_native_run(
         native_create = NativeCreateProgress.MATERIALIZED
     else:
         native_create = adapter.observe_create_materialization(run.identity)
+        if (
+            native_create is NativeCreateProgress.NOT_MATERIALIZED
+            and teardown is not TeardownStatus.QUIESCENT
+        ):
+            native_create = NativeCreateProgress.UNKNOWN
 
     exit_chat_id = None
     if error is None and post.exit is not None:

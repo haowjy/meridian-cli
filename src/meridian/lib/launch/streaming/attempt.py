@@ -26,6 +26,7 @@ from meridian.lib.harness.common import parse_json_stream_event, unwrap_event_pa
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
 from meridian.lib.harness.connections.errors import (
     ConnectionStartFailure,
+    TeardownStatus,
     TurnSubmission,
 )
 from meridian.lib.harness.semantics import NormalizedHarnessEvent, TerminalEventOutcome
@@ -70,6 +71,7 @@ class AttemptRuntime:
     start_error: str | None = None
     start_failure: ConnectionStartFailure | None = None
     turn_submission: TurnSubmission = TurnSubmission.UNKNOWN
+    teardown: TeardownStatus = TeardownStatus.UNKNOWN
     identity_error: NativeIdentityError | None = None
 
     @property
@@ -516,6 +518,7 @@ async def run_streaming_attempt(
     start_error: str | None = None
     start_failure: ConnectionStartFailure | None = None
     turn_submission = TurnSubmission.UNKNOWN
+    teardown = TeardownStatus.UNKNOWN
     identity_error: NativeIdentityError | None = None
     try:
         if runner_phase is not None:
@@ -677,6 +680,7 @@ async def run_streaming_attempt(
         start_error = str(exc.cause)
         start_failure = exc
         turn_submission = exc.turn_submission
+        teardown = exc.teardown
         if isinstance(exc.cause, NativeIdentityError):
             identity_error = exc.cause
     except NativeIdentityError as exc:
@@ -727,5 +731,6 @@ async def run_streaming_attempt(
         start_error=start_error,
         start_failure=start_failure,
         turn_submission=turn_submission,
+        teardown=teardown,
         identity_error=identity_error,
     )

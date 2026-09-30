@@ -9,9 +9,11 @@ from meridian.lib.core.native_identity import NativeCreateProgress
 from meridian.lib.harness.connections.errors import (
     ConnectionStartFailure,
     RetryableConnectionStartupError,
+    TeardownStatus,
     TurnSubmission,
 )
 from meridian.lib.harness.semantics import TerminalEventOutcome, TerminalOutcomeCause
+from meridian.lib.launch.errors import ErrorCategory
 
 
 class FailureDisposition(StrEnum):
@@ -33,11 +35,18 @@ class AttemptFailure:
     code: str
     message: str | None = None
 
+    @property
+    def final_message(self) -> str:
+        """Stable report cause selected by the same record used for retry."""
+
+        return self.message or self.code
+
 
 @dataclass(frozen=True)
 class ReplayEvidence:
     turn: TurnSubmission
     native_create: NativeCreateProgress
+    teardown: TeardownStatus
 
 
 @dataclass(frozen=True)
@@ -68,19 +77,25 @@ class RetryPermit:
 def classify_attempt_failure(
     *,
     cancelled: bool,
+    cancellation_message: str | None,
     terminal_outcome: TerminalEventOutcome | None,
     terminal_code: str | None,
+    terminal_message: str | None,
     start_failure: ConnectionStartFailure | None,
     guardrail_failed: bool,
     timed_out: bool,
     budget_exceeded: bool,
-    legacy_transient: bool,
-    message: str | None,
+    legacy_category: ErrorCategory,
+    fallback_message: str | None,
 ) -> AttemptFailure:
     """Select the strongest typed cause; weaker diagnostics cannot override it."""
 
     if cancelled:
-        return AttemptFailure(FailureDisposition.CANCELLED, "cancelled", message)
+        return AttemptFailure(
+            FailureDisposition.CANCELLED,
+            "cancelled",
+            cancellation_message or "cancelled",
+        )
     if terminal_outcome is not None and terminal_outcome.exit_code != 0:
         disposition = (
             FailureDisposition.TRANSIENT
@@ -89,23 +104,41 @@ def classify_attempt_failure(
         )
         return AttemptFailure(disposition, "harness_terminal", terminal_outcome.error)
     if terminal_code is not None:
-        return AttemptFailure(FailureDisposition.TERMINAL, terminal_code, message)
+        return AttemptFailure(
+            FailureDisposition.TERMINAL,
+            terminal_code,
+            terminal_message or terminal_code,
+        )
     if guardrail_failed:
-        return AttemptFailure(FailureDisposition.TERMINAL, "guardrail_failed", message)
+        return AttemptFailure(FailureDisposition.TERMINAL, "guardrail_failed")
     if timed_out:
-        return AttemptFailure(FailureDisposition.TERMINAL, "timeout", message)
+        return AttemptFailure(FailureDisposition.TERMINAL, "timeout")
     if budget_exceeded:
-        return AttemptFailure(FailureDisposition.TERMINAL, "budget_exceeded", message)
+        return AttemptFailure(FailureDisposition.TERMINAL, "budget_exceeded")
     if start_failure is not None:
         disposition = (
             FailureDisposition.TRANSIENT
             if isinstance(start_failure.cause, RetryableConnectionStartupError)
             else FailureDisposition.UNKNOWN
         )
-        return AttemptFailure(disposition, type(start_failure.cause).__name__, message)
-    if legacy_transient:
-        return AttemptFailure(FailureDisposition.TRANSIENT, "legacy_transient", message)
-    return AttemptFailure(FailureDisposition.UNKNOWN, "unclassified_failure", message)
+        return AttemptFailure(
+            disposition,
+            type(start_failure.cause).__name__,
+            str(start_failure.cause),
+        )
+    if legacy_category is ErrorCategory.RETRYABLE:
+        return AttemptFailure(
+            FailureDisposition.TRANSIENT,
+            "legacy_transient",
+            fallback_message,
+        )
+    if legacy_category is ErrorCategory.STRATEGY_CHANGE:
+        return AttemptFailure(FailureDisposition.TERMINAL, "strategy_change")
+    return AttemptFailure(
+        FailureDisposition.UNKNOWN,
+        "unclassified_failure",
+        fallback_message,
+    )
 
 
 def assess_replay_safety(evidence: ReplayEvidence) -> tuple[ReplaySafety, str]:
@@ -115,6 +148,8 @@ def assess_replay_safety(evidence: ReplayEvidence) -> tuple[ReplaySafety, str]:
         return ReplaySafety.UNSAFE, "initial_turn_submitted"
     if evidence.native_create is NativeCreateProgress.MATERIALIZED:
         return ReplaySafety.UNSAFE, "native_create_materialized"
+    if evidence.teardown is not TeardownStatus.QUIESCENT:
+        return ReplaySafety.UNKNOWN, "teardown_not_quiescent"
     if evidence.turn is TurnSubmission.NOT_SUBMITTED and evidence.native_create in {
         NativeCreateProgress.NOT_MATERIALIZED,
         NativeCreateProgress.NOT_APPLICABLE,

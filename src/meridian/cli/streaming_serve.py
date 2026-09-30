@@ -20,6 +20,7 @@ from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import HarnessConnection
+from meridian.lib.harness.connections.errors import ConnectionStartFailure, TeardownStatus
 from meridian.lib.harness.registry import get_default_harness_registry, get_harness_bundle
 from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
 from meridian.lib.launch.extract import enrich_finalize
@@ -184,6 +185,7 @@ async def streaming_serve(
             child_env.update(prelaunch.env_overrides)
             connection_config = replace(connection_config, child_env=child_env)
             run_error: BaseException | None = None
+            teardown = TeardownStatus.UNKNOWN
             try:
                 outcome = await run_streaming_spawn(
                     config=connection_config,
@@ -203,6 +205,10 @@ async def streaming_serve(
                 outcome_exit_code = outcome.exit_code
                 if outcome_status == "failed":
                     failure_message = outcome.error
+                teardown = TeardownStatus.QUIESCENT
+            except ConnectionStartFailure as exc:
+                teardown = exc.teardown
+                run_error = exc
             except NativeIdentityError as exc:
                 identity_error = exc
                 run_error = exc
@@ -224,6 +230,7 @@ async def streaming_serve(
                     facts=facts,
                     connection_session_id=connection.session_id if connection is not None else None,
                     lifecycle=lifecycle,
+                    teardown=teardown,
                 )
                 native_key = native_run.entry.complete()
                 if run_error is None:

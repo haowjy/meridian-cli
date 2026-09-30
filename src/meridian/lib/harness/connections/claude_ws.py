@@ -28,7 +28,11 @@ from meridian.lib.harness.connections.base import (
     reap_on_ownership_transfer_failure,
     validate_prompt_size,
 )
-from meridian.lib.harness.connections.errors import TurnSubmission
+from meridian.lib.harness.connections.errors import (
+    IncompleteStartupTeardown,
+    TeardownStatus,
+    TurnSubmission,
+)
 from meridian.lib.harness.connections.managed_stdio import (
     ManagedStdioProcess,
     launch_managed_stdio,
@@ -105,6 +109,7 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._signal_in_flight = False
         self._startup_emitter: StartupPhaseEmitter | None = None
         self._initial_turn_submission = TurnSubmission.NOT_SUBMITTED
+        self._startup_teardown = TeardownStatus.UNKNOWN
 
     @property
     def state(self) -> ConnectionState:
@@ -129,6 +134,10 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
     @property
     def initial_turn_submission(self) -> TurnSubmission:
         return self._initial_turn_submission
+
+    @property
+    def startup_teardown(self) -> TeardownStatus:
+        return self._startup_teardown
 
     @property
     def subprocess_pid(self) -> int | None:
@@ -171,9 +180,12 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             await self._send_user_turn(config.prompt)
             self._initial_turn_submission = TurnSubmission.SUBMITTED
             self._set_state("connected")
-        except BaseException:
+        except BaseException as exc:
             self._mark_failed("Claude connection startup failed.")
-            await reap_on_ownership_transfer_failure(self._cleanup_start_failure)
+            local_teardown = await reap_on_ownership_transfer_failure(self._cleanup_start_failure)
+            self._startup_teardown = (
+                exc.teardown if isinstance(exc, IncompleteStartupTeardown) else local_teardown
+            )
             raise
 
     async def _cleanup_start_failure(self) -> None:

@@ -154,10 +154,12 @@ are removed only by the explicit session-history prune.
 
 Automatic retry is startup recovery, never turn replay. `retry.py` permits another
 attempt only for a typed transient cause with `not_submitted` turn evidence and a
-proven unmaterialized (or inapplicable) create identity. Unknown evidence, explicit
-terminal outcomes, completed submission, guardrail failures, cancellation, and
-materialized identities stop. A permit can only rearm the same prebound identity;
-the runner never mints or rebinds a chat identity.
+quiescent teardown followed by a proven unmaterialized (or inapplicable) create
+identity. Unknown evidence, explicit terminal outcomes, completed submission,
+guardrail failures, cancellation, and materialized identities stop. The same typed
+attempt failure selects retry disposition and the reported final cause; legacy
+string/exit classification is fallback evidence only. A permit can only rearm the
+same prebound identity; the runner never mints or rebinds a chat identity.
 
 Runner lifecycle diagnostics can execute after async boundaries. Their
 parent-creating writes use the published-spawn artifact mutation seam; never append

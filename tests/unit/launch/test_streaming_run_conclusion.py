@@ -8,6 +8,7 @@ from meridian.lib.launch.extract import (
     classify_finalize_report,
 )
 from meridian.lib.launch.report import ExtractedReport, ReportSource
+from meridian.lib.launch.retry import AttemptFailure, FailureDisposition
 from meridian.lib.launch.streaming_runner import (
     AttemptRuntime,
     StreamingRunConclusion,
@@ -52,12 +53,23 @@ def _extraction_with_report(
     )
 
 
-def test_absorb_attempt_updates_exit_code_and_terminal_flags() -> None:
+def test_commit_attempt_uses_typed_failure_for_reporting_and_terminal_flags() -> None:
     conclusion = StreamingRunConclusion()
 
-    conclusion.absorb_attempt(_attempt(exit_code=7, terminal_observed=True))
+    conclusion.commit_attempt(
+        _attempt(exit_code=7, terminal_observed=True),
+        exit_code=7,
+        failure=AttemptFailure(
+            FailureDisposition.TERMINAL,
+            "typed_failure",
+            "exact upstream failure",
+        ),
+        terminal_status="failed",
+        cancelled=False,
+    )
 
     assert conclusion.exit_code == 7
+    assert conclusion.failure_reason == "exact upstream failure"
     assert conclusion.final_attempt_terminal_observed is True
 
 
