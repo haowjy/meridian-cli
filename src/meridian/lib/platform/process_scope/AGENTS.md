@@ -26,9 +26,14 @@ dispatch, exception safety, and logging. Do not call `posix.terminate_pgid()` or
 snapshot — if you call terminate after stop without a snapshot, the containment boundary
 is lost.
 
-**`terminate()` must not raise.** Exceptions are caught, logged with
+**`terminate()` returns typed cleanup evidence for ordinary failures.** Exceptions
+from the containment backend are caught, logged with
 `process_scope.terminate_failed`, and returned as a degraded `CleanupResult`.
-Teardown paths must remain safe even when containment fails.
+Caller cancellation is not an ordinary cleanup failure: `CancelledError`
+propagates from this low-level async primitive so ownership remains recoverable.
+Only `reap_on_ownership_transfer_failure()` intentionally shields cleanup across
+cancellation at the startup ownership boundary. Teardown paths must remain safe
+even when containment fails.
 
 **Cleanup success is explicit.** `CleanupResult.verification_complete` says whether
 the backend inspected its full ownership boundary after signaling, and

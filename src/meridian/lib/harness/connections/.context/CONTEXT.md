@@ -197,11 +197,17 @@ Both are 10 MiB uniform across adapters:
 
 ### Startup Error Classification
 
-`errors.py` defines the retry decision tree:
+`errors.py` classifies startup causes for callers:
 
 - `ConnectionStartupError` — base; caller must not retry
-- `RetryableConnectionStartupError` — subclass; caller may retry with new config
+- `RetryableConnectionStartupError` — typed transient cause; it is only one input
+  to launch retry policy, not permission to replay a turn or mint a new identity
 - `PortBindError` — TOCTOU race on port reservation; retryable
+
+Streaming launch retries additionally require typed initial-turn progress, verified
+quiescent teardown, and native-create materialization evidence. The sole decision
+lives in `launch/retry.py`; the primary observer's port retry is a separate
+connection-setup loop.
 
 ## Rationale
 
