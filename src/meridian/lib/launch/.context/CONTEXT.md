@@ -63,7 +63,6 @@ source fails the attempt. Later signals and the connection's current ID are
 store-authoritative diagnostics. `conclude_native_run` runs after teardown joins:
 artifact first ID, connection current ID, `observe_after_exit`, entry verification,
 exit allocation, one boundary write, typed failure or invocation attribution.
-Retries re-arm against the original pre-exec facts, not a previously observed ID.
 Repeated delivery of the same ID within an attempt binds/logs once.
 New exit chats are allocated only when the exact native resolver finds a valid
 session; an already-bound exact chat still wins, including the entry chat. A verified

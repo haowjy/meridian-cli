@@ -421,12 +421,11 @@ def test_reconcile_active_spawn_post_exit_with_live_runner_skips(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A recorded attempt exit must not finalize a spawn whose runner is alive.
+    """A recorded harness exit must not finalize a spawn whose runner is alive.
 
-    The runner records last_attempt_exit_code/last_attempt_exited_at after every attempt drains,
-    including between retries and before post-attempt guardrails run. While the
-    runner process is still alive it owns finalization, so the reaper must skip
-    rather than orphan it.
+    The runner records last_attempt_exit_code/last_attempt_exited_at after the
+    harness drains and before post-run guardrails. While the runner process is
+    still alive it owns finalization, so the reaper must skip rather than orphan it.
     """
     runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
 
