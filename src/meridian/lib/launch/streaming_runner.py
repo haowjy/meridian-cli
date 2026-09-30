@@ -759,17 +759,21 @@ async def execute_with_streaming(
                         completed_attempt=attempt_number,
                     )
                 except Exception as exc:
-                    _record_lifecycle(
-                        "retry_setup_failed",
-                        attempt=attempt_number,
-                        exception_type=type(exc).__name__,
-                        exception=str(exc),
-                    )
-                    _append_text_to_stderr_artifact(
-                        artifacts=artifacts,
-                        spawn_id=run.spawn_id,
-                        text=f"retry setup failed: {exc}",
-                    )
+                    # Diagnostics are subordinate to the causal attempt. A failure
+                    # while recording retry setup must not replace that outcome.
+                    with suppress(Exception):
+                        _record_lifecycle(
+                            "retry_setup_failed",
+                            attempt=attempt_number,
+                            exception_type=type(exc).__name__,
+                            exception=str(exc),
+                        )
+                    with suppress(Exception):
+                        _append_text_to_stderr_artifact(
+                            artifacts=artifacts,
+                            spawn_id=run.spawn_id,
+                            text=f"retry setup failed: {exc}",
+                        )
                     break
 
                 conclusion.retries_attempted += 1
