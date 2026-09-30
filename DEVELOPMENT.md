@@ -15,10 +15,13 @@ clone, so every fresh checkout must run this once.
 Hook policy:
 
 - Pre-commit is not installed by default, so checkpoint commits stay fast. Humans who want a local fast `ruff` guardrail can opt in by copying or symlinking `.githooks/optional/pre-commit` into their active hooks path.
-- Pre-push is strict: it runs `scripts/preflight.sh`, which currently runs
-  `uv run ruff check .`, `uv run --extra dev python -m pyright`, `uv run pytest -x -q`, and
-  `uv build --no-sources`, then blocks direct `v*` tag pushes. `v*` tags are
-  CI-owned; they are created automatically after normal pushes to `main`.
+- Pre-push is strict. It blocks direct `v*` tag pushes (`v*` tags are CI-owned;
+  they are created automatically after normal pushes to `main`), and for branch
+  pushes it runs `scripts/preflight.sh full`: Ruff, Pyright, the locked Pi
+  extension install and build, pytest, and `uv build --no-sources`.
+- Git hooks run without a terminal, so every preflight step must run without
+  prompting. Scope any automation setting to the step that needs it; don't export
+  it for the whole gate.
 - Humans may bypass hooks with Git's standard `--no-verify` only when they are
   doing so intentionally. LLM agents must not use `--no-verify` unless the user
   explicitly instructs them to.
@@ -113,11 +116,11 @@ Fast mode (lint only):
 scripts/preflight.sh fast
 ```
 
-Pre-push gate (lint + type check + all tests, with optional `--quick` to skip smoke tests):
+Quicker Python-only check (lint, type check, unit and contract tests; not the
+pre-push gate):
 
 ```bash
 scripts/check.sh
-scripts/check.sh --quick
 ```
 
 Individual checks:

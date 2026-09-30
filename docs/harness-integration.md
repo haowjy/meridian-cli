@@ -797,13 +797,12 @@ onto the session's reopen lineage. Runner `history.jsonl` is never its source.
 ### Pre-Push
 
 ```bash
-uv run ruff check .
-uv run --extra dev python -m pyright
-uv run pytest -x -q
-uv build --no-sources
+scripts/preflight.sh full
 ```
 
-All must pass. The pre-push hook enforces this automatically.
+This runs Ruff, Pyright, the locked Pi extension install and build, pytest, and
+`uv build --no-sources`. All must pass. The pre-push hook runs it automatically
+for branch pushes; see [DEVELOPMENT.md](../DEVELOPMENT.md#setup) for hook policy.
 
 ## Pi-Specific Current Status and Remaining Gaps
 
