@@ -8,12 +8,12 @@ from pathlib import Path
 from meridian.lib.catalog.model_aliases import (
     AliasEntry,
     MarsResultCache,
-    cached_mars_models_list_all,
+    cached_mars_models_catalog,
     cached_mars_models_resolve,
     load_mars_aliases,
     parse_harness_candidates,
     parse_runnable_paths,
-    run_mars_models_list_all,
+    run_mars_models_catalog,
     run_mars_models_resolve,
 )
 from meridian.lib.config.project_root import resolve_project_root_resolution
@@ -51,37 +51,13 @@ def resolve_model(
     if not normalized:
         raise ValueError("Model identifier must not be empty.")
 
-    def exact_id_alias_entry(model: dict[str, object]) -> AliasEntry:
-        harness: object = model.get("harness")
-        resolved_harness: HarnessId | None = None
-        if isinstance(harness, str) and harness.strip():
-            with suppress(ValueError):
-                resolved_harness = HarnessId(harness.strip())
-
-        description = model.get("description")
-        harness_candidates = parse_harness_candidates(model.get("harness_candidates"))
-        runnable_paths = parse_runnable_paths(model.get("runnable_paths"))
-        return AliasEntry(
-            alias="",
-            model_id=ModelId(normalized),
-            resolved_harness=resolved_harness,
-            description=description.strip() if isinstance(description, str) else None,
-            harness_candidates=harness_candidates,
-            runnable_paths=runnable_paths,
-        )
-
-    def find_exact_id_match() -> dict[str, object] | None:
-        models = (
-            cached_mars_models_list_all(project_root, cache=cache)
+    def catalog_has_exact_id() -> bool:
+        catalog = (
+            cached_mars_models_catalog(project_root, cache=cache)
             if cache is not None
-            else run_mars_models_list_all(project_root)
+            else run_mars_models_catalog(project_root)
         )
-        for model in models or []:
-            model_id = model.get("id")
-            if not isinstance(model_id, str) or model_id.strip() != normalized:
-                continue
-            return model
-        return None
+        return any(model.get("id") == normalized for model in catalog or [])
 
     def mars_alias_entry(
         mars_result: dict[str, object],
@@ -129,7 +105,7 @@ def resolve_model(
         )
 
     # Step 1: Try mars resolve (alias + harness in one call) before the
-    # expensive all-models exact-ID guard.
+    # expensive catalog exact-ID guard.
     mars_result = (
         cached_mars_models_resolve(normalized, project_root, cache=cache)
         if cache is not None
@@ -144,18 +120,19 @@ def resolve_model(
                 return mars_alias_entry(mars_result, resolved_model_id)
 
             # mars can prefix-match literal IDs (for example gpt-5.4 ->
-            # gpt-5.4-mini). Only pay for all-model discovery when mars
+            # gpt-5.4-mini). Only pay for catalog discovery when mars
             # resolved to a different ID and the literal exact-ID guard matters.
-            exact_id_match = find_exact_id_match()
-            if exact_id_match is not None:
-                return exact_id_alias_entry(exact_id_match)
+            if catalog_has_exact_id():
+                # The raw catalog proves identity, not a harness route. The
+                # launch bundle owns runtime routing for this literal ID.
+                return AliasEntry(alias="", model_id=ModelId(normalized))
 
             return mars_alias_entry(mars_result, resolved_model_id)
 
     # Step 2: Raw model ID passthrough when mars cannot resolve the input.
     # Harness stays unresolved here and downstream routing should treat missing
     # harness as a resolution error rather than guessing from model patterns.
-    # Do not call the expensive all-model exact-ID guard in this path; the
+    # Do not call the expensive catalog exact-ID guard in this path; the
     # guard only exists for mars prefix-match collisions where mars returned a
     # different model ID than the literal input.
     return AliasEntry(alias="", model_id=ModelId(normalized), resolved_harness=None)

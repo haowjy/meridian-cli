@@ -1,26 +1,24 @@
-# Model catalog configuration
+# Model catalog commands
 
-`meridian mars models list` shows the static alias/catalog inventory for the
-current project. Use `--all` to include all alias candidates or `--catalog` for
-the raw models.dev cache.
+`meridian mars models list` is a **human display** of curated harness–model
+possibilities. It is not a machine-readable alias or raw-catalog API. Use
+`--all` to include hidden rows and `--live` to add current fixed-harness
+eligibility; eligibility is not a launch decision.
 
-Use `meridian mars models list --live` when you need routed availability,
-selected harnesses, and runnable paths. In live mode, `--unavailable` includes
-unavailable routes.
+Use `meridian mars models aliases --json` for the static alias inventory. An
+alias's `harness` is an authored preference, not proof of an available route.
+Use `meridian mars models resolve ALIAS --json` for per-alias resolution; the
+launch bundle makes the final runtime routing decision.
 
-Use `meridian mars models resolve ALIAS --json` for the authoritative mapping a
-spawn will use in the current project and local config.
+Use `meridian mars models catalog --json` for the raw models.dev cache. Its
+`catalog` entries include model IDs, provider, release date, description,
+context/output limits, and costs. They do not include harness routes,
+matched aliases, or live availability. Meridian's catalog listing projects
+these raw entries without inventing missing routing fields. The
+`meridian.models.list` extension accepts only `project_root` and returns
+`models` with `model_id`, provider, description, release date, context/output
+limits, costs, and a derived cost tier when available. It has no harness,
+alias, name, family, capabilities, or pinned fields.
 
-Builtin aliases (`opus`, `sonnet`, `haiku`, `codex`, `gpt`, `gemini`) auto-resolve to the latest model per family. The default list filters aggressively:
-
-- Date-suffixed variants hidden when base model exists
-- Superseded models hidden when a newer lineage successor exists
-- Models older than ~120 days hidden by default
-- High-cost models (≥$10/M input tokens) hidden by default
-
-Use `meridian mars models refresh` to force a cache refresh from the models.dev catalog.
-
-In `models list --live` output, Cursor models appear as `runnable` when the
-`cursor` binary is installed and the harness probe succeeds. If `cursor` is not
-on `PATH`, Cursor routes show as `unavailable`. Run `meridian doctor` to check
-harness status.
+Use `meridian mars models refresh` to force a models.dev cache refresh.
+`meridian doctor` checks harness installation and health.

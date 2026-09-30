@@ -8,7 +8,7 @@ from pathlib import Path
 from meridian.lib.catalog.model_aliases import (
     AliasEntry,
     MarsResultCache,
-    cached_mars_models_list_all,
+    cached_mars_models_catalog,
 )
 from meridian.lib.catalog.models import load_merged_aliases, resolve_model
 
@@ -60,9 +60,9 @@ class CatalogSession:
             self._alias_map[no_refresh_models] = by_alias
         return self._alias_map[no_refresh_models]
 
-    def list_all_models(self) -> list[dict[str, object]] | None:
-        """List all known models, caching mars calls for this operation."""
-        return cached_mars_models_list_all(self._project_root, cache=self._cache)
+    def load_catalog(self) -> list[dict[str, object]] | None:
+        """Load raw catalog entries, caching mars calls for this operation."""
+        return cached_mars_models_catalog(self._project_root, cache=self._cache)
 
 
 __all__ = ["CatalogSession"]

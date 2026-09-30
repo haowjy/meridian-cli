@@ -257,7 +257,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         StateRequirement.NONE,
         TelemetryMode.NONE,
         "text",
-        "List model catalog inventory.",
+        "Inspect the curated harness-model view.",
         redirect=RedirectPolicy(
             target="meridian mars models list", message="Redirecting to meridian mars models list"
         ),

@@ -15,10 +15,13 @@ operation, then discards it. The session holds a `MarsResultCache` scoped to its
 lifetime — this prevents redundant mars subprocess calls within one CLI invocation
 and prevents stale results from leaking across invocations.
 
-The resolution pipeline for a model alias:
-1. `mars models resolve <name>` via subprocess
-2. If unknown alias → search `mars models list --all` for exact model ID match
-3. If not found → pass through as raw model ID with unresolved harness
+The legacy direct-resolution pipeline (launch routing uses the bundle):
+1. Call `mars models resolve <name>` via subprocess.
+2. If Mars resolves to a different ID, check `mars models catalog --json` for
+   the exact literal ID. Return that literal ID with an unresolved harness if
+   found; otherwise keep Mars's resolution.
+3. If Mars reports an unknown alias, pass the input through as a raw model ID
+   with an unresolved harness.
 
 ## Key Rules
 
@@ -26,14 +29,14 @@ The resolution pipeline for a model alias:
 `CatalogSession.__init__`. A module-level singleton would cache across CLI invocations
 and prevent alias updates from taking effect until restart.
 
-**`run_mars_models_resolve` raises on mars unavailability; the list variant returns
-`None`.** Mars is always bundled — unavailability is a hard error for resolution but
-degrades gracefully for listing. Do not add a soft fallback to resolve.
+**`run_mars_models_resolve` raises on mars unavailability; aliases/catalog queries
+return `None`.** Mars is always bundled — unavailability is a hard error for
+resolution but degrades gracefully for inventory. Do not add a soft fallback to resolve.
 
-**Use `AliasEntry.harness` (property), not `.resolved_harness` (raw field).** The
-property raises when `resolved_harness` is missing. Mars should always provide a
-harness for resolved entries; missing harness is a bug, not a value meridian should
-guess.
+**Use `AliasEntry.harness` only when a harness is required; it raises if absent.**
+Static aliases may have no authored harness preference, and catalog exact-ID
+matches have no route. Do not guess from model-name patterns; runtime routing
+comes from the launch bundle.
 
 **`CatalogSession` is single-operation use.** Create one per launch operation and
 discard at operation end. Do not share across operations — cache is intentionally
@@ -65,7 +68,7 @@ agent = load_agent_profile(project_root, "coder")
 ## Depth
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — mars subprocess integration, resolve vs
-list asymmetry, `MarsResultCache` scoping contract, and fallback to merged JSON
+inventory asymmetry, `MarsResultCache` scoping contract, and fallback to merged JSON
 
 ## Related
 

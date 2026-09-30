@@ -19,14 +19,20 @@ is unavailable or broken. Returns `None` only when the alias is unknown (mars ex
 code 1). Mars is always bundled with meridian, so unavailability is a hard error,
 not a soft fallback.
 
-**`run_mars_models_list(project_root)`** — returns `None` silently when mars is
-unavailable (used for listing, not resolution). Falls back to reading
+**`run_mars_models_aliases(project_root)`** — reads `mars models aliases --json`
+and returns `None` silently when mars is unavailable. Falls back to reading
 `.mars/models-merged.json` directly. This asymmetry is intentional: resolution must
-succeed or fail loudly; listing can degrade gracefully.
+succeed or fail loudly; alias inventory can degrade gracefully. The aliases output
+is static inventory, not routed/live availability.
+
+**`run_mars_models_catalog(project_root)`** — reads the raw `catalog` array from
+`mars models catalog --json` and returns `None` on failure. Catalog entries carry
+model metadata but no harness, aliases, or runnable paths. Launch-bundle owns
+runtime routing.
 
 Dry-run static alias lookup passes `no_refresh_models=True` through the same
-list path to Mars. Cold cache retains the existing merged-file fallback for
-pinned aliases. Alias-map and list caches distinguish refresh policy so a
+aliases path to Mars. Cold cache retains the existing merged-file fallback for
+pinned aliases. Alias-map and aliases caches distinguish refresh policy so a
 cache-only lookup cannot suppress a later normal lookup in the same operation.
 
 **Timeout:** 60 seconds for all mars subprocess calls. Mars may do a cold
@@ -35,8 +41,8 @@ cache-only lookup cannot suppress a later normal lookup in the same operation.
 ### MarsResultCache Scoping
 
 `MarsResultCache` is per-operation, not module-global. Create it inside
-`CatalogSession.__init__` or pass an existing one. It caches resolve, list, and
-list-all results for the duration of one CLI invocation.
+`CatalogSession.__init__` or pass an existing one. It caches resolve, aliases,
+and catalog results for the duration of one CLI invocation.
 
 Caching transient `None` results is intentional — if mars returns "unknown alias"
 once, it will return the same for the same input within the operation. Don't retry.
@@ -46,20 +52,20 @@ separate CLI invocations and prevent alias updates from being picked up.
 
 ### Resolution Pipeline
 
-`resolve_model(name_or_alias, project_root)` in `models.py`:
+`resolve_model(name_or_alias, project_root)` in `models.py` is a legacy direct
+helper; launches obtain runtime routing from the Mars launch bundle:
 
-1. Call `mars models resolve <name> --json` (via `cached_mars_models_resolve`)
-2. If mars returns a result → return `AliasEntry` from it
-3. If mars returns `None` (unknown alias) → search `mars models list --all` for exact model ID match
-4. If found in all-models list → return `AliasEntry` with empty alias (direct model ID passthrough)
-5. If not found → return `AliasEntry` with the input as model ID and unresolved harness
+1. Call `mars models resolve <name> --json` (via `cached_mars_models_resolve`).
+2. If Mars returned a different ID, check `mars models catalog --json` for the exact literal ID.
+3. If found in catalog, return the literal ID with empty alias and unresolved harness; otherwise keep Mars's resolution.
+4. If Mars returned an unknown alias, pass the input through with unresolved harness.
 
 ### AliasEntry
 
-`AliasEntry.harness` property: returns `resolved_harness` if mars provided it;
-raises `ValueError` otherwise. Missing harness is a mars-resolution bug, not a case
-for pattern guessing. Callers should always use `.harness` (the property), not
-`.resolved_harness` (the raw field).
+`AliasEntry.harness` property: returns the recorded harness if present, raises
+`ValueError` otherwise. Static aliases and exact-ID catalog matches can
+legitimately have no harness; do not guess one from model-name patterns.
+Launch-bundle owns the runtime route.
 
 `AliasEntry.mars_provided_harness` exposes the raw mars-provided value for
 diagnostic display — do not use it for routing decisions.

@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Breaking
+- Meridian's machine consumers now require and exactly pin `mars-agents==0.15.0`, which provides `models aliases --json` and `models catalog --json`; Mars 0.14.2 cannot serve these commands.
+- `meridian.models.list` now exposes raw catalog metadata only. Its `all` and `show_superseded` inputs and unpopulatable `harness`, `aliases`, `name`, `family`, `capabilities`, and `pinned` output fields were removed; its text view no longer shows HARNESS or ALIAS columns.
+
 ## [0.7.0] - 2026-09-27
 
 ### Upgrade notes
@@ -56,6 +60,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Managed Pi launches load a bounded, atomic v2 session-boundary observer without writing native journals.
 
 ### Fixed
+- Accept the route-trace v3 contract emitted by the pinned Mars 0.15.0 launch-bundle adapter.
 - Deliver composed starting prompts as first user turns in interactive Claude, Pi, and OpenCode sessions; guard oversized CLI prompt arguments.
 - `session log`/`export` read archived native snapshots again after `session import` (history UUID, streamed from the ZIP) and `session restore` (restored `cN`/`pN`), validating seal and history binding; live chats never fall back to snapshots. Re-importing reports `Already imported`.
 - `session import`/`restore` accept archives written by 0.6.7 and earlier.
