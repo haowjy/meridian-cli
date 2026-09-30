@@ -800,7 +800,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         if terminate_process:
             child = self._child
             if child is not None:
-                stop_escalated = (await child.terminate()).escalated
+                stop_escalated = await child.terminate()
         if not self._events_stream_active and self._child is not None:
             self._child.close_stderr_handle()
         return stop_escalated

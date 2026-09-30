@@ -37,15 +37,6 @@ def _empty_config_snapshot() -> dict[str, object]:
     return {}
 
 
-class RetryPolicy(BaseModel):
-    """Retry configuration for spawn execution."""
-
-    model_config = ConfigDict(frozen=True)
-
-    max_attempts: int = 1
-    backoff_secs: float = 2.0
-
-
 class SessionRequest(BaseModel):
     """Session continuation options carried across prepare/execute boundaries."""
 
@@ -118,9 +109,6 @@ class SpawnRequest(BaseModel):
 
     # Execution policy carrier (replaces flat effort/sandbox/approval/autocompact/autocompact_pct)
     execution_policy: ResolvedExecutionPolicy = Field(default_factory=ResolvedExecutionPolicy)
-
-    # Execution policy (nested)
-    retry: RetryPolicy = Field(default_factory=RetryPolicy)
 
     # Session intent (nested)
     session: SessionRequest = Field(default_factory=SessionRequest)
@@ -238,7 +226,6 @@ __all__ = [
     "LaunchPolicySnapshot",
     "LaunchRuntime",
     "RequestPromptPayload",
-    "RetryPolicy",
     "SessionRequest",
     "SpawnRequest",
 ]

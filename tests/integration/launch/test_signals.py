@@ -50,8 +50,9 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
     tmp_path: Path,
 ) -> None:
     runtime_root = resolve_runtime_paths(tmp_path).root_dir
-    attempt_module = importlib.import_module("meridian.lib.launch.streaming.attempt")
-    run_streaming_spawn = attempt_module.run_streaming_spawn
+    run_streaming_spawn = importlib.import_module(
+        "meridian.lib.launch.streaming_runner"
+    ).run_streaming_spawn
 
     class _FakeControlSocketServer:
         def __init__(self, spawn_id: str, socket_path: Path, manager: object) -> None:
@@ -149,8 +150,7 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
         lambda _harness_id, _transport_id=TransportId.STREAMING: _SignalDrivenConnection,
     )
     monkeypatch.setattr(
-        attempt_module,
-        "install_signal_handlers",
+        "meridian.lib.launch.streaming_runner._install_signal_handlers",
         _fake_install_signal_handlers,
     )
 

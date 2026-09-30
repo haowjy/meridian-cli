@@ -400,7 +400,7 @@ class _ResidentDeadlineConnection:
             await asyncio.sleep(3600)
 
 
-class _ResidentRearmRetryConnection(_ResidentDeadlineConnection):
+class _ResidentGuardrailConnection(_ResidentDeadlineConnection):
     runtime_root = Path()
 
     @classmethod
@@ -428,7 +428,7 @@ class _ResidentRearmRetryConnection(_ResidentDeadlineConnection):
         )
         spawn_dir.mkdir(parents=True, exist_ok=True)
         (spawn_dir / "report.md").write_text(
-            "# Done\n\nResident retry completed.\n",
+            "# Done\n\nGuardrail input completed.\n",
             encoding="utf-8",
         )
         write_spawn_signal(type(self).runtime_root, self._spawn_id, "rearm")
@@ -438,107 +438,6 @@ class _ResidentRearmRetryConnection(_ResidentDeadlineConnection):
             event_type="turn/completed",
             harness_id="codex",
             payload={"threadId": self._session_id, "turnId": f"turn-{self._attempt_index}"},
-        )
-
-
-class _ScriptedRetryOpenCodeConnection:
-    starts = 0
-    first_attempt_events: tuple[RawHarnessEvent, ...] = ()
-    session_id_value = "session-scripted-retry-opencode"
-    subprocess_pid_value = 8383
-
-    @classmethod
-    def reset(
-        cls,
-        *,
-        first_attempt_events: tuple[RawHarnessEvent, ...],
-        session_id: str,
-        subprocess_pid: int,
-    ) -> None:
-        cls.starts = 0
-        cls.first_attempt_events = first_attempt_events
-        cls.session_id_value = session_id
-        cls.subprocess_pid_value = subprocess_pid
-
-    def __init__(self) -> None:
-        self.state = "created"
-        self._spawn_id = SpawnId("")
-        self._attempt_index = 0
-        self._session_id = type(self).session_id_value
-        self._resident_backend = _IdleResidentBackend()
-        self.capabilities = ConnectionCapabilities(
-            mid_turn_injection="http_post",
-            supports_steer=False,
-            supports_cancel=True,
-            runtime_model_switch=False,
-            structured_reasoning=True,
-        )
-
-    @property
-    def harness_id(self) -> HarnessId:
-        return HarnessId.OPENCODE
-
-    @property
-    def spawn_id(self) -> SpawnId:
-        return self._spawn_id
-
-    @property
-    def session_id(self) -> str | None:
-        return self._session_id
-
-    @property
-    def subprocess_pid(self) -> int | None:
-        return type(self).subprocess_pid_value
-
-    @property
-    def primary_event_scope(self) -> PrimaryEventScope | None:
-        session_id = self.session_id
-        return PrimaryEventScope(HarnessId.OPENCODE, session_id) if session_id else None
-
-    def observe_event_semantics(self, semantics: object) -> None:
-        _ = semantics
-
-    @property
-    def resident_backend(self) -> object:
-        return self._resident_backend
-
-    async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        plan = spec.native_identity
-        if plan is not None and plan.session_id is not None:
-            self._session_id = plan.session_id
-        type(self).starts += 1
-        self._attempt_index = type(self).starts
-        self._spawn_id = config.spawn_id
-        self.state = "connected"
-
-    async def stop(
-        self,
-        *,
-        reason: str | None = None,
-        progress: StopProgressCallback | None = None,
-    ) -> StopResult:
-        _ = reason, progress
-        self.state = "stopped"
-        return StopResult()
-
-    def health(self) -> bool:
-        return self.state == "connected"
-
-    async def send_user_message(self, text: str) -> None:
-        _ = text
-
-    async def send_cancel(self) -> None:
-        return None
-
-    async def events(self):  # type: ignore[no-untyped-def]
-        if self._attempt_index == 1:
-            for event in type(self).first_attempt_events:
-                yield event
-            return
-        yield RawHarnessEvent(
-            event_type="session.idle",
-            harness_id="opencode",
-            payload={"type": "session.idle", "sessionID": self.session_id},
         )
 
 

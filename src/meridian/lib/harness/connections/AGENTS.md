@@ -50,16 +50,10 @@ Transports differ at the wire level:
 **Get a connection class via `get_connection_class(harness_id, transport_id)`.**
 Requires `ensure_bootstrap()` first — the registry is populated as a bootstrap side effect.
 
-**Startup errors are classified.** `PortBindError` is retryable; other
-`ConnectionStartupError` subtypes are not. Launch retry policy combines this cause
-with replay-safety evidence; the connection and `SpawnManager` do not decide.
-
-**Initial-turn progress is typed and monotonic.** A connection starts at
-`not_submitted` only when it can prove no prompt write began, advances to `unknown`
-before an ambiguous write, and reaches `submitted` only after delivery completes.
-`dispatch_start()` preserves this evidence and typed teardown status in
-`ConnectionStartFailure`; it does not decide retry policy. A returned `start()` means
-the initial turn was submitted.
+**Port readiness stays local.** `PortBindError` identifies a loopback reservation
+race for callers such as primary attach that can safely select another unused port.
+The launch runner does not replay a harness turn after this or any other startup
+failure.
 
 **New transport = subclass `HarnessConnection[SpecT]`**, declare `_CAPABILITIES`,
 implement all abstract methods, register in the bundle. Missing registration →
@@ -79,11 +73,8 @@ child process can be stranded between owners. `reap_on_ownership_transfer_failur
 in `base.py` catches `BaseException`, shields cleanup from repeated cancellation
 deliveries in a while-not-done loop, and bounds foreground cleanup to 30 seconds.
 Durable `spawn_owned` process scopes and the reaper own any residue beyond that
-bound. Cleanup must return typed teardown evidence: coroutine completion alone is
-`unknown`. Managed process cleanup reduces `CleanupResult` to `quiescent` only after
-the complete process scope is verified empty; skips, survivors, incomplete
-verification, abandonment, or failure cannot prove replay safety. The rejected
-alternative (`with suppress` single-shot) did not survive repeated cancellation.
+bound. The rejected alternative (`with suppress` single-shot) did not survive
+repeated cancellation.
 
 **The published spawn directory is a startup precondition.** Connection and process-
 adoption paths never create `spawns/<id>/`. If retention deletes the aggregate across

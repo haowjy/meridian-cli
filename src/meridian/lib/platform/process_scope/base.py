@@ -104,10 +104,6 @@ class CleanupResult:
     degraded_fallback: bool
     skip_reason: str | None
     """Set when cleanup was intentionally skipped (e.g. 'pid_reuse_detected')."""
-    survivor_count: int | None = None
-    """Progress-capable processes still observed in the owned scope, if knowable."""
-    verification_complete: bool = False
-    """Whether the backend could inspect the full ownership boundary after cleanup."""
 
 
 class ScopedProcessHandle:
@@ -198,8 +194,6 @@ class ScopedProcessHandle:
                 kill_escalated=False,
                 degraded_fallback=True,
                 skip_reason="termination_exception",
-                survivor_count=None,
-                verification_complete=False,
             )
 
         _emit_termination_event(snap, result)
@@ -246,8 +240,6 @@ def _emit_termination_event(
         kill_escalated=result.kill_escalated,
         degraded_fallback=result.degraded_fallback,
         skip_reason=result.skip_reason,
-        survivor_count=result.survivor_count,
-        verification_complete=result.verification_complete,
     )
 
 

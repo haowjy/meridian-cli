@@ -78,8 +78,6 @@ async def terminate_tree(
             kill_escalated=False,
             degraded_fallback=degraded_fallback,
             skip_reason=None,
-            survivor_count=None,
-            verification_complete=False,
         )
 
     skip_reason = _validate_pid_birth(pid, root_created_at_epoch)
@@ -93,8 +91,6 @@ async def terminate_tree(
             kill_escalated=False,
             degraded_fallback=degraded_fallback,
             skip_reason=skip_reason,
-            survivor_count=None,
-            verification_complete=False,
         )
 
     root, children = _snapshot_tree(pid)
@@ -108,8 +104,6 @@ async def terminate_tree(
             kill_escalated=False,
             degraded_fallback=degraded_fallback,
             skip_reason=None,
-            survivor_count=None,
-            verification_complete=False,
         )
 
     descendant_count = len(children)
@@ -121,12 +115,11 @@ async def terminate_tree(
 
     _, alive = await asyncio.to_thread(psutil.wait_procs, tree, timeout=grace_secs)
     kill_escalated = bool(alive)
-    survivors: list[psutil.Process] = []
     if alive:
         for proc in alive:
             with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
                 proc.kill()
-        _, survivors = await asyncio.to_thread(psutil.wait_procs, alive, timeout=1.0)
+        await asyncio.to_thread(psutil.wait_procs, alive, timeout=1.0)
 
     return CleanupResult(
         scope_id=scope_id,
@@ -137,8 +130,6 @@ async def terminate_tree(
         kill_escalated=kill_escalated,
         degraded_fallback=degraded_fallback,
         skip_reason=None,
-        survivor_count=len(survivors),
-        verification_complete=False,
     )
 
 
@@ -167,8 +158,6 @@ def terminate_tree_sync(
             kill_escalated=False,
             degraded_fallback=degraded_fallback,
             skip_reason=skip_reason,
-            survivor_count=None,
-            verification_complete=False,
         )
 
     root, children = _snapshot_tree(pid)
@@ -182,8 +171,6 @@ def terminate_tree_sync(
             kill_escalated=False,
             degraded_fallback=degraded_fallback,
             skip_reason=None,
-            survivor_count=None,
-            verification_complete=False,
         )
 
     descendant_count = len(children)
@@ -195,12 +182,11 @@ def terminate_tree_sync(
 
     _, alive = psutil.wait_procs(tree, timeout=grace_secs)
     kill_escalated = bool(alive)
-    survivors: list[psutil.Process] = []
     if alive:
         for proc in alive:
             with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
                 proc.kill()
-        _, survivors = psutil.wait_procs(alive, timeout=1.0)
+        psutil.wait_procs(alive, timeout=1.0)
 
     return CleanupResult(
         scope_id=scope_id,
@@ -211,8 +197,6 @@ def terminate_tree_sync(
         kill_escalated=kill_escalated,
         degraded_fallback=degraded_fallback,
         skip_reason=None,
-        survivor_count=len(survivors),
-        verification_complete=False,
     )
 
 

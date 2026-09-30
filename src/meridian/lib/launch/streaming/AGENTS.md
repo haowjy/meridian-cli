@@ -1,7 +1,8 @@
 # launch/streaming/ — Streaming Support Utilities
 
-Focused mechanics for one streaming attempt. These support run-level orchestration
-in `streaming_runner.py`; they do not choose retry policy.
+Two focused utilities for streaming spawn execution: terminal trigger arbitration
+and spawn heartbeat. These support `execute_with_streaming()` in `streaming_runner.py`
+— they are not entry points themselves.
 
 ## What's Here
 
@@ -16,10 +17,6 @@ highest-priority trigger wins. Trigger priority is documented in `.context/CONTE
 **`heartbeat.py`** — `FileHeartbeat.touch()` performs one file timestamp update.
 The streaming runner owns periodic scheduling. The reaper in `lib/state/reaper.py`
 reads heartbeat age to determine if a spawn is orphaned.
-
-**`attempt.py`** — connection startup, typed initial-turn progress capture, event
-consumption, watchdogs, terminal arbitration, teardown join, and one-attempt result.
-It reports facts to the runner and never decides whether to retry.
 
 ## Key Rules
 

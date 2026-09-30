@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Generic, Literal, Protocol
 
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.connections.errors import TeardownStatus, TurnSubmission
 from meridian.lib.launch.launch_types import SpecT
 
 if TYPE_CHECKING:
@@ -99,17 +98,16 @@ class StopResult:
     """Normalized stop outcome metadata across harness connections."""
 
     escalated: bool = False
-    teardown: TeardownStatus = TeardownStatus.UNKNOWN
 
 
 StopProgressCallback = Callable[[str, dict[str, object]], Awaitable[None]]
 
 
 async def reap_on_ownership_transfer_failure(
-    cleanup: Callable[[], Awaitable[TeardownStatus | StopResult | None]],
+    cleanup: Callable[[], Awaitable[object]],
     *,
     deadline_seconds: float = OWNERSHIP_TRANSFER_REAP_TIMEOUT_SECONDS,
-) -> TeardownStatus:
+) -> None:
     """Best-effort, cancellation-shielded cleanup before ownership transfers.
 
     Startup callers use this after catching ``BaseException`` so external task
@@ -118,11 +116,9 @@ async def reap_on_ownership_transfer_failure(
     30s). The loop uses ``shield`` so repeated cancellation of the surrounding
     startup task does not abort an in-flight cleanup until the deadline.
 
-    The cleanup coroutine must return typed teardown evidence; untyped normal
-    completion remains ``UNKNOWN``. Expiry returns ``ABANDONED`` and scheduling
-    or cleanup failures return fail-closed evidence. Durable ``spawn_owned``
-    process scopes recorded on disk plus the reaper own any surviving child
-    processes by construction.
+    On expiry, logs a warning that foreground cleanup is abandoned and returns.
+    Durable ``spawn_owned`` process scopes recorded on disk plus the reaper own
+    any surviving child processes by construction.
     """
 
     loop = asyncio.get_running_loop()
@@ -130,7 +126,7 @@ async def reap_on_ownership_transfer_failure(
     try:
         cleanup_task = asyncio.ensure_future(cleanup())
     except BaseException:
-        return TeardownStatus.UNKNOWN
+        return
     while not cleanup_task.done():
         remaining = deadline - loop.time()
         if remaining <= 0:
@@ -139,7 +135,7 @@ async def reap_on_ownership_transfer_failure(
                 "durable spawn_owned scopes and reaper own any residue",
                 deadline_seconds,
             )
-            return TeardownStatus.ABANDONED
+            return
         try:
             await asyncio.wait_for(asyncio.shield(cleanup_task), timeout=remaining)
         except TimeoutError:
@@ -148,19 +144,9 @@ async def reap_on_ownership_transfer_failure(
                 "durable spawn_owned scopes and reaper own any residue",
                 deadline_seconds,
             )
-            return TeardownStatus.ABANDONED
+            return
         except BaseException:  # cleanup must outlive repeated cancellation
             continue
-    try:
-        result = cleanup_task.result()
-    except BaseException:
-        logger.exception("Ownership-transfer cleanup failed before reaching quiescence")
-        return TeardownStatus.FAILED
-    if isinstance(result, TeardownStatus):
-        return result
-    if isinstance(result, StopResult):
-        return result.teardown
-    return TeardownStatus.UNKNOWN
 
 
 @dataclass(frozen=True)
@@ -352,18 +338,6 @@ class HarnessConnection(Generic[SpecT], ABC):
     @property
     @abstractmethod
     def session_id(self) -> str | None: ...
-
-    @property
-    def initial_turn_submission(self) -> TurnSubmission:
-        """Return the strongest transport evidence available during start()."""
-
-        return TurnSubmission.UNKNOWN
-
-    @property
-    def startup_teardown(self) -> TeardownStatus:
-        """Return cleanup evidence retained when ``start()`` failed."""
-
-        return TeardownStatus.UNKNOWN
 
     @property
     def primary_event_scope(self) -> PrimaryEventScope | None:

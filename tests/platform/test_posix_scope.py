@@ -71,10 +71,6 @@ def test_dead_root_pgid_still_has_members_no_scan_needed() -> None:
         patch(
             "meridian.lib.platform.process_scope.posix._scan_by_pgid",
         ) as mock_scan,
-        patch(
-            "meridian.lib.platform.process_scope.posix._count_progress_capable_group_members",
-            return_value=0,
-        ),
     ):
         result = terminate_pgid(
             pgid=500,
@@ -89,8 +85,6 @@ def test_dead_root_pgid_still_has_members_no_scan_needed() -> None:
     mock_scan.assert_not_called()
     assert result.degraded_fallback is True  # root was dead → degraded
     assert result.skip_reason is None
-    assert result.survivor_count is None
-    assert result.verification_complete is False
 
 
 @posix_only
@@ -138,10 +132,6 @@ def test_unknown_birth_time_proceeds_to_signal_owned_pgid() -> None:
             return_value=root_proc,
         ),
         patch("meridian.lib.platform.process_scope.posix.psutil.wait_procs", return_value=([], [])),
-        patch(
-            "meridian.lib.platform.process_scope.posix._count_progress_capable_group_members",
-            return_value=0,
-        ),
         patch("os.killpg") as mock_killpg,
     ):
         result = terminate_pgid(
@@ -154,8 +144,6 @@ def test_unknown_birth_time_proceeds_to_signal_owned_pgid() -> None:
         )
 
     assert result.skip_reason is None
-    assert result.survivor_count == 0
-    assert result.verification_complete is True
     mock_killpg.assert_called_once()
 
 

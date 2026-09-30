@@ -195,19 +195,11 @@ Both are 10 MiB uniform across adapters:
 - `MAX_INITIAL_PROMPT_BYTES` — initial prompt cap enforced by `validate_prompt_size(config)`
   before `start()` is called. Raises `PromptTooLargeError`.
 
-### Startup Error Classification
+### Startup Errors
 
-`errors.py` classifies startup causes for callers:
-
-- `ConnectionStartupError` — base; caller must not retry
-- `RetryableConnectionStartupError` — typed transient cause; it is only one input
-  to launch retry policy, not permission to replay a turn or mint a new identity
-- `PortBindError` — TOCTOU race on port reservation; retryable
-
-Streaming launch retries additionally require typed initial-turn progress, verified
-quiescent teardown, and native-create materialization evidence. The sole decision
-lives in `launch/retry.py`; the primary observer's port retry is a separate
-connection-setup loop.
+`errors.py` distinguishes general `ConnectionStartupError` failures from
+`PortBindError`, the loopback reservation race handled locally by callers that
+own safe port reselection. Neither error asks the launch runner to replay a turn.
 
 ## Rationale
 

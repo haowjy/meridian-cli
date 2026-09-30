@@ -45,7 +45,6 @@ from meridian.lib.harness.connections.base import (
     PrimaryRuntimeRequestPolicy,
     RawHarnessEvent,
 )
-from meridian.lib.harness.connections.errors import TeardownStatus
 from meridian.lib.harness.passthrough import get_passthrough
 from meridian.lib.harness.passthrough.base import PassthroughError
 from meridian.lib.harness.registry import HarnessRegistry
@@ -1030,7 +1029,6 @@ def run_harness_process(
                             facts=facts,
                             connection_session_id=None,
                             lifecycle=lifecycle,
-                            teardown=TeardownStatus.QUIESCENT,
                         )
                         identity_error = outcome.error
                         resolved_harness_session_id = outcome.harness_session_id or ""

@@ -6,10 +6,6 @@
 [defaults]
 # Maximum agent nesting depth (int).
 # max_depth = 3
-# Retry attempts per failed spawn (int).
-# max_retries = 3
-# Delay multiplier between retries in seconds (float).
-# retry_backoff_seconds = 0.25
 
 # -- Timeout behavior -------------------------------------------------------
 [timeouts]

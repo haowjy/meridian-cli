@@ -1,7 +1,6 @@
 """Immutable harness-native identity values and typed refusals."""
 
 from dataclasses import dataclass, replace
-from enum import StrEnum
 from pathlib import Path
 from typing import ClassVar, Literal
 
@@ -9,15 +8,6 @@ Operation = Literal["create", "resume", "fork"]
 BindSource = Literal["assigned", "observed", "legacy_import", "legacy_pi_recovery", "user_repair"]
 UnavailableReason = Literal["unbound", "missing", "ambiguous_native_file"]
 MismatchReason = Literal["key", "fork_reused_source", "source_changed", "fork_parent"]
-
-
-class NativeCreateProgress(StrEnum):
-    """Post-teardown evidence about one planned native create identity."""
-
-    NOT_APPLICABLE = "not_applicable"
-    NOT_MATERIALIZED = "not_materialized"
-    MATERIALIZED = "materialized"
-    UNKNOWN = "unknown"
 
 
 @dataclass(frozen=True)

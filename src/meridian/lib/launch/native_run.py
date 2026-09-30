@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
 
 from meridian.lib.core.native_identity import (
-    NativeCreateProgress,
     NativeEntryMismatch,
     NativeIdentity,
     NativeIdentityError,
@@ -19,9 +18,7 @@ from meridian.lib.core.native_identity import (
 )
 from meridian.lib.core.types import ChatId, SpawnId
 from meridian.lib.harness.attempt_facts import AttemptFacts
-from meridian.lib.harness.connections.errors import TeardownStatus
 from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
-from meridian.lib.launch.retry import RetryPermit
 from meridian.lib.launch.session_scope import SessionAttempt
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.native_binding import Conflict
@@ -44,11 +41,7 @@ class NativeRun:
     fork_source_id: str | None
     on_accepted: Callable[[str], None] | None = None
     _first_seen: bool = False
-    _noted: set[str] = field(default_factory=lambda: set[str]())
-
-    @property
-    def owned_identity_observed(self) -> bool:
-        return bool(self._noted)
+    _noted: set[str] = field(default_factory=set)
 
     def observe(self, session_id: str) -> None:
         """Only first owned signals can contradict pre-exec facts."""
@@ -73,7 +66,7 @@ class NativeRun:
         if not candidate:
             return
         # Live callbacks, on-running, attempt facts and current transport
-        # state can repeat the same signal. Bind/log each candidate once per attempt.
+        # state can repeat the same signal. Bind/log each candidate once per turn.
         if candidate in self._noted:
             return
         self._noted.add(candidate)
@@ -82,20 +75,6 @@ class NativeRun:
             self.entry = outcome.key
             if self.on_accepted is not None:
                 self.on_accepted(candidate)
-
-    def rearm(self, attempt: SessionAttempt, permit: RetryPermit) -> NativeRun:
-        """Reuse only an identity proven unconsumed by the retry policy."""
-
-        evidence = permit.decision.assessment.evidence
-        if evidence.native_create not in {
-            NativeCreateProgress.NOT_MATERIALIZED,
-            NativeCreateProgress.NOT_APPLICABLE,
-        }:
-            raise ValueError("retry permit does not prove the native identity reusable")
-        if evidence.teardown is not TeardownStatus.QUIESCENT:
-            raise ValueError("retry permit does not prove attempt teardown quiescent")
-        return replace(self, attempt=attempt, _first_seen=False, _noted=set())
-
 
 def bind_entry(
     attempt: SessionAttempt,
@@ -130,7 +109,6 @@ class NativeRunOutcome:
     error: NativeIdentityError | None
     boundary: RunBoundaryOutcome
     harness_session_id: str | None
-    native_create: NativeCreateProgress = NativeCreateProgress.UNKNOWN
 
 
 def conclude_native_run(
@@ -148,10 +126,9 @@ def conclude_native_run(
     facts: AttemptFacts,
     connection_session_id: str | None,
     lifecycle: LifecycleLog,
-    teardown: TeardownStatus,
     prior_error_phase: str = "post_exit",
 ) -> NativeRunOutcome:
-    """Conclude once per attempt, after its child exited and teardown joined."""
+    """Conclude once per turn, after its child exited and teardown joined."""
     error = prior_error
     post = PostExit()
     if error is None:
@@ -176,18 +153,6 @@ def conclude_native_run(
                     error = NativeEntryMismatch(run.entry, observed)
         except NativeIdentityError as exc:
             error = exc
-
-    if run.identity is None or run.identity.operation != "create":
-        native_create = NativeCreateProgress.NOT_APPLICABLE
-    elif run.owned_identity_observed:
-        native_create = NativeCreateProgress.MATERIALIZED
-    else:
-        native_create = adapter.observe_create_materialization(run.identity)
-        if (
-            native_create is NativeCreateProgress.NOT_MATERIALIZED
-            and teardown is not TeardownStatus.QUIESCENT
-        ):
-            native_create = NativeCreateProgress.UNKNOWN
 
     exit_chat_id = None
     if error is None and post.exit is not None:
@@ -232,4 +197,4 @@ def conclude_native_run(
         )
     elif started:
         run.attempt.record_started(context, run.entry.session_id)
-    return NativeRunOutcome(error, boundary, run.entry.session_id, native_create)
+    return NativeRunOutcome(error, boundary, run.entry.session_id)

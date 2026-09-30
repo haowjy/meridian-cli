@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import json
 import os
 import signal
-import uuid
+import sys
 from collections.abc import Callable
 from contextlib import suppress
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
+from pydantic import TypeAdapter
 
 from meridian.lib.bootstrap.services import (
     build_spawn_application_service_from_roots,
@@ -29,34 +31,36 @@ from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.bundle import get_harness_bundle
+from meridian.lib.harness.common import parse_json_stream_event, unwrap_event_payload
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
 from meridian.lib.harness.extractors.base import AttemptFold
-from meridian.lib.harness.semantics import TerminalEventOutcome
+from meridian.lib.harness.semantics import (
+    NormalizedHarnessEvent,
+    TerminalEventOutcome,
+)
 from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
 from meridian.lib.launch.artifact_io import (
     append_runner_lifecycle_event as _append_runner_lifecycle_event,
 )
-from meridian.lib.launch.attempt_artifacts import (
-    persist_attempt_artifacts,
-    preserve_attempt_artifacts,
-)
 from meridian.lib.launch.constants import (
+    CURSOR_INACTIVITY_TIMEOUT_SECONDS,
     DEFAULT_INFRA_EXIT_CODE,
+    REPORT_FILENAME,
+    REPORT_WATCHDOG_GRACE_SECONDS,
+    REPORT_WATCHDOG_POLL_SECONDS,
     STDERR_FILENAME,
+    SUBPROCESS_REPORT_WATCHDOG_POLL_SECONDS,
 )
 from meridian.lib.launch.context import LaunchContext
 from meridian.lib.launch.env import (
     apply_pi_bind_time_env,
     resolve_pi_session_role,
 )
-from meridian.lib.launch.errors import (
-    classify_error,
-)
 from meridian.lib.launch.extract import (
     FinalizeExtraction,
     enrich_finalize,
-    reset_finalize_attempt_artifacts,
 )
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.native_run import bind_entry, conclude_native_run
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.launch.resolve import (
@@ -65,13 +69,6 @@ from meridian.lib.launch.resolve import (
     resolve_resident_deadline_seconds,
     resolve_resident_poll_seconds,
     resolve_startup_timeout_seconds,
-)
-from meridian.lib.launch.retry import (
-    AttemptFailure,
-    ReplayEvidence,
-    RetryPermit,
-    classify_attempt_failure,
-    decide_retry,
 )
 from meridian.lib.launch.runner_helpers import (
     append_budget_exceeded_event as _append_budget_exceeded_event,
@@ -87,16 +84,11 @@ from meridian.lib.launch.runner_helpers import (
 )
 from meridian.lib.launch.session_scope import SessionAttempt
 from meridian.lib.launch.signals import signal_coordinator, signal_to_exit_code
-from meridian.lib.launch.streaming.attempt import (
-    AttemptRuntime,
-    install_signal_handlers,
-    run_streaming_attempt,
-    run_streaming_spawn,
-    touch_heartbeat_file,
-)
-from meridian.lib.launch.streaming.heartbeat import HeartbeatTouch
-from meridian.lib.safety.budget import Budget, LiveBudgetTracker
+from meridian.lib.launch.streaming.heartbeat import FileHeartbeat, HeartbeatTouch
+from meridian.lib.launch.streaming.terminal_arbitrator import TriggerKind, arbitrate_terminal
+from meridian.lib.safety.budget import Budget, BudgetBreach, LiveBudgetTracker
 from meridian.lib.safety.guardrails import run_guardrails
+from meridian.lib.state import paths as state_paths
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import ArtifactStore, make_artifact_key
 from meridian.lib.state.paths import resolve_spawn_log_dir
@@ -105,11 +97,12 @@ from meridian.lib.state.spawn.model import (
     FOREGROUND_LAUNCH_MODE,
     LaunchMode,
 )
-from meridian.lib.streaming.spawn_manager import SpawnManager
+from meridian.lib.streaming.spawn_manager import DrainOutcome, SpawnManager
 from meridian.lib.utils.time import minutes_to_seconds
 
 if TYPE_CHECKING:
     from meridian.lib.core.lifecycle import SpawnLifecycleService
+    from meridian.lib.harness.connections.base import RawHarnessEvent
     from meridian.lib.state.spawn.model import CancelIntent
 
 _DEFAULT_CONFIG = MeridianConfig()
@@ -118,34 +111,39 @@ logger = structlog.get_logger(__name__)
 _HEARTBEAT_INTERVAL_SECS = 30.0
 
 
+@dataclass(frozen=True)
+class _AttemptRuntime:
+    connection: HarnessConnection[Any] | None
+    drain_exit_code: int
+    drain_error: str | None
+    timed_out: bool
+    received_signal: signal.Signals | None
+    budget_breach: BudgetBreach | None
+    terminated_by_report_watchdog: bool
+    terminated_by_inactivity: bool = False
+    cancelled_by_request: bool = False
+    terminal_observed: bool = False
+    authoritative_terminal_status: TerminalSpawnStatus | None = None
+    start_error: str | None = None
+    identity_error: NativeIdentityError | None = None
+
+
+class StartupPhaseTimeout(TimeoutError):
+    """The backend boot/connection/session-handshake phase exceeded its bound."""
+
+    def __init__(self, timeout_seconds: float) -> None:
+        super().__init__(f"startup phase timeout after {timeout_seconds:.3f}s")
+
+
 @dataclass
 class StreamingRunConclusion:
-    """Accumulates execution outcome across retry attempts."""
+    """Accumulates the execution outcome for finalization."""
 
     exit_code: int = DEFAULT_INFRA_EXIT_CODE
     failure_reason: str | None = None
     extracted: FinalizeExtraction | None = None
-    final_attempt_terminal_observed: bool = False
     authoritative_terminal_status: TerminalSpawnStatus | None = None
     cancellation_observed: bool = False
-    retries_attempted: int = 0
-
-    def commit_attempt(
-        self,
-        attempt: AttemptRuntime,
-        *,
-        exit_code: int,
-        failure: AttemptFailure | None,
-        terminal_status: TerminalSpawnStatus | None,
-        cancelled: bool,
-    ) -> None:
-        """Select final reporting and retry cause from one typed record."""
-
-        self.failure_reason = None if failure is None else failure.final_message
-        self.exit_code = exit_code
-        self.final_attempt_terminal_observed = attempt.terminal_observed
-        self.authoritative_terminal_status = terminal_status
-        self.cancellation_observed = self.cancellation_observed or cancelled
 
     def terminal_facts(
         self,
@@ -185,6 +183,73 @@ def _inactivity_terminal_outcome(
     return None, "stalled"
 
 
+def _touch_heartbeat_file(
+    runtime_root: Path,
+    spawn_id: SpawnId,
+    *,
+    clock: Clock | None = None,
+) -> None:
+    FileHeartbeat(
+        state_paths.heartbeat_path(runtime_root, spawn_id),
+        clock=clock,
+    ).touch()
+
+
+def _install_signal_handlers(
+    loop: asyncio.AbstractEventLoop,
+    shutdown_event: asyncio.Event,
+    received_signal: list[signal.Signals | None],
+    on_signal: Callable[[signal.Signals], None] | None = None,
+) -> Callable[[], None] | None:
+    """Install portable signal handlers that set the shutdown event.
+
+    Uses signal.signal() instead of loop.add_signal_handler() for Windows
+    compatibility (ProactorEventLoop does not support add_signal_handler).
+
+    Returns a cleanup callable that restores previous handlers, or None if
+    installation failed (non-main thread).
+    """
+    import threading
+
+    if threading.current_thread() is not threading.main_thread():
+        return None
+
+    previous_handlers: dict[int, Any] = {}
+
+    def _handle(signum: int, frame: object) -> None:
+        if received_signal[0] is None:
+            received_signal[0] = signal.Signals(signum)
+            if on_signal is not None:
+                with suppress(Exception):
+                    on_signal(received_signal[0])
+        loop.call_soon_threadsafe(shutdown_event.set)
+
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        try:
+            previous_handlers[int(signum)] = signal.getsignal(signum)
+            signal.signal(signum, _handle)
+        except (ValueError, OSError):
+            continue
+
+    def _cleanup() -> None:
+        for signum_int, prev in previous_handlers.items():
+            with suppress(Exception):
+                signal.signal(signal.Signals(signum_int), prev)
+
+    return _cleanup
+
+
+def _persist_stderr_artifact(
+    *,
+    artifacts: ArtifactStore,
+    spawn_id: SpawnId,
+    log_dir: Path,
+) -> None:
+    source = log_dir / STDERR_FILENAME
+    if source.exists():
+        artifacts.put(make_artifact_key(spawn_id, STDERR_FILENAME), source.read_bytes())
+
+
 def _read_cancel_intent(runtime_root: Path, spawn_id: SpawnId) -> CancelIntent | None:
     record = spawn_store.get_spawn(runtime_root, spawn_id)
     return None if record is None else record.cancel_intent
@@ -205,21 +270,590 @@ def _apply_cancel_intent_to_conclusion(
     return True
 
 
-async def _sleep_retry_backoff_or_cancel(
+def _line_from_harness_event(event: RawHarnessEvent) -> str:
+    if event.raw_text is not None and event.raw_text.strip():
+        return event.raw_text
+    payload: dict[str, object] = dict(event.payload)
+    payload.setdefault("event", event.event_type)
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True)
+
+
+def _observe_budget_from_event(
     *,
-    delay_seconds: float,
-    shutdown_event: asyncio.Event,
-    runtime_root: Path,
-    spawn_id: SpawnId,
-) -> bool:
-    deadline = asyncio.get_running_loop().time() + max(0.0, delay_seconds)
+    budget_tracker: LiveBudgetTracker | None,
+    event: RawHarnessEvent,
+) -> BudgetBreach | None:
+    if budget_tracker is None:
+        return None
+
+    payload = unwrap_event_payload(event.payload)
+    try:
+        encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    except (TypeError, ValueError):
+        return None
+    return budget_tracker.observe_json_line(encoded)
+
+
+def _emit_stream_event(
+    *,
+    line: str,
+    event_observer: Callable[[StreamEvent], None] | None,
+    stream_stdout_to_terminal: bool,
+) -> None:
+    parsed = parse_json_stream_event(line)
+    if parsed is None:
+        return
+
+    if event_observer is not None:
+        try:
+            event_observer(parsed)
+        except Exception:
+            logger.warning("Stream event observer failed.", exc_info=True)
+
+    if not stream_stdout_to_terminal:
+        return
+
+    rendered = parsed.text.strip() if parsed.text is not None else parsed.raw_line.strip()
+    if not rendered:
+        return
+    sys.stderr.write(f"{rendered}\n")
+    sys.stderr.flush()
+
+
+async def _consume_subscriber_events(
+    *,
+    subscriber: asyncio.Queue[NormalizedHarnessEvent | None],
+    budget_tracker: LiveBudgetTracker | None,
+    budget_signal: asyncio.Event,
+    budget_breach_holder: list[BudgetBreach | None],
+    event_observer: Callable[[StreamEvent], None] | None,
+    stream_stdout_to_terminal: bool,
+    terminal_event_future: asyncio.Future[TerminalEventOutcome] | None = None,
+    last_event_at: list[float] | None = None,
+) -> None:
     while True:
-        if shutdown_event.is_set() or _read_cancel_intent(runtime_root, spawn_id) is not None:
-            return True
-        remaining = deadline - asyncio.get_running_loop().time()
-        if remaining <= 0:
+        normalized_event = await subscriber.get()
+        if normalized_event is None:
+            return
+        event = normalized_event.raw
+
+        if last_event_at is not None:
+            last_event_at[0] = asyncio.get_running_loop().time()
+
+        if budget_breach_holder[0] is None:
+            breach = _observe_budget_from_event(
+                budget_tracker=budget_tracker,
+                event=event,
+            )
+            if breach is not None:
+                budget_breach_holder[0] = breach
+                budget_signal.set()
+
+        if terminal_event_future is not None and not terminal_event_future.done():
+            event_outcome = normalized_event.semantics.terminal
+            if event_outcome is not None:
+                terminal_event_future.set_result(event_outcome)
+
+        if event_observer is not None or stream_stdout_to_terminal:
+            line = _line_from_harness_event(event)
+            _emit_stream_event(
+                line=line,
+                event_observer=event_observer,
+                stream_stdout_to_terminal=stream_stdout_to_terminal,
+            )
+
+
+async def _report_watchdog(
+    *,
+    report_path: Path,
+    completion_event: asyncio.Event,
+    manager: SpawnManager,
+    spawn_id: SpawnId,
+    grace_seconds: float = REPORT_WATCHDOG_GRACE_SECONDS,
+) -> bool:
+    while not report_path.exists():
+        if completion_event.is_set():
             return False
-        await asyncio.sleep(min(0.1, remaining))
+        await asyncio.sleep(REPORT_WATCHDOG_POLL_SECONDS)
+
+    deadline = asyncio.get_running_loop().time() + grace_seconds
+    while asyncio.get_running_loop().time() < deadline:
+        if completion_event.is_set():
+            return False
+        await asyncio.sleep(REPORT_WATCHDOG_POLL_SECONDS)
+
+    if completion_event.is_set():
+        return False
+
+    await manager.stop_spawn(
+        spawn_id, status=SpawnStatus.CANCELLED, exit_code=1, error="report_watchdog"
+    )
+    logger.info(
+        "Report watchdog stopped active streaming connection after grace timeout.",
+        spawn_id=str(spawn_id),
+        grace_seconds=grace_seconds,
+    )
+    return True
+
+
+async def _inactivity_watchdog(
+    *,
+    last_event_at: list[float],
+    completion_event: asyncio.Event,
+    manager: SpawnManager,
+    spawn_id: SpawnId,
+    timeout_seconds: float,
+    poll_seconds: float = SUBPROCESS_REPORT_WATCHDOG_POLL_SECONDS,
+) -> bool:
+    loop = asyncio.get_running_loop()
+    while True:
+        if completion_event.is_set():
+            return False
+        idle = loop.time() - last_event_at[0]
+        if idle >= timeout_seconds:
+            break
+        await asyncio.sleep(min(poll_seconds, max(0.0, timeout_seconds - idle)))
+    if completion_event.is_set():
+        return False
+    await manager.stop_spawn(
+        spawn_id, status=SpawnStatus.FAILED, exit_code=1, error="inactivity_stall"
+    )
+    logger.info(
+        "Inactivity watchdog stopped stalled spawn after silence.",
+        spawn_id=str(spawn_id),
+        timeout_seconds=timeout_seconds,
+    )
+    return True
+
+
+async def _start_spawn_with_timeout(
+    *,
+    manager: SpawnManager,
+    config: ConnectionConfig,
+    run_spec: ResolvedLaunchSpec,
+    timeout_seconds: float,
+    event_hook: Callable[[RawHarnessEvent], None] | None = None,
+) -> HarnessConnection[Any]:
+    """Start a managed connection within the shared startup-phase bound."""
+
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            return await manager.start_spawn(config, run_spec, event_hook=event_hook)
+    except TimeoutError as exc:
+        raise StartupPhaseTimeout(timeout_seconds) from exc
+
+
+async def run_streaming_spawn(
+    *,
+    config: ConnectionConfig,
+    spec: ResolvedLaunchSpec,
+    runtime_root: Path,
+    project_root: Path,
+    spawn_id: SpawnId,
+    startup_timeout_seconds: float,
+    stream_to_terminal: bool = False,
+    heartbeat_touch: HeartbeatTouch | None = None,
+    heartbeat_interval_secs: float = _HEARTBEAT_INTERVAL_SECS,
+    lifecycle_service: SpawnLifecycleService | None = None,
+    on_control_endpoint_ready: Callable[[str], None] | None = None,
+    on_running: Callable[[HarnessConnection[Any]], None] | None = None,
+    event_hook: Callable[[RawHarnessEvent], None] | None = None,
+) -> DrainOutcome:
+    """Run one streaming spawn to completion without spawn-store finalization.
+
+    Callers are responsible for resolving *spec* via ``build_launch_context()``
+    before calling this function.  I-8 (executors stay mechanism-only): this
+    executor accepts a fully-composed spec and MUST NOT perform composition.
+    """
+
+    resolved_heartbeat_touch = heartbeat_touch or (
+        lambda: _touch_heartbeat_file(runtime_root, spawn_id)
+    )
+    manager = SpawnManager(
+        runtime_root=runtime_root,
+        project_root=project_root,
+        heartbeat_interval_secs=heartbeat_interval_secs,
+        heartbeat_touch=lambda _runtime_root, _spawn_id: resolved_heartbeat_touch(),
+    )
+
+    loop = asyncio.get_running_loop()
+    shutdown_event = asyncio.Event()
+    received_signal: list[signal.Signals | None] = [None]
+    signal_cleanup = _install_signal_handlers(loop, shutdown_event, received_signal)
+
+    completion_task: asyncio.Task[DrainOutcome | None] | None = None
+    signal_task: asyncio.Task[bool] | None = None
+    consume_task: asyncio.Task[None] | None = None
+    terminal_event_future: asyncio.Future[TerminalEventOutcome] | None = None
+    terminal_outcome: TerminalEventOutcome | None = None
+    subscriber: asyncio.Queue[NormalizedHarnessEvent | None] | None = None
+    run_spec = spec
+    spawn_store.update_spawn(
+        runtime_root,
+        spawn_id,
+        runner_pid=os.getpid(),
+    )
+    resolved_lifecycle = lifecycle_service or build_spawn_lifecycle_service_from_roots(
+        project_root,
+        runtime_root,
+    )
+    try:
+        connection = await _start_spawn_with_timeout(
+            manager=manager,
+            config=config,
+            run_spec=run_spec,
+            timeout_seconds=startup_timeout_seconds,
+            event_hook=event_hook,
+        )
+        if on_running is not None:
+            on_running(connection)
+        if on_control_endpoint_ready is not None:
+            endpoint = manager.control_endpoint(spawn_id)
+            if endpoint is not None:
+                try:
+                    on_control_endpoint_ready(endpoint)
+                except Exception:
+                    logger.warning(
+                        "Control endpoint callback failed.",
+                        spawn_id=str(spawn_id),
+                        exc_info=True,
+                    )
+        await manager.start_heartbeat(spawn_id)
+        subscriber = manager.subscribe(spawn_id)
+        if subscriber is None:
+            raise RuntimeError("failed to subscribe to spawn stream")
+
+        terminal_event_future = loop.create_future()
+        terminal_event_capture = (
+            terminal_event_future
+            if manager.raw_terminal_frames_are_authoritative(spawn_id)
+            else None
+        )
+        completion_task = asyncio.create_task(manager.wait_for_completion(spawn_id))
+        consume_task = asyncio.create_task(
+            _consume_subscriber_events(
+                subscriber=subscriber,
+                budget_tracker=None,
+                budget_signal=asyncio.Event(),
+                budget_breach_holder=[None],
+                event_observer=None,
+                stream_stdout_to_terminal=stream_to_terminal,
+                terminal_event_future=terminal_event_capture,
+            )
+        )
+        signal_task = asyncio.create_task(shutdown_event.wait())
+
+        decision = await arbitrate_terminal(
+            completion_task=completion_task,
+            terminal_event_future=terminal_event_future,
+            signal_task=signal_task,
+        )
+        terminal_outcome = decision.terminal_outcome
+        if decision.stop_required:
+            stop_exit_code = decision.synthetic_exit_code
+            if decision.trigger == TriggerKind.SIGNAL:
+                stop_exit_code = signal_to_exit_code(received_signal[0]) or 130
+            if stop_exit_code is None:
+                raise RuntimeError("terminal decision requires an exit code")
+            await manager.stop_spawn(
+                spawn_id,
+                status=decision.synthetic_status or SpawnStatus.CANCELLED,
+                exit_code=stop_exit_code,
+                error=decision.synthetic_error,
+            )
+
+        outcome = await completion_task
+        if outcome is None:
+            raise RuntimeError("streaming spawn completed without drain outcome")
+        if terminal_outcome is not None:
+            resolved_outcome = DrainOutcome(
+                status=terminal_outcome.status,
+                exit_code=terminal_outcome.exit_code,
+                error=terminal_outcome.error,
+                duration_secs=outcome.duration_secs,
+            )
+        else:
+            resolved_outcome = outcome
+        with suppress(Exception):
+            resolved_lifecycle.record_exited(
+                str(spawn_id),
+                exit_code=resolved_outcome.exit_code,
+            )
+        return resolved_outcome
+    finally:
+        with signal_coordinator().mask_sigterm():
+            if subscriber is not None:
+                manager.unsubscribe(spawn_id)
+            for task in (completion_task, signal_task, consume_task):
+                if task is not None and not task.done():
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
+            if signal_cleanup is not None:
+                signal_cleanup()
+            await manager.join_teardown(spawn_id)
+            with suppress(Exception):
+                await manager.shutdown(status=SpawnStatus.CANCELLED, exit_code=1, error="shutdown")
+
+
+async def _run_streaming_attempt(
+    *,
+    run: Spawn,
+    runtime_root: Path,
+    launch_mode: LaunchMode,
+    log_dir: Path,
+    manager: SpawnManager,
+    config: ConnectionConfig,
+    run_spec: ResolvedLaunchSpec,
+    budget_tracker: LiveBudgetTracker | None,
+    signal_event: asyncio.Event,
+    received_signal: list[signal.Signals | None],
+    timeout_seconds: float | None,
+    startup_timeout_seconds: float = 300.0,
+    event_observer: Callable[[StreamEvent], None] | None,
+    stream_stdout_to_terminal: bool,
+    lifecycle_service: SpawnLifecycleService,
+    runner_phase: list[str] | None = None,
+    on_running: Callable[[HarnessConnection[Any]], None] | None = None,
+    event_hook: Callable[[RawHarnessEvent], None] | None = None,
+) -> _AttemptRuntime:
+    completion_task: asyncio.Task[DrainOutcome | None] | None = None
+    timeout_task: asyncio.Task[None] | None = None
+    signal_task: asyncio.Task[bool] | None = None
+    budget_task: asyncio.Task[bool] | None = None
+    watchdog_task: asyncio.Task[bool] | None = None
+    inactivity_task: asyncio.Task[bool] | None = None
+    consume_task: asyncio.Task[None] | None = None
+    completion_event = asyncio.Event()
+    budget_signal = asyncio.Event()
+    budget_breach_holder: list[BudgetBreach | None] = [None]
+    last_event_at: list[float] = [asyncio.get_running_loop().time()]
+    terminal_event_future: asyncio.Future[TerminalEventOutcome] = (
+        asyncio.get_running_loop().create_future()
+    )
+    terminal_event_capture: asyncio.Future[TerminalEventOutcome] | None = None
+    subscriber: asyncio.Queue[NormalizedHarnessEvent | None] | None = None
+    connection: HarnessConnection[Any] | None = None
+    drain_exit_code = DEFAULT_INFRA_EXIT_CODE
+    drain_error: str | None = None
+    timed_out = False
+    terminated_by_report_watchdog = False
+    terminated_by_inactivity = False
+    cancelled_by_request = False
+    terminal_outcome: TerminalEventOutcome | None = None
+    authoritative_terminal_status: TerminalSpawnStatus | None = None
+    recording_selection = False
+    start_error: str | None = None
+    identity_error: NativeIdentityError | None = None
+    try:
+        if runner_phase is not None:
+            runner_phase[0] = "starting_harness"
+        connection = await _start_spawn_with_timeout(
+            manager=manager,
+            config=config,
+            run_spec=run_spec,
+            timeout_seconds=startup_timeout_seconds,
+            event_hook=event_hook,
+        )
+        terminal_event_capture = (
+            terminal_event_future
+            if manager.raw_terminal_frames_are_authoritative(run.spawn_id)
+            else None
+        )
+        if on_running is not None:
+            recording_selection = True
+            on_running(connection)
+            recording_selection = False
+        await manager.start_heartbeat(run.spawn_id)
+        lifecycle_service.mark_running(
+            run.spawn_id,
+            launch_mode=launch_mode,
+            worker_pid=connection.subprocess_pid,
+        )
+        subscriber = manager.subscribe(run.spawn_id)
+        if subscriber is None:
+            raise RuntimeError("failed to subscribe to spawn stream")
+
+        if runner_phase is not None:
+            runner_phase[0] = "consuming_events"
+        completion_task = asyncio.create_task(manager.wait_for_completion(run.spawn_id))
+        completion_task.add_done_callback(lambda _: completion_event.set())
+        consume_task = asyncio.create_task(
+            _consume_subscriber_events(
+                subscriber=subscriber,
+                budget_tracker=budget_tracker,
+                budget_signal=budget_signal,
+                budget_breach_holder=budget_breach_holder,
+                event_observer=event_observer,
+                stream_stdout_to_terminal=stream_stdout_to_terminal,
+                terminal_event_future=terminal_event_capture,
+                last_event_at=last_event_at,
+            )
+        )
+        signal_task = asyncio.create_task(signal_event.wait())
+        if budget_tracker is not None:
+            budget_task = asyncio.create_task(budget_signal.wait())
+        if timeout_seconds is not None and timeout_seconds > 0:
+            timeout_task = asyncio.create_task(asyncio.sleep(timeout_seconds))
+        watchdog_task = asyncio.create_task(
+            _report_watchdog(
+                report_path=log_dir / REPORT_FILENAME,
+                completion_event=completion_event,
+                manager=manager,
+                spawn_id=run.spawn_id,
+            )
+        )
+        if config.harness_id == HarnessId.CURSOR:
+            inactivity_task = asyncio.create_task(
+                _inactivity_watchdog(
+                    last_event_at=last_event_at,
+                    completion_event=completion_event,
+                    manager=manager,
+                    spawn_id=run.spawn_id,
+                    timeout_seconds=CURSOR_INACTIVITY_TIMEOUT_SECONDS,
+                )
+            )
+
+        decision = await arbitrate_terminal(
+            completion_task=completion_task,
+            terminal_event_future=terminal_event_future,
+            signal_task=signal_task,
+            timeout_task=timeout_task,
+            budget_task=budget_task,
+            watchdog_task=watchdog_task,
+            inactivity_task=inactivity_task,
+        )
+        terminal_outcome = decision.terminal_outcome
+        if decision.trigger == TriggerKind.BUDGET:
+            await manager.stop_spawn(
+                run.spawn_id,
+                status=SpawnStatus.FAILED,
+                exit_code=DEFAULT_INFRA_EXIT_CODE,
+                error="budget_exceeded",
+            )
+            drain_exit_code = DEFAULT_INFRA_EXIT_CODE
+        elif decision.trigger == TriggerKind.TIMEOUT:
+            timed_out = True
+            await manager.stop_spawn(
+                run.spawn_id,
+                status=SpawnStatus.TIMED_OUT,
+                exit_code=3,
+                error="timeout",
+            )
+            drain_exit_code = 3
+        elif decision.trigger == TriggerKind.WATCHDOG:
+            terminated_by_report_watchdog = not decision.watchdog_noop
+        elif decision.trigger == TriggerKind.INACTIVITY:
+            terminated_by_inactivity = not decision.watchdog_noop
+        elif decision.stop_required:
+            stop_exit_code = decision.synthetic_exit_code
+            if decision.trigger == TriggerKind.SIGNAL:
+                cancelled_by_request = True
+                stop_exit_code = signal_to_exit_code(received_signal[0]) or 130
+            if stop_exit_code is None:
+                raise RuntimeError("terminal decision requires an exit code")
+            await manager.stop_spawn(
+                run.spawn_id,
+                status=decision.synthetic_status or SpawnStatus.CANCELLED,
+                exit_code=stop_exit_code,
+                error=decision.synthetic_error,
+            )
+            drain_exit_code = stop_exit_code
+            drain_error = decision.synthetic_error
+
+        drain_outcome = await completion_task
+        if drain_outcome is not None and terminal_outcome is None:
+            if timed_out and drain_outcome.status != "succeeded":
+                authoritative_terminal_status = "timed_out"
+                drain_exit_code = 3
+                drain_error = "timeout"
+            else:
+                drain_exit_code = drain_outcome.exit_code
+                drain_error = drain_outcome.error
+                if drain_outcome.authoritative and drain_outcome.status != "succeeded":
+                    authoritative_terminal_status = TypeAdapter(
+                        TerminalSpawnStatus
+                    ).validate_python(drain_outcome.status)
+            if timed_out and drain_outcome.status == "succeeded":
+                timed_out = False
+            if drain_outcome.error == "report_watchdog":
+                terminated_by_report_watchdog = True
+            if drain_outcome.error == "inactivity_stall":
+                terminated_by_inactivity = True
+
+        # The watchdog resolves the completion future mid-flight inside
+        # stop_spawn(), so completion_task can finish before watchdog_task.
+        # Give the watchdog a brief window to land and reconcile the flag.
+        if not terminated_by_report_watchdog:
+            if watchdog_task.done():
+                with suppress(Exception):
+                    terminated_by_report_watchdog = bool(watchdog_task.result())
+            else:
+                try:
+                    await asyncio.wait_for(asyncio.shield(watchdog_task), timeout=2.0)
+                    terminated_by_report_watchdog = bool(watchdog_task.result())
+                except (TimeoutError, asyncio.CancelledError):
+                    pass
+        with suppress(Exception):
+            lifecycle_service.record_exited(
+                str(run.spawn_id),
+                exit_code=drain_exit_code,
+            )
+    except NativeIdentityError as exc:
+        start_error, identity_error = str(exc), exc
+    except Exception as exc:
+        if recording_selection:
+            raise
+        start_error = str(exc)
+    finally:
+        if subscriber is not None:
+            manager.unsubscribe(run.spawn_id)
+        for task in (
+            timeout_task,
+            signal_task,
+            budget_task,
+            watchdog_task,
+            inactivity_task,
+            consume_task,
+        ):
+            if task is not None and not task.done():
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+        if start_error is not None:
+            await manager.stop_spawn(
+                run.spawn_id, status=SpawnStatus.FAILED, exit_code=1, error=start_error
+            )
+        # Terminal publication hides the active connection while teardown can
+        # still be publishing its native quit. Join that cleanup before reading
+        # the run boundary. Joining does not publish a synthetic cancellation.
+        await manager.join_teardown(run.spawn_id)
+
+    if start_error is not None:
+        drain_exit_code, drain_error, timed_out = DEFAULT_INFRA_EXIT_CODE, start_error, False
+        terminal_outcome, authoritative_terminal_status = None, None
+    pi_drain_terminal = (
+        start_error is None and config.harness_id == HarnessId.PI and drain_error is not None
+    )
+    return _AttemptRuntime(
+        connection=connection,
+        drain_exit_code=drain_exit_code,
+        drain_error=drain_error,
+        timed_out=timed_out,
+        received_signal=received_signal[0],
+        budget_breach=budget_breach_holder[0],
+        terminated_by_report_watchdog=terminated_by_report_watchdog,
+        terminated_by_inactivity=terminated_by_inactivity,
+        cancelled_by_request=cancelled_by_request,
+        terminal_observed=(
+            terminal_outcome is not None
+            or pi_drain_terminal
+            or authoritative_terminal_status is not None
+        ),
+        authoritative_terminal_status=authoritative_terminal_status,
+        start_error=start_error,
+        identity_error=identity_error,
+    )
 
 
 async def execute_with_streaming(
@@ -256,7 +890,7 @@ async def execute_with_streaming(
     started_at = resolved_clock.monotonic()
     started_at_epoch = resolved_clock.time()
     resolved_heartbeat_touch = heartbeat_touch or (
-        lambda: touch_heartbeat_file(
+        lambda: _touch_heartbeat_file(
             runtime_root,
             run.spawn_id,
         )
@@ -319,8 +953,6 @@ async def execute_with_streaming(
             explicit_interval_seconds=request.pi_task_ping_interval_seconds,
             config_snapshot=launch_context.runtime.config_snapshot,
         )
-        retry_backoff_seconds = request.retry.backoff_secs
-
         resolved_harness_id = launch_context.harness.id
         child_cwd = launch_context.binding.child_cwd
         control_root = launch_context.control_root
@@ -434,7 +1066,7 @@ async def execute_with_streaming(
 
         loop = asyncio.get_running_loop()
         shutdown_event = asyncio.Event()
-        signal_cleanup = install_signal_handlers(
+        signal_cleanup = _install_signal_handlers(
             loop,
             shutdown_event,
             received_signal,
@@ -446,384 +1078,212 @@ async def execute_with_streaming(
         )
 
         try:
-            while True:
-                if _apply_cancel_intent_to_conclusion(
-                    conclusion,
-                    runtime_root=runtime_root,
-                    spawn_id=run.spawn_id,
-                ):
-                    break
-
+            if not _apply_cancel_intent_to_conclusion(
+                conclusion,
+                runtime_root=runtime_root,
+                spawn_id=run.spawn_id,
+            ):
                 fold = harness_bundle.extractor.create_fold()
                 facts = fold.facts
-                attempt_number = conclusion.retries_attempted + 1
                 runner_phase[0] = "starting_attempt"
-                _record_lifecycle(
-                    "attempt_started",
-                    attempt=attempt_number,
-                    startup_attempt_id=session_attempt.startup_attempt_id,
-                )
-                reset_finalize_attempt_artifacts(
-                    artifacts=artifacts,
-                    spawn_id=run.spawn_id,
-                    log_dir=log_dir,
-                )
+                _record_lifecycle("attempt_started", attempt=1)
 
                 if preflight_breach is not None:
                     conclusion.exit_code = DEFAULT_INFRA_EXIT_CODE
                     conclusion.failure_reason = "budget_exceeded"
                     _append_budget_exceeded_event(run=run, breach=preflight_breach)
-                    break
+                else:
+                    attempt_pid: int | None = None
 
-                attempt_pid: int | None = None
+                    def record_started(
+                        connection: HarnessConnection[Any],
+                        captured_observer: Callable[[str], None] = native_run.observe,
+                        attempt_fold: AttemptFold = fold,
+                    ) -> None:
+                        nonlocal attempt_pid
+                        attempt_pid = connection.subprocess_pid
+                        attempt_fold.bind_scope(connection.session_id)
+                        native_id = connection.session_id
+                        if native_id:
+                            captured_observer(native_id)
 
-                def record_started(
-                    connection: HarnessConnection[Any],
-                    captured_observer: Callable[[str], None] = native_run.observe,
-                    attempt_fold: AttemptFold = fold,
-                ) -> None:
-                    nonlocal attempt_pid
-                    attempt_pid = connection.subprocess_pid
-                    attempt_fold.bind_scope(connection.session_id)
-                    native_id = connection.session_id
-                    if native_id:
-                        captured_observer(native_id)
-
-                attempt = await run_streaming_attempt(
-                    run=run,
-                    runtime_root=runtime_root,
-                    launch_mode=resolved_launch_mode,
-                    log_dir=log_dir,
-                    manager=manager,
-                    config=config,
-                    run_spec=spec,
-                    budget_tracker=budget_tracker,
-                    signal_event=shutdown_event,
-                    received_signal=received_signal,
-                    timeout_seconds=timeout_seconds,
-                    startup_timeout_seconds=startup_timeout_seconds,
-                    event_observer=event_observer,
-                    stream_stdout_to_terminal=stream_stdout_to_terminal,
-                    lifecycle_service=lifecycle_service,
-                    runner_phase=runner_phase,
-                    on_running=record_started,
-                    event_hook=fold,
-                )
-                runner_phase[0] = "processing_attempt"
-                attempt_exit_code = attempt.drain_exit_code
-                attempt_terminal_status = attempt.authoritative_terminal_status
-                attempt_failure_message = attempt.start_error
-                if attempt.start_error is not None:
-                    logger.info(
-                        "Failed to execute streaming spawn attempt.",
-                        spawn_id=str(run.spawn_id),
-                        harness_id=str(harness.id),
-                        error=attempt.start_error,
-                    )
-                    _append_text_to_stderr_artifact(
-                        artifacts=artifacts,
-                        spawn_id=run.spawn_id,
-                        text=attempt.start_error,
-                    )
-                attempt_cancelled = False
-                cancellation_message: str | None = None
-                if attempt.timed_out:
-                    attempt_failure_message = "timeout"
-                if not attempt.terminal_observed:
-                    if attempt.received_signal == signal.SIGINT:
-                        attempt_failure_message = "cancelled"
-                        cancellation_message = "cancelled"
-                        attempt_cancelled = True
-                    elif attempt.received_signal == signal.SIGTERM:
-                        attempt_failure_message = "terminated"
-                        cancellation_message = "terminated"
-                        attempt_cancelled = True
-                if (
-                    attempt_exit_code != 0
-                    and attempt_failure_message is None
-                    and attempt.drain_error is not None
-                ):
-                    attempt_failure_message = attempt.drain_error
-
-                persist_attempt_artifacts(
-                    artifacts=artifacts,
-                    spawn_id=run.spawn_id,
-                    log_dir=log_dir,
-                )
-
-                outcome = conclude_native_run(
-                    native_run,
-                    harness,
-                    context=launch_context,
-                    spawn_id=run.spawn_id,
-                    child_env=child_env,
-                    child_cwd=child_cwd,
-                    pid=attempt_pid,
-                    started=attempt_pid is not None,
-                    started_at_epoch=started_at_epoch,
-                    prior_error=attempt.identity_error,
-                    prior_error_phase="running",
-                    facts=facts,
-                    connection_session_id=(
-                        attempt.connection.session_id if attempt.connection is not None else None
-                    ),
-                    lifecycle=lifecycle,
-                    teardown=attempt.teardown,
-                )
-                extraction = enrich_finalize(
-                    artifacts=artifacts,
-                    extractor=harness_bundle.extractor,
-                    facts=facts,
-                    native_key=native_run.entry.complete(),
-                    spawn_id=run.spawn_id,
-                    log_dir=log_dir,
-                    model_id=run.model,
-                    harness_id=resolved_harness_id,
-                    project_root=project_root,
-                    failure_reason=attempt_failure_message,
-                )
-                conclusion.extracted = extraction
-                terminal_code: str | None = None
-                terminal_message: str | None = None
-                guardrail_failed = False
-                budget_exceeded = False
-                attempt_cancelled = attempt_cancelled or attempt.cancelled_by_request
-
-                if outcome.error is not None:
-                    attempt_exit_code = 1
-                    attempt_failure_message = outcome.error.failure_code
-                    attempt_terminal_status = "failed"
-                    terminal_code = outcome.error.failure_code
-                    terminal_message = outcome.error.failure_code
-
-                cancel_intent = _read_cancel_intent(runtime_root, run.spawn_id)
-                if cancel_intent is not None and not extraction.durable_report_completion:
-                    attempt_exit_code = cancel_intent.exit_code
-                    attempt_failure_message = cancel_intent.error or "cancelled"
-                    cancellation_message = attempt_failure_message
-                    attempt_cancelled = True
-
-                if attempt_cancelled and attempt.received_signal is not None:
-                    attempt_exit_code = signal_to_exit_code(attempt.received_signal) or 130
-
-                if attempt.budget_breach is not None:
-                    budget_exceeded = True
-                    attempt_failure_message = "budget_exceeded"
-                    attempt_exit_code = DEFAULT_INFRA_EXIT_CODE
-                    _append_budget_exceeded_event(run=run, breach=attempt.budget_breach)
-
-                if (
-                    not budget_exceeded
-                    and budget_tracker is not None
-                    and extraction.usage is not None
-                    and extraction.usage.total_cost_usd is not None
-                    and budget_tracker.observe_cost(extraction.usage.total_cost_usd) is not None
-                ):
-                    budget_exceeded = True
-                    attempt_failure_message = "budget_exceeded"
-                    breach = budget_tracker.check()
-                    if breach is not None:
-                        _append_budget_exceeded_event(run=run, breach=breach)
-                    attempt_exit_code = DEFAULT_INFRA_EXIT_CODE
-
-                if attempt.terminated_by_inactivity:
-                    exit_override, failure_override = _inactivity_terminal_outcome(extraction)
-                    if exit_override is not None:
-                        attempt_exit_code = exit_override
-                    attempt_failure_message = failure_override
-                    if failure_override is not None:
-                        terminal_code = failure_override
-                        terminal_message = failure_override
-
-                if (
-                    attempt_exit_code == 0
-                    and terminal_code is None
-                    and not attempt_cancelled
-                    and not budget_exceeded
-                    and _spawn_kind(runtime_root, run.spawn_id) == "child"
-                    and extraction.report.content is None
-                ):
-                    attempt_failure_message = "missing_report"
-                    attempt_exit_code = 1
-                    terminal_code = "missing_report"
-                    terminal_message = "missing_report"
-
-                if attempt.terminated_by_report_watchdog and extraction.durable_report_completion:
-                    attempt_exit_code = 0
-                    attempt_failure_message = None
-
-                if (
-                    extraction.output_is_empty
-                    and attempt_exit_code == 0
-                    and not attempt.terminated_by_report_watchdog
-                ):
-                    attempt_exit_code = 1
-                    attempt_failure_message = "empty_output"
-                    terminal_code = "empty_output"
-                    terminal_message = "empty_output"
-
-                if (
-                    attempt_exit_code == 0
-                    and terminal_code is None
-                    and not attempt_cancelled
-                    and not budget_exceeded
-                ):
-                    guardrail_spawn = spawn_store.get_spawn(runtime_root, run.spawn_id)
-                    guardrail_result = run_guardrails(
-                        guardrails,
-                        spawn_id=run.spawn_id,
-                        cwd=child_cwd,
-                        env=child_env,
-                        report_path=extraction.report_path,
-                        chat_id=(guardrail_spawn.continue_chat_id if guardrail_spawn else None),
-                        timeout_seconds=guardrail_timeout_seconds,
-                    )
-                    if guardrail_result.ok:
-                        conclusion.commit_attempt(
-                            attempt,
-                            exit_code=attempt_exit_code,
-                            failure=None,
-                            terminal_status=attempt_terminal_status,
-                            cancelled=attempt_cancelled,
-                        )
-                        break
-                    guardrail_failed = True
-                    attempt_exit_code = 1
-                    attempt_failure_message = "guardrail_failed"
-                    _append_text_to_stderr_artifact(
-                        artifacts=artifacts,
-                        spawn_id=run.spawn_id,
-                        text=_guardrail_failure_text(guardrail_result.failures),
-                    )
-
-                stderr_key = make_artifact_key(run.spawn_id, STDERR_FILENAME)
-                stderr_text = (
-                    artifacts.get(stderr_key).decode("utf-8", errors="ignore")
-                    if artifacts.exists(stderr_key)
-                    else ""
-                )
-                category = classify_error(
-                    attempt_exit_code,
-                    stderr_text,
-                    timed_out=attempt.timed_out,
-                    failure_message=attempt.drain_error,
-                )
-                resolved_terminal_code = terminal_code or (
-                    f"authoritative_{attempt_terminal_status}"
-                    if attempt_terminal_status is not None
-                    else None
-                )
-                resolved_terminal_message = terminal_message
-                if resolved_terminal_message is None and resolved_terminal_code is not None:
-                    resolved_terminal_message = attempt.drain_error or resolved_terminal_code
-                failure = classify_attempt_failure(
-                    cancelled=attempt_cancelled or conclusion.cancellation_observed,
-                    cancellation_message=cancellation_message,
-                    terminal_outcome=attempt.terminal_outcome,
-                    terminal_code=resolved_terminal_code,
-                    terminal_message=resolved_terminal_message,
-                    start_failure=attempt.start_failure,
-                    guardrail_failed=guardrail_failed,
-                    timed_out=attempt.timed_out,
-                    budget_exceeded=budget_exceeded,
-                    legacy_category=category,
-                    fallback_message=attempt_failure_message or attempt.drain_error,
-                )
-                conclusion.commit_attempt(
-                    attempt,
-                    exit_code=attempt_exit_code,
-                    failure=failure,
-                    terminal_status=attempt_terminal_status,
-                    cancelled=attempt_cancelled,
-                )
-                decision = decide_retry(
-                    failure,
-                    ReplayEvidence(
-                        attempt.turn_submission,
-                        outcome.native_create,
-                        attempt.teardown,
-                    ),
-                    attempts_used=attempt_number,
-                    max_attempts=request.retry.max_attempts,
-                )
-                assessment = decision.assessment
-                _record_lifecycle(
-                    "retry_assessed",
-                    attempt=attempt_number,
-                    startup_attempt_id=session_attempt.startup_attempt_id,
-                    planned_native_operation=(
-                        native_run.identity.operation if native_run.identity is not None else None
-                    ),
-                    planned_native_id=native_run.assigned_session_id,
-                    failure_disposition=assessment.failure.disposition.value,
-                    failure_code=assessment.failure.code,
-                    turn_submission=assessment.evidence.turn.value,
-                    native_create=assessment.evidence.native_create.value,
-                    teardown=assessment.evidence.teardown.value,
-                    replay_safety=assessment.replay_safety.value,
-                    retry=decision.retry,
-                    reason=assessment.reason,
-                )
-                if not decision.retry:
-                    break
-
-                permit = RetryPermit(decision)
-                next_session_attempt = replace(
-                    session_attempt,
-                    startup_attempt_id=uuid.uuid4().hex,
-                )
-                try:
-                    next_native_run = native_run.rearm(next_session_attempt, permit)
-                    preserve_attempt_artifacts(
-                        artifacts=artifacts,
-                        spawn_id=run.spawn_id,
+                    attempt = await _run_streaming_attempt(
+                        run=run,
+                        runtime_root=runtime_root,
+                        launch_mode=resolved_launch_mode,
                         log_dir=log_dir,
-                        completed_attempt=attempt_number,
+                        manager=manager,
+                        config=config,
+                        run_spec=spec,
+                        budget_tracker=budget_tracker,
+                        signal_event=shutdown_event,
+                        received_signal=received_signal,
+                        timeout_seconds=timeout_seconds,
+                        startup_timeout_seconds=startup_timeout_seconds,
+                        event_observer=event_observer,
+                        stream_stdout_to_terminal=stream_stdout_to_terminal,
+                        lifecycle_service=lifecycle_service,
+                        runner_phase=runner_phase,
+                        on_running=record_started,
+                        event_hook=fold,
                     )
-                except Exception as exc:
-                    # Diagnostics are subordinate to the causal attempt. A failure
-                    # while recording retry setup must not replace that outcome.
-                    with suppress(Exception):
-                        _record_lifecycle(
-                            "retry_setup_failed",
-                            attempt=attempt_number,
-                            exception_type=type(exc).__name__,
-                            exception=str(exc),
+                    runner_phase[0] = "processing_attempt"
+                    conclusion.failure_reason = None
+                    conclusion.exit_code = attempt.drain_exit_code
+                    conclusion.authoritative_terminal_status = (
+                        attempt.authoritative_terminal_status
+                    )
+                    conclusion.cancellation_observed = (
+                        conclusion.cancellation_observed or attempt.cancelled_by_request
+                    )
+                    if attempt.start_error is not None:
+                        logger.info(
+                            "Failed to execute streaming spawn.",
+                            spawn_id=str(run.spawn_id),
+                            harness_id=str(harness.id),
+                            error=attempt.start_error,
                         )
-                    with suppress(Exception):
+                        conclusion.failure_reason = attempt.start_error
                         _append_text_to_stderr_artifact(
                             artifacts=artifacts,
                             spawn_id=run.spawn_id,
-                            text=f"retry setup failed: {exc}",
+                            text=attempt.start_error,
                         )
-                    break
+                    attempt_cancelled = False
+                    if attempt.timed_out:
+                        conclusion.failure_reason = "timeout"
+                    if not attempt.terminal_observed:
+                        if attempt.received_signal == signal.SIGINT:
+                            conclusion.failure_reason = "cancelled"
+                            attempt_cancelled = True
+                        elif attempt.received_signal == signal.SIGTERM:
+                            conclusion.failure_reason = "terminated"
+                            attempt_cancelled = True
+                    if (
+                        conclusion.exit_code != 0
+                        and conclusion.failure_reason is None
+                        and attempt.drain_error is not None
+                    ):
+                        conclusion.failure_reason = attempt.drain_error
 
-                conclusion.retries_attempted += 1
-                session_attempt = next_session_attempt
-                native_run = next_native_run
-                config = replace(config, session_id_observer=native_run.observe)
-                logger.info(
-                    "Retrying proven-safe startup failure.",
-                    spawn_id=str(run.spawn_id),
-                    harness_id=str(harness.id),
-                    retries_attempted=conclusion.retries_attempted,
-                    max_attempts=request.retry.max_attempts,
-                    failure_code=failure.code,
-                )
-                if retry_backoff_seconds > 0:
-                    cancelled_during_backoff = await _sleep_retry_backoff_or_cancel(
-                        delay_seconds=retry_backoff_seconds * conclusion.retries_attempted,
-                        shutdown_event=shutdown_event,
-                        runtime_root=runtime_root,
+                    _persist_stderr_artifact(
+                        artifacts=artifacts,
                         spawn_id=run.spawn_id,
+                        log_dir=log_dir,
                     )
-                    if cancelled_during_backoff:
+
+                    outcome = conclude_native_run(
+                        native_run,
+                        harness,
+                        context=launch_context,
+                        spawn_id=run.spawn_id,
+                        child_env=child_env,
+                        child_cwd=child_cwd,
+                        pid=attempt_pid,
+                        started=attempt_pid is not None,
+                        started_at_epoch=started_at_epoch,
+                        prior_error=attempt.identity_error,
+                        prior_error_phase="running",
+                        facts=facts,
+                        connection_session_id=(
+                            attempt.connection.session_id
+                            if attempt.connection is not None
+                            else None
+                        ),
+                        lifecycle=lifecycle,
+                    )
+                    extraction = enrich_finalize(
+                        artifacts=artifacts,
+                        extractor=harness_bundle.extractor,
+                        facts=facts,
+                        native_key=native_run.entry.complete(),
+                        spawn_id=run.spawn_id,
+                        log_dir=log_dir,
+                        model_id=run.model,
+                        harness_id=resolved_harness_id,
+                        project_root=project_root,
+                        failure_reason=conclusion.failure_reason,
+                    )
+                    conclusion.extracted = extraction
+
+                    if outcome.error is not None:
+                        conclusion.exit_code = 1
+                        conclusion.failure_reason = outcome.error.failure_code
+                        conclusion.authoritative_terminal_status = "failed"
+                    elif (
+                        _read_cancel_intent(runtime_root, run.spawn_id) is not None
+                        and not extraction.durable_report_completion
+                    ):
                         _apply_cancel_intent_to_conclusion(
                             conclusion,
                             runtime_root=runtime_root,
                             spawn_id=run.spawn_id,
                         )
-                        break
+                    elif attempt_cancelled:
+                        if attempt.received_signal is not None:
+                            conclusion.exit_code = (
+                                signal_to_exit_code(attempt.received_signal) or 130
+                            )
+                    elif attempt.budget_breach is not None:
+                        conclusion.failure_reason = "budget_exceeded"
+                        conclusion.exit_code = DEFAULT_INFRA_EXIT_CODE
+                        _append_budget_exceeded_event(run=run, breach=attempt.budget_breach)
+                    elif (
+                        budget_tracker is not None
+                        and extraction.usage is not None
+                        and extraction.usage.total_cost_usd is not None
+                        and budget_tracker.observe_cost(extraction.usage.total_cost_usd) is not None
+                    ):
+                        conclusion.failure_reason = "budget_exceeded"
+                        breach = budget_tracker.check()
+                        if breach is not None:
+                            _append_budget_exceeded_event(run=run, breach=breach)
+                        conclusion.exit_code = DEFAULT_INFRA_EXIT_CODE
+                    elif attempt.terminated_by_inactivity:
+                        exit_override, failure_override = _inactivity_terminal_outcome(extraction)
+                        if exit_override is not None:
+                            conclusion.exit_code = exit_override
+                        conclusion.failure_reason = failure_override
+                    else:
+                        if (
+                            conclusion.exit_code == 0
+                            and _spawn_kind(runtime_root, run.spawn_id) == "child"
+                            and extraction.report.content is None
+                        ):
+                            conclusion.failure_reason = "missing_report"
+
+                        if (
+                            attempt.terminated_by_report_watchdog
+                            and extraction.durable_report_completion
+                        ):
+                            conclusion.exit_code = 0
+                            conclusion.failure_reason = None
+                        elif extraction.output_is_empty and conclusion.exit_code == 0:
+                            conclusion.exit_code = 1
+                            conclusion.failure_reason = "empty_output"
+                        elif conclusion.exit_code == 0:
+                            guardrail_spawn = spawn_store.get_spawn(runtime_root, run.spawn_id)
+                            guardrail_result = run_guardrails(
+                                guardrails,
+                                spawn_id=run.spawn_id,
+                                cwd=child_cwd,
+                                env=child_env,
+                                report_path=extraction.report_path,
+                                chat_id=(
+                                    guardrail_spawn.continue_chat_id
+                                    if guardrail_spawn
+                                    else None
+                                ),
+                                timeout_seconds=guardrail_timeout_seconds,
+                            )
+                            if not guardrail_result.ok:
+                                conclusion.exit_code = 1
+                                conclusion.failure_reason = "guardrail_failed"
+                                _append_text_to_stderr_artifact(
+                                    artifacts=artifacts,
+                                    spawn_id=run.spawn_id,
+                                    text=_guardrail_failure_text(guardrail_result.failures),
+                                )
         except asyncio.CancelledError:
             _record_lifecycle("task_cancelled")
             conclusion.exit_code = 130

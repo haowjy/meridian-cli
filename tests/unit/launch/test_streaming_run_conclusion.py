@@ -1,41 +1,16 @@
 # qa-validated: pi-rpc-quiescence
 import signal
 
-from meridian.lib.core.domain import SpawnStatus, TokenUsage
-from meridian.lib.harness.semantics import TerminalEventOutcome
+from meridian.lib.core.domain import TokenUsage
 from meridian.lib.launch.extract import (
     FinalizeExtraction,
     classify_finalize_report,
 )
 from meridian.lib.launch.report import ExtractedReport, ReportSource
-from meridian.lib.launch.retry import AttemptFailure, FailureDisposition
 from meridian.lib.launch.streaming_runner import (
-    AttemptRuntime,
     StreamingRunConclusion,
     _inactivity_terminal_outcome,
 )
-
-
-def _attempt(
-    *,
-    exit_code: int,
-    watchdog: bool = False,
-    terminal_observed: bool = False,
-) -> AttemptRuntime:
-    return AttemptRuntime(
-        connection=None,
-        drain_exit_code=exit_code,
-        drain_error=None,
-        timed_out=False,
-        received_signal=None,
-        budget_breach=None,
-        terminated_by_report_watchdog=watchdog,
-        terminal_outcome=(
-            TerminalEventOutcome(SpawnStatus.FAILED, exit_code, "failed")
-            if terminal_observed
-            else None
-        ),
-    )
 
 
 def _extraction_with_report(
@@ -51,26 +26,6 @@ def _extraction_with_report(
         output_is_empty=False,
         report_kind=classify_finalize_report(ExtractedReport(content=report_text, source=source)),
     )
-
-
-def test_commit_attempt_uses_typed_failure_for_reporting_and_terminal_flags() -> None:
-    conclusion = StreamingRunConclusion()
-
-    conclusion.commit_attempt(
-        _attempt(exit_code=7, terminal_observed=True),
-        exit_code=7,
-        failure=AttemptFailure(
-            FailureDisposition.TERMINAL,
-            "typed_failure",
-            "exact upstream failure",
-        ),
-        terminal_status="failed",
-        cancelled=False,
-    )
-
-    assert conclusion.exit_code == 7
-    assert conclusion.failure_reason == "exact upstream failure"
-    assert conclusion.final_attempt_terminal_observed is True
 
 
 def test_terminal_facts_treat_durable_report_watchdog_as_success() -> None:
@@ -112,15 +67,6 @@ def test_terminal_facts_treat_signal_without_terminal_as_cancelled() -> None:
     assert facts.cancellation_observed is True
 
 
-def test_retry_count_tracks_attempts() -> None:
-    conclusion = StreamingRunConclusion()
-
-    conclusion.retries_attempted += 1
-    conclusion.retries_attempted += 1
-
-    assert conclusion.retries_attempted == 2
-
-
 def test_inactivity_terminal_outcome_success_when_durable_report_recovered() -> None:
     exit_override, failure_reason = _inactivity_terminal_outcome(
         _extraction_with_report("recovered report"),
@@ -139,11 +85,10 @@ def test_inactivity_terminal_outcome_stalled_without_durable_report() -> None:
     assert failure_reason == "stalled"
 
 
-def test_inactivity_terminal_outcome_applied_to_conclusion_without_retry() -> None:
+def test_inactivity_terminal_outcome_applied_to_conclusion() -> None:
     conclusion = StreamingRunConclusion(
         exit_code=1,
         failure_reason="inactivity_stall",
-        retries_attempted=0,
     )
     extraction = _extraction_with_report(None)
 
@@ -154,4 +99,3 @@ def test_inactivity_terminal_outcome_applied_to_conclusion_without_retry() -> No
 
     assert conclusion.exit_code == 1
     assert conclusion.failure_reason == "stalled"
-    assert conclusion.retries_attempted == 0

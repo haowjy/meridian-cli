@@ -32,7 +32,7 @@ from tests.support.fakes import FakeClock, FakeHeartbeat
 _pi_extension_projection_fixture = _pi_extension_projection_fixture
 
 
-def testpersist_attempt_artifacts_does_not_mirror_history(tmp_path: Path) -> None:
+def test_persist_stderr_artifact_does_not_mirror_history(tmp_path: Path) -> None:
     from meridian.lib.launch import streaming_runner
 
     spawn_id = SpawnId("p-single-history")
@@ -40,7 +40,7 @@ def testpersist_attempt_artifacts_does_not_mirror_history(tmp_path: Path) -> Non
     (tmp_path / "stderr.log").write_bytes(b"diagnostic\n")
     artifacts = InMemoryStore()
 
-    streaming_runner.persist_attempt_artifacts(
+    streaming_runner._persist_stderr_artifact(
         artifacts=artifacts,
         spawn_id=spawn_id,
         log_dir=tmp_path,

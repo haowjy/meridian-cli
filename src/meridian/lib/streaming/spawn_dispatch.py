@@ -11,12 +11,6 @@ from meridian.lib.harness.connections.base import (
     RawHarnessEvent,
     reap_on_ownership_transfer_failure,
 )
-from meridian.lib.harness.connections.errors import (
-    ConnectionStartFailure,
-    IncompleteStartupTeardown,
-    TeardownStatus,
-    TurnSubmission,
-)
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -96,25 +90,6 @@ async def dispatch_start(
         raise HarnessBinaryNotFound.from_os_error(
             harness_id=config.harness_id,
             error=exc,
-        ) from exc
-    except Exception as exc:
-        cause = exc.cause if isinstance(exc, IncompleteStartupTeardown) else exc
-        teardown = (
-            exc.teardown
-            if isinstance(exc, IncompleteStartupTeardown)
-            else getattr(connection, "startup_teardown", TeardownStatus.UNKNOWN)
-        )
-        if teardown is TeardownStatus.UNKNOWN:
-            teardown = await reap_on_ownership_transfer_failure(connection.stop)
-        raise ConnectionStartFailure(
-            cause,
-            turn_submission=getattr(
-                connection,
-                "initial_turn_submission",
-                TurnSubmission.UNKNOWN,
-            ),
-            subprocess_pid=connection.subprocess_pid,
-            teardown=teardown,
         ) from exc
     except BaseException:
         await reap_on_ownership_transfer_failure(connection.stop)

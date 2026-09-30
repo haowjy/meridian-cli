@@ -21,13 +21,10 @@ terminate_scope_sync(scope)
   └── else                               → fallback.terminate_tree_sync()
 ```
 
-Synchronous cleanup never raises: backend exceptions are caught and returned as a
-degraded `CleanupResult` with `skip_reason="termination_exception"`. The async
-`ScopedProcessHandle.terminate()` catches ordinary backend exceptions and logs
-`process_scope.terminate_failed`, but caller `asyncio.CancelledError` propagates so
-the handle remains recoverable. Cancellation is intentionally shielded only by
-`reap_on_ownership_transfer_failure()` at the startup ownership boundary.
-`terminate_scope_sync` logs with `terminate_scope_sync.failed`.
+Both entry points never raise — exceptions are caught and returned as a degraded
+`CleanupResult` with `skip_reason="termination_exception"`. `ScopedProcessHandle.terminate()`
+logs with `process_scope.terminate_failed`; `terminate_scope_sync` logs with
+`terminate_scope_sync.failed`.
 
 `terminate_scope_sync` sets `degraded_fallback=True` when the containment type is
 anything other than `"pid_tree_fallback"` (i.e., posix_pgid fell through to fallback,

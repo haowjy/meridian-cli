@@ -1,6 +1,6 @@
 """Tests for portable signal handler installation in streaming_runner.py.
 
-Verifies that install_signal_handlers uses signal.signal() (stdlib, portable)
+Verifies that _install_signal_handlers uses signal.signal() (stdlib, portable)
 rather than loop.add_signal_handler() (asyncio, Windows-broken), and that the
 cleanup callable pattern correctly restores previous handlers.
 """
@@ -16,7 +16,7 @@ import pytest
 
 from meridian.lib.launch.signals import SignalForwarder
 from meridian.lib.launch.streaming_runner import (
-    install_signal_handlers,  # pyright: ignore[reportPrivateUsage]
+    _install_signal_handlers,  # pyright: ignore[reportPrivateUsage]
 )
 
 # ---------------------------------------------------------------------------
@@ -43,12 +43,12 @@ def _invoke_handler(signum: signal.Signals) -> None:
 
 @pytest.mark.asyncio
 async def test_install_returns_cleanup_callable() -> None:
-    """install_signal_handlers returns a callable from the main thread."""
+    """_install_signal_handlers returns a callable from the main thread."""
     loop = asyncio.get_running_loop()
     shutdown_event = asyncio.Event()
     received_signal: list[signal.Signals | None] = [None]
 
-    cleanup = install_signal_handlers(loop, shutdown_event, received_signal)
+    cleanup = _install_signal_handlers(loop, shutdown_event, received_signal)
     assert cleanup is not None
     assert callable(cleanup)
     cleanup()  # restore
@@ -61,7 +61,7 @@ async def test_sigint_sets_shutdown_event() -> None:
     shutdown_event = asyncio.Event()
     received_signal: list[signal.Signals | None] = [None]
 
-    cleanup = install_signal_handlers(loop, shutdown_event, received_signal)
+    cleanup = _install_signal_handlers(loop, shutdown_event, received_signal)
     assert cleanup is not None
     try:
         _invoke_handler(signal.SIGINT)
@@ -81,7 +81,7 @@ async def test_sigterm_sets_shutdown_event() -> None:
     shutdown_event = asyncio.Event()
     received_signal: list[signal.Signals | None] = [None]
 
-    cleanup = install_signal_handlers(loop, shutdown_event, received_signal)
+    cleanup = _install_signal_handlers(loop, shutdown_event, received_signal)
     assert cleanup is not None
     try:
         _invoke_handler(signal.SIGTERM)
@@ -109,7 +109,7 @@ async def test_cleanup_restores_previous_handlers() -> None:
     prev_sigint = signal.signal(signal.SIGINT, _sentinel)
     prev_sigterm = signal.signal(signal.SIGTERM, _sentinel)
     try:
-        cleanup = install_signal_handlers(loop, shutdown_event, received_signal)
+        cleanup = _install_signal_handlers(loop, shutdown_event, received_signal)
         assert cleanup is not None
         # Our handler should be active now, not sentinel
         assert signal.getsignal(signal.SIGINT) is not _sentinel
@@ -127,14 +127,14 @@ async def test_cleanup_restores_previous_handlers() -> None:
 
 
 def test_returns_none_from_non_main_thread() -> None:
-    """install_signal_handlers returns None when called from a non-main thread."""
+    """_install_signal_handlers returns None when called from a non-main thread."""
     result: list[object] = []
 
     async def _inner() -> None:
         loop = asyncio.get_running_loop()
         shutdown_event = asyncio.Event()
         received_signal: list[signal.Signals | None] = [None]
-        cleanup = install_signal_handlers(loop, shutdown_event, received_signal)
+        cleanup = _install_signal_handlers(loop, shutdown_event, received_signal)
         result.append(cleanup)
 
     def _thread_target() -> None:
@@ -162,7 +162,7 @@ async def test_layering_streaming_handlers_restored_after_forwarder_unregisters(
     received_signal: list[signal.Signals | None] = [None]
 
     # 1. Install streaming handlers first
-    cleanup = install_signal_handlers(loop, shutdown_event, received_signal)
+    cleanup = _install_signal_handlers(loop, shutdown_event, received_signal)
     assert cleanup is not None
 
     streaming_handler_sigint = signal.getsignal(signal.SIGINT)

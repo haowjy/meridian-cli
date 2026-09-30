@@ -28,11 +28,6 @@ from meridian.lib.harness.connections.base import (
     reap_on_ownership_transfer_failure,
     validate_prompt_size,
 )
-from meridian.lib.harness.connections.errors import (
-    IncompleteStartupTeardown,
-    TeardownStatus,
-    TurnSubmission,
-)
 from meridian.lib.harness.connections.managed_stdio import (
     ManagedStdioProcess,
     launch_managed_stdio,
@@ -108,8 +103,6 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._cancel_requested = False
         self._signal_in_flight = False
         self._startup_emitter: StartupPhaseEmitter | None = None
-        self._initial_turn_submission = TurnSubmission.NOT_SUBMITTED
-        self._startup_teardown = TeardownStatus.UNKNOWN
 
     @property
     def state(self) -> ConnectionState:
@@ -130,14 +123,6 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
     @property
     def session_id(self) -> str | None:
         return None
-
-    @property
-    def initial_turn_submission(self) -> TurnSubmission:
-        return self._initial_turn_submission
-
-    @property
-    def startup_teardown(self) -> TeardownStatus:
-        return self._startup_teardown
 
     @property
     def subprocess_pid(self) -> int | None:
@@ -176,22 +161,16 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             await self._start_subprocess(config, spec)
             self._emit_startup_phase(StartupPhase.WAITING_FOR_CONNECTION)
             self._emit_startup_phase(StartupPhase.SENDING_PROMPT)
-            self._initial_turn_submission = TurnSubmission.UNKNOWN
             await self._send_user_turn(config.prompt)
-            self._initial_turn_submission = TurnSubmission.SUBMITTED
             self._set_state("connected")
-        except BaseException as exc:
+        except BaseException:
             self._mark_failed("Claude connection startup failed.")
-            local_teardown = await reap_on_ownership_transfer_failure(self._cleanup_start_failure)
-            self._startup_teardown = (
-                exc.teardown if isinstance(exc, IncompleteStartupTeardown) else local_teardown
-            )
+            await reap_on_ownership_transfer_failure(self._cleanup_start_failure)
             raise
 
-    async def _cleanup_start_failure(self) -> TeardownStatus:
+    async def _cleanup_start_failure(self) -> None:
         async with self._stop_lock:
-            cleanup = await self._cleanup_resources()
-            return cleanup.teardown
+            await self._cleanup_resources(terminate_process=True)
 
     async def stop(
         self,
@@ -204,19 +183,16 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
         async with self._stop_lock:
             if self._state == "stopped":
-                return StopResult(teardown=TeardownStatus.QUIESCENT)
+                return StopResult()
 
             if self._state not in {"stopping", "failed"}:
                 self._set_state("stopping")
 
-            cleanup = await self._cleanup_resources()
+            await self._cleanup_resources(terminate_process=True)
             self._cancel_requested = False
             self._signal_in_flight = False
-            if cleanup.teardown is TeardownStatus.QUIESCENT:
-                self._set_state("stopped")
-            else:
-                self._mark_failed("Claude process cleanup did not prove quiescence.")
-            return cleanup
+            self._set_state("stopped")
+            return StopResult()
 
     def health(self) -> bool:
         return self._state == "connected"
@@ -436,13 +412,13 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         else:
             process.send_signal(sig)
 
-    async def _cleanup_resources(self) -> StopResult:
+    async def _cleanup_resources(self, *, terminate_process: bool) -> None:
         child = self._child
         if child is None:
-            return StopResult(teardown=TeardownStatus.QUIESCENT)
-        cleanup = await child.terminate()
+            return
+        if terminate_process:
+            await child.terminate()
         child.close_stderr_handle()
-        return cleanup
 
     def _read_stderr_excerpt(self) -> str:
         child = self._child

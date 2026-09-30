@@ -76,8 +76,6 @@ These override spawn-level runtime policy. They sit above project config but bel
 
 ## Config Overrides
 
-- `MERIDIAN_MAX_RETRIES`
-- `MERIDIAN_RETRY_BACKOFF_SECONDS`
 - `MERIDIAN_KILL_GRACE_MINUTES`
 - `MERIDIAN_GUARDRAIL_TIMEOUT_MINUTES`
 - `MERIDIAN_WAIT_TIMEOUT_MINUTES`

@@ -18,10 +18,7 @@ from meridian.lib.harness.adapter import SpawnExtractor
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.cost import estimate_usage_cost
 from meridian.lib.launch.constants import (
-    OUTPUT_FILENAME,
     REPORT_FILENAME,
-    STDERR_FILENAME,
-    TOKENS_FILENAME,
 )
 from meridian.lib.launch.report import ExtractedReport, extract_or_fallback_report
 from meridian.lib.state.artifact_store import ArtifactStore
@@ -55,22 +52,6 @@ class FinalizeExtraction(BaseModel):
     @property
     def durable_report_completion(self) -> bool:
         return self.report_kind is FinalizeReportKind.DURABLE_COMPLETION
-
-
-def reset_finalize_attempt_artifacts(
-    *,
-    artifacts: ArtifactStore,
-    spawn_id: SpawnId,
-    log_dir: Path,
-) -> None:
-    """Clear attempt-scoped artifacts so retries never reuse stale extraction state."""
-
-    for name in (OUTPUT_FILENAME, STDERR_FILENAME, TOKENS_FILENAME, REPORT_FILENAME):
-        artifacts.delete(ArtifactKey(f"{spawn_id}/{name}"))
-
-    report_path = log_dir / REPORT_FILENAME
-    if report_path.exists():
-        report_path.unlink()
 
 
 def _persist_report(

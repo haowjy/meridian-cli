@@ -99,7 +99,7 @@ Three concentric layers, each defined by function scope:
 |---|---|
 | I-1 | All composition inside `build_launch_context()` — no adapter composes independently |
 | I-2 | No driving adapter reconstructs argv, env, or permissions independently |
-| I-4 | `conclude_native_run()` once per attempt after teardown joins: IDs → adapter → boundary → attribution |
+| I-4 | `conclude_native_run()` once per turn after teardown joins: IDs → adapter → boundary → attribution |
 | I-5 | `SpawnRequest`/`LaunchRuntime` carry no derived state; `LaunchContext` complete at construction |
 | I-10 | Fork materialization (`fork.py`) happens only after spawn row exists |
 | I-13 | `LaunchContext.warnings` is the sole channel for composition warnings |
@@ -130,36 +130,25 @@ Use `LaunchArgvIntent.SPEC_ONLY` on execution paths. `LaunchArgvIntent.REQUIRED`
 
 ## Startup Watchdog
 
-`_start_spawn_with_timeout()` in `streaming/attempt.py` wraps the entire pre-connect
+`_start_spawn_with_timeout()` in `streaming_runner.py` wraps the entire pre-connect
 span — backend boot, connection, and session handshake — with an outer
 `asyncio.timeout`. Default bound is 5 minutes, configured via
 `timeouts.startup_minutes` or `MERIDIAN_STARTUP_TIMEOUT_MINUTES`. Both the spawn
 path (`execute_with_streaming`) and the streaming-serve path (`run_streaming_spawn`)
 use the same helper. Exceeding the bound raises `StartupPhaseTimeout`, which the
-runner treats as a non-retryable terminal failure.
+runner preserves as the turn's terminal failure.
 
 Rationale: before the watchdog, the pre-connect span was unbounded by accident. The
 recorded worst case was a spawn that wedged for 2h18m before any liveness signal.
 
-## Attempt Evidence Preservation
+## Single-Attempt Execution
 
-On retry, `preserve_attempt_artifacts()` in `attempt_artifacts.py` moves completed
-attempt diagnostics (`stderr.log`, `report.md`, `runner-lifecycle.jsonl`,
-`tokens.json`) into `attempt-N/` under the spawn log directory.
-Attempt reports, usage and identity come from `AttemptFacts` folded on live events.
-Each retry gets fresh facts; runner history is not read during finalization.
-Diagnostic rotation commits with `os.replace(staging_dir, attempt_dir)` before
-auxiliary copies and active diagnostic keys are updated. Retired runner-stream files
-are removed only by the explicit session-history prune.
-
-Automatic retry is startup recovery, never turn replay. `retry.py` permits another
-attempt only for a typed transient cause with `not_submitted` turn evidence and a
-quiescent teardown followed by a proven unmaterialized (or inapplicable) create
-identity. Unknown evidence, explicit terminal outcomes, completed submission,
-guardrail failures, cancellation, and materialized identities stop. The same typed
-attempt failure selects retry disposition and the reported final cause; legacy
-string/exit classification is fallback evidence only. A permit can only rearm the
-same prebound identity; the runner never mints or rebinds a chat identity.
+A Meridian harness turn executes once. Terminal frames, transport failures,
+timeouts, guardrails, identity failures, and generic subprocess failures all
+finalize that attempt without launch-level replay. Reports, usage, and identity
+come from `AttemptFacts` folded on live events; explicit terminal errors remain
+the causal final result. Transport-owned readiness polling may retry only within
+an adapter when the operation is demonstrably idempotent.
 
 Runner lifecycle diagnostics can execute after async boundaries. Their
 parent-creating writes use the published-spawn artifact mutation seam; never append
@@ -176,10 +165,8 @@ hang indefinitely when fd 0 was held open without data. Empty prompt is valid fo
 
 - `context.py` — `prepare_launch_surface()`, `bind_launch_context()` — the seam
 - `__init__.py` — `launch_primary()` for the interactive primary path
-- `streaming_runner.py` — run-level orchestration and `execute_with_streaming()`
-- `streaming/attempt.py` — one streaming attempt, startup watchdog, and async drain mechanics
-- `retry.py` — typed failure/replay assessment and the sole retry decision
-- `attempt_artifacts.py` — crash-safe retry evidence rotation
+- `streaming_runner.py` — `execute_with_streaming()` for spawn/streaming paths;
+  `_start_spawn_with_timeout()` for the startup watchdog
 - `process/` — `run_harness_process()` for the PTY/pipe primary executor
 
 ## Anti-Patterns
