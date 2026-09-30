@@ -121,6 +121,8 @@ def test_terminate_tree_sync_escalates_and_suppresses_racy_process_errors(
         kill_escalated=True,
         degraded_fallback=False,
         skip_reason=None,
+        survivor_count=0,
+        verification_complete=False,
     )
     assert root.terminated == 1
     assert root.killed == 1

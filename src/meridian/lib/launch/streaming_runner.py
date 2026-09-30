@@ -129,7 +129,6 @@ class StreamingRunConclusion:
     authoritative_terminal_status: TerminalSpawnStatus | None = None
     cancellation_observed: bool = False
     retries_attempted: int = 0
-    attempt_failure: AttemptFailure | None = None
 
     def commit_attempt(
         self,
@@ -142,7 +141,6 @@ class StreamingRunConclusion:
     ) -> None:
         """Select final reporting and retry cause from one typed record."""
 
-        self.attempt_failure = failure
         self.failure_reason = None if failure is None else failure.final_message
         self.exit_code = exit_code
         self.final_attempt_terminal_observed = attempt.terminal_observed

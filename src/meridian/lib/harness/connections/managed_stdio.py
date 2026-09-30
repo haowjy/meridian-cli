@@ -14,6 +14,7 @@ from typing import Final
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import (
     ConnectionConfig,
+    StopResult,
     reap_on_ownership_transfer_failure,
 )
 from meridian.lib.harness.connections.errors import (
@@ -26,13 +27,53 @@ from meridian.lib.harness.connections.managed_backend import (
 )
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.platform import IS_WINDOWS
-from meridian.lib.platform.process_scope import ProcessScopeSnapshot, ScopedProcessHandle
+from meridian.lib.platform.process_scope import (
+    CleanupResult,
+    ProcessScopeSnapshot,
+    ScopedProcessHandle,
+)
 from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
     resolve_spawn_log_dir,
 )
 
 STDIO_STDERR_TAIL_MAX_BYTES: Final[int] = 16 * 1024
+_PROCESS_EXIT_CONFIRM_SECONDS: Final[float] = 1.0
+
+
+def teardown_from_scope_cleanup(result: CleanupResult) -> TeardownStatus:
+    """Reduce platform facts without teaching retry policy platform details."""
+
+    if result.skip_reason is not None:
+        return TeardownStatus.FAILED
+    if not result.verification_complete or result.survivor_count is None:
+        return TeardownStatus.UNKNOWN
+    if result.survivor_count != 0:
+        return TeardownStatus.FAILED
+    return TeardownStatus.QUIESCENT
+
+
+async def _terminate_scoped_process(
+    process: asyncio.subprocess.Process,
+    scope_handle: ScopedProcessHandle,
+    *,
+    grace_seconds: float,
+    reason: str,
+) -> StopResult:
+    result = await scope_handle.terminate(
+        grace_seconds=grace_seconds,
+        reason=reason,
+    )
+    teardown = teardown_from_scope_cleanup(result)
+    if teardown is TeardownStatus.QUIESCENT:
+        try:
+            await asyncio.wait_for(
+                process.wait(),
+                timeout=_PROCESS_EXIT_CONFIRM_SECONDS,
+            )
+        except (TimeoutError, asyncio.CancelledError):
+            teardown = TeardownStatus.UNKNOWN
+    return StopResult(escalated=result.kill_escalated, teardown=teardown)
 
 
 class ManagedStdioProcess:
@@ -100,41 +141,45 @@ class ManagedStdioProcess:
         except TimeoutError:
             return False
 
-    async def terminate(self) -> bool:
+    async def terminate(self) -> StopResult:
         process = self._process
         if process is None:
-            return False
+            return StopResult(teardown=TeardownStatus.QUIESCENT)
 
         scope_handle = self._scope_handle
-        self._scope_handle = None
-        if process.returncode is not None:
-            self._process = None
-            return False
         if scope_handle is not None:
-            result = await scope_handle.terminate(
+            cleanup = await _terminate_scoped_process(
+                process,
+                scope_handle,
                 grace_seconds=self._kill_grace_seconds,
                 reason=self._terminate_reason,
             )
-            self._process = None
-            return result.kill_escalated
+            if cleanup.teardown is TeardownStatus.QUIESCENT:
+                self._scope_handle = None
+                self._process = None
+            return cleanup
 
+        if process.returncode is not None:
+            return StopResult(teardown=TeardownStatus.UNKNOWN)
         if process.stdin is not None:
             with suppress(Exception):
                 process.stdin.close()
-        if IS_WINDOWS:
-            with suppress(ProcessLookupError):
-                process.terminate()
-        else:
-            with suppress(ProcessLookupError):
-                process.send_signal(signal.SIGTERM)
         try:
+            if IS_WINDOWS:
+                process.terminate()
+            else:
+                process.send_signal(signal.SIGTERM)
             await asyncio.wait_for(process.wait(), timeout=self._kill_grace_seconds)
         except TimeoutError:
-            with suppress(ProcessLookupError):
+            try:
                 process.kill()
-            await process.wait()
-        self._process = None
-        return True
+                await process.wait()
+            except (ProcessLookupError, OSError):
+                return StopResult(escalated=True, teardown=TeardownStatus.FAILED)
+        except (ProcessLookupError, OSError):
+            return StopResult(teardown=TeardownStatus.FAILED)
+        # Without the scope handle the root exit cannot prove descendants gone.
+        return StopResult(teardown=TeardownStatus.UNKNOWN)
 
     def read_stderr_tail(
         self,
@@ -195,6 +240,7 @@ async def launch_managed_stdio(
     stderr_log_path = spawn_dir / "stderr.log"
     stderr_handle = stderr_log_path.open("ab")
     stderr_read_offset = stderr_handle.tell()
+    process: asyncio.subprocess.Process | None = None
     provisional_scope_handle: ScopedProcessHandle | None = None
     try:
         try:
@@ -230,14 +276,20 @@ async def launch_managed_stdio(
             persist=config.runtime_root is not None,
         )
     except BaseException as exc:
-        teardown = TeardownStatus.QUIESCENT
+        teardown = (
+            TeardownStatus.QUIESCENT if process is None else TeardownStatus.UNKNOWN
+        )
         if provisional_scope_handle is not None:
-            teardown = await reap_on_ownership_transfer_failure(
-                lambda: provisional_scope_handle.terminate(
+            async def _cleanup_provisional() -> TeardownStatus:
+                cleanup = await _terminate_scoped_process(
+                    provisional_scope_handle.process,
+                    provisional_scope_handle,
                     grace_seconds=kill_grace_seconds,
                     reason=terminate_reason,
                 )
-            )
+                return cleanup.teardown
+
+            teardown = await reap_on_ownership_transfer_failure(_cleanup_provisional)
         with suppress(OSError):
             stderr_handle.flush()
         stderr_handle.close()
@@ -264,4 +316,5 @@ __all__ = [
     "STDIO_STDERR_TAIL_MAX_BYTES",
     "ManagedStdioProcess",
     "launch_managed_stdio",
+    "teardown_from_scope_cleanup",
 ]

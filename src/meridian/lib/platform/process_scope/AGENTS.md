@@ -30,6 +30,12 @@ is lost.
 `process_scope.terminate_failed`, and returned as a degraded `CleanupResult`.
 Teardown paths must remain safe even when containment fails.
 
+**Cleanup success is explicit.** `CleanupResult.verification_complete` says whether
+the backend inspected its full ownership boundary after signaling, and
+`survivor_count` reports progress-capable members still present. A missing/partial
+verification, any survivor, or any `skip_reason` is not quiescence. Callers must
+preserve the scope handle so later reaping can retry when termination is unverified.
+
 **Every adapter validates `root_created_at_epoch` before sending any signal.** If the
 current process birth time differs from the recorded value by more than 1 second, the
 PID was reused — the kill is skipped with `skip_reason="pid_reuse_detected"`. A sentinel

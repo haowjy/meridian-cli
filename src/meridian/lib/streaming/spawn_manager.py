@@ -211,7 +211,7 @@ class SpawnManager:
         control_server: ControlSocketServer | None = None
         drain_task: asyncio.Task[None] | None = None
 
-        async def _cleanup_unregistered_start() -> object:
+        async def _cleanup_unregistered_start() -> None:
             if tracer is not None:
                 tracer.close()
             self._event_hooks.pop(spawn_id, None)

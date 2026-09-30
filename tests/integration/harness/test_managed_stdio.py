@@ -19,6 +19,7 @@ from meridian.lib.harness.connections.errors import (
     RetryableConnectionStartupError,
     TeardownStatus,
 )
+from meridian.lib.platform.process_scope import CleanupResult, ScopedProcessHandle
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn_store import start_spawn
 
@@ -144,3 +145,71 @@ async def test_launch_managed_stdio_preserves_incomplete_provisional_teardown(
             if process.returncode is None:
                 os.killpg(process.pid, signal.SIGKILL)
                 await process.wait()
+
+
+@pytest.mark.asyncio
+async def test_failed_scope_cleanup_retains_managed_process_ownership(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spawn_id = SpawnId("stdio-retained-failed-cleanup")
+    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
+    start_spawn(
+        runtime_root,
+        spawn_id=spawn_id,
+        chat_id="chat-1",
+        model="test-model",
+        agent="tester",
+        harness="claude",
+        prompt="test",
+        status="running",
+    )
+    child = await managed_stdio.launch_managed_stdio(
+        config=ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.CLAUDE,
+            prompt="test",
+            control_root=tmp_path,
+            child_env={},
+            runtime_root=runtime_root,
+        ),
+        harness_id=HarnessId.CLAUDE,
+        command=(sys.executable, "-c", "import time; time.sleep(60)"),
+        env=os.environ.copy(),
+        cwd=str(tmp_path),
+        stdin=asyncio.subprocess.PIPE,
+        stdout_limit=64 * 1024,
+        kill_grace_seconds=0.1,
+        terminate_reason="test_cleanup",
+    )
+    process = child.process
+    assert process is not None
+
+    async def report_failure(
+        handle: ScopedProcessHandle,
+        grace_seconds: float = 5.0,
+        reason: str = "stop_called",
+    ) -> CleanupResult:
+        return CleanupResult(
+            scope_id=handle.snapshot.scope_id,
+            root_pid=handle.pid,
+            descendant_count=None,
+            reason=reason,
+            grace_seconds=grace_seconds,
+            kill_escalated=False,
+            degraded_fallback=True,
+            skip_reason="pid_reuse_detected",
+        )
+
+    monkeypatch.setattr(ScopedProcessHandle, "terminate", report_failure)
+    try:
+        cleanup = await child.terminate()
+        assert cleanup.teardown is TeardownStatus.FAILED
+        assert child.process is process
+        assert child.scope_snapshot is not None
+        assert process.returncode is None
+    finally:
+        if process.returncode is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            await process.wait()
+        child.close_stderr_handle()

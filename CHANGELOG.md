@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
-- Restrict automatic harness retries to typed transient startup failures whose initial turn was definitely not submitted, whose attempt teardown is proven quiescent, and whose planned create identity is then proven unmaterialized; explicit terminal results and ambiguous or submitted work now preserve the exact causal failure without replay.
+- Restrict automatic harness retries to typed transient startup failures whose initial turn was definitely not submitted, whose process scope is verified empty after teardown, and whose planned create identity is then proven unmaterialized; skipped, failed, abandoned, or unverifiable cleanup fails closed, while explicit terminal results and ambiguous or submitted work preserve the exact causal failure without replay.
 
 ## [0.8.1] - 2026-09-30
 

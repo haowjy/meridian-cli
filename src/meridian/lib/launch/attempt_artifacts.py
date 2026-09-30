@@ -117,4 +117,3 @@ def persist_attempt_artifacts(
     source = log_dir / STDERR_FILENAME
     if source.exists():
         artifacts.put(make_artifact_key(spawn_id, STDERR_FILENAME), source.read_bytes())
-

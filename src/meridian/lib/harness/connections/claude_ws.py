@@ -188,9 +188,10 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             )
             raise
 
-    async def _cleanup_start_failure(self) -> None:
+    async def _cleanup_start_failure(self) -> TeardownStatus:
         async with self._stop_lock:
-            await self._cleanup_resources(terminate_process=True)
+            cleanup = await self._cleanup_resources()
+            return cleanup.teardown
 
     async def stop(
         self,
@@ -203,16 +204,19 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
         async with self._stop_lock:
             if self._state == "stopped":
-                return StopResult()
+                return StopResult(teardown=TeardownStatus.QUIESCENT)
 
             if self._state not in {"stopping", "failed"}:
                 self._set_state("stopping")
 
-            await self._cleanup_resources(terminate_process=True)
+            cleanup = await self._cleanup_resources()
             self._cancel_requested = False
             self._signal_in_flight = False
-            self._set_state("stopped")
-            return StopResult()
+            if cleanup.teardown is TeardownStatus.QUIESCENT:
+                self._set_state("stopped")
+            else:
+                self._mark_failed("Claude process cleanup did not prove quiescence.")
+            return cleanup
 
     def health(self) -> bool:
         return self._state == "connected"
@@ -432,13 +436,13 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         else:
             process.send_signal(sig)
 
-    async def _cleanup_resources(self, *, terminate_process: bool) -> None:
+    async def _cleanup_resources(self) -> StopResult:
         child = self._child
         if child is None:
-            return
-        if terminate_process:
-            await child.terminate()
+            return StopResult(teardown=TeardownStatus.QUIESCENT)
+        cleanup = await child.terminate()
         child.close_stderr_handle()
+        return cleanup
 
     def _read_stderr_excerpt(self) -> str:
         child = self._child

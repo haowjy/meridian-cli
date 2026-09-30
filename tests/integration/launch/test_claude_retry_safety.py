@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import shlex
+import signal
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,7 @@ from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.claude_sessions import project_slug
 from meridian.lib.harness.connections import claude_ws as claude_connection_module
+from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.harness.connections.errors import (
     IncompleteStartupTeardown,
     RetryableConnectionStartupError,
@@ -25,7 +27,9 @@ from meridian.lib.harness.connections.errors import (
 from meridian.lib.harness.connections.managed_stdio import ManagedStdioProcess
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch import native_run as native_run_module
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.request import RetryPolicy, SpawnRequest
+from meridian.lib.platform.process_scope import CleanupResult, ScopedProcessHandle
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
@@ -339,6 +343,118 @@ async def test_incomplete_teardown_with_delayed_materialization_never_retries(
     finally:
         for child in first_child:
             await child.terminate()
+
+
+@pytest.mark.asyncio
+async def test_normal_returning_failed_scope_cleanup_never_retries(
+    claude_scenario: _ClaudeScenario,
+) -> None:
+    """A non-throwing termination failure is not quiescence proof."""
+
+    log = shlex.quote(str(claude_scenario.invocation_log))
+    claude_scenario.install_claude(
+        f"printf '%s\\n' \"$*\" >> {log}\n"
+        f"invocation_count=$(wc -l < {log})\n"
+        'if [ "$invocation_count" = "1" ]; then\n'
+        "  sleep 0.2\n"
+        '  mkdir -p "$(dirname "$NATIVE_PATH")"\n'
+        '  printf partial > "$NATIVE_PATH"\n'
+        "  sleep 30\n"
+        "fi\n"
+        "IFS= read -r prompt\n"
+        "printf '%s\\n' '{\"type\":\"result\",\"is_error\":true,"
+        "\"result\":\"session id already in use\"}'\n"
+        "exit 1\n"
+    )
+    original_start = claude_connection_module.ClaudeConnection._start_subprocess
+    launch_calls = 0
+    first_processes: list[asyncio.subprocess.Process] = []
+
+    async def fail_after_first_process_start(
+        connection: claude_connection_module.ClaudeConnection,
+        config: ConnectionConfig,
+        spec: ResolvedLaunchSpec,
+    ) -> None:
+        nonlocal launch_calls
+        launch_calls += 1
+        identity = spec.native_identity
+        assert identity is not None and identity.session_id is not None
+        native_path = Path(identity.native_store) / f"{identity.session_id}.jsonl"
+        config.child_env["NATIVE_PATH"] = str(native_path)
+        if launch_calls > 1:
+            for _ in range(100):
+                if native_path.exists():
+                    break
+                await asyncio.sleep(0.01)
+        await original_start(connection, config, spec)
+        if launch_calls == 1:
+            assert connection._child is not None
+            process = connection._child.process
+            assert process is not None
+            first_processes.append(process)
+            raise RetryableConnectionStartupError("temporary startup handoff failure")
+
+    async def report_termination_failure(
+        handle: ScopedProcessHandle,
+        grace_seconds: float = 5.0,
+        reason: str = "stop_called",
+    ) -> CleanupResult:
+        return CleanupResult(
+            scope_id=handle.snapshot.scope_id,
+            root_pid=handle.pid,
+            descendant_count=None,
+            reason=reason,
+            grace_seconds=grace_seconds,
+            kill_escalated=False,
+            degraded_fallback=True,
+            skip_reason="termination_exception",
+        )
+
+    claude_scenario.monkeypatch.setattr(
+        claude_connection_module.ClaudeConnection,
+        "_start_subprocess",
+        fail_after_first_process_start,
+    )
+    claude_scenario.monkeypatch.setattr(
+        ScopedProcessHandle,
+        "terminate",
+        report_termination_failure,
+    )
+
+    try:
+        exit_code, run = await claude_scenario.run("failed-scope-cleanup-no-retry")
+        invocations = claude_scenario.invocations()
+        assert exit_code == 2
+        assert len(invocations) == 1
+        native_id = claude_scenario.session_id(invocations[0])
+        native_path = claude_scenario.native_path(native_id)
+        for _ in range(100):
+            if native_path.exists():
+                break
+            await asyncio.sleep(0.01)
+        assert native_path.exists()
+        row = spawn_store.get_spawn(claude_scenario.runtime_root, run.spawn_id)
+        assert row is not None and row.terminal is not None
+        assert row.terminal.error == "temporary startup handoff failure"
+        assessment = next(
+            item for item in claude_scenario.lifecycle(run) if item["event"] == "retry_assessed"
+        )
+        assert [
+            item["attempt"]
+            for item in claude_scenario.lifecycle(run)
+            if item["event"] == "attempt_started"
+        ] == [1]
+        assert assessment["teardown"] in {"failed", "unknown"}
+        assert assessment["teardown"] != "quiescent"
+        assert assessment["native_create"] == "unknown"
+        assert assessment["retry"] is False
+        assert assessment["planned_native_id"] == native_id
+        assert row.harness_session_id == native_id
+    finally:
+        for process in first_processes:
+            if process.returncode is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                await process.wait()
 
 
 @pytest.mark.asyncio

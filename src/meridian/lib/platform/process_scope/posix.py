@@ -50,6 +50,27 @@ def _scan_by_pgid(pgid: int) -> list[psutil.Process]:
     return result
 
 
+def _count_progress_capable_group_members(pgid: int) -> int | None:
+    """Count non-zombie group members, or return unknown if the scan is incomplete."""
+
+    count = 0
+    try:
+        processes = psutil.process_iter(["pid", "status"])
+        for proc in processes:
+            try:
+                if os.getpgid(proc.pid) != pgid:
+                    continue
+                if proc.info.get("status") != psutil.STATUS_ZOMBIE:
+                    count += 1
+            except (psutil.NoSuchProcess, ProcessLookupError):
+                continue
+            except (psutil.AccessDenied, PermissionError, OSError):
+                return None
+    except (psutil.Error, OSError):
+        return None
+    return count
+
+
 def terminate_pgid(
     pgid: int,
     root_pid: int,
@@ -111,6 +132,8 @@ def terminate_pgid(
             kill_escalated=False,
             degraded_fallback=False,
             skip_reason="pid_reuse_detected",
+            survivor_count=None,
+            verification_complete=False,
         )
 
     # --- Snapshot tree before signalling for wait + descendant count ---
@@ -168,6 +191,8 @@ def terminate_pgid(
                     proc.kill()
             psutil.wait_procs(alive, timeout=1.0)
 
+    survivor_count = _count_progress_capable_group_members(pgid)
+
     return CleanupResult(
         scope_id=scope_id,
         root_pid=root_pid,
@@ -177,6 +202,8 @@ def terminate_pgid(
         kill_escalated=kill_escalated,
         degraded_fallback=degraded_fallback,
         skip_reason=None,
+        survivor_count=survivor_count,
+        verification_complete=survivor_count is not None,
     )
 
 

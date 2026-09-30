@@ -79,8 +79,10 @@ child process can be stranded between owners. `reap_on_ownership_transfer_failur
 in `base.py` catches `BaseException`, shields cleanup from repeated cancellation
 deliveries in a while-not-done loop, and bounds foreground cleanup to 30 seconds.
 Durable `spawn_owned` process scopes and the reaper own any residue beyond that
-bound. Its typed result is `quiescent` only when cleanup completed normally;
-abandoned, failed, or unknown cleanup cannot prove replay safety. The rejected
+bound. Cleanup must return typed teardown evidence: coroutine completion alone is
+`unknown`. Managed process cleanup reduces `CleanupResult` to `quiescent` only after
+the complete process scope is verified empty; skips, survivors, incomplete
+verification, abandonment, or failure cannot prove replay safety. The rejected
 alternative (`with suppress` single-shot) did not survive repeated cancellation.
 
 **The published spawn directory is a startup precondition.** Connection and process-
