@@ -81,7 +81,7 @@ def classify_attempt_failure(
 
     if cancelled:
         return AttemptFailure(FailureDisposition.CANCELLED, "cancelled", message)
-    if terminal_outcome is not None:
+    if terminal_outcome is not None and terminal_outcome.exit_code != 0:
         disposition = (
             FailureDisposition.TRANSIENT
             if terminal_outcome.cause is TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE

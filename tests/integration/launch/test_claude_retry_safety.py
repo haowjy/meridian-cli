@@ -26,10 +26,19 @@ from tests.integration.launch.streaming_runner_support import (
 )
 
 
+@pytest.mark.parametrize(
+    "upstream_error",
+    [
+        "subscription quota exhausted",
+        "authentication rejected",
+        "invalid model configuration",
+    ],
+)
 @pytest.mark.asyncio
 async def test_explicit_claude_terminal_result_is_not_replayed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    upstream_error: str,
 ) -> None:
     """A typed upstream terminal result must remain the one causal failure."""
 
@@ -55,9 +64,8 @@ async def test_explicit_claude_terminal_result_is_not_replayed(
         "'{\"type\":\"result\",\"is_error\":true,"
         "\"result\":\"session id already in use\"}'\n"
         "else\n"
-        "  printf '%s\\n' "
-        "'{\"type\":\"result\",\"subtype\":\"error_max_turns\",\"is_error\":true,"
-        "\"result\":\"subscription quota exhausted\"}'\n"
+        "  printf '{\"type\":\"result\",\"subtype\":\"error_max_turns\","
+        f"\"is_error\":true,\"result\":\"{upstream_error}\"}}\\n'\n"
         "fi\n"
         "exit 1\n",
         encoding="utf-8",
@@ -108,7 +116,7 @@ async def test_explicit_claude_terminal_result_is_not_replayed(
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
     assert exit_code == 1
     assert row is not None and row.terminal is not None
-    assert row.terminal.error == "subscription quota exhausted"
+    assert row.terminal.error == upstream_error
     assert len(invocation_log.read_text(encoding="utf-8").splitlines()) == 1
     lifecycle_rows = [
         json.loads(line)

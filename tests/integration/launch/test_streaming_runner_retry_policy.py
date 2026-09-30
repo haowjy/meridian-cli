@@ -313,6 +313,15 @@ async def test_execute_with_streaming_does_not_replay_after_guardrail_failure(
     assert row.status == "failed"
     assert row.terminal.error == "guardrail_failed"
     assert row.resident_rearm_count == 1
+    lifecycle_rows = [
+        json.loads(line)
+        for line in (runtime_root / "spawns" / str(run.spawn_id) / "runner-lifecycle.jsonl")
+        .read_text()
+        .splitlines()
+    ]
+    assessment = next(row for row in lifecycle_rows if row["event"] == "retry_assessed")
+    assert assessment["failure_code"] == "guardrail_failed"
+    assert assessment["failure_disposition"] == "terminal"
 
 
 @pytest.mark.asyncio
