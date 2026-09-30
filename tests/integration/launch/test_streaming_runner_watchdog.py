@@ -21,6 +21,7 @@ from meridian.lib.harness.launch_spec import ResolvedLaunchSpec
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.harness.semantics import EventSemantics, NormalizedHarnessEvent
 from meridian.lib.launch import constants as launch_constants
+from meridian.lib.launch.streaming import attempt as streaming_attempt_module
 from meridian.lib.launch.extract import enrich_finalize, reset_finalize_attempt_artifacts
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
@@ -208,7 +209,7 @@ async def test_streaming_attempt_fresh_events_keep_slow_cursor_backend_alive(
                 self.stop_calls.append({"spawn_id": spawn_id, **kwargs})
 
     manager = SlowActiveManager()
-    monkeypatch.setattr(streaming_runner_module, "CURSOR_INACTIVITY_TIMEOUT_SECONDS", 0.5)
+    monkeypatch.setattr(streaming_attempt_module, "CURSOR_INACTIVITY_TIMEOUT_SECONDS", 0.5)
     run = Spawn(
         spawn_id=SpawnId("fresh-events"),
         prompt="hello",
@@ -494,6 +495,7 @@ async def test_execute_with_streaming_succeeds_after_report_watchdog_cleanup(
     )
     monkeypatch.setattr(launch_constants, "REPORT_WATCHDOG_POLL_SECONDS", 0.001)
     monkeypatch.setattr(launch_constants, "REPORT_WATCHDOG_GRACE_SECONDS", 0.001)
+    importlib.reload(streaming_attempt_module)
     importlib.reload(streaming_runner_module)
 
     run = Spawn(
@@ -560,6 +562,7 @@ async def test_execute_with_streaming_finalizes_when_duration_clock_read_fails(
     )
     monkeypatch.setattr(launch_constants, "REPORT_WATCHDOG_POLL_SECONDS", 0.001)
     monkeypatch.setattr(launch_constants, "REPORT_WATCHDOG_GRACE_SECONDS", 0.001)
+    importlib.reload(streaming_attempt_module)
     importlib.reload(streaming_runner_module)
 
     run = Spawn(
