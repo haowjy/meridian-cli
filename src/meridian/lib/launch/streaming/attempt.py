@@ -676,6 +676,8 @@ async def run_streaming_attempt(
         start_error = str(exc.cause)
         start_failure = exc
         turn_submission = exc.turn_submission
+        if isinstance(exc.cause, NativeIdentityError):
+            identity_error = exc.cause
     except NativeIdentityError as exc:
         start_error, identity_error = str(exc), exc
     except Exception as exc:
