@@ -100,4 +100,3 @@ def classify_error(
     if exit_code in {1, 2}:
         return ErrorCategory.RETRYABLE
     return ErrorCategory.UNRECOVERABLE
-
