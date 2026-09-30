@@ -213,3 +213,89 @@ async def test_failed_scope_cleanup_retains_managed_process_ownership(
             os.killpg(process.pid, signal.SIGKILL)
             await process.wait()
         child.close_stderr_handle()
+
+
+@pytest.mark.asyncio
+async def test_cancellation_during_root_reap_propagates_and_retains_ownership(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Caller cancellation wins while managed ownership remains available."""
+
+    spawn_id = SpawnId("stdio-cancelled-root-reap")
+    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
+    start_spawn(
+        runtime_root,
+        spawn_id=spawn_id,
+        chat_id="chat-1",
+        model="test-model",
+        agent="tester",
+        harness="claude",
+        prompt="test",
+        status="running",
+    )
+    child = await managed_stdio.launch_managed_stdio(
+        config=ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.CLAUDE,
+            prompt="test",
+            control_root=tmp_path,
+            child_env={},
+            runtime_root=runtime_root,
+        ),
+        harness_id=HarnessId.CLAUDE,
+        command=(sys.executable, "-c", "import time; time.sleep(60)"),
+        env=os.environ.copy(),
+        cwd=str(tmp_path),
+        stdin=asyncio.subprocess.PIPE,
+        stdout_limit=64 * 1024,
+        kill_grace_seconds=0.1,
+        terminate_reason="test_cleanup",
+    )
+    process = child.process
+    assert process is not None
+    original_wait = process.wait
+    root_reap_started = asyncio.Event()
+    keep_waiting = asyncio.Event()
+
+    async def report_verified_empty_scope(
+        handle: ScopedProcessHandle,
+        grace_seconds: float = 5.0,
+        reason: str = "stop_called",
+    ) -> CleanupResult:
+        return CleanupResult(
+            scope_id=handle.snapshot.scope_id,
+            root_pid=handle.pid,
+            descendant_count=0,
+            reason=reason,
+            grace_seconds=grace_seconds,
+            kill_escalated=False,
+            degraded_fallback=False,
+            skip_reason=None,
+            survivor_count=0,
+            verification_complete=True,
+        )
+
+    async def wait_until_cancelled() -> int:
+        root_reap_started.set()
+        await keep_waiting.wait()
+        return 0
+
+    monkeypatch.setattr(ScopedProcessHandle, "terminate", report_verified_empty_scope)
+    monkeypatch.setattr(process, "wait", wait_until_cancelled)
+    try:
+        cleanup_task = asyncio.create_task(child.terminate())
+        await asyncio.wait_for(root_reap_started.wait(), timeout=1.0)
+        cleanup_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cleanup_task
+
+        assert child.process is process
+        assert child.scope_snapshot is not None
+        assert process.returncode is None
+    finally:
+        monkeypatch.setattr(process, "wait", original_wait)
+        if process.returncode is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            await original_wait()
+        child.close_stderr_handle()

@@ -1,7 +1,10 @@
 """Typed reduction of process-scope cleanup facts."""
 
+import asyncio
+
 import pytest
 
+from meridian.lib.harness.connections.base import reap_on_ownership_transfer_failure
 from meridian.lib.harness.connections.errors import TeardownStatus
 from meridian.lib.harness.connections.managed_stdio import teardown_from_scope_cleanup
 from meridian.lib.platform.process_scope import CleanupResult
@@ -60,3 +63,25 @@ def test_verified_empty_scope_is_quiescent() -> None:
         )
         is TeardownStatus.QUIESCENT
     )
+
+
+@pytest.mark.asyncio
+async def test_ownership_transfer_cleanup_outlives_caller_cancellation() -> None:
+    cleanup_started = asyncio.Event()
+    allow_cleanup = asyncio.Event()
+
+    async def cleanup() -> TeardownStatus:
+        cleanup_started.set()
+        await allow_cleanup.wait()
+        return TeardownStatus.QUIESCENT
+
+    reap_task = asyncio.create_task(
+        reap_on_ownership_transfer_failure(cleanup, deadline_seconds=1.0)
+    )
+    await asyncio.wait_for(cleanup_started.wait(), timeout=1.0)
+    reap_task.cancel()
+    await asyncio.sleep(0)
+
+    assert not reap_task.done()
+    allow_cleanup.set()
+    assert await reap_task is TeardownStatus.QUIESCENT

@@ -71,7 +71,7 @@ async def _terminate_scoped_process(
                 process.wait(),
                 timeout=_PROCESS_EXIT_CONFIRM_SECONDS,
             )
-        except (TimeoutError, asyncio.CancelledError):
+        except TimeoutError:
             teardown = TeardownStatus.UNKNOWN
     return StopResult(escalated=result.kill_escalated, teardown=teardown)
 
