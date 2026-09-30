@@ -11,7 +11,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 from pydantic import TypeAdapter
@@ -644,9 +644,10 @@ async def run_streaming_attempt(
                 drain_exit_code = drain_outcome.exit_code
                 drain_error = drain_outcome.error
                 if drain_outcome.authoritative and drain_outcome.status != "succeeded":
-                    authoritative_terminal_status = TypeAdapter(
-                        TerminalSpawnStatus
-                    ).validate_python(drain_outcome.status)
+                    authoritative_terminal_status = cast(
+                        "TerminalSpawnStatus",
+                        TypeAdapter(TerminalSpawnStatus).validate_python(drain_outcome.status),
+                    )
             if timed_out and drain_outcome.status == "succeeded":
                 timed_out = False
             if drain_outcome.error == "report_watchdog":

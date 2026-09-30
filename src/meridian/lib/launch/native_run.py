@@ -43,7 +43,11 @@ class NativeRun:
     fork_source_id: str | None
     on_accepted: Callable[[str], None] | None = None
     _first_seen: bool = False
-    _noted: set[str] = field(default_factory=set)
+    _noted: set[str] = field(default_factory=lambda: set[str]())
+
+    @property
+    def owned_identity_observed(self) -> bool:
+        return bool(self._noted)
 
     def observe(self, session_id: str) -> None:
         """Only first owned signals can contradict pre-exec facts."""
@@ -171,7 +175,7 @@ def conclude_native_run(
 
     if run.identity is None or run.identity.operation != "create":
         native_create = NativeCreateProgress.NOT_APPLICABLE
-    elif run._noted:
+    elif run.owned_identity_observed:
         native_create = NativeCreateProgress.MATERIALIZED
     else:
         native_create = adapter.observe_create_materialization(run.identity)
