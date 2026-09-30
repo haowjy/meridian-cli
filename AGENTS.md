@@ -66,7 +66,8 @@ meridian-cli and mars-agents: CI auto-release on labeled PR merge.
 
 ## Testing
 
-Prefer smoke tests over unit tests. See `tests/AGENTS.md`.
+Prefer manual smoke tests over unit tests. See `tests/AGENTS.md`.
+When manually smoke testing and probing, make sure the models you use are cheap
 
 ## Sibling Repos
 
