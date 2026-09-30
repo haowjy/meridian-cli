@@ -123,7 +123,7 @@ class NativeRunOutcome:
     error: NativeIdentityError | None
     boundary: RunBoundaryOutcome
     harness_session_id: str | None
-    native_create: NativeCreateProgress
+    native_create: NativeCreateProgress = NativeCreateProgress.UNKNOWN
 
 
 def conclude_native_run(
