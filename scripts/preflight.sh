@@ -21,7 +21,8 @@ case "$MODE" in
     run_step uv run --extra dev python -m pyright
     (
       cd "$ROOT_DIR/src/meridian/pi_runtime"
-      run_step pnpm install --frozen-lockfile
+      # Git hooks have no TTY; allow dependency-tree recreation without prompting.
+      run_step pnpm install --frozen-lockfile --config.confirmModulesPurge=false
       run_step pnpm run build:extensions
     )
     run_step uv run --extra dev pytest -x -q
