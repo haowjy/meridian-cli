@@ -242,24 +242,10 @@ async def test_execute_with_streaming_finalizes_resident_deadline_without_retry(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("different_ids", [False, True])
-async def test_execute_with_streaming_keeps_resident_rearm_budget_across_retry(
+async def test_execute_with_streaming_does_not_replay_after_guardrail_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    different_ids: bool,
 ) -> None:
-    from structlog.testing import capture_logs
-
-    from meridian.lib.state import session_store
-
-    original_start = _ResidentRearmRetryConnection.start
-
-    async def start(connection, config, spec):
-        await original_start(connection, config, spec)
-        if different_ids:
-            connection._session_id = f"thread-{connection._attempt_index}"
-
-    monkeypatch.setattr(_ResidentRearmRetryConnection, "start", start)
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
@@ -304,35 +290,29 @@ async def test_execute_with_streaming_keeps_resident_rearm_budget_across_retry(
         encoding="utf-8",
     )
 
-    with capture_logs() as logs:
-        exit_code = await asyncio.wait_for(
-            _execute_with_context(
-                run,
-                request=request,
-                project_root=tmp_path,
-                runtime_root=runtime_root,
-                artifacts=artifacts,
-                registry=registry,
-                clock=fake_clock,
-                heartbeat_touch=fake_heartbeat.touch,
-                heartbeat_interval_secs=0.001,
-                guardrails=(guardrail,),
-            ),
-            timeout=15.0,
-        )
+    exit_code = await asyncio.wait_for(
+        _execute_with_context(
+            run,
+            request=request,
+            project_root=tmp_path,
+            runtime_root=runtime_root,
+            artifacts=artifacts,
+            registry=registry,
+            clock=fake_clock,
+            heartbeat_touch=fake_heartbeat.touch,
+            heartbeat_interval_secs=0.001,
+            guardrails=(guardrail,),
+        ),
+        timeout=15.0,
+    )
 
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
-    assert exit_code == 0
-    assert _ResidentRearmRetryConnection.starts == 2
+    assert exit_code == 1
+    assert _ResidentRearmRetryConnection.starts == 1
     assert row is not None
-    assert row.status == "succeeded"
+    assert row.status == "failed"
+    assert row.terminal.error == "guardrail_failed"
     assert row.resident_rearm_count == 1
-
-    if different_ids:
-        assert row.chat_id is not None
-        entry = session_store.get_session_record(runtime_root, row.chat_id)
-        assert entry.harness_session_id == "thread-1"
-        assert len([log for log in logs if log["event"] == "native_binding_conflict"]) == 1
 
 
 @pytest.mark.asyncio
@@ -415,7 +395,7 @@ async def test_execute_with_streaming_does_not_retry_authoritative_terminal_fail
 
 @pytest.mark.parametrize("first_attempt_has_facts", [False, True])
 @pytest.mark.asyncio
-async def test_execute_with_streaming_retries_single_turn_close_without_terminal_frame(
+async def test_execute_with_streaming_does_not_replay_submitted_turn_after_close(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     first_attempt_has_facts: bool,
@@ -494,12 +474,8 @@ async def test_execute_with_streaming_retries_single_turn_close_without_terminal
     )
 
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
-    assert exit_code == 0
-    assert _ScriptedRetryOpenCodeConnection.starts == 2
+    assert exit_code == 1
+    assert _ScriptedRetryOpenCodeConnection.starts == 1
     assert row is not None
-    assert row.status == "succeeded"
-    assert row.terminal.exit_code == 0
-
-    assert row.terminal.input_tokens is None
-    assert row.terminal.output_tokens is None
-    assert not (runtime_root / "spawns" / run.spawn_id / "report.md").exists()
+    assert row.status == "failed"
+    assert row.terminal.exit_code == 1

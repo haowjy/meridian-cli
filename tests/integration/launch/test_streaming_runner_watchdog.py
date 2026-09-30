@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -21,8 +20,8 @@ from meridian.lib.harness.launch_spec import ResolvedLaunchSpec
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.harness.semantics import EventSemantics, NormalizedHarnessEvent
 from meridian.lib.launch import constants as launch_constants
-from meridian.lib.launch.streaming import attempt as streaming_attempt_module
 from meridian.lib.launch.extract import enrich_finalize, reset_finalize_attempt_artifacts
+from meridian.lib.launch.streaming import attempt as streaming_attempt_module
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore, make_artifact_key
@@ -104,7 +103,7 @@ async def test_streaming_attempt_bounds_backend_startup_with_no_events(
         status="running",
     )
     attempt = await asyncio.wait_for(
-        streaming_runner_module._run_streaming_attempt(
+        streaming_runner_module.run_streaming_attempt(
             run=run,
             runtime_root=tmp_path,
             launch_mode=FOREGROUND_LAUNCH_MODE,
@@ -218,7 +217,7 @@ async def test_streaming_attempt_fresh_events_keep_slow_cursor_backend_alive(
     )
 
     attempt = await asyncio.wait_for(
-        streaming_runner_module._run_streaming_attempt(
+        streaming_runner_module.run_streaming_attempt(
             run=run,
             runtime_root=tmp_path,
             launch_mode=FOREGROUND_LAUNCH_MODE,
@@ -273,7 +272,7 @@ def test_retry_preserves_completed_attempt_artifacts(tmp_path: Path) -> None:
     durable_path = log_dir / "durable.json"
     durable_path.write_text("durable data\n", encoding="utf-8")
 
-    streaming_runner_module._preserve_attempt_artifacts(
+    streaming_runner_module.preserve_attempt_artifacts(
         artifacts=artifacts,
         spawn_id=spawn_id,
         log_dir=log_dir,
@@ -306,7 +305,7 @@ def test_preserve_clears_current_attempt_extraction(tmp_path: Path) -> None:
     artifacts.put(report_key, attempt_one_report)
     (log_dir / launch_constants.REPORT_FILENAME).write_bytes(attempt_one_report)
 
-    streaming_runner_module._preserve_attempt_artifacts(
+    streaming_runner_module.preserve_attempt_artifacts(
         artifacts=artifacts,
         spawn_id=spawn_id,
         log_dir=log_dir,
@@ -353,7 +352,7 @@ def test_preserve_recovers_interrupted_rotation(tmp_path: Path) -> None:
         "late stderr\n",
         encoding="utf-8",
     )
-    streaming_runner_module._preserve_attempt_artifacts(
+    streaming_runner_module.preserve_attempt_artifacts(
         artifacts=artifacts,
         spawn_id=spawn_id,
         log_dir=log_dir,
@@ -394,7 +393,7 @@ def test_preserve_discards_stale_staging_when_attempt_dir_exists(tmp_path: Path)
         encoding="utf-8",
     )
 
-    streaming_runner_module._preserve_attempt_artifacts(
+    streaming_runner_module.preserve_attempt_artifacts(
         artifacts=artifacts,
         spawn_id=spawn_id,
         log_dir=log_dir,
@@ -408,72 +407,6 @@ def test_preserve_discards_stale_staging_when_attempt_dir_exists(tmp_path: Path)
     assert (attempt_dir / launch_constants.STDERR_FILENAME).read_text(
         encoding="utf-8",
     ) == "live stderr\n"
-
-
-def test_retry_blocked_after_pi_child_started_detects_disk_child_state(
-    tmp_path: Path,
-) -> None:
-    runtime_root = tmp_path / "runtime"
-    spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p2",
-        chat_id="c2",
-        parent_id="p1",
-        model="gpt-5.4",
-        agent="coder",
-        harness="pi",
-        prompt="child",
-    )
-
-    assert streaming_runner_module._retry_blocked_after_pi_child_started(
-        harness_id=HarnessId.PI,
-        runtime_root=runtime_root,
-        current_spawn_id=SpawnId("p1"),
-    )
-
-
-def test_retry_gate_fails_closed_for_quarantined_spawn_state(tmp_path: Path) -> None:
-    runtime_root = tmp_path / "runtime"
-    state_path = runtime_root / "spawns" / "p2" / "state.json"
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(
-        json.dumps(
-            {
-                "v": 2,
-                "id": "p2",
-                "parent_id": "p1",
-                "status": ["running"],
-                "exit_code": 0,
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    assert streaming_runner_module._retry_blocked_after_pi_child_started(
-        harness_id=HarnessId.PI,
-        runtime_root=runtime_root,
-        current_spawn_id=SpawnId("p1"),
-    )
-
-
-@pytest.mark.parametrize("entry_name", [".staging", ".p2", "spawn-stage", "p²"])
-def test_retry_scan_ignores_non_spawn_row_entries(
-    tmp_path: Path,
-    entry_name: str,
-) -> None:
-    runtime_root = tmp_path / "runtime"
-    state_path = runtime_root / "spawns" / entry_name / "state.json"
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(
-        json.dumps({"id": entry_name, "parent_id": "p1", "status": "running"}),
-        encoding="utf-8",
-    )
-
-    assert not streaming_runner_module._retry_blocked_after_pi_child_started(
-        harness_id=HarnessId.PI,
-        runtime_root=runtime_root,
-        current_spawn_id=SpawnId("p1"),
-    )
 
 
 @pytest.mark.asyncio

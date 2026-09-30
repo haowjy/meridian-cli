@@ -130,7 +130,7 @@ Use `LaunchArgvIntent.SPEC_ONLY` on execution paths. `LaunchArgvIntent.REQUIRED`
 
 ## Startup Watchdog
 
-`_start_spawn_with_timeout()` in `streaming_runner.py` wraps the entire pre-connect
+`_start_spawn_with_timeout()` in `streaming/attempt.py` wraps the entire pre-connect
 span — backend boot, connection, and session handshake — with an outer
 `asyncio.timeout`. Default bound is 5 minutes, configured via
 `timeouts.startup_minutes` or `MERIDIAN_STARTUP_TIMEOUT_MINUTES`. Both the spawn
@@ -143,7 +143,7 @@ recorded worst case was a spawn that wedged for 2h18m before any liveness signal
 
 ## Attempt Evidence Preservation
 
-On retry, `_preserve_attempt_artifacts()` in `streaming_runner.py` moves completed
+On retry, `preserve_attempt_artifacts()` in `attempt_artifacts.py` moves completed
 attempt diagnostics (`stderr.log`, `report.md`, `runner-lifecycle.jsonl`,
 `tokens.json`) into `attempt-N/` under the spawn log directory.
 Attempt reports, usage and identity come from `AttemptFacts` folded on live events.
@@ -151,6 +151,13 @@ Each retry gets fresh facts; runner history is not read during finalization.
 Diagnostic rotation commits with `os.replace(staging_dir, attempt_dir)` before
 auxiliary copies and active diagnostic keys are updated. Retired runner-stream files
 are removed only by the explicit session-history prune.
+
+Automatic retry is startup recovery, never turn replay. `retry.py` permits another
+attempt only for a typed transient cause with `not_submitted` turn evidence and a
+proven unmaterialized (or inapplicable) create identity. Unknown evidence, explicit
+terminal outcomes, completed submission, guardrail failures, cancellation, and
+materialized identities stop. A permit can only rearm the same prebound identity;
+the runner never mints or rebinds a chat identity.
 
 Runner lifecycle diagnostics can execute after async boundaries. Their
 parent-creating writes use the published-spawn artifact mutation seam; never append
@@ -167,9 +174,10 @@ hang indefinitely when fd 0 was held open without data. Empty prompt is valid fo
 
 - `context.py` — `prepare_launch_surface()`, `bind_launch_context()` — the seam
 - `__init__.py` — `launch_primary()` for the interactive primary path
-- `streaming_runner.py` — `execute_with_streaming()` for spawn/streaming paths;
-  `_start_spawn_with_timeout()` for the startup watchdog;
-  `_preserve_attempt_artifacts()` for retry evidence rotation
+- `streaming_runner.py` — run-level orchestration and `execute_with_streaming()`
+- `streaming/attempt.py` — one streaming attempt, startup watchdog, and async drain mechanics
+- `retry.py` — typed failure/replay assessment and the sole retry decision
+- `attempt_artifacts.py` — crash-safe retry evidence rotation
 - `process/` — `run_harness_process()` for the PTY/pipe primary executor
 
 ## Anti-Patterns

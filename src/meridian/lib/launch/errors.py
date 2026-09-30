@@ -101,26 +101,3 @@ def classify_error(
         return ErrorCategory.RETRYABLE
     return ErrorCategory.UNRECOVERABLE
 
-
-def should_retry(
-    *,
-    exit_code: int,
-    stderr: str,
-    timed_out: bool = False,
-    failure_message: str | None = None,
-    retries_attempted: int,
-    max_retries: int = 3,
-) -> bool:
-    if timed_out:
-        return False
-    if retries_attempted >= max_retries:
-        return False
-    return (
-        classify_error(
-            exit_code,
-            stderr,
-            timed_out=timed_out,
-            failure_message=failure_message,
-        )
-        == ErrorCategory.RETRYABLE
-    )

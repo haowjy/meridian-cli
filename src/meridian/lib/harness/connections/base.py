@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Generic, Literal, Protocol
 
 from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness.connections.errors import TurnSubmission
 from meridian.lib.launch.launch_types import SpecT
 
 if TYPE_CHECKING:
@@ -338,6 +339,12 @@ class HarnessConnection(Generic[SpecT], ABC):
     @property
     @abstractmethod
     def session_id(self) -> str | None: ...
+
+    @property
+    def initial_turn_submission(self) -> TurnSubmission:
+        """Return the strongest transport evidence available during start()."""
+
+        return TurnSubmission.UNKNOWN
 
     @property
     def primary_event_scope(self) -> PrimaryEventScope | None:

@@ -51,8 +51,14 @@ Transports differ at the wire level:
 Requires `ensure_bootstrap()` first — the registry is populated as a bootstrap side effect.
 
 **Startup errors are classified.** `PortBindError` is retryable; other
-`ConnectionStartupError` subtypes are not. The caller (SpawnManager) acts on this
-distinction.
+`ConnectionStartupError` subtypes are not. Launch retry policy combines this cause
+with replay-safety evidence; the connection and `SpawnManager` do not decide.
+
+**Initial-turn progress is typed and monotonic.** A connection starts at
+`not_submitted` only when it can prove no prompt write began, advances to `unknown`
+before an ambiguous write, and reaches `submitted` only after delivery completes.
+`dispatch_start()` preserves this evidence in `ConnectionStartFailure` after cleanup;
+it does not decide retry policy. A returned `start()` means the initial turn was submitted.
 
 **New transport = subclass `HarnessConnection[SpecT]`**, declare `_CAPABILITIES`,
 implement all abstract methods, register in the bundle. Missing registration →

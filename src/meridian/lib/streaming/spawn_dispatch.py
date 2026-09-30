@@ -11,6 +11,7 @@ from meridian.lib.harness.connections.base import (
     RawHarnessEvent,
     reap_on_ownership_transfer_failure,
 )
+from meridian.lib.harness.connections.errors import ConnectionStartFailure
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -90,6 +91,13 @@ async def dispatch_start(
         raise HarnessBinaryNotFound.from_os_error(
             harness_id=config.harness_id,
             error=exc,
+        ) from exc
+    except Exception as exc:
+        await reap_on_ownership_transfer_failure(connection.stop)
+        raise ConnectionStartFailure(
+            exc,
+            turn_submission=connection.initial_turn_submission,
+            subprocess_pid=connection.subprocess_pid,
         ) from exc
     except BaseException:
         await reap_on_ownership_transfer_failure(connection.stop)

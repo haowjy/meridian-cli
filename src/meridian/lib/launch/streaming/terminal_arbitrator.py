@@ -1,6 +1,6 @@
 """Single terminal-outcome arbitration for streaming spawns.
 
-Both ``run_streaming_spawn()`` and ``_run_streaming_attempt()`` delegate
+Both ``run_streaming_spawn()`` and ``run_streaming_attempt()`` delegate
 terminal precedence decisions to this module.
 """
 

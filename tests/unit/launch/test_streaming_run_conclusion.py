@@ -1,15 +1,16 @@
 # qa-validated: pi-rpc-quiescence
 import signal
 
-from meridian.lib.core.domain import TokenUsage
+from meridian.lib.core.domain import SpawnStatus, TokenUsage
+from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.launch.extract import (
     FinalizeExtraction,
     classify_finalize_report,
 )
 from meridian.lib.launch.report import ExtractedReport, ReportSource
 from meridian.lib.launch.streaming_runner import (
+    AttemptRuntime,
     StreamingRunConclusion,
-    _AttemptRuntime,
     _inactivity_terminal_outcome,
 )
 
@@ -19,8 +20,8 @@ def _attempt(
     exit_code: int,
     watchdog: bool = False,
     terminal_observed: bool = False,
-) -> _AttemptRuntime:
-    return _AttemptRuntime(
+) -> AttemptRuntime:
+    return AttemptRuntime(
         connection=None,
         drain_exit_code=exit_code,
         drain_error=None,
@@ -28,7 +29,11 @@ def _attempt(
         received_signal=None,
         budget_breach=None,
         terminated_by_report_watchdog=watchdog,
-        terminal_observed=terminal_observed,
+        terminal_outcome=(
+            TerminalEventOutcome(SpawnStatus.FAILED, exit_code, "failed")
+            if terminal_observed
+            else None
+        ),
     )
 
 

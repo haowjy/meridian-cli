@@ -47,7 +47,7 @@ def _recover_interrupted_attempt_rotation(log_dir: Path, attempt_prefix: str) ->
     return True
 
 
-def _preserve_attempt_artifacts(
+def preserve_attempt_artifacts(
     *,
     artifacts: ArtifactStore,
     spawn_id: SpawnId,
@@ -108,7 +108,7 @@ def _preserve_attempt_artifacts(
         fsync_directory(log_dir)
 
 
-def _persist_attempt_artifacts(
+def persist_attempt_artifacts(
     *,
     artifacts: ArtifactStore,
     spawn_id: SpawnId,

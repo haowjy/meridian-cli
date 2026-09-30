@@ -24,6 +24,10 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.common import parse_json_stream_event, unwrap_event_payload
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
+from meridian.lib.harness.connections.errors import (
+    ConnectionStartFailure,
+    TurnSubmission,
+)
 from meridian.lib.harness.semantics import NormalizedHarnessEvent, TerminalEventOutcome
 from meridian.lib.launch.constants import (
     CURSOR_INACTIVITY_TIMEOUT_SECONDS,
@@ -51,7 +55,7 @@ logger = structlog.get_logger(__name__)
 _HEARTBEAT_INTERVAL_SECS = 30.0
 
 @dataclass(frozen=True)
-class _AttemptRuntime:
+class AttemptRuntime:
     connection: HarnessConnection[Any] | None
     drain_exit_code: int
     drain_error: str | None
@@ -61,10 +65,16 @@ class _AttemptRuntime:
     terminated_by_report_watchdog: bool
     terminated_by_inactivity: bool = False
     cancelled_by_request: bool = False
-    terminal_observed: bool = False
+    terminal_outcome: TerminalEventOutcome | None = None
     authoritative_terminal_status: TerminalSpawnStatus | None = None
     start_error: str | None = None
+    start_failure: ConnectionStartFailure | None = None
+    turn_submission: TurnSubmission = TurnSubmission.UNKNOWN
     identity_error: NativeIdentityError | None = None
+
+    @property
+    def terminal_observed(self) -> bool:
+        return self.terminal_outcome is not None or self.authoritative_terminal_status is not None
 
 
 class StartupPhaseTimeout(TimeoutError):
@@ -74,7 +84,7 @@ class StartupPhaseTimeout(TimeoutError):
         super().__init__(f"startup phase timeout after {timeout_seconds:.3f}s")
 
 
-def _touch_heartbeat_file(
+def touch_heartbeat_file(
     runtime_root: Path,
     spawn_id: SpawnId,
     *,
@@ -86,7 +96,7 @@ def _touch_heartbeat_file(
     ).touch()
 
 
-def _install_signal_handlers(
+def install_signal_handlers(
     loop: asyncio.AbstractEventLoop,
     shutdown_event: asyncio.Event,
     received_signal: list[signal.Signals | None],
@@ -327,7 +337,7 @@ async def run_streaming_spawn(
     """
 
     resolved_heartbeat_touch = heartbeat_touch or (
-        lambda: _touch_heartbeat_file(runtime_root, spawn_id)
+        lambda: touch_heartbeat_file(runtime_root, spawn_id)
     )
     manager = SpawnManager(
         runtime_root=runtime_root,
@@ -339,7 +349,7 @@ async def run_streaming_spawn(
     loop = asyncio.get_running_loop()
     shutdown_event = asyncio.Event()
     received_signal: list[signal.Signals | None] = [None]
-    signal_cleanup = _install_signal_handlers(loop, shutdown_event, received_signal)
+    signal_cleanup = install_signal_handlers(loop, shutdown_event, received_signal)
 
     completion_task: asyncio.Task[DrainOutcome | None] | None = None
     signal_task: asyncio.Task[bool] | None = None
@@ -456,7 +466,7 @@ async def run_streaming_spawn(
                 await manager.shutdown(status=SpawnStatus.CANCELLED, exit_code=1, error="shutdown")
 
 
-async def _run_streaming_attempt(
+async def run_streaming_attempt(
     *,
     run: Spawn,
     runtime_root: Path,
@@ -476,7 +486,7 @@ async def _run_streaming_attempt(
     runner_phase: list[str] | None = None,
     on_running: Callable[[HarnessConnection[Any]], None] | None = None,
     event_hook: Callable[[RawHarnessEvent], None] | None = None,
-) -> _AttemptRuntime:
+) -> AttemptRuntime:
     completion_task: asyncio.Task[DrainOutcome | None] | None = None
     timeout_task: asyncio.Task[None] | None = None
     signal_task: asyncio.Task[bool] | None = None
@@ -504,6 +514,8 @@ async def _run_streaming_attempt(
     authoritative_terminal_status: TerminalSpawnStatus | None = None
     recording_selection = False
     start_error: str | None = None
+    start_failure: ConnectionStartFailure | None = None
+    turn_submission = TurnSubmission.UNKNOWN
     identity_error: NativeIdentityError | None = None
     try:
         if runner_phase is not None:
@@ -515,6 +527,7 @@ async def _run_streaming_attempt(
             timeout_seconds=startup_timeout_seconds,
             event_hook=event_hook,
         )
+        turn_submission = TurnSubmission.SUBMITTED
         terminal_event_capture = (
             terminal_event_future
             if manager.raw_terminal_frames_are_authoritative(run.spawn_id)
@@ -659,6 +672,10 @@ async def _run_streaming_attempt(
                 str(run.spawn_id),
                 exit_code=drain_exit_code,
             )
+    except ConnectionStartFailure as exc:
+        start_error = str(exc.cause)
+        start_failure = exc
+        turn_submission = exc.turn_submission
     except NativeIdentityError as exc:
         start_error, identity_error = str(exc), exc
     except Exception as exc:
@@ -692,10 +709,7 @@ async def _run_streaming_attempt(
     if start_error is not None:
         drain_exit_code, drain_error, timed_out = DEFAULT_INFRA_EXIT_CODE, start_error, False
         terminal_outcome, authoritative_terminal_status = None, None
-    pi_drain_terminal = (
-        start_error is None and config.harness_id == HarnessId.PI and drain_error is not None
-    )
-    return _AttemptRuntime(
+    return AttemptRuntime(
         connection=connection,
         drain_exit_code=drain_exit_code,
         drain_error=drain_error,
@@ -705,12 +719,10 @@ async def _run_streaming_attempt(
         terminated_by_report_watchdog=terminated_by_report_watchdog,
         terminated_by_inactivity=terminated_by_inactivity,
         cancelled_by_request=cancelled_by_request,
-        terminal_observed=(
-            terminal_outcome is not None
-            or pi_drain_terminal
-            or authoritative_terminal_status is not None
-        ),
+        terminal_outcome=terminal_outcome,
         authoritative_terminal_status=authoritative_terminal_status,
         start_error=start_error,
+        start_failure=start_failure,
+        turn_submission=turn_submission,
         identity_error=identity_error,
     )

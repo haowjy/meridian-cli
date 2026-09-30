@@ -9,6 +9,7 @@ from uuid import uuid4
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import (
     LaunchIntent,
+    NativeCreateProgress,
     NativeIdentity,
     NativeKeyFields,
     NativeSessionUnavailable,
@@ -65,6 +66,7 @@ from meridian.lib.harness.semantics import (
     EventSemantics,
     HarnessSemantics,
     TerminalEventOutcome,
+    TerminalOutcomeCause,
     connection_closed_outcome,
     stringify_terminal_error,
 )
@@ -440,6 +442,26 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             trampoline_successor_id=successor if successor != entry.session_id else None,
         )
 
+    def observe_create_materialization(
+        self,
+        identity: NativeIdentity,
+    ) -> NativeCreateProgress:
+        """Observe the exact prebound create path; any path entry consumes the ID."""
+
+        if identity.operation != "create":
+            return NativeCreateProgress.NOT_APPLICABLE
+        session_id = identity.session_id
+        if session_id is None or Path(session_id).name != session_id or ".." in session_id:
+            return NativeCreateProgress.UNKNOWN
+        candidate = Path(identity.native_store) / f"{session_id}.jsonl"
+        try:
+            candidate.lstat()
+        except FileNotFoundError:
+            return NativeCreateProgress.NOT_MATERIALIZED
+        except OSError:
+            return NativeCreateProgress.UNKNOWN
+        return NativeCreateProgress.MATERIALIZED
+
     def resolve_native_session_file(
         self,
         *,
@@ -489,7 +511,10 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
 def _resolve_claude_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
     if event.event_type == MERIDIAN_CONNECTION_CLOSED_EVENT:
-        return connection_closed_outcome(event)
+        return connection_closed_outcome(
+            event,
+            cause=TerminalOutcomeCause.REPLACEABLE_TRANSPORT_CLOSE,
+        )
     if bool(event.payload.get("is_error")):
         error = (
             stringify_terminal_error(event.payload.get("result"))

@@ -24,6 +24,7 @@ from meridian.lib.config.settings import PiHarnessProfileConfig
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.native_identity import (
     LaunchIntent,
+    NativeCreateProgress,
     NativeIdentity,
     NativeKey,
     NativeKeyFields,
@@ -434,6 +435,11 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
         started_at_epoch: float | None,
     ) -> PostExit: ...
 
+    def observe_create_materialization(
+        self,
+        identity: NativeIdentity,
+    ) -> NativeCreateProgress: ...
+
     def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> AdapterSpecT: ...
 
     def preflight(
@@ -716,6 +722,14 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         started_at_epoch: float | None,
     ) -> PostExit:
         return PostExit()
+
+    def observe_create_materialization(
+        self,
+        identity: NativeIdentity,
+    ) -> NativeCreateProgress:
+        if identity.operation != "create":
+            return NativeCreateProgress.NOT_APPLICABLE
+        return NativeCreateProgress.UNKNOWN
 
     @abstractmethod
     def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> SpecT:

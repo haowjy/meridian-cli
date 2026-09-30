@@ -37,8 +37,8 @@ from meridian.lib.launch.artifact_io import (
     append_runner_lifecycle_event as _append_runner_lifecycle_event,
 )
 from meridian.lib.launch.attempt_artifacts import (
-    _persist_attempt_artifacts,
-    _preserve_attempt_artifacts,
+    persist_attempt_artifacts,
+    preserve_attempt_artifacts,
 )
 from meridian.lib.launch.constants import (
     DEFAULT_INFRA_EXIT_CODE,
@@ -52,7 +52,6 @@ from meridian.lib.launch.env import (
 from meridian.lib.launch.errors import (
     ErrorCategory,
     classify_error,
-    should_retry,
 )
 from meridian.lib.launch.extract import (
     FinalizeExtraction,
@@ -67,6 +66,12 @@ from meridian.lib.launch.resolve import (
     resolve_resident_deadline_seconds,
     resolve_resident_poll_seconds,
     resolve_startup_timeout_seconds,
+)
+from meridian.lib.launch.retry import (
+    ReplayEvidence,
+    RetryPermit,
+    classify_attempt_failure,
+    decide_retry,
 )
 from meridian.lib.launch.runner_helpers import (
     append_budget_exceeded_event as _append_budget_exceeded_event,
@@ -83,11 +88,11 @@ from meridian.lib.launch.runner_helpers import (
 from meridian.lib.launch.session_scope import SessionAttempt
 from meridian.lib.launch.signals import signal_coordinator, signal_to_exit_code
 from meridian.lib.launch.streaming.attempt import (
-    _AttemptRuntime,
-    _install_signal_handlers,
-    _run_streaming_attempt,
-    _touch_heartbeat_file,
+    AttemptRuntime,
+    install_signal_handlers,
+    run_streaming_attempt,
     run_streaming_spawn,
+    touch_heartbeat_file,
 )
 from meridian.lib.launch.streaming.heartbeat import HeartbeatTouch
 from meridian.lib.safety.budget import Budget, LiveBudgetTracker
@@ -127,7 +132,7 @@ class StreamingRunConclusion:
     cancellation_observed: bool = False
     retries_attempted: int = 0
 
-    def absorb_attempt(self, attempt: _AttemptRuntime) -> None:
+    def absorb_attempt(self, attempt: AttemptRuntime) -> None:
         """Merge one attempt's terminal fields into the run conclusion."""
 
         self.failure_reason = None
@@ -176,22 +181,6 @@ def _inactivity_terminal_outcome(
 
 
 
-
-
-def _retry_blocked_after_pi_child_started(
-    *, harness_id: HarnessId, runtime_root: Path, current_spawn_id: SpawnId
-) -> bool:
-    """Return whether retrying would orphan already-started Pi child spawn work."""
-
-    if harness_id is not HarnessId.PI:
-        return False
-    scan = spawn_store.list_spawns(runtime_root, parent_id=str(current_spawn_id))
-    # Retry policy fails closed: an unreadable sibling could be a child whose
-    # already-started work must not be orphaned by a new attempt.
-    return bool(
-        scan.records
-        or any(spawn_store.is_spawn_id_shape(report.spawn_id) for report in scan.quarantines)
-    )
 
 
 def _read_cancel_intent(runtime_root: Path, spawn_id: SpawnId) -> CancelIntent | None:
@@ -267,7 +256,7 @@ async def execute_with_streaming(
     started_at = resolved_clock.monotonic()
     started_at_epoch = resolved_clock.time()
     resolved_heartbeat_touch = heartbeat_touch or (
-        lambda: _touch_heartbeat_file(
+        lambda: touch_heartbeat_file(
             runtime_root,
             run.spawn_id,
         )
@@ -330,7 +319,6 @@ async def execute_with_streaming(
             explicit_interval_seconds=request.pi_task_ping_interval_seconds,
             config_snapshot=launch_context.runtime.config_snapshot,
         )
-        max_retries = max(request.retry.max_attempts - 1, 0)
         retry_backoff_seconds = request.retry.backoff_secs
 
         resolved_harness_id = launch_context.harness.id
@@ -446,7 +434,7 @@ async def execute_with_streaming(
 
         loop = asyncio.get_running_loop()
         shutdown_event = asyncio.Event()
-        signal_cleanup = _install_signal_handlers(
+        signal_cleanup = install_signal_handlers(
             loop,
             shutdown_event,
             received_signal,
@@ -469,21 +457,12 @@ async def execute_with_streaming(
                 fold = harness_bundle.extractor.create_fold()
                 facts = fold.facts
                 attempt_number = conclusion.retries_attempted + 1
-                if attempt_number > 1:
-                    session_attempt = replace(
-                        session_attempt,
-                        startup_attempt_id=uuid.uuid4().hex,
-                    )
-                    native_run = native_run.retry(session_attempt)
-                    config = replace(config, session_id_observer=native_run.observe)
-                    _preserve_attempt_artifacts(
-                        artifacts=artifacts,
-                        spawn_id=run.spawn_id,
-                        log_dir=log_dir,
-                        completed_attempt=attempt_number - 1,
-                    )
                 runner_phase[0] = "starting_attempt"
-                _record_lifecycle("attempt_started", attempt=attempt_number)
+                _record_lifecycle(
+                    "attempt_started",
+                    attempt=attempt_number,
+                    startup_attempt_id=session_attempt.startup_attempt_id,
+                )
                 reset_finalize_attempt_artifacts(
                     artifacts=artifacts,
                     spawn_id=run.spawn_id,
@@ -510,7 +489,7 @@ async def execute_with_streaming(
                     if native_id:
                         captured_observer(native_id)
 
-                attempt = await _run_streaming_attempt(
+                attempt = await run_streaming_attempt(
                     run=run,
                     runtime_root=runtime_root,
                     launch_mode=resolved_launch_mode,
@@ -562,7 +541,7 @@ async def execute_with_streaming(
                 ):
                     conclusion.failure_reason = attempt.drain_error
 
-                _persist_attempt_artifacts(
+                persist_attempt_artifacts(
                     artifacts=artifacts,
                     spawn_id=run.spawn_id,
                     log_dir=log_dir,
@@ -599,11 +578,16 @@ async def execute_with_streaming(
                     failure_reason=conclusion.failure_reason,
                 )
                 conclusion.extracted = extraction
+                terminal_code: str | None = None
+                guardrail_failed = False
+                budget_exceeded = False
+                attempt_cancelled = attempt_cancelled or attempt.cancelled_by_request
+
                 if outcome.error is not None:
                     conclusion.exit_code = 1
                     conclusion.failure_reason = outcome.error.failure_code
                     conclusion.authoritative_terminal_status = "failed"
-                    break
+                    terminal_code = outcome.error.failure_code
 
                 if (
                     _read_cancel_intent(runtime_root, run.spawn_id) is not None
@@ -614,64 +598,70 @@ async def execute_with_streaming(
                         runtime_root=runtime_root,
                         spawn_id=run.spawn_id,
                     )
-                    break
+                    attempt_cancelled = True
 
-                if attempt_cancelled:
-                    if attempt.received_signal is not None:
-                        conclusion.exit_code = signal_to_exit_code(attempt.received_signal) or 130
-                    break
+                if attempt_cancelled and attempt.received_signal is not None:
+                    conclusion.exit_code = signal_to_exit_code(attempt.received_signal) or 130
 
                 if attempt.budget_breach is not None:
+                    budget_exceeded = True
                     conclusion.failure_reason = "budget_exceeded"
                     conclusion.exit_code = DEFAULT_INFRA_EXIT_CODE
                     _append_budget_exceeded_event(run=run, breach=attempt.budget_breach)
-                    break
 
                 if (
-                    budget_tracker is not None
+                    not budget_exceeded
+                    and budget_tracker is not None
                     and extraction.usage is not None
                     and extraction.usage.total_cost_usd is not None
                     and budget_tracker.observe_cost(extraction.usage.total_cost_usd) is not None
                 ):
+                    budget_exceeded = True
                     conclusion.failure_reason = "budget_exceeded"
                     breach = budget_tracker.check()
                     if breach is not None:
                         _append_budget_exceeded_event(run=run, breach=breach)
                     conclusion.exit_code = DEFAULT_INFRA_EXIT_CODE
-                    break
 
                 if attempt.terminated_by_inactivity:
-                    # Inactivity is terminal: either we recovered a durable report
-                    # (success) or we finalize as "stalled". Never fall through to the
-                    # generic retry classifier — re-running a stalled cursor turn would
-                    # redo already-completed work.
                     exit_override, failure_override = _inactivity_terminal_outcome(extraction)
                     if exit_override is not None:
                         conclusion.exit_code = exit_override
                     conclusion.failure_reason = failure_override
-                    break
+                    if failure_override is not None:
+                        terminal_code = failure_override
 
                 if (
                     conclusion.exit_code == 0
+                    and terminal_code is None
+                    and not attempt_cancelled
+                    and not budget_exceeded
                     and _spawn_kind(runtime_root, run.spawn_id) == "child"
                     and extraction.report.content is None
                 ):
                     conclusion.failure_reason = "missing_report"
+                    conclusion.exit_code = 1
+                    terminal_code = "missing_report"
 
-                # A lingering Codex app-server can require watchdog-driven cleanup even after
-                # the spawn has already written a durable report. Treat that as terminal
-                # success here so the retry classifier never turns the synthetic exit code
-                # from `stop_spawn()` back into another failed attempt.
                 if attempt.terminated_by_report_watchdog and extraction.durable_report_completion:
                     conclusion.exit_code = 0
                     conclusion.failure_reason = None
-                    break
 
-                if extraction.output_is_empty and conclusion.exit_code == 0:
+                if (
+                    extraction.output_is_empty
+                    and conclusion.exit_code == 0
+                    and not attempt.terminated_by_report_watchdog
+                ):
                     conclusion.exit_code = 1
                     conclusion.failure_reason = "empty_output"
-                    break
-                if conclusion.exit_code == 0:
+                    terminal_code = "empty_output"
+
+                if (
+                    conclusion.exit_code == 0
+                    and terminal_code is None
+                    and not attempt_cancelled
+                    and not budget_exceeded
+                ):
                     guardrail_spawn = spawn_store.get_spawn(runtime_root, run.spawn_id)
                     guardrail_result = run_guardrails(
                         guardrails,
@@ -684,54 +674,14 @@ async def execute_with_streaming(
                     )
                     if guardrail_result.ok:
                         break
-
+                    guardrail_failed = True
+                    conclusion.exit_code = 1
                     conclusion.failure_reason = "guardrail_failed"
-                    guardrail_text = _guardrail_failure_text(guardrail_result.failures)
                     _append_text_to_stderr_artifact(
                         artifacts=artifacts,
                         spawn_id=run.spawn_id,
-                        text=guardrail_text,
+                        text=_guardrail_failure_text(guardrail_result.failures),
                     )
-
-                    if _retry_blocked_after_pi_child_started(
-                        harness_id=resolved_harness_id,
-                        runtime_root=runtime_root,
-                        current_spawn_id=run.spawn_id,
-                    ):
-                        conclusion.exit_code = 1
-                        break
-
-                    if conclusion.retries_attempted >= max_retries:
-                        conclusion.exit_code = 1
-                        break
-
-                    conclusion.retries_attempted += 1
-                    conclusion.exit_code = 1
-                    logger.info(
-                        "Retrying after guardrail failure.",
-                        spawn_id=str(run.spawn_id),
-                        harness_id=str(harness.id),
-                        retries_attempted=conclusion.retries_attempted,
-                        max_retries=max_retries,
-                        guardrail_failures=[
-                            f"{item.script}:{item.exit_code}" for item in guardrail_result.failures
-                        ],
-                    )
-                    if retry_backoff_seconds > 0:
-                        cancelled_during_backoff = await _sleep_retry_backoff_or_cancel(
-                            delay_seconds=retry_backoff_seconds * conclusion.retries_attempted,
-                            shutdown_event=shutdown_event,
-                            runtime_root=runtime_root,
-                            spawn_id=run.spawn_id,
-                        )
-                        if cancelled_during_backoff:
-                            _apply_cancel_intent_to_conclusion(
-                                conclusion,
-                                runtime_root=runtime_root,
-                                spawn_id=run.spawn_id,
-                            )
-                            break
-                    continue
 
                 stderr_key = make_artifact_key(run.spawn_id, STDERR_FILENAME)
                 stderr_text = (
@@ -749,38 +699,90 @@ async def execute_with_streaming(
                     conclusion.failure_reason = "timeout"
                 elif category == ErrorCategory.STRATEGY_CHANGE:
                     conclusion.failure_reason = "strategy_change"
+                    terminal_code = terminal_code or "strategy_change"
 
-                # Retrying after Pi already launched lifecycle-managed subspawn work is unsafe:
-                # children cannot be re-adopted by a new parent retry attempt.
-                if _retry_blocked_after_pi_child_started(
-                    harness_id=resolved_harness_id,
-                    runtime_root=runtime_root,
-                    current_spawn_id=run.spawn_id,
-                ):
-                    break
-
-                if attempt.authoritative_terminal_status is not None:
-                    break
-
-                if not should_retry(
-                    exit_code=conclusion.exit_code,
-                    stderr=stderr_text,
-                    failure_message=attempt.drain_error,
+                failure = classify_attempt_failure(
+                    cancelled=attempt_cancelled or conclusion.cancellation_observed,
+                    terminal_outcome=attempt.terminal_outcome,
+                    terminal_code=(
+                        terminal_code
+                        or (
+                            f"authoritative_{attempt.authoritative_terminal_status}"
+                            if attempt.authoritative_terminal_status is not None
+                            else None
+                        )
+                    ),
+                    start_failure=attempt.start_failure,
+                    guardrail_failed=guardrail_failed,
                     timed_out=attempt.timed_out,
-                    retries_attempted=conclusion.retries_attempted,
-                    max_retries=max_retries,
-                ):
+                    budget_exceeded=budget_exceeded,
+                    legacy_transient=category is ErrorCategory.RETRYABLE,
+                    message=conclusion.failure_reason or attempt.drain_error,
+                )
+                decision = decide_retry(
+                    failure,
+                    ReplayEvidence(attempt.turn_submission, outcome.native_create),
+                    attempts_used=attempt_number,
+                    max_attempts=request.retry.max_attempts,
+                )
+                assessment = decision.assessment
+                _record_lifecycle(
+                    "retry_assessed",
+                    attempt=attempt_number,
+                    startup_attempt_id=session_attempt.startup_attempt_id,
+                    planned_native_operation=(
+                        native_run.identity.operation if native_run.identity is not None else None
+                    ),
+                    planned_native_id=native_run.assigned_session_id,
+                    failure_disposition=assessment.failure.disposition.value,
+                    failure_code=assessment.failure.code,
+                    turn_submission=assessment.evidence.turn.value,
+                    native_create=assessment.evidence.native_create.value,
+                    replay_safety=assessment.replay_safety.value,
+                    retry=decision.retry,
+                    reason=assessment.reason,
+                )
+                if not decision.retry:
+                    break
+
+                permit = RetryPermit(decision)
+                next_session_attempt = replace(
+                    session_attempt,
+                    startup_attempt_id=uuid.uuid4().hex,
+                )
+                try:
+                    next_native_run = native_run.rearm(next_session_attempt, permit)
+                    preserve_attempt_artifacts(
+                        artifacts=artifacts,
+                        spawn_id=run.spawn_id,
+                        log_dir=log_dir,
+                        completed_attempt=attempt_number,
+                    )
+                except Exception as exc:
+                    _record_lifecycle(
+                        "retry_setup_failed",
+                        attempt=attempt_number,
+                        exception_type=type(exc).__name__,
+                        exception=str(exc),
+                    )
+                    _append_text_to_stderr_artifact(
+                        artifacts=artifacts,
+                        spawn_id=run.spawn_id,
+                        text=f"retry setup failed: {exc}",
+                    )
                     break
 
                 conclusion.retries_attempted += 1
+                session_attempt = next_session_attempt
+                native_run = next_native_run
+                config = replace(config, session_id_observer=native_run.observe)
                 logger.info(
-                    "Retrying failed run attempt.",
+                    "Retrying proven-safe startup failure.",
                     spawn_id=str(run.spawn_id),
                     harness_id=str(harness.id),
-                    exit_code=conclusion.exit_code,
                     retries_attempted=conclusion.retries_attempted,
-                    max_retries=max_retries,
-                    error_category=str(category),
+                    max_attempts=request.retry.max_attempts,
+                    failure_code=failure.code,
                 )
                 if retry_backoff_seconds > 0:
                     cancelled_during_backoff = await _sleep_retry_backoff_or_cancel(

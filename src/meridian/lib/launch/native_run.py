@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from meridian.lib.core.native_identity import (
+    NativeCreateProgress,
     NativeEntryMismatch,
     NativeIdentity,
     NativeIdentityError,
@@ -19,6 +20,7 @@ from meridian.lib.core.native_identity import (
 from meridian.lib.core.types import ChatId, SpawnId
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
+from meridian.lib.launch.retry import RetryPermit
 from meridian.lib.launch.session_scope import SessionAttempt
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.native_binding import Conflict
@@ -76,7 +78,15 @@ class NativeRun:
             if self.on_accepted is not None:
                 self.on_accepted(candidate)
 
-    def retry(self, attempt: SessionAttempt) -> NativeRun:
+    def rearm(self, attempt: SessionAttempt, permit: RetryPermit) -> NativeRun:
+        """Reuse only an identity proven unconsumed by the retry policy."""
+
+        evidence = permit.decision.assessment.evidence
+        if evidence.native_create not in {
+            NativeCreateProgress.NOT_MATERIALIZED,
+            NativeCreateProgress.NOT_APPLICABLE,
+        }:
+            raise ValueError("retry permit does not prove the native identity reusable")
         return replace(self, attempt=attempt, _first_seen=False, _noted=set())
 
 
@@ -113,6 +123,7 @@ class NativeRunOutcome:
     error: NativeIdentityError | None
     boundary: RunBoundaryOutcome
     harness_session_id: str | None
+    native_create: NativeCreateProgress
 
 
 def conclude_native_run(
@@ -158,6 +169,13 @@ def conclude_native_run(
         except NativeIdentityError as exc:
             error = exc
 
+    if run.identity is None or run.identity.operation != "create":
+        native_create = NativeCreateProgress.NOT_APPLICABLE
+    elif run._noted:
+        native_create = NativeCreateProgress.MATERIALIZED
+    else:
+        native_create = adapter.observe_create_materialization(run.identity)
+
     exit_chat_id = None
     if error is None and post.exit is not None:
         exit_key = post.exit
@@ -201,4 +219,4 @@ def conclude_native_run(
         )
     elif started:
         run.attempt.record_started(context, run.entry.session_id)
-    return NativeRunOutcome(error, boundary, run.entry.session_id)
+    return NativeRunOutcome(error, boundary, run.entry.session_id, native_create)
