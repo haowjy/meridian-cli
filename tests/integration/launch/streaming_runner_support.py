@@ -410,12 +410,10 @@ class _ResidentGuardrailConnection(_ResidentDeadlineConnection):
 
     def __init__(self) -> None:
         super().__init__()
-        self._attempt_index = 0
         self._project_root: Path | None = None
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         await super().start(config, spec)
-        self._attempt_index = type(self).starts
         self._project_root = config.control_root
 
     async def events(self):  # type: ignore[no-untyped-def]
@@ -431,13 +429,11 @@ class _ResidentGuardrailConnection(_ResidentDeadlineConnection):
             "# Done\n\nGuardrail input completed.\n",
             encoding="utf-8",
         )
-        write_spawn_signal(type(self).runtime_root, self._spawn_id, "rearm")
-        if self._attempt_index == 1:
-            write_spawn_signal(type(self).runtime_root, self._spawn_id, "done")
+        write_spawn_signal(type(self).runtime_root, self._spawn_id, "done")
         yield RawHarnessEvent(
             event_type="turn/completed",
             harness_id="codex",
-            payload={"threadId": self._session_id, "turnId": f"turn-{self._attempt_index}"},
+            payload={"threadId": self._session_id, "turnId": "turn-1"},
         )
 
 

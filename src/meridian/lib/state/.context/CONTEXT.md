@@ -29,7 +29,7 @@ meridian.toml
       state.json                    — authoritative spawn state (schema v3)
       starting-prompt.md            — prompt body (written once)
       history.jsonl                 — legacy runner stream; no longer written, removed by session archive prune
-      attempt-N/                    — preserved retry evidence
+      attempt-N/                    — legacy retry evidence; new runs do not create it
       last-observed-event.json      — legacy checkpoint; no longer written, removed by session archive prune
       runner-lifecycle.jsonl        — runner lifecycle breadcrumbs
       finalize-evidence.json        — orphan-time liveness snapshot

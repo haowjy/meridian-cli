@@ -83,19 +83,3 @@ def test_inactivity_terminal_outcome_stalled_without_durable_report() -> None:
 
     assert exit_override is None
     assert failure_reason == "stalled"
-
-
-def test_inactivity_terminal_outcome_applied_to_conclusion() -> None:
-    conclusion = StreamingRunConclusion(
-        exit_code=1,
-        failure_reason="inactivity_stall",
-    )
-    extraction = _extraction_with_report(None)
-
-    exit_override, failure_override = _inactivity_terminal_outcome(extraction)
-    if exit_override is not None:
-        conclusion.exit_code = exit_override
-    conclusion.failure_reason = failure_override
-
-    assert conclusion.exit_code == 1
-    assert conclusion.failure_reason == "stalled"

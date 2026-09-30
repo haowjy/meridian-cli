@@ -239,17 +239,6 @@ def _install_signal_handlers(
     return _cleanup
 
 
-def _persist_stderr_artifact(
-    *,
-    artifacts: ArtifactStore,
-    spawn_id: SpawnId,
-    log_dir: Path,
-) -> None:
-    source = log_dir / STDERR_FILENAME
-    if source.exists():
-        artifacts.put(make_artifact_key(spawn_id, STDERR_FILENAME), source.read_bytes())
-
-
 def _read_cancel_intent(runtime_root: Path, spawn_id: SpawnId) -> CancelIntent | None:
     record = spawn_store.get_spawn(runtime_root, spawn_id)
     return None if record is None else record.cancel_intent
@@ -1166,11 +1155,12 @@ async def execute_with_streaming(
                     ):
                         conclusion.failure_reason = attempt.drain_error
 
-                    _persist_stderr_artifact(
-                        artifacts=artifacts,
-                        spawn_id=run.spawn_id,
-                        log_dir=log_dir,
-                    )
+                    stderr_path = log_dir / STDERR_FILENAME
+                    if stderr_path.exists():
+                        artifacts.put(
+                            make_artifact_key(run.spawn_id, STDERR_FILENAME),
+                            stderr_path.read_bytes(),
+                        )
 
                     outcome = conclude_native_run(
                         native_run,

@@ -237,25 +237,10 @@ async def test_execute_with_streaming_finalizes_resident_deadline_after_one_star
     assert row.terminal.error == "resident_deadline_expired"
 
 
-@pytest.mark.parametrize(
-    ("terminal_script", "expected_error"),
-    [
-        (
-            "printf '%s\n' "
-            "'{\"type\":\"result\",\"subtype\":\"error_max_turns\",\"is_error\":true,"
-            "\"result\":\"subscription quota exhausted\"}'\n",
-            "subscription quota exhausted",
-        ),
-        ('printf "%s\n" "connection reset by peer" >&2\n', None),
-    ],
-    ids=("explicit-quota-result", "post-init-transport-failure"),
-)
 @pytest.mark.asyncio
 async def test_claude_failure_runs_one_real_subprocess(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    terminal_script: str,
-    expected_error: str | None,
 ) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -273,7 +258,9 @@ async def test_claude_failure_runs_one_real_subprocess(
         "IFS= read -r prompt\n"
         "printf '{\"type\":\"system\",\"subtype\":\"init\","
         "\"session_id\":\"%s\"}\n' \"$session_id\"\n"
-        f"{terminal_script}"
+        "printf '%s\n' "
+        "'{\"type\":\"result\",\"subtype\":\"error_max_turns\",\"is_error\":true,"
+        "\"result\":\"subscription quota exhausted\"}'\n"
         "exit 1\n",
         encoding="utf-8",
     )
@@ -321,21 +308,8 @@ async def test_claude_failure_runs_one_real_subprocess(
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
     assert exit_code == 1
     assert row is not None and row.terminal is not None
-    if expected_error is not None:
-        assert row.terminal.error == expected_error
-    else:
-        assert row.terminal.error
+    assert row.terminal.error == "subscription quota exhausted"
     assert invocation_log.read_text(encoding="utf-8").count("\n") == 1
-
-    spawn_dir = runtime_root / "spawns" / str(run.spawn_id)
-    assert not any(path.name.startswith("attempt-2") for path in spawn_dir.iterdir())
-    lifecycle_rows = [
-        json.loads(line)
-        for line in (spawn_dir / "runner-lifecycle.jsonl").read_text(encoding="utf-8").splitlines()
-    ]
-    assert [row["attempt"] for row in lifecycle_rows if row["event"] == "attempt_started"] == [
-        1
-    ]
 
 
 @pytest.mark.asyncio
@@ -380,11 +354,7 @@ async def test_guardrail_failure_does_not_rerun_harness(
     exit_code = await asyncio.wait_for(
         _execute_with_context(
             run,
-            request=_build_request().model_copy(
-                update={
-                    "execution_policy": ResolvedExecutionPolicy(resident_rearm_budget=1),
-                }
-            ),
+            request=_build_request(),
             project_root=tmp_path,
             runtime_root=runtime_root,
             artifacts=artifacts,

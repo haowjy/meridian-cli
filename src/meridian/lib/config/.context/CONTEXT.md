@@ -21,8 +21,8 @@ without a second lock protocol or a cross-module `lock_held` flag.
 
 ### Two Config Systems — Don't Conflate
 
-**`MeridianConfig`** — persistent, project-wide operational settings: retry policy,
-timeouts, output verbosity, state retention, default model/harness. Loaded from TOML
+**`MeridianConfig`** — persistent, project-wide operational settings: timeouts,
+output verbosity, state retention, default model/harness. Loaded from TOML
 files at startup. Applies broadly across all spawns.
 
 **`RuntimeOverrides`** — per-spawn behavioral choices: model, harness, effort, approval,
