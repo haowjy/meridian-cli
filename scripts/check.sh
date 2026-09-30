@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pre-push gate script — runs lint, type check, unit tests, and contracts.
+# Focused check script — runs lint, type check, unit tests, and contracts.
 # Target: < 2 minutes on typical hardware.
 #
 # Usage:
