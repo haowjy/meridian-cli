@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-10-01
+
 ### Removed
 - Remove automatic harness-turn retries and their configuration. Each launch now
   runs once and preserves its causal terminal, transport, guardrail, timeout, or
