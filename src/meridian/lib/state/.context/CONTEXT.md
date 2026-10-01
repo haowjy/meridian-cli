@@ -29,7 +29,7 @@ meridian.toml
       state.json                    — authoritative spawn state (schema v3)
       starting-prompt.md            — prompt body (written once)
       history.jsonl                 — legacy runner stream; no longer written, removed by session archive prune
-      attempt-N/                    — preserved retry evidence
+      attempt-N/                    — legacy retry evidence; new runs do not create it
       last-observed-event.json      — legacy checkpoint; no longer written, removed by session archive prune
       runner-lifecycle.jsonl        — runner lifecycle breadcrumbs
       finalize-evidence.json        — orphan-time liveness snapshot
@@ -96,9 +96,9 @@ represents original legacy intent and never outranks a started invocation.
 
 Pending selections bind through ID updates with the same captured chat generation
 and startup attempt. Binding does not move the original event's position. Pair-level
-invocation/conversation dedup prevents retries from promoting an old selection;
-fresh retries can retain distinct new conversations. Identity conflicts fail rather
-than moving a selection. Reads do not write seeds or consult attempted snapshots.
+invocation/conversation dedup prevents duplicate accepted-running callbacks from
+promoting an old selection; separate launches can retain distinct new conversations.
+Identity conflicts fail rather than moving a selection. Reads do not write seeds or consult attempted snapshots.
 New-protocol starts cannot seed prelaunch intent. Launch callers must pass the
 protocol marker and commit only at their accepted-running boundary.
 

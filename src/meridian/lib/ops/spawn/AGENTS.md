@@ -67,9 +67,9 @@ newer identity. Missing retained spawn metadata cannot be reconstructed by
 `--harness`; that flag disambiguates ownership, not missing history.
 
 The captured `SessionAttempt` follows the session generation into streaming
-execution. Each retry gets its own attempt identity; native-ID callbacks and
-accepted-running model-selection writes use that same capture. Recording failure
-is a coordination error, not a reason to retry the model.
+execution. Native-ID callbacks and accepted-running model-selection writes use
+that same capture. Recording failure is a coordination error, not a reason to
+replay the model turn.
 
 ## Key Entry Points
 

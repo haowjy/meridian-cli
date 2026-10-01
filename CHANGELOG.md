@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+- Remove automatic harness-turn retries and their configuration. Each launch now
+  runs once and preserves its causal terminal, transport, guardrail, timeout, or
+  subprocess failure instead of replaying a consumed native session.
+
 ## [0.8.1] - 2026-09-30
 
 ### Fixed

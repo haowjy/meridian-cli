@@ -369,7 +369,7 @@ def project_pi_spec_to_cli_args(spec, *, base_command) -> list[str]:
 **File: `src/meridian/lib/harness/extractors/pi.py`**
 
 The extractor itself is stateless; it implements `create_fold()` and the identity
-ports, and folding state lives on a per-attempt `AttemptFold` subclass:
+ports, and folding state for the turn lives on an `AttemptFold` subclass:
 
 ```python
 class PiHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
@@ -384,10 +384,10 @@ class PiFold(AttemptFold):
 
 Pi's `session` event names its native ID. `PiFold.fold_event()` folds assistant
 `message_end` usage and `message_end`/`agent_end` final text into bounded
-`AttemptFacts`. Retries get a fresh fold. Never scan the latest native file or
-reread runner artifacts to recover identity or a report. Where a harness
+`AttemptFacts`. Never scan the latest native file or reread runner artifacts to
+recover identity or a report. Where a harness
 supports a native-turn fallback, the extractor's `read_native_turn(key, ids)`
-may read only replies named by this attempt's events from its recorded store;
+may read only replies named by this turn's events from its recorded store;
 otherwise the fact remains unknown. Claude `--print` is the black-box exception:
 its captured stdout is folded after exit.
 

@@ -1,9 +1,9 @@
-# harness/extractors/ — Attempt Facts
+# harness/extractors/ — Turn Facts
 
-One stateless extractor per harness. `create_fold()` makes an attempt-local
-fold with its own cursor and bounded facts. Calling it with a `RawHarnessEvent`
-updates facts synchronously before event persistence. Retries use fresh folds. Extractors
-never read runner history or artifact-store output. Claude `--print` is the
+One stateless extractor per harness. `create_fold()` makes a turn-local fold
+with its own cursor and bounded facts. Calling it with a `RawHarnessEvent`
+updates facts synchronously before event persistence. Extractors never read
+runner history or artifact-store output. Claude `--print` is the
 black-box exception: the runner folds its captured stdout after exit.
 
 `detect_session_id_from_event` remains the live connection identity port.

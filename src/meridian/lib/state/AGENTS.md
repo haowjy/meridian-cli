@@ -29,7 +29,7 @@ meridian.toml
   spawns/<spawn_id>/
     state.json                      — authoritative spawn state (schema v3)
     history.jsonl                   — legacy runner event stream (no longer written), never read
-    attempt-N/                      — preserved retry evidence from prior attempts
+    attempt-N/                      — legacy retry evidence; new runs do not create it
     runner-lifecycle.jsonl          — runner breadcrumb journal (signals, phases, atexit)
     finalize-evidence.json          — orphan-time liveness snapshot before reaper cleanup
     process_scopes.json             — durable process identities + release markers

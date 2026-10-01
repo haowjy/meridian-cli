@@ -6,7 +6,7 @@ broadly. This is not the same system as per-spawn runtime overrides.
 
 ## Mental Model: Two Config Systems — Don't Conflate
 
-**`MeridianConfig`** — persistent, project-wide settings: retry policy, timeouts,
+**`MeridianConfig`** — persistent, project-wide settings: timeouts,
 output verbosity, state retention, default model/harness. Loaded from TOML files.
 Lives in this module.
 

@@ -19,7 +19,6 @@ from meridian.lib.launch.plan import build_spawn_mars_runtime
 from meridian.lib.launch.reference import parse_template_assignments
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
-    RetryPolicy,
     SpawnRequest,
     is_exact_continue_session,
 )
@@ -184,10 +183,6 @@ def build_create_payload(
                 effort=payload.effort,
                 timeout=payload.timeout,
                 resident_rearm_budget=payload.resident_rearm_budget,
-            ),
-            retry=RetryPolicy(
-                max_attempts=max(1, config.max_retries + 1),
-                backoff_secs=config.retry_backoff_seconds,
             ),
             session=payload.session.model_copy(update={
                 "requested_harness_session_id": (

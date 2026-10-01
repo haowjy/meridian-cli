@@ -1,11 +1,12 @@
 # qa-validated: test-suite-redesign
 # qa-validated: pi-rpc-quiescence
-"""Streaming runner retry policy and resident deadline behavior."""
+"""Streaming runner terminal failure and resident deadline behavior."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 from pathlib import Path
 
@@ -15,10 +16,9 @@ from meridian.lib.config.settings import load_config
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
-from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch import bundle_adapter
-from meridian.lib.launch.request import RetryPolicy
+from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.ops.runtime import build_runtime_from_root_and_config
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.ops.spawn.prepare import build_create_payload
@@ -28,14 +28,12 @@ from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.streaming import pi_drain as pi_drain_module
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.integration.launch.streaming_runner_support import (
-    _build_opencode_request,
     _build_request,
     _execute_with_context,
     _FakeControlSocketServer,
     _pi_extension_projection_fixture,
     _ResidentDeadlineConnection,
-    _ResidentRearmRetryConnection,
-    _ScriptedRetryOpenCodeConnection,
+    _ResidentGuardrailConnection,
     _TimeoutAbortPiConnection,
     streaming_runner_module,
 )
@@ -155,7 +153,7 @@ async def test_execute_with_streaming_attempt_timeout_survives_pi_abort(
 
 
 @pytest.mark.asyncio
-async def test_execute_with_streaming_finalizes_resident_deadline_without_retry(
+async def test_execute_with_streaming_finalizes_resident_deadline_after_one_start(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -214,9 +212,7 @@ async def test_execute_with_streaming_finalizes_resident_deadline_without_retry(
         launch_mode="background",
         status="running",
     )
-    request = _build_request().model_copy(
-        update={"retry": RetryPolicy(max_attempts=3, backoff_secs=0.0)}
-    )
+    request = _build_request()
     exit_code = await asyncio.wait_for(
         _execute_with_context(
             run,
@@ -242,46 +238,107 @@ async def test_execute_with_streaming_finalizes_resident_deadline_without_retry(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("different_ids", [False, True])
-async def test_execute_with_streaming_keeps_resident_rearm_budget_across_retry(
+async def test_claude_failure_runs_one_real_subprocess(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    different_ids: bool,
 ) -> None:
-    from structlog.testing import capture_logs
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    invocation_log = tmp_path / "claude-invocations"
+    shim = bin_dir / "claude"
+    shim.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "--version" ]; then echo "2.0.0"; exit 0; fi\n'
+        f'printf "%s\n" "$*" >> {invocation_log}\n'
+        "session_id=\n"
+        "while [ \"$#\" -gt 0 ]; do\n"
+        '  if [ "$1" = "--session-id" ]; then shift; session_id=$1; fi\n'
+        "  shift\n"
+        "done\n"
+        "IFS= read -r prompt\n"
+        "printf '{\"type\":\"system\",\"subtype\":\"init\","
+        "\"session_id\":\"%s\"}\n' \"$session_id\"\n"
+        "printf '%s\n' "
+        "'{\"type\":\"result\",\"subtype\":\"error_max_turns\",\"is_error\":true,"
+        "\"result\":\"subscription quota exhausted\"}'\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
 
-    from meridian.lib.state import session_store
+    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
+    run = Spawn(
+        spawn_id=SpawnId("r-claude-single-attempt"),
+        prompt="do work",
+        model=ModelId("claude-sonnet-4-5"),
+        status="queued",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        chat_id="test-chat-claude-single-attempt",
+        model=str(run.model),
+        agent="",
+        harness=HarnessId.CLAUDE.value,
+        kind="streaming",
+        prompt=run.prompt,
+        spawn_id=run.spawn_id,
+        launch_mode="foreground",
+        status="queued",
+    )
 
-    original_start = _ResidentRearmRetryConnection.start
+    exit_code = await asyncio.wait_for(
+        _execute_with_context(
+            run,
+            request=SpawnRequest(
+                model=str(run.model),
+                harness=HarnessId.CLAUDE.value,
+                prompt=run.prompt,
+            ),
+            project_root=tmp_path,
+            runtime_root=runtime_root,
+            artifacts=LocalStore(root_dir=tmp_path / ".artifacts"),
+            registry=HarnessRegistry.with_defaults(),
+        ),
+        timeout=15.0,
+    )
 
-    async def start(connection, config, spec):
-        await original_start(connection, config, spec)
-        if different_ids:
-            connection._session_id = f"thread-{connection._attempt_index}"
+    row = spawn_store.get_spawn(runtime_root, run.spawn_id)
+    assert exit_code == 1
+    assert row is not None and row.terminal is not None
+    assert row.terminal.error == "subscription quota exhausted"
+    assert invocation_log.read_text(encoding="utf-8").count("\n") == 1
 
-    monkeypatch.setattr(_ResidentRearmRetryConnection, "start", start)
+
+@pytest.mark.asyncio
+async def test_guardrail_failure_does_not_rerun_harness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     runtime_root = resolve_project_runtime_root_for_write(tmp_path)
     artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
     registry = HarnessRegistry.with_defaults()
     fake_clock = FakeClock(start=1_000.0)
     fake_heartbeat = FakeHeartbeat()
     fake_heartbeat.set_clock(fake_clock)
-    _ResidentRearmRetryConnection.reset(runtime_root)
+    _ResidentGuardrailConnection.reset(runtime_root)
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id, _transport_id=TransportId.STREAMING: _ResidentRearmRetryConnection,
+        lambda _harness_id, _transport_id=TransportId.STREAMING: _ResidentGuardrailConnection,
     )
 
     run = Spawn(
-        spawn_id=SpawnId("r-resident-rearm-retry"),
+        spawn_id=SpawnId("r-guardrail-single-attempt"),
         prompt="hello",
         model=ModelId("gpt-5.3-codex"),
         status="queued",
     )
     spawn_store.start_spawn(
         runtime_root,
-        chat_id="test-chat-resident-rearm-retry",
+        chat_id="test-chat-guardrail-single-attempt",
         model=str(run.model),
         agent="",
         harness=HarnessId.CODEX.value,
@@ -291,108 +348,13 @@ async def test_execute_with_streaming_keeps_resident_rearm_budget_across_retry(
         launch_mode="foreground",
         status="queued",
     )
-    request = _build_request().model_copy(
-        update={
-            "execution_policy": ResolvedExecutionPolicy(resident_rearm_budget=1),
-            "retry": RetryPolicy(max_attempts=2, backoff_secs=0.0),
-        }
-    )
-    guardrail = tmp_path / "retry-once.sh"
-    marker = tmp_path / "guardrail-passed-once"
-    guardrail.write_text(
-        f'if [ ! -e "{marker}" ]; then touch "{marker}"; exit 1; fi\n',
-        encoding="utf-8",
-    )
-
-    with capture_logs() as logs:
-        exit_code = await asyncio.wait_for(
-            _execute_with_context(
-                run,
-                request=request,
-                project_root=tmp_path,
-                runtime_root=runtime_root,
-                artifacts=artifacts,
-                registry=registry,
-                clock=fake_clock,
-                heartbeat_touch=fake_heartbeat.touch,
-                heartbeat_interval_secs=0.001,
-                guardrails=(guardrail,),
-            ),
-            timeout=15.0,
-        )
-
-    row = spawn_store.get_spawn(runtime_root, run.spawn_id)
-    assert exit_code == 0
-    assert _ResidentRearmRetryConnection.starts == 2
-    assert row is not None
-    assert row.status == "succeeded"
-    assert row.resident_rearm_count == 1
-
-    if different_ids:
-        assert row.chat_id is not None
-        entry = session_store.get_session_record(runtime_root, row.chat_id)
-        assert entry.harness_session_id == "thread-1"
-        assert len([log for log in logs if log["event"] == "native_binding_conflict"]) == 1
-
-
-@pytest.mark.asyncio
-async def test_execute_with_streaming_does_not_retry_authoritative_terminal_failure(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
-    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
-    registry = HarnessRegistry.with_defaults()
-    fake_clock = FakeClock(start=1_000.0)
-    fake_heartbeat = FakeHeartbeat()
-    fake_heartbeat.set_clock(fake_clock)
-    _ScriptedRetryOpenCodeConnection.reset(
-        first_attempt_events=(
-            RawHarnessEvent(
-                event_type="session.error",
-                harness_id="opencode",
-                payload={
-                    "type": "session.error",
-                    "error": "connection reset by peer",
-                    "sessionID": "session-retryable-opencode",
-                },
-            ),
-        ),
-        session_id="session-retryable-opencode",
-        subprocess_pid=8383,
-    )
-    monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
-    monkeypatch.setattr(
-        "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id, _transport_id=TransportId.STREAMING: _ScriptedRetryOpenCodeConnection,
-    )
-
-    run = Spawn(
-        spawn_id=SpawnId("r-opencode-retryable"),
-        prompt="hello",
-        model=ModelId("openai/gpt-5.4"),
-        status="queued",
-    )
-    spawn_store.start_spawn(
-        runtime_root,
-        chat_id="test-chat-opencode-retryable",
-        model=str(run.model),
-        agent="",
-        harness=HarnessId.OPENCODE.value,
-        kind="streaming",
-        prompt=run.prompt,
-        spawn_id=run.spawn_id,
-        launch_mode="foreground",
-        status="queued",
-    )
-    request = _build_opencode_request().model_copy(
-        update={"retry": RetryPolicy(max_attempts=2, backoff_secs=0.0)}
-    )
+    guardrail = tmp_path / "fail.sh"
+    guardrail.write_text("exit 1\n", encoding="utf-8")
 
     exit_code = await asyncio.wait_for(
         _execute_with_context(
             run,
-            request=request,
+            request=_build_request(),
             project_root=tmp_path,
             runtime_root=runtime_root,
             artifacts=artifacts,
@@ -400,106 +362,14 @@ async def test_execute_with_streaming_does_not_retry_authoritative_terminal_fail
             clock=fake_clock,
             heartbeat_touch=fake_heartbeat.touch,
             heartbeat_interval_secs=0.001,
+            guardrails=(guardrail,),
         ),
         timeout=15.0,
     )
 
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
     assert exit_code == 1
-    assert _ScriptedRetryOpenCodeConnection.starts == 1
-    assert row is not None
+    assert _ResidentGuardrailConnection.starts == 1
+    assert row is not None and row.terminal is not None
     assert row.status == "failed"
-    assert row.terminal.exit_code == 1
-    assert row.terminal.error == "connection reset by peer"
-
-
-@pytest.mark.parametrize("first_attempt_has_facts", [False, True])
-@pytest.mark.asyncio
-async def test_execute_with_streaming_retries_single_turn_close_without_terminal_frame(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    first_attempt_has_facts: bool,
-) -> None:
-    runtime_root = resolve_project_runtime_root_for_write(tmp_path)
-    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
-    registry = HarnessRegistry.with_defaults()
-    fake_clock = FakeClock(start=1_000.0)
-    fake_heartbeat = FakeHeartbeat()
-    fake_heartbeat.set_clock(fake_clock)
-    _ScriptedRetryOpenCodeConnection.reset(
-        first_attempt_events=(
-            RawHarnessEvent(
-                event_type="message.updated",
-                harness_id="opencode",
-                payload={
-                    "type": "message.updated",
-                    "properties": {
-                        "info": {
-                            "sessionID": "ses_retry",
-                            "id": "old-message",
-                            "role": "assistant",
-                            "tokens": {"input": 456, "output": 42},
-                            "parts": [{"type": "text", "text": "old attempt report"}],
-                        }
-                    },
-                },
-            ),
-        )
-        if first_attempt_has_facts
-        else (),
-        session_id="ses_retry",
-        subprocess_pid=8484,
-    )
-    monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
-    monkeypatch.setattr(
-        "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id, _transport_id=TransportId.STREAMING: _ScriptedRetryOpenCodeConnection,
-    )
-
-    run = Spawn(
-        spawn_id=SpawnId("r-opencode-close-without-terminal"),
-        prompt="hello",
-        model=ModelId("openai/gpt-5.4"),
-        status="queued",
-    )
-    spawn_store.start_spawn(
-        runtime_root,
-        chat_id="test-chat-opencode-close-without-terminal",
-        model=str(run.model),
-        agent="",
-        harness=HarnessId.OPENCODE.value,
-        kind="streaming",
-        prompt=run.prompt,
-        spawn_id=run.spawn_id,
-        launch_mode="foreground",
-        status="queued",
-    )
-    request = _build_opencode_request().model_copy(
-        update={"retry": RetryPolicy(max_attempts=2, backoff_secs=0.0)}
-    )
-
-    exit_code = await asyncio.wait_for(
-        _execute_with_context(
-            run,
-            request=request,
-            project_root=tmp_path,
-            runtime_root=runtime_root,
-            artifacts=artifacts,
-            registry=registry,
-            clock=fake_clock,
-            heartbeat_touch=fake_heartbeat.touch,
-            heartbeat_interval_secs=0.001,
-        ),
-        timeout=15.0,
-    )
-
-    row = spawn_store.get_spawn(runtime_root, run.spawn_id)
-    assert exit_code == 0
-    assert _ScriptedRetryOpenCodeConnection.starts == 2
-    assert row is not None
-    assert row.status == "succeeded"
-    assert row.terminal.exit_code == 0
-
-    assert row.terminal.input_tokens is None
-    assert row.terminal.output_tokens is None
-    assert not (runtime_root / "spawns" / run.spawn_id / "report.md").exists()
+    assert row.terminal.error == "guardrail_failed"

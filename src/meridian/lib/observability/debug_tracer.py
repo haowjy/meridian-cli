@@ -36,7 +36,6 @@ class DebugTracer:
         self._lock = threading.Lock()
         self._handle: IO[str] | None = None
         self._disabled = False
-        self._opened = False
 
     def emit(
         self,
@@ -107,18 +106,13 @@ class DebugTracer:
                 except Exception:
                     pass
                 self._handle = None
-            self._opened = False
 
     def _ensure_open(self) -> None:
         """Open the file handle on first write. Creates parent dirs."""
         if self._handle is not None:
             return
-        if self._opened and self._handle is None:
-            # Was previously closed — reopen in append mode for retry support.
-            pass
         self._debug_path.parent.mkdir(parents=True, exist_ok=True)
         self._handle = self._debug_path.open("a", encoding="utf-8")
-        self._opened = True
 
     def _prepare_data(self, data: dict[str, object]) -> dict[str, object]:
         """Serialize and truncate data values for JSONL output."""

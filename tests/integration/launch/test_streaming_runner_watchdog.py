@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -14,17 +13,14 @@ import pytest
 
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
-from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent
-from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 from meridian.lib.harness.launch_spec import ResolvedLaunchSpec
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.harness.semantics import EventSemantics, NormalizedHarnessEvent
 from meridian.lib.launch import constants as launch_constants
-from meridian.lib.launch.extract import enrich_finalize, reset_finalize_attempt_artifacts
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
-from meridian.lib.state.artifact_store import LocalStore, make_artifact_key
+from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.spawn.model import FOREGROUND_LAUNCH_MODE
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
@@ -41,20 +37,6 @@ from tests.integration.launch.streaming_runner_support import (
 from tests.support.fakes import FakeClock, FakeHeartbeat
 
 _pi_extension_projection_fixture = _pi_extension_projection_fixture
-
-_STORE_ATTEMPT_FILES = (
-    launch_constants.OUTPUT_FILENAME,
-    launch_constants.STDERR_FILENAME,
-    launch_constants.TOKENS_FILENAME,
-    launch_constants.REPORT_FILENAME,
-)
-_DISK_ATTEMPT_FILES = (
-    launch_constants.RUNNER_LIFECYCLE_FILENAME,
-    launch_constants.STDERR_FILENAME,
-    launch_constants.TOKENS_FILENAME,
-    launch_constants.REPORT_FILENAME,
-)
-
 
 @dataclass
 class _LifecycleRecorder:
@@ -252,227 +234,6 @@ async def test_streaming_attempt_fresh_events_keep_slow_cursor_backend_alive(
     assert attempt.drain_exit_code == 0
     assert attempt.terminated_by_inactivity is False
     assert manager.stop_calls == []
-
-
-def test_retry_preserves_completed_attempt_artifacts(tmp_path: Path) -> None:
-    from meridian.lib.state import spawn_store
-
-    spawn_id = spawn_store.start_spawn(
-        tmp_path, chat_id="c1", model="test", agent="test", harness="codex", prompt="retry evidence"
-    )
-    log_dir = tmp_path / "spawns" / spawn_id
-    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
-    for name in _DISK_ATTEMPT_FILES:
-        (log_dir / name).write_text("attempt data\n", encoding="utf-8")
-    for name in _STORE_ATTEMPT_FILES:
-        artifacts.put(
-            make_artifact_key(spawn_id, name),
-            b"persisted attempt data\n",
-        )
-    durable_path = log_dir / "durable.json"
-    durable_path.write_text("durable data\n", encoding="utf-8")
-
-    streaming_runner_module._preserve_attempt_artifacts(
-        artifacts=artifacts,
-        spawn_id=spawn_id,
-        log_dir=log_dir,
-        completed_attempt=1,
-    )
-
-    for name in _DISK_ATTEMPT_FILES:
-        assert not (log_dir / name).exists()
-        assert (log_dir / "attempt-1" / name).read_text(encoding="utf-8") == "attempt data\n"
-    for name in _STORE_ATTEMPT_FILES:
-        assert not artifacts.exists(make_artifact_key(spawn_id, name))
-        assert artifacts.get(make_artifact_key(spawn_id, f"attempt-1/{name}")) == (
-            b"persisted attempt data\n"
-        )
-    assert not (log_dir / launch_constants.HISTORY_FILENAME).exists()
-    assert durable_path.exists()
-    assert not (log_dir / "attempt-1.tmp").exists()
-
-
-def test_preserve_clears_current_attempt_extraction(tmp_path: Path) -> None:
-    from meridian.lib.state import spawn_store
-
-    spawn_id = spawn_store.start_spawn(
-        tmp_path, chat_id="c1", model="test", agent="test", harness="codex", prompt="retry evidence"
-    )
-    log_dir = tmp_path / "spawns" / spawn_id
-    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
-    attempt_one_report = b"# Report\n\nattempt 1 durable completion\n"
-    report_key = make_artifact_key(spawn_id, launch_constants.REPORT_FILENAME)
-    artifacts.put(report_key, attempt_one_report)
-    (log_dir / launch_constants.REPORT_FILENAME).write_bytes(attempt_one_report)
-
-    streaming_runner_module._preserve_attempt_artifacts(
-        artifacts=artifacts,
-        spawn_id=spawn_id,
-        log_dir=log_dir,
-        completed_attempt=1,
-    )
-
-    assert not artifacts.exists(report_key)
-
-    reset_finalize_attempt_artifacts(
-        artifacts=artifacts,
-        spawn_id=spawn_id,
-        log_dir=log_dir,
-    )
-
-    extraction = enrich_finalize(
-        artifacts=artifacts,
-        extractor=CODEX_EXTRACTOR,
-        facts=AttemptFacts(),
-        spawn_id=spawn_id,
-        log_dir=log_dir,
-        failure_reason="adapter startup failed",
-    )
-
-    assert extraction.durable_report_completion is False
-    assert extraction.report.content == "adapter startup failed"
-    assert extraction.report.source == "failure_reason"
-
-
-def test_preserve_recovers_interrupted_rotation(tmp_path: Path) -> None:
-    from meridian.lib.state import spawn_store
-
-    spawn_id = spawn_store.start_spawn(
-        tmp_path, chat_id="c1", model="test", agent="test", harness="codex", prompt="retry evidence"
-    )
-    log_dir = tmp_path / "spawns" / spawn_id
-    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
-    staging_dir = log_dir / "attempt-1.tmp"
-    staging_dir.mkdir(parents=True)
-    (staging_dir / launch_constants.RUNNER_LIFECYCLE_FILENAME).write_text(
-        "staged history\n",
-        encoding="utf-8",
-    )
-    (log_dir / launch_constants.STDERR_FILENAME).write_text(
-        "late stderr\n",
-        encoding="utf-8",
-    )
-    streaming_runner_module._preserve_attempt_artifacts(
-        artifacts=artifacts,
-        spawn_id=spawn_id,
-        log_dir=log_dir,
-        completed_attempt=1,
-    )
-
-    assert not staging_dir.exists()
-    assert (log_dir / "attempt-1" / launch_constants.RUNNER_LIFECYCLE_FILENAME).read_text(
-        encoding="utf-8",
-    ) == "staged history\n"
-    assert (log_dir / "attempt-1" / launch_constants.STDERR_FILENAME).read_text(
-        encoding="utf-8",
-    ) == "late stderr\n"
-
-
-def test_preserve_discards_stale_staging_when_attempt_dir_exists(tmp_path: Path) -> None:
-    from meridian.lib.state import spawn_store
-
-    spawn_id = spawn_store.start_spawn(
-        tmp_path, chat_id="c1", model="test", agent="test", harness="codex", prompt="retry evidence"
-    )
-    log_dir = tmp_path / "spawns" / spawn_id
-    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
-    attempt_dir = log_dir / "attempt-1"
-    attempt_dir.mkdir(parents=True)
-    (attempt_dir / launch_constants.RUNNER_LIFECYCLE_FILENAME).write_text(
-        "committed lifecycle\n",
-        encoding="utf-8",
-    )
-    staging_dir = log_dir / "attempt-1.tmp"
-    staging_dir.mkdir(parents=True)
-    (staging_dir / launch_constants.STDERR_FILENAME).write_text(
-        "stale staging\n",
-        encoding="utf-8",
-    )
-    (log_dir / launch_constants.STDERR_FILENAME).write_text(
-        "live stderr\n",
-        encoding="utf-8",
-    )
-
-    streaming_runner_module._preserve_attempt_artifacts(
-        artifacts=artifacts,
-        spawn_id=spawn_id,
-        log_dir=log_dir,
-        completed_attempt=1,
-    )
-
-    assert not staging_dir.exists()
-    assert (attempt_dir / launch_constants.RUNNER_LIFECYCLE_FILENAME).read_text(
-        encoding="utf-8",
-    ) == "committed lifecycle\n"
-    assert (attempt_dir / launch_constants.STDERR_FILENAME).read_text(
-        encoding="utf-8",
-    ) == "live stderr\n"
-
-
-def test_retry_blocked_after_pi_child_started_detects_disk_child_state(
-    tmp_path: Path,
-) -> None:
-    runtime_root = tmp_path / "runtime"
-    spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p2",
-        chat_id="c2",
-        parent_id="p1",
-        model="gpt-5.4",
-        agent="coder",
-        harness="pi",
-        prompt="child",
-    )
-
-    assert streaming_runner_module._retry_blocked_after_pi_child_started(
-        harness_id=HarnessId.PI,
-        runtime_root=runtime_root,
-        current_spawn_id=SpawnId("p1"),
-    )
-
-
-def test_retry_gate_fails_closed_for_quarantined_spawn_state(tmp_path: Path) -> None:
-    runtime_root = tmp_path / "runtime"
-    state_path = runtime_root / "spawns" / "p2" / "state.json"
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(
-        json.dumps(
-            {
-                "v": 2,
-                "id": "p2",
-                "parent_id": "p1",
-                "status": ["running"],
-                "exit_code": 0,
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    assert streaming_runner_module._retry_blocked_after_pi_child_started(
-        harness_id=HarnessId.PI,
-        runtime_root=runtime_root,
-        current_spawn_id=SpawnId("p1"),
-    )
-
-
-@pytest.mark.parametrize("entry_name", [".staging", ".p2", "spawn-stage", "p²"])
-def test_retry_scan_ignores_non_spawn_row_entries(
-    tmp_path: Path,
-    entry_name: str,
-) -> None:
-    runtime_root = tmp_path / "runtime"
-    state_path = runtime_root / "spawns" / entry_name / "state.json"
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(
-        json.dumps({"id": entry_name, "parent_id": "p1", "status": "running"}),
-        encoding="utf-8",
-    )
-
-    assert not streaming_runner_module._retry_blocked_after_pi_child_started(
-        harness_id=HarnessId.PI,
-        runtime_root=runtime_root,
-        current_spawn_id=SpawnId("p1"),
-    )
 
 
 @pytest.mark.asyncio

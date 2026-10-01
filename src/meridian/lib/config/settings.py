@@ -1397,27 +1397,6 @@ class MeridianConfig(BaseSettings):
             env_vars=("MERIDIAN_MAX_DEPTH",),
         ),
     ] = 3
-    max_retries: Annotated[
-        int,
-        config_field(
-            "defaults.max_retries",
-            value_kind="int",
-            file_aliases=(file_alias("defaults", "max_retries"), file_alias(None, "max_retries")),
-            env_vars=("MERIDIAN_MAX_RETRIES",),
-        ),
-    ] = 3
-    retry_backoff_seconds: Annotated[
-        float,
-        config_field(
-            "defaults.retry_backoff_seconds",
-            value_kind="float",
-            file_aliases=(
-                file_alias("defaults", "retry_backoff_seconds"),
-                file_alias(None, "retry_backoff_seconds"),
-            ),
-            env_vars=("MERIDIAN_RETRY_BACKOFF_SECONDS",),
-        ),
-    ] = 0.25
     kill_grace_minutes: Annotated[
         float,
         config_field(

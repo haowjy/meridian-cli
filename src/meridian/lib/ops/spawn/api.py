@@ -112,6 +112,7 @@ from .query import (
 )
 
 _WAIT_PROGRESS_INTERVAL_SECS = 5.0
+_WAIT_POLL_INTERVAL_SECS = 0.25
 
 
 def _looks_like_spawn_ref(ref: str) -> bool:
@@ -1755,10 +1756,10 @@ def spawn_wait_sync(
     poll = (
         payload.poll_interval_secs
         if payload.poll_interval_secs is not None
-        else config.retry_backoff_seconds
+        else _WAIT_POLL_INTERVAL_SECS
     )
     if poll <= 0:
-        poll = config.retry_backoff_seconds
+        poll = _WAIT_POLL_INTERVAL_SECS
 
     completed_rows: dict[str, SpawnRecord] = {}
     pending: set[str] = set(spawn_ids)

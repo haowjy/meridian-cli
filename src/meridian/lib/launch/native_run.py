@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -66,7 +66,7 @@ class NativeRun:
         if not candidate:
             return
         # Live callbacks, on-running, attempt facts and current transport
-        # state can repeat the same signal. Bind/log each candidate once per attempt.
+        # state can repeat the same signal. Bind/log each candidate once per turn.
         if candidate in self._noted:
             return
         self._noted.add(candidate)
@@ -75,10 +75,6 @@ class NativeRun:
             self.entry = outcome.key
             if self.on_accepted is not None:
                 self.on_accepted(candidate)
-
-    def retry(self, attempt: SessionAttempt) -> NativeRun:
-        return replace(self, attempt=attempt, _first_seen=False, _noted=set())
-
 
 def bind_entry(
     attempt: SessionAttempt,
@@ -132,7 +128,7 @@ def conclude_native_run(
     lifecycle: LifecycleLog,
     prior_error_phase: str = "post_exit",
 ) -> NativeRunOutcome:
-    """Conclude once per attempt, after its child exited and teardown joined."""
+    """Conclude once per turn, after its child exited and teardown joined."""
     error = prior_error
     post = PostExit()
     if error is None:

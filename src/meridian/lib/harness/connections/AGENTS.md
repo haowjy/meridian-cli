@@ -50,9 +50,10 @@ Transports differ at the wire level:
 **Get a connection class via `get_connection_class(harness_id, transport_id)`.**
 Requires `ensure_bootstrap()` first — the registry is populated as a bootstrap side effect.
 
-**Startup errors are classified.** `PortBindError` is retryable; other
-`ConnectionStartupError` subtypes are not. The caller (SpawnManager) acts on this
-distinction.
+**Port readiness stays local.** `PortBindError` identifies a loopback reservation
+race for callers such as primary attach that can safely select another unused port.
+The launch runner does not replay a harness turn after this or any other startup
+failure.
 
 **New transport = subclass `HarnessConnection[SpecT]`**, declare `_CAPABILITIES`,
 implement all abstract methods, register in the bundle. Missing registration →

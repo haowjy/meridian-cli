@@ -63,7 +63,6 @@ source fails the attempt. Later signals and the connection's current ID are
 store-authoritative diagnostics. `conclude_native_run` runs after teardown joins:
 artifact first ID, connection current ID, `observe_after_exit`, entry verification,
 exit allocation, one boundary write, typed failure or invocation attribution.
-Retries re-arm against the original pre-exec facts, not a previously observed ID.
 Repeated delivery of the same ID within an attempt binds/logs once.
 New exit chats are allocated only when the exact native resolver finds a valid
 session; an already-bound exact chat still wins, including the entry chat. A verified
@@ -105,8 +104,8 @@ task-dir mutations. Agent opt-out is also a mutation.
 
 Primary and spawn accepted-running callbacks append selection intent through
 `SessionAttempt`. Its captured generation/startup attempt also binds native-ID
-observations. Each streaming retry gets a distinct attempt; a recording failure is
-a coordination error, not a model retry. The record means accepted selection, not
+observations. A recording failure is a coordination error, not a reason to replay
+the model turn. The record means accepted selection, not
 model execution. Legacy baseline lookup reads the original session generation;
 the session scope seeds that value under the existing store lock before startup.
 Previews do not seed. Missing snapshots retain partial historical values; a
@@ -169,7 +168,7 @@ constraint required for the background worker's disk-persisted request.
 |------|------|
 | I-1 | Runtime composition happens at `bind_launch_context()`; `build_launch_context()` is its prepare+bind wrapper |
 | I-2 | Driving adapters and connections consume the bound argv, env, and permissions without reconstruction |
-| I-4 | `conclude_native_run()` once per attempt after teardown joins: IDs → adapter → boundary → attribution |
+| I-4 | `conclude_native_run()` once per turn after teardown joins: IDs → adapter → boundary → attribution |
 | I-5 | `SpawnRequest`/`LaunchRuntime` carry no derived state; `LaunchContext` complete at construction |
 | I-10 | Fork materialization (`fork.py`) happens only after spawn row exists |
 | I-13 | `LaunchContext.warnings` is the sole channel for composition warnings |

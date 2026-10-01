@@ -1,16 +1,13 @@
-"""Pure Pi rejection extraction, error compaction, and retry classification."""
+"""Pure Pi rejection extraction and error compaction."""
 
 from __future__ import annotations
 
 import json
 
-import pytest
-
 from meridian.lib.harness.pi_failure import (
     compact_pi_failure_output,
     pi_failure_from_payload,
 )
-from meridian.lib.launch.errors import should_retry
 
 
 def test_extract_pi_failure_from_prompt_rejection() -> None:
@@ -75,25 +72,3 @@ def test_compact_pi_failure_output_preserves_plain_multi_line_errors() -> None:
     message = "Mars model resolution failed\nAdd mars.toml or use a model id."
 
     assert compact_pi_failure_output(message, verbose=False) == message
-
-
-@pytest.mark.parametrize(
-    ("failure_message", "expected"),
-    [
-        ("No API key configured", False),
-        ("Temporary provider failure", True),
-    ],
-)
-def test_should_retry_classifies_pi_failures(
-    failure_message: str,
-    expected: bool,
-) -> None:
-    assert (
-        should_retry(
-            exit_code=1,
-            stderr="",
-            failure_message=failure_message,
-            retries_attempted=0,
-        )
-        is expected
-    )

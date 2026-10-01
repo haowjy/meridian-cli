@@ -95,26 +95,26 @@ Status transitions are validated against the allowed state machine in
 `core.spawn_lifecycle.validate_transition()`. Pass `validate_status_transition=False`
 only when the record may be in `unknown` status (legacy migration paths).
 
-## Attempt vs Runner-Exit vs Terminal Facts
+## Harness Exit vs Runner-Exit vs Terminal Facts
 
 The spawn record carries three distinct categories of exit metadata at different
 nesting levels. Confusing them produces wrong terminal-state decisions.
 
-### Attempt-level: `last_attempt_exit_code` / `last_attempt_exited_at`
+### Pre-finalization harness exit: `last_attempt_exit_code` / `last_attempt_exited_at`
 
-Flat top-level fields overwritten on every harness-attempt drain. They carry no
-spawn-level terminal meaning — a `0` exit code can precede retries or
-post-attempt budget failures. Written by `apply_record_exited()` in
-`transitions.py`.
+Flat top-level fields capture the harness process exit immediately after its
+single drain. They preserve that observation across a crash before runner
+terminal intent is recorded, but carry no spawn-level terminal meaning. Written
+by `apply_record_exited()` in `transitions.py`.
 
 ### Runner terminal intent: `runner_exit: RunnerExitFacts | None`
 
 Frozen sub-model holding the runner's resolved terminal outcome (`status`,
-`exit_code`, `error`, `exited_at`). Written exactly once after all attempts
-and post-attempt work are complete, before `mark_finalizing()`.
+`exit_code`, `error`, `exited_at`). Written exactly once after the harness drain
+and post-run work are complete, before `mark_finalizing()`.
 
 **Authoritative presence check:** `runner_exit is not None`. The reaper pivots
-entirely on this; attempt-level fields carry no terminal weight.
+entirely on this; pre-finalization harness-exit fields carry no terminal weight.
 
 **Write sequence (caller contract):**
 
@@ -168,15 +168,15 @@ with a mutator. Without the lock, external writes race with the runner's hot pat
 status regressions (e.g. writing `running` after `success`).
 
 **Don't treat `last_attempt_exit_code == 0` as a spawn-success signal.** It is
-attempt-level bookkeeping — overwritten on retries and potentially stale after
-post-attempt budget checks or guardrail failures that change the outcome. The
-runner's terminal intent lives in `runner_exit.status`, not in attempt exit codes.
+pre-finalization crash-recovery bookkeeping and can disagree with the final
+outcome when budget checks or guardrails fail. The runner's terminal intent
+lives in `runner_exit.status`, not in the harness exit code.
 
 **Don't trust `durable_report` as success evidence when `runner_exit is None`
-and the runner is dead.** A `report.md` from a prior guardrail-failing attempt looks
-identical to one from a successful run. The runner is the only entity that knows
-whether the spawn succeeded — if it never persisted `runner_exit`, treat the spawn
-as an orphan failure even if artifacts exist.
+and the runner is dead.** A `report.md` can exist before a post-run guardrail
+fails. The runner is the only entity that knows whether the spawn succeeded —
+if it never persisted `runner_exit`, treat the spawn as an orphan failure even
+if artifacts exist.
 
 **Don't set flat lifecycle fact fields on the model.** Fields like `exit_code`,
 `finished_at`, `terminal_origin` are read-only properties that delegate to the

@@ -22,9 +22,6 @@ configured package sources.
 meridian
 meridian config show
 meridian config init
-meridian config set defaults.max_retries 5
-meridian config get defaults.max_retries
-meridian config reset defaults.max_retries
 meridian mars models list
 ```
 
@@ -77,8 +74,6 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | Key | Type | Purpose |
 |---|---|---|
 | `defaults.max_depth` | int | Max zero-based delegated spawn depth |
-| `defaults.max_retries` | int | Retry attempts per run |
-| `defaults.retry_backoff_seconds` | float | Retry backoff multiplier |
 | `timeouts.kill_grace_minutes` | float | Grace before force-kill (minutes) |
 | `timeouts.guardrail_minutes` | float | Guardrail timeout (minutes) |
 | `timeouts.startup_minutes` | float | Startup-phase timeout for backend boot, connection, and session handshake (minutes) |

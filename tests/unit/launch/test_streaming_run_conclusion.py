@@ -9,27 +9,8 @@ from meridian.lib.launch.extract import (
 from meridian.lib.launch.report import ExtractedReport, ReportSource
 from meridian.lib.launch.streaming_runner import (
     StreamingRunConclusion,
-    _AttemptRuntime,
     _inactivity_terminal_outcome,
 )
-
-
-def _attempt(
-    *,
-    exit_code: int,
-    watchdog: bool = False,
-    terminal_observed: bool = False,
-) -> _AttemptRuntime:
-    return _AttemptRuntime(
-        connection=None,
-        drain_exit_code=exit_code,
-        drain_error=None,
-        timed_out=False,
-        received_signal=None,
-        budget_breach=None,
-        terminated_by_report_watchdog=watchdog,
-        terminal_observed=terminal_observed,
-    )
 
 
 def _extraction_with_report(
@@ -45,15 +26,6 @@ def _extraction_with_report(
         output_is_empty=False,
         report_kind=classify_finalize_report(ExtractedReport(content=report_text, source=source)),
     )
-
-
-def test_absorb_attempt_updates_exit_code_and_terminal_flags() -> None:
-    conclusion = StreamingRunConclusion()
-
-    conclusion.absorb_attempt(_attempt(exit_code=7, terminal_observed=True))
-
-    assert conclusion.exit_code == 7
-    assert conclusion.final_attempt_terminal_observed is True
 
 
 def test_terminal_facts_treat_durable_report_watchdog_as_success() -> None:
@@ -95,15 +67,6 @@ def test_terminal_facts_treat_signal_without_terminal_as_cancelled() -> None:
     assert facts.cancellation_observed is True
 
 
-def test_retry_count_tracks_attempts() -> None:
-    conclusion = StreamingRunConclusion()
-
-    conclusion.retries_attempted += 1
-    conclusion.retries_attempted += 1
-
-    assert conclusion.retries_attempted == 2
-
-
 def test_inactivity_terminal_outcome_success_when_durable_report_recovered() -> None:
     exit_override, failure_reason = _inactivity_terminal_outcome(
         _extraction_with_report("recovered report"),
@@ -120,21 +83,3 @@ def test_inactivity_terminal_outcome_stalled_without_durable_report() -> None:
 
     assert exit_override is None
     assert failure_reason == "stalled"
-
-
-def test_inactivity_terminal_outcome_applied_to_conclusion_without_retry() -> None:
-    conclusion = StreamingRunConclusion(
-        exit_code=1,
-        failure_reason="inactivity_stall",
-        retries_attempted=0,
-    )
-    extraction = _extraction_with_report(None)
-
-    exit_override, failure_override = _inactivity_terminal_outcome(extraction)
-    if exit_override is not None:
-        conclusion.exit_code = exit_override
-    conclusion.failure_reason = failure_override
-
-    assert conclusion.exit_code == 1
-    assert conclusion.failure_reason == "stalled"
-    assert conclusion.retries_attempted == 0
