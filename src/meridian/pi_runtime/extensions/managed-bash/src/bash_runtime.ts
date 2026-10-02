@@ -126,6 +126,7 @@ export class BashRuntime {
     const prior = owners.get(key);
     if (prior) {
       prior.hooks = hooks;
+      for (const record of prior.records.values()) prior.schedulePing(record);
       return prior;
     }
     owners.set(key, this);
@@ -510,6 +511,7 @@ export class BashRuntime {
     this.clearPing(record);
     if (
       record.status !== "running" ||
+      !record.task ||
       !record.is_background ||
       !record.is_tracked ||
       record.ping_sent_at_ms != null
@@ -536,9 +538,21 @@ export class BashRuntime {
     ) {
       return;
     }
+    const notify = this.hooks.onBackgroundPing;
+    if (!notify) return;
     record.ping_sent_at_ms = Date.now();
     await this.persist();
-    await this.hooks.onBackgroundPing?.(toPlainRecord(record));
+    try { await notify(toPlainRecord(record)); }
+    catch (error) {
+      // Notification capability can become stale during reload. It owns no
+      // shell lifecycle: release its claim without turning it into task failure.
+      record.ping_sent_at_ms = null;
+      await this.persist();
+      process.stderr.write(`[managed-bash] ping ${record.bash_id}: ${errorText(error)}\n`);
+      // Do not spin on a broken capability. A new hook (including one rebound
+      // while this attempt was in flight) can retry the released claim.
+      if (this.hooks.onBackgroundPing !== notify) this.schedulePing(record);
+    }
   }
 
   private async manageSpawn(spawnId: string, params: BashManageParams): Promise<BashManageResult> {

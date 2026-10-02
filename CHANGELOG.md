@@ -23,6 +23,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   absent or malformed costs remain unknown.
 - Clean managed stdio process groups after their leader exits, including
   descendants that require SIGKILL.
+- Keep managed Bash alive when a background ping cannot be queued; retry released ping claims after extension hooks rebind.
 - Stop managed Bash from publishing obsolete origin sidecars; canonical records and child environment carry origin identity.
 - Route noninteractive Pi Bash slash-command output through native UI notifications, preserving RPC stdout framing.
 - Clear completed Pi Bash history only after wait consumption, causal admission or explicit detach; refuse invalid receipt evidence. Bound process cleanup with monotonic deadlines.

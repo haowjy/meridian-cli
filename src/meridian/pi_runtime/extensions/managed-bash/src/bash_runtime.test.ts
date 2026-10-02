@@ -34,6 +34,47 @@ async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 
 describe("BashRuntime task pings", () => {
   afterEach(() => restoreEnv());
 
+  it("keeps the shell running after ping failure and retries with rebound hooks", async () => {
+    const runtimeRoot = await mkdtemp(path.join(tmpdir(), "pi-bash-ping-failure-"));
+    setEnv("_MERIDIAN_PI_STATE_DIR", runtimeRoot);
+    setEnv("MERIDIAN_SPAWN_ID", "p-test-ping-failure");
+    setEnv("_MERIDIAN_PI_TASK_PING_INTERVAL_MS", "20");
+    let failedAttempts = 0;
+    const unhandled: unknown[] = [];
+    const onUnhandled = (error: unknown): void => { unhandled.push(error); };
+    process.on("unhandledRejection", onUnhandled);
+    const runtime = new BashRuntime({ onBackgroundPing: () => {
+      failedAttempts += 1;
+      throw new Error("stale notification capability");
+    } });
+    try {
+      const started = await runtime.execute({ command: "sleep 5", background: true }, undefined) as { bash_id: string };
+      await waitFor(() => failedAttempts === 1);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      const row = runtime.list(true)[0]!;
+      expect(row.status).toBe("running");
+      expect(row.execution_error).toBeUndefined();
+      expect(() => process.kill(-row.pid!, 0)).not.toThrow();
+      expect(failedAttempts).toBe(1);
+      const file = parseBashRecordsFile(JSON.parse(await readFile(path.join(runtimeRoot, "pi-bash", "p-test-ping-failure", "bash-records.json"), "utf8")));
+      expect(file?.records[started.bash_id]?.ping_sent_at_ms).toBeNull();
+      expect(file?.runtime_error).toBeUndefined();
+      const pings: string[] = [];
+      const rebound = new BashRuntime({ onBackgroundPing: (record) => { pings.push(record.bash_id); } });
+      expect(rebound).toBe(runtime);
+      await waitFor(() => pings.length === 1);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(pings).toEqual([started.bash_id]);
+      expect(unhandled).toEqual([]);
+      expect(await rebound.manage({ action: "kill", bash_id: started.bash_id })).toMatchObject({ killed: true });
+      expect(runtime.list(true)[0]?.status).toBe("killed");
+    } finally {
+      process.removeListener("unhandledRejection", onUnhandled);
+      await runtime.shutdown();
+      await rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
   it("sends one ping for a tracked background command", async () => {
     const runtimeRoot = await mkdtemp(path.join(tmpdir(), "pi-bash-ping-"));
     setEnv("_MERIDIAN_PI_STATE_DIR", runtimeRoot);

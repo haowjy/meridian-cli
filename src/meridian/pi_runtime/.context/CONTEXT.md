@@ -56,6 +56,10 @@ owns the POSIX group created for it, uses bounded TERM→KILL escalation, and
 publishes terminal after group exit and its queued log writes. Its output queue
 applies stream backpressure; failures close owned pipes before cleanup and
 release outstanding operations with an error instead of an unhandled rejection.
+Ping delivery is advisory: a stale notification callback releases its durable
+ping claim and warns, preserving the live shell owner. It does not retry the
+same broken capability in a timer loop; hook rebind or later task activity can
+schedule another attempt. Publication failure remains a task/storage failure.
 
 Cold recovery validates and retains the complete record store before accepting
 commands. Historical terminal/wait-consumed rows remain intact. Running rows
