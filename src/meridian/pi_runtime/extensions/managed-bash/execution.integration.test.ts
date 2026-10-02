@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import { BashRuntime } from "./src/bash_runtime";
 import { readLogTail } from "./src/bash_log_store";
@@ -26,6 +27,30 @@ async function setup(): Promise<{ root: string; runtime: BashRuntime; recordsPat
 afterEach(() => vi.unstubAllEnvs());
 
 describe("managed Bash execution ownership", () => {
+  it("routes noninteractive slash-command output through the native UI API", async () => {
+    const { root, runtime } = await setup();
+    const commands = new Map<string, Parameters<ExtensionAPI["registerCommand"]>[1]>();
+    const host = {
+      on: () => {}, registerTool: () => {},
+      registerCommand: (name: string, command: Parameters<ExtensionAPI["registerCommand"]>[1]) => commands.set(name, command),
+    };
+    try {
+      managedBashExtension(host as unknown as ExtensionAPI);
+      await runtime.execute({ command: "printf rpc-safe" }, undefined);
+      const row = runtime.list(true)[0]!;
+      const notify = vi.fn();
+      const ctx = { hasUI: false, ui: { notify } } as unknown as ExtensionCommandContext;
+      const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+      try {
+        await commands.get("ps")!.handler("", ctx);
+        await commands.get("ps:logs")!.handler(row.bash_id, ctx);
+        expect(stdout).not.toHaveBeenCalled();
+      } finally { stdout.mockRestore(); }
+      expect(notify).toHaveBeenCalledWith(expect.stringContaining(row.bash_id), "info");
+      expect(notify).toHaveBeenCalledWith("rpc-safe", "info");
+    } finally { await runtime.shutdown(); await rm(root, { recursive: true, force: true }); }
+  });
+
   it("preserves unattended terminal obligations when clearing completed history", async () => {
     const { root, runtime } = await setup();
     try {

@@ -278,8 +278,8 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
         return Promise.all(rows.map(async (row) => ({ ...row, preview: await readLogTail(row.log_path, 2048) })));
       };
 
-      if (ctx.hasUI === false || !ctx.ui?.custom) {
-        process.stdout.write(`${formatRows(await loadRows())}\n`);
+      if (!ctx.hasUI) {
+        ctx.ui.notify(formatRows(await loadRows()), "info");
         return;
       }
 
@@ -293,7 +293,7 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
         footer: "enter logs · c clear · j/k select · r refresh · q close",
         onClear: async () => {
           const cleared = await runtime.clearFinished();
-          ctx.ui?.notify?.(`cleared ${cleared} finished bash task(s)`, "info");
+          ctx.ui.notify(`cleared ${cleared} finished bash task(s)`, "info");
         },
         onEnter: async (row) => {
           await openLogOverlay(ctx as PanelCommandContext, {
@@ -341,7 +341,7 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
         });
         return;
       }
-      process.stdout.write(`${await loadText()}\n`);
+      ctx.ui.notify(await loadText(), "info");
     },
   });
 

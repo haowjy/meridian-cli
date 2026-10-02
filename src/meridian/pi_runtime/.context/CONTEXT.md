@@ -72,6 +72,8 @@ not consume a failed result. Clearing history prunes only untracked, durably
 wait-consumed, or causally admitted terminal rows, preserving unattended
 completion obligations. Read admission receipts through the shared strict
 reader at the owner's frozen path; invalid evidence refuses pruning.
+Noninteractive slash commands use the required native `ctx.ui.notify` API;
+plain tables or logs must never be written to the RPC stdout transport.
 Spawn-watch suppresses only terminal Bash records whose persisted
 `notification_consumed_at_ms` is written before `bash_manage(wait)` returns a
 terminal result. Missing markers preserve completion notifications for
