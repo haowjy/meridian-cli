@@ -9,6 +9,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Preserve Pi managed Bash tasks across extension reload, recover recorded history after restart, and report lost process ownership without signalling stale PIDs. Kill, abort and shutdown now terminate owned POSIX groups before reporting completion; storage failures clean up started work, and log previews read bounded tails outside rendering.
+- Share strict Pi receipt and wait-reservation readers across notification and task cleanup.
 - Define validated Pi task-state and causal delivery-receipt contracts for completion recovery.
 - Stop Pi spawn-watch from sending a second completion follow-up after `bash_manage(wait)` returns a terminal managed Bash result; unattended terminal records remain eligible for their completion notice.
 - Keep Pi completion batches reserved during delivery; overlapping scans no longer send a task twice, failed sends retain unread notices, and shutdown prevents later waves.

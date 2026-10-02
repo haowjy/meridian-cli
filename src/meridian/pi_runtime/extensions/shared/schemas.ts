@@ -33,16 +33,10 @@ export type BashRecordsFile = {
   runtime_error?: string;
 };
 
-export type LastNotificationFile = {
-  ts_epoch_secs: number;
-  notified_spawn_ids: string[];
-};
-
 /** Consumed only by an explicit operation or admission of this exact custom message. */
 export type DeliveryReceiptsFile = {
   v: 1;
   spawn_id: string;
-  consumed_work_ids: string[];
   messages: Record<string, string[]>;
 };
 
@@ -84,6 +78,12 @@ export type ObservedSpawnsFile = {
   updated_at_ms: number;
   observed_spawn_ids: string[];
   waiting_spawn_ids?: string[];
+  wait_reservations?: Record<string, {
+    owner_pid: number;
+    owner_birth_epoch: number;
+    expires_at_epoch: number;
+    spawn_ids: string[];
+  }>;
 };
 
 export const SpawnStateFileSchema = Type.Object({
