@@ -27,13 +27,6 @@ import {
 } from "../../shared/selectable_panel";
 import { formatDurationSecs, renderTable } from "../../shared/ui";
 
-type PiWithMessages = ExtensionAPI & {
-  sendMessage?: (
-    message: { customType?: string; content: string; display?: boolean; details?: Record<string, unknown> },
-    options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
-  ) => void | Promise<void>;
-};
-
 type ClearedSpawnsFile = {
   v: 1;
   spawn_id: string;
@@ -85,8 +78,9 @@ export class SpawnWatchRuntime {
   private running = false;
   private scanRunning = false;
   private scanAgain = false;
+  private flushing = false;
 
-  constructor(private readonly pi: PiWithMessages) {}
+  constructor(private readonly pi: ExtensionAPI) {}
 
   start(): void {
     this.running = true;
@@ -429,7 +423,7 @@ export class SpawnWatchRuntime {
   }
 
   private scheduleFlush(): void {
-    if (this.pending.size === 0) return;
+    if (!this.running || this.flushing || this.pending.size === 0) return;
     if (this.debounce) clearTimeout(this.debounce);
     this.debounce = setTimeout(() => void this.flush(), DEBOUNCE_MS);
     this.debounce.unref();
@@ -440,50 +434,59 @@ export class SpawnWatchRuntime {
   }
 
   private async flush(): Promise<void> {
+    if (!this.running || this.flushing) return;
     if (this.debounce) clearTimeout(this.debounce);
     if (this.maxWave) clearTimeout(this.maxWave);
     this.debounce = null;
     this.maxWave = null;
-    const suppressed = await this.readSuppressedSpawnIds();
-    const consumedBashIds = await this.readConsumedBashIds();
-    const items = [...this.pending.values()].filter((item) =>
-      item.kind === "spawn" ? !suppressed.has(item.id) : !consumedBashIds.has(item.id),
-    );
-    for (const item of this.pending.values()) {
-      if (item.kind === "spawn" ? suppressed.has(item.id) : consumedBashIds.has(item.id)) {
-        TERMINAL_NOTIFIED.add(item.id);
+    const batch = [...this.pending.values()];
+    if (batch.length === 0) return;
+    this.flushing = true;
+    let committed = false;
+    try {
+      const suppressed = await this.readSuppressedSpawnIds();
+      const spawnItems = batch.filter((item) =>
+        item.kind === "spawn" && !suppressed.has(item.id) && !TERMINAL_NOTIFIED.has(item.id),
+      );
+      const spawnContent = spawnItems.length > 0
+        ? await formatSpawnWaitNotification(spawnItems.map((item) => item.id), spawnItems)
+        : "";
+      const consumedBashIds = await this.readConsumedBashIds();
+      const bashItems = batch.filter((item) =>
+        item.kind === "bash" && !consumedBashIds.has(item.id) && !TERMINAL_NOTIFIED.has(item.id),
+      );
+      const content = [spawnContent, bashItems.length > 0 ? formatBashNotification(bashItems) : ""]
+        .filter((section) => section.trim().length > 0)
+        .join("\n\n");
+      if (!this.running) return;
+      if (content.length > 0) {
+        await this.pi.sendMessage(
+          {
+            customType: "meridian-spawn-watch",
+            content,
+            display: true,
+            details: { ids: [...spawnItems, ...bashItems].map((item) => item.id) },
+          },
+          { triggerTurn: true, deliverAs: "followUp" },
+        );
       }
+      for (const item of batch) {
+        TERMINAL_NOTIFIED.add(item.id);
+        this.pending.delete(item.id);
+      }
+      committed = true;
+      if (content.length > 0) {
+        await writeJsonAtomic(this.markerPath, {
+          ts_epoch_secs: Date.now() / 1000,
+          notified_spawn_ids: spawnItems.map((item) => item.id),
+        });
+      }
+    } catch (error) {
+      this.logWarning(`notification wave failed: ${this.formatError(error)}`);
+    } finally {
+      this.flushing = false;
+      if (committed && this.running) this.scheduleFlush();
     }
-    this.pending.clear();
-    if (items.length === 0) return;
-
-    const spawnItems = items.filter((item) => item.kind === "spawn");
-    const spawnContent = spawnItems.length > 0
-      ? await formatSpawnWaitNotification(spawnItems.map((item) => item.id), spawnItems)
-      : "";
-    const consumedDuringFormatting = await this.readConsumedBashIds();
-    const bashItems = items.filter((item) => item.kind === "bash" && !consumedDuringFormatting.has(item.id));
-    for (const item of items) {
-      if (item.kind === "bash" && consumedDuringFormatting.has(item.id)) TERMINAL_NOTIFIED.add(item.id);
-    }
-    const content = [spawnContent, bashItems.length > 0 ? formatBashNotification(bashItems) : ""]
-      .filter((section) => section.trim().length > 0)
-      .join("\n\n");
-    if (content.length === 0) return;
-    await this.pi.sendMessage?.(
-      {
-        customType: "meridian-spawn-watch",
-        content,
-        display: true,
-        details: { ids: [...spawnItems, ...bashItems].map((item) => item.id) },
-      },
-      { triggerTurn: true, deliverAs: "followUp" },
-    );
-    for (const item of [...spawnItems, ...bashItems]) TERMINAL_NOTIFIED.add(item.id);
-    await writeJsonAtomic(this.markerPath, {
-      ts_epoch_secs: Date.now() / 1000,
-      notified_spawn_ids: spawnItems.map((item) => item.id),
-    });
   }
 
   private isClearedTerminalSpawn(state: SpawnStateFile): boolean {
@@ -628,7 +631,7 @@ async function formatSpawnWaitNotification(
   spawnIds: string[],
   fallbackItems: NotificationItem[],
 ): Promise<string> {
-  const result = await runMeridianCommand(["spawn", "wait", ...spawnIds], 30_000);
+  const result = await runMeridianCommand(["spawn", "wait", ...spawnIds, "--no-observe"], 30_000);
   const output = (result.stdout || result.stderr).trimEnd();
   if (result.exitCode === 0 && output.length > 0) return output;
 
@@ -693,7 +696,7 @@ const SPAWN_PANEL_COLUMNS: SelectablePanelColumn<SpawnStateFile>[] = [
 ];
 
 export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
-  const runtime = new SpawnWatchRuntime(pi as PiWithMessages);
+  const runtime = new SpawnWatchRuntime(pi);
   pi.on?.("session_start", () => runtime.start());
   pi.on?.("session_shutdown", () => runtime.stop());
 

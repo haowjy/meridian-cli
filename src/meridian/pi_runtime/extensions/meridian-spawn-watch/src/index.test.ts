@@ -125,11 +125,13 @@ function terminalFacts(status = "succeeded"): Record<string, unknown> {
   };
 }
 
-async function makeRuntime(): Promise<{ runtimeRoot: string; runtime: SpawnWatchRuntime; internals: SpawnWatchRuntimeInternals }> {
+async function makeRuntime(
+  pi: ConstructorParameters<typeof SpawnWatchRuntime>[0] = {} as ConstructorParameters<typeof SpawnWatchRuntime>[0],
+): Promise<{ runtimeRoot: string; runtime: SpawnWatchRuntime; internals: SpawnWatchRuntimeInternals }> {
   const runtimeRoot = await mkdtemp(path.join(tmpdir(), "spawn-watch-origin-"));
   setEnv("_MERIDIAN_PI_STATE_DIR", runtimeRoot);
   setEnv("MERIDIAN_SPAWN_ID", "p-parent");
-  const runtime = new SpawnWatchRuntime({} as ConstructorParameters<typeof SpawnWatchRuntime>[0]);
+  const runtime = new SpawnWatchRuntime(pi);
   return { runtimeRoot, runtime, internals: runtime as unknown as SpawnWatchRuntimeInternals };
 }
 
@@ -492,35 +494,35 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
     }
   });
 
-  it("rechecks consumed bash completion after a queued spawn wave is formatted", async () => {
+  it("owns a mixed wave while rescans, consumption, and new completions arrive", async () => {
     const runtimeRoot = await mkdtemp(path.join(tmpdir(), "spawn-watch-flush-dedup-"));
     const binDir = path.join(runtimeRoot, "bin");
     const formattingStartedPath = path.join(runtimeRoot, "formatting-started");
+    const releaseFormattingPath = path.join(runtimeRoot, "release-formatting");
     const bashId = "b-queued";
+    const unattendedId = "b-wave-unattended";
+    const nextWaveId = "b-next-wave";
     const messages: unknown[] = [];
     setEnv("_MERIDIAN_PI_STATE_DIR", runtimeRoot);
     setEnv("MERIDIAN_SPAWN_ID", "p-parent");
     await mkdir(binDir, { recursive: true });
     const fakeMeridian = path.join(binDir, "meridian");
-    await writeFile(fakeMeridian, `#!/bin/sh\ntouch '${formattingStartedPath}'\nsleep 0.5\nprintf 'spawn wait output\\n'\n`);
+    await writeFile(fakeMeridian, `#!/bin/sh\ntouch '${formattingStartedPath}'\nwhile [ ! -f '${releaseFormattingPath}' ]; do sleep 0.01; done\nprintf 'spawn wait output\\n'\n`);
     await chmod(fakeMeridian, 0o755);
     setEnv("PATH", `${binDir}:${process.env.PATH ?? ""}`);
     await writeBashRecords(runtimeRoot, "p-parent", [
       bashRecord(bashId, { command: "sleep 1", ended_at_ms: Date.now() - 10_000 }),
+      bashRecord(unattendedId, { command: "printf unattended", ended_at_ms: Date.now() - 10_000 }),
     ]);
     const runtime = new SpawnWatchRuntime({
       sendMessage: (message: unknown) => messages.push(message),
     } as unknown as ConstructorParameters<typeof SpawnWatchRuntime>[0]);
     const internals = runtime as unknown as SpawnWatchRuntimeInternals;
 
+    let flush: Promise<void> | undefined;
     try {
-      internals.pending.set(bashId, {
-        id: bashId,
-        kind: "bash",
-        status: "exited",
-        label: "sleep 1",
-        duration: "0m01s",
-      });
+      runtime.start();
+      await internals.scanBashRecords();
       internals.pending.set("p-wave", {
         id: "p-wave",
         kind: "spawn",
@@ -530,7 +532,7 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
       });
 
       const recordsPath = path.join(runtimeRoot, "pi-bash", "p-parent", "bash-records.json");
-      const flush = internals.flush();
+      flush = internals.flush();
       const deadline = Date.now() + 1_000;
       while (!existsSync(formattingStartedPath) && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 5));
@@ -538,14 +540,127 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
       expect(existsSync(formattingStartedPath)).toBe(true);
       const file = JSON.parse(await readFile(recordsPath, "utf-8")) as BashRecordsFile;
       file.records[bashId]!.notification_consumed_at_ms = Date.now();
+      file.records[nextWaveId] = bashRecord(nextWaveId, { command: "printf later", ended_at_ms: Date.now() - 10_000 });
       await writeFile(recordsPath, JSON.stringify(file));
+      await internals.scanBashRecords();
+      await internals.flush();
+      await writeFile(releaseFormattingPath, "release");
       await flush;
+      await internals.flush();
 
-      expect(messages).toHaveLength(1);
-      const message = messages[0] as { content: string; details: { ids: string[] } };
-      expect(message.details.ids).toEqual(["p-wave"]);
-      expect(message.content).toContain("spawn wait output");
-      expect(message.content).not.toContain(bashId);
+      const delivered = messages as Array<{ content: string; details: { ids: string[] } }>;
+      expect(delivered).toHaveLength(2);
+      expect(delivered[0]!.details.ids).toEqual(["p-wave", unattendedId]);
+      expect(delivered[0]!.content).toContain("spawn wait output");
+      expect(delivered[1]!.details.ids).toEqual([nextWaveId]);
+      expect(delivered.flatMap((message) => message.details.ids)).not.toContain(bashId);
+    } finally {
+      await writeFile(releaseFormattingPath, "release");
+      await flush;
+      runtime.stop();
+      await rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["recover", "shutdown"] as const)("preserves an unread spawn through formatting: %s", async (outcome) => {
+    const spawnId = `p-unread-wave-${outcome}`;
+    const messages: unknown[] = [];
+    let fail = true;
+    const { runtimeRoot, runtime, internals } = await makeRuntime({
+      sendMessage: (message: unknown) => {
+        if (fail) throw new Error("delivery unavailable");
+        messages.push(message);
+      },
+    } as unknown as ConstructorParameters<typeof SpawnWatchRuntime>[0]);
+    const binDir = path.join(runtimeRoot, "bin");
+    const startedPath = path.join(runtimeRoot, "formatting-started");
+    const releasePath = path.join(runtimeRoot, "release-formatting");
+    const observedPath = path.join(runtimeRoot, "pi-bash", "p-parent", "observed-spawns.json");
+    await mkdir(binDir, { recursive: true });
+    await mkdir(path.dirname(observedPath), { recursive: true });
+    const fakeMeridian = path.join(binDir, "meridian");
+    await writeFile(fakeMeridian, `#!/bin/sh
+case " $* " in
+  *" --no-observe "*) ;;
+  *) printf '{"observed_spawn_ids":["${spawnId}"]}' > '${observedPath}' ;;
+esac
+touch '${startedPath}'
+while [ ! -f '${releasePath}' ]; do sleep 0.01; done
+printf 'unread spawn output\\n'
+`);
+    await chmod(fakeMeridian, 0o755);
+    setEnv("PATH", `${binDir}:${process.env.PATH ?? ""}`);
+    let flush: Promise<void> | undefined;
+    try {
+      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-unread-origin")]);
+      await writeSpawnState(runtimeRoot, spawnId, {
+        originBashId: "b-unread-origin", status: "succeeded", terminal: terminalFacts(),
+      });
+      runtime.start();
+      await internals.scanSpawns();
+      flush = internals.flush();
+      const deadline = Date.now() + 1_000;
+      while (!existsSync(startedPath) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(existsSync(startedPath)).toBe(true);
+      expect(existsSync(observedPath)).toBe(false);
+      await internals.scanSpawns();
+      expect(internals.pending.has(spawnId)).toBe(true);
+      if (outcome === "shutdown") {
+        await writeBashRecords(runtimeRoot, "p-parent", [
+          bashRecord("b-unread-origin"),
+          bashRecord("b-after-stop", { command: "printf later", ended_at_ms: Date.now() - 10_000 }),
+        ]);
+        await internals.scanBashRecords();
+        runtime.stop();
+        fail = false;
+      }
+      await writeFile(releasePath, "release");
+      await flush;
+      expect(messages).toHaveLength(0);
+      fail = false;
+      await internals.scanSpawns();
+      await internals.flush();
+      await internals.flush();
+      if (outcome === "recover") {
+        expect(messages).toHaveLength(1);
+        expect((messages[0] as { details: { ids: string[] } }).details.ids).toEqual([spawnId]);
+      } else {
+        expect(messages).toHaveLength(0);
+      }
+    } finally {
+      await writeFile(releasePath, "release");
+      await flush;
+      runtime.stop();
+      await rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a failed delivery queued and allows a later flush to deliver it", async () => {
+    const delivered: unknown[] = [];
+    let fail = true;
+    const { runtimeRoot, runtime, internals } = await makeRuntime({
+      sendMessage: (message: unknown) => {
+        if (fail) throw new Error("delivery unavailable");
+        delivered.push(message);
+      },
+    } as unknown as ConstructorParameters<typeof SpawnWatchRuntime>[0]);
+    try {
+      runtime.start();
+      await writeBashRecords(runtimeRoot, "p-parent", [
+        bashRecord("b-failed-delivery", { command: "printf finished", ended_at_ms: Date.now() - 10_000 }),
+      ]);
+      await internals.scanBashRecords();
+      await internals.flush();
+      expect(delivered).toHaveLength(0);
+      fail = false;
+      await internals.scanBashRecords();
+      await internals.flush();
+      await internals.scanBashRecords();
+      await internals.flush();
+      expect(delivered).toHaveLength(1);
+      expect((delivered[0] as { details: { ids: string[] } }).details.ids).toEqual(["b-failed-delivery"]);
     } finally {
       runtime.stop();
       await rm(runtimeRoot, { recursive: true, force: true });

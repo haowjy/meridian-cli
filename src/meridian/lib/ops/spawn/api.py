@@ -1771,7 +1771,11 @@ def spawn_wait_sync(
     progress_interval = max(_WAIT_PROGRESS_INTERVAL_SECS, poll)
     next_progress = started + progress_interval
 
-    parent_wait_observer_id = str(resolved_context.spawn_id) if resolved_context.spawn_id else None
+    parent_wait_observer_id = (
+        str(resolved_context.spawn_id)
+        if payload.observe and resolved_context.spawn_id
+        else None
+    )
     _update_pi_wait_observation(
         runtime_root=runtime_root,
         parent_spawn_id=parent_wait_observer_id,

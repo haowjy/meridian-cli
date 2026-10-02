@@ -80,6 +80,7 @@ describe("managed bash and spawn-watch completion notifications", () => {
       sendMessage: (message: unknown) => messages.push(message),
     } as unknown as ConstructorParameters<typeof SpawnWatchRuntime>[0]);
     const runtimeInternals = spawnWatch as unknown as SpawnWatchTestRuntime;
+    spawnWatch.start();
 
     try {
       const bashTool = tools.get("bash");
@@ -142,6 +143,7 @@ describe("managed bash and spawn-watch completion notifications", () => {
       sendMessage: (message: unknown) => messages.push(message),
     } as unknown as ConstructorParameters<typeof SpawnWatchRuntime>[0]);
     const spawnWatchInternals = spawnWatch as unknown as SpawnWatchTestRuntime;
+    spawnWatch.start();
 
     try {
       const bashId = ((await tools.get("bash")!.execute("call", {
@@ -191,7 +193,7 @@ describe("managed bash and spawn-watch completion notifications", () => {
       const bashTool = tools.get("bash")!;
       const manageTool = tools.get("bash_manage")!;
       const started = await bashTool.execute("call", {
-        command: "sleep 0.02; printf finished",
+        command: "sleep 0.02",
         background: true,
       });
       const bashId = (started.details as { bash_id: string }).bash_id;

@@ -58,6 +58,14 @@ result returns. If consumption persistence fails, the marker is rolled back and
 the wait returns an error, leaving the completion eligible for notification.
 Spawn-watch re-reads consumed markers after asynchronous notification formatting
 and before sending, so retain both scan-time and pre-send checks.
+One flush owns a notification batch through formatting and delivery. Batch IDs
+remain pending until delivery or suppression commits; rescans cannot queue them
+again. New completions wait for the next wave. A failed delivery retains its
+batch for a later scan, without starting an automatic retry loop.
+Notification formatting uses `meridian spawn wait --no-observe`: fetching a
+result must not consume the parent's notification before delivery succeeds.
+Shutdown clears scheduled waves and prevents an in-flight formatter from
+sending or scheduling another wave.
 
 ### Build Pipeline
 

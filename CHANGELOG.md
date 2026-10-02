@@ -9,6 +9,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Stop Pi spawn-watch from sending a second completion follow-up after `bash_manage(wait)` returns a terminal managed Bash result; unattended terminal records remain eligible for their completion notice.
+- Keep Pi completion batches reserved during delivery; overlapping scans no longer send a task twice, failed sends retain unread notices, and shutdown prevents later waves.
 
 ## [0.8.2] - 2026-10-01
 

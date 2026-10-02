@@ -1095,6 +1095,16 @@ def _spawn_wait(
             help="Include the full report body (default: summary in JSON, full in text).",
         ),
     ] = None,
+    observe: Annotated[
+        bool,
+        Parameter(
+            name="--observe",
+            help=(
+                "Consume completion notifications for waited spawns. "
+                "Use --no-observe to fetch results without consuming them."
+            ),
+        ),
+    ] = True,
 ) -> None:
     output_format = _get_global_options().output.format
     include_report_body = full if full is not None else output_format != "json"
@@ -1108,6 +1118,7 @@ def _spawn_wait(
             verbose=verbose,
             quiet=quiet,
             include_report_body=include_report_body,
+            observe=observe,
         ),
         sink=_current_output_sink(),
         prepared=_prepare_spawn_runtime_read(),
