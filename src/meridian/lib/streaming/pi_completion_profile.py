@@ -51,6 +51,7 @@ class PiOutstandingWork:
 
     spawn_children: bool
     non_spawn_processes: bool
+    delivery_pending: bool = False
 
 
 @dataclass(frozen=True)
@@ -345,7 +346,7 @@ class PiCompletionProfile:
         if not self.quiescence_enabled:
             return False
         work = self.evidence.classify_outstanding_work()
-        return work.spawn_children or work.non_spawn_processes
+        return work.spawn_children or work.non_spawn_processes or work.delivery_pending
 
     def fallback_error_without_recorded_outcome(self) -> str | None:
         return None
@@ -471,9 +472,14 @@ class PiCompletionProfile:
         candidate: TerminalEventOutcome,
     ) -> ProfileDecision:
         self._clear_done_nudge_timer()
-        if context.assessment.disposition != "unknown":
-            return ProfileDecision(action="complete", outcome=candidate)
-        return ProfileDecision(action="wait")
+        if (
+            context.assessment.disposition == "unknown"
+            or context.active_turn
+            or not self.quiescence_tracker.parent_idle
+            or self.classify_outstanding_work().delivery_pending
+        ):
+            return ProfileDecision(action="wait")
+        return ProfileDecision(action="complete", outcome=candidate)
 
     def _update_evidence_deadlines(self, context: CompletionEvaluation) -> None:
         timeout = self.child_wave_timeout_seconds
@@ -523,6 +529,7 @@ class PiCompletionProfile:
     def _refresh_done_nudge_state(self) -> None:
         if (
             not self.quiescence_enabled
+            or self._done_requested
             or self.last_successful_terminal is None
             or not self.quiescence_tracker.parent_idle
             or self.micro_drain_active
@@ -530,8 +537,10 @@ class PiCompletionProfile:
             self._clear_done_nudge_timer()
             return
         outstanding = self.classify_outstanding_work()
-        if outstanding.spawn_children:
+        if outstanding.spawn_children or outstanding.delivery_pending:
             self._clear_done_nudge_timer()
+            if outstanding.delivery_pending:
+                self._done_nudge_eligible_since = None
             return
         if not outstanding.non_spawn_processes:
             self._clear_done_nudge_timer()

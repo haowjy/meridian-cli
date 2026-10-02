@@ -84,7 +84,10 @@ child-wave window, otherwise 300 seconds). Delivery anchors at first idle and is
 evaluated during intentional active-turn deferral; that activity never renews the
 anchor. Unknown evidence remains bounded while active too. Failure reports
 `pi_evidence_unreadable` with original evidence detail or `pi_delivery_unresolved`.
-`done` may override known blockers, but never unknown evidence.
+`done` may release known running execution or descendant liveness once the parent
+is idle. It cannot skip a native active turn, an owed result/publication, or unknown
+evidence. Result delivery never schedules the generic done nudge; the parent must
+receive and finish its causal notice before completion can select its report.
 
 Every proposed success requests a descendant refresh begun after that proposal. Pi
 reevaluates policy only after the qualifying result commits; a cached ready result cannot

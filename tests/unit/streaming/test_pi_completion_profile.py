@@ -20,6 +20,7 @@ from meridian.lib.streaming.pi_completion_profile import (
     PiCompletionCleanupPort,
     PiCompletionEvidenceView,
     PiCompletionProfile,
+    PiOutstandingWork,
 )
 
 _SUCCESS = TerminalEventOutcome(status="succeeded", exit_code=0)
@@ -40,6 +41,7 @@ def _profile(tmp_path: Any, *, child: bool, nudge: bool) -> PiCompletionProfile:
             session_phase_emitted=False,
             has_pending_children=lambda: child,
             pending_child_count=lambda: int(child),
+            classify_outstanding_work=lambda: PiOutstandingWork(child, False),
         ),
     )
     profile = PiCompletionProfile(

@@ -110,8 +110,9 @@ projection contract.
 
 Every proposed success receives a request sequence and waits for a refresh that covers
 that request before policy is reevaluated. A cached `ready` assessment cannot publish
-success. Explicit `done` may override known `blocked` evidence under Pi and resident
-policy, but never `unknown`. Refresh completions and other auxiliary or lifecycle wakes
+success. Explicit `done` may override known `blocked` evidence under resident policy;
+Pi additionally requires parent idle and no owed result/publication. Neither policy
+overrides `unknown`. Refresh completions and other auxiliary or lifecycle wakes
 only request reevaluation; they are not completion authority. After event EOF, the same
 waiter stops event reads but continues refresh, poll, stabilization, nudge, and deadline
 arbitration until the candidate is accepted or rejected.

@@ -289,7 +289,7 @@ async def test_pi_non_spawn_background_only_nudges_after_idle_delay(
 
 
 @pytest.mark.asyncio
-async def test_pi_reconciled_terminal_child_allows_done_nudge_for_private_work(
+async def test_pi_unpublished_child_result_suppresses_done_nudge_for_private_work(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     spawn_id = SpawnId("p1")
@@ -339,7 +339,8 @@ async def test_pi_reconciled_terminal_child_allows_done_nudge_for_private_work(
 
         assert outstanding.spawn_children is False
         assert outstanding.non_spawn_processes is True
-        assert sent_messages == [PI_COMPLETION_NUDGE_MESSAGE]
+        assert outstanding.delivery_pending is True
+        assert sent_messages == []
     finally:
         await coordinator.stop()
 

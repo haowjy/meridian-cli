@@ -242,12 +242,14 @@ class PiCompletionEvidence:
         if reconciled_descendants.disposition == "unknown":
             return PiOutstandingWork(
                 spawn_children=True,
-                non_spawn_processes=bool(private_work.blockers),
+                non_spawn_processes=private_work.tracked_bash_bg,
+                delivery_pending=private_work.pending_disk_notification,
             )
 
         return PiOutstandingWork(
             spawn_children=bool(reconciled_descendants.blockers),
-            non_spawn_processes=bool(private_work.blockers)
+            non_spawn_processes=private_work.tracked_bash_bg,
+            delivery_pending=private_work.pending_disk_notification
             or bool(self._pending_result_blockers(private_work)),
         )
 

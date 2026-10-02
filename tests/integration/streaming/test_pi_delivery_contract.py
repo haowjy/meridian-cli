@@ -11,7 +11,9 @@ import pytest
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.pi_private_state import BashEvidenceFile
+from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.streaming.disk_watcher import PiDiskWatcher
+from meridian.lib.streaming.drain_policy import DrainAction
 from tests.support.pi import PiDrainScenario, pi_event
 
 
@@ -67,12 +69,64 @@ async def scenario(root: Path, monkeypatch: pytest.MonkeyPatch) -> PiDrainScenar
 async def settle(started: PiDrainScenario):  # type: ignore[no-untyped-def]
     for _ in range(80):
         await asyncio.sleep(0.025)
-        await started.coordinator.handle_aux_wake()
+        decision = await started.coordinator.handle_aux_wake()
+        if decision.recorded_outcome:
+            return decision.recorded_outcome
         started.clock.advance(0.05)
         decision = await started.coordinator.handle_timeout()
         if decision.recorded_outcome:
             return decision.recorded_outcome
     return None
+
+
+@pytest.mark.parametrize("work_kind", ["child", "bash"])
+@pytest.mark.asyncio
+async def test_done_cannot_skip_owed_result_or_notice_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, work_kind: str
+) -> None:
+    from meridian.lib.state import spawn_store
+
+    if work_kind == "bash":
+        write_private(tmp_path, "bash-records.json", bash_file())
+    started = await scenario(tmp_path, monkeypatch)
+    started.row("p1", parent_id=None)
+    work_id = "p2" if work_kind == "child" else "b1"
+    if work_kind == "child":
+        started.row("p2", parent_id="p1")
+        spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
+    try:
+        await started.terminal()
+        started.clock.advance(6)
+        assert await settle(started) is None
+        assert started.nudges == []
+        # Native smoke: a generic nudge caused done before the notice arrived.
+        await started.observe("agent_start", transition="turn_active")
+        started.done()
+        assert (await started.timeout()).recorded_outcome is None
+        assert await settle(started) is None
+        await started.idle()
+        assert await settle(started) is None  # idle done still cannot waive the result
+        write_private(tmp_path, "delivery-receipts.json", {
+            "v": 1, "spawn_id": "p1", "messages": {"notice": [work_id]},
+        })
+        assert await settle(started) is None
+        await started.observe("message_start", {
+            "message": {
+                "role": "custom", "customType": "meridian-spawn-watch",
+                "details": {"delivery_id": "notice", "work_ids": [work_id]},
+            },
+        })
+        assert await settle(started) is None  # causal ACK must not end its active turn
+        observation = tmp_path / "pi-bash" / "p1" / "delivery-observations.json"
+        assert json.loads(observation.read_text())["observed_message_ids"] == ["notice"]
+        await started.idle()
+        latest = TerminalEventOutcome(status="succeeded", exit_code=0)
+        await started.coordinator.handle_terminal_event(
+            pi_event("agent_end"), latest, DrainAction(terminate=True, emit_turn_boundary=False),
+        )
+        assert await settle(started) is latest
+    finally:
+        await started.stop()
 
 
 @pytest.mark.asyncio
@@ -115,6 +169,28 @@ async def test_terminal_result_remains_owed_until_specific_message_observed(
         await started.terminal()
         outcome = await settle(started)
         assert outcome is not None and outcome.status == "succeeded"
+    finally:
+        await started.stop()
+
+
+@pytest.mark.asyncio
+async def test_done_waits_for_active_turn_but_can_release_running_background_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_private(tmp_path, "bash-records.json", bash_file(status="running"))
+    started = await scenario(tmp_path, monkeypatch)
+    started.row("p1", parent_id=None)
+    try:
+        await started.terminal()
+        await started.observe("agent_start", transition="turn_active")
+        started.done()
+        assert await settle(started) is None
+        await started.idle()
+        latest = TerminalEventOutcome(status="succeeded", exit_code=0)
+        await started.coordinator.handle_terminal_event(
+            pi_event("agent_end"), latest, DrainAction(terminate=True, emit_turn_boundary=False),
+        )
+        assert await settle(started) is latest
     finally:
         await started.stop()
 
