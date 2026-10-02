@@ -21,6 +21,7 @@ export type BashRecord = {
   timeout_min: number;
   originating_bash_id: string | null;
   ping_sent_at_ms?: number | null;
+  notification_consumed_at_ms?: number | null;
 };
 
 export type BashRecordsFile = {

@@ -9,7 +9,7 @@ import {
   resolveBashLogsDir,
   resolveBashRecordsPath,
 } from "../../shared/pi_state_paths";
-import type { BashRecord, BashRecordsFile, BashStatus } from "../../shared/schemas";
+import { isTerminalBashStatus, type BashRecord, type BashRecordsFile, type BashStatus } from "../../shared/schemas";
 import { rememberSpawnOriginBashIds } from "../../shared/spawn_origins";
 import { BashLogStore, type BashLogPaths } from "./bash_log_store";
 
@@ -104,6 +104,7 @@ export class BashRuntime {
   private readonly spawnId = currentSpawnIdFromEnv();
   private readonly logStore = new BashLogStore(resolveBashLogsDir(this.spawnId));
   private readonly records = new Map<string, RuntimeRecord>();
+  private persistQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly hooks: BashRuntimeHooks = {}) {}
 
@@ -289,8 +290,13 @@ export class BashRuntime {
         return { bash_id: id, output: await this.readLog(record, LOG_TAIL_BYTES), truncated: true };
       case "kill":
         return await this.killBash(id, "killed");
-      case "wait":
-        return await this.waitBash(record, normalizeTimeoutMin(params.timeout_min, DEFAULT_WAIT_TIMEOUT_MIN));
+      case "wait": {
+        const result = await this.waitBash(record, normalizeTimeoutMin(params.timeout_min, DEFAULT_WAIT_TIMEOUT_MIN));
+        if (isTerminalBashStatus(result.status)) {
+          await this.persistWaitConsumption(record);
+        }
+        return result;
+      }
       case "detach":
         record.is_tracked = false;
         this.clearPing(record);
@@ -403,12 +409,12 @@ export class BashRuntime {
     record.ended_at_ms = Date.now();
     record.child = null;
     this.clearPing(record);
+    await this.persist();
     const waiters = record.waiters.splice(0);
     for (const waiter of waiters) waiter();
-    await this.persist();
   }
 
-  private async killBash(bashId: string, reason: "killed" | "aborted"): Promise<unknown> {
+  private async killBash(bashId: string, reason: "killed" | "aborted"): Promise<BashKillResult> {
     const record = this.records.get(bashId);
     if (!record) {
       return { bash_id: bashId, killed: false, message: `bash_id not found: ${bashId}` };
@@ -425,7 +431,7 @@ export class BashRuntime {
     return { bash_id: bashId, killed: true, message: `${bashId} killed` };
   }
 
-  private async waitBash(record: RuntimeRecord, timeoutMin: number): Promise<unknown> {
+  private async waitBash(record: RuntimeRecord, timeoutMin: number): Promise<BashWaitResult> {
     if (record.status === "running") {
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, timeoutMin * 60_000);
@@ -532,7 +538,30 @@ export class BashRuntime {
     }
   }
 
-  private async persist(): Promise<void> {
+  private persist(): Promise<void> {
+    return this.enqueuePersist(() => this.writeCurrentRecords());
+  }
+
+  private persistWaitConsumption(record: RuntimeRecord): Promise<void> {
+    return this.enqueuePersist(async () => {
+      const previous = record.notification_consumed_at_ms;
+      record.notification_consumed_at_ms = Date.now();
+      try {
+        await this.writeCurrentRecords();
+      } catch (error) {
+        record.notification_consumed_at_ms = previous;
+        throw error;
+      }
+    });
+  }
+
+  private enqueuePersist(writeCurrentRecords: () => Promise<void>): Promise<void> {
+    const write = this.persistQueue.catch(() => undefined).then(writeCurrentRecords);
+    this.persistQueue = write;
+    return write;
+  }
+
+  private async writeCurrentRecords(): Promise<void> {
     const records: Record<string, BashRecord> = {};
     for (const [id, record] of this.records.entries()) {
       const { child: _child, waiters: _waiters, foregroundFinish: _foregroundFinish, pingTimer: _pingTimer, ...plain } = record;

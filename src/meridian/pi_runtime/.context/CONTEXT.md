@@ -42,12 +42,22 @@ once after process exit, validating nonce and actual child PID.
 
 | Extension | Owns | Writes / observes |
 |---|---|---|
-| `managed-bash` | `bash` / `bash_manage`, tracked vs detached bash records, `/ps*` slash commands, `_MERIDIAN_PI_BASH_ID` injection into child processes | `runtime_root/pi-bash/<spawn-id>/bash-records.json` and bash logs |
+| `managed-bash` | `bash` / `bash_manage`, tracked vs detached bash records, `/ps*` slash commands, `_MERIDIAN_PI_BASH_ID` injection into child processes | `runtime_root/pi-bash/<spawn-id>/bash-records.json` and bash logs; terminal waits mark their record's notification as consumed |
 | `meridian-spawn-watch` | correlated spawn discovery, `/spawn*` slash commands, implicit-wait `sendMessage({triggerTurn: true})` notifications | watches `runtime_root/spawns/<child>/state.json`, reads `originating_bash_id`, writes `runtime_root/pi-bash/<spawn-id>/last-notification.json` |
 
 `managed-bash` is the mechanism extension. `meridian-spawn-watch` is the policy extension.
 Keep that split: shell task execution and task record persistence belong in managed-bash;
 child-spawn observation and notification behavior belong in spawn-watch.
+Spawn-watch suppresses only terminal Bash records whose persisted
+`notification_consumed_at_ms` is written before `bash_manage(wait)` returns a
+terminal result. Missing markers preserve completion notifications for
+unattended records, including after extension reload.
+Managed-bash serializes record snapshots; terminal state is persisted before
+waiters are released, and consumption is persisted before the terminal wait
+result returns. If consumption persistence fails, the marker is rolled back and
+the wait returns an error, leaving the completion eligible for notification.
+Spawn-watch re-reads consumed markers after asynchronous notification formatting
+and before sending, so retain both scan-time and pre-send checks.
 
 ### Build Pipeline
 

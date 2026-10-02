@@ -4,6 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Upgrade notes
+- Pi managed Bash records a consumed terminal wait marker; older Pi bundles ignore it and may notify again after rollback. No migration is needed. See [Pi managed Bash notification marker](docs/upgrading.md#unreleased-pi-managed-bash-notification-marker).
+
+### Fixed
+- Stop Pi spawn-watch from sending a second completion follow-up after `bash_manage(wait)` returns a terminal managed Bash result; unattended terminal records remain eligible for their completion notice.
+
 ## [0.8.2] - 2026-10-01
 
 ### Removed

@@ -1,3 +1,19 @@
+# Upgrade notes
+
+## Unreleased: Pi managed Bash notification marker
+
+After installing the release with this change, start a new Pi session to load
+the updated extensions; already-running sessions keep their loaded bundles.
+When the updated `bash_manage(wait)` returns a terminal result for a managed
+Bash task, its `bash-records.json` record gains the optional
+`notification_consumed_at_ms` field before the result returns. Spawn-watch reads
+it to suppress a later completion follow-up. Existing records without the field
+remain eligible for their normal completion notice; no migration is required.
+
+Older Pi extension bundles ignore the added field and may send a completion
+notice again after rollback. The record remains readable, and reinstalling the
+updated bundle restores suppression for waits performed through it.
+
 # Upgrading to 0.7
 
 ## What changed, and why

@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -23,11 +24,12 @@ function restoreEnv(): void {
   }
 }
 
-type SpawnWatchRuntimeInternals = SpawnWatchRuntime & {
+type SpawnWatchRuntimeInternals = {
   scanBashRecords(): Promise<void>;
   scanSpawns(): Promise<void>;
   fallbackScanReasons: Set<string>;
-  pending: Map<string, { kind: "spawn" | "bash"; duration: string }>;
+  pending: Map<string, { id: string; kind: "spawn" | "bash"; status: string; label: string; duration: string }>;
+  flush(): Promise<void>;
   running: boolean;
   enableDiscoveryPolling(): void;
   stopDiscoveryPolling(): void;
@@ -128,7 +130,7 @@ async function makeRuntime(): Promise<{ runtimeRoot: string; runtime: SpawnWatch
   setEnv("_MERIDIAN_PI_STATE_DIR", runtimeRoot);
   setEnv("MERIDIAN_SPAWN_ID", "p-parent");
   const runtime = new SpawnWatchRuntime({} as ConstructorParameters<typeof SpawnWatchRuntime>[0]);
-  return { runtimeRoot, runtime, internals: runtime as SpawnWatchRuntimeInternals };
+  return { runtimeRoot, runtime, internals: runtime as unknown as SpawnWatchRuntimeInternals };
 }
 
 describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
@@ -423,7 +425,7 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
     ]);
 
     const runtime = new SpawnWatchRuntime({} as ConstructorParameters<typeof SpawnWatchRuntime>[0]);
-    const internals = runtime as SpawnWatchRuntimeInternals;
+    const internals = runtime as unknown as SpawnWatchRuntimeInternals;
 
     try {
       runtime.start();
@@ -484,6 +486,66 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
 
       await internals.scanBashRecords();
       expect(internals.pending.has("b-timeout")).toBe(false);
+    } finally {
+      runtime.stop();
+      await rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rechecks consumed bash completion after a queued spawn wave is formatted", async () => {
+    const runtimeRoot = await mkdtemp(path.join(tmpdir(), "spawn-watch-flush-dedup-"));
+    const binDir = path.join(runtimeRoot, "bin");
+    const formattingStartedPath = path.join(runtimeRoot, "formatting-started");
+    const bashId = "b-queued";
+    const messages: unknown[] = [];
+    setEnv("_MERIDIAN_PI_STATE_DIR", runtimeRoot);
+    setEnv("MERIDIAN_SPAWN_ID", "p-parent");
+    await mkdir(binDir, { recursive: true });
+    const fakeMeridian = path.join(binDir, "meridian");
+    await writeFile(fakeMeridian, `#!/bin/sh\ntouch '${formattingStartedPath}'\nsleep 0.5\nprintf 'spawn wait output\\n'\n`);
+    await chmod(fakeMeridian, 0o755);
+    setEnv("PATH", `${binDir}:${process.env.PATH ?? ""}`);
+    await writeBashRecords(runtimeRoot, "p-parent", [
+      bashRecord(bashId, { command: "sleep 1", ended_at_ms: Date.now() - 10_000 }),
+    ]);
+    const runtime = new SpawnWatchRuntime({
+      sendMessage: (message: unknown) => messages.push(message),
+    } as unknown as ConstructorParameters<typeof SpawnWatchRuntime>[0]);
+    const internals = runtime as unknown as SpawnWatchRuntimeInternals;
+
+    try {
+      internals.pending.set(bashId, {
+        id: bashId,
+        kind: "bash",
+        status: "exited",
+        label: "sleep 1",
+        duration: "0m01s",
+      });
+      internals.pending.set("p-wave", {
+        id: "p-wave",
+        kind: "spawn",
+        status: "succeeded",
+        label: "spawn",
+        duration: "0m01s",
+      });
+
+      const recordsPath = path.join(runtimeRoot, "pi-bash", "p-parent", "bash-records.json");
+      const flush = internals.flush();
+      const deadline = Date.now() + 1_000;
+      while (!existsSync(formattingStartedPath) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(existsSync(formattingStartedPath)).toBe(true);
+      const file = JSON.parse(await readFile(recordsPath, "utf-8")) as BashRecordsFile;
+      file.records[bashId]!.notification_consumed_at_ms = Date.now();
+      await writeFile(recordsPath, JSON.stringify(file));
+      await flush;
+
+      expect(messages).toHaveLength(1);
+      const message = messages[0] as { content: string; details: { ids: string[] } };
+      expect(message.details.ids).toEqual(["p-wave"]);
+      expect(message.content).toContain("spawn wait output");
+      expect(message.content).not.toContain(bashId);
     } finally {
       runtime.stop();
       await rm(runtimeRoot, { recursive: true, force: true });

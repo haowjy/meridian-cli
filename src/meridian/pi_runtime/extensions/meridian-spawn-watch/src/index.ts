@@ -376,6 +376,11 @@ export class SpawnWatchRuntime {
       if (!record.is_tracked || !record.is_background || !isTerminalBashStatus(record.status)) {
         continue;
       }
+      if (typeof record.notification_consumed_at_ms === "number") {
+        TERMINAL_NOTIFIED.add(record.bash_id);
+        this.pending.delete(record.bash_id);
+        continue;
+      }
       if (bashIdsWithSpawns.has(record.bash_id)) {
         TERMINAL_NOTIFIED.add(record.bash_id);
         this.pending.delete(record.bash_id);
@@ -440,29 +445,44 @@ export class SpawnWatchRuntime {
     this.debounce = null;
     this.maxWave = null;
     const suppressed = await this.readSuppressedSpawnIds();
-    const items = [...this.pending.values()].filter(
-      (item) => item.kind !== "spawn" || !suppressed.has(item.id),
+    const consumedBashIds = await this.readConsumedBashIds();
+    const items = [...this.pending.values()].filter((item) =>
+      item.kind === "spawn" ? !suppressed.has(item.id) : !consumedBashIds.has(item.id),
     );
     for (const item of this.pending.values()) {
-      if (item.kind === "spawn" && suppressed.has(item.id)) TERMINAL_NOTIFIED.add(item.id);
+      if (item.kind === "spawn" ? suppressed.has(item.id) : consumedBashIds.has(item.id)) {
+        TERMINAL_NOTIFIED.add(item.id);
+      }
     }
     this.pending.clear();
     if (items.length === 0) return;
 
-    const content = await formatNotification(items);
+    const spawnItems = items.filter((item) => item.kind === "spawn");
+    const spawnContent = spawnItems.length > 0
+      ? await formatSpawnWaitNotification(spawnItems.map((item) => item.id), spawnItems)
+      : "";
+    const consumedDuringFormatting = await this.readConsumedBashIds();
+    const bashItems = items.filter((item) => item.kind === "bash" && !consumedDuringFormatting.has(item.id));
+    for (const item of items) {
+      if (item.kind === "bash" && consumedDuringFormatting.has(item.id)) TERMINAL_NOTIFIED.add(item.id);
+    }
+    const content = [spawnContent, bashItems.length > 0 ? formatBashNotification(bashItems) : ""]
+      .filter((section) => section.trim().length > 0)
+      .join("\n\n");
+    if (content.length === 0) return;
     await this.pi.sendMessage?.(
       {
         customType: "meridian-spawn-watch",
         content,
         display: true,
-        details: { ids: items.map((item) => item.id) },
+        details: { ids: [...spawnItems, ...bashItems].map((item) => item.id) },
       },
       { triggerTurn: true, deliverAs: "followUp" },
     );
-    for (const item of items) TERMINAL_NOTIFIED.add(item.id);
+    for (const item of [...spawnItems, ...bashItems]) TERMINAL_NOTIFIED.add(item.id);
     await writeJsonAtomic(this.markerPath, {
       ts_epoch_secs: Date.now() / 1000,
-      notified_spawn_ids: items.filter((item) => item.kind === "spawn").map((item) => item.id),
+      notified_spawn_ids: spawnItems.map((item) => item.id),
     });
   }
 
@@ -494,6 +514,15 @@ export class SpawnWatchRuntime {
       [...(file?.observed_spawn_ids ?? []), ...(file?.waiting_spawn_ids ?? [])].filter(
         (id): id is string => typeof id === "string",
       ),
+    );
+  }
+
+  private async readConsumedBashIds(): Promise<Set<string>> {
+    const file = await readJsonFile<BashRecordsFile | null>(this.bashRecordsPath, null);
+    return new Set(
+      Object.values(file?.records ?? {})
+        .filter((record) => typeof record.notification_consumed_at_ms === "number")
+        .map((record) => record.bash_id),
     );
   }
 
@@ -593,22 +622,6 @@ async function readTextFile(filePath: string | null | undefined): Promise<string
   } catch {
     return "";
   }
-}
-
-async function formatNotification(items: NotificationItem[]): Promise<string> {
-  const spawnIds = items.filter((item) => item.kind === "spawn").map((item) => item.id);
-  const bashItems = items.filter((item) => item.kind === "bash");
-  const sections: string[] = [];
-
-  if (spawnIds.length > 0) {
-    sections.push(await formatSpawnWaitNotification(spawnIds, items));
-  }
-
-  if (bashItems.length > 0) {
-    sections.push(formatBashNotification(bashItems));
-  }
-
-  return sections.filter((section) => section.trim().length > 0).join("\n\n");
 }
 
 async function formatSpawnWaitNotification(
