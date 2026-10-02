@@ -1,18 +1,68 @@
 # Upgrade notes
 
-## Unreleased: Pi managed Bash notification marker
+## Unreleased: Pi task ownership and result delivery
 
-After installing the release with this change, start a new Pi session to load
-the updated extensions; already-running sessions keep their loaded bundles.
-When the updated `bash_manage(wait)` returns a terminal result for a managed
-Bash task, its `bash-records.json` record gains the optional
-`notification_consumed_at_ms` field before the result returns. Spawn-watch reads
-it to suppress a later completion follow-up. Existing records without the field
-remain eligible for their normal completion notice; no migration is required.
+Before reinstalling, finish or cancel managed shell tasks and spawned Pi runs,
+then close Pi sessions loading Meridian's extensions. Start a new session after
+installation: a running Pi process keeps its loaded bundles. Use one bundle
+version per parent; old and new writers cannot safely share its private state.
 
-Older Pi extension bundles ignore the added field and may send a completion
-notice again after rollback. The record remains readable, and reinstalling the
-updated bundle restores suppression for waits performed through it.
+Managed Bash now preserves task records across reload and restart. Same-process
+`/reload` retains live process handles. After a process restart, previously
+running tasks show `ownership_lost`; their recorded PID cannot prove ownership.
+Inspect the old process manually, then use
+`bash_manage({action: "detach", bash_id: "b-…"})` to release tracking. Detach
+releases tracking; a live owner still cleans up its tasks on normal shutdown.
+Kill and abort wait for owned POSIX process groups to exit before reporting
+completion. Terminal history and consumption markers survive subsequent writes.
+
+A terminal `bash_manage(wait)` persists `notification_consumed_at_ms` before
+returning. Unattended background Bash and direct child results remain owed
+until explicitly consumed or admitted as a specific native custom message.
+Follow-ups wait for Pi to become idle, so an active tool wait can consume its
+result before a completion notice enters the queue. `/ps` clear keeps unread
+background completions; returned foreground results can be cleared.
+
+Private coordination files under `pi-bash/<parent>/` now include:
+
+- `delivery-receipts.json`: v1 parent and `messages`, mapping each delivery ID
+  to its admitted work IDs. Queueing a message creates no receipt.
+- `delivery-observations.json`: v1 parent and `observed_message_ids`, written
+  by the Python runner when it observes that exact native admission event.
+- `delivery-fault.json`: v1 parent, operation and error, preserving notification
+  failures separately from shell execution failures.
+- `observed-spawns.json`: durable observed child IDs plus temporary wait leases
+  bound to the caller's PID, birth time and expiry. Interrupted waits no longer
+  suppress child completion permanently.
+
+Valid existing v1 Bash records remain readable; no migration command is needed.
+Missing receipt files leave unconsumed work eligible. The old
+`last-notification.json` timestamp is ignored because it cannot identify which
+result reached the model. A notice admitted by an older bundle may therefore
+repeat once after upgrade. Present malformed or wrong-parent files block
+completion with a bounded diagnostic rather than becoming empty work.
+See the [delivery contract](../src/meridian/pi_runtime/.context/delivery-contract.md)
+for exact shapes and writers.
+
+Hot reload preserves queued message ownership. Cold restart retries terminal
+work without a receipt; waited or admitted work remains consumed. Native
+admission, disk receipts and public RPC observation are separate stores. If
+a process crashes after persisting a receipt but before Python observes its
+event, completion fails closed with
+`pi_evidence_unreadable: pi_delivery_event_unobserved: <delivery-id>` after the
+fixed recovery window. Inspect the previous native session and result, then
+start a fresh parent/session. Keep the receipt; deleting it or inventing an
+observation loses the evidence needed to explain the interruption. This does
+not guarantee atomic exactly-once delivery across a process crash.
+
+### Rolling back Pi bundles
+
+Reusing this private parent state with 0.8.2 bundles is unsupported. A probe of
+the actual 0.8.2 bundles against copied new state repeated both waited and
+admitted notices, listed no recovered tasks, and discarded the old records on
+its first write. Stop all writers before downgrading and use a fresh parent;
+retain copies of task records and native transcripts for inspection. Reinstalling
+the new version cannot recover history that an old writer has overwritten.
 
 # Upgrading to 0.7
 

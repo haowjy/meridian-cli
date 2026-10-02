@@ -24,7 +24,6 @@ pi_runtime/
 │       ├── meridian-spawn-watch/index.js
 │       └── session-boundary/index.js
 └── extensions/
-    ├── types.ts              # shared TS types (ExtensionAPI, ToolRegistration)
     ├── shared/               # ids, json files, panels, pi state paths, meridian CLI helpers
     ├── managed-bash/
     │   └── src/index.ts      # bash/bash_manage override, b-* records, /ps* UI
@@ -149,13 +148,12 @@ directories or infer descendants from newer IDs. Both Pi and resident drains use
 the shared reconciled transitive tree; keep extension notification and bash state
 independent of persisted descendant state.
 
-### ExtensionAPI (`types.ts`)
+### Native ExtensionAPI
 
-Shared TypeScript interface between Pi and extensions:
+Extensions import the native `ExtensionAPI` from the Pi package root:
 
 - `registerTool(definition)` — register a tool with name, description, input schema, and call handler
-- `registerHook(name, handler)` — register lifecycle hooks where Pi exposes them
-- `session.on(event, handler)` — subscribe to session events
+- `on(event, handler)` — register typed native lifecycle and session hooks
 - `sendMessage(message, options)` — void queue/prompt operation, never admission acknowledgement
 - native `message_start` — exact custom-message admission; receipt hook runs before public RPC event
 - `ctx.isIdle()` — publication capability; `ctx.ui.notify()` frames slash output through RPC
