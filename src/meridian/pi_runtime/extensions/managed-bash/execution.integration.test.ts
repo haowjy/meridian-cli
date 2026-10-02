@@ -52,7 +52,7 @@ describe("managed Bash execution ownership", () => {
       await runtime.execute({ command: "printf rpc-safe" }, undefined);
       const row = runtime.list(true)[0]!;
       const notify = vi.fn();
-      const ctx = { hasUI: false, ui: { notify } } as unknown as ExtensionCommandContext;
+      const ctx = { hasUI: true, mode: "rpc", ui: { notify, custom: async () => undefined } } as unknown as ExtensionCommandContext;
       const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
       try {
         await commands.get("ps")!.handler("", ctx);

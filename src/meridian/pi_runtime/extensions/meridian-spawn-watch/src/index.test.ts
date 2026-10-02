@@ -58,10 +58,11 @@ async function bash(root: string, ...records: BashRecord[]) {
   });
 }
 async function child(root: string, id: string, originating_bash_id: string | null = null) {
+  // Captured from Python TerminalFacts.model_dump(); preserve canonical extras
+  // so a handwritten projection cannot hide reader/writer incompatibility.
+  const canonical = JSON.parse(await readFile(new URL('../fixtures/canonical-child-state.json', import.meta.url), 'utf8'));
   await writeJsonAtomic(path.join(root, 'spawns', id, 'state.json'), {
-    id, parent_id: 'p-parent', originating_bash_id, status: 'succeeded', terminal: {
-      exit_code: 0, finished_at: '2026-01-01T00:00:00Z', published_at: '2026-01-01T00:00:00Z', duration_secs: 1
-    }
+    ...canonical, id, parent_id: 'p-parent', originating_bash_id,
   });
 }
 function host(idle = true) {
@@ -109,6 +110,21 @@ afterEach(async () => {
   }));
 });
 describe('durable result delivery', () => {
+  it('scopes invalid terminal evidence to its canonical parent', async () => {
+    const root = await setup();
+    await child(root, 'p1');
+    await writeJsonAtomic(path.join(root, 'spawns', 'p2', 'state.json'), {
+      id: 'p2', parent_id: 'p-other', status: 'succeeded', terminal: 'malformed',
+    });
+    const runtime = new SpawnWatchRuntime(host().pi, () => true);
+    owners.push(runtime);
+    expect((await runtime.rows()).map(row => row.id)).toEqual(['p1']);
+    await writeJsonAtomic(path.join(root, 'spawns', 'p2', 'state.json'), {
+      id: 'p2', parent_id: 'p-parent', status: 'succeeded', terminal: 'malformed',
+    });
+    await expect(runtime.rows()).rejects.toThrow('invalid spawn state: p2');
+  });
+
   it('uses framed UI notification for the no-UI slash listing', async () => {
     await setup();
     const h = host();
@@ -116,7 +132,7 @@ describe('durable result delivery', () => {
     const notify = vi.fn();
     const stdout = vi.spyOn(process.stdout, 'write');
     try {
-      await h.commands.get('spawn')!.handler('', {hasUI: false, ui: {notify}});
+      await h.commands.get('spawn')!.handler('', {hasUI: true, mode: 'rpc', ui: {notify, custom: async () => undefined}});
       expect(notify).toHaveBeenCalledWith('No correlated Meridian spawns.', 'info');
       expect(stdout).not.toHaveBeenCalled();
       expect(h.notices).toHaveLength(0);

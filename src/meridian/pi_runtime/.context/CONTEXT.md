@@ -75,8 +75,10 @@ not consume a failed result. Clearing history prunes returned foreground,
 untracked, durably wait-consumed, or causally admitted terminal rows, preserving
 unattended background completion obligations. Read admission receipts through the shared strict
 reader at the owner's frozen path; invalid evidence refuses pruning.
-Noninteractive slash commands use the required native `ctx.ui.notify` API;
-plain tables or logs must never be written to the RPC stdout transport.
+Native `ctx.mode` determines custom-panel availability: Pi 1.0 has `hasUI=true`
+in RPC, but its custom-panel API is a no-op. RPC task output uses required
+`ctx.ui.notify`; print mode retains text output. Tables and logs must never be
+written directly to the RPC stdout transport.
 Shell launch propagates its own Bash ID in `_MERIDIAN_PI_BASH_ID`, and its
 durable record retains the enclosing originating Bash ID. Canonical child
 spawn rows carry parent/origin membership; no origin sidecar is produced.

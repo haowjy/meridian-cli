@@ -1,5 +1,15 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
+
+/** Pi 1.0 has RPC UI notifications, but custom panels require interactive mode. */
+export function hasTaskPanelUI(ctx: ExtensionContext): boolean {
+  return ctx.hasUI && (!("mode" in ctx) || ctx.mode === "interactive");
+}
+
+export function showTaskText(ctx: ExtensionContext, text: string): void {
+  if ("mode" in ctx && ctx.mode === "print") process.stdout.write(`${text}\n`);
+  else ctx.ui.notify(text, "info");
+}
 
 export type SelectablePanelColumn<Row> = {
   header: string;

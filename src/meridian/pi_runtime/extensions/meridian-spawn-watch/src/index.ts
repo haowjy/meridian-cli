@@ -19,6 +19,8 @@ import { isTerminalBashStatus, parseBashRecordsFile, parseSpawnStateFile } from 
 import { openLogOverlay } from "../../shared/log_overlay";
 import {
   openTaskPanel,
+  hasTaskPanelUI,
+  showTaskText,
   type PanelCommandContext,
   type SelectablePanelColumn,
 } from "../../shared/selectable_panel";
@@ -236,9 +238,14 @@ export class SpawnWatchRuntime {
       if (!name.startsWith("p")) continue;
       const value = await readPrivateJson(path.join(this.spawnsDir, name, "state.json"));
       if (value === undefined) continue;
+      // A definitively foreign row cannot affect this parent's obligations.
+      // Unknown membership and malformed own-child evidence still fail closed.
+      if (value && typeof value === "object" && "id" in value && value.id === name
+          && "parent_id" in value && (value.parent_id === null || typeof value.parent_id === "string")
+          && value.parent_id !== this.currentSpawnId) continue;
       const state = parseSpawnStateFile(value);
-      if (!state) throw Error(`invalid spawn state: ${name}`);
-      if (state.id === name && state.parent_id === this.currentSpawnId) rows.push(state);
+      if (!state || state.id !== name) throw Error(`invalid spawn state: ${name}`);
+      if (state.parent_id === this.currentSpawnId) rows.push(state);
     }
     return rows;
   }
@@ -352,10 +359,10 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
     handler: async (_args, ctx) => {
       const loadRows = async (): Promise<SpawnStateFile[]> => runtime.rows(true);
 
-      if (ctx.hasUI === false || !ctx.ui?.custom) {
+      if (!hasTaskPanelUI(ctx)) {
         const rows = await loadRows();
         const text = rows.length ? renderTable(SPAWN_PANEL_COLUMNS, rows, 100).join("\n") : "No correlated Meridian spawns.";
-        ctx.ui.notify(text, "info");
+        showTaskText(ctx, text);
         return;
       }
 

@@ -4,6 +4,8 @@ import { Type } from "typebox";
 import { openLogOverlay } from "../../shared/log_overlay";
 import {
   openTaskPanel,
+  hasTaskPanelUI,
+  showTaskText,
   type PanelCommandContext,
   type SelectablePanelColumn,
 } from "../../shared/selectable_panel";
@@ -278,8 +280,8 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
         return Promise.all(rows.map(async (row) => ({ ...row, preview: await readLogTail(row.log_path, 2048) })));
       };
 
-      if (!ctx.hasUI) {
-        ctx.ui.notify(formatRows(await loadRows()), "info");
+      if (!hasTaskPanelUI(ctx)) {
+        showTaskText(ctx, formatRows(await loadRows()));
         return;
       }
 
@@ -332,7 +334,7 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
         const result = await runtime.manage({ action: "output", bash_id: bashId });
         return "output" in result && typeof result.output === "string" ? result.output : formatToolResult(result);
       };
-      if (ctx.hasUI) {
+      if (hasTaskPanelUI(ctx)) {
         const row = runtime.list(true).find((candidate) => candidate.bash_id === bashId);
         await openLogOverlay(ctx as PanelCommandContext, {
           title: `Bash log ${bashId}`,
@@ -341,7 +343,7 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
         });
         return;
       }
-      ctx.ui.notify(await loadText(), "info");
+      showTaskText(ctx, await loadText());
     },
   });
 

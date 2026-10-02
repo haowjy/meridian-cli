@@ -10,6 +10,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   recovered private history on rollback. See [Pi upgrade notes](docs/upgrading.md#unreleased-pi-task-ownership-and-result-delivery).
 
 ### Fixed
+- Accept canonical published child terminal metadata in Pi's result projection.
 - Show task-panel action failures even when existing rows remain visible.
 - Use normalized model usage for streaming budgets; tool-result prices no longer
   trigger false breaches. Receive Pi startup output while sending large prompts.
