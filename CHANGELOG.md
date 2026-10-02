@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-02
+
 ### Upgrade notes
 - Start fresh Pi sessions after installing; task ownership and causal delivery
   receipts now survive reload/restart. Old bundles can repeat notices and discard
