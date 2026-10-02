@@ -74,6 +74,9 @@ completion obligations. Read admission receipts through the shared strict
 reader at the owner's frozen path; invalid evidence refuses pruning.
 Noninteractive slash commands use the required native `ctx.ui.notify` API;
 plain tables or logs must never be written to the RPC stdout transport.
+Shell launch propagates its own Bash ID in `_MERIDIAN_PI_BASH_ID`, and its
+durable record retains the enclosing originating Bash ID. Canonical child
+spawn rows carry parent/origin membership; no origin sidecar is produced.
 Spawn-watch suppresses only terminal Bash records whose persisted
 `notification_consumed_at_ms` is written before `bash_manage(wait)` returns a
 terminal result. Missing markers preserve completion notifications for

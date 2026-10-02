@@ -13,7 +13,6 @@ import {
   resolveDeliveryReceiptsPath,
 } from "../../shared/pi_state_paths";
 import { isTerminalBashStatus, parseBashRecordsFile, type BashRecord, type BashRecordsFile, type BashStatus } from "../../shared/schemas";
-import { rememberSpawnOriginBashIds } from "../../shared/spawn_origins";
 import { BashLogStore, type BashLogPaths } from "./bash_log_store";
 import { ShellTask } from "./shell_task";
 
@@ -408,7 +407,6 @@ export class BashRuntime {
     }).catch((error) => this.failRecord(record, error));
 
     try {
-      await rememberSpawnOriginBashIds([bashId], this.spawnId);
       await this.persist();
     } catch (error) {
       await this.failRecord(record, error);
