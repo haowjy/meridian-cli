@@ -48,6 +48,35 @@ once after process exit, validating nonce and actual child PID.
 `managed-bash` is the mechanism extension. `meridian-spawn-watch` is the policy extension.
 Keep that split: shell task execution and task record persistence belong in managed-bash;
 child-spawn observation and notification behavior belong in spawn-watch.
+
+The managed Bash owner is launch-scoped in `globalThis`, keyed by its record
+path, so extension reload preserves live process handles and rebinds current
+hooks. `session_shutdown(reason=reload)` only clears UI hints. Normal shutdown
+terminates all owned groups, including tasks detached from quiescence. A task
+owns the POSIX group created for it, uses bounded TERM→KILL escalation, and
+publishes terminal after group exit and its queued log writes. Its output queue
+applies stream backpressure; failures close owned pipes before cleanup and
+release outstanding operations with an error instead of an unhandled rejection.
+
+Cold recovery validates and retains the complete record store before accepting
+commands. Historical terminal/wait-consumed rows remain intact. Running rows
+have no recoverable process handle and retain `status=running` plus
+`execution_error=ownership_lost`; a recorded PID never authorizes signalling.
+`bash_manage(kill)` explains the lost ownership, `wait` reports it, and explicit
+`detach` durably releases tracking. `runtime_error` records failed publication
+when storage permits; a successful later command can repair publication. A
+corrupt store is preserved and refused until repaired. Log readers bound bytes
+with seek/read, and panels load preview snapshots before rendering.
+Wait propagates supervised execution failures even after group cleanup; it does
+not consume a failed result. Clearing history prunes only untracked, durably
+wait-consumed, or causally admitted terminal rows, preserving unattended
+completion obligations. Read admission receipts through the shared strict
+reader at the owner's frozen path; invalid evidence refuses pruning.
+Noninteractive slash commands use the required native `ctx.ui.notify` API;
+plain tables or logs must never be written to the RPC stdout transport.
+Shell launch propagates its own Bash ID in `_MERIDIAN_PI_BASH_ID`, and its
+durable record retains the enclosing originating Bash ID. Canonical child
+spawn rows carry parent/origin membership; no origin sidecar is produced.
 Spawn-watch suppresses only terminal Bash records whose persisted
 `notification_consumed_at_ms` is written before `bash_manage(wait)` returns a
 terminal result. Missing markers preserve completion notifications for

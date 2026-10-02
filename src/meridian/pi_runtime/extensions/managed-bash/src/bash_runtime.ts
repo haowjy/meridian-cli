@@ -1,17 +1,20 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
+import { StringDecoder } from "node:string_decoder";
 
 import { classifyWorkId } from "../../shared/ids";
 import { writeJsonAtomic } from "../../shared/json_file";
 import { runMeridianCommand } from "../../shared/meridian_cli";
+import { admittedWorkIds, readDeliveryReceipts } from "../../shared/delivery_receipts";
 import {
   currentSpawnIdFromEnv,
   resolveBashLogsDir,
   resolveBashRecordsPath,
+  resolveDeliveryReceiptsPath,
 } from "../../shared/pi_state_paths";
-import { isTerminalBashStatus, type BashRecord, type BashRecordsFile, type BashStatus } from "../../shared/schemas";
-import { rememberSpawnOriginBashIds } from "../../shared/spawn_origins";
+import { isTerminalBashStatus, parseBashRecordsFile, type BashRecord, type BashRecordsFile, type BashStatus } from "../../shared/schemas";
 import { BashLogStore, type BashLogPaths } from "./bash_log_store";
+import { ShellTask } from "./shell_task";
 
 export type BashParams = {
   command: string;
@@ -33,8 +36,12 @@ export type UserBashExecOptions = {
 };
 
 type RuntimeRecord = BashRecord & {
-  child: ChildProcess | null;
-  waiters: Array<() => void>;
+  task: ShellTask | null;
+  outputQueue: Promise<void>;
+  finished: Promise<void>;
+  resolveFinished: () => void;
+  rejectFinished: (error: Error) => void;
+  terminationReason: BashStatus | null;
   foregroundFinish: ((result: unknown) => void) | null;
   pingTimer: NodeJS.Timeout | null;
 };
@@ -100,13 +107,32 @@ const TASK_PING_INTERVAL_ENV = "_MERIDIAN_PI_TASK_PING_INTERVAL_MS";
 const TASK_PING_RESET_ON_ACTIVITY_ENV = "_MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY";
 export const USER_BASH_PANEL_BACKGROUND_MSG = "Sent to background — /ps";
 
+const ownersKey = Symbol.for("meridian.pi.managed-bash.owners.v2");
+const scope = globalThis as typeof globalThis & { [ownersKey]?: Map<string, BashRuntime> };
+const owners = scope[ownersKey] ??= new Map<string, BashRuntime>();
+
 export class BashRuntime {
   private readonly spawnId = currentSpawnIdFromEnv();
+  private readonly recordsPath = resolveBashRecordsPath(this.spawnId);
+  private readonly receiptsPath = resolveDeliveryReceiptsPath(this.spawnId);
   private readonly logStore = new BashLogStore(resolveBashLogsDir(this.spawnId));
   private readonly records = new Map<string, RuntimeRecord>();
   private persistQueue: Promise<void> = Promise.resolve();
+  private ready: Promise<void> = Promise.resolve();
+  private runtimeError: string | undefined;
 
-  constructor(private readonly hooks: BashRuntimeHooks = {}) {}
+  constructor(private hooks: BashRuntimeHooks = {}) {
+    const key = this.recordsPath;
+    const prior = owners.get(key);
+    if (prior) {
+      prior.hooks = hooks;
+      return prior;
+    }
+    owners.set(key, this);
+    this.ready = this.recoverRecords();
+    // Construction cannot await recovery; commands observe its rejection.
+    void this.ready.catch(() => undefined);
+  }
 
   async execute(params: BashParams, signal: AbortSignal | undefined): Promise<unknown> {
     const timeoutMin = normalizeTimeoutMin(params.timeout_min, DEFAULT_TIMEOUT_MIN);
@@ -114,7 +140,7 @@ export class BashRuntime {
 
     if (params.background === true) {
       record.is_background = true;
-      await this.persist();
+      await this.publishRecord(record);
       this.schedulePing(record);
       return { bash_id: record.bash_id, status: "started" };
     }
@@ -132,31 +158,33 @@ export class BashRuntime {
         resolve(result);
       };
       record.foregroundFinish = finish;
-      const abort = async (): Promise<void> => {
-        await this.killBash(record.bash_id, "aborted");
-        finish({ stdout: await this.readLog(record, LOG_TAIL_BYTES), stderr: "[command aborted]", exit_code: -1 });
+      const abort = (): void => {
+        void this.killBash(record.bash_id, "aborted").then(async () =>
+          finish({ stdout: await this.readLog(record, LOG_TAIL_BYTES), stderr: "[command aborted]", exit_code: -1 }))
+          .catch((error) => finish({ error: errorText(error) }));
       };
-      const timeout = setTimeout(async () => {
+      const timeout = setTimeout(() => {
         record.is_background = true;
-        await this.persist();
-        this.schedulePing(record);
-        finish({
+        void this.persist().then(() => {
+          this.schedulePing(record);
+          finish({
           bash_id: record.bash_id,
           status: "backgrounded",
           message: `Command exceeded timeout_min=${timeoutMin} and was backgrounded as ${record.bash_id}. Use /ps to manage it.`,
-        });
+          });
+        }, async (error) => { await this.failRecord(record, error); finish({ error: errorText(error) }); });
       }, timeoutMin * 60_000);
 
       if (signal?.aborted) {
-        void abort();
+        abort();
         return;
       }
-      signal?.addEventListener("abort", () => void abort(), { once: true });
-      this.onTerminal(record, async () => {
+      signal?.addEventListener("abort", abort, { once: true });
+      void record.finished.then(async () => {
         if (settled) return;
         const output = await this.readSplitLog(record);
         finish(output);
-      });
+      }).catch((error) => finish({ error: errorText(error) }));
     });
   }
 
@@ -185,7 +213,7 @@ export class BashRuntime {
       };
       const abort = (): void => {
         forwardForegroundOutput = false;
-        void this.killBash(record.bash_id, "aborted").finally(() => finish(-1));
+        void this.killBash(record.bash_id, "aborted").then(() => finish(-1), () => finish(-1));
       };
       record.foregroundFinish = () => {
         safeOnData(options.onData, Buffer.from(`${USER_BASH_PANEL_BACKGROUND_MSG}\n`, "utf-8"));
@@ -197,14 +225,14 @@ export class BashRuntime {
         return;
       }
       options.signal?.addEventListener("abort", abort, { once: true });
-      this.onTerminal(record, () => finish(record.exit_code));
+      void record.finished.then(() => finish(record.exit_code), () => finish(-1));
     });
   }
 
   async startDetachedUserBash(command: string, cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<{ bash_id: string }> {
     const record = await this.startRecord(command, DEFAULT_TIMEOUT_MIN, cwd, env);
     record.is_background = true;
-    await this.persist();
+    await this.publishRecord(record);
     this.schedulePing(record);
     return { bash_id: record.bash_id };
   }
@@ -218,7 +246,7 @@ export class BashRuntime {
     }
 
     foreground.is_background = true;
-    await this.persist();
+    await this.publishRecord(foreground);
     this.schedulePing(foreground);
     foreground.foregroundFinish?.({
       bash_id: foreground.bash_id,
@@ -251,17 +279,29 @@ export class BashRuntime {
         log_bytes: record.log_bytes,
         timeout_min: record.timeout_min,
         originating_bash_id: record.originating_bash_id,
+        execution_error: record.execution_error,
       }));
   }
 
+  async rows(): Promise<BashListRow[]> {
+    await this.ensureReady();
+    return this.list(true);
+  }
+
   async clearFinished(): Promise<number> {
-    const finished = [...this.records.values()].filter((record) => record.status !== "running");
+    await this.prepare();
+    const admitted = admittedWorkIds(await readDeliveryReceipts(this.spawnId, this.receiptsPath));
+    const finished = [...this.records.values()].filter((record) => record.status !== "running" && (!record.is_tracked || record.notification_consumed_at_ms != null || admitted.has(record.bash_id)));
     for (const record of finished) this.records.delete(record.bash_id);
-    if (finished.length > 0) await this.persist();
+    if (finished.length > 0) {
+      try { await this.persist(); }
+      catch (error) { for (const record of finished) this.records.set(record.bash_id, record); throw error; }
+    }
     return finished.length;
   }
 
   async manage(params: BashManageParams): Promise<BashManageResult> {
+    await this.prepare();
     const action = params.action;
     if (action === "list") {
       return { rows: this.list(params.include_completed === true) };
@@ -298,9 +338,11 @@ export class BashRuntime {
         return result;
       }
       case "detach":
+        const wasTracked = record.is_tracked;
         record.is_tracked = false;
         this.clearPing(record);
-        await this.persist();
+        try { await this.persist(); }
+        catch (error) { record.is_tracked = wasTracked; this.schedulePing(record); throw error; }
         return { bash_id: id, detached: true, message: `${id} detached from quiescence tracking.` };
       default:
         return { error: `unsupported action: ${String(action)}` };
@@ -308,16 +350,14 @@ export class BashRuntime {
   }
 
   async shutdown(): Promise<void> {
-    for (const record of this.records.values()) {
-      if (record.child && record.status === "running") {
-        try {
-          record.child.kill("SIGTERM");
-        } catch {
-          // ignore process-race failures
-        }
-      }
-    }
+    await this.ensureReady();
+    const results = await Promise.allSettled([...this.records.values()].map(async (record) => {
+      this.clearPing(record);
+      if (record.task && record.status === "running") await this.killBash(record.bash_id, "killed");
+    }));
     await this.persist();
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
   }
 
   private async startRecord(
@@ -327,10 +367,11 @@ export class BashRuntime {
     env: NodeJS.ProcessEnv = process.env,
     onData?: (data: Buffer) => void,
   ): Promise<RuntimeRecord> {
+    await this.prepare();
     const bashId = makeBashId();
     const logPaths = await this.logStore.create(bashId);
 
-    const record: RuntimeRecord = {
+    const record = runtimeRecord({
       bash_id: bashId,
       command,
       cwd,
@@ -348,53 +389,59 @@ export class BashRuntime {
       timeout_min: timeoutMin,
       originating_bash_id: process.env._MERIDIAN_PI_BASH_ID || null,
       ping_sent_at_ms: null,
-      child: null,
-      waiters: [],
-      foregroundFinish: null,
-      pingTimer: null,
-    };
+    });
     this.records.set(bashId, record);
 
-    const child = spawn(command, {
-      cwd,
-      env: { ...env, _MERIDIAN_PI_BASH_ID: bashId },
-      shell: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    record.child = child;
+    let task: ShellTask;
+    try { task = new ShellTask(command, cwd, { ...env, _MERIDIAN_PI_BASH_ID: bashId }); }
+    catch (error) { this.records.delete(bashId); throw error; }
+    const child = task.child;
+    record.task = task;
     record.pid = child.pid ?? null;
-    void rememberSpawnOriginBashIds([bashId], this.spawnId).catch(() => undefined);
-    this.attachOutput(record, child, onData);
+    this.attachOutput(record, task, onData);
+    child.once("error", (error) => this.queueOutput(record, `\n[failed to start command: ${error.message}]\n`, "stderr"));
+    // Exit observation waits for the owned group and every preceding log write.
+    void task.waitForExit().then(async (code) => {
+      await record.outputQueue;
+      if (record.status === "running") await this.markTerminal(record, record.terminationReason ?? "exited", code);
+    }).catch((error) => this.failRecord(record, error));
 
-    child.once("error", async (error) => {
-      await this.appendLog(record, `\n[failed to start command: ${error.message}]\n`, "stderr");
-      await this.markTerminal(record, "killed", -1);
-    });
-    child.once("close", async (code) => {
-      if (record.status !== "running") return;
-      await this.markTerminal(record, "exited", code ?? -1);
-    });
-
-    await this.persist();
+    try {
+      await this.persist();
+    } catch (error) {
+      await this.failRecord(record, error);
+      throw error;
+    }
     return record;
   }
 
-  private attachOutput(record: RuntimeRecord, child: ChildProcess, onData?: (data: Buffer) => void): void {
-    child.stdout?.on("data", (chunk: string | Buffer) => {
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf-8");
-      onData?.(buffer);
-      void this.appendLog(record, buffer.toString("utf-8"), "stdout");
-    });
-    child.stderr?.on("data", (chunk: string | Buffer) => {
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf-8");
-      onData?.(buffer);
-      void this.appendLog(record, buffer.toString("utf-8"), "stderr");
-    });
+  private attachOutput(record: RuntimeRecord, task: ShellTask, onData?: (data: Buffer) => void): void {
+    const child = task.child;
+    for (const stream of ["stdout", "stderr"] as const) {
+      const output = child[stream];
+      const decoder = new StringDecoder("utf-8");
+      output?.on("error", (error) => { void this.failRecord(record, error); });
+      output?.on("data", (chunk: string | Buffer) => {
+        output.pause();
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf-8");
+        try { onData?.(buffer); }
+        catch (error) { void this.failRecord(record, error); }
+        void this.queueOutput(record, decoder.write(buffer), stream).then(() => output.resume());
+      });
+      output?.once("end", () => { const tail = decoder.end(); if (tail) void this.queueOutput(record, tail, stream); });
+    }
+  }
+
+  private queueOutput(record: RuntimeRecord, chunk: string, stream: "stdout" | "stderr"): Promise<void> {
+    record.outputQueue = record.outputQueue.then(async () => {
+      if (!record.execution_error) await this.appendLog(record, chunk, stream);
+    }).catch((error) => this.failRecord(record, error));
+    return record.outputQueue;
   }
 
   private async appendLog(record: RuntimeRecord, chunk: string, stream: "stdout" | "stderr"): Promise<void> {
     const size = await this.logStore.append(logPathsFromRecord(record), stream, chunk);
-    record.log_bytes = size ?? record.log_bytes + Buffer.byteLength(chunk, "utf-8");
+    record.log_bytes = size;
     if (shouldResetPingOnActivity()) this.schedulePing(record);
     await this.persist();
   }
@@ -407,11 +454,10 @@ export class BashRuntime {
     record.status = status;
     record.exit_code = exitCode;
     record.ended_at_ms = Date.now();
-    record.child = null;
+    record.task = null;
     this.clearPing(record);
     await this.persist();
-    const waiters = record.waiters.splice(0);
-    for (const waiter of waiters) waiter();
+    record.resolveFinished();
   }
 
   private async killBash(bashId: string, reason: "killed" | "aborted"): Promise<BashKillResult> {
@@ -422,25 +468,28 @@ export class BashRuntime {
     if (record.status !== "running") {
       return { bash_id: bashId, killed: false, message: `${bashId} is already ${record.status}` };
     }
-    try {
-      record.child?.kill("SIGTERM");
-    } catch {
-      // ignore process-race failures
+    if (!record.task) {
+      return { bash_id: bashId, killed: false, message: `${bashId}: ownership lost after restart; no PID was signalled. Inspect the process manually or use bash_manage detach to release tracking.` };
     }
-    await this.markTerminal(record, reason === "aborted" ? "killed" : "killed", -1);
+    record.terminationReason = "killed";
+    try { await record.task.terminate(); }
+    catch (error) { await this.failRecord(record, error); throw error; }
+    await record.finished;
     return { bash_id: bashId, killed: true, message: `${bashId} killed` };
   }
 
   private async waitBash(record: RuntimeRecord, timeoutMin: number): Promise<BashWaitResult> {
+    if (record.status === "running" && !record.task) throw new Error(`${record.bash_id}: ownership_lost after restart; inspect manually or detach to release tracking`);
     if (record.status === "running") {
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, timeoutMin * 60_000);
-        this.onTerminal(record, () => {
+        void record.finished.then(() => {
           clearTimeout(timer);
           resolve();
-        });
+        }, () => { clearTimeout(timer); resolve(); });
       });
     }
+    if (record.execution_error) throw new Error(record.execution_error);
     if (record.status === "running") {
       return {
         bash_id: record.bash_id,
@@ -453,7 +502,7 @@ export class BashRuntime {
       status: record.status,
       exit_code: record.exit_code,
       duration_secs: durationSecs(record),
-      output: await this.readLog(record, 2 * 1024),
+      output: (await this.readLog(record, 2 * 1024)) + (record.execution_error ? `\n[execution failed: ${record.execution_error}]` : ""),
     };
   }
 
@@ -467,7 +516,7 @@ export class BashRuntime {
     ) {
       return;
     }
-    const timer = setTimeout(() => void this.firePing(record), taskPingIntervalMs());
+    const timer = setTimeout(() => { void this.firePing(record).catch((error) => this.failRecord(record, error)); }, taskPingIntervalMs());
     timer.unref();
     record.pingTimer = timer;
   }
@@ -490,14 +539,6 @@ export class BashRuntime {
     record.ping_sent_at_ms = Date.now();
     await this.persist();
     await this.hooks.onBackgroundPing?.(toPlainRecord(record));
-  }
-
-  private onTerminal(record: RuntimeRecord, fn: () => void | Promise<void>): void {
-    if (record.status !== "running") {
-      void fn();
-      return;
-    }
-    record.waiters.push(() => void fn());
   }
 
   private async manageSpawn(spawnId: string, params: BashManageParams): Promise<BashManageResult> {
@@ -531,15 +572,84 @@ export class BashRuntime {
   }
 
   private async readLog(record: RuntimeRecord, maxBytes: number, stream: "combined" | "stdout" | "stderr" = "combined"): Promise<string> {
-    try {
-      return await this.logStore.read(logPathsFromRecord(record), stream, maxBytes);
-    } catch {
-      return "";
-    }
+    return this.logStore.read(logPathsFromRecord(record), stream, maxBytes);
   }
 
   private persist(): Promise<void> {
     return this.enqueuePersist(() => this.writeCurrentRecords());
+  }
+
+  private async publishRecord(record: RuntimeRecord): Promise<void> {
+    try { await this.persist(); }
+    catch (error) { await this.failRecord(record, error); throw error; }
+  }
+
+  private async prepare(): Promise<void> {
+    await this.ensureReady();
+    if (this.runtimeError) {
+      const previous = this.runtimeError;
+      this.runtimeError = undefined;
+      try { await this.persist(); }
+      catch (error) { this.runtimeError = previous; throw error; }
+    }
+  }
+
+  private async ensureReady(): Promise<void> {
+    try { await this.ready; }
+    catch {
+      // An operator can repair unreadable cold-start evidence without needing
+      // to abandon the process. Never replace it with an empty map.
+      this.ready = this.recoverRecords();
+      await this.ready;
+    }
+  }
+
+  private async recoverRecords(): Promise<void> {
+    let text: string;
+    try { text = await readFile(this.recordsPath, "utf-8"); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    const file = parseBashRecordsFile(JSON.parse(text));
+    if (!file || file.spawn_id !== this.spawnId) throw new Error("Invalid managed Bash record store; refusing to replace recovery evidence");
+    this.runtimeError = file.runtime_error;
+    for (const plain of Object.values(file.records)) {
+      const record = runtimeRecord(plain);
+      if (record.status === "running") {
+        record.execution_error = "ownership_lost: previous runtime exited; inspect manually or use bash_manage detach to release tracking";
+      }
+      this.records.set(record.bash_id, record);
+    }
+    // A recovered running row is unresolved work, not permission to signal a
+    // possibly reused PID. Publish its diagnostic before accepting commands.
+    await this.persist();
+  }
+
+  private async failRecord(record: RuntimeRecord, error: unknown): Promise<void> {
+    if (record.execution_error) return;
+    record.execution_error = errorText(error);
+    record.terminationReason = "killed";
+    this.runtimeError = record.execution_error;
+    this.clearPing(record);
+    // No further output can be published. Closing owned pipes avoids tying
+    // cleanup to paused read buffers or a failed output queue.
+    record.task?.child.stdout?.destroy();
+    record.task?.child.stderr?.destroy();
+    try {
+      if (record.task) await record.task.terminate();
+      record.task = null;
+      record.status = "killed";
+      record.exit_code = -1;
+      record.ended_at_ms = Date.now();
+    } catch (cleanupError) {
+      record.execution_error += `; cleanup failed: ${errorText(cleanupError)}`;
+    }
+    try { await this.persist(); }
+    catch (publishError) {
+      process.stderr.write(`[managed-bash] task ${record.bash_id}: ${errorText(publishError)}\n`);
+    }
+    record.rejectFinished(new Error(record.execution_error));
   }
 
   private persistWaitConsumption(record: RuntimeRecord): Promise<void> {
@@ -564,16 +674,16 @@ export class BashRuntime {
   private async writeCurrentRecords(): Promise<void> {
     const records: Record<string, BashRecord> = {};
     for (const [id, record] of this.records.entries()) {
-      const { child: _child, waiters: _waiters, foregroundFinish: _foregroundFinish, pingTimer: _pingTimer, ...plain } = record;
-      records[id] = plain;
+      records[id] = toPlainRecord(record);
     }
     const file: BashRecordsFile = {
       v: 1,
       spawn_id: this.spawnId,
       updated_at_ms: Date.now(),
       records,
+      ...(this.runtimeError ? { runtime_error: this.runtimeError } : {}),
     };
-    await writeJsonAtomic(resolveBashRecordsPath(this.spawnId), file);
+    await writeJsonAtomic(this.recordsPath, file);
   }
 }
 
@@ -587,9 +697,24 @@ function shouldResetPingOnActivity(): boolean {
 }
 
 function toPlainRecord(record: RuntimeRecord): BashRecord {
-  const { child: _child, waiters: _waiters, foregroundFinish: _foregroundFinish, pingTimer: _pingTimer, ...plain } = record;
+  const { task: _task, outputQueue: _outputQueue, finished: _finished, resolveFinished: _resolve,
+    rejectFinished: _reject, terminationReason: _reason,
+    foregroundFinish: _foregroundFinish, pingTimer: _pingTimer, ...plain } = record;
   return plain;
 }
+
+function runtimeRecord(plain: BashRecord): RuntimeRecord {
+  let resolveFinished!: () => void;
+  let rejectFinished!: (error: Error) => void;
+  const finished = new Promise<void>((resolve, reject) => { resolveFinished = resolve; rejectFinished = reject; });
+  void finished.catch(() => undefined);
+  if (plain.status !== "running") resolveFinished();
+  return { ...plain, task: null, outputQueue: Promise.resolve(), finished,
+    resolveFinished, rejectFinished, terminationReason: null,
+    foregroundFinish: null, pingTimer: null };
+}
+
+function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
 function makeBashId(): string {
   return `b-${randomBytes(4).toString("hex")}`;

@@ -16,6 +16,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   absent or malformed costs remain unknown.
 - Clean managed stdio process groups after their leader exits, including
   descendants that require SIGKILL.
+- Stop managed Bash from publishing obsolete origin sidecars; canonical records and child environment carry origin identity.
+- Route noninteractive Pi Bash slash-command output through native UI notifications, preserving RPC stdout framing.
+- Clear completed Pi Bash history only after wait consumption, causal admission or explicit detach; refuse invalid receipt evidence. Bound process cleanup with monotonic deadlines.
+- Preserve Pi managed Bash tasks across extension reload, recover recorded history after restart, and report lost process ownership without signalling stale PIDs. Kill, abort and shutdown now terminate owned POSIX groups before reporting completion; storage failures clean up started work, and log previews read bounded tails outside rendering.
+- Share strict Pi receipt and wait-reservation readers across notification and task cleanup.
+- Define validated Pi task-state and causal delivery-receipt contracts for completion recovery.
 - Stop Pi spawn-watch from sending a second completion follow-up after `bash_manage(wait)` returns a terminal managed Bash result; unattended terminal records remain eligible for their completion notice.
 - Keep Pi completion batches reserved during delivery; overlapping scans no longer send a task twice, failed sends retain unread notices, and shutdown prevents later waves.
 

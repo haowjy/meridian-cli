@@ -1,10 +1,10 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { readSpawnOriginBashIds } from "../../shared/spawn_origins";
+import { parseBashRecordsFile } from "../../shared/schemas";
 import { BashRuntime } from "./bash_runtime";
 
 const savedEnv: Record<string, string | undefined> = {};
@@ -38,23 +38,28 @@ describe("BashRuntime task pings", () => {
     const runtimeRoot = await mkdtemp(path.join(tmpdir(), "pi-bash-ping-"));
     setEnv("_MERIDIAN_PI_STATE_DIR", runtimeRoot);
     setEnv("MERIDIAN_SPAWN_ID", "p-test-ping");
+    setEnv("_MERIDIAN_PI_BASH_ID", "b-12345678");
     setEnv("_MERIDIAN_PI_TASK_PING_INTERVAL_MS", "20");
 
     const pings: string[] = [];
     const runtime = new BashRuntime({
-      onBackgroundPing: (record) => pings.push(record.bash_id),
+      onBackgroundPing: (record) => { pings.push(record.bash_id); },
     });
 
     try {
       const result = await runtime.execute(
         {
-          command: `"${process.execPath}" -e "setTimeout(() => {}, 1000)"`,
+          command: `"${process.execPath}" -e "process.stdout.write(process.env._MERIDIAN_PI_BASH_ID);setTimeout(() => {}, 1000)"`,
           background: true,
         },
         undefined,
       );
       const bashId = (result as { bash_id: string }).bash_id;
-      await waitFor(async () => (await readSpawnOriginBashIds("p-test-ping")).has(bashId));
+      const file = parseBashRecordsFile(JSON.parse(await readFile(path.join(runtimeRoot, "pi-bash", "p-test-ping", "bash-records.json"), "utf8")));
+      expect(file?.spawn_id).toBe("p-test-ping");
+      expect(file?.records[bashId]?.originating_bash_id).toBe("b-12345678");
+      await waitFor(() => runtime.list(true)[0]!.log_bytes > 0);
+      expect(await runtime.manage({ action: "output", bash_id: bashId })).toMatchObject({ output: bashId });
       await waitFor(() => pings.length === 1);
       expect(pings).toEqual([bashId]);
 
