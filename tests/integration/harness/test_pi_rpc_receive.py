@@ -132,11 +132,24 @@ async def test_prompt_ack_is_received_without_advancing_event_iterator(tmp_path:
 
 
 @pytest.mark.asyncio
-async def test_large_frame_preserves_tool_output_and_next_response(tmp_path: Path) -> None:
+@pytest.mark.parametrize("event_type", ["message_end", "agent_end"])
+async def test_large_frame_preserves_tool_output_and_next_response(
+    tmp_path: Path, event_type: str
+) -> None:
+    aggregate = event_type == "agent_end"
+    size = (13 if aggregate else 11) * 1024 * 1024
+    content = (
+        f"{{'type':'image','mimeType':'image/png','data':'x'*{size}}}"
+        if aggregate
+        else f"{{'type':'text','text':'x'*{size}}}"
+    )
     body = (
-        "print(json.dumps({'type':'message_end','message':{'role':'toolResult',"
+        "message={'role':'toolResult',"
         "'toolCallId':'large-tool','toolName':'bash',"
-        "'content':[{'type':'text','text':'x'*(11*1024*1024)}]}}),flush=True)\n"
+        f"'content':[{content}]}}\n"
+        f"print(json.dumps({{'type':{event_type!r},"
+        + ("'messages':[message]" if aggregate else "'message':message")
+        + "}),flush=True)\n"
         "print(json.dumps({'type':'response','command':'prompt','id':command['id'],'success':True}),flush=True)"
     )
     async with rpc_process(tmp_path, body) as connection:
@@ -145,11 +158,12 @@ async def test_large_frame_preserves_tool_output_and_next_response(tmp_path: Pat
         try:
             while True:
                 event = await asyncio.wait_for(anext(events), 2)
-                if event.event_type == "message_end":
+                if event.event_type == event_type:
                     break
                 assert event.event_type != "meridian/error/connectionClosed", event.payload
-            assert len(event.payload["message"]["content"][0]["text"]) == 11 * 1024 * 1024
-            assert event.payload["message"]["toolName"] == "bash"
+            message = event.payload["messages"][0] if aggregate else event.payload["message"]
+            assert len(message["content"][0]["data" if aggregate else "text"]) == size
+            assert message["toolName"] == "bash"
             await asyncio.wait_for(sent, 2)
         finally:
             sent.cancel()
