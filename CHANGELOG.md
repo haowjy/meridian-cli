@@ -8,6 +8,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pi managed Bash records a consumed terminal wait marker; older Pi bundles ignore it and may notify again after rollback. No migration is needed. See [Pi managed Bash notification marker](docs/upgrading.md#unreleased-pi-managed-bash-notification-marker).
 
 ### Fixed
+- Show task-panel action failures even when existing rows remain visible.
 - Use normalized model usage for streaming budgets; tool-result prices no longer
   trigger false breaches. Receive Pi startup output while sending large prompts.
 - Let returned foreground Bash results be cleared, preserve escaped shell
