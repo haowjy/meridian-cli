@@ -11,6 +11,12 @@ observes it. Keep stdout reserved for Pi JSON-RPC: do not add a sidecar event
 transport or make command-line parsing the source of spawn authority.
 
 `managed-bash` owns shell-task execution and task records.
+Its launch-scoped owner survives extension reload; reload rebinds hooks and does
+not terminate live tasks. Cold recovery preserves records but never signals a
+persisted PID: prior running rows remain tracked with `ownership_lost` until
+explicit detach/manual recovery. Detach releases quiescence, not process
+ownership; normal shutdown still cleans up owned groups. Publish terminal only
+after group exit and queued output, and supervise every async task callback.
 `meridian-spawn-watch` owns child-spawn observation and follow-up notifications.
 Keep that mechanism/policy boundary intact.
 `session-boundary` owns bounded native lifecycle observations; only a final

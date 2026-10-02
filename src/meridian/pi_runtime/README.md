@@ -56,3 +56,5 @@ when upgrading Pi; do not broaden the catch to guess an identity.
 - **Blocking wait** — `meridian spawn wait` in the terminal, or **`/spawn:wait <p-id>`** in Pi (30m subprocess cap; CLI may checkpoint earlier).
 - **`/ps`** — observability only (`ps:kill`, `ps:logs`); no wait subcommand. `/spawns*` removed.
 - **Task pings** — tracked background bash sends one follow-up ping after `_MERIDIAN_PI_TASK_PING_INTERVAL_MS` (project config/CLI resolve to this env var). Pings are one-shot per task and reset on log activity unless `_MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY=false`.
+- **Reload and recovery** — `/reload` keeps live managed Bash tasks. A process restart preserves history and wait-consumption records; formerly running tasks show `ownership_lost`. Inspect those processes manually or use `bash_manage(action='detach', bash_id='b-…')` to release tracking. Recorded PIDs are never used to kill a process after restart.
+- **Detach and shutdown** — detach stops quiescence tracking. Pi still owns the live task and terminates its process group on normal shutdown. Kill/abort wait for owned work to exit; TERM-resistant work receives SIGKILL after a bounded grace period.

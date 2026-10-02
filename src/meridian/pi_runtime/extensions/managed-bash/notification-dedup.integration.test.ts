@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -200,12 +200,15 @@ describe("managed bash and spawn-watch completion notifications", () => {
       const recordsPath = path.join(runtimeRoot, "pi-bash", "p-notification-write-failure", "bash-records.json");
       await waitForTerminalRecord(recordsPath, bashId);
 
-      const blockedRoot = path.join(runtimeRoot, "not-a-directory");
-      await writeFile(blockedRoot, "block runtime directory creation");
-      process.env._MERIDIAN_PI_STATE_DIR = blockedRoot;
-      await expect(manageTool.execute("call", { action: "wait", bash_id: bashId })).rejects.toThrow();
-
-      process.env._MERIDIAN_PI_STATE_DIR = runtimeRoot;
+      const previous = await readFile(recordsPath, "utf-8");
+      await rm(recordsPath);
+      await mkdir(recordsPath);
+      try {
+        await expect(manageTool.execute("call", { action: "wait", bash_id: bashId })).rejects.toThrow();
+      } finally {
+        await rm(recordsPath, { recursive: true });
+        await writeFile(recordsPath, previous);
+      }
       const later = await bashTool.execute("call", { command: "true", background: true });
       const laterBashId = (later.details as { bash_id: string }).bash_id;
       await waitForTerminalRecord(recordsPath, laterBashId);
