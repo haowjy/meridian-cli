@@ -8,6 +8,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pi managed Bash records a consumed terminal wait marker; older Pi bundles ignore it and may notify again after rollback. No migration is needed. See [Pi managed Bash notification marker](docs/upgrading.md#unreleased-pi-managed-bash-notification-marker).
 
 ### Fixed
+- Define validated Pi task-state and causal delivery-receipt contracts for completion recovery.
 - Stop Pi spawn-watch from sending a second completion follow-up after `bash_manage(wait)` returns a terminal managed Bash result; unattended terminal records remain eligible for their completion notice.
 - Keep Pi completion batches reserved during delivery; overlapping scans no longer send a task twice, failed sends retain unread notices, and shutdown prevents later waves.
 
