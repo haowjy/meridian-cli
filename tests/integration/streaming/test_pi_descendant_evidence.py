@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 
 import pytest
@@ -14,7 +13,7 @@ from meridian.lib.state import spawn_store
 from meridian.lib.streaming import descendant_evidence as descendant_evidence_module
 from meridian.lib.streaming.drain_coordinator import DrainTerminalDecision
 from meridian.lib.streaming.drain_policy import DrainAction
-from tests.support.pi import PiDrainScenario, pi_event
+from tests.support.pi import PiDrainScenario, pi_event, write_json, write_pi_bash_record
 from tests.support.resident_drain import start_row
 
 _ROOT_ID = SpawnId("p1")
@@ -100,6 +99,14 @@ async def test_pi_tree_authority_polls_until_live_grandchild_finishes(
             0,
             origin="runner",
         )
+        write_json(
+            tmp_path / "pi-bash" / "p1" / "observed-spawns.json",
+            {
+                "v": 1,
+                "spawn_id": "p1",
+                "observed_spawn_ids": ["p2"],
+            },
+        )
         started.clock.advance(0.25)
 
         ready = await started.coordinator.handle_timeout()
@@ -114,7 +121,7 @@ async def test_pi_tree_authority_polls_until_live_grandchild_finishes(
 
 
 @pytest.mark.asyncio
-async def test_pi_tree_authority_polls_until_finalizing_child_gets_report(
+async def test_pi_tree_authority_waits_for_finalizing_child_publication_and_consumption(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -129,7 +136,24 @@ async def test_pi_tree_authority_polls_until_finalizing_child_gets_report(
             encoding="utf-8",
         )
         started.clock.advance(0.25)
-
+        await started.coordinator.handle_timeout()
+        await started.coordinator.wait_for_aux_wake()
+        unpublished = await started.coordinator.handle_aux_wake()
+        assert unpublished.recorded_outcome is None
+        assert any(
+            blocker.code == "pi_result_publication_pending"
+            for blocker in started.coordinator._coordinator.state.assessment.blockers
+        )
+        spawn_store.finalize_spawn(tmp_path, SpawnId("p2"), "succeeded", 0, origin="runner")
+        write_json(
+            tmp_path / "pi-bash" / "p1" / "observed-spawns.json",
+            {
+                "v": 1,
+                "spawn_id": "p1",
+                "observed_spawn_ids": ["p2"],
+            },
+        )
+        started.clock.advance(0.25)
         ready = await started.coordinator.handle_timeout()
         started.clock.advance(0.05)
         await started.coordinator.handle_timeout()
@@ -213,23 +237,7 @@ async def test_pi_tree_authority_still_blocks_on_tracked_bash(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     start_row(tmp_path, "p1", HarnessId.PI, None)
-    bash_state = tmp_path / "pi-bash" / "p1" / "bash-records.json"
-    bash_state.parent.mkdir(parents=True)
-    bash_state.write_text(
-        json.dumps(
-            {
-                "records": {
-                    "b1": {
-                        "bash_id": "b1",
-                        "is_tracked": True,
-                        "is_background": True,
-                        "status": "running",
-                    }
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
+    write_pi_bash_record(tmp_path, _ROOT_ID)
     started = await _start_pi(tmp_path, monkeypatch)
     try:
         await _assess_terminal(started)
@@ -240,10 +248,6 @@ async def test_pi_tree_authority_still_blocks_on_tracked_bash(
         assert stabilized.recorded_outcome is None
     finally:
         await started.coordinator.stop()
-
-
-
-
 
 
 @pytest.mark.asyncio

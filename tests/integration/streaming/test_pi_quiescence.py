@@ -55,9 +55,7 @@ async def test_spawn_manager_pi_attempt_timeout_keeps_terminal_truth_through_cle
     spawn_id = SpawnId("p-pi-attempt-timeout-cleanup")
     connection = _TimeoutStopConnection([])
     observed: list[RawHarnessEvent] = []
-    manager = await _start_pi_manager(
-        tmp_path, connection, spawn_id=spawn_id, observed=observed
-    )
+    manager = await _start_pi_manager(tmp_path, connection, spawn_id=spawn_id, observed=observed)
 
     outcome = await manager.stop_spawn(
         spawn_id,

@@ -72,8 +72,12 @@ export async function reservedSpawnIds(observed: ObservedSpawnsFile): Promise<Se
       const { stdout } = await execFileAsync("ps", ["-o", "lstart=", "-p", String(lease.owner_pid)],
         { timeout: 1000, env: { ...process.env, LC_ALL: "C" } });
       const birth = Date.parse(stdout.trim()) / 1000;
-      if (!Number.isFinite(birth) || Math.abs(birth - lease.owner_birth_epoch) > 2) continue;
-    } catch { continue; }
+      if (!Number.isFinite(birth)) throw Error("unreadable wait owner identity");
+      if (Math.abs(birth - lease.owner_birth_epoch) > 2) continue;
+    } catch (error) {
+      if ((error as { code?: unknown }).code === 1) continue; // ps reports no matching PID
+      throw error;
+    }
     for (const id of lease.spawn_ids) result.add(id);
   }
   return result;

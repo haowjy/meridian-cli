@@ -1,52 +1,41 @@
-# qa-validated: pi-rpc-quiescence
-"""Pi private-ledger disk watcher tests."""
+"""Validated private-file boundaries and wake delivery with real disk writes."""
 
 from __future__ import annotations
 
 import asyncio
-import json
-from contextlib import suppress
 from pathlib import Path
 
 import pytest
 
 from meridian.lib.core.types import SpawnId
-from meridian.lib.streaming.completion_contracts import EvidenceFailure
 from meridian.lib.streaming.disk_watcher import PiDiskWatcher
+from tests.support.pi import write_pi_bash_record
 
 
-def _write_json(path: Path, payload: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload), encoding="utf-8")
-
-
+@pytest.mark.parametrize("bytes_value", [b"{not json", b"\xff", b'{"records": []}'])
 @pytest.mark.asyncio
-async def test_hard_private_work_read_error_surfaces_typed_failure(tmp_path: Path) -> None:
+async def test_hard_private_read_failure_recovers_only_after_valid_publication(
+    tmp_path: Path, bytes_value: bytes
+) -> None:
     parent_id = SpawnId("p-parent")
-    records_path = tmp_path / "pi-bash" / str(parent_id) / "bash-records.json"
-    records_path.parent.mkdir(parents=True)
-    records_path.write_text("{not json", encoding="utf-8")
-
+    file = tmp_path / "pi-bash" / str(parent_id) / "bash-records.json"
+    file.parent.mkdir(parents=True)
+    file.write_bytes(bytes_value)
     watcher = PiDiskWatcher(tmp_path, parent_id)
     await watcher.start()
     try:
         failure = watcher.evidence_failure()
-
-        assert failure == EvidenceFailure(
-            code="pi_private_work_read_failed",
-            detail=f"{records_path.as_posix()}: invalid JSON",
-        )
-
-        _write_json(records_path, {"records": {}})
+        assert failure is not None and failure.code == "pi_private_work_read_failed"
+        assert str(file) in (failure.detail or "")
+        write_pi_bash_record(tmp_path, parent_id)
         await watcher.force_rescan()
-
-        assert watcher.evidence_failure() is None
+        assert watcher.evidence_failure() is None and watcher.has_tracked_bash_bg()
     finally:
         await watcher.stop()
 
 
 @pytest.mark.asyncio
-async def test_missing_private_work_file_is_not_an_evidence_failure(tmp_path: Path) -> None:
+async def test_missing_private_file_is_empty(tmp_path: Path) -> None:
     watcher = PiDiskWatcher(tmp_path, SpawnId("p-parent"))
     await watcher.start()
     try:
@@ -55,109 +44,35 @@ async def test_missing_private_work_file_is_not_an_evidence_failure(tmp_path: Pa
         await watcher.stop()
 
 
+@pytest.mark.parametrize("before_wait", [False, True])
 @pytest.mark.asyncio
-async def test_invalid_utf8_surfaces_typed_failure(tmp_path: Path) -> None:
+async def test_validated_disk_change_wakes_current_or_next_waiter(
+    tmp_path: Path, before_wait: bool
+) -> None:
     parent_id = SpawnId("p-parent")
-    records_path = tmp_path / "pi-bash" / str(parent_id) / "bash-records.json"
-    records_path.parent.mkdir(parents=True)
-    records_path.write_bytes(b"\xff")
-
     watcher = PiDiskWatcher(tmp_path, parent_id)
     await watcher.start()
     try:
-        failure = watcher.evidence_failure()
-
-        assert failure is not None
-        assert failure.code == "pi_private_work_read_failed"
-        assert failure.detail is not None
-        assert records_path.as_posix() in failure.detail
-    finally:
-        await watcher.stop()
-
-
-@pytest.mark.asyncio
-async def test_wait_for_change_wakes_on_refresh(tmp_path: Path) -> None:
-    parent_id = SpawnId("p-parent")
-    marker_path = tmp_path / "pi-bash" / str(parent_id) / "last-notification.json"
-    _write_json(marker_path, {"ts_epoch_secs": 1.0})
-
-    watcher = PiDiskWatcher(tmp_path, parent_id)
-    await watcher.start()
-    try:
-        wait_task = asyncio.create_task(watcher.wait_for_change())
+        waiter = None if before_wait else asyncio.create_task(watcher.wait_for_change())
         await asyncio.sleep(0)
-        assert not wait_task.done()
-        _write_json(marker_path, {"ts_epoch_secs": 2.0})
+        write_pi_bash_record(tmp_path, parent_id)
         await watcher.force_rescan()
-        await wait_task
+        if waiter is None:
+            waiter = asyncio.create_task(watcher.wait_for_change())
+        await asyncio.wait_for(waiter, 1)
+        assert watcher.has_tracked_bash_bg()
     finally:
         await watcher.stop()
 
 
 @pytest.mark.asyncio
-async def test_wait_for_change_observes_pre_signaled_refresh(tmp_path: Path) -> None:
-    parent_id = SpawnId("p-parent")
-    marker_path = tmp_path / "pi-bash" / str(parent_id) / "last-notification.json"
-
-    watcher = PiDiskWatcher(tmp_path, parent_id)
+async def test_retired_marker_cannot_poison_or_authorize_completion(tmp_path: Path) -> None:
+    parent = tmp_path / "pi-bash" / "p-parent"
+    parent.mkdir(parents=True)
+    (parent / "last-notification.json").write_text("{invalid retired marker")
+    watcher = PiDiskWatcher(tmp_path, SpawnId("p-parent"))
     await watcher.start()
     try:
-        _write_json(marker_path, {"ts_epoch_secs": 1.0})
-        await watcher.force_rescan()
-        await watcher.wait_for_change()
-
-        wait_task = asyncio.create_task(watcher.wait_for_change())
-        await asyncio.sleep(0)
-        assert not wait_task.done()
-        wait_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await wait_task
-    finally:
-        await watcher.stop()
-
-
-@pytest.mark.asyncio
-async def test_pi_disk_watcher_tracks_bash_and_notification_files(tmp_path: Path) -> None:
-    parent_id = SpawnId("p-parent")
-    bash_dir = tmp_path / "pi-bash" / str(parent_id)
-    records_path = bash_dir / "bash-records.json"
-    marker_path = bash_dir / "last-notification.json"
-    _write_json(
-        records_path,
-        {
-            "records": {
-                "b1": {
-                    "bash_id": "b1",
-                    "is_tracked": True,
-                    "is_background": True,
-                    "status": "running",
-                }
-            }
-        },
-    )
-    _write_json(marker_path, {"ts_epoch_secs": 123.5})
-
-    watcher = PiDiskWatcher(tmp_path, parent_id)
-    await watcher.start()
-    try:
-        assert watcher.has_tracked_bash_bg() is True
-        assert watcher.last_notification_ts() == 123.5
-
-        _write_json(
-            records_path,
-            {
-                "records": {
-                    "b1": {
-                        "bash_id": "b1",
-                        "is_tracked": True,
-                        "is_background": True,
-                        "status": "exited",
-                    }
-                }
-            },
-        )
-        await watcher.force_rescan()
-
-        assert watcher.has_tracked_bash_bg() is False
+        assert watcher.evidence_failure() is None
     finally:
         await watcher.stop()

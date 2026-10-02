@@ -138,16 +138,18 @@ orphaned; deletion, normal completion, cancellation, and shutdown stop it intent
   immutable categorized snapshots
 - `resident_drain.py` — resident evidence/profile/cleanup and drain-protocol adapter
 - `pi_lifecycle_tracker.py` — validation/deduplication for produced Pi lifecycle events
-- `disk_watcher.py` / `pi_quiescence.py` — Pi-private bash/notification disk
-  observation and parent-idle epochs; disk-backed private evidence feeds the ledger
+- `disk_watcher.py` / `pi_quiescence.py` — validated Pi-private task/receipt disk
+  observation and exact public-message admission fencing; disk evidence feeds the ledger
 - `drain_wait.py` — generic event/timeout/aux-wake arbitration for drain loops
 - `drain_policy.py` — `DrainPolicy`, `SingleTurnDrainPolicy`, `PersistentDrainPolicy`
 - `control_socket.py` — per-spawn inject endpoint
 - `types.py` — `InjectResult`, `ControlMessage`
 
 Resident and Pi completion use the shared reconciled transitive spawn-tree assessment as
-their sole persisted-descendant authority. Pi's disk watcher observes only private bash
-and notification files; incomplete or wrong-parent spawn directories are not descendant
+their sole persisted-descendant authority. One reconciled projection also retains raw
+canonical rows for Pi result obligations: a read-only terminal inference cannot replace
+terminal publication. Pi's disk watcher observes private task, consumption, receipt,
+public-observation and fault files; incomplete or wrong-parent spawn directories are not descendant
 evidence. Accessors read one immutable cached assessment; a single-flight worker catches
 up the history index, selects the transitive subtree (including archived ancestry), and
 authoritatively rereads selected loose rows. Refresh completion uses the auxiliary-wake
