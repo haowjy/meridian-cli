@@ -98,6 +98,8 @@ an awaited startup boundary, artifact opens and guarded scope registration fail 
   split.
 - `managed_stdio.py` — spawn-lifetime stdio child ownership, durable scope
   registration, termination escalation, and bounded current-launch stderr tails.
+- `pi_rpc_stream.py` — bounded byte framing and reusable temporary Pi event inbox;
+  reception owns ACKs independently of the event consumer.
 - `__init__.py` — `get_connection_class(harness_id, transport_id)`.
 
 ## Depth

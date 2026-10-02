@@ -90,6 +90,7 @@ and session directory defaults use this seam; forced adapter policy remains in
 **Pi usage is per assistant message.** Fold each `message_end` increment once;
 `agent_end.messages` is repeated history. Unknown usage operands leave totals
 unknown. The live budget consumes the typed cumulative fold before fan-out.
+Numeric cost coercion rejects boolean, nonfinite, and unrepresentable values.
 
 **SpawnParams accounting:** every field must appear in `consumed_fields` or
 `explicitly_ignored_fields` for each adapter. Adding a `SpawnParams` field

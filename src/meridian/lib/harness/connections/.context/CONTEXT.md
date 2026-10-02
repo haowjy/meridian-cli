@@ -107,13 +107,22 @@ definition, not per-instance. Fields:
 
 ### Pi RPC Stdout Path
 
-`PiRpcConnection.events()` consumes exactly one stdout reader task. The event loop:
+`PiRpcConnection` owns one receive task from successful startup through stop.
+Reception resolves prompt ACKs and observes protocol readiness independently of
+`events()` consumption; an awaited completion nudge cannot block its own ACK.
+The initial prompt has a 30-second first-protocol-event deadline. Follow-up
+writes and ACKs have a 30-second deadline; failures after writing are delivery
+uncertainty and must not replay the prompt. Stdout EOF gives the leader one
+second to exit before failing and cleaning its process scope.
 
-1. yields queued Meridian phase events (`process_spawned`, `initial_prompt_sent`, etc.);
-2. waits for the first stdout event with a 30-second deadline after the initial prompt;
-3. parses each stdout line as a Pi JSON object;
-4. emits `first_pi_event_received` and `session_event_seen` / `session_event_absent` phase events;
-5. yields normalized `HarnessEvent` objects to the streaming drain loop.
+`pi_rpc_stream.py` frames NDJSON through 64 KiB byte reads, accepts frames up to
+64 MiB, and preserves a final complete row without LF. A lossless anonymous
+circular-file inbox holds at most 128 MiB of unread event bytes; consumed space
+is reused, so disk use stays bounded over the whole session. Overflow fails
+explicitly with byte counts, retains prior events, and surfaces a terminal
+connection error. It is transient transport buffering, never a state journal.
+Payloads remain canonical; wire tracing happens at reception. `events()` yields
+startup phases and inbox events in order to the streaming drain loop.
 
 Malformed stdout becomes `meridian.lifecycle.parse_error` so bad protocol output fails
 closed and stays visible. Canonical lifecycle-looking stdout events are ignored because
@@ -122,7 +131,8 @@ current Pi coordination is disk-backed.
 ### Pi Stop Path
 
 `stop(reason="quiescent")` sends `{"type": "abort"}` to the Pi subprocess, waits a
-5-second abort grace period, then escalates to process termination if Pi is still alive.
+5-second abort grace period, then cleans the captured process scope, including
+descendants left after the leader exits. Abort writes also have a deadline.
 The streaming layer records cleanup phases (`cleanup_running`, `cleanup_completed`,
 `cleanup_escalated`, `cleanup_failed`) around this transport stop.
 

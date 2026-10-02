@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.connections.base import RawHarnessEvent
@@ -16,7 +18,7 @@ def _output_store(spawn_id: SpawnId, lines: list[dict[str, object]]) -> AttemptF
     return facts
 
 
-def test_pi_extractor_reads_usage_from_latest_assistant_message_end() -> None:
+def test_pi_extractor_reads_usage_from_assistant_message_end() -> None:
     spawn_id = SpawnId("p-pi-usage")
     store = _output_store(
         spawn_id,
@@ -91,6 +93,52 @@ def test_pi_usage_counts_every_model_call_once_and_preserves_unknown_totals() ->
     _fold(fold, {"type": "message_end", "message": {"role": "assistant", "usage": {"output": 0}}})
     assert fold.facts.usage.input_tokens is None
     assert fold.facts.usage.output_tokens == 30
+    assert fold.facts.usage.total_cost_usd is None
+    _fold(fold, {"type": "message_end", "message": {"role": "assistant"}})
+    assert fold.facts.usage.output_tokens is None
+
+
+@pytest.mark.parametrize("missing_first", [False, True])
+def test_pi_usage_whole_missing_increment_keeps_totals_unknown(missing_first: bool) -> None:
+    messages = [
+        {"role": "assistant", "usage": {"input": 1, "output": 2, "cost": {"total": 0.5}}},
+        {"role": "assistant"},
+    ]
+    if missing_first:
+        messages.reverse()
+    fold = PI_EXTRACTOR.create_fold()
+    for message in messages:
+        _fold(fold, {"type": "message_end", "message": message})
+    assert fold.facts.usage is not None
+    assert fold.facts.usage.input_tokens is None
+    assert fold.facts.usage.output_tokens is None
+    assert fold.facts.usage.total_cost_usd is None
+
+
+@pytest.mark.parametrize(
+    "cost",
+    [True, False, float("nan"), float("inf"), -float("inf"), "nan", "inf", 10**1000],
+    ids=[
+        "true",
+        "false",
+        "nan",
+        "positive_inf",
+        "negative_inf",
+        "nan_text",
+        "inf_text",
+        "huge_int",
+    ],
+)
+def test_pi_usage_malformed_cost_is_unknown(cost: object) -> None:
+    fold = PI_EXTRACTOR.create_fold()
+    _fold(
+        fold,
+        {
+            "type": "message_end",
+            "message": {"role": "assistant", "usage": {"cost": {"total": cost}}},
+        },
+    )
+    assert fold.facts.usage is not None
     assert fold.facts.usage.total_cost_usd is None
 
 
