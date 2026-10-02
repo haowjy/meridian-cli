@@ -37,6 +37,24 @@ describe("managed Bash execution ownership", () => {
     } finally { await runtime.shutdown(); await rm(root, { recursive: true, force: true }); }
   });
 
+  it("clears causally admitted completion and refuses invalid receipt evidence", async () => {
+    const { root, runtime, recordsPath } = await setup();
+    try {
+      const started = await runtime.execute({ command: "printf admitted", background: true }, undefined) as { bash_id: string };
+      await until(() => runtime.list(true)[0]?.status === "exited");
+      const receiptsPath = path.join(path.dirname(recordsPath), "delivery-receipts.json");
+      await writeFile(receiptsPath, "{");
+      await expect(runtime.clearFinished()).rejects.toThrow();
+      await writeFile(receiptsPath, JSON.stringify({ v: 1, spawn_id: "different-parent", messages: {} }));
+      await expect(runtime.clearFinished()).rejects.toThrow("invalid delivery receipts");
+      expect(runtime.list(true)).toHaveLength(1);
+      await writeFile(receiptsPath, JSON.stringify({ v: 1, spawn_id: "p900001", messages: { "delivery-1": [started.bash_id] } }));
+      vi.stubEnv("_MERIDIAN_PI_STATE_DIR", path.join(root, "later-env"));
+      expect(await runtime.clearFinished()).toBe(1);
+      expect(JSON.parse(await readFile(recordsPath, "utf8")).records).toEqual({});
+    } finally { await runtime.shutdown(); await rm(root, { recursive: true, force: true }); }
+  });
+
   it("abort waits for foreground task exit", async () => {
     const { root, runtime } = await setup();
     try {

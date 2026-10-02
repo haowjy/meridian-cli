@@ -50,11 +50,11 @@ export class ShellTask {
   }
 
   private async waitUntilGone(timeoutMs: number): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs;
+    const deadline = performance.now() + timeoutMs;
     do {
       if (this.exitCode !== null && !await this.hasLiveGroup()) return true;
       await delay(25);
-    } while (Date.now() < deadline);
+    } while (performance.now() < deadline);
     return this.exitCode !== null && !await this.hasLiveGroup();
   }
 

@@ -5,10 +5,12 @@ import { StringDecoder } from "node:string_decoder";
 import { classifyWorkId } from "../../shared/ids";
 import { writeJsonAtomic } from "../../shared/json_file";
 import { runMeridianCommand } from "../../shared/meridian_cli";
+import { admittedWorkIds, readDeliveryReceipts } from "../../shared/delivery_receipts";
 import {
   currentSpawnIdFromEnv,
   resolveBashLogsDir,
   resolveBashRecordsPath,
+  resolveDeliveryReceiptsPath,
 } from "../../shared/pi_state_paths";
 import { isTerminalBashStatus, parseBashRecordsFile, type BashRecord, type BashRecordsFile, type BashStatus } from "../../shared/schemas";
 import { rememberSpawnOriginBashIds } from "../../shared/spawn_origins";
@@ -113,6 +115,7 @@ const owners = scope[ownersKey] ??= new Map<string, BashRuntime>();
 export class BashRuntime {
   private readonly spawnId = currentSpawnIdFromEnv();
   private readonly recordsPath = resolveBashRecordsPath(this.spawnId);
+  private readonly receiptsPath = resolveDeliveryReceiptsPath(this.spawnId);
   private readonly logStore = new BashLogStore(resolveBashLogsDir(this.spawnId));
   private readonly records = new Map<string, RuntimeRecord>();
   private persistQueue: Promise<void> = Promise.resolve();
@@ -288,7 +291,8 @@ export class BashRuntime {
 
   async clearFinished(): Promise<number> {
     await this.prepare();
-    const finished = [...this.records.values()].filter((record) => record.status !== "running" && (!record.is_tracked || record.notification_consumed_at_ms != null));
+    const admitted = admittedWorkIds(await readDeliveryReceipts(this.spawnId, this.receiptsPath));
+    const finished = [...this.records.values()].filter((record) => record.status !== "running" && (!record.is_tracked || record.notification_consumed_at_ms != null || admitted.has(record.bash_id)));
     for (const record of finished) this.records.delete(record.bash_id);
     if (finished.length > 0) {
       try { await this.persist(); }

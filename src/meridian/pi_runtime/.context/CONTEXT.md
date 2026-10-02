@@ -68,8 +68,10 @@ when storage permits; a successful later command can repair publication. A
 corrupt store is preserved and refused until repaired. Log readers bound bytes
 with seek/read, and panels load preview snapshots before rendering.
 Wait propagates supervised execution failures even after group cleanup; it does
-not consume a failed result. Clearing history prunes only untracked or durably
-wait-consumed terminal rows, preserving unattended completion obligations.
+not consume a failed result. Clearing history prunes only untracked, durably
+wait-consumed, or causally admitted terminal rows, preserving unattended
+completion obligations. Read admission receipts through the shared strict
+reader at the owner's frozen path; invalid evidence refuses pruning.
 Spawn-watch suppresses only terminal Bash records whose persisted
 `notification_consumed_at_ms` is written before `bash_manage(wait)` returns a
 terminal result. Missing markers preserve completion notifications for
