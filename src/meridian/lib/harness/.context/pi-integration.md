@@ -11,6 +11,7 @@ subprocess. Meridian-owned extensions split by concern:
 
 - **managed-bash** — task registry, `bash` / `bash_manage`, bash bridge, `/ps*` UI, and bash-record writes. See `src/meridian/pi_runtime/extensions/managed-bash/`.
 - **meridian-spawn-watch** — spawn discovery, implicit-wait notification dispatch, `/spawn*` UI, and disk observation. See `src/meridian/pi_runtime/extensions/meridian-spawn-watch/`.
+- **session-boundary** — always loaded, on primary and spawned launches alike, with no `[harness.pi]` toggle. It publishes Pi's `session_start`, `session_before_switch` and `session_shutdown` identity to the spawn's nonce-guarded `pi-session-boundary.json`, which `PiAdapter` reads after exit (`pi_boundary.read_boundary`) to verify the exit session. See `src/meridian/pi_runtime/extensions/session-boundary/`.
 
 Shared helpers under `src/meridian/pi_runtime/extensions/shared/` are UI/path/schema/json/id
 helpers only; they are not the runtime authority boundary. The coordination boundary is
@@ -18,7 +19,7 @@ the disk state the extensions write and the Python side observes.
 
 Extensions are TypeScript, built with `pnpm run build:extensions`, and loaded via stable
 `-e` paths from `pi_paths.resolve_meridian_pi_extension_root()` (`~/.meridian/pi/extensions/`
-or packaged `dist/extensions`). `[harness.pi]` toggles and `load_all_pi_extensions` are
+or packaged `dist/extensions`). The managed-bash and spawn-watch `[harness.pi]` toggles and `load_all_pi_extensions` are
 resolved from the launch config snapshot in `bind_launch_context()` → `SpawnParams.pi_harness_profile`
 → `PiAdapter.resolve_launch_spec()` (not ambient CWD config reload).
 
