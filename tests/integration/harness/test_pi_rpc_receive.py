@@ -31,6 +31,8 @@ async def rpc_process(
     body: str,
     *,
     timing: PiRpcTimingPolicy | None = None,
+    prompt: str = "FIRST",
+    startup: str = "",
 ) -> AsyncIterator[PiRpcConnection]:
     runtime_root = root / "runtime"
     spawn_id = SpawnId("rpc-reception")
@@ -49,7 +51,7 @@ async def rpc_process(
         f"#!{sys.executable}\nimport json,os,sys,time\n"
         "if '--version' in sys.argv: print('0.87.1'); raise SystemExit\n"
         f"if '--help' in sys.argv: print({HELP!r}); raise SystemExit\n"
-        "for line in sys.stdin:\n"
+        + startup + "\nfor line in sys.stdin:\n"
         " command=json.loads(line)\n"
         " if command['type']=='abort': raise SystemExit\n"
         " if command['type']!='prompt': continue\n"
@@ -65,7 +67,7 @@ async def rpc_process(
     config = ConnectionConfig(
         spawn_id=spawn_id,
         harness_id=HarnessId.PI,
-        prompt="FIRST",
+        prompt=prompt,
         control_root=root,
         runtime_root=runtime_root,
         pi_session_role="spawned",
@@ -73,7 +75,7 @@ async def rpc_process(
     )
     spec = ResolvedLaunchSpec(
         harness=HarnessId.PI,
-        prompt="FIRST",
+        prompt=prompt,
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
     try:
@@ -81,6 +83,31 @@ async def rpc_process(
         yield connection
     finally:
         await connection.stop()
+
+
+@pytest.mark.asyncio
+async def test_large_prompt_and_startup_frame_do_not_block_each_other(tmp_path: Path) -> None:
+    startup = (
+        "print(json.dumps({'type':'session','id':'startup','data':'x'*(512*1024)}),flush=True)"
+    )
+    body = (
+        "print(json.dumps({'type':'response','command':'prompt',"
+        "'id':command['id'],'success':True}),flush=True)"
+    )
+    async with rpc_process(
+        tmp_path, body, startup=startup, prompt="x" * (512 * 1024),
+        timing=PiRpcTimingPolicy(
+            prompt_ack_timeout_seconds=1, abort_grace_seconds=.05, kill_grace_seconds=.05
+        ),
+    ) as connection:
+        events = connection.events()
+        try:
+            while (event := await asyncio.wait_for(anext(events), 1)).event_type != "response":
+                pass
+            assert event.payload["success"] is True
+            assert connection.session_id == "startup"
+        finally:
+            await events.aclose()
 
 
 @pytest.mark.asyncio
@@ -190,6 +217,8 @@ async def test_live_budget_stops_on_sum_of_pi_message_costs(tmp_path: Path) -> N
     from tests.support.pi import NoopControlServer
 
     body = (
+        "print(json.dumps({'type':'tool_execution_end','toolName':'invoice',"
+        "'result':{'details':{'cost':100}}}),flush=True)\n"
         "for i in range(2):\n"
         " print(json.dumps({'type':'message_end','message':{'role':'assistant','content':[],"
         "'usage':{'input':1,'output':1,'cacheRead':0,'cacheWrite':0,'cost':{'total':0.9}}}}),flush=True)\n"

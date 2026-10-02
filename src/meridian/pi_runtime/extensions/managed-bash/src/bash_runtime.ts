@@ -291,7 +291,7 @@ export class BashRuntime {
   async clearFinished(): Promise<number> {
     await this.prepare();
     const admitted = admittedWorkIds(await readDeliveryReceipts(this.spawnId, this.receiptsPath));
-    const finished = [...this.records.values()].filter((record) => record.status !== "running" && (!record.is_tracked || record.notification_consumed_at_ms != null || admitted.has(record.bash_id)));
+    const finished = [...this.records.values()].filter((record) => record.status !== "running" && (!record.is_background || !record.is_tracked || record.notification_consumed_at_ms != null || admitted.has(record.bash_id)));
     for (const record of finished) this.records.delete(record.bash_id);
     if (finished.length > 0) {
       try { await this.persist(); }

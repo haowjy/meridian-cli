@@ -156,7 +156,7 @@ function splitUserBashBackground(command: string): { background: boolean; execCo
       escape = false;
       continue;
     }
-    if (ch === "\\" && (inSingle || inDouble)) {
+    if (ch === "\\" && !inSingle) {
       escape = true;
       continue;
     }

@@ -32,7 +32,7 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.bundle import get_harness_bundle
-from meridian.lib.harness.common import parse_json_stream_event, unwrap_event_payload
+from meridian.lib.harness.common import parse_json_stream_event
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
 from meridian.lib.harness.extractors.base import AttemptFold
 from meridian.lib.harness.semantics import (
@@ -268,22 +268,6 @@ def _line_from_harness_event(event: RawHarnessEvent) -> str:
     return json.dumps(payload, separators=(",", ":"), sort_keys=True)
 
 
-def _observe_budget_from_event(
-    *,
-    budget_tracker: LiveBudgetTracker | None,
-    event: RawHarnessEvent,
-) -> BudgetBreach | None:
-    if budget_tracker is None:
-        return None
-
-    payload = unwrap_event_payload(event.payload)
-    try:
-        encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    except (TypeError, ValueError):
-        return None
-    return budget_tracker.observe_json_line(encoded)
-
-
 def _emit_stream_event(
     *,
     line: str,
@@ -313,9 +297,6 @@ def _emit_stream_event(
 async def _consume_subscriber_events(
     *,
     subscriber: asyncio.Queue[NormalizedHarnessEvent | None],
-    budget_tracker: LiveBudgetTracker | None,
-    budget_signal: asyncio.Event,
-    budget_breach_holder: list[BudgetBreach | None],
     event_observer: Callable[[StreamEvent], None] | None,
     stream_stdout_to_terminal: bool,
     terminal_event_future: asyncio.Future[TerminalEventOutcome] | None = None,
@@ -329,15 +310,6 @@ async def _consume_subscriber_events(
 
         if last_event_at is not None:
             last_event_at[0] = asyncio.get_running_loop().time()
-
-        if budget_breach_holder[0] is None:
-            breach = _observe_budget_from_event(
-                budget_tracker=budget_tracker,
-                event=event,
-            )
-            if breach is not None:
-                budget_breach_holder[0] = breach
-                budget_signal.set()
 
         if terminal_event_future is not None and not terminal_event_future.done():
             event_outcome = normalized_event.semantics.terminal
@@ -523,9 +495,6 @@ async def run_streaming_spawn(
         consume_task = asyncio.create_task(
             _consume_subscriber_events(
                 subscriber=subscriber,
-                budget_tracker=None,
-                budget_signal=asyncio.Event(),
-                budget_breach_holder=[None],
                 event_observer=None,
                 stream_stdout_to_terminal=stream_to_terminal,
                 terminal_event_future=terminal_event_capture,
@@ -685,9 +654,6 @@ async def _run_streaming_attempt(
         consume_task = asyncio.create_task(
             _consume_subscriber_events(
                 subscriber=subscriber,
-                budget_tracker=budget_tracker,
-                budget_signal=budget_signal,
-                budget_breach_holder=budget_breach_holder,
                 event_observer=event_observer,
                 stream_stdout_to_terminal=stream_stdout_to_terminal,
                 terminal_event_future=terminal_event_capture,

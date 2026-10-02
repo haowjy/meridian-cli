@@ -225,6 +225,14 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             )
             self._emit_startup_phase(StartupPhase.WAITING_FOR_CONNECTION)
             self._set_state("connected")
+            if not self._initial_prompt_sent:
+                self._waiting_for_first_pi_event_after_prompt = True
+                self._first_event_deadline_monotonic = (
+                    self._clock() + self._timing.first_event_timeout_seconds
+                )
+            # Read while writing: either pipe may fill during startup. Arm the
+            # first-event deadline before reception can observe an early reply.
+            self._receive_task = asyncio.create_task(self._receive())
             sent_initial_prompt = await self._send_initial_prompt_if_pending()
             prompt_chars = len(self._initial_prompt)
             prompt_bytes = len(self._initial_prompt.encode("utf-8"))
@@ -233,10 +241,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                     "initial_prompt_sent",
                     prompt_chars=prompt_chars,
                     prompt_bytes=prompt_bytes,
-                )
-                self._waiting_for_first_pi_event_after_prompt = True
-                self._first_event_deadline_monotonic = (
-                    self._clock() + self._timing.first_event_timeout_seconds
                 )
                 self._queue_lifecycle_phase_event(
                     "waiting_for_first_pi_event_after_prompt",
@@ -248,7 +252,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                     prompt_chars=prompt_chars,
                     prompt_bytes=prompt_bytes,
                 )
-            self._receive_task = asyncio.create_task(self._receive())
         except BaseException:
             self._mark_failed("Pi RPC connection startup failed.")
             await reap_on_ownership_transfer_failure(self._cleanup_start_failure)

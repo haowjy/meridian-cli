@@ -68,9 +68,9 @@ when storage permits; a successful later command can repair publication. A
 corrupt store is preserved and refused until repaired. Log readers bound bytes
 with seek/read, and panels load preview snapshots before rendering.
 Wait propagates supervised execution failures even after group cleanup; it does
-not consume a failed result. Clearing history prunes only untracked, durably
-wait-consumed, or causally admitted terminal rows, preserving unattended
-completion obligations. Read admission receipts through the shared strict
+not consume a failed result. Clearing history prunes returned foreground,
+untracked, durably wait-consumed, or causally admitted terminal rows, preserving
+unattended background completion obligations. Read admission receipts through the shared strict
 reader at the owner's frozen path; invalid evidence refuses pruning.
 Noninteractive slash commands use the required native `ctx.ui.notify` API;
 plain tables or logs must never be written to the RPC stdout transport.

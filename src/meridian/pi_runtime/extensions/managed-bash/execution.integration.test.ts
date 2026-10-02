@@ -27,6 +27,19 @@ async function setup(): Promise<{ root: string; runtime: BashRuntime; recordsPat
 afterEach(() => vi.unstubAllEnvs());
 
 describe("managed Bash execution ownership", () => {
+  it("keeps escaped ampersands in foreground user Bash commands", async () => {
+    const { root, runtime } = await setup();
+    const hooks = new Map<string, Function>();
+    const host = {on: (name: string, fn: Function) => hooks.set(name, fn), registerTool() {}, registerCommand() {}};
+    try {
+      managedBashExtension(host as unknown as ExtensionAPI);
+      const result = await hooks.get("user_bash")!({command: "printf '%s' \\&", cwd: root});
+      expect(result.operations).toBeDefined();
+      expect(result.result).toBeUndefined();
+      expect(runtime.list(true)).toEqual([]);
+    } finally { await runtime.shutdown(); await rm(root, { recursive: true, force: true }); }
+  });
+
   it("routes noninteractive slash-command output through the native UI API", async () => {
     const { root, runtime } = await setup();
     const commands = new Map<string, Parameters<ExtensionAPI["registerCommand"]>[1]>();
@@ -48,6 +61,15 @@ describe("managed Bash execution ownership", () => {
       } finally { stdout.mockRestore(); }
       expect(notify).toHaveBeenCalledWith(expect.stringContaining(row.bash_id), "info");
       expect(notify).toHaveBeenCalledWith("rpc-safe", "info");
+    } finally { await runtime.shutdown(); await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("clears returned foreground results without needing notification receipts", async () => {
+    const { root, runtime } = await setup();
+    try {
+      await runtime.execute({ command: "printf foreground" }, undefined);
+      expect(await runtime.clearFinished()).toBe(1);
+      expect(runtime.list(true)).toEqual([]);
     } finally { await runtime.shutdown(); await rm(root, { recursive: true, force: true }); }
   });
 
