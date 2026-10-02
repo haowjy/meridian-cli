@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +30,7 @@ from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.async_determinism import AsyncDeterminism, assert_still_pending, wait_until
 from tests.support.pi import FakePiConnection as _FakePiConnection
 from tests.support.pi import NoopControlServer as _NoopControlServer
-from tests.support.pi import PiDrainScenario
+from tests.support.pi import PiDrainScenario, write_pi_bash_record
 from tests.support.pi import pi_event as _pi_event
 from tests.support.resident_drain import start_row
 
@@ -42,19 +41,7 @@ def _write_json(path: Path, payload: object) -> None:
 
 
 def _write_running_bash_record(runtime_root: Path, spawn_id: SpawnId, *, running: bool) -> None:
-    _write_json(
-        runtime_root / "pi-bash" / str(spawn_id) / "bash-records.json",
-        {
-            "records": {
-                "b1": {
-                    "bash_id": "b1",
-                    "is_tracked": True,
-                    "is_background": True,
-                    "status": "running" if running else "exited",
-                }
-            }
-        },
-    )
+    write_pi_bash_record(runtime_root, spawn_id, running=running, consumed=not running)
 
 
 async def _started_pi_coordinator(
@@ -536,7 +523,7 @@ async def test_micro_drain_timeout_rechecks_disk_before_accepting(
 
 
 @pytest.mark.asyncio
-async def test_micro_drain_recheck_preserves_idle_epoch_for_notifications(
+async def test_micro_drain_recheck_preserves_new_terminal_result_obligation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     spawn_id = SpawnId("p-micro-drain-notification")
@@ -546,10 +533,7 @@ async def test_micro_drain_recheck_preserves_idle_epoch_for_notifications(
         spawn_id=spawn_id,
         mark_idle=True,
     )
-    _write_json(
-        tmp_path / "pi-bash" / str(spawn_id) / "last-notification.json",
-        {"ts_epoch_secs": time.time()},
-    )
+    write_pi_bash_record(tmp_path, spawn_id, running=False)
 
     try:
         requested = await started.coordinator.handle_timeout()
@@ -643,6 +627,14 @@ async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
             "succeeded",
             0,
             origin="runner",
+        )
+        _write_json(
+            tmp_path / "pi-bash" / str(spawn_id) / "observed-spawns.json",
+            {
+                "v": 1,
+                "spawn_id": str(spawn_id),
+                "observed_spawn_ids": ["p123"],
+            },
         )
         disk_wakeup.set()
         outcome = await completion

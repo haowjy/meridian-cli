@@ -7,7 +7,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
@@ -126,6 +126,31 @@ class PiCompletionEvidence:
             self.quiescence_tracker.mark_turn_active()
         elif transition == "idle":
             await self.quiescence_tracker.mark_idle()
+        if event.event_type == "message_start":
+            raw_message = event.payload.get("message")
+            message = (
+                cast("dict[str, object]", raw_message) if isinstance(raw_message, dict) else {}
+            )
+            if (
+                message
+                and message.get("role") == "custom"
+                and message.get("customType") == "meridian-spawn-watch"
+            ):
+                raw_details = message.get("details")
+                details = (
+                    cast("dict[str, object]", raw_details) if isinstance(raw_details, dict) else {}
+                )
+                delivery_id = details.get("delivery_id")
+                work_ids = details.get("work_ids")
+                if (
+                    isinstance(delivery_id, str)
+                    and isinstance(work_ids, list)
+                ):
+                    members = cast("list[object]", work_ids)
+                    if all(isinstance(item, str) for item in members):
+                        self.quiescence_tracker.observe_delivery_message(
+                            delivery_id, cast("list[str]", members)
+                        )
         profile = self._profile
         if profile is not None:
             profile.after_observed_event(transition)
@@ -213,16 +238,17 @@ class PiCompletionEvidence:
 
     def classify_outstanding_work(self) -> PiOutstandingWork:
         reconciled_descendants = self._assess_reconciled_descendants()
-        private_work = self.quiescence_tracker.private_work_snapshot()
+        private_work = self._private_work_snapshot()
         if reconciled_descendants.disposition == "unknown":
             return PiOutstandingWork(
                 spawn_children=True,
-                non_spawn_processes=private_work.tracked_bash_bg,
+                non_spawn_processes=bool(private_work.blockers),
             )
 
         return PiOutstandingWork(
             spawn_children=bool(reconciled_descendants.blockers),
-            non_spawn_processes=private_work.tracked_bash_bg,
+            non_spawn_processes=bool(private_work.blockers)
+            or bool(self._pending_result_blockers(private_work)),
         )
 
     def _assess_reconciled_descendants(self) -> WorkAssessment:
@@ -230,7 +256,7 @@ class PiCompletionEvidence:
 
     def _assessment(self, reconciled_descendants: WorkAssessment) -> WorkAssessment:
         descendants = self._persisted_descendant_assessment(reconciled_descendants)
-        private_work = self.quiescence_tracker.private_work_snapshot()
+        private_work = self._private_work_snapshot()
         private_failure = private_work.failure
         if descendants.disposition == "unknown" or private_failure is not None:
             failure = descendants.failure or private_failure
@@ -243,7 +269,11 @@ class PiCompletionEvidence:
                 failure=failure,
             )
 
-        blockers = descendants.blockers + self._pi_owned_blockers(private_work)
+        blockers = (
+            descendants.blockers
+            + self._pi_owned_blockers(private_work)
+            + self._pending_result_blockers(private_work)
+        )
         signature = tuple((item.code, item.identity) for item in blockers)
         if blockers:
             return WorkAssessment(
@@ -262,6 +292,32 @@ class PiCompletionEvidence:
     ) -> WorkAssessment:
         return reconciled_descendants
 
+    def _private_work_snapshot(self) -> PiPrivateWorkSnapshot:
+        origins = frozenset(
+            row.originating_bash_id
+            for row in self._refresh.records
+            if row.parent_id == str(self.spawn_id) and row.originating_bash_id
+        )
+        return self.quiescence_tracker.private_work_snapshot(correlated_bash_ids=origins)
+
+    def _pending_result_blockers(
+        self, private: PiPrivateWorkSnapshot
+    ) -> tuple[DiagnosticBlocker, ...]:
+        active_ids = {item.identity for item in self._refresh.assessment.blockers}
+        return tuple(
+            DiagnosticBlocker(
+                source="profile",
+                code="pi_result_delivery_pending"
+                if row.terminal
+                else "pi_result_publication_pending",
+                identity=row.id,
+            )
+            for row in self._refresh.records
+            if row.parent_id == str(self.spawn_id)
+            and row.id not in active_ids
+            and row.id not in private.consumed_work_ids
+        )
+
     def _pi_owned_blockers(
         self,
         private_work: PiPrivateWorkSnapshot,
@@ -273,6 +329,7 @@ class PiCompletionEvidence:
             DiagnosticBlocker(
                 source="profile",
                 code=blocker.code,
+                identity=blocker.identity,
             )
             for blocker in private_work.blockers
         )

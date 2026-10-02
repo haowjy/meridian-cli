@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from pathlib import Path
 
 import pytest
@@ -46,9 +45,15 @@ async def test_spawn_manager_derives_direct_followup_transitions_from_pi_events(
             yield pi_event(
                 "message_start",
                 {
-                    "role": "custom",
-                    "customType": "meridian-spawn-watch",
-                    "details": {"ids": [str(child_id)]},
+                    "message": {
+                        "role": "custom",
+                        "customType": "meridian-spawn-watch",
+                        "details": {
+                            "ids": [str(child_id)],
+                            "work_ids": [str(child_id)],
+                            "delivery_id": "child-admission",
+                        },
+                    },
                 },
             )
             yield pi_event("agent_end")
@@ -79,8 +84,8 @@ async def test_spawn_manager_derives_direct_followup_transitions_from_pi_events(
             origin="runner",
         )
         write_json(
-            tmp_path / "pi-bash" / str(spawn_id) / "last-notification.json",
-            {"ts_epoch_secs": time.time(), "notified_spawn_ids": [str(child_id)]},
+            tmp_path / "pi-bash" / str(spawn_id) / "delivery-receipts.json",
+            {"v": 1, "spawn_id": str(spawn_id), "messages": {"child-admission": [str(child_id)]}},
         )
         done, _ = await asyncio.wait({completion}, timeout=0.3)
         assert completion not in done

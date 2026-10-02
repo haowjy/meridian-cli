@@ -47,13 +47,13 @@ export const BashRecordsFileSchema = Type.Object({
   runtime_error: Type.Optional(Type.String()),
   records: Type.Record(Type.String(), Type.Object({
     bash_id: Type.String(), command: Type.String(), cwd: Type.String(),
-    pid: Type.Union([Type.Number(), Type.Null()]),
+    pid: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
     status: Type.Union([Type.Literal("running"), Type.Literal("exited"), Type.Literal("killed"), Type.Literal("timed_out")]),
     is_background: Type.Boolean(), is_tracked: Type.Boolean(),
-    exit_code: Type.Union([Type.Number(), Type.Null()]),
+    exit_code: Type.Union([Type.Integer(), Type.Null()]),
     started_at_ms: Type.Number(), ended_at_ms: Type.Union([Type.Number(), Type.Null()]),
     log_path: Type.String(), stdout_log_path: Type.String(), stderr_log_path: Type.String(),
-    log_bytes: Type.Number(), timeout_min: Type.Number(),
+    log_bytes: Type.Integer({ minimum: 0 }), timeout_min: Type.Number(),
     originating_bash_id: Type.Union([Type.String(), Type.Null()]),
     ping_sent_at_ms: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
     notification_consumed_at_ms: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
@@ -66,7 +66,7 @@ export function parseBashRecordsFile(value: unknown): BashRecordsFile | null {
   if (!Number.isFinite(value.updated_at_ms)) return null;
   for (const [id, record] of Object.entries(value.records)) {
     if (record.bash_id !== id) return null;
-    if ([record.started_at_ms, record.ended_at_ms, record.ping_sent_at_ms,
+    if ([record.started_at_ms, record.ended_at_ms, record.ping_sent_at_ms, record.timeout_min,
       record.notification_consumed_at_ms].some((n) => n != null && !Number.isFinite(n))) return null;
   }
   return value;

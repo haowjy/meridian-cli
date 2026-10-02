@@ -25,6 +25,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Route noninteractive Pi Bash slash-command output through native UI notifications, preserving RPC stdout framing.
 - Clear completed Pi Bash history only after wait consumption, causal admission or explicit detach; refuse invalid receipt evidence. Bound process cleanup with monotonic deadlines.
 - Preserve Pi managed Bash tasks across extension reload, recover recorded history after restart, and report lost process ownership without signalling stale PIDs. Kill, abort and shutdown now terminate owned POSIX groups before reporting completion; storage failures clean up started work, and log previews read bounded tails outside rendering.
+- Remove retired Pi origin-sidecar and timestamp-marker helper authority after canonical child handoff.
+- Keep Pi terminal results owed through exact native admission and public-event observation; bound unreadable evidence and unpublished/undelivered results without sliding deadlines.
+- Defer completion follow-ups while Pi streams, rebuild partly consumed batches, preserve queued claims across reload, recover expired waits, and guarantee fair disk scans with supervised delivery faults.
+- Frame `/spawn` listing output through Pi's native UI RPC notification.
 - Share strict Pi receipt and wait-reservation readers across notification and task cleanup.
 - Define validated Pi task-state and causal delivery-receipt contracts for completion recovery.
 - Stop Pi spawn-watch from sending a second completion follow-up after `bash_manage(wait)` returns a terminal managed Bash result; unattended terminal records remain eligible for their completion notice.

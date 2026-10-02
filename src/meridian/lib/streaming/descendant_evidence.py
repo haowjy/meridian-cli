@@ -23,6 +23,14 @@ from meridian.lib.streaming.completion_contracts import (
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class DescendantProjection:
+    """One reconciled subtree read, shared by liveness and result consumers."""
+
+    assessment: WorkAssessment
+    records: tuple[SpawnRecord, ...] = ()
+
+
 class ReconciledDescendantEvidence:
     """Project valid spawn rows into active transitive descendant blockers."""
 
@@ -40,34 +48,56 @@ class ReconciledDescendantEvidence:
     def assess(self) -> WorkAssessment:
         """Return a fresh blocker assessment, or typed unknown on a hard read failure."""
 
+        return self.project().assessment
+
+    def project(self) -> DescendantProjection:
+
         try:
             if self._blocker_reader is None:
-                blockers = self._read_blockers()
+                records = self._read_records()
+                blockers = tuple(
+                    DiagnosticBlocker(
+                        source="persisted_descendant",
+                        code="active_descendant",
+                        identity=row.id,
+                    )
+                    for row in records
+                    if is_active_spawn_status(
+                        peek_reconciled_active_spawn(self._runtime_root, row).status
+                    )
+                )
             else:
+                records = ()
                 blockers = self._blocker_reader()
         except Exception as exc:
             failure = EvidenceFailure(code="descendant_evidence_read_failed", detail=str(exc))
-            return WorkAssessment(
-                disposition="unknown",
-                blockers=(),
-                generation=0,
-                failure=failure,
+            return DescendantProjection(
+                WorkAssessment(
+                    disposition="unknown",
+                    blockers=(),
+                    generation=0,
+                    failure=failure,
+                )
             )
 
         if blockers:
-            return WorkAssessment(
-                disposition="blocked",
-                blockers=blockers,
-                generation=0,
+            return DescendantProjection(
+                WorkAssessment(
+                    disposition="blocked",
+                    blockers=blockers,
+                    generation=0,
+                ),
+                records,
             )
-        return WorkAssessment(disposition="ready", blockers=(), generation=0)
-
-    def _read_blockers(
-        self,
-    ) -> tuple[DiagnosticBlocker, ...]:
-        selected = HistoryIndex(self._runtime_root).descendant_projection(
-            str(self._root_spawn_id)
+        return DescendantProjection(
+            WorkAssessment(disposition="ready", blockers=(), generation=0),
+            records,
         )
+
+    def _read_records(
+        self,
+    ) -> tuple[SpawnRecord, ...]:
+        selected = HistoryIndex(self._runtime_root).descendant_projection(str(self._root_spawn_id))
         descendants: list[SpawnRecord] = []
         for spawn_id, _parent_id, archived in selected:
             if archived:
@@ -75,24 +105,15 @@ class ReconciledDescendantEvidence:
             row = spawn_store.get_spawn(self._runtime_root, spawn_id)
             if row is None:
                 raise RuntimeError(f"indexed descendant state is missing: {spawn_id}")
-            descendants.append(peek_reconciled_active_spawn(self._runtime_root, row))
-        blockers = tuple(
-            DiagnosticBlocker(
-                source="persisted_descendant",
-                code="active_descendant",
-                identity=row.id,
-            )
-            for row in descendants
-            if row.id != str(self._root_spawn_id) and is_active_spawn_status(row.status)
-        )
-        return blockers
-
+            descendants.append(row)
+        return tuple(descendants)
 
 
 @dataclass(frozen=True)
 class RefreshSnapshot:
     assessment: WorkAssessment
     completed_request: int
+    records: tuple[SpawnRecord, ...] = ()
 
 
 class DescendantRefreshOwner:
@@ -111,7 +132,7 @@ class DescendantRefreshOwner:
         self._clock = clock
         self._on_commit = on_commit
         self._snapshot: RefreshSnapshot | None = None
-        self._task: asyncio.Task[WorkAssessment] | None = None
+        self._task: asyncio.Task[DescendantProjection] | None = None
         self._task_request = 0
         self._requested = 0
         self._next_due: float | None = None
@@ -122,11 +143,17 @@ class DescendantRefreshOwner:
         self._epoch = 0
 
     @property
+    def records(self) -> tuple[SpawnRecord, ...]:
+        return self._snapshot.records if self._snapshot is not None else ()
+
+    @property
     def assessment(self) -> WorkAssessment:
         if self._snapshot is not None:
             return self._snapshot.assessment
         return WorkAssessment(
-            disposition="unknown", blockers=(), generation=0,
+            disposition="unknown",
+            blockers=(),
+            generation=0,
             failure=EvidenceFailure(code="descendant_evidence_unavailable"),
         )
 
@@ -180,22 +207,29 @@ class DescendantRefreshOwner:
         self._next_due = None
         self._task_request = self._requested
         epoch = self._epoch
-        task = asyncio.create_task(asyncio.to_thread(self._evidence.assess))
+        task = asyncio.create_task(asyncio.to_thread(self._evidence.project))
         self._task = task
         task.add_done_callback(lambda done: self._commit(done, epoch))
 
-    def _commit(self, task: asyncio.Task[WorkAssessment], epoch: int) -> None:
+    def _commit(self, task: asyncio.Task[DescendantProjection], epoch: int) -> None:
         if self._closed or epoch != self._epoch or task is not self._task:
             return
         self._task = None
         try:
-            raw = task.result()
+            projection = task.result()
         except BaseException as exc:
-            raw = WorkAssessment(
-                disposition="unknown", blockers=(), generation=0,
-                failure=EvidenceFailure(code="descendant_evidence_read_failed", detail=str(exc)),
+            projection = DescendantProjection(
+                WorkAssessment(
+                    disposition="unknown",
+                    blockers=(),
+                    generation=0,
+                    failure=EvidenceFailure(
+                        code="descendant_evidence_read_failed", detail=str(exc)
+                    ),
+                )
             )
-        signature = (raw.disposition, raw.blockers, raw.failure)
+        raw = projection.assessment
+        signature = (raw.disposition, raw.blockers, raw.failure, projection.records)
         if signature != self._signature:
             self._generation += 1
             self._signature = signature
@@ -205,7 +239,7 @@ class DescendantRefreshOwner:
             generation=self._generation,
             failure=raw.failure,
         )
-        self._snapshot = RefreshSnapshot(assessment, self._task_request)
+        self._snapshot = RefreshSnapshot(assessment, self._task_request, projection.records)
         self._next_due = self._clock() + self._poll_seconds
         if self._on_commit is not None:
             try:
