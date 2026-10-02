@@ -54,11 +54,8 @@ class _FakeProc:
 
 
 @posix_only
-def test_dead_root_pgid_still_has_members_no_scan_needed() -> None:
-    """PROC-004: Root is dead, but SIGTERM to the PGID succeeds (group still
-    exists). No secondary scan needed because SIGTERM was delivered to the group
-    via os.killpg — the orphan-scan path only activates on ProcessLookupError.
-    """
+def test_dead_root_scans_group_even_when_group_signal_succeeds() -> None:
+    """Retain orphaned group members for wait/escalation after a successful TERM."""
     from meridian.lib.platform.process_scope.posix import terminate_pgid
 
     with (
@@ -70,10 +67,11 @@ def test_dead_root_pgid_still_has_members_no_scan_needed() -> None:
         patch("os.killpg"),
         patch(
             "meridian.lib.platform.process_scope.posix._scan_by_pgid",
+            return_value=[],
         ) as mock_scan,
     ):
         result = terminate_pgid(
-            pgid=500,
+            pgid=12345,
             root_pid=12345,
             created_at_epoch=1_000_000.0,
             grace_seconds=0.1,
@@ -81,8 +79,7 @@ def test_dead_root_pgid_still_has_members_no_scan_needed() -> None:
             scope_id="backend",
         )
 
-    # Group kill succeeded — no need for orphan scan
-    mock_scan.assert_not_called()
+    mock_scan.assert_called_once_with(12345)
     assert result.degraded_fallback is True  # root was dead → degraded
     assert result.skip_reason is None
 

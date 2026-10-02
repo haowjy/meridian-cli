@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.core.domain import TokenUsage
+
 COST_KEYS: tuple[str, ...] = (
     "total_cost_usd",
     "cost_usd",
@@ -41,6 +43,12 @@ class LiveBudgetTracker(BaseModel):
     budget: Budget
     space_spent_usd: float = 0.0
     run_cost_usd: float = 0.0
+
+    def observe_usage(self, usage: TokenUsage | None) -> BudgetBreach | None:
+        """Consume a harness fold's cumulative cost, independent of wire shape."""
+        if usage is None or usage.total_cost_usd is None:
+            return self.check()
+        return self.observe_cost(usage.total_cost_usd)
 
     def observe_cost(self, cost_usd: float) -> BudgetBreach | None:
         """Update the current run cost and return breach details when exceeded."""

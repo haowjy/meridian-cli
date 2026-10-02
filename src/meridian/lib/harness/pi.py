@@ -103,6 +103,7 @@ from meridian.lib.safety.permissions import PermissionConfig
 from meridian.lib.state import pi_lifecycle
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import spawn_log_subpath
+from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
 
 def _write_pi_runtime_metadata_sidecar(
@@ -116,9 +117,13 @@ def _write_pi_runtime_metadata_sidecar(
     if payload.get("runtime_path") is None:
         return
     metadata_path = runtime_root / spawn_log_subpath(spawn_id) / PI_RUNTIME_META_FILENAME
-    atomic_write_text(
-        metadata_path,
-        json.dumps({"schema_version": 1, **payload}, separators=(",", ":")) + "\n",
+    mutate_published_spawn_artifact(
+        runtime_root,
+        spawn_id,
+        lambda: atomic_write_text(
+            metadata_path,
+            json.dumps({"schema_version": 1, **payload}, separators=(",", ":")) + "\n",
+        ),
     )
 
 
@@ -458,6 +463,9 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
 
     def env_overrides(self, config: PermissionConfig) -> dict[str, str]:
+        return {}
+
+    def env_defaults(self, config: PermissionConfig) -> dict[str, str]:
         _ = config
         return {
             **pi_agent_dir_env_override(),

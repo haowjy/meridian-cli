@@ -38,9 +38,8 @@ def is_pgid_reachable(pgid: int) -> bool:
 def _scan_by_pgid(pgid: int) -> list[psutil.Process]:
     """Return all live processes whose process group ID matches *pgid*.
 
-    Full-process-table scan — used only as a degraded fallback when the
-    root process is already dead and the normal PGID-kill path produced a
-    ProcessLookupError (group dissolved before SIGTERM landed).
+    Used when the root is dead: its descendants may have been reparented and
+    must still be waited on and escalated after the group receives SIGTERM.
     """
     result: list[psutil.Process] = []
     for proc in psutil.process_iter(["pid"]):
@@ -64,9 +63,8 @@ def terminate_pgid(
 
     When the root process is already dead (``NoSuchProcess`` during birth-time
     check), the function still attempts PGID termination in degraded mode
-    (PROC-004).  If the process group has also dissolved (``ProcessLookupError``
-    from ``os.killpg``), a secondary full-table scan by PGID is performed to
-    catch orphaned descendants that re-parented but stayed in the group.
+    (PROC-004). A full-table scan retains group members for wait and escalation,
+    including descendants that ignore SIGTERM after their leader exits.
 
     Returns a CleanupResult — never raises.
     """
@@ -116,42 +114,36 @@ def terminate_pgid(
     # --- Snapshot tree before signalling for wait + descendant count ---
     root_proc: psutil.Process | None = None
     children: list[psutil.Process] = []
-    with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
+    try:
         root_proc = psutil.Process(root_pid)
+    except psutil.NoSuchProcess:
+        root_is_dead = True
+    except psutil.AccessDenied:
+        pass
     if root_proc is not None:
         with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
             children = root_proc.children(recursive=True)
 
+    # A dead leader can leave live group members, including ones that ignore
+    # SIGTERM. Retain those members for the same wait/escalation as a live tree.
+    orphans = _scan_by_pgid(pgid) if root_is_dead else []
+
     # --- SIGTERM to the process group ---
     # Even when root_is_dead the group may still have live members — attempt it.
-    pgid_group_dissolved = False
     try:
         os.killpg(pgid, signal.SIGTERM)
     except ProcessLookupError:
-        pgid_group_dissolved = True
+        pass
     except (PermissionError, OSError):
         pass
 
     # --- Build the process tree to wait on ---
-    tree: list[psutil.Process] = ([root_proc] if root_proc is not None else []) + children
-
-    # --- Secondary sweep (PROC-004): dead root + dissolved group ---
-    # When the root died before snapshot AND the group has dissolved, scan all
-    # processes for any remaining PGID members (orphaned, re-parented to init).
-    orphan_scan_performed = False
-    if root_is_dead and pgid_group_dissolved:
-        orphans = _scan_by_pgid(pgid)
-        if orphans:
-            tree = orphans
-            orphan_scan_performed = True
+    tree: list[psutil.Process] = (
+        orphans if root_is_dead else ([root_proc] if root_proc is not None else []) + children
+    )
 
     # Determine descendant count for the result record.
-    descendant_count: int | None
-    if root_is_dead:
-        # When root was dead: orphan-scan count if we found any, else unknown.
-        descendant_count = len(tree) if orphan_scan_performed else None
-    else:
-        descendant_count = len(children)
+    descendant_count = len(tree) if root_is_dead else len(children)
 
     # degraded when root was already dead before we started
     degraded_fallback = root_is_dead

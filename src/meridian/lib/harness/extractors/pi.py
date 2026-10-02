@@ -7,7 +7,7 @@ from typing import cast
 
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.harness.attempt_facts import HarnessFailure
-from meridian.lib.harness.common import coerce_optional_int
+from meridian.lib.harness.common import coerce_optional_float, coerce_optional_int
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.pi_failure import compact_pi_failure_output, pi_failure_from_payload
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -17,8 +17,10 @@ from .base import AttemptFold, HarnessExtractor
 
 def _usage_from_message(message: Mapping[str, object]) -> TokenUsage | None:
     usage_obj = message.get("usage")
-    if message.get("role") != "assistant" or not isinstance(usage_obj, dict):
+    if message.get("role") != "assistant":
         return None
+    if not isinstance(usage_obj, dict):
+        return TokenUsage()
     usage = cast("dict[str, object]", usage_obj)
     cost = usage.get("cost")
     total = cast("dict[str, object]", cost).get("total") if isinstance(cost, dict) else None
@@ -27,7 +29,7 @@ def _usage_from_message(message: Mapping[str, object]) -> TokenUsage | None:
         output_tokens=coerce_optional_int(usage.get("output")),
         cache_read_input_tokens=coerce_optional_int(usage.get("cacheRead")),
         cache_creation_input_tokens=coerce_optional_int(usage.get("cacheWrite")),
-        total_cost_usd=float(total) if isinstance(total, int | float) else None,
+        total_cost_usd=coerce_optional_float(total),
     )
 
 
@@ -53,6 +55,29 @@ def _assistant_message_text(message: Mapping[str, object]) -> str | None:
     if not texts:
         return None
     return "\n".join(texts)
+
+
+def _add_usage(prior: TokenUsage | None, usage: TokenUsage) -> TokenUsage:
+    """Message usage is incremental; a missing operand leaves its total unknown."""
+    if prior is None:
+        return usage
+
+    def total(left: int | None, right: int | None) -> int | None:
+        return left + right if left is not None and right is not None else None
+
+    return TokenUsage(
+        input_tokens=total(prior.input_tokens, usage.input_tokens),
+        output_tokens=total(prior.output_tokens, usage.output_tokens),
+        cache_read_input_tokens=total(prior.cache_read_input_tokens, usage.cache_read_input_tokens),
+        cache_creation_input_tokens=total(
+            prior.cache_creation_input_tokens, usage.cache_creation_input_tokens
+        ),
+        total_cost_usd=(
+            coerce_optional_float(prior.total_cost_usd + usage.total_cost_usd)
+            if prior.total_cost_usd is not None and usage.total_cost_usd is not None
+            else None
+        ),
+    )
 
 
 class PiHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
@@ -85,7 +110,7 @@ class PiFold(AttemptFold):
                 usage = _usage_from_message(message)
                 if usage is not None:
                     self.usage_is_specific = True
-                    facts.usage = usage
+                    facts.usage = _add_usage(facts.usage, usage)
                 text = _assistant_message_text(message)
                 if text:
                     self.set_text(text, "pi_message_end")

@@ -1,6 +1,7 @@
 """Shared helpers for harness adapters."""
 
 import json
+import math
 from typing import cast
 
 from meridian.lib.harness.adapter import StreamEvent
@@ -178,20 +179,23 @@ def coerce_optional_int(value: object) -> int | None:
 
 def coerce_optional_float(value: object) -> float | None:
     if isinstance(value, bool):
-        return float(value)
+        return None
     if isinstance(value, int | float):
-        return float(value)
-    if isinstance(value, str):
+        candidate = value
+    elif isinstance(value, str):
         stripped = value.strip()
         if not stripped:
             return None
         if stripped.startswith("$"):
             stripped = stripped[1:]
-        try:
-            return float(stripped)
-        except ValueError:
-            return None
-    return None
+        candidate = stripped
+    else:
+        return None
+    try:
+        parsed = float(candidate)
+    except (ValueError, OverflowError):
+        return None
+    return parsed if math.isfinite(parsed) else None
 
 
 def iter_nested_dicts(value: object) -> list[dict[str, object]]:

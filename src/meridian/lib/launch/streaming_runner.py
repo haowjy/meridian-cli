@@ -30,6 +30,7 @@ from meridian.lib.core.native_identity import (
 from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
+from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.common import parse_json_stream_event, unwrap_event_payload
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
@@ -605,6 +606,7 @@ async def _run_streaming_attempt(
     runner_phase: list[str] | None = None,
     on_running: Callable[[HarnessConnection[Any]], None] | None = None,
     event_hook: Callable[[RawHarnessEvent], None] | None = None,
+    attempt_facts: AttemptFacts | None = None,
 ) -> _AttemptRuntime:
     completion_task: asyncio.Task[DrainOutcome | None] | None = None
     timeout_task: asyncio.Task[None] | None = None
@@ -616,6 +618,19 @@ async def _run_streaming_attempt(
     completion_event = asyncio.Event()
     budget_signal = asyncio.Event()
     budget_breach_holder: list[BudgetBreach | None] = [None]
+
+    def observe_event(event: RawHarnessEvent) -> None:
+        # Fold/budget hooks run before subscriber fan-out, so dropped or delayed
+        # subscriber events cannot hide a typed cumulative budget breach.
+        try:
+            if event_hook is not None:
+                event_hook(event)
+        finally:
+            if budget_tracker is not None and attempt_facts is not None:
+                breach = budget_tracker.observe_usage(attempt_facts.usage)
+                if breach is not None and budget_breach_holder[0] is None:
+                    budget_breach_holder[0] = breach
+                    budget_signal.set()
     last_event_at: list[float] = [asyncio.get_running_loop().time()]
     terminal_event_future: asyncio.Future[TerminalEventOutcome] = (
         asyncio.get_running_loop().create_future()
@@ -642,7 +657,7 @@ async def _run_streaming_attempt(
             config=config,
             run_spec=run_spec,
             timeout_seconds=startup_timeout_seconds,
-            event_hook=event_hook,
+            event_hook=observe_event,
         )
         terminal_event_capture = (
             terminal_event_future
@@ -1115,6 +1130,7 @@ async def execute_with_streaming(
                         runner_phase=runner_phase,
                         on_running=record_started,
                         event_hook=fold,
+                        attempt_facts=facts,
                     )
                     runner_phase[0] = "processing_attempt"
                     conclusion.failure_reason = None

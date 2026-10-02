@@ -153,6 +153,9 @@ an adapter when the operation is demonstrably idempotent.
 Runner lifecycle diagnostics can execute after async boundaries. Their
 parent-creating writes use the published-spawn artifact mutation seam; never append
 late diagnostics directly into a spawn directory that retention may have deleted.
+Streaming budget checks observe typed cumulative `AttemptFacts.usage` immediately
+after the inline fold, before subscriber fan-out. Harness wire costs must first
+be normalized by the harness fold; a subscriber backlog cannot hide a breach.
 
 ## Prompt Source
 

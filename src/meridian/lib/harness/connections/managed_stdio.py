@@ -102,17 +102,17 @@ class ManagedStdioProcess:
             return False
 
         scope_handle = self._scope_handle
-        self._scope_handle = None
-        if process.returncode is not None:
-            self._process = None
-            return False
         if scope_handle is not None:
             result = await scope_handle.terminate(
                 grace_seconds=self._kill_grace_seconds,
                 reason=self._terminate_reason,
             )
+            self._scope_handle = None
             self._process = None
             return result.kill_escalated
+        if process.returncode is not None:
+            self._process = None
+            return False
 
         if process.stdin is not None:
             with suppress(Exception):
