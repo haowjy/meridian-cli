@@ -80,6 +80,16 @@ the accounting guard runs on a partial set and raises false `ImportError`.
 **Spawn-owned harness journals:** permission and control-action writes must use the
 published-spawn artifact mutation seam at the write point. An awaited send or dispatch
 can cross spawn deletion; a late journal or cursor write must not recreate the directory.
+Pi runtime metadata uses that same publication gate.
+
+**Environment defaults differ from overrides.** `env_defaults()` fills missing or
+blank child values after explicit inherited/runtime values are bound. Pi agent
+and session directory defaults use this seam; forced adapter policy remains in
+`env_overrides()`.
+
+**Pi usage is per assistant message.** Fold each `message_end` increment once;
+`agent_end.messages` is repeated history. Unknown usage operands leave totals
+unknown. The live budget consumes the typed cumulative fold before fan-out.
 
 **SpawnParams accounting:** every field must appear in `consumed_fields` or
 `explicitly_ignored_fields` for each adapter. Adding a `SpawnParams` field

@@ -74,6 +74,26 @@ def test_pi_extractor_reads_report_from_last_assistant_agent_end_message() -> No
     assert store.final_text == "final\nreport"
 
 
+def test_pi_usage_counts_every_model_call_once_and_preserves_unknown_totals() -> None:
+    messages = [
+        {"role": "assistant", "usage": {"input": 100, "output": 20, "cost": {"total": 1.25}}},
+        {"role": "assistant", "usage": {"input": 80, "output": 10, "cost": {"total": 0.50}}},
+    ]
+    fold = PI_EXTRACTOR.create_fold()
+    for message in messages:
+        _fold(fold, {"type": "message_end", "message": message})
+    _fold(fold, {"type": "agent_end", "messages": messages})
+    assert fold.facts.usage is not None
+    assert fold.facts.usage.input_tokens == 180
+    assert fold.facts.usage.output_tokens == 30
+    assert fold.facts.usage.total_cost_usd == 1.75
+    assert fold.facts.usage.cache_read_input_tokens is None
+    _fold(fold, {"type": "message_end", "message": {"role": "assistant", "usage": {"output": 0}}})
+    assert fold.facts.usage.input_tokens is None
+    assert fold.facts.usage.output_tokens == 30
+    assert fold.facts.usage.total_cost_usd is None
+
+
 def _fold(fold, payload):
     fold(
         RawHarnessEvent(

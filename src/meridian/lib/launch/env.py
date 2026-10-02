@@ -182,11 +182,15 @@ def build_harness_child_env(
         adapter_blocked = cast("Callable[[], frozenset[str]]", blocked_child_env_vars)()
     else:
         adapter_blocked = cast("frozenset[str]", frozenset())
-    return inherit_child_env(
+    child_env = inherit_child_env(
         base_env=base_env,
         env_overrides=merged_env,
         blocked=BLOCKED_CHILD_ENV_VARS | adapter_blocked | RUNTIME_OVERRIDE_ENV_VARS,
     )
+    for key, value in adapter.env_defaults(permission_config).items():
+        if not child_env.get(key, "").strip():
+            child_env[key] = value
+    return child_env
 
 
 def build_env_plan(

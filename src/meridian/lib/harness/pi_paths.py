@@ -8,6 +8,7 @@ state uses ``_MERIDIAN_PI_STATE_DIR``.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -24,10 +25,9 @@ _MERIDIAN_PI_EXTENSION_ROOT_ENV = "MERIDIAN_PI_EXTENSION_INSTALL_ROOT"
 def resolve_pi_agent_dir(*, env: Mapping[str, str] | None = None) -> Path:
     """Return Pi agent dir (auth, settings) — default ``~/.pi/agent``."""
 
-    if env is not None:
-        override = env.get(_PI_AGENT_DIR_ENV, "").strip()
-        if override:
-            return Path(override).expanduser()
+    override = (os.environ if env is None else env).get(_PI_AGENT_DIR_ENV, "").strip()
+    if override:
+        return Path(override).expanduser()
     return get_home_path() / ".pi" / "agent"
 
 
@@ -49,10 +49,9 @@ def resolve_meridian_pi_extension_root() -> Path:
 def resolve_pi_spawn_session_root(*, env: Mapping[str, str] | None = None) -> Path:
     """Return unscoped spawn session root (per-spawn subdirs applied later)."""
 
-    if env is not None:
-        override = env.get(_PI_SESSION_DIR_ENV, "").strip()
-        if override:
-            return Path(override).expanduser()
+    override = (os.environ if env is None else env).get(_PI_SESSION_DIR_ENV, "").strip()
+    if override:
+        return Path(override).expanduser()
     return get_user_home() / "meridian-pi" / "sessions"
 
 
@@ -82,8 +81,6 @@ def resolve_pi_extension_target_root(
 
 
 def _env_strip(key: str) -> str:
-    import os
-
     return os.environ.get(key, "").strip()
 
 

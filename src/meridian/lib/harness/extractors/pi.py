@@ -55,6 +55,29 @@ def _assistant_message_text(message: Mapping[str, object]) -> str | None:
     return "\n".join(texts)
 
 
+def _add_usage(prior: TokenUsage | None, usage: TokenUsage) -> TokenUsage:
+    """Message usage is incremental; a missing operand leaves its total unknown."""
+    if prior is None:
+        return usage
+
+    def total(left: int | None, right: int | None) -> int | None:
+        return left + right if left is not None and right is not None else None
+
+    return TokenUsage(
+        input_tokens=total(prior.input_tokens, usage.input_tokens),
+        output_tokens=total(prior.output_tokens, usage.output_tokens),
+        cache_read_input_tokens=total(prior.cache_read_input_tokens, usage.cache_read_input_tokens),
+        cache_creation_input_tokens=total(
+            prior.cache_creation_input_tokens, usage.cache_creation_input_tokens
+        ),
+        total_cost_usd=(
+            prior.total_cost_usd + usage.total_cost_usd
+            if prior.total_cost_usd is not None and usage.total_cost_usd is not None
+            else None
+        ),
+    )
+
+
 class PiHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
     """Extractor implementation for Pi artifacts and events."""
 
@@ -85,7 +108,7 @@ class PiFold(AttemptFold):
                 usage = _usage_from_message(message)
                 if usage is not None:
                     self.usage_is_specific = True
-                    facts.usage = usage
+                    facts.usage = _add_usage(facts.usage, usage)
                 text = _assistant_message_text(message)
                 if text:
                     self.set_text(text, "pi_message_end")
