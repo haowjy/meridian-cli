@@ -1,8 +1,9 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it } from "vitest";
+import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   openTaskPanel,
+  hasTaskPanelUI,
   renderSelectablePanel,
   SelectablePanelComponent,
   type PanelCommandContext,
@@ -35,6 +36,12 @@ const options: SelectablePanelOptions<Row> = {
 };
 
 describe("openTaskPanel", () => {
+  it("keeps native TUI panels available while routing RPC to notifications", () => {
+    expect(hasTaskPanelUI({ hasUI: true, mode: "tui" } as unknown as ExtensionContext)).toBe(true);
+    expect(hasTaskPanelUI({ hasUI: true, mode: "rpc" } as unknown as ExtensionContext)).toBe(false);
+    expect(hasTaskPanelUI({ hasUI: true } as ExtensionContext)).toBe(true);
+  });
+
   it("opens task panels as full-screen covering overlays", async () => {
     let receivedOptions: Record<string, unknown> | undefined;
     const ctx: PanelCommandContext = {
@@ -60,6 +67,21 @@ describe("openTaskPanel", () => {
 });
 
 describe("SelectablePanelComponent", () => {
+  it("shows a failed clear action while retaining the existing rows", async () => {
+    const component = new SelectablePanelComponent(
+      { requestRender: () => undefined, terminal: { rows: 24 } }, mockTheme(),
+      { ...options, onClear: async () => { throw new Error("invalid delivery receipts"); } },
+      () => undefined,
+    );
+    await vi.waitFor(() => expect(component.render(80).join("\n")).toContain("b-1"));
+    component.handleInput("c");
+    await vi.waitFor(() => {
+      const rendered = component.render(80).join("\n");
+      expect(rendered).toContain("Action failed: invalid delivery receipts");
+      expect(rendered).toContain("b-1");
+    });
+  });
+
   it("runs the clear action from c", async () => {
     let cleared = 0;
     const component = new SelectablePanelComponent(

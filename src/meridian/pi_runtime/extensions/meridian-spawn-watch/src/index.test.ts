@@ -1,492 +1,365 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
-
-import { afterEach, describe, expect, it } from "vitest";
-
-import { SpawnWatchRuntime } from "./index";
-import { rememberSpawnOriginBashIds } from "../../shared/spawn_origins";
-import type { BashRecord, BashRecordsFile } from "../../shared/schemas";
-
-const savedEnv: Record<string, string | undefined> = {};
-
-function setEnv(key: string, value: string): void {
-  if (!(key in savedEnv)) savedEnv[key] = process.env[key];
-  process.env[key] = value;
-}
-
-function restoreEnv(): void {
-  for (const [key, value] of Object.entries(savedEnv)) {
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-    delete savedEnv[key];
-  }
-}
-
-type SpawnWatchRuntimeInternals = SpawnWatchRuntime & {
-  scanBashRecords(): Promise<void>;
-  scanSpawns(): Promise<void>;
-  fallbackScanReasons: Set<string>;
-  pending: Map<string, { kind: "spawn" | "bash"; duration: string }>;
-  running: boolean;
-  enableDiscoveryPolling(): void;
-  stopDiscoveryPolling(): void;
-  slowDiscoveryPolling(): void;
-  fallbackScanInterval: NodeJS.Timeout | null;
-  discoveryScanInterval: NodeJS.Timeout | null;
-  missingStateFirstSeenMs: Map<string, number>;
+import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import extension, { SpawnWatchRuntime } from './index';
+import { writeJsonAtomic } from '../../shared/json_file';
+import type { BashRecord } from '../../shared/schemas';
+const formatter = vi.hoisted(() => vi.fn(async (args: string[]) => ({
+  exitCode: 0, stdout: args.slice(2, -1).join(' '), stderr: ''
+})));
+vi.mock('../../shared/meridian_cli', () => ({
+  runMeridianCommand: formatter
+}));
+const savedEnv = {
+  ...process.env
 };
-
-function bashRecord(bashId: string, overrides: Partial<BashRecord> = {}): BashRecord {
+const roots: string[] = [];
+const owners: SpawnWatchRuntime[] = [];
+type Notice = {
+  customType: string;
+  content: string;
+  details: {
+    delivery_id: string;
+    work_ids: string[];
+  };
+};
+async function pause(ms = 30) {
+  await new Promise(r => setTimeout(r, ms));
+}
+async function eventually(check: () => boolean | Promise<boolean>) {
+  for (let i = 0; i < 100; i++) {
+    if (await check())
+      return;
+    await pause();
+  }
+  throw Error('delivery contract did not settle');
+}
+function record(id: string, overrides: Partial<BashRecord> = {}): BashRecord {
   return {
-    bash_id: bashId,
-    command: `meridian spawn -m test ${bashId}`,
-    cwd: "/tmp",
-    pid: null,
-    status: "exited",
-    is_background: true,
-    is_tracked: true,
-    exit_code: 0,
-    started_at_ms: Date.now() - 10_000,
-    ended_at_ms: Date.now() - 5_000,
-    log_path: "/tmp/log",
-    stdout_log_path: "/tmp/stdout",
-    stderr_log_path: "/tmp/stderr",
-    log_bytes: 0,
-    timeout_min: 55,
-    originating_bash_id: null,
-    ...overrides,
+    bash_id: id, command: `echo ${id}`, cwd: '/tmp', pid: null, status: 'exited', is_background: true, is_tracked: true, exit_code: 0, started_at_ms: Date.now() - 1000, ended_at_ms: Date.now(), log_path: '/unused', stdout_log_path: '/unused', stderr_log_path: '/unused', log_bytes: 0, timeout_min: 1, originating_bash_id: null, ...overrides
   };
 }
-
-async function writeBashRecords(runtimeRoot: string, spawnId: string, records: BashRecord[]): Promise<void> {
-  const bashDir = path.join(runtimeRoot, "pi-bash", spawnId);
-  await mkdir(bashDir, { recursive: true });
-  const file: BashRecordsFile = {
-    v: 1,
-    spawn_id: spawnId,
-    updated_at_ms: Date.now(),
-    records: Object.fromEntries(records.map((record) => [record.bash_id, record])),
+async function setup() {
+  const root = await mkdtemp(path.join(tmpdir(), 'delivery-contract-'));
+  roots.push(root);
+  process.env._MERIDIAN_PI_STATE_DIR = root;
+  process.env.MERIDIAN_SPAWN_ID = 'p-parent';
+  return root;
+}
+async function file(root: string, name: string, value: unknown) {
+  await writeJsonAtomic(path.join(root, 'pi-bash', 'p-parent', name), value);
+}
+async function bash(root: string, ...records: BashRecord[]) {
+  await file(root, 'bash-records.json', {
+    v: 1, spawn_id: 'p-parent', updated_at_ms: Date.now(), records: Object.fromEntries(records.map(r => [r.bash_id, r]))
+  });
+}
+async function child(root: string, id: string, originating_bash_id: string | null = null) {
+  // Captured from Python TerminalFacts.model_dump(); preserve canonical extras
+  // so a handwritten projection cannot hide reader/writer incompatibility.
+  const canonical = JSON.parse(await readFile(new URL('../fixtures/canonical-child-state.json', import.meta.url), 'utf8'));
+  await writeJsonAtomic(path.join(root, 'spawns', id, 'state.json'), {
+    ...canonical, id, parent_id: 'p-parent', originating_bash_id,
+  });
+}
+function host(idle = true) {
+  const h = {
+    idle, notices: [] as Notice[], handlers: new Map<string, Function>(),
+    commands: new Map<string, {handler: Function}>(), pi: {} as ExtensionAPI
   };
-  await writeFile(path.join(bashDir, "bash-records.json"), JSON.stringify(file));
+  h.pi = {
+    on: (name: string, callback: Function) => h.handlers.set(name, callback),
+    registerCommand: (name: string, command: {handler: Function}) => h.commands.set(name, command),
+    sendMessage: (message: Notice) => {
+      h.notices.push(message);
+      h.idle = false;
+    }
+  } as unknown as ExtensionAPI;
+  return h;
 }
-
-async function bashRecordWithSpawnOutput(
-  runtimeRoot: string,
-  bashId: string,
-  spawnId: string,
-  overrides: Partial<BashRecord> = {},
-): Promise<BashRecord> {
-  const logPath = path.join(runtimeRoot, "logs", `${bashId}.log`);
-  await mkdir(path.dirname(logPath), { recursive: true });
-  await writeFile(logPath, `Spawn id: ${spawnId}\n`);
-  return bashRecord(bashId, {
-    log_path: logPath,
-    stdout_log_path: logPath,
-    stderr_log_path: logPath,
-    log_bytes: `Spawn id: ${spawnId}\n`.length,
-    ...overrides,
-  });
+function owner(h: ReturnType<typeof host>) {
+  const runtime = new SpawnWatchRuntime(h.pi, () => h.idle);
+  owners.push(runtime);
+  runtime.start();
+  return runtime;
 }
-
-async function writeSpawnState(
-  runtimeRoot: string,
-  spawnId: string,
-  values: {
-    parentId?: string | null;
-    originBashId?: string | null;
-    status?: string;
-    terminal?: Record<string, unknown> | null;
-  } = {},
-): Promise<void> {
-  const spawnDir = path.join(runtimeRoot, "spawns", spawnId);
-  await mkdir(spawnDir, { recursive: true });
-  await writeFile(
-    path.join(spawnDir, "state.json"),
-    JSON.stringify({
-      id: spawnId,
-      parent_id: values.parentId ?? null,
-      originating_bash_id: values.originBashId ?? null,
-      status: values.status ?? "running",
-      terminal: values.terminal ?? null,
-    }),
-  );
-}
-
-function terminalFacts(status = "succeeded"): Record<string, unknown> {
-  return {
-    // Terminal status lives only at the top level of state.json.
-    exit_code: status === "succeeded" ? 0 : 1,
-    finished_at: "2026-07-17T12:00:05Z",
-    published_at: "2026-07-17T12:00:05Z",
-    duration_secs: 65,
+afterEach(async () => {
+  for (const runtime of owners.splice(0))
+    runtime.stop();
+  const registry = globalThis as unknown as {
+    [key: symbol]: Map<string, SpawnWatchRuntime>;
   };
-}
-
-async function makeRuntime(): Promise<{ runtimeRoot: string; runtime: SpawnWatchRuntime; internals: SpawnWatchRuntimeInternals }> {
-  const runtimeRoot = await mkdtemp(path.join(tmpdir(), "spawn-watch-origin-"));
-  setEnv("_MERIDIAN_PI_STATE_DIR", runtimeRoot);
-  setEnv("MERIDIAN_SPAWN_ID", "p-parent");
-  const runtime = new SpawnWatchRuntime({} as ConstructorParameters<typeof SpawnWatchRuntime>[0]);
-  return { runtimeRoot, runtime, internals: runtime as SpawnWatchRuntimeInternals };
-}
-
-describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
-  afterEach(() => restoreEnv());
-
-  it("lists only spawns launched by this session's managed bash commands", async () => {
-    const { runtimeRoot, runtime } = await makeRuntime();
-    try {
-      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-origin")]);
-      await writeSpawnState(runtimeRoot, "p1001", { originBashId: "b-origin", status: "running" });
-      await writeSpawnState(runtimeRoot, "p-parent-child", { parentId: "p-parent", status: "running" });
-      await writeSpawnState(runtimeRoot, "p-other-origin", { originBashId: "b-other", status: "running" });
-
-      expect((await runtime.rows()).map((state) => state.id)).toEqual(["p1001"]);
-    } finally {
-      runtime.stop();
-      await rm(runtimeRoot, { recursive: true, force: true });
-    }
+  for (const runtime of registry[Symbol.for('meridian.spawn-watch.runtimes')]?.values() ?? [])
+    runtime.stop();
+  registry[Symbol.for('meridian.spawn-watch.runtimes')]?.clear();
+  await pause(100);
+  for (const root of roots.splice(0))
+    await rm(root, {
+      recursive: true, force: true
+    });
+  for (const key of Object.keys(process.env))
+    if (!(key in savedEnv))
+      delete process.env[key];
+  Object.assign(process.env, savedEnv);
+  formatter.mockReset();
+  formatter.mockImplementation(async (args: string[]) => ({
+    exitCode: 0, stdout: args.slice(2, -1).join(' '), stderr: ''
+  }));
+});
+describe('durable result delivery', () => {
+  it('scopes invalid terminal evidence to its canonical parent', async () => {
+    const root = await setup();
+    await child(root, 'p1');
+    await writeJsonAtomic(path.join(root, 'spawns', 'p2', 'state.json'), {
+      id: 'p2', parent_id: 'p-other', status: 'succeeded', terminal: 'malformed',
+    });
+    const runtime = new SpawnWatchRuntime(host().pi, () => true);
+    owners.push(runtime);
+    expect((await runtime.rows()).map(row => row.id)).toEqual(['p1']);
+    await writeJsonAtomic(path.join(root, 'spawns', 'p2', 'state.json'), {
+      id: 'p2', parent_id: 'p-parent', status: 'succeeded', terminal: 'malformed',
+    });
+    await expect(runtime.rows()).rejects.toThrow('invalid spawn state: p2');
   });
 
-
-  it("ignores parent-only spawns when managed-bash origins are absent", async () => {
-    const { runtimeRoot, runtime } = await makeRuntime();
+  it('uses framed UI notification for the no-UI slash listing', async () => {
+    await setup();
+    const h = host();
+    extension(h.pi);
+    const notify = vi.fn();
+    const stdout = vi.spyOn(process.stdout, 'write');
     try {
-      await writeSpawnState(runtimeRoot, "p-parent-child", { parentId: "p-parent", status: "running" });
-
-      expect(await runtime.rows()).toEqual([]);
-    } finally {
-      runtime.stop();
-      await rm(runtimeRoot, { recursive: true, force: true });
-    }
+      await h.commands.get('spawn')!.handler('', {hasUI: true, mode: 'rpc', ui: {notify, custom: async () => undefined}});
+      expect(notify).toHaveBeenCalledWith('No correlated Meridian spawns.', 'info');
+      expect(stdout).not.toHaveBeenCalled();
+      expect(h.notices).toHaveLength(0);
+    } finally { stdout.mockRestore(); }
   });
-
-  it("polls while bash-origin spawns are running and stops when they finish", async () => {
-    const { runtimeRoot, runtime, internals } = await makeRuntime();
-    try {
-      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-origin")]);
-      await writeSpawnState(runtimeRoot, "p1001", { originBashId: "b-origin", status: "running" });
-      internals.running = true;
-
-      await internals.scanSpawns();
-      expect(internals.fallbackScanReasons.has("active-origin-spawns")).toBe(true);
-
-      await writeSpawnState(runtimeRoot, "p1001", {
-        originBashId: "b-origin",
-        status: "succeeded",
-        terminal: terminalFacts(),
+  it('does not trust expired or dead owner reservations after a restart', async () => {
+    const root = await setup();
+    await child(root, 'p1');
+    await child(root, 'p2');
+    await file(root, 'observed-spawns.json', {
+      v: 1, spawn_id: 'p-parent', observed_spawn_ids: [], waiting_spawn_ids: ['p1', 'p2'],
+      wait_reservations: {
+        dead: {owner_pid: 2147483647, owner_birth_epoch: 1, expires_at_epoch: Date.now()/1000+30, spawn_ids: ['p1']},
+        expired: {owner_pid: process.pid, owner_birth_epoch: 1, expires_at_epoch: 1, spawn_ids: ['p2']},
+      },
+    });
+    const h = host();
+    owner(h);
+    await eventually(() => h.notices.length === 1);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1', 'p2']);
+  });
+  it('supervises a receipt write failure without claiming admission', async () => {
+    const root = await setup();
+    await bash(root, record('b1'));
+    const h = host();
+    const runtime = owner(h);
+    await eventually(() => h.notices.length === 1);
+    const receiptsPath = path.join(root, 'pi-bash', 'p-parent', 'delivery-receipts.json');
+    await mkdir(receiptsPath);
+    await expect(runtime.admitMessage({role: 'custom', ...h.notices[0]})).resolves.toBeUndefined();
+    const fault = JSON.parse(await readFile(path.join(root, 'pi-bash', 'p-parent', 'delivery-fault.json'), 'utf8'));
+    expect(fault.operation).toBe('admission');
+    expect(fault.error).toBeTruthy();
+    runtime.stop();
+    await rm(receiptsPath, {recursive: true});
+    const restarted = host();
+    const nextOwner = owner(restarted);
+    await eventually(() => restarted.notices.length === 1);
+    await nextOwner.admitMessage({role: 'custom', ...restarted.notices[0]});
+    expect(JSON.parse(await readFile(receiptsPath, 'utf8')).messages).toHaveProperty(restarted.notices[0]!.details.delivery_id);
+  });
+  it('keeps streaming results owed and excludes waited members of a batch', async () => {
+    const root = await setup();
+    const h = host(false);
+    const runtime = owner(h);
+    await bash(root, record('b1'), record('b2'));
+    await pause(700);
+    expect(h.notices).toHaveLength(0);
+    await bash(root, record('b1', {
+      notification_consumed_at_ms: Date.now()
+    }), record('b2'));
+    h.idle = true;
+    runtime.observeIdle(() => h.idle);
+    await eventually(() => h.notices.length === 1);
+    expect(h.notices[0]!.details.work_ids).toEqual(['b2']);
+    expect(h.notices[0]!.content).not.toContain('b1');
+  });
+  it('waited Bash produces zero follow-ups after the next idle turn', async () => {
+    const root = await setup();
+    const h = host(false);
+    const runtime = owner(h);
+    await bash(root, record('b1'));
+    await pause(300);
+    await bash(root, record('b1', {
+      notification_consumed_at_ms: Date.now()
+    }));
+    h.idle = true;
+    runtime.observeIdle(() => h.idle);
+    await pause(900);
+    expect(h.notices).toHaveLength(0);
+  });
+  it('queues once; exact admission becomes durable and survives cold restart', async () => {
+    const root = await setup();
+    await bash(root, record('b1'));
+    const h = host();
+    const runtime = owner(h);
+    await eventually(() => h.notices.length === 1);
+    await pause(700);
+    expect(h.notices).toHaveLength(1);
+    await runtime.admitMessage({
+      role: 'custom', ...h.notices[0], details: {
+        delivery_id: 'unrelated', work_ids: ['b1']
+      }
+    });
+    await expect(readFile(path.join(root, 'pi-bash', 'p-parent', 'delivery-receipts.json'))).rejects.toThrow();
+    await runtime.admitMessage({
+      role: 'custom', ...h.notices[0]
+    });
+    runtime.stop();
+    const receipt = JSON.parse(await readFile(path.join(root, 'pi-bash', 'p-parent', 'delivery-receipts.json'), 'utf8'));
+    expect(Object.values(receipt.messages)).toEqual([['b1']]);
+    const restarted = host();
+    owner(restarted);
+    await pause(900);
+    expect(restarted.notices).toHaveLength(0);
+  });
+  it('cold restart retries unadmitted work', async () => {
+    const root = await setup();
+    await bash(root, record('b1'));
+    const first = host();
+    const runtime = owner(first);
+    await eventually(() => first.notices.length === 1);
+    runtime.stop();
+    const next = host();
+    owner(next);
+    await eventually(() => next.notices.length === 1);
+    expect(next.notices[0]!.details.work_ids).toEqual(['b1']);
+  });
+  it('reload retains queued ownership until the retained native message is admitted', async () => {
+    const root = await setup();
+    await bash(root, record('b1'));
+    const first = host();
+    extension(first.pi);
+    first.handlers.get('session_start')!({}, {
+      isIdle: () => first.idle
+    });
+    await eventually(() => first.notices.length === 1);
+    first.handlers.get('session_shutdown')!({
+      reason: 'reload'
+    });
+    const next = host(false);
+    extension(next.pi);
+    next.handlers.get('session_start')!({}, {
+      isIdle: () => next.idle
+    });
+    await pause(800);
+    expect(next.notices).toHaveLength(0);
+    await next.handlers.get('message_start')!({
+      message: {
+        role: 'custom', ...first.notices[0]
+      }
+    });
+    next.idle = true;
+    next.handlers.get('agent_end')!({}, {
+      isIdle: () => next.idle
+    });
+    await pause(800);
+    expect(next.notices).toHaveLength(0);
+  });
+  it('temporary wait reservations become eligible again when removed', async () => {
+    const root = await setup();
+    await child(root, 'p1');
+    const birth = Date.parse(execFileSync('ps', ['-o', 'lstart=', '-p', String(process.pid)], {
+      encoding: 'utf8'
+    }).trim()) / 1000;
+    const observation = {
+      v: 1, spawn_id: 'p-parent', updated_at_ms: Date.now(), observed_spawn_ids: [], waiting_spawn_ids: ['p1'], wait_reservations: {
+        live: {
+          owner_pid: process.pid, owner_birth_epoch: birth, expires_at_epoch: Date.now() / 1000 + 30, spawn_ids: ['p1']
+        }
+      }
+    };
+    await file(root, 'observed-spawns.json', observation);
+    const h = host();
+    owner(h);
+    await pause(800);
+    expect(h.notices).toHaveLength(0);
+    await file(root, 'observed-spawns.json', {
+      ...observation, wait_reservations: {}, waiting_spawn_ids: []
+    });
+    await eventually(() => h.notices.length === 1);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
+  });
+  it('rechecks observations after formatter await and preserves the rest of the batch', async () => {
+    const root = await setup();
+    await child(root, 'p1');
+    await child(root, 'p2');
+    let entered = false;
+    let release!: () => void;
+    formatter.mockImplementationOnce(async () => {
+      entered = true;
+      await new Promise<void>(r => {
+        release = r;
       });
-      await internals.scanSpawns();
-      expect(internals.fallbackScanReasons.has("active-origin-spawns")).toBe(false);
-    } finally {
-      runtime.stop();
-      await rm(runtimeRoot, { recursive: true, force: true });
-    }
+      return {
+        exitCode: 0, stdout: 'p1 p2', stderr: ''
+      };
+    });
+    const h = host();
+    owner(h);
+    await eventually(() => entered);
+    await file(root, 'observed-spawns.json', {
+      v: 1, spawn_id: 'p-parent', updated_at_ms: Date.now(), observed_spawn_ids: ['p1'], wait_reservations: {}
+    });
+    release();
+    await eventually(() => h.notices.length === 1);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p2']);
+    expect(h.notices[0]!.content).toBe('p2');
   });
-
-  it("does not report a status-only row as completed", async () => {
-    const { runtimeRoot, runtime, internals } = await makeRuntime();
+  it('continuous writes cannot postpone a scan indefinitely', async () => {
+    const root = await setup();
+    const h = host();
+    owner(h);
+    let stopped = false;
+    const churn = (async () => {
+      while (!stopped) {
+        await bash(root, record('b1'));
+        await pause(20);
+      }
+    })();
     try {
-      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-status-only")]);
-      await writeSpawnState(runtimeRoot, "p-status-only", {
-        originBashId: "b-status-only",
-        status: "succeeded",
-        terminal: null,
-      });
-      internals.running = true;
-
-      await internals.scanSpawns();
-
-      expect(internals.pending.has("p-status-only")).toBe(false);
-      expect(internals.fallbackScanReasons.has("active-origin-spawns")).toBe(true);
-    } finally {
-      runtime.stop();
-      await rm(runtimeRoot, { recursive: true, force: true });
+      await eventually(() => h.notices.length === 1);
     }
+    finally {
+      stopped = true;
+      await churn;
+    }
+    expect(h.notices).toHaveLength(1);
   });
-
-  it("reads terminal duration from nested persisted facts", async () => {
-    const { runtimeRoot, runtime, internals } = await makeRuntime();
-    try {
-      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-duration")]);
-      await writeSpawnState(runtimeRoot, "p-duration", {
-        originBashId: "b-duration",
-        status: "succeeded",
-        terminal: {
-          exit_code: 0,
-          finished_at: "2026-07-17T12:00:05Z",
-          published_at: "2026-07-17T12:00:05Z",
-          duration_secs: 65,
-        },
-      });
-
-      await internals.scanSpawns();
-
-      expect(internals.pending.get("p-duration")?.duration).toBe("1m05s");
-      expect(internals.pending.get("p-duration")?.kind).toBe("spawn");
-    } finally {
-      runtime.stop();
-      await rm(runtimeRoot, { recursive: true, force: true });
-    }
-  });
-
-  it("does not report a retired nested-status row as completed", async () => {
-    const { runtimeRoot, runtime, internals } = await makeRuntime();
-    try {
-      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-retired")]);
-      await writeSpawnState(runtimeRoot, "p-retired", {
-        originBashId: "b-retired",
-        status: "succeeded",
-        terminal: { ...terminalFacts(), status: "succeeded" },
-      });
-
-      await internals.scanSpawns();
-
-      expect(internals.pending.has("p-retired")).toBe(false);
-    } finally {
-      runtime.stop();
-      await rm(runtimeRoot, { recursive: true, force: true });
-    }
-  });
-
-  it("reports a current-shape terminal row as completed", async () => {
-    const { runtimeRoot, runtime, internals } = await makeRuntime();
-    try {
-      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-current")]);
-      await writeSpawnState(runtimeRoot, "p-current", {
-        originBashId: "b-current",
-        status: "succeeded",
-        terminal: terminalFacts(),
-      });
-
-      await internals.scanSpawns();
-
-      expect(internals.pending.get("p-current")?.kind).toBe("spawn");
-    } finally {
-      runtime.stop();
-      await rm(runtimeRoot, { recursive: true, force: true });
-    }
-  });
-
-
-  it("keeps polling when a spawn directory appears before state.json", async () => {
-    const { runtimeRoot, runtime, internals } = await makeRuntime();
-    try {
-      await writeBashRecords(runtimeRoot, "p-parent", [
-        await bashRecordWithSpawnOutput(runtimeRoot, "b-origin", "p1001"),
-      ]);
-      await mkdir(path.join(runtimeRoot, "spawns", "p1001"), { recursive: true });
-      internals.running = true;
-
-      await internals.scanBashRecords();
-      expect(internals.fallbackScanReasons.has("spawn-discovery")).toBe(true);
-      expect(internals.fallbackScanReasons.has("active-origin-spawns")).toBe(false);
-
-      await writeSpawnState(runtimeRoot, "p1001", { originBashId: "b-origin", status: "running" });
-      await internals.scanSpawns();
-      expect(internals.fallbackScanReasons.has("active-origin-spawns")).toBe(true);
-      expect(internals.fallbackScanInterval).not.toBeNull();
-
-      internals.stopDiscoveryPolling();
-      expect(internals.fallbackScanReasons.has("active-origin-spawns")).toBe(true);
-      expect(internals.fallbackScanInterval).not.toBeNull();
-    } finally {
-      runtime.stop();
-      await rm(runtimeRoot, { recursive: true, force: true });
-    }
-  });
-
-  it("keeps slow discovery polling until missing state.json files resolve", async () => {
-    const { runtimeRoot, runtime, internals } = await makeRuntime();
-    try {
-      await writeBashRecords(runtimeRoot, "p-parent", [
-        await bashRecordWithSpawnOutput(runtimeRoot, "b-origin", "p1001"),
-      ]);
-      await mkdir(path.join(runtimeRoot, "spawns", "p1001"), { recursive: true });
-      internals.running = true;
-
-      await internals.scanBashRecords();
-      internals.slowDiscoveryPolling();
-      expect(internals.fallbackScanReasons.has("spawn-discovery")).toBe(true);
-      expect(internals.discoveryScanInterval).toBeNull();
-      expect(internals.fallbackScanInterval).not.toBeNull();
-
-      await writeSpawnState(runtimeRoot, "p1001", {
-        originBashId: "b-origin",
-        status: "succeeded",
-        terminal: terminalFacts(),
-      });
-      await internals.scanSpawns();
-      expect(internals.fallbackScanReasons.has("spawn-discovery")).toBe(false);
-    } finally {
-      runtime.stop();
-      await rm(runtimeRoot, { recursive: true, force: true });
-    }
-  });
-
-  it("keeps correlated spawns visible after finished bash records are cleared", async () => {
-    const { runtimeRoot, runtime } = await makeRuntime();
-    try {
-      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-origin")]);
-      await writeSpawnState(runtimeRoot, "p1001", { originBashId: "b-origin", status: "running" });
-
-      expect((await runtime.rows()).map((state) => state.id)).toEqual(["p1001"]);
-
-      await writeBashRecords(runtimeRoot, "p-parent", []);
-      expect((await runtime.rows()).map((state) => state.id)).toEqual(["p1001"]);
-    } finally {
-      runtime.stop();
-      await rm(runtimeRoot, { recursive: true, force: true });
-    }
-  });
-
-  it("picks up origin sidecar ids written after the first scan", async () => {
-    const { runtimeRoot, runtime } = await makeRuntime();
-    try {
-      await writeSpawnState(runtimeRoot, "p2001", { originBashId: "b-late", status: "running" });
-
-      expect(await runtime.rows()).toEqual([]);
-
-      await rememberSpawnOriginBashIds(["b-late"], "p-parent");
-      expect((await runtime.rows()).map((state) => state.id)).toEqual(["p2001"]);
-    } finally {
-      runtime.stop();
-      await rm(runtimeRoot, { recursive: true, force: true });
-    }
-  });
-
-
-  it("withholds bash completion while discovery polling may still find a spawn", async () => {
-    const { runtimeRoot, runtime, internals } = await makeRuntime();
-    try {
-      await writeBashRecords(runtimeRoot, "p-parent", [
-        await bashRecordWithSpawnOutput(runtimeRoot, "b-origin", "p1001"),
-      ]);
-      await mkdir(path.join(runtimeRoot, "spawns", "p1001"), { recursive: true });
-      internals.running = true;
-
-      await internals.scanBashRecords();
-      expect(internals.pending.has("b-timeout")).toBe(false);
-
-      await writeSpawnState(runtimeRoot, "p1001", { originBashId: "b-origin", status: "running" });
-      await internals.scanBashRecords();
-      expect(internals.pending.has("b-timeout")).toBe(false);
-    } finally {
-      runtime.stop();
-      await rm(runtimeRoot, { recursive: true, force: true });
-    }
-  });
-
-  it("releases bash completion when expected spawn state never appears", async () => {
-    const { runtimeRoot, runtime, internals } = await makeRuntime();
-    try {
-      await writeBashRecords(runtimeRoot, "p-parent", [
-        await bashRecordWithSpawnOutput(runtimeRoot, "b-timeout", "p1003"),
-      ]);
-      internals.running = true;
-
-      await internals.scanBashRecords();
-      expect(internals.pending.has("b-timeout")).toBe(false);
-
-      internals.missingStateFirstSeenMs.set("p1003", Date.now() - 16_000);
-      internals.slowDiscoveryPolling();
-      await internals.scanBashRecords();
-      expect(internals.pending.get("b-timeout")?.kind).toBe("bash");
-    } finally {
-      runtime.stop();
-      await rm(runtimeRoot, { recursive: true, force: true });
-    }
-  });
-
-
-  it("manual refresh ignores unowned empty spawn dirs", async () => {
-    const { runtimeRoot, runtime, internals } = await makeRuntime();
-    try {
-      await mkdir(path.join(runtimeRoot, "spawns", "p-late"), { recursive: true });
-      internals.running = true;
-
-      await runtime.rows(true);
-      expect(internals.fallbackScanReasons.has("spawn-discovery")).toBe(false);
-    } finally {
-      runtime.stop();
-      await rm(runtimeRoot, { recursive: true, force: true });
-    }
-  });
-
-  it("starts discovery polling for expected spawn ids without state.json", async () => {
-    const runtimeRoot = await mkdtemp(path.join(tmpdir(), "spawn-watch-origin-start-"));
-    setEnv("_MERIDIAN_PI_STATE_DIR", runtimeRoot);
-    setEnv("MERIDIAN_SPAWN_ID", "p-parent");
-    await writeBashRecords(runtimeRoot, "p-parent", [
-      await bashRecordWithSpawnOutput(runtimeRoot, "b-origin", "p1002"),
-    ]);
-
-    const runtime = new SpawnWatchRuntime({} as ConstructorParameters<typeof SpawnWatchRuntime>[0]);
-    const internals = runtime as SpawnWatchRuntimeInternals;
-
-    try {
-      runtime.start();
-      await internals.scanBashRecords();
-      expect(internals.fallbackScanReasons.has("spawn-discovery")).toBe(true);
-    } finally {
-      runtime.stop();
-      await rm(runtimeRoot, { recursive: true, force: true });
-    }
-  });
-
-
-  it("does not let stale discovery suppress old bash completions", async () => {
-    const { runtimeRoot, runtime, internals } = await makeRuntime();
-    try {
-      await writeBashRecords(runtimeRoot, "p-parent", [
-        bashRecord("b-old", { ended_at_ms: Date.now() - 20_000 }),
-      ]);
-      await mkdir(path.join(runtimeRoot, "spawns", "p-orphan"), { recursive: true });
-      internals.running = true;
-      internals.enableDiscoveryPolling();
-
-      await internals.scanBashRecords();
-      expect(internals.pending.get("b-old")?.kind).toBe("bash");
-    } finally {
-      runtime.stop();
-      await rm(runtimeRoot, { recursive: true, force: true });
-    }
-  });
-
-
-  it("does not let global discovery suppress non-spawn bash completions", async () => {
-    const { runtimeRoot, runtime, internals } = await makeRuntime();
-    try {
-      await writeBashRecords(runtimeRoot, "p-parent", [
-        await bashRecordWithSpawnOutput(runtimeRoot, "b-shell", "p9999", {
-          command: "echo 'Spawn id: p9999'",
-          ended_at_ms: Date.now() - 5_000,
-        }),
-      ]);
-      await mkdir(path.join(runtimeRoot, "spawns", "p-orphan"), { recursive: true });
-      internals.running = true;
-      internals.enableDiscoveryPolling();
-
-      await internals.scanBashRecords();
-      expect(internals.pending.get("b-shell")?.kind).toBe("bash");
-    } finally {
-      runtime.stop();
-      await rm(runtimeRoot, { recursive: true, force: true });
-    }
-  });
-
-  it("suppresses bash completion when the bash command launched a spawn", async () => {
-    const { runtimeRoot, runtime, internals } = await makeRuntime();
-    try {
-      await writeBashRecords(runtimeRoot, "p-parent", [bashRecord("b-origin")]);
-      await writeSpawnState(runtimeRoot, "p1001", { originBashId: "b-origin", status: "running" });
-
-      await internals.scanBashRecords();
-      expect(internals.pending.has("b-timeout")).toBe(false);
-    } finally {
-      runtime.stop();
-      await rm(runtimeRoot, { recursive: true, force: true });
-    }
+  it('supervises malformed file failures and recovers after repair', async () => {
+    const root = await setup();
+    await file(root, 'bash-records.json', {
+      records: []
+    });
+    const h = host();
+    owner(h);
+    await eventually(async () => {
+      try {
+        return !!JSON.parse(await readFile(path.join(root, 'pi-bash', 'p-parent', 'delivery-fault.json'), 'utf8')).error;
+      }
+      catch {
+        return false;
+      }
+    });
+    expect(h.notices).toHaveLength(0);
+    await bash(root, record('b1'));
+    await eventually(() => h.notices.length === 1);
+    await eventually(async () => JSON.parse(await readFile(path.join(root, 'pi-bash', 'p-parent', 'delivery-fault.json'), 'utf8')).error === null);
   });
 });

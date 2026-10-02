@@ -24,7 +24,6 @@ pi_runtime/
 │       ├── meridian-spawn-watch/index.js
 │       └── session-boundary/index.js
 └── extensions/
-    ├── types.ts              # shared TS types (ExtensionAPI, ToolRegistration)
     ├── shared/               # ids, json files, panels, pi state paths, meridian CLI helpers
     ├── managed-bash/
     │   └── src/index.ts      # bash/bash_manage override, b-* records, /ps* UI
@@ -42,12 +41,66 @@ once after process exit, validating nonce and actual child PID.
 
 | Extension | Owns | Writes / observes |
 |---|---|---|
-| `managed-bash` | `bash` / `bash_manage`, tracked vs detached bash records, `/ps*` slash commands, `_MERIDIAN_PI_BASH_ID` injection into child processes | `runtime_root/pi-bash/<spawn-id>/bash-records.json` and bash logs |
-| `meridian-spawn-watch` | correlated spawn discovery, `/spawn*` slash commands, implicit-wait `sendMessage({triggerTurn: true})` notifications | watches `runtime_root/spawns/<child>/state.json`, reads `originating_bash_id`, writes `runtime_root/pi-bash/<spawn-id>/last-notification.json` |
+| `managed-bash` | `bash` / `bash_manage`, tracked vs detached bash records, `/ps*` slash commands, `_MERIDIAN_PI_BASH_ID` injection into child processes | `runtime_root/pi-bash/<spawn-id>/bash-records.json` and bash logs; terminal waits mark their record's notification as consumed |
+| `meridian-spawn-watch` | canonical direct-child discovery, `/spawn*` slash commands, idle-turn completion notifications | observes scoped child rows, task consumption and wait leases; writes exact admission receipts and delivery faults |
 
 `managed-bash` is the mechanism extension. `meridian-spawn-watch` is the policy extension.
 Keep that split: shell task execution and task record persistence belong in managed-bash;
 child-spawn observation and notification behavior belong in spawn-watch.
+
+The managed Bash owner is launch-scoped in `globalThis`, keyed by its record
+path, so extension reload preserves live process handles and rebinds current
+hooks. `session_shutdown(reason=reload)` only clears UI hints. Normal shutdown
+terminates all owned groups, including tasks detached from quiescence. A task
+owns the POSIX group created for it, uses bounded TERM→KILL escalation, and
+publishes terminal after group exit and its queued log writes. Its output queue
+applies stream backpressure; failures close owned pipes before cleanup and
+release outstanding operations with an error instead of an unhandled rejection.
+Ping delivery is advisory: a stale notification callback releases its durable
+ping claim and warns, preserving the live shell owner. It does not retry the
+same broken capability in a timer loop; hook rebind or later task activity can
+schedule another attempt. Publication failure remains a task/storage failure.
+
+Cold recovery validates and retains the complete record store before accepting
+commands. Historical terminal/wait-consumed rows remain intact. Running rows
+have no recoverable process handle and retain `status=running` plus
+`execution_error=ownership_lost`; a recorded PID never authorizes signalling.
+`bash_manage(kill)` explains the lost ownership, `wait` reports it, and explicit
+`detach` durably releases tracking. `runtime_error` records failed publication
+when storage permits; a successful later command can repair publication. A
+corrupt store is preserved and refused until repaired. Log readers bound bytes
+with seek/read, and panels load preview snapshots before rendering.
+Wait propagates supervised execution failures even after group cleanup; it does
+not consume a failed result. Clearing history prunes returned foreground,
+untracked, durably wait-consumed, or causally admitted terminal rows, preserving
+unattended background completion obligations. Read admission receipts through the shared strict
+reader at the owner's frozen path; invalid evidence refuses pruning.
+Native `ctx.mode` determines custom-panel availability: Pi 1.0 has `hasUI=true`
+in RPC, but its custom-panel API is a no-op. RPC task output uses required
+`ctx.ui.notify`; print mode retains text output. Tables and logs must never be
+written directly to the RPC stdout transport.
+Shell launch propagates its own Bash ID in `_MERIDIAN_PI_BASH_ID`, and its
+durable record retains the enclosing originating Bash ID. Canonical child
+spawn rows carry parent/origin membership; no origin sidecar is produced.
+Terminal tracked background Bash rows are durable result obligations. Their persisted
+`notification_consumed_at_ms` consumes a terminal wait; exact custom-message
+admission consumes an unattended notice. Sending or queueing is not consumption.
+Managed-bash serializes record snapshots; terminal state is persisted before
+waiters are released, and consumption is persisted before the terminal wait
+result returns. If consumption persistence fails, the marker is rolled back and
+the wait returns an error, leaving the completion eligible for notification.
+Spawn-watch publishes only while native `ctx.isIdle()`, and rereads consumption
+and live wait reservations after formatting. A changed child selection rebuilds
+the batch. One launch-scoped owner reserves exact message membership until its
+native `message_start` admission; reload rebinds that owner and preserves its queue
+claims. Cold restart retries unreceipted work and keeps admitted/consumed work.
+Scan, formatting and receipt failures are supervised in `delivery-fault.json`.
+Notification formatting uses `meridian spawn wait --no-observe`: fetching a
+result must not consume the parent's notification before delivery succeeds.
+Final shutdown stops publication; reload preserves the owner. Polling plus one
+non-resetting scheduled scan guarantees progress under continuous writes.
+See [delivery-contract.md](delivery-contract.md) for schemas, public-event fencing
+and the bounded receipt-to-public-observation crash window.
 
 ### Build Pipeline
 
@@ -87,47 +140,39 @@ quiescence inputs:
 - valid rows under `runtime_root/spawns/` — read through the shared reconciled
   transitive descendant evidence
 - `runtime_root/pi-bash/<parent>/bash-records.json` — tracked/detached bash records
-- `runtime_root/pi-bash/<parent>/last-notification.json` — last implicit-wait notification marker
+- exact admission and public observation files — causal notification membership,
+  fenced by the matching public message event
+- explicit result consumption/dismissal, process-owned wait leases and delivery faults
 
 Writes must use the shared JSON-file helpers so readers never observe half-written JSON.
-Readers tolerate truncation/missing files and re-check disk before final quiescence.
+Missing authority is empty. Present malformed, truncated, wrong-parent or invalid
+schema evidence is unknown; readers recheck disk before final quiescence. Retired
+`last-notification.json` is ignored.
 
-`PiDiskWatcher` reads only bash and notification files. It does not scan spawn
+`PiDiskWatcher` reads only private task/delivery coordination files. It does not scan spawn
 directories or infer descendants from newer IDs. Both Pi and resident drains use
 the shared reconciled transitive tree; keep extension notification and bash state
 independent of persisted descendant state.
 
-### ExtensionAPI (`types.ts`)
+### Native ExtensionAPI
 
-Shared TypeScript interface between Pi and extensions:
+Extensions import the native `ExtensionAPI` from the Pi package root:
 
 - `registerTool(definition)` — register a tool with name, description, input schema, and call handler
-- `registerHook(name, handler)` — register lifecycle hooks where Pi exposes them
-- `session.on(event, handler)` — subscribe to session events
-- `session.sendMessage(message, options)` — send an agent follow-up message; spawn-watch uses this for implicit-wait notifications
+- `on(event, handler)` — register typed native lifecycle and session hooks
+- `sendMessage(message, options)` — void queue/prompt operation, never admission acknowledgement
+- native `message_start` — exact custom-message admission; receipt hook runs before public RPC event
+- `ctx.isIdle()` — publication capability; `ctx.ui.notify()` frames slash output through RPC
 
 ### Spawn Correlation
 
 `managed-bash` injects `_MERIDIAN_PI_BASH_ID=b-*` into every child process. If that
 process runs `meridian spawn` (directly, through `uv run meridian`, or through a wrapper),
 Meridian's spawn store persists the value as `originating_bash_id` on the child spawn
-record. `meridian-spawn-watch` reads disk state and uses that field to scope `/spawn`
-rows and notifications to the current Pi session.
-
-**Sidecar origin tracking (`spawn_origins.ts`).** A separate sidecar file
-(`pi-bash/<spawn-id>/spawn-origins.json`) bridges gaps in the env-propagation chain.
-`managed-bash` calls `rememberSpawnOriginBashIds()` at process start to record the
-bash ID in this sidecar. `meridian-spawn-watch` reads `readSpawnOriginBashIds()` at
-startup to discover bash IDs that may not yet appear in `bash-records.json` (due to
-atomic write timing) or that were written by concurrent bash processes. The sidecar
-serializes concurrent writes through a per-file promise chain so no origin is lost.
-
-This two-channel design (env propagation + sidecar) means spawn correlation works even
-when a bash process starts before `bash-records.json` is persisted, or when a spawn
-state.json appears on disk before the bash record that launched it.
-
-Do not reintroduce argv parsing as the authority. Env propagation plus sidecar plus
-spawn-record writes are the stable bridge.
+record. The watcher scopes `/spawn` and notifications by canonical direct
+`parent_id`. A matching `originating_bash_id` transfers the launcher obligation
+to those children. Logs, remembered discovery, timers and origin sidecars do not
+establish authority, including during atomic publication races.
 
 ### Build Invariant
 

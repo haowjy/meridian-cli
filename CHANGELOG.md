@@ -4,6 +4,42 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Upgrade notes
+- Start fresh Pi sessions after installing; task ownership and causal delivery
+  receipts now survive reload/restart. Old bundles can repeat notices and discard
+  recovered private history on rollback. See [Pi upgrade notes](docs/upgrading.md#unreleased-pi-task-ownership-and-result-delivery).
+
+### Fixed
+- Accept canonical published child terminal metadata in Pi's result projection.
+- Show task-panel action failures even when existing rows remain visible.
+- Use normalized model usage for streaming budgets; tool-result prices no longer
+  trigger false breaches. Receive Pi startup output while sending large prompts.
+- Let returned foreground Bash results be cleared, preserve escaped shell
+  ampersands, and register session-boundary hooks through typed native APIs.
+- Receive Pi RPC acknowledgements independently of event consumption, bound
+  writes/ACKs and EOF waits, and accept large output through bounded byte framing
+  and a reusable event spool; uncertain prompt delivery is never replayed.
+- Honor explicit Pi agent/session directories, guard runtime metadata against
+  deleted spawn owners, and sum assistant-message usage for live cost budgets;
+  absent or malformed costs remain unknown.
+- Clean managed stdio process groups after their leader exits, including
+  descendants that require SIGKILL.
+- Keep managed Bash alive when a background ping cannot be queued; retry released ping claims after extension hooks rebind.
+- Stop managed Bash from publishing obsolete origin sidecars; canonical records and child environment carry origin identity.
+- Route noninteractive Pi Bash slash-command output through native UI notifications, preserving RPC stdout framing.
+- Clear completed Pi Bash history only after wait consumption, causal admission or explicit detach; refuse invalid receipt evidence. Bound process cleanup with monotonic deadlines.
+- Preserve Pi managed Bash tasks across extension reload, recover recorded history after restart, and report lost process ownership without signalling stale PIDs. Kill, abort and shutdown now terminate owned POSIX groups before reporting completion; storage failures clean up started work, and log previews read bounded tails outside rendering.
+- Start Pi child-wave timeout verification after its initial descendant evidence is readable.
+- Keep Pi done signals behind active-turn and result-delivery fences; do not nudge done while a child result awaits its notice.
+- Remove retired Pi origin-sidecar and timestamp-marker helper authority after canonical child handoff.
+- Keep Pi terminal results owed through exact native admission and public-event observation; bound unreadable evidence and unpublished/undelivered results without sliding deadlines.
+- Defer completion follow-ups while Pi streams, rebuild partly consumed batches, preserve queued claims across reload, recover expired waits, and guarantee fair disk scans with supervised delivery faults.
+- Frame `/spawn` listing output through Pi's native UI RPC notification.
+- Share strict Pi receipt and wait-reservation readers across notification and task cleanup.
+- Define validated Pi task-state and causal delivery-receipt contracts for completion recovery.
+- Stop Pi spawn-watch from sending a second completion follow-up after `bash_manage(wait)` returns a terminal managed Bash result; unattended terminal records remain eligible for their completion notice.
+- Keep Pi completion batches reserved during delivery; overlapping scans no longer send a task twice, failed sends retain unread notices, and shutdown prevents later waves.
+
 ## [0.8.2] - 2026-10-01
 
 ### Removed

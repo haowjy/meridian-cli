@@ -11,6 +11,12 @@ observes it. Keep stdout reserved for Pi JSON-RPC: do not add a sidecar event
 transport or make command-line parsing the source of spawn authority.
 
 `managed-bash` owns shell-task execution and task records.
+Its launch-scoped owner survives extension reload; reload rebinds hooks and does
+not terminate live tasks. Cold recovery preserves records but never signals a
+persisted PID: prior running rows remain tracked with `ownership_lost` until
+explicit detach/manual recovery. Detach releases quiescence, not process
+ownership; normal shutdown still cleans up owned groups. Publish terminal only
+after group exit and queued output, and supervise every async task callback.
 `meridian-spawn-watch` owns child-spawn observation and follow-up notifications.
 Keep that mechanism/policy boundary intact.
 `session-boundary` owns bounded native lifecycle observations; only a final
@@ -24,8 +30,11 @@ See README for that dependency.
 
 - Use the shared JSON-file helpers for disk state; readers can encounter a
   missing or truncated file.
-- Correlate spawned work through `_MERIDIAN_PI_BASH_ID`, persisted spawn rows,
-  and the origin sidecar — never argv parsing.
+- Scope children by canonical `parent_id`; transfer launcher work through the
+  row's `originating_bash_id`. Logs and origin sidecars are not authority.
+- `sendMessage()` returns void; receipt authority is exact native custom-message
+  admission. Publish only while native `ctx.isIdle()`, recheck explicit consumption
+  after formatting, and retain queued ownership across reload.
 - Change extension source, never `dist/` output. Rebuild bundles before testing
   source changes; launch projection may otherwise use an installed bundle.
 - Import Pi packages only from their package roots; extension-loader subpath
@@ -35,6 +44,8 @@ See README for that dependency.
 
 - [.context/CONTEXT.md](.context/CONTEXT.md) — contracts, build/projection
   flow, disk-state boundary, and rationale
+- [.context/delivery-contract.md](.context/delivery-contract.md) — disk schemas,
+  consumption/admission ownership and honest restart/crash semantics
 - [README.md](README.md) — contributor build and verification commands
 
 ## Related

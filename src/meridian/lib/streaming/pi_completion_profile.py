@@ -51,6 +51,7 @@ class PiOutstandingWork:
 
     spawn_children: bool
     non_spawn_processes: bool
+    delivery_pending: bool = False
 
 
 @dataclass(frozen=True)
@@ -116,7 +117,8 @@ class PiCompletionProfile:
         self.next_done_nudge_monotonic: float | None = None
         self._done_nudge_eligible_since: float | None = None
         self._done_requested = False
-        self._awaiting_readable_evidence = False
+        self._unknown_deadline_at: float | None = None
+        self._delivery_deadline_at: float | None = None
         self._cleanup: PiCompletionCleanupPort | None = None
 
     def allows_evaluation_without_candidate(self) -> bool:
@@ -130,7 +132,8 @@ class PiCompletionProfile:
 
     def stop(self) -> None:
         self._clear_done_nudge_timer()
-        self._awaiting_readable_evidence = False
+        self._unknown_deadline_at = None
+        self._delivery_deadline_at = None
 
     def emit(self, phase: str, **payload: object) -> None:
         self._emit(phase, **payload)
@@ -149,12 +152,39 @@ class PiCompletionProfile:
             and self.last_successful_terminal is not None
             and not self._done_requested
         ):
-            self._done_requested = consume_resident_signals(
-                self.runtime_root, self.spawn_id
-            ).done
+            self._done_requested = consume_resident_signals(self.runtime_root, self.spawn_id).done
         return CompletionDirectives(done=self._done_requested)
 
     def evaluate(self, context: CompletionEvaluation) -> ProfileDecision:
+        self._update_evidence_deadlines(context)
+        if self._unknown_deadline_at is not None and context.now >= self._unknown_deadline_at:
+            failure = context.assessment.failure
+            detail = (
+                f": {failure.code}" + (f": {failure.detail}" if failure.detail else "")
+                if failure is not None
+                else ""
+            )
+            return ProfileDecision(
+                action="fail",
+                outcome=_terminal_outcome(
+                    status=SpawnStatus.FAILED,
+                    exit_code=1,
+                    error=f"pi_evidence_unreadable{detail}",
+                ),
+            )
+        if (
+            self.quiescence_tracker.parent_idle
+            and self._delivery_deadline_at is not None
+            and context.now >= self._delivery_deadline_at
+        ):
+            return ProfileDecision(
+                action="fail",
+                outcome=_terminal_outcome(
+                    status=SpawnStatus.FAILED,
+                    exit_code=1,
+                    error="pi_delivery_unresolved",
+                ),
+            )
         lifecycle_failure = context.evidence_failure
         if lifecycle_failure is not None:
             return ProfileDecision(
@@ -171,11 +201,7 @@ class PiCompletionProfile:
             return self._evaluate_stabilizing(context)
         if context.trigger == "timeout" or (
             context.trigger == "evidence_due"
-            and (
-                context.directives.done
-                or context.deadline_expired
-                or context.profile_timer_due
-            )
+            and (context.directives.done or context.deadline_expired or context.profile_timer_due)
         ):
             return self._evaluate_timeout(context)
         candidate = context.candidate or self.last_successful_terminal
@@ -190,9 +216,7 @@ class PiCompletionProfile:
             return ProfileDecision(
                 action="stabilize",
                 restart_stabilization=context.evidence_activity is not None,
-                candidate=(
-                    self.last_successful_terminal if context.candidate is None else None
-                ),
+                candidate=(self.last_successful_terminal if context.candidate is None else None),
             )
         return ProfileDecision(action="wait", reset_deadline=True)
 
@@ -203,16 +227,12 @@ class PiCompletionProfile:
             "abandon_candidate",
         }:
             return None
-        unreadable_deadline = None
-        if self._awaiting_readable_evidence and decision.action == "wait":
-            timeout_seconds = self.child_wave_timeout_seconds
-            if timeout_seconds is None or timeout_seconds <= 0:
-                timeout_seconds = PI_EVIDENCE_UNREADABLE_TIMEOUT_SECONDS
-            unreadable_deadline = now + timeout_seconds
+        del now
         deadlines = [
             deadline
             for deadline in (
-                unreadable_deadline,
+                self._unknown_deadline_at,
+                self._delivery_deadline_at if self.quiescence_tracker.parent_idle else None,
                 self._active_child_wave_deadline(),
             )
             if deadline is not None
@@ -228,9 +248,7 @@ class PiCompletionProfile:
         del intentional_stop
         return state.candidate if self.micro_drain_active else None
 
-    def next_nudge_at(
-        self, state: CompletionState, assessment: WorkAssessment
-    ) -> float | None:
+    def next_nudge_at(self, state: CompletionState, assessment: WorkAssessment) -> float | None:
         del state, assessment
         self._refresh_done_nudge_state()
         return self.next_done_nudge_monotonic
@@ -267,9 +285,7 @@ class PiCompletionProfile:
             recorded_outcome=recorded_outcome,
             fallback_error=self.fallback_error_without_recorded_outcome(),
             cleanup_reason=(
-                "pi_process_exit_with_tracked_children"
-                if pending_tracked_work
-                else None
+                "pi_process_exit_with_tracked_children" if pending_tracked_work else None
             ),
         )
 
@@ -294,10 +310,7 @@ class PiCompletionProfile:
         if outcome.status != "succeeded":
             return
         self.last_successful_terminal = outcome
-        if (
-            self.quiescence_tracker.parent_idle
-            and self._done_nudge_eligible_since is None
-        ):
+        if self.quiescence_tracker.parent_idle and self._done_nudge_eligible_since is None:
             self._done_nudge_eligible_since = self._clock()
         self._refresh_done_nudge_state()
         self.emit_waiting_phases_if_needed()
@@ -326,20 +339,14 @@ class PiCompletionProfile:
     def after_descendant_assessment(self, assessment: WorkAssessment) -> None:
         """Apply a committed shared assessment without requiring another event."""
         del assessment
-        if (
-            self.quiescence_enabled
-            and self.quiescence_tracker.parent_idle
-        ):
+        if self.quiescence_enabled and self.quiescence_tracker.parent_idle:
             self._update_idle_waiting_state()
 
     def pending_children_at_exit(self) -> bool:
         if not self.quiescence_enabled:
             return False
         work = self.evidence.classify_outstanding_work()
-        return (
-            work.spawn_children
-            or work.non_spawn_processes
-        )
+        return work.spawn_children or work.non_spawn_processes or work.delivery_pending
 
     def fallback_error_without_recorded_outcome(self) -> str | None:
         return None
@@ -455,9 +462,7 @@ class PiCompletionProfile:
             )
 
         if context.profile_timer_due and self._done_nudge_due(context.now):
-            self.next_done_nudge_monotonic = (
-                context.now + self.done_nudge_interval_seconds
-            )
+            self.next_done_nudge_monotonic = context.now + self.done_nudge_interval_seconds
             return ProfileDecision(action="wait", nudge="normal", reset_deadline=True)
         return ProfileDecision(action="wait", reset_deadline=True)
 
@@ -467,21 +472,38 @@ class PiCompletionProfile:
         candidate: TerminalEventOutcome,
     ) -> ProfileDecision:
         self._clear_done_nudge_timer()
-        if context.assessment.disposition != "unknown":
-            self._awaiting_readable_evidence = False
-            return ProfileDecision(action="complete", outcome=candidate)
-        if context.deadline_expired:
-            self._awaiting_readable_evidence = False
-            return ProfileDecision(
-                action="fail",
-                outcome=_terminal_outcome(
-                    status=SpawnStatus.FAILED,
-                    exit_code=1,
-                    error="pi_evidence_unreadable",
-                ),
-            )
-        self._awaiting_readable_evidence = True
-        return ProfileDecision(action="wait")
+        if (
+            context.assessment.disposition == "unknown"
+            or context.active_turn
+            or not self.quiescence_tracker.parent_idle
+            or self.classify_outstanding_work().delivery_pending
+        ):
+            return ProfileDecision(action="wait")
+        return ProfileDecision(action="complete", outcome=candidate)
+
+    def _update_evidence_deadlines(self, context: CompletionEvaluation) -> None:
+        timeout = self.child_wave_timeout_seconds
+        if timeout is None or timeout <= 0:
+            timeout = PI_EVIDENCE_UNREADABLE_TIMEOUT_SECONDS
+        if context.assessment.disposition == "unknown":
+            if self._unknown_deadline_at is None:
+                self._unknown_deadline_at = context.now + timeout
+        else:
+            self._unknown_deadline_at = None
+        delivery_pending = any(
+            b.code
+            in {
+                "pi_result_delivery_pending",
+                "pi_result_publication_pending",
+                "pi_delivery_event_pending",
+            }
+            for b in context.assessment.blockers
+        )
+        if delivery_pending:
+            if self.quiescence_tracker.parent_idle and self._delivery_deadline_at is None:
+                self._delivery_deadline_at = context.now + timeout
+        else:
+            self._delivery_deadline_at = None
 
     def _start_micro_drain(self) -> None:
         self.micro_drain_active = True
@@ -498,9 +520,7 @@ class PiCompletionProfile:
         ):
             wave_start = self._clock()
             self.child_wave_started_monotonic = wave_start
-            self.child_wave_deadline_monotonic = (
-                wave_start + self.child_wave_timeout_seconds
-            )
+            self.child_wave_deadline_monotonic = wave_start + self.child_wave_timeout_seconds
         if not self.evidence.has_pending_children():
             self._clear_child_wave_timer()
         self._refresh_done_nudge_state()
@@ -509,6 +529,7 @@ class PiCompletionProfile:
     def _refresh_done_nudge_state(self) -> None:
         if (
             not self.quiescence_enabled
+            or self._done_requested
             or self.last_successful_terminal is None
             or not self.quiescence_tracker.parent_idle
             or self.micro_drain_active
@@ -516,10 +537,10 @@ class PiCompletionProfile:
             self._clear_done_nudge_timer()
             return
         outstanding = self.classify_outstanding_work()
-        if (
-            outstanding.spawn_children
-        ):
+        if outstanding.spawn_children or outstanding.delivery_pending:
             self._clear_done_nudge_timer()
+            if outstanding.delivery_pending:
+                self._done_nudge_eligible_since = None
             return
         if not outstanding.non_spawn_processes:
             self._clear_done_nudge_timer()
@@ -535,10 +556,7 @@ class PiCompletionProfile:
             )
 
     def _done_nudge_due(self, now: float) -> bool:
-        return (
-            self.next_done_nudge_monotonic is not None
-            and now >= self.next_done_nudge_monotonic
-        )
+        return self.next_done_nudge_monotonic is not None and now >= self.next_done_nudge_monotonic
 
     def _prepare_child_timeout(self, now: float) -> None:
         cleanup = self._cleanup
@@ -553,8 +571,7 @@ class PiCompletionProfile:
         ):
             timeout_seconds = max(
                 0.0,
-                self.child_wave_deadline_monotonic
-                - self.child_wave_started_monotonic,
+                self.child_wave_deadline_monotonic - self.child_wave_started_monotonic,
             )
         cleanup.prepare_child_timeout(
             ChildTimeoutTelemetry(
@@ -587,7 +604,6 @@ class PiCompletionProfile:
 
     def _emit(self, phase: str, **payload: object) -> None:
         self.emit_phase(phase=phase, session_role=self.session_role or None, **payload)
-
 
 
 def _pi_child_wave_timeout_error() -> str:

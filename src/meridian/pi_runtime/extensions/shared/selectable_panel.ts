@@ -1,5 +1,15 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
+
+/** Pi 1.0 has RPC UI notifications, but custom panels require interactive mode. */
+export function hasTaskPanelUI(ctx: ExtensionContext): boolean {
+  return ctx.hasUI && (!("mode" in ctx) || ctx.mode === "tui");
+}
+
+export function showTaskText(ctx: ExtensionContext, text: string): void {
+  if ("mode" in ctx && ctx.mode === "print") process.stdout.write(`${text}\n`);
+  else ctx.ui.notify(text, "info");
+}
 
 export type SelectablePanelColumn<Row> = {
   header: string;
@@ -165,6 +175,7 @@ export function renderSelectablePanel<Row>(
   rows: Row[],
   selectedIndex: number,
   rowScrollOffset: number,
+  errorMessage: string | null = null,
 ): string[] {
   const footer = options.footer ?? "enter open · j/k select · r refresh · q close";
   const maxRows = Math.max(1, options.maxRows ?? 8);
@@ -181,6 +192,7 @@ export function renderSelectablePanel<Row>(
   const headerSuffix = rows.length > visibleCount && visibleCount > 0 ? theme.fg("dim", ` [${start + 1}-${end}/${rows.length}]`) : "";
 
   const topLines: string[] = [titleLine(options.title, width, theme), padLine("", width, theme)];
+  if (errorMessage) topLines.push(padLine(theme.fg("error", errorMessage), width, theme));
   for (const line of preview) topLines.push(padLine(line, width, theme));
 
   const tableLines: string[] = [borderLine(width, "├", "─", "┤", theme)];
@@ -282,10 +294,11 @@ export class SelectablePanelComponent<Row> implements Component {
       width,
       this.tui.terminal?.rows ?? 24,
       this.theme,
-      this.errorMessage ? { ...this.options, emptyMessage: this.errorMessage } : this.options,
+      this.options,
       this.rows,
       this.selectedIndex,
       this.rowScrollOffset,
+      this.errorMessage,
     );
   }
 

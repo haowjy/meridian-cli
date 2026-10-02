@@ -51,9 +51,9 @@ descendants that have reparented to PID 1. Single-PID `SIGTERM` only reaches
 the root; if the root has exited and its children reparented, they escape.
 
 When the root is already dead before `terminate_pgid()` is called (degraded mode),
-the function still attempts `os.killpg()`. If the group has also dissolved
-(`ProcessLookupError`), a secondary full-table scan by PGID runs to catch orphaned
-processes that stayed in the group after reparenting (PROC-004 sweep).
+the function still attempts `os.killpg()`. A full-table scan by PGID retains
+orphaned group members for the grace wait and SIGKILL escalation, including
+members that ignore SIGTERM after their leader exits (PROC-004 sweep).
 
 ### Legacy Windows Branch (Untested): Job Object Handle Lifetime
 

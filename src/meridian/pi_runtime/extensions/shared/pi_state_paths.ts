@@ -26,8 +26,8 @@ export function resolveBashRecordsPath(spawnId = currentSpawnIdFromEnv()): strin
   return path.join(resolvePiBashDir(spawnId), "bash-records.json");
 }
 
-export function resolveLastNotificationPath(spawnId = currentSpawnIdFromEnv()): string {
-  return path.join(resolvePiBashDir(spawnId), "last-notification.json");
+export function resolveDeliveryReceiptsPath(spawnId = currentSpawnIdFromEnv()): string {
+  return path.join(resolvePiBashDir(spawnId), "delivery-receipts.json");
 }
 
 export function resolveObservedSpawnsPath(spawnId = currentSpawnIdFromEnv()): string {
@@ -36,10 +36,6 @@ export function resolveObservedSpawnsPath(spawnId = currentSpawnIdFromEnv()): st
 
 export function resolveClearedSpawnsPath(spawnId = currentSpawnIdFromEnv()): string {
   return path.join(resolvePiBashDir(spawnId), "cleared-spawns.json");
-}
-
-export function resolveSpawnOriginsPath(spawnId = currentSpawnIdFromEnv()): string {
-  return path.join(resolvePiBashDir(spawnId), "spawn-origins.json");
 }
 
 export function resolveBashLogsDir(spawnId = currentSpawnIdFromEnv()): string {

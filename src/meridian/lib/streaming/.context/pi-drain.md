@@ -19,7 +19,7 @@ The Pi completion composition owns:
 - parent idle/active observation
 - disk watcher / quiescence integration (`PiDiskWatcher`, `PiQuiescenceTracker`)
 - active persisted-descendant tracking from the reconciled transitive spawn tree
-- direct follow-up marker gating and child-wave timeout decisions
+- durable result obligations, causal admission fencing and bounded recovery decisions
 - micro-drain candidate state and phase-event emission coordination
 - Pi failure/finalization decisions when the process exits before quiescence
 
@@ -29,19 +29,22 @@ deadline, nudge, or exit behavior to `pi_completion_profile.py`. The exception i
 purely generic event persistence, observer dispatch, subscriber fan-out, heartbeat,
 or control-socket handling.
 
-`PiPrivateWorkLedger` owns managed-bash state, the direct follow-up marker, and
+`PiPrivateWorkLedger` owns validated managed-bash facts, causal receipts, and
 private-file read failures. It exposes categorized immutable blocker snapshots.
-`PiDiskWatcher` reads and watches the bash and notification-marker files, while
+`PiDiskWatcher` reads task, receipt, public-observation, explicit-consumption and fault files, while
 `PiLifecycleTracker` validates the produced quiescence lifecycle event. Canonical
 notification and subspawn events are not part of the Pi runtime contract.
-`PiQuiescenceTracker` preserves parent-idle epochs across private-disk wakeups. The Pi
+`PiQuiescenceTracker` fences the parent active before acknowledging the exact public
+custom-message admission; unrelated activity and wall-clock timestamps cannot acknowledge work. The Pi
 evidence collaborator combines private-work snapshots with reconciled transitive
 persisted-descendant evidence; the profile uses the summary for deadlines and
 finalization decisions.
 
 Pi and resident use the shared reconciled transitive persisted tree as descendant
 authority. A live grandchild beneath a terminal direct child therefore blocks Pi, while a
-`finalizing` direct child with a durable report is reconciled terminal and does not.
+`finalizing` direct child with a durable report is reconciled terminal for liveness.
+The same projection retains its raw canonical row: Pi still blocks on result publication
+until a terminal row appears, then on result consumption/admission. Resident semantics remain unchanged.
 Only valid, parent-linked rows enter the tree; incomplete and wrong-parent directories
 are not descendant evidence. Both profiles consume the same immutable cached assessment;
 streamed events never trigger a descendant read. Meridian's `start_spawn()` publishes
@@ -52,7 +55,15 @@ complete rows atomically.
 Pi extensions coordinate private work with Python through disk files:
 
 - bash state under `runtime_root/pi-bash/<parent>/bash-records.json`
-- notification marker under `runtime_root/pi-bash/<parent>/last-notification.json`
+- exact admission receipts under `runtime_root/pi-bash/<parent>/delivery-receipts.json`
+- Python's exact public-event acknowledgements in `delivery-observations.json`
+- explicit CLI observations/dismissals in `observed-spawns.json` / `cleared-spawns.json`
+- supervised watcher/storage diagnostics in `delivery-fault.json`
+
+See [the delivery contract](../../../pi_runtime/.context/delivery-contract.md) for full
+shapes and writers. `last-notification.json` is retired and ignored. Terminal tracked
+background Bash stays owed until its persisted wait marker or exact admission receipt.
+Canonical direct-child rows transfer matching launcher obligations, without log parsing.
 
 Persisted descendant state comes independently through `DescendantRefreshOwner`. Its
 single-flight worker uses `ReconciledDescendantEvidence` to discover the transitive
@@ -61,14 +72,22 @@ the selected loose rows under `runtime_root/spawns/`. Stdout lifecycle-like subs
 messages and wake notifications are not descendant evidence.
 
 Private-disk changes are not passive. `PiDiskWatcher` wakes the drain loop when a bash
-or notification file changes, and the drain loop re-evaluates quiescence on those
+or delivery file changes, and the drain loop re-evaluates quiescence on those
 wakeups. Terminal-event micro-drain rechecks private disk before accepting success;
 finish-based bounded refresh rechecks descendants without coupling reads to event volume.
 
 An absent private-work file means no blocker. A file that exists but cannot be read or
-parsed produces typed unknown evidence instead of an empty snapshot. `done` waits for
-that evidence to recover and fails explicitly if it remains unknown through the single
-completion deadline. `done` may override known blockers, but never unknown evidence.
+validated produces typed unknown evidence instead of an empty snapshot. Boolean,
+nonfinite timestamp, wrong-parent, malformed member and version values are rejected.
+Unknown evidence and undelivered results have anchored recovery windows (configured
+child-wave window, otherwise 300 seconds). Delivery anchors at first idle and is not
+evaluated during intentional active-turn deferral; that activity never renews the
+anchor. Unknown evidence remains bounded while active too. Failure reports
+`pi_evidence_unreadable` with original evidence detail or `pi_delivery_unresolved`.
+`done` may release known running execution or descendant liveness once the parent
+is idle. It cannot skip a native active turn, an owed result/publication, or unknown
+evidence. Result delivery never schedules the generic done nudge; the parent must
+receive and finish its causal notice before completion can select its report.
 
 Every proposed success requests a descendant refresh begun after that proposal. Pi
 reevaluates policy only after the qualifying result commits; a cached ready result cannot
@@ -81,8 +100,8 @@ enforces refresh, stabilization, nudge, and completion timers.
 When the parent agent is idle and reconciled descendants are still pending,
 `PiCompletionProfile` starts the child-wave deadline. If the deadline expires, it fails
 with `failed` / `pi_child_wave_timeout` rather than letting Pi wait forever. Pi-private
-bash and notification-marker work does not start this deadline; it relies on direct
-follow-up/nudge handling and the opt-in outer attempt timeout. Child-wave timeout state
+bash execution does not start the child-wave deadline. Publication/delivery and unknown
+evidence use their separate bounded recovery windows. Child-wave timeout state
 is latched and its deadline cleared before the outcome publishes. The single
 descendant cleanup then runs asynchronously and best-effort. Ordinary cleanup or
 timeout-phase emission failures are diagnostic and do not replace that outcome or
@@ -103,10 +122,16 @@ signal-gated deadline/rearm model documented in [AGENTS.md](../AGENTS.md).
 When a terminal event arrives but quiescence is not yet confirmed, `PiCompletionProfile`
 enters micro-drain mode. It gives already-buffered or just-written disk/event activity a
 short chance to arrive before accepting the terminal event as the final outcome. This
-covers races where descendant state or notification markers land immediately after
+covers races where descendant state or causal delivery evidence lands immediately after
 `agent_end`. Micro-drain rechecks private evidence and requests qualifying descendant
 validation before finalizing. A slow initial descendant refresh does not move the
 idle/terminal anchor used by Pi's done-nudge delay.
+
+Receipt persistence precedes the native public RPC message event. Until Python observes
+that exact delivery ID and membership, evidence remains unknown; once observed, the
+parent active fence requires its subsequent idle turn. A crash between receipt and
+public observation fails closed with `pi_delivery_event_unobserved`; never fabricate
+the missing acknowledgement. Admission plus observation survives cold restart.
 
 ### Pi Phase Events
 

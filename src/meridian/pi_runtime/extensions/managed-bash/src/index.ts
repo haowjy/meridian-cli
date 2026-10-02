@@ -1,17 +1,18 @@
-import { readFileSync } from "node:fs";
-
-import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import { openLogOverlay } from "../../shared/log_overlay";
 import {
   openTaskPanel,
+  hasTaskPanelUI,
+  showTaskText,
   type PanelCommandContext,
   type SelectablePanelColumn,
 } from "../../shared/selectable_panel";
 import { formatDurationSecs, renderTable } from "../../shared/ui";
 import type { BashRecord } from "../../shared/schemas";
 import { BashRuntime, type BashListRow, type BashManageParams, type BashParams } from "./bash_runtime";
+import { readLogTail } from "./bash_log_store";
 
 const FOREGROUND_BASH_HINT_TEXT = "/ps to manage tasks · /ps:b to run in background";
 
@@ -45,34 +46,27 @@ function formatToolResult(result: unknown): string {
 
 function formatRows(rows: BashListRow[]): string {
   if (rows.length === 0) return "No managed bash tasks.";
-  return renderTable(
+  const table = renderTable(
     [
       { header: "ID", width: 10, render: (row: BashListRow) => row.bash_id },
-      { header: "STATE", width: 12, render: (row: BashListRow) => row.status },
+      { header: "STATE", width: 12, render: (row: BashListRow) => row.status === "running" && row.execution_error ? "unresolved" : row.status },
       { header: "DUR", width: 8, render: (row: BashListRow) => formatDurationSecs(row.duration_secs) },
       { header: "COMMAND", width: 60, render: (row: BashListRow) => row.command },
     ],
     rows,
     100,
   ).join("\n");
+  const errors = rows.flatMap((row) => row.execution_error ? [`${row.bash_id}: ${row.execution_error}`] : []);
+  return [table, ...errors].join("\n");
 }
 
-type BashPanelRow = BashListRow;
-
-function tailFile(filePath: string, maxBytes = 4096): string {
-  try {
-    const text = readFileSync(filePath, "utf-8");
-    return text.slice(Math.max(0, text.length - maxBytes));
-  } catch {
-    return "";
-  }
-}
+type BashPanelRow = BashListRow & { preview?: string };
 
 type BashLogStream = "combined" | "stdout" | "stderr";
 
-function readInspectableLog(row: BashPanelRow, stream: BashLogStream = "combined"): string {
+async function readInspectableLog(row: BashPanelRow, stream: BashLogStream = "combined"): Promise<string> {
   const filePath = stream === "stdout" ? row.stdout_log_path : stream === "stderr" ? row.stderr_log_path : row.log_path;
-  return tailFile(filePath, 1024 * 1024).trimEnd() || "(no output yet)";
+  return (await readLogTail(filePath, 1024 * 1024)).trimEnd() || "(no output yet)";
 }
 
 async function sendBackgroundPing(pi: ExtensionAPI, record: BashRecord): Promise<void> {
@@ -101,7 +95,7 @@ function formatBashStatus(row: BashPanelRow, theme: Theme): string {
   const error = (value: string) => theme.fg("error", value);
   const warning = (value: string) => theme.fg("warning", value);
 
-  if (row.status === "running") return success("● running");
+  if (row.status === "running") return row.execution_error ? warning("! unresolved") : success("● running");
   if (row.status === "exited") {
     return row.exit_code === 0 ? dim("✓ exit(0)") : error(`✗ exit(${row.exit_code ?? "?"})`);
   }
@@ -111,18 +105,19 @@ function formatBashStatus(row: BashPanelRow, theme: Theme): string {
 
 function renderBashPreview(row: BashPanelRow, theme: Theme): string[] {
   const dim = (value: string) => theme.fg("dim", value);
-  const output = tailFile(row.log_path, 2048).trimEnd();
+  const output = row.preview?.trimEnd() ?? "";
   const lines = output ? output.split(/\r?\n/).slice(-3) : [dim("(no output yet)")];
   return [
     `${theme.fg("accent", row.bash_id)} ${formatBashStatus(row, theme)} ${dim(formatDurationSecs(row.duration_secs))}`,
     dim(row.command),
+    ...(row.execution_error ? [theme.fg("error", row.execution_error)] : []),
     ...lines,
   ];
 }
 
 const BASH_PANEL_COLUMNS: SelectablePanelColumn<BashPanelRow>[] = [
   { header: "ID", width: 10, render: (row, theme, selected) => (theme ? (selected ? theme.fg("accent", row.bash_id) : theme.fg("dim", row.bash_id)) : row.bash_id) },
-  { header: "STATE", width: 12, render: (row, theme) => (theme ? formatBashStatus(row, theme) : row.status) },
+  { header: "STATE", width: 12, render: (row, theme) => (theme ? formatBashStatus(row, theme) : row.status === "running" && row.execution_error ? "unresolved" : row.status) },
   { header: "BG", width: 3, render: (row, theme) => (theme ? (row.is_background ? theme.fg("accent", "yes") : theme.fg("dim", "no")) : row.is_background ? "yes" : "no") },
   { header: "DUR", width: 8, render: (row, theme) => (theme ? theme.fg("dim", formatDurationSecs(row.duration_secs)) : formatDurationSecs(row.duration_secs)), align: "right" },
   { header: "SIZE", width: 8, render: (row, theme) => (theme ? theme.fg("dim", `${row.log_bytes}B`) : `${row.log_bytes}B`), align: "right" },
@@ -135,34 +130,18 @@ let activeForegroundCount = 0;
 
 function showForegroundHint(): void {
   activeForegroundCount += 1;
-  if (activeForegroundCount === 1 && capturedSetWidget) {
-    capturedSetWidget("managed-bash", [FOREGROUND_BASH_HINT_TEXT]);
-  }
+  if (activeForegroundCount === 1) updateForegroundWidget([FOREGROUND_BASH_HINT_TEXT]);
 }
 
 function clearForegroundHint(): void {
   activeForegroundCount = Math.max(0, activeForegroundCount - 1);
-  if (activeForegroundCount === 0 && capturedSetWidget) {
-    capturedSetWidget("managed-bash", undefined);
-  }
+  if (activeForegroundCount === 0) updateForegroundWidget(undefined);
 }
 
-function notify(ctx: { ui?: { notify?: (msg: string, level?: string) => void } }, message: string, level: "info" | "warning" = "info"): void {
-  if (ctx.ui?.notify) ctx.ui.notify(message, level);
-  else process.stdout.write(`${message}\n`);
+function updateForegroundWidget(content: string[] | undefined): void {
+  try { capturedSetWidget?.("managed-bash", content); }
+  catch { capturedSetWidget = null; } // UI replacement never owns task cleanup.
 }
-
-type UserBashEvent = {
-  command?: string;
-  cwd?: string;
-};
-
-type BashExecOptions = {
-  onData?: (data: Buffer) => void;
-  signal?: AbortSignal;
-  timeout?: number;
-  env?: NodeJS.ProcessEnv;
-};
 
 function splitUserBashBackground(command: string): { background: boolean; execCommand: string } {
   const trimmed = command.trim();
@@ -179,7 +158,7 @@ function splitUserBashBackground(command: string): { background: boolean; execCo
       escape = false;
       continue;
     }
-    if (ch === "\\" && (inSingle || inDouble)) {
+    if (ch === "\\" && !inSingle) {
       escape = true;
       continue;
     }
@@ -215,19 +194,18 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
     }
   });
 
-  pi.on?.("session_shutdown", async () => {
+  pi.on?.("session_shutdown", async (event) => {
     activeForegroundCount = 0;
-    if (capturedSetWidget) capturedSetWidget("managed-bash", undefined);
+    updateForegroundWidget(undefined);
     capturedSetWidget = null;
-    await runtime.shutdown();
+    if (event?.reason !== "reload") await runtime.shutdown();
   });
 
-  pi.on?.("user_bash", async (event: unknown) => {
-    const typed = event as UserBashEvent;
-    const command = typed.command?.trim();
+  pi.on?.("user_bash", async (event) => {
+    const command = event.command.trim();
     if (!command) return undefined;
 
-    const cwd = typed.cwd?.trim() || process.cwd();
+    const cwd = event.cwd.trim() || process.cwd();
     const { background, execCommand } = splitUserBashBackground(command);
     if (background) {
       const { bash_id: bashId } = await runtime.startDetachedUserBash(execCommand, cwd, process.env);
@@ -236,17 +214,14 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
           exitCode: 0,
           output: `Detached task ${bashId} — /ps to manage\n`,
           cancelled: false,
+          truncated: false,
         },
       };
     }
 
     return {
       operations: {
-        exec: async (
-          execCommandFromPi: string,
-          execCwd: string,
-          options: BashExecOptions,
-        ): Promise<{ exitCode: number | null }> =>
+        exec: async (execCommandFromPi, execCwd, options) =>
           await runtime.executeUserBash(execCommandFromPi, execCwd, options),
       },
     };
@@ -300,10 +275,13 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
   pi.registerCommand("ps", {
     description: "List Meridian-managed bash tasks for this Pi session.",
     handler: async (_args, ctx) => {
-      const loadRows = async (): Promise<BashPanelRow[]> => runtime.list(true);
+      const loadRows = async (): Promise<BashPanelRow[]> => {
+        const rows = await runtime.rows();
+        return Promise.all(rows.map(async (row) => ({ ...row, preview: await readLogTail(row.log_path, 2048) })));
+      };
 
-      if (ctx.hasUI === false || !ctx.ui?.custom) {
-        process.stdout.write(`${formatRows(await loadRows())}\n`);
+      if (!hasTaskPanelUI(ctx)) {
+        showTaskText(ctx, formatRows(await loadRows()));
         return;
       }
 
@@ -317,7 +295,7 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
         footer: "enter logs · c clear · j/k select · r refresh · q close",
         onClear: async () => {
           const cleared = await runtime.clearFinished();
-          ctx.ui?.notify?.(`cleared ${cleared} finished bash task(s)`, "info");
+          ctx.ui.notify(`cleared ${cleared} finished bash task(s)`, "info");
         },
         onEnter: async (row) => {
           await openLogOverlay(ctx as PanelCommandContext, {
@@ -354,9 +332,9 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
         const row = runtime.list(true).find((candidate) => candidate.bash_id === bashId);
         if (row) return readInspectableLog(row);
         const result = await runtime.manage({ action: "output", bash_id: bashId });
-        return "output" in result ? result.output : formatToolResult(result);
+        return "output" in result && typeof result.output === "string" ? result.output : formatToolResult(result);
       };
-      if (ctx.hasUI !== false && ctx.ui?.custom) {
+      if (hasTaskPanelUI(ctx)) {
         const row = runtime.list(true).find((candidate) => candidate.bash_id === bashId);
         await openLogOverlay(ctx as PanelCommandContext, {
           title: `Bash log ${bashId}`,
@@ -365,14 +343,14 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
         });
         return;
       }
-      process.stdout.write(`${await loadText()}\n`);
+      showTaskText(ctx, await loadText());
     },
   });
 
-  const backgroundForegroundHandler = async (_args: string, ctx: { ui?: { notify?: (msg: string, level?: string) => void } }): Promise<void> => {
+  const backgroundForegroundHandler = async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
     const result = await runtime.backgroundForeground();
     if (result.ok) return;
-    notify(ctx, "No foreground $ task to background", "warning");
+    ctx.ui.notify("No foreground $ task to background", "warning");
   };
 
   pi.registerCommand("ps:b", {

@@ -1,13 +1,15 @@
 """Spawn operations used by CLI and MCP surfaces."""
 
 import asyncio
-import json
 import os
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
+
+import psutil
 
 from meridian.lib.bootstrap.services import (
     RuntimeReadContext,
@@ -32,6 +34,7 @@ from meridian.lib.core.spawn_service import CancelOutcome
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
+from meridian.lib.harness.pi_private_state import SpawnObservations, WaitReservation
 from meridian.lib.launch.continue_replay import (
     build_continue_replay_contract,
     continue_replay_source_from_reference,
@@ -531,9 +534,7 @@ def spawn_list_sync(
 
     spawns = list(
         reversed(
-            reconcile_spawns(
-                project_root, runtime_root, indexed_spawn_scan(runtime_root)
-            ).records
+            reconcile_spawns(project_root, runtime_root, indexed_spawn_scan(runtime_root)).records
         )
     )
 
@@ -705,9 +706,7 @@ def spawn_stats_sync(
         []
         if runtime_root is None
         else list(
-            reconcile_spawns(
-                project_root, runtime_root, indexed_spawn_scan(runtime_root)
-            ).records
+            reconcile_spawns(project_root, runtime_root, indexed_spawn_scan(runtime_root)).records
         )
     )
 
@@ -1626,6 +1625,7 @@ def _update_pi_wait_observation(
     waiting_add: tuple[str, ...] = (),
     waiting_remove: tuple[str, ...] = (),
     observed_add: tuple[str, ...] = (),
+    lease_seconds: float = 30.0,
 ) -> None:
     """Record spawn IDs the parent session is explicitly waiting for or saw.
 
@@ -1641,36 +1641,48 @@ def _update_pi_wait_observation(
     lock_path = runtime_root / "pi-bash" / parent_spawn_id / "observed-spawns.lock"
     with lock_file(lock_path):
         try:
-            existing = json.loads(observed_path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
-            existing = {}
-        existing_obj = cast("dict[str, object]", existing) if isinstance(existing, dict) else {}
-        observed_ids = _string_set(existing_obj.get("observed_spawn_ids"))
-        waiting_ids = _string_set(existing_obj.get("waiting_spawn_ids"))
-        waiting_ids.update(waiting_add)
-        waiting_ids.difference_update(waiting_remove)
+            existing = SpawnObservations.model_validate_json(
+                observed_path.read_text(encoding="utf-8")
+            )
+        except FileNotFoundError:
+            existing = SpawnObservations(v=1, spawn_id=parent_spawn_id, observed_spawn_ids=[])
+        if existing.spawn_id != parent_spawn_id:
+            raise ValueError("Pi spawn observation parent mismatch")
+        observed_ids = set(existing.observed_spawn_ids)
+        now = time.time()
+        reservations = {
+            token: lease
+            for token, lease in existing.wait_reservations.items()
+            if lease.expires_at_epoch > now
+        }
+        token = f"{os.getpid()}:{threading.get_ident()}"
+        own_lease = reservations.get(token)
+        own_ids = set(own_lease.spawn_ids if own_lease else ())
+        own_ids.update(waiting_add)
+        own_ids.difference_update(waiting_remove)
+        if own_ids:
+            reservations[token] = WaitReservation(
+                owner_pid=os.getpid(),
+                owner_birth_epoch=psutil.Process().create_time(),
+                expires_at_epoch=now + lease_seconds,
+                spawn_ids=sorted(own_ids),
+            )
+        else:
+            reservations.pop(token, None)
+        waiting_ids = {item for lease in reservations.values() for item in lease.spawn_ids}
         observed_ids.update(observed_add)
-        observed_ids.difference_update(waiting_ids)
         atomic_write_text(
             observed_path,
-            json.dumps(
-                {
-                    "v": 1,
-                    "spawn_id": parent_spawn_id,
-                    "updated_at_ms": int(time.time() * 1000),
-                    "observed_spawn_ids": sorted(observed_ids),
-                    "waiting_spawn_ids": sorted(waiting_ids),
-                },
-                indent=2,
-            )
+            SpawnObservations(
+                v=1,
+                spawn_id=parent_spawn_id,
+                updated_at_ms=time.time() * 1000,
+                observed_spawn_ids=sorted(observed_ids),
+                waiting_spawn_ids=sorted(waiting_ids),
+                wait_reservations=reservations,
+            ).model_dump_json(indent=2)
             + "\n",
         )
-
-
-def _string_set(raw: object) -> set[str]:
-    if not isinstance(raw, list):
-        return set()
-    return {item for item in cast("list[object]", raw) if isinstance(item, str)}
 
 
 def spawn_wait_sync(
@@ -1771,14 +1783,23 @@ def spawn_wait_sync(
     progress_interval = max(_WAIT_PROGRESS_INTERVAL_SECS, poll)
     next_progress = started + progress_interval
 
-    parent_wait_observer_id = str(resolved_context.spawn_id) if resolved_context.spawn_id else None
+    parent_wait_observer_id = (
+        str(resolved_context.spawn_id) if payload.observe and resolved_context.spawn_id else None
+    )
     _update_pi_wait_observation(
         runtime_root=runtime_root,
         parent_spawn_id=parent_wait_observer_id,
         waiting_add=spawn_ids,
+        lease_seconds=max(30.0, poll * 2 + 5),
     )
     try:
         while True:
+            _update_pi_wait_observation(
+                runtime_root=runtime_root,
+                parent_spawn_id=parent_wait_observer_id,
+                waiting_add=tuple(pending),
+                lease_seconds=max(30.0, poll * 2 + 5),
+            )
             for spawn_id in tuple(pending):
                 row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
                 if row is None:
@@ -1827,9 +1848,7 @@ def spawn_wait_sync(
                     parent_spawn_id=parent_wait_observer_id,
                     waiting_remove=spawn_ids,
                     observed_add=tuple(
-                        detail.spawn_id
-                        for detail in details
-                        if _spawn_is_terminal(detail.status)
+                        detail.spawn_id for detail in details if _spawn_is_terminal(detail.status)
                     ),
                 )
                 if not pending_ids:

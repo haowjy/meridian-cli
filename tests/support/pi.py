@@ -144,20 +144,42 @@ def pi_process_exit_event(return_code: int) -> RawHarnessEvent:
     )
 
 
-def write_pi_bash_record(runtime_root: Path, spawn_id: SpawnId, *, running: bool = True) -> None:
+def write_pi_bash_record(
+    runtime_root: Path,
+    spawn_id: SpawnId,
+    *,
+    running: bool = True,
+    consumed: bool = False,
+) -> None:
     """Write the managed-bash disk evidence used by the Pi extension."""
     path = runtime_root / "pi-bash" / str(spawn_id) / "bash-records.json"
     write_json(
         path,
         {
+            "v": 1,
+            "spawn_id": str(spawn_id),
+            "updated_at_ms": 0.0,
             "records": {
                 "b1": {
                     "bash_id": "b1",
                     "is_tracked": True,
                     "is_background": True,
                     "status": "running" if running else "exited",
+                    "command": "echo result",
+                    "cwd": str(runtime_root),
+                    "pid": None,
+                    "exit_code": None if running else 0,
+                    "started_at_ms": 0.0,
+                    "ended_at_ms": None if running else 1.0,
+                    "log_path": "unused",
+                    "stdout_log_path": "unused",
+                    "stderr_log_path": "unused",
+                    "log_bytes": 0,
+                    "timeout_min": 1.0,
+                    "originating_bash_id": None,
+                    "notification_consumed_at_ms": 1.0 if consumed else None,
                 }
-            }
+            },
         },
     )
 

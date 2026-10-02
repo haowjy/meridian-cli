@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time
 from dataclasses import fields
 from pathlib import Path
 
@@ -23,7 +22,7 @@ from meridian.lib.streaming.completion_nudge import PI_COMPLETION_NUDGE_MESSAGE
 from meridian.lib.streaming.drain_coordinator import DrainExitDecision, DrainLoopDecision
 from meridian.lib.streaming.drain_policy import DrainAction, PiRpcQuiescenceDrainPolicy
 from meridian.lib.streaming.pi_drain import PiDrainCoordinator
-from tests.support.pi import PiDrainScenario, pi_event, start_row, write_json
+from tests.support.pi import PiDrainScenario, pi_event, start_row, write_json, write_pi_bash_record
 
 
 async def _after_refresh(started: PiDrainScenario):  # type: ignore[no-untyped-def]
@@ -40,6 +39,7 @@ async def _after_refresh(started: PiDrainScenario):  # type: ignore[no-untyped-d
     assert decision is not None
     return decision
 
+
 _SPAWN_ID = SpawnId("p1")
 _SUCCESS = TerminalEventOutcome(status="succeeded", exit_code=0)
 _TERMINATE = DrainAction(terminate=True, emit_turn_boundary=False)
@@ -54,13 +54,7 @@ def _write_done_signal(runtime_root: Path, spawn_id: str) -> None:
 
 
 def _write_running_bash(runtime_root: Path, spawn_id: SpawnId) -> None:
-    # Scenario owns the disk shape; this wrapper preserves descriptive call sites.
-    scenario_path = runtime_root / "pi-bash" / str(spawn_id) / "bash-records.json"
-    scenario_path.parent.mkdir(parents=True, exist_ok=True)
-    scenario_path.write_text(
-        '{"records":{"b1":{"bash_id":"b1","is_tracked":true,"is_background":true,"status":"running"}}}',
-        encoding="utf-8",
-    )
+    write_pi_bash_record(runtime_root, spawn_id)
 
 
 def _start_row(
@@ -74,7 +68,7 @@ def _assert_failed(decision: DrainLoopDecision | DrainExitDecision, error: str) 
     assert outcome is not None
     assert outcome.status == "failed"
     assert outcome.exit_code == 1
-    assert outcome.error == error
+    assert (outcome.error or "").split(":", 1)[0] == error
 
 
 async def _execute_latched_cleanup(
@@ -119,10 +113,11 @@ async def test_real_pi_tracked_child_followup_has_no_canonical_lifecycle_depende
             origin="runner",
         )
         write_json(
-            tmp_path / "pi-bash" / str(_SPAWN_ID) / "last-notification.json",
+            tmp_path / "pi-bash" / str(_SPAWN_ID) / "delivery-receipts.json",
             {
-                "ts_epoch_secs": time.time(),
-                "notified_spawn_ids": [child_id],
+                "v": 1,
+                "spawn_id": str(_SPAWN_ID),
+                "messages": {"child-admission": [child_id]},
             },
         )
         disk_wake = await coordinator.handle_aux_wake()
@@ -132,9 +127,15 @@ async def test_real_pi_tracked_child_followup_has_no_canonical_lifecycle_depende
             pi_event(
                 "message_start",
                 {
-                    "role": "custom",
-                    "customType": "meridian-spawn-watch",
-                    "details": {"ids": [child_id]},
+                    "message": {
+                        "role": "custom",
+                        "customType": "meridian-spawn-watch",
+                        "details": {
+                            "ids": [child_id],
+                            "work_ids": [child_id],
+                            "delivery_id": "child-admission",
+                        },
+                    },
                 },
             ),
             "turn_active",
@@ -251,7 +252,7 @@ async def test_done_fails_closed_when_pi_descendant_evidence_stays_unreadable(
         assert terminal.recorded_outcome is None
         assert waiting.recorded_outcome is None
 
-        started.clock.advance(4.999)
+        started.clock.advance(4.749)
         just_before_deadline = await coordinator.handle_timeout()
 
         assert just_before_deadline.recorded_outcome is None
@@ -339,10 +340,6 @@ async def test_done_fails_closed_on_pi_private_work_read_error(
         assert started.cleanups == []
     finally:
         await coordinator.stop()
-
-
-
-
 
 
 @pytest.mark.asyncio
@@ -452,12 +449,6 @@ async def test_initial_descendant_refresh_latency_does_not_shift_pi_nudge_anchor
     finally:
         release.set()
         await coordinator.stop()
-
-
-
-
-
-
 
 
 @pytest.mark.asyncio

@@ -249,6 +249,32 @@ def test_build_harness_child_env_pi_state_dir_from_runtime_root() -> None:
     assert "PI_CODING_AGENT_SESSION_DIR" in child_env
 
 
+def test_pi_directory_defaults_preserve_explicit_launch_environment() -> None:
+    env = build_harness_child_env(
+        base_env={
+            "PI_CODING_AGENT_DIR": "/requested/auth",
+            "PI_CODING_AGENT_SESSION_DIR": "/requested/sessions",
+        },
+        adapter=PiAdapter(),
+        run_params=SpawnParams(prompt="test"),
+        permission_config=PermissionConfig(),
+    )
+    assert env["PI_CODING_AGENT_DIR"] == "/requested/auth"
+    assert env["PI_CODING_AGENT_SESSION_DIR"] == "/requested/sessions"
+    env = build_harness_child_env(
+        base_env={"PI_CODING_AGENT_DIR": "/inherited/auth"},
+        adapter=PiAdapter(),
+        run_params=SpawnParams(prompt="test"),
+        permission_config=PermissionConfig(),
+        runtime_env_overrides={
+            "PI_CODING_AGENT_DIR": "/launch/auth",
+            "PI_CODING_AGENT_SESSION_DIR": "/launch/sessions",
+        },
+    )
+    assert env["PI_CODING_AGENT_DIR"] == "/launch/auth"
+    assert env["PI_CODING_AGENT_SESSION_DIR"] == "/launch/sessions"
+
+
 def test_pi_bind_time_env_contains_agent_dir_timeout_and_task_ping() -> None:
     child_env = build_harness_child_env(
         base_env={"PATH": "/usr/bin", "HOME": "/home/tester"},

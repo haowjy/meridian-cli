@@ -40,6 +40,10 @@ fail-fast (cancellation keeps existing aggregate-exit behavior).
 Checkpoint polling respects the depth-appropriate yield interval (read from
 `_MERIDIAN_HARNESS` env — the orchestrator's own harness prompt-cache TTL).
 
+Result fetchers that do not consume a parent's completion notification must use
+`SpawnWaitInput(observe=False)` (`spawn wait --no-observe`). Normal waits observe
+by default; formatting a notification is not delivery.
+
 ## The Exception to SPEC_ONLY
 
 `prepare.py` uses `LaunchArgvIntent.REQUIRED`. This is the only execution path

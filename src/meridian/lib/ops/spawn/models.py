@@ -1256,6 +1256,7 @@ class SpawnWaitInput(BaseModel):
     verbose: bool = False
     quiet: bool = False
     include_report_body: bool = False
+    observe: bool = True
     project_root: str | None = None
 
 
