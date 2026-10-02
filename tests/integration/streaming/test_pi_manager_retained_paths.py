@@ -10,6 +10,7 @@ import pytest
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.state import spawn_store
+from meridian.lib.streaming.pi_drain import PiDrainCoordinator
 from tests.support.async_determinism import assert_still_pending, wait_until
 from tests.support.pi import (
     FakePiConnection,
@@ -21,13 +22,6 @@ from tests.support.pi import (
     write_pi_bash_record,
 )
 from tests.support.resident_drain import start_row
-
-
-class _OpenPiConnection(FakePiConnection):
-    async def events(self):  # type: ignore[no-untyped-def]
-        for event in self._events:
-            yield event
-        await asyncio.Event().wait()
 
 
 @pytest.mark.asyncio
@@ -119,6 +113,13 @@ async def test_spawn_manager_child_wave_timeout_publishes_before_descendant_canc
     cleanup_started = asyncio.Event()
     allow_cleanup = asyncio.Event()
     cleanup_finished = asyncio.Event()
+    parent_idle = asyncio.Event()
+
+    class _GatedIdleConnection(FakePiConnection):
+        async def events(self):  # type: ignore[no-untyped-def]
+            await parent_idle.wait()
+            yield pi_event("agent_end")
+            await asyncio.Event().wait()
 
     class _GatedCleanupService:
         async def cancel_descendants(self, target_spawn_id: SpawnId) -> set[str]:
@@ -140,13 +141,26 @@ async def test_spawn_manager_child_wave_timeout_publishes_before_descendant_canc
     )
     manager = await start_pi_manager(
         tmp_path,
-        _OpenPiConnection([pi_event("agent_end")]),
+        _GatedIdleConnection([]),
         spawn_id=spawn_id,
         child_wave_timeout_seconds=0.01,
     )
     completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
 
     try:
+        coordinator = manager._sessions[spawn_id].drain_plan.coordinator
+        assert isinstance(coordinator, PiDrainCoordinator)
+        # Start the tiny child-wave window from readable child evidence, not
+        # from the unrelated initial threaded-projection recovery window.
+        await wait_until(
+            lambda: coordinator._evidence._refresh.assessment.disposition == "blocked",
+            timeout=2.0,
+            description="initial persisted-child assessment",
+        )
+        assert {
+            blocker.identity for blocker in coordinator._evidence._refresh.assessment.blockers
+        } == {"p-retained-timeout-child"}
+        parent_idle.set()
         await asyncio.wait_for(cleanup_started.wait(), timeout=2.0)
         outcome = await asyncio.wait_for(completion, timeout=0.1)
 
@@ -155,6 +169,7 @@ async def test_spawn_manager_child_wave_timeout_publishes_before_descendant_canc
         assert outcome.error == "pi_child_wave_timeout"
         assert not cleanup_finished.is_set()
     finally:
+        parent_idle.set()
         allow_cleanup.set()
         await manager.stop_spawn(spawn_id)
 
