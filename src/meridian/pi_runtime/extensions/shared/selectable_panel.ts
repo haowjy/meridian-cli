@@ -3,7 +3,7 @@ import { truncateToWidth, visibleWidth, type Component } from "@earendil-works/p
 
 /** Pi 1.0 has RPC UI notifications, but custom panels require interactive mode. */
 export function hasTaskPanelUI(ctx: ExtensionContext): boolean {
-  return ctx.hasUI && (!("mode" in ctx) || ctx.mode === "interactive");
+  return ctx.hasUI && (!("mode" in ctx) || ctx.mode === "tui");
 }
 
 export function showTaskText(ctx: ExtensionContext, text: string): void {

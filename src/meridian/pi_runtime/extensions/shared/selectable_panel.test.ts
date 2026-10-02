@@ -1,8 +1,9 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   openTaskPanel,
+  hasTaskPanelUI,
   renderSelectablePanel,
   SelectablePanelComponent,
   type PanelCommandContext,
@@ -35,6 +36,12 @@ const options: SelectablePanelOptions<Row> = {
 };
 
 describe("openTaskPanel", () => {
+  it("keeps native TUI panels available while routing RPC to notifications", () => {
+    expect(hasTaskPanelUI({ hasUI: true, mode: "tui" } as unknown as ExtensionContext)).toBe(true);
+    expect(hasTaskPanelUI({ hasUI: true, mode: "rpc" } as unknown as ExtensionContext)).toBe(false);
+    expect(hasTaskPanelUI({ hasUI: true } as ExtensionContext)).toBe(true);
+  });
+
   it("opens task panels as full-screen covering overlays", async () => {
     let receivedOptions: Record<string, unknown> | undefined;
     const ctx: PanelCommandContext = {
