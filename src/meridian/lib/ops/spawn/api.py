@@ -55,7 +55,7 @@ from meridian.lib.ops.runtime import (
     runtime_context,
 )
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state import session_store, spawn_store, work_store
+from meridian.lib.state import history_index, session_store, spawn_store, work_store
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.paths import resolve_project_paths
@@ -116,6 +116,7 @@ from .query import (
 
 _WAIT_PROGRESS_INTERVAL_SECS = 5.0
 _WAIT_POLL_INTERVAL_SECS = 0.25
+_WAIT_DISCOVERY_TIMEOUT_SECS = 15.0
 
 
 def _looks_like_spawn_ref(ref: str) -> bool:
@@ -1431,8 +1432,11 @@ def _resolve_wait_targets(
     project_root: Path,
     runtime_root: Path,
     ctx: RuntimeContext,
+    *,
+    deadline: float,
+    sink: OutputSink,
 ) -> tuple[str, ...]:
-    """Resolve explicit wait IDs or discover pending spawns for the current chat."""
+    """Resolve explicit IDs or discover this session's targets within its wait budget."""
     candidates: list[str] = []
     for spawn_id in payload.spawn_ids:
         normalized = spawn_id.strip()
@@ -1452,14 +1456,26 @@ def _resolve_wait_targets(
         )
 
     self_spawn_id = str(ctx.spawn_id) if ctx.spawn_id else None
-    pending = _discover_pending_spawns(
-        project_root,
-        runtime_root,
-        chat_id,
-        exclude_spawn_id=self_spawn_id,
-        only_descendants_of=self_spawn_id,
-    )
-    return tuple(row.id for row in pending)
+    notified = False
+    while True:
+        try:
+            pending = _discover_pending_spawns(
+                project_root,
+                runtime_root,
+                chat_id,
+                exclude_spawn_id=self_spawn_id,
+                only_descendants_of=self_spawn_id,
+                deadline=deadline,
+            )
+            return tuple(row.id for row in pending)
+        except (history_index.HistoryIndexBusy, TimeoutError):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            if not notified and not payload.quiet:
+                sink.status("Pending-agent discovery is busy; retrying within the wait budget.")
+                notified = True
+            time.sleep(min(_WAIT_POLL_INTERVAL_SECS, remaining))
 
 
 def _discover_pending_spawns(
@@ -1469,36 +1485,57 @@ def _discover_pending_spawns(
     *,
     exclude_spawn_id: str | None = None,
     only_descendants_of: str | None = None,
+    deadline: float | None = None,
 ) -> list[SpawnRecord]:
-    """Discover active spawns for a given chat ID.
+    """Discover this owner's active spawns, or only the caller's transitive subtree.
 
-    When *only_descendants_of* is set (i.e. called from a nested spawn),
-    returns only spawns that are descendants of that spawn — not siblings,
-    ancestors, or the primary session. This prevents no-arg ``spawn wait``
-    from blocking on the entire chat tree.
+    The index selects membership; lifecycle decisions re-read authority. Recursive
+    traversal retains terminal/archived ancestry so it cannot lose grandchildren.
     """
-    from meridian.lib.state.reaper import reconcile_spawns
+    from meridian.lib.state.reaper import peek_reconciled_active_spawn
     from meridian.lib.state.session_identity import spawn_matches_owner_chat
 
-    all_spawns = reconcile_spawns(
-        project_root,
-        runtime_root,
-        indexed_spawn_scan(runtime_root),
-    ).records
-
-    # Build descendant set if scoping to a parent
-    descendant_ids: set[str] | None = None
+    _ = project_root
+    index = history_index.HistoryIndex(runtime_root)
+    if deadline is not None:
+        # Cold metadata gets one bounded explicit initialization phase. Warm
+        # queries keep the ordinary short budget, leaving room to retry contention.
+        if index.classify(deadline=deadline).baseline == "absent":
+            index.initialize(deadline=deadline, timeout_is_cancellation=True)
+        deadline = min(deadline, time.monotonic() + history_index.QUERY_TIMEOUT)
     if only_descendants_of is not None:
-        descendant_ids = descendant_id_set(only_descendants_of, all_spawns)
-
-    pending = [
-        row
-        for row in all_spawns
-        if row.status in ACTIVE_SPAWN_STATUSES
-        and row.id != exclude_spawn_id
-        and (descendant_ids is None or row.id in descendant_ids)
-        and (descendant_ids is not None or spawn_matches_owner_chat(row, chat_id or ""))
-    ]
+        selected_ids = {
+            spawn_id
+            for spawn_id, _parent, archived in index.descendant_projection(
+                only_descendants_of,
+                active_only=True,
+                deadline=deadline,
+            )
+            if not archived
+        }
+    else:
+        selected_ids = {
+            row.id
+            for row in index.spawns(
+                owner_chat_id=chat_id,
+                status=set(ACTIVE_SPAWN_STATUSES),
+                deadline=deadline,
+            )
+        }
+    pending: list[SpawnRecord] = []
+    for spawn_id in selected_ids:
+        if spawn_id == exclude_spawn_id:
+            continue
+        row = spawn_store.get_spawn(runtime_root, spawn_id)
+        if row is None:
+            # A discovered row can be retired before this authoritative read,
+            # just as a no-arg wait target can vanish during polling.
+            continue
+        if only_descendants_of is None and not spawn_matches_owner_chat(row, chat_id):
+            continue
+        row = peek_reconciled_active_spawn(runtime_root, row)
+        if row.status in ACTIVE_SPAWN_STATUSES:
+            pending.append(row)
     pending.sort(key=lambda row: row.id)
     return pending
 
@@ -1604,8 +1641,6 @@ def _emit_wait_progress(message: str, *, sink: OutputSink) -> None:
 def _resolve_wait_checkpoint_seconds(
     *,
     payload: SpawnWaitInput,
-    spawn_ids: tuple[str, ...],
-    project_root: Path,
     config: MeridianConfig,
 ) -> float:
     """Resolve per-invocation or harness-aware wait-yield interval."""
@@ -1613,7 +1648,6 @@ def _resolve_wait_checkpoint_seconds(
     if payload.yield_after_secs is not None:
         return payload.yield_after_secs
 
-    _ = (spawn_ids, project_root)
     parent_harness = os.getenv("_MERIDIAN_HARNESS")
     return float(config.wait_yield_seconds_for_harness(parent_harness))
 
@@ -1714,10 +1748,47 @@ def spawn_wait_sync(
     has_explicit_ids = bool(payload.spawn_ids) or bool(
         payload.spawn_id is not None and payload.spawn_id.strip()
     )
-    spawn_ids = _resolve_wait_targets(payload, project_root, runtime_root, resolved_context)
-    wait_chat_id: str | None = None
-    if not has_explicit_ids:
-        wait_chat_id = (resolved_context.chat_id or "").strip() or None
+    wait_chat_id = None if has_explicit_ids else (resolved_context.chat_id or "").strip() or None
+    started = time.monotonic()
+    timeout_minutes = (
+        payload.timeout if payload.timeout is not None else config.wait_timeout_minutes
+    )
+    timeout_seconds = minutes_to_seconds(timeout_minutes) or 0.0
+    checkpoint_seconds = _resolve_wait_checkpoint_seconds(payload=payload, config=config)
+    wait_deadline = started + max(
+        timeout_seconds if payload.timeout_explicit else checkpoint_seconds, 0.0
+    )
+    checkpoint_deadline = None if payload.timeout_explicit else wait_deadline
+    hard_deadline = wait_deadline if payload.timeout_explicit else None
+    discovery_deadline = min(started + _WAIT_DISCOVERY_TIMEOUT_SECS, wait_deadline)
+    try:
+        spawn_ids = _resolve_wait_targets(
+            payload,
+            project_root,
+            runtime_root,
+            resolved_context,
+            deadline=discovery_deadline,
+            sink=active_sink,
+        )
+    except (history_index.HistoryIndexBusy, TimeoutError) as exc:
+        elapsed = time.monotonic() - started
+        if checkpoint_deadline is not None and time.monotonic() >= checkpoint_deadline:
+            return SpawnWaitMultiOutput(
+                spawns=(),
+                total_runs=0,
+                succeeded_runs=0,
+                failed_runs=0,
+                cancelled_runs=0,
+                any_failed=False,
+                checkpoint=True,
+                checkpoint_discovery_pending=True,
+                checkpoint_chat_id=wait_chat_id,
+                checkpoint_elapsed_secs=elapsed,
+            )
+        raise TimeoutError(
+            f"Could not discover pending spawns for this session after {elapsed:.1f}s; "
+            "history discovery is busy. Retry `meridian spawn wait` or pass explicit p-* IDs."
+        ) from exc
 
     if not spawn_ids:
         chat_display = wait_chat_id or "current chat"
@@ -1747,24 +1818,6 @@ def spawn_wait_sync(
         sink=active_sink,
     )
 
-    timeout_minutes = (
-        payload.timeout if payload.timeout is not None else config.wait_timeout_minutes
-    )
-    timeout_seconds = minutes_to_seconds(timeout_minutes) or 0.0
-    checkpoint_seconds = _resolve_wait_checkpoint_seconds(
-        payload=payload,
-        spawn_ids=spawn_ids,
-        project_root=project_root,
-        config=config,
-    )
-    started = time.monotonic()
-    use_checkpoint = not payload.timeout_explicit
-    if use_checkpoint:
-        checkpoint_deadline = started + max(checkpoint_seconds, 0.0)
-        hard_deadline = None
-    else:
-        checkpoint_deadline = None
-        hard_deadline = started + max(timeout_seconds, 0.0)
     poll = (
         payload.poll_interval_secs
         if payload.poll_interval_secs is not None
@@ -1945,7 +1998,7 @@ def spawn_wait_sync(
                 if progress is not None:
                     _emit_wait_progress(progress, sink=active_sink)
                 next_progress = now + progress_interval
-            time.sleep(poll)
+            time.sleep(min(poll, max(0.0, wait_deadline - time.monotonic())))
     finally:
         _update_pi_wait_observation(
             runtime_root=runtime_root,
