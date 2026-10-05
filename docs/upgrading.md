@@ -1,6 +1,6 @@
 # Upgrade notes
 
-## Unreleased: Pi task ownership and result delivery
+## Upgrading to 0.9: Pi task ownership and result delivery
 
 Before reinstalling, finish or cancel managed shell tasks and spawned Pi runs,
 then close Pi sessions loading Meridian's extensions. Start a new session after

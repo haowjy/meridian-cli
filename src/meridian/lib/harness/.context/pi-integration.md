@@ -6,22 +6,32 @@ remain in [CONTEXT.md](CONTEXT.md).
 
 ## Extension Architecture
 
-Pi is the first harness with in-process TypeScript extensions rather than an opaque
-subprocess. Meridian-owned extensions split by concern:
+Meridian loads three TypeScript extensions inside Pi:
 
-- **managed-bash** — task registry, `bash` / `bash_manage`, bash bridge, `/ps*` UI, and bash-record writes. See `src/meridian/pi_runtime/extensions/managed-bash/`.
-- **meridian-spawn-watch** — spawn discovery, implicit-wait notification dispatch, `/spawn*` UI, and disk observation. See `src/meridian/pi_runtime/extensions/meridian-spawn-watch/`.
+- **managed-bash** — shell execution, `bash` / `bash_manage`, `/ps*` UI, and durable task records.
+- **meridian-spawn-watch** — canonical direct-child observation, `/spawn*` UI, and idle-turn result delivery.
+- **session-boundary** — bounded native lifecycle observations for post-exit identity verification.
+
+Both primary and spawned launches load managed-bash and spawn-watch when their
+`[harness.pi]` toggles are enabled. Session-boundary is always loaded, with no
+config toggle. Primary keeps the native TUI and does not auto-stop on quiescence.
 
 Shared helpers under `src/meridian/pi_runtime/extensions/shared/` provide schemas,
 validated receipt/reservation readers, atomic JSON, paths and UI. Python's matching
 models live in `pi_private_state.py`. The coordination boundary is
 the disk state the extensions write and the Python side observes.
 
-Extensions are TypeScript, built with `pnpm run build:extensions`, and loaded via stable
-`-e` paths from `pi_paths.resolve_meridian_pi_extension_root()` (`~/.meridian/pi/extensions/`
-or packaged `dist/extensions`). `[harness.pi]` toggles and `load_all_pi_extensions` are
-resolved from the launch config snapshot in `bind_launch_context()` → `SpawnParams.pi_harness_profile`
-→ `PiAdapter.resolve_launch_spec()` (not ambient CWD config reload).
+Extensions are built with `pnpm run build:extensions`. Projection prefers the
+package's `pi_runtime/dist/extensions/<name>/index.js`, falling back to
+`pi_paths.resolve_meridian_pi_extension_root()` (`~/.meridian/pi/extensions/`).
+These are stable `-e` paths, not per-launch copies.
+
+Bundle toggles and `load_all_pi_extensions` resolve from the launch config snapshot
+in `bind_launch_context()` → `SpawnParams.pi_harness_profile` →
+`PiAdapter.resolve_launch_spec()`, not ambient CWD config reload. Spawned RPC
+suppresses ambient extensions by default; `load_all_pi_extensions = true` retains
+native discovery and adds configured extra roots. Primary always retains native
+discovery. Both roles reject passthrough mode/extension selectors.
 
 The runtime itself is resolved by `pi_runtime_resolver.py` — it probes the installed `pi`
 binary for compatibility (required `--help` surface tokens differ between primary and
@@ -41,6 +51,16 @@ path to Pi. Missing/empty files cannot be resumed: Pi would silently create a ne
 identity there. Post-exit verification checks only the assigned entry (including
 the fork parent); an unmaterialized create stays bound and pending. It never
 selects a newest/cwd-matching journal. Meridian writes no Pi native journal.
+
+`prepare_prelaunch()` gives session-boundary a path and launch nonce. The extension
+writes at most 16 KiB to `spawns/<run>/pi-session-boundary.json`, using its own PID.
+`observe_after_exit()` first verifies the assigned entry, then reads the v2 record
+with the expected nonce and actual Pi PID. Only a final
+`session_shutdown(reason=quit)` with readable native identity supplies an exit.
+Entry/last-seen identity, switches, reloads, stale-context shutdowns, and missing or
+invalid records cannot substitute for a verified quit. The launch layer owns exit
+allocation and persistence. See the
+[native boundary contract](../../../pi_runtime/.context/CONTEXT.md).
 
 ## Completion and Disk State
 

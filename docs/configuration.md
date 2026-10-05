@@ -84,9 +84,9 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | `harness.claude` | str | Default model for Claude harness |
 | `harness.codex` | str | Default model for Codex harness |
 | `harness.opencode` | str | Default model for OpenCode harness |
-| `harness.pi.load_all_pi_extensions` | bool | When `true`, Pi also loads extensions from `extra_extension_paths` (default `false` = Meridian bundles only) |
+| `harness.pi.load_all_pi_extensions` | bool | Retain ambient extensions in spawned RPC and scan `extra_extension_paths` in both roles (default `false`; primary always retains native discovery) |
 | `harness.pi.extra_extension_paths` | array[str] | Extra extension roots scanned only when `load_all_pi_extensions = true` (default: Pi user extension dir) |
-| `harness.pi.background_tasks.enabled` | bool | Toggles the `managed-bash` extension (`/ps` background bash tasks; default `true`) |
+| `harness.pi.background_tasks.enabled` | bool | Toggles `managed-bash` in primary and spawned sessions (`bash` / `bash_manage`, `/ps*`; default `true`) |
 | `harness.pi.spawn_watch.enabled` | bool | Toggles the `meridian-spawn-watch` extension (`/spawn` spawn discovery + wait; default `true`) |
 | `harness.pi.disable_managed_bash` | bool | **Legacy** — same as `background_tasks.enabled = false` |
 | `output.show` | array[str] | Stream categories shown |
@@ -95,6 +95,10 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | `spawn.default_wait_yield_seconds` | float | Default yield interval for `spawn wait` (seconds) |
 | `spawn.min_wait_yield_seconds` | float | Minimum yield interval for `spawn wait` (seconds) |
 | `primary.autocompact` | int | Context compaction threshold for primary session (1–100) |
+
+Pi's `session-boundary` extension is always loaded in both roles; it has no config
+toggle. It records launch-correlated native lifecycle evidence for post-exit session
+verification. See the [Pi extension guide](../src/meridian/pi_runtime/README.md).
 
 Agent profiles are opt-in. When `--agent/-a` is omitted and `primary.agent` is unset,
 Meridian runs without a predefined profile. Pass `-a ""` to explicitly clear

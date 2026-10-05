@@ -4,12 +4,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Reconcile Pi docs and smoke guides with current extension loading, native session boundaries, task ownership and causal result delivery; remove obsolete integration phases and status tables.
+
 ## [0.9.0] - 2026-10-02
 
 ### Upgrade notes
 - Start fresh Pi sessions after installing; task ownership and causal delivery
   receipts now survive reload/restart. Old bundles can repeat notices and discard
-  recovered private history on rollback. See [Pi upgrade notes](docs/upgrading.md#unreleased-pi-task-ownership-and-result-delivery).
+  recovered private history on rollback. See [Pi upgrade notes](docs/upgrading.md#upgrading-to-09-pi-task-ownership-and-result-delivery).
 
 ### Fixed
 - Accept canonical published child terminal metadata in Pi's result projection.

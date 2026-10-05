@@ -35,9 +35,19 @@ pi_runtime/
 
 ### Extension Responsibilities
 
-`session-boundary` consumes launch path/nonce handles, writes at most 16 KiB to
-`spawns/<run>/pi-session-boundary.json`, and emits nothing on stdout. Python reads
-once after process exit, validating nonce and actual child PID.
+`session-boundary` consumes launch path/nonce handles and atomically publishes a
+v2 record of at most 16 KiB to `spawns/<run>/pi-session-boundary.json`. Python reads
+once after process exit, validating nonce and actual Pi PID. Initial entry stays
+fixed across switches; only a final readable `session_shutdown(reason=quit)`
+supplies exit identity. No itinerary or native journal writes.
+
+Lifecycle handlers use their invocation context, never a retained context. A
+shutdown context may already be invalidated by Pi session replacement or reload.
+The extension recognizes only the exact error-text prefix
+`This extension ctx is stale after session replacement or reload.` and publishes
+that shutdown without identity, clearing any earlier quit. Other identity-read
+faults poison the record and rethrow. Requalify this error-text dependency when
+upgrading Pi; never infer exit from current/target session or the last-seen ID.
 
 | Extension | Owns | Writes / observes |
 |---|---|---|
@@ -104,31 +114,36 @@ and the bounded receipt-to-public-observation crash window.
 
 ### Build Pipeline
 
-`npm run build:extensions` runs four scripts in sequence:
+`pnpm run build:extensions` runs four scripts in sequence:
 
 1. `build:extensions:clean` — removes `./dist/extensions`
 2. `build:extensions:managed-bash` — `tsup` bundles `managed-bash/src/index.ts` → ESM, Node 20, single-file output
 3. `build:extensions:meridian-spawn-watch` — bundles `meridian-spawn-watch/src/index.ts` the same way
 4. `build:extensions:session-boundary` — bundles the native session observer
 
-`npm run verify:extensions` rebuilds and runs Vitest coverage for the extension sources.
+`pnpm run verify:extensions` rebuilds and runs Vitest coverage for the extension sources.
 
 Output goes to `dist/extensions/`. Python launch projection resolves entrypoints with
 `pi_extension_projection.py`, preferring the repo build output during local development
-and falling back to the installed bundle root from `pi_paths.resolve_meridian_pi_extension_root()`.
+and falling back to the stable install root from `pi_paths.resolve_meridian_pi_extension_root()`.
 A missing bundle raises `PiExtensionProjectionError` with the build command.
 
 ### Extension Loading
 
-Pi loads extensions via explicit `-e <path>` CLI flags. Meridian launches with
-`--no-extensions` and then adds only the selected Meridian bundles, so ambient user
-extensions do not change spawn behavior.
+Pi loads stable bundles via explicit `-e <path>` flags; projection does not copy
+extensions into per-launch agent directories. Both roles load managed-bash and
+spawn-watch when their `[harness.pi]` toggles are enabled. Session-boundary is
+always loaded by the adapter and has no config toggle.
 
-- **spawned RPC mode**: `managed-bash` + `meridian-spawn-watch` + `session-boundary`
-- **primary native TUI mode**: `meridian-spawn-watch` + `session-boundary`; no bash override and no spawned-session auto-stop
+- **Spawned RPC**: suppress ambient extensions by default (`--no-extensions`),
+  skills, context files, and prompt templates. `load_all_pi_extensions = true`
+  retains native extension discovery and adds configured extra roots.
+- **Primary native TUI**: retain native discovery, including ambient extensions;
+  managed-bash overrides bash when enabled. No spawned-session quiescence auto-stop.
 
-Role-specific behavior is gated by environment, including `_MERIDIAN_PI_SESSION_ROLE` and
-`_MERIDIAN_PI_STATE_DIR`.
+Both projectors reject passthrough mode and extension-loading selectors.
+`_MERIDIAN_PI_SESSION_ROLE` gates role-specific behavior;
+`_MERIDIAN_PI_STATE_DIR` points extension disk state at the project runtime.
 
 ## Contracts
 
@@ -204,7 +219,7 @@ without the parent needing to parse command strings or receive every event in or
 ### Why TypeScript
 
 Pi's extension system is TypeScript-native. Bundling with tsup/esbuild produces ESM
-output targeting Node 20, which matches Pi's runtime. Extension imports must stay at
+output targeting Node 20 syntax; CI builds use Node 24. Extension imports must stay at
 package roots (`@earendil-works/pi-tui`, `@earendil-works/pi-coding-agent`) because
 subpath imports break under Pi's extension loader.
 
@@ -214,12 +229,3 @@ subpath imports break under Pi's extension loader.
 - [../../lib/harness/projections/.context/CONTEXT.md](../../lib/harness/projections/.context/CONTEXT.md) — extension entrypoint projection
 - [../../lib/harness/connections/.context/CONTEXT.md](../../lib/harness/connections/.context/CONTEXT.md) — Pi RPC JSON-RPC transport
 - [../../lib/streaming/.context/CONTEXT.md](../../lib/streaming/.context/CONTEXT.md) — Pi drain/quiescence policy consumes disk-backed state
-
-Session boundary consumes launch path/nonce handles and atomically publishes a bounded record. Initial entry never changes on switches; only a final shutdown/quit with readable identity supplies exit identity. No itinerary or native journal writes.
-
-Pi lifecycle handlers use their invocation ctx, never a retained ctx. Pi 0.87.1
-can race RPC stdin EOF against session replacement: a freshly supplied shutdown
-ctx can still belong to an invalidated runner. Boundary v2 records that shutdown
-without identity, clearing any earlier quit rather than poisoning the observer.
-Do not infer an exit from current/targetSessionFile or synthesize a quit for the
-replacement. EOF after a completed RPC switch does emit quit for the new session.
