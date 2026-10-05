@@ -200,6 +200,10 @@ class HistoryIndexIncomplete(RuntimeError):
     """Discovery cannot safely promise complete candidate membership."""
 
 
+class HistoryIndexBusy(HistoryIndexIncomplete):
+    """A bounded catch-up left busy sources; retry without rebuilding authority."""
+
+
 @dataclass(frozen=True)
 class IndexCoverage:
     generation: str
@@ -963,8 +967,17 @@ class HistoryIndex:
             )
         return status
 
-    def initialize(self, *, deadline: float) -> IndexCoverage | None:
-        """Explicit automatic-init phase; a corpus can share its deadline across roots."""
+    def initialize(
+        self,
+        *,
+        deadline: float,
+        timeout_is_cancellation: bool = False,
+    ) -> IndexCoverage | None:
+        """Build missing metadata within a caller's explicit initialization phase.
+
+        Invocation yield/timeout deadlines cancel the build instead of latching
+        an owned initialization failure. Genuine I/O/authority failures still latch.
+        """
         changes = HistoryChanges(self.root)
         with (
             lock_file(self.catchup_lock, timeout=_remaining(deadline)),
@@ -991,6 +1004,8 @@ class HistoryIndex:
                 ) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
                     raise
                 if isinstance(exc, TimeoutError):
+                    if timeout_is_cancellation:
+                        raise
                     code, reason = (
                         "timeout",
                         "Metadata build exhausted its remaining initialization budget",
@@ -1065,9 +1080,7 @@ class HistoryIndex:
         deadline = self._operation_deadline(deadline)
         coverage = self._catch_up(deadline)
         if not coverage.complete:
-            raise HistoryIndexIncomplete(
-                f"History index has unresolved sources: {coverage.pending}"
-            )
+            raise HistoryIndexBusy(f"History index has unresolved sources: {coverage.pending}")
         with (
             lock_file(self.database_lock, mode="shared", timeout=_remaining(deadline)),
             _connect(self.path, timeout=_remaining(deadline)) as db,
@@ -1303,6 +1316,7 @@ class HistoryIndex:
         *,
         oldest_first: bool = False,
         related_chat_ids: set[str] | None = None,
+        deadline: float | None = None,
         **filters: str | set[str] | None,
     ) -> tuple[SpawnRecord, ...]:
         columns = {
@@ -1331,26 +1345,33 @@ class HistoryIndex:
             if oldest_first
             else stmt.order_by(RECORDS.c.started.desc(), RECORDS.c.local_id.desc())
         )
-        with self.query() as db:
+        with self.query(deadline=deadline) as db:
             return tuple(SpawnRecord.model_validate_json(row[0]) for row in db.execute(stmt))
 
-    def descendant_projection(self, root_spawn_id: str) -> tuple[tuple[str, str | None, bool], ...]:
+    def descendant_projection(
+        self,
+        root_spawn_id: str,
+        *,
+        active_only: bool = False,
+        deadline: float | None = None,
+    ) -> tuple[tuple[str, str | None, bool], ...]:
         """Return the indexed transitive subtree, retaining archived ancestry.
 
         The query context performs one bounded catch-up before taking the shared
         database lock.  Callers must authoritatively read every returned loose
-        row before using its lifecycle state.
+        row before using its lifecycle state. ``active_only`` filters the result
+        after traversal, never the ancestry needed to reach an active grandchild.
         """
         statement = text(
             """
-            WITH RECURSIVE subtree(local_id, parent, archived, path) AS (
-                SELECT local_id, parent, archive_id IS NOT NULL,
+            WITH RECURSIVE subtree(local_id, parent, archived, active, path) AS (
+                SELECT local_id, parent, archive_id IS NOT NULL, active,
                        ',' || local_id || ','
                   FROM records
                  WHERE parent = :root AND local_id != :root
                 UNION ALL
                 SELECT child.local_id, child.parent,
-                       child.archive_id IS NOT NULL,
+                       child.archive_id IS NOT NULL, child.active,
                        subtree.path || child.local_id || ','
                   FROM records AS child
                   JOIN subtree ON child.parent = subtree.local_id
@@ -1359,13 +1380,16 @@ class HistoryIndex:
             )
             SELECT local_id, parent, archived
               FROM subtree
+             WHERE :active_only = 0 OR active = 1
              ORDER BY local_id
             """
         )
-        with self.query() as db:
+        with self.query(deadline=deadline) as db:
             return tuple(
                 (str(row[0]), str(row[1]) if row[1] is not None else None, bool(row[2]))
-                for row in db.execute(statement, {"root": root_spawn_id})
+                for row in db.execute(
+                    statement, {"root": root_spawn_id, "active_only": active_only}
+                )
             )
 
     def work_chat_ids(self, work_id: str, *, deadline: float | None = None) -> set[str]:

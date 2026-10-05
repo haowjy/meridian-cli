@@ -17,7 +17,8 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn list` | See running and recent spawns |
 | `meridian spawn list --profile reviewer` | Show spawns launched with the `reviewer` profile |
 | `meridian spawn list --primary` | Show only primary spawns (top-level sessions) |
-| `meridian spawn wait ID` | Block until a spawn completes; report body included by default, `--no-full` to suppress |
+| `meridian spawn wait` | Wait on your session's pending agents; inside a spawn, only its transitive descendants |
+| `meridian spawn wait ID...` | Wait on specific spawns without discovery; report body included by default, `--no-full` to suppress |
 | `meridian spawn show ID` | Read a spawn's report and status |
 | `meridian spawn status ID` | Read spawn status summary (report body off by default; add `--full` to include) |
 | `meridian spawn --continue ID -p "more"` | Resume a prior spawn with new input |
@@ -35,6 +36,14 @@ OpenCode managed primaries honor explicit provider/model selections without edit
 native config. See [managed startup and failure behavior](codex-tui-passthrough.md#failure-behavior).
 `spawn inject` requires a streaming spawn control endpoint; a native primary TUI
 does not currently expose that endpoint ([#498](https://github.com/haowjy/meridian-cli/issues/498)).
+
+No-argument wait discovers only its owner session or descendant tree before reading
+candidate lifecycle state. Discovery counts toward `--yield-after-secs` or an
+explicit `--timeout`. Transient history contention retries for at most 15 seconds;
+corrupt history still fails. A checkpoint reached before discovery finishes says
+pending agents are not known yet (`checkpoint_discovery_pending: true` in JSON).
+Retry the wait or pass the returned `p-*` IDs to skip discovery. If piping output,
+use Bash `set -o pipefail` so `tail` cannot mask a failed wait.
 
 Common `spawn` flags:
 

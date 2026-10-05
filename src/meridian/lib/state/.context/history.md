@@ -81,9 +81,17 @@ then one recursive parent-index query. Traversal retains archived rows as ancest
 loose grandchild remains discoverable through an archived intermediate, excludes the
 root, and terminates parent-edge cycles by path. The result is discovery only. Callers
 must authoritatively read every selected loose row before using lifecycle state; archived
-rows are traversal edges, not projected lifecycle authority. A cold initialization or
-rebuild is still corpus-sized even though the warm query and authoritative rereads are
-subtree-sized.
+rows are traversal edges, not projected lifecycle authority. `active_only` filters
+results after traversal, preserving paths through terminal or archived ancestors.
+No-arg spawn wait uses this subtree query or owner/status-filtered spawn selection;
+it never hydrates the entire runtime to discard other sessions. Both queries accept
+caller-owned deadlines. Busy-source incompleteness is `HistoryIndexBusy`, distinct
+from corruption or initialization failures, so wait can retry it within its budget.
+Cold wait initialization uses `timeout_is_cancellation`: a yield/hard-timeout budget
+cancels the attempt without a sticky failure latch. Ordinary owned initialization
+keeps its existing timeout/failure suppression; I/O and authority faults still latch.
+A cold initialization or rebuild is still corpus-sized even though the warm query
+and authoritative rereads are subtree-sized.
 
 ## Identity and authority
 

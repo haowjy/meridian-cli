@@ -5,3 +5,11 @@ control_root/task_cwd/execution_cwd at spawn/session write sites. Other
 persisted path-like fields (claude_config_dir, agent_path, skill_paths) still
 accept raw strings — extend the same write-boundary normalization if their
 consumers ever compare or dedupe on path equality.
+
+[spawn-wait-indexing-error; related #530] `HistoryIndex.query()` still performs
+runtime-wide catch-up before a scoped candidate query. Consider scope-aware
+coverage/catch-up so unrelated busy sources do not delay lifecycle discovery.
+Keep new-source discovery and quarantine completeness explicit; never satisfy a
+scoped query by silently ignoring an unreadable source. No-arg wait now selects
+only its owner/subtree and retries transient contention, but does not isolate the
+shared metadata maintenance. Revisit if bounded discovery checkpoints recur.
