@@ -111,10 +111,6 @@ def build_harness_env_overrides(
             # Child spawn with no explicit restriction: allow everything so
             # `opencode run` (subprocess mode) doesn't auto-reject all tool calls.
             merged["OPENCODE_PERMISSION"] = '{"*":"allow"}'
-    if adapter.id == HarnessId.PI:
-        merged["_MERIDIAN_PI_SESSION_ROLE"] = resolve_pi_session_role(
-            interactive=run_params.interactive
-        )
     return merged
 
 

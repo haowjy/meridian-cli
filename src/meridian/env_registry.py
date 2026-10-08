@@ -164,6 +164,7 @@ ENV_VARS: tuple[EnvVar, ...] = (
         "Current Meridian project directory.",
         hook_field="project_root",
     ),
+    _public_handle("MERIDIAN_SESSION_ROLE", "Meridian launch role: primary or spawn."),
     _public_handle("MERIDIAN_SPAWN_ID", "Current spawn identifier.", hook_field="spawn_id"),
     _public_handle("MERIDIAN_TASK_DIR", "Logical task checkout directory."),
     # Public hook payload fields.
@@ -204,7 +205,6 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _internal_handle("_MERIDIAN_PI_SESSION_BOUNDARY_PATH", "Pi boundary observation path."),
     _internal_handle("_MERIDIAN_PI_SESSION_BOUNDARY_NONCE", "Pi boundary launch nonce."),
     _internal_handle("_MERIDIAN_PI_STATE_DIR", "Pi extension runtime-state root."),
-    _internal_handle("_MERIDIAN_PI_SESSION_ROLE", "Pi primary or spawned session role."),
     _internal_handle("_MERIDIAN_PI_BASH_ID", "Originating managed-bash task identifier."),
     _internal_handle("_MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS", "Resolved Pi child-wave timeout."),
     _internal_handle("_MERIDIAN_PI_TASK_PING_INTERVAL_MS", "Resolved Pi task-ping interval."),

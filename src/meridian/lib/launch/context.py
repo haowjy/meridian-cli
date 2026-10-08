@@ -2077,6 +2077,7 @@ def bind_launch_context(
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
     child_context_env["_MERIDIAN_HARNESS"] = harness.id.value
+    child_context_env["MERIDIAN_SESSION_ROLE"] = "primary" if is_primary_launch else "spawn"
     child_context_env["MERIDIAN_PROJECT_DIR"] = resolved_control_root.as_posix()
     # Override inherited task-dir with the child's resolved task-dir.
     # child_env_overrides() carries the parent's MERIDIAN_TASK_DIR;

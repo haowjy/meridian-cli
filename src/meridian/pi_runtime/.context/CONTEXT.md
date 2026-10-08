@@ -142,7 +142,7 @@ always loaded by the adapter and has no config toggle.
   managed-bash overrides bash when enabled. No spawned-session quiescence auto-stop.
 
 Both projectors reject passthrough mode and extension-loading selectors.
-`_MERIDIAN_PI_SESSION_ROLE` gates role-specific behavior;
+`MERIDIAN_SESSION_ROLE` gates role-specific behavior;
 `_MERIDIAN_PI_STATE_DIR` points extension disk state at the project runtime.
 
 ## Contracts
