@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Surface non-zero managed Bash outcomes as model-visible tool errors, and classify managed child waits from the structured JSON result rather than the CLI process exit code.
 - Reconcile Pi docs and smoke guides with current extension loading, native session boundaries, task ownership and causal result delivery; remove obsolete integration phases and status tables.
 - Separate Pi completion stabilization from its post-window validation read, remove unsupported queue/retry activity mappings, and reject unsupported runtimes before launch. Managed TUI and RPC now share the stable Pi >=1.1.0 <2 contract; build extensions against Pi 1.1.0. Drop duplicate test scaffolding, retain one outcome-based validation-interruption guard, and align fake runtimes with their emitted lifecycle and supported major version. Reconcile completion-phase and runtime guidance. Resolve SDK dependencies within CI's release-age safety policy.
 - Wait for Pi run settlement and compaction before accepting idle; retries no longer fail early, active work cannot spend delivery deadlines, and final errors retain their diagnostics. Reject stale/malformed success; preserve explicit drain policies. Spawned runs require the Pi 1.1 lifecycle contract.
