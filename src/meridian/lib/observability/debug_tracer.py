@@ -28,11 +28,13 @@ class DebugTracer:
         *,
         echo_stderr: bool = False,
         max_payload_bytes: int = 4096,
+        report_failures: bool = True,
     ) -> None:
         self._spawn_id = spawn_id
         self._debug_path = debug_path
         self._echo_stderr = echo_stderr
         self._max_payload_bytes = max_payload_bytes
+        self._report_failures = report_failures
         self._lock = threading.Lock()
         self._handle: IO[str] | None = None
         self._disabled = False
@@ -78,6 +80,8 @@ class DebugTracer:
                 sys.stderr.flush()
         except Exception as exc:
             self._disabled = True
+            if not self._report_failures:
+                return
             from meridian.lib.telemetry import emit_telemetry
             from meridian.lib.telemetry.events import make_error_data
 

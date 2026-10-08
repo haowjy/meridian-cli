@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Add harness-agnostic idle sensor contracts and an inert launcher-side task seam.
+
 ### Fixed
 - Reconcile Pi docs and smoke guides with current extension loading, native session boundaries, task ownership and causal result delivery; remove obsolete integration phases and status tables.
 
