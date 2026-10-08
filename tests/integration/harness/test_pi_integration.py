@@ -170,8 +170,17 @@ def test_pi_semantics_terminal_outcome_and_activity_mapping() -> None:
     agent_end = normalize_event(
         RawHarnessEvent(event_type="agent_end", harness_id="pi", payload={})
     ).semantics
-    assert agent_end.activity == "idle"
-    assert agent_end.clears_signal is True
+    assert agent_end.activity is None
+    assert agent_end.clears_signal is False
+    settled = normalize_event(
+        RawHarnessEvent(
+            event_type="agent_settled",
+            harness_id="pi",
+            payload={"aborted": False},
+        )
+    ).semantics
+    assert settled.activity == "idle"
+    assert settled.clears_signal is True
 
 
 @pytest.mark.asyncio
