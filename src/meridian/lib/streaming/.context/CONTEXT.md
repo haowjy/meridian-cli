@@ -56,12 +56,23 @@ The implementation is split by responsibility:
 
 ### Drain Loop Ordering
 
-`SpawnManager._run_event_hooks` runs synchronous inline hooks (attempt facts and Pi
-lifecycle sidecar). The coordinator observation seam may refine a normalized event
-first (Pi keeps `agent_end` private until `agent_settled`); only that refined event
-is delivered to connection semantics, subscribers, and then `note_event_delivered`.
-A hook error is logged and does not block delivery. Meridian persists no runner event
-stream.
+The drain normalizes each raw frame once, then the coordinator observation seam may
+refine or deduplicate that normalized event. Connection-local state receives the
+refined semantics. `SpawnManager._run_event_hooks` receives the original raw frame;
+for Pi, an `agent_end` frame remains visible there and in the subscriber's raw
+envelope. Only its decoded attempt terminal outcome is retained privately until
+`agent_settled`, whose refined descriptor carries that outcome. The ordering is:
+
+```text
+normalize → coordinator refinement/dedupe
+  → receiver semantics (refined)
+  → inline hooks (raw frame)
+  → subscriber fan-out (raw envelope + refined semantics)
+  → note_event_delivered(raw) → terminal handling
+```
+
+A hook error is logged and does not block delivery. Meridian persists no runner
+event stream.
 
 Terminal classification follows successful delivery. The loop passes the
 connection's `primary_event_scope` to the harness semantics: child Codex threads

@@ -19,11 +19,13 @@ batch as idle:
 
 - `turn_end` closes one assistant/tool batch and does not change parent activity.
 - `agent_end` records the latest low-level attempt provisionally; retries,
-  compaction recovery, and queued continuation may still follow it.
-- `agent_settled` is the only automatic-work boundary. It resolves the retained
-  attempt outcome (or fails closed when the attempt is missing/malformed) and marks
-  the parent idle. `aborted` remains cancellation, and final provider errors remain
-  failures with their diagnostics.
+  compaction recovery, and queued continuation may still follow it. Its raw frame
+  remains observable; only the decoded attempt outcome is retained privately.
+- `agent_settled` resolves that retained attempt (or fails closed when the attempt
+  is missing/malformed). Native idleness requires settlement **and no open
+  compaction**: `aborted` remains cancellation, and final provider errors retain
+  their diagnostics. Either event order is valid; `compaction_end` does not need a
+  second settlement after an already-settled run, and it cannot settle an active run.
 
 Retry, automatic compaction, summarization-retry, nonempty queue updates, and
 agent-start events keep the parent active. An empty queue update does not change
@@ -153,10 +155,10 @@ After a settled success has a ready work assessment, the shared
 `CompletionCoordinator` enters its `stabilizing` phase. The Pi profile supplies the
 short policy window, while activity and fresh descendant validation are owned by that
 coordinator state (there is no second Pi phase gate). This gives already-buffered or
-just-written disk/event activity a chance to arrive before accepting the terminal event
-as final, without allowing compaction/activity to leave a stale success validation
-pending. A slow initial descendant refresh does not move the idle/terminal anchor used
-by Pi's done-nudge delay.
+just-written disk/event activity a chance to arrive before accepting the settled
+success as final, without allowing compaction/activity to leave a stale success
+validation pending. A slow initial descendant refresh does not move the idle/terminal
+anchor used by Pi's done-nudge delay.
 
 Receipt persistence precedes the native public RPC message event. Until Python observes
 that exact delivery ID and membership, evidence remains unknown; once observed, the
@@ -176,9 +178,9 @@ An inline phase sink atomically updates `spawns/<id>/pi-lifecycle.json`;
 | `session_event_seen` / `session_event_absent` | Pi session event observed (or not) |
 | `waiting_for_tracked_children` | Parent idle, children still running |
 | `pi_child_wave_timeout` | Wave deadline expired |
-| `quiescence_micro_drain_started` | Terminal event seen, polling for quiescence |
+| `quiescence_micro_drain_started` | Settled success candidate seen, polling for quiescence |
 | `quiescence_micro_drain_extended` | Additional event during micro-drain |
-| `quiescence_deferred` | Terminal event but still waiting for children/private disk evidence |
+| `quiescence_deferred` | Settled candidate but still waiting for children/private disk evidence |
 | `cleanup_running` / `cleanup_completed` / `cleanup_escalated` / `cleanup_failed` | Connection cleanup phases |
 | `finalized` | Drain complete; final status/exit_code/error |
 
