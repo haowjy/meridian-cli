@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +15,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_session_payload,
 )
-from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.harness.registry import get_default_harness_registry, get_harness_bundle
 from meridian.lib.launch.constants import OUTPUT_FILENAME, PRIMARY_META_FILENAME
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -155,8 +156,19 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
     harness_registry.get_subprocess_harness(HarnessId.OPENCODE)
     managed_calls = 0
     black_box_calls = 0
+    idle_sensor_calls = 0
     captured_spawn_dir: Path | None = None
     captured_black_box_cwd: Path | None = None
+
+    def unexpected_idle_sensor(_ctx: object) -> None:
+        nonlocal idle_sensor_calls
+        idle_sensor_calls += 1
+
+    opencode_bundle = replace(
+        get_harness_bundle(HarnessId.OPENCODE),
+        primary_idle_sensor=unexpected_idle_sensor,
+    )
+    monkeypatch.setattr(runner_module, "get_harness_bundle", lambda _h: opencode_bundle)
 
     def failing_managed(
         harness_id: Any,
@@ -212,6 +224,7 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
 
     assert managed_calls == 1
     assert black_box_calls == 1
+    assert idle_sensor_calls == 0
     assert captured_spawn_dir is not None
     assert not (captured_spawn_dir / PRIMARY_META_FILENAME).exists()
     assert not (captured_spawn_dir / OUTPUT_FILENAME).exists()

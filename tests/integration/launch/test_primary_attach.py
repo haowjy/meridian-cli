@@ -5,7 +5,8 @@ import json
 import signal
 import threading
 import time
-from dataclasses import dataclass, field
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -19,6 +20,13 @@ from meridian.lib.harness.connections.base import (
     ObserverEndpoint,
     RawHarnessEvent,
 )
+from meridian.lib.harness.idle_types import (
+    CompactResult,
+    IdleEvent,
+    IdleFacts,
+    IdleSensorContext,
+)
+from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.launch.constants import HISTORY_FILENAME, PRIMARY_META_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import primary_attach as primary_attach_module
@@ -35,6 +43,72 @@ from meridian.lib.state.process_scope_projection import read_scopes_from_disk, r
 from meridian.lib.state.spawn_store import start_spawn
 
 _BACKEND_SCOPE_EPOCH = 12_345.0
+
+
+class SensorCrash(BaseException):
+    """A non-Exception sensor failure used to prove the sidecar boundary."""
+
+
+@dataclass
+class RecordingIdleSensor:
+    started: asyncio.Event = field(default_factory=asyncio.Event)
+    cancelled: asyncio.Event = field(default_factory=asyncio.Event)
+    raw_events: list[RawHarnessEvent] = field(default_factory=list)
+    raw_error: BaseException | None = None
+    events_error: BaseException | None = None
+
+    def on_raw_event(self, event: RawHarnessEvent) -> None:
+        self.raw_events.append(event)
+        if self.raw_error is not None:
+            raise self.raw_error
+
+    async def events(self) -> AsyncIterator[IdleEvent]:
+        if False:
+            yield IdleEvent(
+                kind="idle",
+                harness_session_id="unreachable",
+                turn_id=None,
+                timestamp=0.0,
+            )
+        self.started.set()
+        try:
+            if self.events_error is not None:
+                raise self.events_error
+            await asyncio.Event().wait()
+        finally:
+            self.cancelled.set()
+
+    async def facts(self) -> IdleFacts:
+        return IdleFacts(
+            draft="unknown",
+            busy=False,
+            agents_running=0,
+            context_tokens=None,
+            harness_autocompact_off=False,
+        )
+
+    async def compact(self) -> CompactResult:
+        return CompactResult(result="vetoed", reason="test")
+
+
+def _install_idle_sensor_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    harness_id: HarnessId,
+    sensor: RecordingIdleSensor,
+) -> tuple[list[IdleSensorContext], list[bool]]:
+    contexts: list[IdleSensorContext] = []
+    alive_at_creation: list[bool] = []
+    original_bundle = get_harness_bundle(harness_id)
+
+    def _create_sensor(ctx: IdleSensorContext) -> RecordingIdleSensor:
+        contexts.append(ctx)
+        alive_at_creation.append(ctx.tui_alive())
+        return sensor
+
+    idle_bundle = replace(original_bundle, primary_idle_sensor=_create_sensor)
+    monkeypatch.setattr(primary_attach_module, "get_harness_bundle", lambda _h: idle_bundle)
+    return contexts, alive_at_creation
 
 
 @pytest.mark.asyncio
@@ -368,6 +442,98 @@ def _read_metadata(spawn_dir: Path) -> dict[str, object]:
     )
 
 
+@pytest.mark.asyncio
+async def test_primary_attach_idle_sensor_runs_with_tui_and_receives_raw_events(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spawn_dir = tmp_path / "spawns" / "p-idle-normal"
+    event = RawHarnessEvent(
+        event_type="test.noop",
+        payload={"turn": "turn-1"},
+        harness_id="codex",
+    )
+    connection = FakeManagedConnection(events=[event], session_id="sess-idle")
+    process_launcher = FakeProcessLauncher(spawn_dir=spawn_dir)
+    sensor = RecordingIdleSensor()
+    contexts, alive_at_creation = _install_idle_sensor_bundle(
+        monkeypatch,
+        harness_id=HarnessId.CODEX,
+        sensor=sensor,
+    )
+    launcher = PrimaryAttachLauncher(
+        spawn_id=SpawnId("p-idle-normal"),
+        spawn_dir=spawn_dir,
+        connection=connection,
+        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
+        process_launcher=process_launcher,
+    )
+
+    outcome = await launcher.run(
+        config=_build_config(spawn_id=SpawnId("p-idle-normal"), control_root=tmp_path),
+        spec=_build_spec(),
+        cwd=tmp_path,
+        env={"TMUX_PANE": "%9", "IDLE_TEST": "yes"},
+    )
+
+    assert outcome.exit_code == 0
+    assert sensor.started.is_set()
+    assert sensor.cancelled.is_set()
+    assert sensor.raw_events == [event]
+    assert alive_at_creation == [True]
+    assert len(contexts) == 1
+    assert contexts[0].connection is connection
+    assert contexts[0].harness_id is HarnessId.CODEX
+    assert contexts[0].harness_session_id == "sess-idle"
+    assert contexts[0].env == {"TMUX_PANE": "%9", "IDLE_TEST": "yes"}
+    assert contexts[0].tmux_pane == "%9"
+    assert contexts[0].spawn_dir == spawn_dir
+    assert contexts[0].tui_alive() is False
+
+
+@pytest.mark.asyncio
+async def test_primary_attach_idle_sensor_failures_do_not_change_outcome_or_stderr(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    spawn_dir = tmp_path / "spawns" / "p-idle-errors"
+    event = RawHarnessEvent(event_type="test.noop", payload={}, harness_id="codex")
+    connection = FakeManagedConnection(events=[event], session_id="sess-idle-errors")
+    sensor = RecordingIdleSensor(
+        raw_error=RuntimeError("raw sensor failed"),
+        events_error=SensorCrash("sensor iterator failed"),
+    )
+    _install_idle_sensor_bundle(
+        monkeypatch,
+        harness_id=HarnessId.CODEX,
+        sensor=sensor,
+    )
+    launcher = PrimaryAttachLauncher(
+        spawn_id=SpawnId("p-idle-errors"),
+        spawn_dir=spawn_dir,
+        connection=connection,
+        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
+        process_launcher=FakeProcessLauncher(spawn_dir=spawn_dir),
+    )
+
+    outcome = await launcher.run(
+        config=_build_config(spawn_id=SpawnId("p-idle-errors"), control_root=tmp_path),
+        spec=_build_spec(),
+        cwd=tmp_path,
+        env={},
+    )
+
+    assert outcome.exit_code == 0
+    assert sensor.raw_events == [event]
+    assert capsys.readouterr().err == ""
+    debug_records = [
+        json.loads(line)
+        for line in (spawn_dir / "debug.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert {record["data"]["phase"] for record in debug_records} == {"raw_event", "run"}
+
+
 def test_primary_attach_scope_snapshot_records_unknown_birth_sentinel_when_create_time_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -557,6 +723,12 @@ async def test_primary_attach_codex_event_stream_closure_does_not_stop_backend_o
         session_id="sess-codex",
     )
     process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir)
+    sensor = RecordingIdleSensor()
+    _install_idle_sensor_bundle(
+        monkeypatch,
+        harness_id=HarnessId.CODEX,
+        sensor=sensor,
+    )
     terminated_scopes: list[str] = []
 
     def _terminate_scope(scope: Any, *, grace_seconds: float, reason: str) -> None:
@@ -584,9 +756,11 @@ async def test_primary_attach_codex_event_stream_closure_does_not_stop_backend_o
     )
 
     await stream_closed.wait()
+    await sensor.started.wait()
     await asyncio.sleep(0)
 
     assert run_task.done() is False
+    assert sensor.cancelled.is_set() is False
     assert connection.stop_reasons == []
     assert terminated_scopes == []
 
@@ -594,6 +768,7 @@ async def test_primary_attach_codex_event_stream_closure_does_not_stop_backend_o
     outcome = await run_task
 
     assert outcome.exit_code == 143
+    assert sensor.cancelled.is_set()
     assert connection.stop_reasons == [None]
     assert terminated_scopes == []
     assert _read_metadata(spawn_dir)["tui_pid"] == 5252
@@ -1025,6 +1200,12 @@ async def test_primary_attach_signal_cancel_records_cancelled_and_restores_handl
     tui_started = asyncio.Event()
     connection = FakeManagedConnection(events=[], session_id="sess-signal")
     process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir, wait_exit_code=130)
+    sensor = RecordingIdleSensor()
+    _install_idle_sensor_bundle(
+        monkeypatch,
+        harness_id=HarnessId.CODEX,
+        sensor=sensor,
+    )
     terminated_scopes: list[str] = []
     installed_handlers: list[Any] = []
 
@@ -1059,14 +1240,16 @@ async def test_primary_attach_signal_cancel_records_cancelled_and_restores_handl
         )
     )
     await tui_started.wait()
+    await sensor.started.wait()
     assert installed_handlers
     assert installed_handlers[0] not in (signal.SIG_DFL, signal.SIG_IGN)
 
-    launcher._request_signal_cancel()
+    signal.raise_signal(signal.SIGHUP)
     outcome = await run_task
 
     assert outcome.cancelled is True
     assert outcome.exit_code == 130
+    assert sensor.cancelled.is_set()
     assert terminated_scopes == ["tui:signal_cancelled"]
     assert signal.getsignal(signal.SIGTERM) is before_term
     assert signal.getsignal(signal.SIGHUP) is before_hup

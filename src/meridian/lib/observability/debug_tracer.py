@@ -17,8 +17,8 @@ class DebugTracer:
     """Structured JSONL debug event writer for streaming pipeline observability.
 
     Contract: emit() is best-effort and never raises. If the underlying file
-    write or serialization fails, the tracer logs one warning and disables
-    itself for the remainder of the session.
+    write or serialization fails, the tracer disables itself for the remainder
+    of the session and, unless ``report_failures`` is false, logs one warning.
     """
 
     def __init__(
@@ -49,8 +49,8 @@ class DebugTracer:
     ) -> None:
         """Append one structured debug event. Never raises.
 
-        If the underlying write fails, logs a warning on the first failure,
-        sets self._disabled = True, and returns silently on all subsequent calls.
+        If the underlying write fails, optionally logs a warning on the first
+        failure, sets self._disabled = True, and returns silently thereafter.
         """
         if self._disabled:
             return

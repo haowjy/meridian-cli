@@ -15,6 +15,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import Lock, Thread
+from types import MappingProxyType
 from typing import Any
 
 import psutil
@@ -30,8 +31,10 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.extractors.base import AttemptFold
+from meridian.lib.harness.idle_types import IdleSensorContext
 from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.harness.semantics import normalize_event
+from meridian.lib.idle import sidecar as idle_sidecar
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.signals import SignalCallbackReceiver, signal_coordinator
 from meridian.lib.platform import IS_WINDOWS
@@ -242,18 +245,18 @@ class PrimaryAttachLauncher:
         self._process_launcher = process_launcher
         self._runtime_root = runtime_root
         self._on_running = on_running
-        self._fold = fold or get_harness_bundle(connection.harness_id).extractor.create_fold()
-        self._event_hooks = (self._fold,)
+        self._harness_bundle = get_harness_bundle(connection.harness_id)
+        self._fold = fold or self._harness_bundle.extractor.create_fold()
+        self._event_hooks: tuple[Callable[[RawHarnessEvent], None], ...] = (self._fold,)
         if runtime_root is not None:
-            self._event_hooks += get_harness_bundle(connection.harness_id).event_sinks(
-                runtime_root, spawn_id
-            )
+            self._event_hooks += self._harness_bundle.event_sinks(runtime_root, spawn_id)
         self._facts = self._fold.facts
         self._session_id_observer = session_id_observer
         self._metadata = _LauncherMetadata()
         self._metadata_lock = Lock()
         self._event_consumer_task: asyncio.Task[None] | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
+        self._idle_task: asyncio.Task[None] | None = None
         self._tui_scope_snapshot: ProcessScopeSnapshot | None = None
         self._running_process: RunningProcess | None = None
         self._signal_cancel_requested = False
@@ -265,6 +268,43 @@ class PrimaryAttachLauncher:
         running = self._running_process
         if running is not None:
             running.cancel_wait()
+
+    def _start_idle_sensor(
+        self,
+        *,
+        session_id: str,
+        env: dict[str, str],
+        running_process: RunningProcess,
+    ) -> None:
+        sensor_factory = self._harness_bundle.primary_idle_sensor
+        if sensor_factory is None:
+            return
+
+        ctx = IdleSensorContext(
+            connection=self._connection,
+            harness_id=self._connection.harness_id,
+            harness_session_id=session_id,
+            env=MappingProxyType(dict(env)),
+            tmux_pane=env.get("TMUX_PANE"),
+            tui_alive=lambda: self._running_process is running_process,
+            spawn_dir=self._spawn_dir,
+        )
+        try:
+            sensor = sensor_factory(ctx)
+        except BaseException as exc:
+            idle_sidecar.record_sensor_error(ctx, phase="create", error=exc)
+            return
+        if sensor is None:
+            return
+
+        def _on_raw_event(event: RawHarnessEvent) -> None:
+            try:
+                sensor.on_raw_event(event)
+            except BaseException as exc:
+                idle_sidecar.record_sensor_error(ctx, phase="raw_event", error=exc)
+
+        self._event_hooks += (_on_raw_event,)
+        self._idle_task = asyncio.create_task(idle_sidecar.run(sensor, ctx))
 
     async def run(
         self,
@@ -356,6 +396,11 @@ class PrimaryAttachLauncher:
                 await _start_process_wait(running_process)
                 raise
             launch_task = _start_process_wait(running_process)
+            self._start_idle_sensor(
+                session_id=session_id,
+                env=env,
+                running_process=running_process,
+            )
             telemetry.clear()
 
             consumer_task = self._event_consumer_task
@@ -442,6 +487,12 @@ class PrimaryAttachLauncher:
                 consumer_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await consumer_task
+            idle_task = self._idle_task
+            if idle_task is not None:
+                idle_task.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await idle_task
+                self._idle_task = None
             heartbeat_task = self._heartbeat_task
             if heartbeat_task is not None:
                 heartbeat_task.cancel()

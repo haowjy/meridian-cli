@@ -48,4 +48,4 @@ async def run(sensor: IdleSensor, ctx: IdleSensorContext) -> None:
         record_sensor_error(ctx, phase="run", error=exc)
 
 
-__all__ = ["run"]
+__all__ = ["record_sensor_error", "run"]
