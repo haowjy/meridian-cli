@@ -123,7 +123,21 @@ class PiCompletionEvidence:
                 self.session_phase_emitted = True
                 if phase_value == "session_event_seen":
                     self.session_seen = True
-        if transition == "turn_active":
+        if event.event_type == "compaction_start":
+            await self.quiescence_tracker.set_compacting(True)
+        elif event.event_type == "compaction_end":
+            await self.quiescence_tracker.set_compacting(False)
+        elif (
+            event.event_type
+            in {
+                "summarization_retry_scheduled",
+                "summarization_retry_attempt_start",
+                "summarization_retry_finished",
+            }
+            and self.quiescence_tracker.compacting
+        ):
+            pass  # Retry work belongs to the open compaction, not a new agent run.
+        elif transition == "turn_active":
             self.quiescence_tracker.mark_turn_active()
         elif transition == "idle":
             await self.quiescence_tracker.mark_idle()
@@ -143,10 +157,7 @@ class PiCompletionEvidence:
                 )
                 delivery_id = details.get("delivery_id")
                 work_ids = details.get("work_ids")
-                if (
-                    isinstance(delivery_id, str)
-                    and isinstance(work_ids, list)
-                ):
+                if isinstance(delivery_id, str) and isinstance(work_ids, list):
                     members = cast("list[object]", work_ids)
                     if all(isinstance(item, str) for item in members):
                         self.quiescence_tracker.observe_delivery_message(
@@ -154,7 +165,10 @@ class PiCompletionEvidence:
                         )
         profile = self._profile
         if profile is not None:
-            profile.after_observed_event(transition)
+            activity = transition
+            if transition is not None:
+                activity = "idle" if self.quiescence_tracker.parent_idle else "turn_active"
+            profile.after_observed_event(activity)
         return EvidenceEventDecision()
 
     def note_event_delivered(self, event: RawHarnessEvent) -> EvidenceEventDecision:

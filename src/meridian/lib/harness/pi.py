@@ -578,20 +578,6 @@ def _resolve_pi_settled(event: RawHarnessEvent) -> TerminalEventOutcome:
     )
 
 
-def _resolve_pi_compaction_end_activity(event: RawHarnessEvent) -> ActivityState:
-    """Return idle only when a manual compaction has actually finished.
-
-    Automatic compaction runs inside Pi's active agent loop and is followed by
-    continuation or ``agent_settled``. Manual compaction is a separate RPC
-    operation: Pi clears its compaction state before emitting ``compaction_end``
-    and does not emit a settlement marker. Its explicit reason is therefore the
-    only safe boundary for returning the parent to idle here; malformed or
-    undocumented payloads stay active rather than inventing idleness.
-    """
-
-    return "idle" if event.payload.get("reason") == "manual" else "turn_active"
-
-
 def _resolve_pi_queue_activity(event: RawHarnessEvent) -> ActivityState | None:
     # Clearing an idle queue does not start a run; it also cannot settle active work.
     if event.payload.get("steering") == [] and event.payload.get("followUp") == []:
@@ -615,7 +601,9 @@ PI_SEMANTICS = HarnessSemantics(
         "auto_retry_start": EventSemantics(activity="turn_active"),
         "auto_retry_end": EventSemantics(activity="turn_active"),
         "compaction_start": EventSemantics(activity="turn_active"),
-        "compaction_end": EventSemantics(activity="turn_active"),
+        # Ends the compaction operation, not the agent run. Pi's tracker
+        # combines both facts before exposing parent idleness.
+        "compaction_end": EventSemantics(activity="idle"),
         "summarization_retry_scheduled": EventSemantics(activity="turn_active"),
         "summarization_retry_attempt_start": EventSemantics(activity="turn_active"),
         "summarization_retry_finished": EventSemantics(activity="turn_active"),
@@ -630,7 +618,6 @@ PI_SEMANTICS = HarnessSemantics(
         MERIDIAN_CONNECTION_CLOSED_EVENT: _resolve_pi_terminal,
     },
     activity_resolvers={
-        "compaction_end": _resolve_pi_compaction_end_activity,
         "queue_update": _resolve_pi_queue_activity,
     },
 )

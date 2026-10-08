@@ -27,10 +27,14 @@ batch as idle:
 
 Retry, automatic compaction, summarization-retry, nonempty queue updates, and
 agent-start events keep the parent active. An empty queue update does not change
-activity. A new run invalidates the previous success candidate and micro-drain;
+activity. The tracker keeps agent settlement and compaction-in-progress separately:
+a manual compaction can start inside a settlement hook before the public settlement
+event arrives. Both facts must permit idleness; neither event overwrites the other. A new run invalidates the previous success candidate and micro-drain;
 it must supply its own attempt and settlement. Manual compaction is separate from an automatic run:
-its `compaction_end` carries `reason: manual` and returns the parent to idle (an
-absent or unknown reason stays active rather than inventing idleness). A
+its `compaction_end` closes that operation without creating another agent run.
+Compaction retries belong to the open compaction, not a new agent run. An end event
+cannot settle an otherwise active agent. Pi's combined idle observation also gates
+`done`; the generic coordinator's turn flag is not a second native-idle authority. A
 notification-delivery deadline is armed only while that settled parent is idle;
 starting a new run clears the old window, so active work cannot spend an earlier idle
 budget. Exact receipt/public-observation and causal response fences remain in force

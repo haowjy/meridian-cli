@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -57,7 +58,6 @@ def test_pi_batch_events_are_not_session_idle(event_type: str) -> None:
         "auto_retry_start",
         "auto_retry_end",
         "compaction_start",
-        "compaction_end",
         "summarization_retry_scheduled",
         "summarization_retry_attempt_start",
         "summarization_retry_finished",
@@ -70,20 +70,21 @@ def test_pi_automatic_work_events_keep_parent_active(event_type: str) -> None:
     assert semantics.activity == "turn_active"
 
 
-@pytest.mark.parametrize(
-    ("payload", "activity"),
-    [
-        ({"reason": "manual", "aborted": False}, "idle"),
-        ({"reason": "overflow", "willRetry": True}, "turn_active"),
-        ({}, "turn_active"),
-    ],
-)
-def test_pi_compaction_end_only_settles_explicit_manual_work(
-    payload: dict[str, object], activity: str
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [{"reason": "manual"}, {"reason": "overflow"}, {}])
+async def test_compaction_end_cannot_settle_an_active_agent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    payload: dict[str, object],
 ) -> None:
-    semantics = normalize_event(pi_event("compaction_end", payload)).semantics
-
-    assert semantics.activity == activity
+    started = await PiDrainScenario.start(tmp_path, monkeypatch)
+    try:
+        await started.observe("agent_start", {}, "turn_active")
+        await started.observe("compaction_start", {}, "turn_active")
+        await started.observe("compaction_end", payload, "idle")
+        assert not started.coordinator._profile.quiescence_tracker.parent_idle
+    finally:
+        await started.stop()
 
 
 def test_pi_settled_without_attempt_is_not_synthetic_success() -> None:
@@ -112,9 +113,9 @@ async def test_retryable_agent_end_waits_for_settlement_and_preserves_error(
     assert first_semantics.terminal is not None
     try:
         await coordinator.observe_event(first, first_semantics.activity)
-        action = PiRpcQuiescenceDrainPolicy(
-            quiescence_check=coordinator.is_quiescent
-        ).classify(first_semantics.terminal)
+        action = PiRpcQuiescenceDrainPolicy(quiescence_check=coordinator.is_quiescent).classify(
+            first_semantics.terminal
+        )
         provisional = await coordinator.handle_terminal_event(
             first, first_semantics.terminal, action
         )
@@ -159,9 +160,9 @@ async def test_settled_abort_remains_cancelled(
         await coordinator.handle_terminal_event(
             attempt,
             attempt_semantics.terminal,
-            PiRpcQuiescenceDrainPolicy(
-                quiescence_check=coordinator.is_quiescent
-            ).classify(attempt_semantics.terminal),
+            PiRpcQuiescenceDrainPolicy(quiescence_check=coordinator.is_quiescent).classify(
+                attempt_semantics.terminal
+            ),
         )
 
         settled = pi_event("agent_settled", {"aborted": True})
@@ -181,10 +182,15 @@ async def test_settled_abort_remains_cancelled(
         await started.stop()
 
 
-@pytest.mark.parametrize("messages", [
-    [], [{"role": "user"}], [{"role": "assistant"}],
-    [{"role": "assistant", "stopReason": "invented"}],
-])
+@pytest.mark.parametrize(
+    "messages",
+    [
+        [],
+        [{"role": "user"}],
+        [{"role": "assistant"}],
+        [{"role": "assistant", "stopReason": "invented"}],
+    ],
+)
 def test_attempt_requires_an_assistant_outcome(messages: list[dict[str, object]]) -> None:
     outcome = normalize_event(pi_event("agent_end", {"messages": messages})).semantics.terminal
     assert outcome is not None and outcome.status == "failed"
@@ -192,7 +198,8 @@ def test_attempt_requires_an_assistant_outcome(messages: list[dict[str, object]]
 
 def test_final_provider_diagnostic_is_preserved() -> None:
     message = {
-        "role": "assistant", "stopReason": "error",
+        "role": "assistant",
+        "stopReason": "error",
         "errorMessage": "503 SPECIFIC_PROVIDER_FAILURE",
     }
     outcome = normalize_event(pi_event("agent_end", {"messages": [message]})).semantics.terminal
@@ -219,7 +226,9 @@ async def test_explicit_policy_survives_settlement_with_owed_work(
             await coordinator.observe_event(event, semantics.activity)
             assert semantics.terminal is not None
             result = await coordinator.handle_terminal_event(
-                event, semantics.terminal, policy.classify(semantics.terminal),
+                event,
+                semantics.terminal,
+                policy.classify(semantics.terminal),
             )
         if isinstance(policy, SingleTurnDrainPolicy):
             assert result.recorded_outcome is not None
@@ -232,7 +241,8 @@ async def test_explicit_policy_survives_settlement_with_owed_work(
 
 @pytest.mark.asyncio
 async def test_new_run_discards_previous_close_candidate(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     started = await PiDrainScenario.start(tmp_path, monkeypatch, start_micro_drain=True)
     try:
@@ -256,12 +266,75 @@ def test_empty_queue_update_does_not_start_new_work() -> None:
     assert normalize_event(event).semantics.activity is None
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("settled_first", [True, False])
+async def test_compaction_and_settlement_must_both_finish_before_idle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    settled_first: bool,
+) -> None:
+    started = await PiDrainScenario.start(tmp_path, monkeypatch)
+    try:
+        events = [
+            pi_event("agent_settled", {"aborted": False}),
+            pi_event("compaction_start", {"reason": "manual"}),
+        ]
+        if not settled_first:
+            events.reverse()
+        events += [
+            pi_event(name)
+            for name in [
+                "summarization_retry_scheduled",
+                "summarization_retry_attempt_start",
+                "summarization_retry_finished",
+            ]
+        ]
+        for event in events:
+            await started.coordinator.observe_event(
+                event, normalize_event(event).semantics.activity
+            )
+        tracker = started.coordinator._profile.quiescence_tracker
+        assert not tracker.parent_idle
+        await started.observe("compaction_end", {"reason": "manual"}, "idle")
+        assert tracker.parent_idle
+    finally:
+        await started.stop()
+
+
+@pytest.mark.asyncio
+async def test_done_can_release_work_after_manual_compaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = await PiDrainScenario.start(tmp_path, monkeypatch, patch_clock=False)
+    coordinator = started.coordinator
+    try:
+        started.row("p1", parent_id=None)
+        started.running_bash()
+        await started.idle()
+        await coordinator.handle_aux_wake()
+        await started.terminal()
+        for kind, transition in [("compaction_start", "turn_active"), ("compaction_end", "idle")]:
+            event = pi_event(kind, {"reason": "manual"})
+            await coordinator.observe_event(event, transition)
+            coordinator.note_event_delivered(event)
+            await coordinator.after_event()
+        started.done()
+        outcome = None
+        for _ in range(100):
+            await asyncio.sleep(0.025)
+            outcome = (await started.timeout()).recorded_outcome
+            if outcome is not None:
+                break
+        assert outcome is not None and outcome.status == "succeeded"
+    finally:
+        await started.stop()
+
+
 def test_delivery_deadline_rearms_after_active_run(tmp_path: Path) -> None:
     now = [0.0]
     tracker = SimpleNamespace(parent_idle=True)
-    blocker = DiagnosticBlocker(
-        source="profile", code="pi_result_delivery_pending", identity="b1"
-    )
+    blocker = DiagnosticBlocker(source="profile", code="pi_result_delivery_pending", identity="b1")
     assessment = WorkAssessment(disposition="blocked", blockers=(blocker,), generation=1)
     evidence = SimpleNamespace(
         quiescence_tracker=tracker,
@@ -269,9 +342,7 @@ def test_delivery_deadline_rearms_after_active_run(tmp_path: Path) -> None:
         session_phase_emitted=False,
         has_pending_children=lambda: False,
         pending_child_count=lambda: 0,
-        classify_outstanding_work=lambda: PiOutstandingWork(
-            False, False, delivery_pending=True
-        ),
+        classify_outstanding_work=lambda: PiOutstandingWork(False, False, delivery_pending=True),
     )
     profile = PiCompletionProfile(
         runtime_root=tmp_path,

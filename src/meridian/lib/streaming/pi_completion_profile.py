@@ -502,7 +502,6 @@ class PiCompletionProfile:
         self._clear_done_nudge_timer()
         if (
             context.assessment.disposition == "unknown"
-            or context.active_turn
             or not self.quiescence_tracker.parent_idle
             or self.classify_outstanding_work().delivery_pending
         ):
