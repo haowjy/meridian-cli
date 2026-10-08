@@ -78,12 +78,16 @@ class _Evidence:
         del event, transition
         return EvidenceEventDecision()
 
-    def note_event_delivered(self, event: RawHarnessEvent) -> EvidenceEventDecision:
-        del event
+    def note_event_delivered(
+        self, event: RawHarnessEvent, state: CompletionState
+    ) -> EvidenceEventDecision:
+        del event, state
         return self.persisted
 
-    async def assess(self, trigger: AssessmentTrigger) -> WorkAssessment:
-        del trigger
+    async def assess(
+        self, trigger: AssessmentTrigger, state: CompletionState
+    ) -> WorkAssessment:
+        del trigger, state
         if self.assessments:
             self.last = self.assessments.popleft()
         return self.last

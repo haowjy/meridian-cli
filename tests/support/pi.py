@@ -21,7 +21,7 @@ from meridian.lib.harness.connections.base import (
     StopResult,
 )
 from meridian.lib.harness.connections.pi_rpc import pi_subprocess_exit_error
-from meridian.lib.harness.semantics import TerminalEventOutcome
+from meridian.lib.harness.semantics import normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
@@ -290,18 +290,26 @@ class PiDrainScenario:
         self,
         event_type: str,
         payload: dict[str, object] | None = None,
-        transition: str | None = None,
     ) -> None:
-        await self.coordinator.observe_event(pi_event(event_type, payload), transition)
+        event = pi_event(event_type, payload)
+        normalized = normalize_event(event)
+        await self.coordinator.observe_event(normalized)
 
     async def idle(self) -> None:
-        await self.observe("agent_settled", transition="idle")
+        await self.observe("agent_settled", {"aborted": False})
 
     async def terminal(self):  # type: ignore[no-untyped-def]
-        event = pi_event("agent_settled")
+        attempt = pi_event(
+            "agent_end",
+            {"messages": [{"role": "assistant", "stopReason": "stop"}]},
+        )
+        await self.coordinator.observe_event(normalize_event(attempt))
+        event = pi_event("agent_settled", {"aborted": False})
+        normalized = await self.coordinator.observe_event(normalize_event(event))
+        assert normalized is not None and normalized.semantics.terminal is not None
         return await self.coordinator.handle_terminal_event(
             event,
-            TerminalEventOutcome(status="succeeded", exit_code=0),
+            normalized.semantics.terminal,
             DrainAction(terminate=True, emit_turn_boundary=False),
         )
 

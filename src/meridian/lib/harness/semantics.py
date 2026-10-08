@@ -28,11 +28,9 @@ PI_INCOMPLETE_STOP_REASONS = PI_CANCELLED_STOP_REASONS | {"error", "length"}
 
 
 class TerminalOutcomeCause(StrEnum):
-    """Typed cause used only when completion policy may refine an outcome."""
+    """Typed cause used only when a transport outcome may be refined."""
 
     REPLACEABLE_TRANSPORT_CLOSE = "replaceable_transport_close"
-    PI_AGENT_END_PROVISIONAL = "pi_agent_end_provisional"
-    PI_AGENT_SETTLED = "pi_agent_settled"
 
 
 @dataclass(frozen=True)

@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.pi_rpc import is_pi_subprocess_exit_error
-from meridian.lib.harness.semantics import TerminalOutcomeCause
 from meridian.lib.state.spawn_signals import consume_resident_signals
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
@@ -108,8 +107,6 @@ class PiCompletionProfile:
         self._clock = clock
         self.quiescence_enabled = False
         self.last_successful_terminal: TerminalEventOutcome | None = None
-        self._latest_agent_attempt: TerminalEventOutcome | None = None
-        self.micro_drain_active = False
         self.micro_drain_event_count = 0
         self.waiting_child_count: int | None = None
         self.child_wave_deadline_monotonic: float | None = None
@@ -136,7 +133,6 @@ class PiCompletionProfile:
         self._clear_done_nudge_timer()
         self._unknown_deadline_at = None
         self._delivery_deadline_at = None
-        self._latest_agent_attempt = None
 
     def emit(self, phase: str, **payload: object) -> None:
         self._emit(phase, **payload)
@@ -249,7 +245,7 @@ class PiCompletionProfile:
         self, state: CompletionState, intentional_stop: bool
     ) -> TerminalEventOutcome | None:
         del intentional_stop
-        return state.candidate if self.micro_drain_active else None
+        return state.candidate if state.phase == "stabilizing" else None
 
     def next_nudge_at(self, state: CompletionState, assessment: WorkAssessment) -> float | None:
         del state, assessment
@@ -292,11 +288,12 @@ class PiCompletionProfile:
             ),
         )
 
-    def note_persisted_activity(self, event: RawHarnessEvent) -> EvidenceActivity | None:
-        if not self.quiescence_enabled or not self.micro_drain_active:
+    def note_persisted_activity(
+        self, event: RawHarnessEvent, state: CompletionState
+    ) -> EvidenceActivity | None:
+        if not self.quiescence_enabled or state.phase != "stabilizing":
             return None
         self.micro_drain_event_count += 1
-        self.micro_drain_active = False
         self._emit(
             "quiescence_micro_drain_extended",
             event_type=event.event_type,
@@ -309,8 +306,6 @@ class PiCompletionProfile:
         event: RawHarnessEvent,
         outcome: TerminalEventOutcome,
     ) -> None:
-        if event.event_type == "agent_settled":
-            self._latest_agent_attempt = None
         if outcome.status != "succeeded":
             return
         self.last_successful_terminal = outcome
@@ -318,26 +313,6 @@ class PiCompletionProfile:
             self._done_nudge_eligible_since = self._clock()
         self._refresh_done_nudge_state()
         self.emit_waiting_phases_if_needed()
-
-    def note_agent_attempt(self, outcome: TerminalEventOutcome) -> None:
-        """Retain the latest low-level result until Pi reports settlement."""
-
-        self._latest_agent_attempt = outcome
-
-    def begin_agent_run(self) -> None:
-        """A new run must supply its own outcome, never reuse prior success."""
-
-        self._latest_agent_attempt = None
-        self.last_successful_terminal = None
-        self.micro_drain_active = False
-
-    def settled_outcome(self, marker: TerminalEventOutcome) -> TerminalEventOutcome:
-        """Resolve Pi's session-level outcome from the latest attempt marker."""
-
-        if marker.cause != TerminalOutcomeCause.PI_AGENT_SETTLED:
-            return marker
-        attempt = self._latest_agent_attempt
-        return replace(attempt, cause=None) if attempt is not None else marker
 
     def after_observed_event(self, transition: str | None) -> None:
         if transition == "turn_active":
@@ -433,7 +408,6 @@ class PiCompletionProfile:
         if context.assessment.disposition == "ready":
             self._start_micro_drain()
             return ProfileDecision(action="stabilize")
-        self.micro_drain_active = False
         private_work = self.quiescence_tracker.private_work_snapshot()
         active_tracked_count = self.evidence.pending_child_count()
         self._emit(
@@ -452,7 +426,6 @@ class PiCompletionProfile:
             if context.assessment.disposition == "ready":
                 self._start_micro_drain()
                 return ProfileDecision(action="stabilize", restart_stabilization=True)
-            self.micro_drain_active = False
             self._update_idle_waiting_state()
             return ProfileDecision(action="wait", reset_deadline=True)
         if context.trigger == "aux_wake":
@@ -463,10 +436,8 @@ class PiCompletionProfile:
             context.trigger == "evidence_due" and context.stabilization_elapsed
         ):
             if context.assessment.disposition == "ready":
-                self.micro_drain_active = False
                 self._clear_done_nudge_timer()
                 return ProfileDecision(action="complete", outcome=candidate)
-            self.micro_drain_active = False
             self._emit("quiescence_micro_drain_cancelled", reason="disk_state_changed")
             self._update_idle_waiting_state()
             return ProfileDecision(action="abandon_candidate", reset_deadline=True)
@@ -534,7 +505,6 @@ class PiCompletionProfile:
             self._delivery_deadline_at = None
 
     def _start_micro_drain(self) -> None:
-        self.micro_drain_active = True
         self.micro_drain_event_count = 0
         self._clear_done_nudge_timer()
         self._emit("quiescence_micro_drain_started")
@@ -560,7 +530,6 @@ class PiCompletionProfile:
             or self._done_requested
             or self.last_successful_terminal is None
             or not self.quiescence_tracker.parent_idle
-            or self.micro_drain_active
         ):
             self._clear_done_nudge_timer()
             return

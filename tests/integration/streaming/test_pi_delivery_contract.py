@@ -11,7 +11,7 @@ import pytest
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.pi_private_state import BashEvidenceFile
-from meridian.lib.harness.semantics import TerminalEventOutcome
+from meridian.lib.harness.semantics import TerminalEventOutcome, normalize_event
 from meridian.lib.streaming.disk_watcher import PiDiskWatcher
 from meridian.lib.streaming.drain_policy import DrainAction
 from tests.support.pi import PiDrainScenario, pi_event
@@ -100,7 +100,7 @@ async def test_done_cannot_skip_owed_result_or_notice_response(
         assert await settle(started) is None
         assert started.nudges == []
         # Native smoke: a generic nudge caused done before the notice arrived.
-        await started.observe("agent_start", transition="turn_active")
+        await started.observe("agent_start")
         started.done()
         assert (await started.timeout()).recorded_outcome is None
         assert await settle(started) is None
@@ -152,7 +152,7 @@ async def test_terminal_result_remains_owed_until_specific_message_observed(
             },
         )
         assert await settle(started) is None
-        await started.coordinator.observe_event(pi_event("agent_start"), "turn_active")
+        await started.coordinator.observe_event(normalize_event(pi_event("agent_start")))
         assert await settle(started) is None  # unrelated activity is not the causal receipt
         event = RawHarnessEvent(
             harness_id="pi",
@@ -165,7 +165,7 @@ async def test_terminal_result_remains_owed_until_specific_message_observed(
                 },
             },
         )
-        await started.coordinator.observe_event(event, None)
+        await started.coordinator.observe_event(normalize_event(event))
         assert await settle(started) is None  # exact receipt still fences the active turn
         await started.idle()
         await started.terminal()
@@ -184,7 +184,7 @@ async def test_done_waits_for_active_turn_but_can_release_running_background_wor
     started.row("p1", parent_id=None)
     try:
         await started.terminal()
-        await started.observe("agent_start", transition="turn_active")
+        await started.observe("agent_start")
         started.done()
         assert await settle(started) is None
         await started.idle()
@@ -258,7 +258,7 @@ async def test_unreadable_deadline_is_anchored_and_delivery_has_bounded_recovery
         await started.coordinator.handle_timeout()
         initial = started.coordinator._coordinator.deadline_monotonic
         started.clock.advance(299)
-        await started.coordinator.observe_event(pi_event("message_update"), None)
+        await started.coordinator.observe_event(normalize_event(pi_event("message_update")))
         assert started.coordinator._coordinator.deadline_monotonic == initial
         started.clock.advance(2)
         outcome = (await started.coordinator.handle_timeout()).recorded_outcome
@@ -400,7 +400,7 @@ async def test_delivery_window_restarts_after_a_healthy_active_turn(
     started = await scenario(tmp_path, monkeypatch)
     try:
         await started.terminal()
-        await started.coordinator.observe_event(pi_event("agent_start"), "turn_active")
+        await started.coordinator.observe_event(normalize_event(pi_event("agent_start")))
         started.clock.advance(301)
         assert (await started.coordinator.handle_timeout()).recorded_outcome is None
         await started.idle()

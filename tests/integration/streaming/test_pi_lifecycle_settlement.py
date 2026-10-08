@@ -18,7 +18,6 @@ from meridian.lib.streaming.completion_contracts import (
     WorkAssessment,
 )
 from meridian.lib.streaming.drain_policy import (
-    DrainAction,
     PersistentDrainPolicy,
     PiRpcQuiescenceDrainPolicy,
     SingleTurnDrainPolicy,
@@ -28,8 +27,6 @@ from meridian.lib.streaming.pi_completion_profile import (
     PiOutstandingWork,
 )
 from tests.support.pi import PiDrainScenario, pi_event
-
-_SUCCESS_ACTION = DrainAction(terminate=True, emit_turn_boundary=False)
 
 
 def _retryable_error() -> object:
@@ -79,19 +76,18 @@ async def test_compaction_end_cannot_settle_an_active_agent(
 ) -> None:
     started = await PiDrainScenario.start(tmp_path, monkeypatch)
     try:
-        await started.observe("agent_start", {}, "turn_active")
-        await started.observe("compaction_start", {}, "turn_active")
-        await started.observe("compaction_end", payload, "idle")
+        await started.observe("agent_start", {})
+        await started.observe("compaction_start", {})
+        await started.observe("compaction_end", payload)
         assert not started.coordinator._profile.quiescence_tracker.parent_idle
     finally:
         await started.stop()
 
 
-def test_pi_settled_without_attempt_is_not_synthetic_success() -> None:
+def test_pi_settlement_success_is_private_until_session_refinement() -> None:
     semantics = normalize_event(pi_event("agent_settled", {"aborted": False})).semantics
 
-    assert semantics.terminal is not None
-    assert semantics.terminal.status == "failed"
+    assert semantics.terminal is None
 
 
 def test_pi_malformed_attempt_is_not_synthetic_success() -> None:
@@ -109,26 +105,20 @@ async def test_retryable_agent_end_waits_for_settlement_and_preserves_error(
     started = await PiDrainScenario.start(tmp_path, monkeypatch)
     coordinator = started.coordinator
     first = pi_event("agent_end", _retryable_error())
-    first_semantics = normalize_event(first).semantics
-    assert first_semantics.terminal is not None
     try:
-        await coordinator.observe_event(first, first_semantics.activity)
-        action = PiRpcQuiescenceDrainPolicy(quiescence_check=coordinator.is_quiescent).classify(
-            first_semantics.terminal
-        )
-        provisional = await coordinator.handle_terminal_event(
-            first, first_semantics.terminal, action
-        )
-        assert provisional.recorded_outcome is None
+        first_refined = await coordinator.observe_event(normalize_event(first))
+        assert first_refined is not None and first_refined.semantics.terminal is None
 
         settled = pi_event("agent_settled", {"aborted": False})
-        settled_semantics = normalize_event(settled).semantics
-        assert settled_semantics.terminal is not None
-        await coordinator.observe_event(settled, settled_semantics.activity)
+        settled_refined = await coordinator.observe_event(normalize_event(settled))
+        assert settled_refined is not None and settled_refined.semantics.terminal is not None
+        outcome = settled_refined.semantics.terminal
         final = await coordinator.handle_terminal_event(
             settled,
-            settled_semantics.terminal,
-            _SUCCESS_ACTION,
+            outcome,
+            PiRpcQuiescenceDrainPolicy(quiescence_check=coordinator.is_quiescent).classify(
+                outcome
+            ),
         )
 
         assert final.recorded_outcome is not None
@@ -153,26 +143,20 @@ async def test_settled_abort_remains_cancelled(
             "willRetry": False,
         },
     )
-    attempt_semantics = normalize_event(attempt).semantics
-    assert attempt_semantics.terminal is not None
     try:
-        await coordinator.observe_event(attempt, attempt_semantics.activity)
-        await coordinator.handle_terminal_event(
-            attempt,
-            attempt_semantics.terminal,
-            PiRpcQuiescenceDrainPolicy(quiescence_check=coordinator.is_quiescent).classify(
-                attempt_semantics.terminal
-            ),
-        )
+        attempt_refined = await coordinator.observe_event(normalize_event(attempt))
+        assert attempt_refined is not None and attempt_refined.semantics.terminal is None
 
         settled = pi_event("agent_settled", {"aborted": True})
-        settled_semantics = normalize_event(settled).semantics
-        assert settled_semantics.terminal is not None
-        await coordinator.observe_event(settled, settled_semantics.activity)
+        settled_refined = await coordinator.observe_event(normalize_event(settled))
+        assert settled_refined is not None and settled_refined.semantics.terminal is not None
+        outcome = settled_refined.semantics.terminal
         final = await coordinator.handle_terminal_event(
             settled,
-            settled_semantics.terminal,
-            _SUCCESS_ACTION,
+            outcome,
+            PiRpcQuiescenceDrainPolicy(quiescence_check=coordinator.is_quiescent).classify(
+                outcome
+            ),
         )
 
         assert final.recorded_outcome is not None
@@ -222,13 +206,14 @@ async def test_explicit_policy_survives_settlement_with_owed_work(
             pi_event("agent_end", {"messages": [{"role": "assistant", "stopReason": "stop"}]}),
             pi_event("agent_settled", {"aborted": False}),
         ]:
-            semantics = normalize_event(event).semantics
-            await coordinator.observe_event(event, semantics.activity)
-            assert semantics.terminal is not None
+            refined = await coordinator.observe_event(normalize_event(event))
+            if refined is None or refined.semantics.terminal is None:
+                continue
+            outcome = refined.semantics.terminal
             result = await coordinator.handle_terminal_event(
                 event,
-                semantics.terminal,
-                policy.classify(semantics.terminal),
+                outcome,
+                policy.classify(outcome),
             )
         if isinstance(policy, SingleTurnDrainPolicy):
             assert result.recorded_outcome is not None
@@ -247,7 +232,7 @@ async def test_new_run_discards_previous_close_candidate(
     started = await PiDrainScenario.start(tmp_path, monkeypatch, start_micro_drain=True)
     try:
         assert started.coordinator.handle_close(intentional_stop=False) is not None
-        await started.observe("agent_start", transition="turn_active")
+        await started.observe("agent_start")
         assert started.coordinator.handle_close(intentional_stop=False) is None
         assert not started.coordinator.should_defer_close()
     finally:
@@ -290,12 +275,10 @@ async def test_compaction_and_settlement_must_both_finish_before_idle(
             ]
         ]
         for event in events:
-            await started.coordinator.observe_event(
-                event, normalize_event(event).semantics.activity
-            )
+            await started.coordinator.observe_event(normalize_event(event))
         tracker = started.coordinator._profile.quiescence_tracker
         assert not tracker.parent_idle
-        await started.observe("compaction_end", {"reason": "manual"}, "idle")
+        await started.observe("compaction_end", {"reason": "manual"})
         assert tracker.parent_idle
     finally:
         await started.stop()
@@ -314,9 +297,9 @@ async def test_done_can_release_work_after_manual_compaction(
         await started.idle()
         await coordinator.handle_aux_wake()
         await started.terminal()
-        for kind, transition in [("compaction_start", "turn_active"), ("compaction_end", "idle")]:
+        for kind, _transition in [("compaction_start", "turn_active"), ("compaction_end", "idle")]:
             event = pi_event(kind, {"reason": "manual"})
-            await coordinator.observe_event(event, transition)
+            await coordinator.observe_event(normalize_event(event))
             coordinator.note_event_delivered(event)
             await coordinator.after_event()
         started.done()

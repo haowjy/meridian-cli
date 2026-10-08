@@ -149,13 +149,14 @@ signal-gated deadline/rearm model documented in [AGENTS.md](../AGENTS.md).
 
 ### Micro-Drain
 
-After a settled success has a ready work assessment, `PiCompletionProfile`
-enters micro-drain mode. It gives already-buffered or just-written disk/event activity a
-short chance to arrive before accepting the terminal event as the final outcome. This
-covers races where descendant state or causal delivery evidence lands immediately after
-`agent_settled`. Micro-drain rechecks private evidence and requests qualifying descendant
-validation before finalizing. A slow initial descendant refresh does not move the
-idle/terminal anchor used by Pi's done-nudge delay.
+After a settled success has a ready work assessment, the shared
+`CompletionCoordinator` enters its `stabilizing` phase. The Pi profile supplies the
+short policy window, while activity and fresh descendant validation are owned by that
+coordinator state (there is no second Pi phase gate). This gives already-buffered or
+just-written disk/event activity a chance to arrive before accepting the terminal event
+as final, without allowing compaction/activity to leave a stale success validation
+pending. A slow initial descendant refresh does not move the idle/terminal anchor used
+by Pi's done-nudge delay.
 
 Receipt persistence precedes the native public RPC message event. Until Python observes
 that exact delivery ID and membership, evidence remains unknown; once observed, the

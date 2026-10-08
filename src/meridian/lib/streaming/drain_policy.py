@@ -4,8 +4,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from meridian.lib.harness.semantics import TerminalOutcomeCause
-
 if TYPE_CHECKING:
     from meridian.lib.harness.semantics import TerminalEventOutcome
 
@@ -49,10 +47,6 @@ class PiRpcQuiescenceDrainPolicy:
         self._quiescence_check = quiescence_check
 
     def classify(self, outcome: TerminalEventOutcome) -> DrainAction:
-        if outcome.cause == TerminalOutcomeCause.PI_AGENT_END_PROVISIONAL:
-            # Pi may retry, compact, or continue after agent_end.  The
-            # session-level agent_settled event owns final classification.
-            return DrainAction(terminate=False, emit_turn_boundary=False)
         if outcome.status != "succeeded":
             return DrainAction(terminate=True, emit_turn_boundary=False)
         if self._quiescence_check():
