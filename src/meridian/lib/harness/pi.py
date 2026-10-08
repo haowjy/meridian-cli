@@ -520,6 +520,13 @@ def _resolve_pi_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
 def _resolve_pi_agent_end(event: RawHarnessEvent) -> TerminalEventOutcome | None:
     """Resolve one low-level attempt without treating it as session completion."""
 
+    if not isinstance(event.payload.get("messages"), list):
+        return TerminalEventOutcome(
+            status=SpawnStatus.FAILED,
+            exit_code=1,
+            error="pi_agent_end_missing_messages",
+            cause=TerminalOutcomeCause.PI_AGENT_END_PROVISIONAL,
+        )
     outcome = _resolve_pi_terminal(event)
     if outcome is None:
         return None
@@ -566,6 +573,7 @@ PI_SEMANTICS = HarnessSemantics(
         "summarization_retry_scheduled": EventSemantics(activity="turn_active"),
         "summarization_retry_attempt_start": EventSemantics(activity="turn_active"),
         "summarization_retry_finished": EventSemantics(activity="turn_active"),
+        "queue_update": EventSemantics(activity="turn_active"),
         "response": EventSemantics(),
         MERIDIAN_CONNECTION_CLOSED_EVENT: EventSemantics(),
     },

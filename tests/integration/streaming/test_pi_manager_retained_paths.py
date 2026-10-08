@@ -34,6 +34,10 @@ async def test_spawn_manager_derives_direct_followup_transitions_from_pi_events(
 
     class _FollowupConnection(FakePiConnection):
         async def events(self):  # type: ignore[no-untyped-def]
+            yield pi_event(
+                "agent_end",
+                {"messages": [{"role": "assistant", "stopReason": "stop"}]},
+            )
             yield pi_event("agent_settled")
             await followup_ready.wait()
             yield pi_event(
@@ -49,6 +53,10 @@ async def test_spawn_manager_derives_direct_followup_transitions_from_pi_events(
                         },
                     },
                 },
+            )
+            yield pi_event(
+                "agent_end",
+                {"messages": [{"role": "assistant", "stopReason": "stop"}]},
             )
             yield pi_event("agent_settled")
             await asyncio.Event().wait()
@@ -118,6 +126,10 @@ async def test_spawn_manager_child_wave_timeout_publishes_before_descendant_canc
     class _GatedIdleConnection(FakePiConnection):
         async def events(self):  # type: ignore[no-untyped-def]
             await parent_idle.wait()
+            yield pi_event(
+                "agent_end",
+                {"messages": [{"role": "assistant", "stopReason": "stop"}]},
+            )
             yield pi_event("agent_settled")
             await asyncio.Event().wait()
 

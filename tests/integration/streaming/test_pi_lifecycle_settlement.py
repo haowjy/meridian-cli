@@ -46,11 +46,38 @@ def test_pi_batch_events_are_not_session_idle(event_type: str) -> None:
     assert semantics.activity != "idle"
 
 
+@pytest.mark.parametrize(
+    "event_type",
+    [
+        "auto_retry_start",
+        "auto_retry_end",
+        "compaction_start",
+        "compaction_end",
+        "summarization_retry_scheduled",
+        "summarization_retry_attempt_start",
+        "summarization_retry_finished",
+        "queue_update",
+    ],
+)
+def test_pi_automatic_work_events_keep_parent_active(event_type: str) -> None:
+    semantics = normalize_event(pi_event(event_type)).semantics
+
+    assert semantics.activity == "turn_active"
+
+
 def test_pi_settled_without_attempt_is_not_synthetic_success() -> None:
     semantics = normalize_event(pi_event("agent_settled", {"aborted": False})).semantics
 
     assert semantics.terminal is not None
     assert semantics.terminal.status == "failed"
+
+
+def test_pi_malformed_attempt_is_not_synthetic_success() -> None:
+    semantics = normalize_event(pi_event("agent_end")).semantics
+
+    assert semantics.terminal is not None
+    assert semantics.terminal.status == "failed"
+    assert semantics.terminal.error == "pi_agent_end_missing_messages"
 
 
 @pytest.mark.asyncio
