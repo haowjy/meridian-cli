@@ -203,6 +203,19 @@ def test_delivery_deadline_rearms_after_active_run(tmp_path: Path) -> None:
     tracker.parent_idle = False
     profile.after_observed_event("turn_active")
     now[0] = 301.0
+    active_decision = profile.evaluate(
+        CompletionEvaluation(
+            state=CompletionState("waiting", None, assessment, None, None, None),
+            trigger="event",
+            now=301.0,
+            directives=CompletionDirectives(),
+            assessment=assessment,
+            active_turn=True,
+        )
+    )
+    assert active_decision.action == "wait"
+    assert profile._delivery_deadline_at is None
+
     tracker.parent_idle = True
     profile.after_observed_event("idle")
     decision = profile.evaluate(
