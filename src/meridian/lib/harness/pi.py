@@ -78,6 +78,7 @@ from meridian.lib.harness.projections.project_pi_rpc import (
 from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,
     PI_CANCELLED_STOP_REASONS,
+    ActivityState,
     EventSemantics,
     HarnessSemantics,
     TerminalEventOutcome,
@@ -553,6 +554,20 @@ def _resolve_pi_settled(event: RawHarnessEvent) -> TerminalEventOutcome:
     )
 
 
+def _resolve_pi_compaction_end_activity(event: RawHarnessEvent) -> ActivityState:
+    """Return idle only when a manual compaction has actually finished.
+
+    Automatic compaction runs inside Pi's active agent loop and is followed by
+    continuation or ``agent_settled``. Manual compaction is a separate RPC
+    operation: Pi clears its compaction state before emitting ``compaction_end``
+    and does not emit a settlement marker. Its explicit reason is therefore the
+    only safe boundary for returning the parent to idle here; malformed or
+    undocumented payloads stay active rather than inventing idleness.
+    """
+
+    return "idle" if event.payload.get("reason") == "manual" else "turn_active"
+
+
 PI_SEMANTICS = HarnessSemantics(
     events={
         "agent_start": EventSemantics(activity="turn_active"),
@@ -582,6 +597,9 @@ PI_SEMANTICS = HarnessSemantics(
         "agent_settled": _resolve_pi_settled,
         "response": _resolve_pi_terminal,
         MERIDIAN_CONNECTION_CLOSED_EVENT: _resolve_pi_terminal,
+    },
+    activity_resolvers={
+        "compaction_end": _resolve_pi_compaction_end_activity,
     },
 )
 

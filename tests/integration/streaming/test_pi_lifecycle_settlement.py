@@ -65,6 +65,22 @@ def test_pi_automatic_work_events_keep_parent_active(event_type: str) -> None:
     assert semantics.activity == "turn_active"
 
 
+@pytest.mark.parametrize(
+    ("payload", "activity"),
+    [
+        ({"reason": "manual", "aborted": False}, "idle"),
+        ({"reason": "overflow", "willRetry": True}, "turn_active"),
+        ({}, "turn_active"),
+    ],
+)
+def test_pi_compaction_end_only_settles_explicit_manual_work(
+    payload: dict[str, object], activity: str
+) -> None:
+    semantics = normalize_event(pi_event("compaction_end", payload)).semantics
+
+    assert semantics.activity == activity
+
+
 def test_pi_settled_without_attempt_is_not_synthetic_success() -> None:
     semantics = normalize_event(pi_event("agent_settled", {"aborted": False})).semantics
 

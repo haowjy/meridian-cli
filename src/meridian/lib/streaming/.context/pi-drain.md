@@ -25,11 +25,14 @@ batch as idle:
   the parent idle. `aborted` remains cancellation, and final provider errors remain
   failures with their diagnostics.
 
-Retry, compaction, summarization-retry, queue-update, and agent-start events keep the
-parent active. A notification-delivery deadline is armed only while that settled
-parent is idle; starting a new run clears the old window, so active work cannot spend
-an earlier idle budget. Exact receipt/public-observation and causal response fences
-remain in force during every settlement.
+Retry, automatic compaction, summarization-retry, queue-update, and agent-start
+events keep the parent active. Manual compaction is separate from an automatic run:
+its `compaction_end` carries `reason: manual` and returns the parent to idle (an
+absent or unknown reason stays active rather than inventing idleness). A
+notification-delivery deadline is armed only while that settled parent is idle;
+starting a new run clears the old window, so active work cannot spend an earlier idle
+budget. Exact receipt/public-observation and causal response fences remain in force
+during every settlement.
 
 ### Ownership Boundary
 

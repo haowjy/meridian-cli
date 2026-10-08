@@ -75,6 +75,7 @@ class NormalizedHarnessEvent:
 
 
 type PayloadSemanticResolver = Callable[["RawHarnessEvent"], TerminalEventOutcome | None]
+type ActivitySemanticResolver = Callable[["RawHarnessEvent"], ActivityState | None]
 type ScopeIdResolver = Callable[[dict[str, object]], str | None]
 
 
@@ -111,6 +112,7 @@ class HarnessSemantics:
 
     events: Mapping[str, EventSemantics]
     payload_resolvers: Mapping[str, PayloadSemanticResolver] = MappingProxyType({})
+    activity_resolvers: Mapping[str, ActivitySemanticResolver] = MappingProxyType({})
     scoped_events: frozenset[str] = frozenset()
     scope_id_resolver: ScopeIdResolver | None = None
 
@@ -121,8 +123,15 @@ class HarnessSemantics:
             "payload_resolvers",
             MappingProxyType(dict(self.payload_resolvers)),
         )
+        object.__setattr__(
+            self,
+            "activity_resolvers",
+            MappingProxyType(dict(self.activity_resolvers)),
+        )
         if not self.payload_resolvers.keys() <= self.events.keys():
             raise ValueError("payload resolver events must be declared in events")
+        if not self.activity_resolvers.keys() <= self.events.keys():
+            raise ValueError("activity resolver events must be declared in events")
         if not self.scoped_events.issubset(self.events):
             raise ValueError("scoped events must be declared in events")
         if self.scoped_events and self.scope_id_resolver is None:
@@ -139,13 +148,19 @@ class HarnessSemantics:
         descriptor = self.events.get(event.event_type)
         if descriptor is None or not self._matches_scope(event, primary_event_scope):
             return EventSemantics()
-        resolver = self.payload_resolvers.get(event.event_type)
-        if resolver is None:
+        payload_resolver = self.payload_resolvers.get(event.event_type)
+        activity_resolver = self.activity_resolvers.get(event.event_type)
+        if payload_resolver is None and activity_resolver is None:
             return descriptor
+        activity = (
+            activity_resolver(event)
+            if activity_resolver is not None
+            else descriptor.activity
+        )
         return EventSemantics(
-            activity=descriptor.activity,
+            activity=activity,
             clears_signal=descriptor.clears_signal,
-            terminal=resolver(event),
+            terminal=payload_resolver(event) if payload_resolver is not None else None,
         )
 
     def _matches_scope(
@@ -192,6 +207,7 @@ __all__ = [
     "MERIDIAN_CONNECTION_CLOSED_EVENT",
     "PI_CANCELLED_STOP_REASONS",
     "PI_INCOMPLETE_STOP_REASONS",
+    "ActivitySemanticResolver",
     "ActivityState",
     "EventSemantics",
     "HarnessSemantics",
