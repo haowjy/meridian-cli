@@ -10,8 +10,10 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
+from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
     CleanupReport,
@@ -55,7 +57,7 @@ from meridian.lib.streaming.pi_work_ledger import (
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
-    from meridian.lib.harness.semantics import NormalizedHarnessEvent, TerminalEventOutcome
+    from meridian.lib.harness.semantics import NormalizedHarnessEvent
     from meridian.lib.launch.launch_types import ResolvedLaunchSpec
     from meridian.lib.streaming.spawn_session import DrainOutcome
 
@@ -550,7 +552,11 @@ class PiDrainCoordinator:
         if marker is not None:
             return event
         if attempt is None:
-            attempt = _missing_settlement_outcome()
+            attempt = TerminalEventOutcome(
+                status=SpawnStatus.FAILED,
+                exit_code=1,
+                error="pi_agent_settled_without_agent_end",
+            )
         return _replace_terminal(event, attempt)
 
     def note_event_delivered(self, event: RawHarnessEvent) -> DrainLoopDecision:
@@ -631,16 +637,6 @@ class PiDrainCoordinator:
 
 
 __all__ = ["PiDrainCoordinator"]
-
-
-def _missing_settlement_outcome() -> TerminalEventOutcome:
-    from meridian.lib.harness.semantics import TerminalEventOutcome
-
-    return TerminalEventOutcome(
-        status="failed",
-        exit_code=1,
-        error="pi_agent_settled_without_agent_end",
-    )
 
 
 def _replace_terminal(

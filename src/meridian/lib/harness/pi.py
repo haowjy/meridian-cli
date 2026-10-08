@@ -486,11 +486,9 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
 
 def _latest_pi_assistant_candidate(
-    messages_obj: object,
+    messages: list[object],
 ) -> dict[str, object] | None:
-    if not isinstance(messages_obj, list):
-        return None
-    for message_obj in reversed(cast("list[object]", messages_obj)):
+    for message_obj in reversed(messages):
         if not isinstance(message_obj, dict):
             continue
         message = cast("dict[str, object]", message_obj)
@@ -545,7 +543,7 @@ def _resolve_pi_agent_end(event: RawHarnessEvent) -> TerminalEventOutcome | None
             exit_code=1,
             error="pi_agent_end_missing_messages",
         )
-    candidate = _latest_pi_assistant_candidate(messages)
+    candidate = _latest_pi_assistant_candidate(cast("list[object]", messages))
     if candidate is None:
         return TerminalEventOutcome(
             status=SpawnStatus.FAILED, exit_code=1, error="pi_agent_end_missing_outcome",
