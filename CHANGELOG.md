@@ -6,7 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Reconcile Pi docs and smoke guides with current extension loading, native session boundaries, task ownership and causal result delivery; remove obsolete integration phases and status tables.
-- Respect Pi `agent_settled` as the run boundary: provisional retries and automatic compaction no longer fail delivery windows, explicit manual compaction returns to idle, active work cannot age an earlier idle deadline, and final errors/aborts retain their outcome details. Discard stale success on new runs, honor explicit drain policies, and reject missing attempt outcomes. Wait for compaction in either settlement-event ordering.
+- Wait for Pi run settlement and compaction before accepting idle; retries no longer fail early, active work cannot spend delivery deadlines, and final errors retain their diagnostics. Reject stale/malformed success; preserve explicit drain policies. Spawned runs require the Pi 1.1 lifecycle contract.
 
 ## [0.9.0] - 2026-10-02
 

@@ -1,5 +1,20 @@
 # Upgrade notes
 
+## Pi spawned-run settlement
+
+Update Pi before using the settlement-based spawned-run completion policy. The
+verified runtime is Pi 1.1.0; older lifecycle shapes are unsupported. In
+particular, Pi 1.0.4's settlement event lacks the Boolean `aborted` field and is
+rejected with `pi_invalid_agent_settled`. A successful `--help` compatibility
+probe does not validate this event contract.
+
+A tool batch ending no longer means the parent is idle. Meridian waits for
+native settlement and any open compaction; retries and queued continuations can
+finish before completion is chosen. Active work clears the idle result-delivery
+window, while genuinely idle undeliverable results still have a bounded failure.
+This changes no private-file schema. Restart workers to load the new Python code;
+do not replace their installed environment while they are running.
+
 ## Upgrading to 0.9: Pi task ownership and result delivery
 
 Before reinstalling, finish or cancel managed shell tasks and spawned Pi runs,

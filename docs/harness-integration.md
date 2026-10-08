@@ -105,6 +105,11 @@ runtime. The compatibility probe checks different flag surfaces for native
 primary and spawned RPC roles; the exact requirements live in
 [`pi_runtime_resolver.py`](../src/meridian/lib/harness/pi_runtime_resolver.py).
 
+Spawned completion requires Pi's 1.1 lifecycle contract: `agent_settled` with a
+Boolean `aborted`, plus compaction start/end events. It is runtime-qualified on
+Pi 1.1.0. Update older Pi installations before launching spawned workers; the
+flag-surface probe alone does not establish lifecycle compatibility.
+
 | Launch | Transport and discovery |
 |---|---|
 | Primary | Native Pi TUI, no `--mode rpc`; native ambient discovery remains enabled |
