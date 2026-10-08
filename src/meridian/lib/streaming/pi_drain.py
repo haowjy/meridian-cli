@@ -504,7 +504,7 @@ class PiDrainCoordinator:
         return self._coordinator.next_timeout()
 
     async def observe_event(self, event: RawHarnessEvent, transition: str | None) -> bool:
-        if event.event_type == "agent_start":
+        if event.event_type in {"agent_start", "turn_start"}:
             self._profile.begin_agent_run()
         return await self._coordinator.observe_event(event, transition)
 
