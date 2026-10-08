@@ -96,7 +96,7 @@ class CompletionCoordinator:
         close_outcome = self._profile.close_outcome(self.state, False)
         return self._candidate is not None and (
             (
-                self._phase == "stabilizing"
+                self._phase in {"stabilizing", "validating"}
                 and close_outcome is not None
                 and close_outcome.status == "succeeded"
             )
@@ -114,6 +114,10 @@ class CompletionCoordinator:
         if transition == "turn_active":
             self._active_turn = True
             self._success_validation = None
+            if self._phase in {"stabilizing", "validating"}:
+                self._phase = "waiting"
+                self._stabilization_at = None
+                self._stabilization_generation = None
 
     def invalidate_candidate(self) -> None:
         """New work invalidates completion, not session-wide evidence or cleanup."""
@@ -174,7 +178,7 @@ class CompletionCoordinator:
     def note_event_delivered(self, event: RawHarnessEvent) -> DrainLoopDecision:
         decision = self._evidence.note_event_delivered(event, self.state)
         self._latch_evidence_decision(decision)
-        if decision.activity is not None and self._phase == "stabilizing":
+        if decision.activity is not None and self._phase in {"stabilizing", "validating"}:
             self._phase = "waiting"
             self._stabilization_at = None
             self._stabilization_generation = None
@@ -393,6 +397,9 @@ class CompletionCoordinator:
             if outcome.status == "succeeded":
                 if self._success_validation is None:
                     self._success_validation = self._evidence.request_validation()
+                    self._phase = "validating"
+                    self._stabilization_at = None
+                    self._stabilization_generation = None
                     return DrainLoopDecision()
                 if not self._evidence.validation_complete(self._success_validation):
                     return DrainLoopDecision()

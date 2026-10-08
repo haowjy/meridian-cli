@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Reconcile Pi docs and smoke guides with current extension loading, native session boundaries, task ownership and causal result delivery; remove obsolete integration phases and status tables.
+- Separate Pi completion stabilization from its post-window validation read, remove unsupported queue/retry activity mappings, and reject spawned Pi runtimes older than 1.1.0 before launch.
 - Wait for Pi run settlement and compaction before accepting idle; retries no longer fail early, active work cannot spend delivery deadlines, and final errors retain their diagnostics. Reject stale/malformed success; preserve explicit drain policies. Spawned runs require the Pi 1.1 lifecycle contract.
 - Resolve Pi's private attempt only at native settlement before one policy/publication pass; completion stabilization now derives activity and validation from the shared coordinator state, and assistant outcomes are decoded once. Keep malformed-settlement failures and assistant-list boundaries type-safe. Clarify that raw attempt frames remain visible to hooks and subscribers.
 

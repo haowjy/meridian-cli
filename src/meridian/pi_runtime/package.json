@@ -23,8 +23,8 @@
     "vitest": "^3.2.4"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">0.70.0 <1",
-    "@earendil-works/pi-tui": ">0.70.0 <1"
+    "@earendil-works/pi-coding-agent": ">=1.1.0 <2",
+    "@earendil-works/pi-tui": ">=1.1.0 <2"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-coding-agent": {

@@ -130,16 +130,6 @@ class PiCompletionEvidence:
             await self.quiescence_tracker.set_compacting(True)
         elif event.event_type == "compaction_end":
             await self.quiescence_tracker.set_compacting(False)
-        elif (
-            event.event_type
-            in {
-                "summarization_retry_scheduled",
-                "summarization_retry_attempt_start",
-                "summarization_retry_finished",
-            }
-            and self.quiescence_tracker.compacting
-        ):
-            pass  # Retry work belongs to the open compaction, not a new agent run.
         elif transition == "turn_active":
             self.quiescence_tracker.mark_turn_active()
         elif transition == "idle":

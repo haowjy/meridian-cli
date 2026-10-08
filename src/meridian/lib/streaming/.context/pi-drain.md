@@ -27,9 +27,11 @@ batch as idle:
   their diagnostics. Either event order is valid; `compaction_end` does not need a
   second settlement after an already-settled run, and it cannot settle an active run.
 
-Retry, automatic compaction, summarization-retry, nonempty queue updates, and
-agent-start events keep the parent active. An empty queue update does not change
-activity. The tracker keeps agent settlement and compaction-in-progress separately:
+Retry, automatic compaction, and agent-start events keep the parent active. Pi's
+summarization-retry and queue-update notifications are retained as raw facts but
+do not establish activity: branch-summary retries have no paired compaction
+boundary, and an idle queued continuation has no run until a later prompt.
+The tracker keeps agent settlement and compaction-in-progress separately:
 a manual compaction can start inside a settlement hook before the public settlement
 event arrives. Both facts must permit idleness; neither event overwrites the other. A new run invalidates the previous success candidate and micro-drain;
 it must supply its own attempt and settlement. Manual compaction is separate from an automatic run:
@@ -152,13 +154,14 @@ signal-gated deadline/rearm model documented in [AGENTS.md](../AGENTS.md).
 ### Micro-Drain
 
 After a settled success has a ready work assessment, the shared
-`CompletionCoordinator` enters its `stabilizing` phase. The Pi profile supplies the
-short policy window, while activity and fresh descendant validation are owned by that
-coordinator state (there is no second Pi phase gate). This gives already-buffered or
-just-written disk/event activity a chance to arrive before accepting the settled
-success as final, without allowing compaction/activity to leave a stale success
-validation pending. A slow initial descendant refresh does not move the idle/terminal
-anchor used by Pi's done-nudge delay.
+`CompletionCoordinator` enters its `stabilizing` phase. Once that window elapses,
+the coordinator enters an explicit `validating` phase and requests one fresh
+descendant read. The refresh commit wakes the drain; it does not re-arm the
+stabilization timer or synchronously rescan on every wake. Activity during either
+phase invalidates the candidate. The Pi profile supplies the short policy window,
+while activity and fresh descendant validation are owned by that coordinator state
+(there is no second Pi phase gate). A slow initial descendant refresh does not move
+the idle/terminal anchor used by Pi's done-nudge delay.
 
 Receipt persistence precedes the native public RPC message event. Until Python observes
 that exact delivery ID and membership, evidence remains unknown; once observed, the

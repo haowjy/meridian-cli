@@ -15,7 +15,6 @@ from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.support.pi import (
     FakePiConnection,
     NoopControlServer,
-    PiDrainScenario,
     _config,
     _spec,
     pi_event,
@@ -83,36 +82,6 @@ async def test_spawn_manager_publishes_refined_success_boundary(
         await manager.shutdown()
 
 
-@pytest.mark.asyncio
-async def test_compaction_cancels_pending_success_validation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    started = await PiDrainScenario.start(
-        tmp_path,
-        monkeypatch,
-        patch_clock=True,
-        start_micro_drain=True,
-    )
-    coordinator = started.coordinator
-    try:
-        assert coordinator._coordinator.state.phase == "stabilizing"
-        started.clock.advance(0.1)
-        first = await coordinator.handle_timeout()
-        assert first.recorded_outcome is None
-        assert coordinator._coordinator._success_validation is not None
-
-        compaction = pi_event("compaction_start", {"reason": "manual"})
-        refined = await coordinator.observe_event(normalize_event(compaction))
-        assert refined is not None
-        assert refined.semantics.activity == "turn_active"
-        coordinator.note_event_delivered(compaction)
-        result = await coordinator.after_event()
-        assert result.recorded_outcome is None
-        assert coordinator._coordinator.state.phase != "stabilizing"
-    finally:
-        await started.stop()
-
-
 def test_pi_parser_keeps_one_latest_assistant_candidate() -> None:
     event = pi_event(
         "agent_end",
@@ -127,4 +96,3 @@ def test_pi_parser_keeps_one_latest_assistant_candidate() -> None:
     assert outcome is not None
     assert outcome.status == "failed"
     assert outcome.error == "REAL_FAILURE"
-

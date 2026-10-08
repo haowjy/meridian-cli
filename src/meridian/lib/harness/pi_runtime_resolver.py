@@ -14,6 +14,8 @@ PiLaunchRole = Literal["primary", "spawned"]
 
 _PI_BINARY_ENV: Final[str] = "MERIDIAN_PI_BINARY"
 _PI_BINARY_NAME: Final[str] = "pi"
+_MIN_SPAWNED_RUNTIME_VERSION: Final[tuple[int, int, int]] = (1, 1, 0)
+_SEMVER_RE: Final[re.Pattern[str]] = re.compile(r"(?<!\d)(\d+)\.(\d+)\.(\d+)(?!\d)")
 
 _REQUIRED_HELP_SURFACE_TOKEN_GROUPS_PRIMARY: Final[tuple[tuple[str, ...], ...]] = (
     ("--model",),
@@ -124,6 +126,27 @@ def _probe_runtime_compatibility(
             None,
         )
     runtime_version = _runtime_version_from_probe(version_probe)
+    if role == "spawned":
+        parsed_version = _parse_runtime_version(runtime_version)
+        if parsed_version is None:
+            return (
+                _ProbeFailure(
+                    kind="compatibility",
+                    detail="`--version` output does not identify a semantic version; "
+                    "spawned runs require Pi >=1.1.0",
+                ),
+                runtime_version,
+            )
+        if parsed_version < _MIN_SPAWNED_RUNTIME_VERSION:
+            minimum = ".".join(str(part) for part in _MIN_SPAWNED_RUNTIME_VERSION)
+            actual = ".".join(str(part) for part in parsed_version)
+            return (
+                _ProbeFailure(
+                    kind="compatibility",
+                    detail=f"spawned runs require Pi >={minimum}; detected {actual}",
+                ),
+                runtime_version,
+            )
 
     help_probe = _run_probe_command((binary_path, "--help"), env)
     if isinstance(help_probe, _ProbeFailure):
@@ -172,6 +195,15 @@ def _runtime_version_from_probe(completed: subprocess.CompletedProcess[str]) -> 
         if text:
             return text.splitlines()[0]
     return None
+
+
+def _parse_runtime_version(value: str | None) -> tuple[int, int, int] | None:
+    if value is None:
+        return None
+    match = _SEMVER_RE.search(value)
+    if match is None:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
 
 
 def _run_probe_command(

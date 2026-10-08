@@ -159,6 +159,10 @@ class _Profile:
             return ProfileDecision(action="cleanup", outcome=_TIMEOUT, cleanup_reason="deadline")
         if context.evidence_activity is not None:
             return ProfileDecision(action="stabilize", restart_stabilization=True)
+        if context.state.phase == "validating":
+            if context.assessment.disposition == "ready":
+                return ProfileDecision(action="complete", outcome=candidate)
+            return ProfileDecision(action="wait")
         if context.state.phase == "stabilizing":
             if (
                 context.assessment.disposition == "ready"

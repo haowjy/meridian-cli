@@ -78,7 +78,6 @@ from meridian.lib.harness.projections.project_pi_rpc import (
 from meridian.lib.harness.semantics import (
     MERIDIAN_CONNECTION_CLOSED_EVENT,
     PI_CANCELLED_STOP_REASONS,
-    ActivityState,
     EventSemantics,
     HarnessSemantics,
     TerminalEventOutcome,
@@ -573,13 +572,6 @@ def _resolve_pi_settled(event: RawHarnessEvent) -> TerminalEventOutcome | None:
     return None
 
 
-def _resolve_pi_queue_activity(event: RawHarnessEvent) -> ActivityState | None:
-    # Clearing an idle queue does not start a run; it also cannot settle active work.
-    if event.payload.get("steering") == [] and event.payload.get("followUp") == []:
-        return None
-    return "turn_active"
-
-
 PI_SEMANTICS = HarnessSemantics(
     events={
         "agent_start": EventSemantics(activity="turn_active"),
@@ -599,10 +591,13 @@ PI_SEMANTICS = HarnessSemantics(
         # Ends the compaction operation, not the agent run. Pi's tracker
         # combines both facts before exposing parent idleness.
         "compaction_end": EventSemantics(activity="idle"),
-        "summarization_retry_scheduled": EventSemantics(activity="turn_active"),
-        "summarization_retry_attempt_start": EventSemantics(activity="turn_active"),
-        "summarization_retry_finished": EventSemantics(activity="turn_active"),
-        "queue_update": EventSemantics(activity="turn_active"),
+        # Branch-summary retries and queued continuations are not a complete
+        # native activity pair. Real compaction and run events carry supported
+        # execution activity; these notifications are retained as raw facts.
+        "summarization_retry_scheduled": EventSemantics(),
+        "summarization_retry_attempt_start": EventSemantics(),
+        "summarization_retry_finished": EventSemantics(),
+        "queue_update": EventSemantics(),
         "response": EventSemantics(),
         MERIDIAN_CONNECTION_CLOSED_EVENT: EventSemantics(),
     },
@@ -611,9 +606,6 @@ PI_SEMANTICS = HarnessSemantics(
         "agent_settled": _resolve_pi_settled,
         "response": _resolve_pi_terminal,
         MERIDIAN_CONNECTION_CLOSED_EVENT: _resolve_pi_terminal,
-    },
-    activity_resolvers={
-        "queue_update": _resolve_pi_queue_activity,
     },
 )
 

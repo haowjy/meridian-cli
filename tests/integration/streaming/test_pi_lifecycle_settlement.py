@@ -55,10 +55,6 @@ def test_pi_batch_events_are_not_session_idle(event_type: str) -> None:
         "auto_retry_start",
         "auto_retry_end",
         "compaction_start",
-        "summarization_retry_scheduled",
-        "summarization_retry_attempt_start",
-        "summarization_retry_finished",
-        "queue_update",
     ],
 )
 def test_pi_automatic_work_events_keep_parent_active(event_type: str) -> None:
@@ -246,11 +242,6 @@ def test_invalid_settlement_cannot_refine_a_retained_attempt(payload: dict[str, 
     assert outcome.cause is None
 
 
-def test_empty_queue_update_does_not_start_new_work() -> None:
-    event = pi_event("queue_update", {"steering": [], "followUp": []})
-    assert normalize_event(event).semantics.activity is None
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("settled_first", [True, False])
 async def test_compaction_and_settlement_must_both_finish_before_idle(
@@ -266,14 +257,6 @@ async def test_compaction_and_settlement_must_both_finish_before_idle(
         ]
         if not settled_first:
             events.reverse()
-        events += [
-            pi_event(name)
-            for name in [
-                "summarization_retry_scheduled",
-                "summarization_retry_attempt_start",
-                "summarization_retry_finished",
-            ]
-        ]
         for event in events:
             await started.coordinator.observe_event(normalize_event(event))
         tracker = started.coordinator._profile.quiescence_tracker
