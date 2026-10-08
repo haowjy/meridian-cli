@@ -17,7 +17,7 @@ from tests.support.pi import PiDrainScenario, pi_event, write_json, write_pi_bas
 from tests.support.resident_drain import start_row
 
 _ROOT_ID = SpawnId("p1")
-_AGENT_END = pi_event("agent_end")
+_AGENT_END = pi_event("agent_settled")
 _SUCCESS = TerminalEventOutcome(status="succeeded", exit_code=0)
 _TERMINATE = DrainAction(terminate=True, emit_turn_boundary=False)
 _start_pi = PiDrainScenario.start

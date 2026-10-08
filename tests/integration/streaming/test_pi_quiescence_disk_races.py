@@ -67,7 +67,7 @@ async def _started_pi_coordinator(
 
 async def _put_pi_parent_idle_after_success(coordinator: PiDrainCoordinator) -> None:
     outcome = TerminalEventOutcome(status="succeeded", exit_code=0, error=None)
-    agent_end = _pi_event("agent_end")
+    agent_end = _pi_event("agent_settled")
     await coordinator.observe_event(agent_end, "idle")
     await coordinator.handle_terminal_event(
         agent_end, outcome, DrainAction(terminate=True, emit_turn_boundary=False)
@@ -108,7 +108,7 @@ async def _started_micro_drain_coordinator(
 
 async def _arm_child_wave(started: PiDrainScenario) -> None:
     started.row("p-stuck-child", parent_id=str(started.spawn_id))
-    await started.coordinator.observe_event(_pi_event("agent_end"), "idle")
+    await started.coordinator.observe_event(_pi_event("agent_settled"), "idle")
 
 
 @pytest.mark.asyncio
@@ -583,6 +583,7 @@ async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
                 "agent_end",
                 {"messages": [{"role": "assistant", "stopReason": "stop"}]},
             )
+            yield _pi_event("agent_settled", {"aborted": False})
             await asyncio.sleep(60)
 
     fake_connection = _OpenAfterTerminalConnection([])

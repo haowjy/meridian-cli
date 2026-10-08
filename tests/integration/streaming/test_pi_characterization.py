@@ -43,7 +43,7 @@ async def _after_refresh(started: PiDrainScenario):  # type: ignore[no-untyped-d
 _SPAWN_ID = SpawnId("p1")
 _SUCCESS = TerminalEventOutcome(status="succeeded", exit_code=0)
 _TERMINATE = DrainAction(terminate=True, emit_turn_boundary=False)
-_AGENT_END = pi_event("agent_end")
+_AGENT_END = pi_event("agent_settled")
 _start_coordinator = PiDrainScenario.start
 
 
@@ -252,7 +252,7 @@ async def test_done_fails_closed_when_pi_descendant_evidence_stays_unreadable(
         assert terminal.recorded_outcome is None
         assert waiting.recorded_outcome is None
 
-        started.clock.advance(4.749)
+        started.clock.advance(4.999)
         just_before_deadline = await coordinator.handle_timeout()
 
         assert just_before_deadline.recorded_outcome is None

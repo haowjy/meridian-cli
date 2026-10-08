@@ -122,7 +122,9 @@ async def test_done_cannot_skip_owed_result_or_notice_response(
         await started.idle()
         latest = TerminalEventOutcome(status="succeeded", exit_code=0)
         await started.coordinator.handle_terminal_event(
-            pi_event("agent_end"), latest, DrainAction(terminate=True, emit_turn_boundary=False),
+            pi_event("agent_settled"),
+            latest,
+            DrainAction(terminate=True, emit_turn_boundary=False),
         )
         assert await settle(started) is latest
     finally:
@@ -188,7 +190,9 @@ async def test_done_waits_for_active_turn_but_can_release_running_background_wor
         await started.idle()
         latest = TerminalEventOutcome(status="succeeded", exit_code=0)
         await started.coordinator.handle_terminal_event(
-            pi_event("agent_end"), latest, DrainAction(terminate=True, emit_turn_boundary=False),
+            pi_event("agent_settled"),
+            latest,
+            DrainAction(terminate=True, emit_turn_boundary=False),
         )
         assert await settle(started) is latest
     finally:
@@ -388,7 +392,7 @@ async def test_foreground_ownership_loss_is_unknown_until_explicit_detach(
 
 
 @pytest.mark.asyncio
-async def test_delivery_window_keeps_its_anchor_without_failing_a_healthy_active_turn(
+async def test_delivery_window_restarts_after_a_healthy_active_turn(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -400,6 +404,8 @@ async def test_delivery_window_keeps_its_anchor_without_failing_a_healthy_active
         started.clock.advance(301)
         assert (await started.coordinator.handle_timeout()).recorded_outcome is None
         await started.idle()
+        assert (await started.coordinator.handle_timeout()).recorded_outcome is None
+        started.clock.advance(300)
         outcome = (await started.coordinator.handle_timeout()).recorded_outcome
         assert outcome is not None and outcome.error == "pi_delivery_unresolved"
     finally:

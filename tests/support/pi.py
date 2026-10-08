@@ -295,10 +295,10 @@ class PiDrainScenario:
         await self.coordinator.observe_event(pi_event(event_type, payload), transition)
 
     async def idle(self) -> None:
-        await self.observe("agent_end", transition="idle")
+        await self.observe("agent_settled", transition="idle")
 
     async def terminal(self):  # type: ignore[no-untyped-def]
-        event = pi_event("agent_end")
+        event = pi_event("agent_settled")
         return await self.coordinator.handle_terminal_event(
             event,
             TerminalEventOutcome(status="succeeded", exit_code=0),

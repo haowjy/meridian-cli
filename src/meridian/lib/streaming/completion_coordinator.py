@@ -184,6 +184,11 @@ class CompletionCoordinator:
             if action.terminate:
                 self._phase = "assessing"
                 return await self._evaluate_terminal(outcome, action)
+            # Settlement is the session-level boundary even when outstanding
+            # child or delivery work keeps the drain alive.  Refresh evidence
+            # now so any idle-only recovery window is anchored at settlement,
+            # not at a later timeout wake.
+            return await self._evaluate_terminal(outcome, action)
         return await self._evaluate_terminal(outcome, action, assess=False)
 
     async def handle_timeout(self) -> DrainLoopDecision:
