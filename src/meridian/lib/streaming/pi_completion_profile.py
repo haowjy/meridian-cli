@@ -107,6 +107,7 @@ class PiCompletionProfile:
         self._clock = clock
         self.quiescence_enabled = False
         self.last_successful_terminal: TerminalEventOutcome | None = None
+        self._latest_agent_attempt: TerminalEventOutcome | None = None
         self.micro_drain_active = False
         self.micro_drain_event_count = 0
         self.waiting_child_count: int | None = None
@@ -134,6 +135,7 @@ class PiCompletionProfile:
         self._clear_done_nudge_timer()
         self._unknown_deadline_at = None
         self._delivery_deadline_at = None
+        self._latest_agent_attempt = None
 
     def emit(self, phase: str, **payload: object) -> None:
         self._emit(phase, **payload)
@@ -306,7 +308,11 @@ class PiCompletionProfile:
         event: RawHarnessEvent,
         outcome: TerminalEventOutcome,
     ) -> None:
-        del event
+        if event.event_type == "agent_end":
+            self._latest_agent_attempt = outcome
+            return
+        if event.event_type == "agent_settled":
+            self._latest_agent_attempt = None
         if outcome.status != "succeeded":
             return
         self.last_successful_terminal = outcome
@@ -315,9 +321,30 @@ class PiCompletionProfile:
         self._refresh_done_nudge_state()
         self.emit_waiting_phases_if_needed()
 
+    def note_agent_attempt(self, outcome: TerminalEventOutcome) -> None:
+        """Retain the latest low-level result until Pi reports settlement."""
+
+        self._latest_agent_attempt = outcome
+
+    def begin_agent_run(self) -> None:
+        """Discard the prior low-level result when Pi starts a new run."""
+
+        self._latest_agent_attempt = None
+
+    def settled_outcome(self, marker: TerminalEventOutcome) -> TerminalEventOutcome:
+        """Resolve Pi's session-level outcome from the latest attempt marker."""
+
+        if marker.status == "cancelled":
+            return marker
+        return self._latest_agent_attempt or marker
+
     def after_observed_event(self, transition: str | None) -> None:
         if transition == "turn_active":
             self._clear_child_wave_timer()
+            # A delivery window belongs only to the idle period that armed it.
+            # Starting new native work invalidates that window; settlement will
+            # arm a fresh one if the result is still owed.
+            self._delivery_deadline_at = None
             self._done_nudge_eligible_since = None
         elif transition == "idle":
             if (
@@ -499,10 +526,11 @@ class PiCompletionProfile:
             }
             for b in context.assessment.blockers
         )
-        if delivery_pending:
-            if self.quiescence_tracker.parent_idle and self._delivery_deadline_at is None:
-                self._delivery_deadline_at = context.now + timeout
-        else:
+        if not self.quiescence_tracker.parent_idle:
+            self._delivery_deadline_at = None
+        elif delivery_pending and self._delivery_deadline_at is None:
+            self._delivery_deadline_at = context.now + timeout
+        elif not delivery_pending:
             self._delivery_deadline_at = None
 
     def _start_micro_drain(self) -> None:

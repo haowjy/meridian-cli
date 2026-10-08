@@ -81,6 +81,7 @@ from meridian.lib.harness.semantics import (
     EventSemantics,
     HarnessSemantics,
     TerminalEventOutcome,
+    TerminalOutcomeCause,
     connection_closed_outcome,
     stringify_terminal_error,
 )
@@ -516,6 +517,35 @@ def _resolve_pi_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
     return TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0)
 
 
+def _resolve_pi_agent_end(event: RawHarnessEvent) -> TerminalEventOutcome | None:
+    """Resolve one low-level attempt without treating it as session completion."""
+
+    outcome = _resolve_pi_terminal(event)
+    if outcome is None:
+        return None
+    return TerminalEventOutcome(
+        status=outcome.status,
+        exit_code=outcome.exit_code,
+        error=outcome.error,
+        cause=TerminalOutcomeCause.PI_AGENT_END_PROVISIONAL,
+    )
+
+
+def _resolve_pi_settled(event: RawHarnessEvent) -> TerminalEventOutcome:
+    """Provide a settlement marker; the coordinator supplies the attempt outcome."""
+
+    if bool(event.payload.get("aborted")):
+        return TerminalEventOutcome(status=SpawnStatus.CANCELLED, exit_code=130, error="cancelled")
+    # A settlement without an observed agent_end is malformed.  The Pi drain
+    # coordinator replaces this marker with the retained attempt outcome when
+    # one exists, and otherwise preserves this explicit failure.
+    return TerminalEventOutcome(
+        status=SpawnStatus.FAILED,
+        exit_code=1,
+        error="pi_agent_settled_without_agent_end",
+    )
+
+
 PI_SEMANTICS = HarnessSemantics(
     events={
         "agent_start": EventSemantics(activity="turn_active"),
@@ -524,13 +554,24 @@ PI_SEMANTICS = HarnessSemantics(
         "message_update": EventSemantics(activity="turn_active"),
         "tool_execution_start": EventSemantics(activity="turn_active"),
         "tool_execution_update": EventSemantics(activity="turn_active"),
-        "turn_end": EventSemantics(activity="idle"),
-        "agent_end": EventSemantics(activity="idle", clears_signal=True),
+        # A turn/low-level attempt is not a session-level idle boundary.  Pi
+        # may retry, compact, or continue after either event.
+        "turn_end": EventSemantics(),
+        "agent_end": EventSemantics(),
+        "agent_settled": EventSemantics(activity="idle", clears_signal=True),
+        "auto_retry_start": EventSemantics(activity="turn_active"),
+        "auto_retry_end": EventSemantics(activity="turn_active"),
+        "compaction_start": EventSemantics(activity="turn_active"),
+        "compaction_end": EventSemantics(activity="turn_active"),
+        "summarization_retry_scheduled": EventSemantics(activity="turn_active"),
+        "summarization_retry_attempt_start": EventSemantics(activity="turn_active"),
+        "summarization_retry_finished": EventSemantics(activity="turn_active"),
         "response": EventSemantics(),
         MERIDIAN_CONNECTION_CLOSED_EVENT: EventSemantics(),
     },
     payload_resolvers={
-        "agent_end": _resolve_pi_terminal,
+        "agent_end": _resolve_pi_agent_end,
+        "agent_settled": _resolve_pi_settled,
         "response": _resolve_pi_terminal,
         MERIDIAN_CONNECTION_CLOSED_EVENT: _resolve_pi_terminal,
     },

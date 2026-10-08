@@ -504,6 +504,8 @@ class PiDrainCoordinator:
         return self._coordinator.next_timeout()
 
     async def observe_event(self, event: RawHarnessEvent, transition: str | None) -> bool:
+        if event.event_type == "agent_start":
+            self._profile.begin_agent_run()
         return await self._coordinator.observe_event(event, transition)
 
     def note_event_delivered(self, event: RawHarnessEvent) -> DrainLoopDecision:
@@ -515,6 +517,22 @@ class PiDrainCoordinator:
         outcome: TerminalEventOutcome,
         action: DrainAction,
     ) -> DrainTerminalDecision:
+        if event.event_type == "agent_end":
+            self._profile.note_agent_attempt(outcome)
+            # A low-level attempt is never a terminal boundary.  In
+            # particular, a recoverable error with willRetry=true must not
+            # stop the stream before Pi starts its next attempt.
+            return DrainTerminalDecision()
+        if event.event_type == "agent_settled":
+            outcome = self._profile.settled_outcome(outcome)
+            action = (
+                DrainAction(terminate=True, emit_turn_boundary=False)
+                if outcome.status != "succeeded"
+                else DrainAction(
+                    terminate=self.is_quiescent(),
+                    emit_turn_boundary=not self.is_quiescent(),
+                )
+            )
         self._profile.observe_terminal_event(event, outcome)
         return await self._coordinator.handle_terminal_event(event, outcome, action)
 

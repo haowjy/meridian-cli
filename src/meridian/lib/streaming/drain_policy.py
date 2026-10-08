@@ -47,6 +47,10 @@ class PiRpcQuiescenceDrainPolicy:
         self._quiescence_check = quiescence_check
 
     def classify(self, outcome: TerminalEventOutcome) -> DrainAction:
+        if outcome.cause == "pi_agent_end_provisional":
+            # Pi may retry, compact, or continue after agent_end.  The
+            # session-level agent_settled event owns final classification.
+            return DrainAction(terminate=False, emit_turn_boundary=False)
         if outcome.status != "succeeded":
             return DrainAction(terminate=True, emit_turn_boundary=False)
         if self._quiescence_check():

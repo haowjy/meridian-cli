@@ -31,6 +31,7 @@ class TerminalOutcomeCause(StrEnum):
     """Typed cause used only when completion policy may refine an outcome."""
 
     REPLACEABLE_TRANSPORT_CLOSE = "replaceable_transport_close"
+    PI_AGENT_END_PROVISIONAL = "pi_agent_end_provisional"
 
 
 @dataclass(frozen=True)
