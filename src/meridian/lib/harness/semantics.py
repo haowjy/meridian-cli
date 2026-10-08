@@ -160,7 +160,11 @@ class HarnessSemantics:
         return EventSemantics(
             activity=activity,
             clears_signal=descriptor.clears_signal,
-            terminal=payload_resolver(event) if payload_resolver is not None else None,
+            terminal=(
+                payload_resolver(event)
+                if payload_resolver is not None
+                else descriptor.terminal
+            ),
         )
 
     def _matches_scope(
