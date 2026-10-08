@@ -45,6 +45,7 @@ from meridian.lib.launch.composition import (
     project_inline_content,
 )
 from meridian.lib.launch.launch_types import (
+    CompositionWarning,
     PermissionResolver,
     PreflightResult,
     ResolvedLaunchSpec,
@@ -436,6 +437,10 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
 
     def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> AdapterSpecT: ...
 
+    def launch_spec_warnings(
+        self, spec: ResolvedLaunchSpec
+    ) -> tuple[CompositionWarning, ...]: ...
+
     def preflight(
         self,
         *,
@@ -723,6 +728,14 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> SpecT:
         """Resolve typed launch spec from generic spawn parameters."""
         ...
+
+    def launch_spec_warnings(
+        self, spec: ResolvedLaunchSpec
+    ) -> tuple[CompositionWarning, ...]:
+        """Return non-fatal diagnostics produced while resolving a launch spec."""
+
+        _ = spec
+        return ()
 
     def preflight(
         self,
