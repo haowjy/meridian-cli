@@ -508,7 +508,9 @@ def _resolve_pi_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
             stop_reason = str(message.get("stopReason", "")).strip().lower()
             if stop_reason == "error":
                 return TerminalEventOutcome(
-                    status=SpawnStatus.FAILED, exit_code=1, error="pi_stop_error"
+                    status=SpawnStatus.FAILED,
+                    exit_code=1,
+                    error=stringify_terminal_error(message.get("errorMessage")) or "pi_stop_error",
                 )
             if stop_reason in PI_CANCELLED_STOP_REASONS:
                 return TerminalEventOutcome(
@@ -521,11 +523,27 @@ def _resolve_pi_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
 def _resolve_pi_agent_end(event: RawHarnessEvent) -> TerminalEventOutcome | None:
     """Resolve one low-level attempt without treating it as session completion."""
 
-    if not isinstance(event.payload.get("messages"), list):
+    messages = event.payload.get("messages")
+    if not isinstance(messages, list):
         return TerminalEventOutcome(
             status=SpawnStatus.FAILED,
             exit_code=1,
             error="pi_agent_end_missing_messages",
+            cause=TerminalOutcomeCause.PI_AGENT_END_PROVISIONAL,
+        )
+    candidate = next(
+        (cast("dict[str, object]", message)
+         for message in reversed(cast("list[object]", messages))
+         if isinstance(message, dict)
+         and cast("dict[str, object]", message).get("role") == "assistant"),
+        None,
+    )
+    reason = candidate.get("stopReason") if candidate is not None else None
+    if not isinstance(reason, str) or reason.lower() not in {
+        "stop", "tooluse", "length", "error", *PI_CANCELLED_STOP_REASONS,
+    }:
+        return TerminalEventOutcome(
+            status=SpawnStatus.FAILED, exit_code=1, error="pi_agent_end_missing_outcome",
             cause=TerminalOutcomeCause.PI_AGENT_END_PROVISIONAL,
         )
     outcome = _resolve_pi_terminal(event)
@@ -542,7 +560,12 @@ def _resolve_pi_agent_end(event: RawHarnessEvent) -> TerminalEventOutcome | None
 def _resolve_pi_settled(event: RawHarnessEvent) -> TerminalEventOutcome:
     """Provide a settlement marker; the coordinator supplies the attempt outcome."""
 
-    if bool(event.payload.get("aborted")):
+    aborted = event.payload.get("aborted")
+    if not isinstance(aborted, bool):
+        return TerminalEventOutcome(
+            status=SpawnStatus.FAILED, exit_code=1, error="pi_invalid_agent_settled",
+        )
+    if aborted:
         return TerminalEventOutcome(status=SpawnStatus.CANCELLED, exit_code=130, error="cancelled")
     # A settlement without an observed agent_end is malformed.  The Pi drain
     # coordinator replaces this marker with the retained attempt outcome when
@@ -551,6 +574,7 @@ def _resolve_pi_settled(event: RawHarnessEvent) -> TerminalEventOutcome:
         status=SpawnStatus.FAILED,
         exit_code=1,
         error="pi_agent_settled_without_agent_end",
+        cause=TerminalOutcomeCause.PI_AGENT_SETTLED,
     )
 
 
@@ -566,6 +590,13 @@ def _resolve_pi_compaction_end_activity(event: RawHarnessEvent) -> ActivityState
     """
 
     return "idle" if event.payload.get("reason") == "manual" else "turn_active"
+
+
+def _resolve_pi_queue_activity(event: RawHarnessEvent) -> ActivityState | None:
+    # Clearing an idle queue does not start a run; it also cannot settle active work.
+    if event.payload.get("steering") == [] and event.payload.get("followUp") == []:
+        return None
+    return "turn_active"
 
 
 PI_SEMANTICS = HarnessSemantics(
@@ -600,6 +631,7 @@ PI_SEMANTICS = HarnessSemantics(
     },
     activity_resolvers={
         "compaction_end": _resolve_pi_compaction_end_activity,
+        "queue_update": _resolve_pi_queue_activity,
     },
 )
 

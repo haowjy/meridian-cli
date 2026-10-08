@@ -97,7 +97,8 @@ def install_shim(root: Path, *, behavior: str = "ok") -> None:
         ' *\'"type":"prompt"\'*)\n'
         " printf '%s\\n' '{\"type\":\"agent_start\"}' "
         '\'{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop",'
-        '"content":[{"type":"text","text":"done"}]}]}\' ;;\n'
+        '"content":[{"type":"text","text":"done"}]}]}\' '
+        "'{\"type\":\"agent_settled\",\"aborted\":false}' ;;\n"
         ' *\'"type":"abort"\'*) exit 0 ;;\n'
         " esac\ndone\n"
     )

@@ -38,7 +38,7 @@ async def test_spawn_manager_derives_direct_followup_transitions_from_pi_events(
                 "agent_end",
                 {"messages": [{"role": "assistant", "stopReason": "stop"}]},
             )
-            yield pi_event("agent_settled")
+            yield pi_event("agent_settled", {"aborted": False})
             await followup_ready.wait()
             yield pi_event(
                 "message_start",
@@ -58,7 +58,7 @@ async def test_spawn_manager_derives_direct_followup_transitions_from_pi_events(
                 "agent_end",
                 {"messages": [{"role": "assistant", "stopReason": "stop"}]},
             )
-            yield pi_event("agent_settled")
+            yield pi_event("agent_settled", {"aborted": False})
             await asyncio.Event().wait()
 
     start_row(tmp_path, str(child_id), HarnessId.CODEX, str(spawn_id))
@@ -130,7 +130,7 @@ async def test_spawn_manager_child_wave_timeout_publishes_before_descendant_canc
                 "agent_end",
                 {"messages": [{"role": "assistant", "stopReason": "stop"}]},
             )
-            yield pi_event("agent_settled")
+            yield pi_event("agent_settled", {"aborted": False})
             await asyncio.Event().wait()
 
     class _GatedCleanupService:

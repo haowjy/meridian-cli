@@ -33,6 +33,7 @@ from meridian.lib.streaming.drain_coordinator import (
 from meridian.lib.streaming.drain_policy import (
     DrainAction,
     DrainPolicy,
+    SingleTurnDrainPolicy,
 )
 from meridian.lib.streaming.pi_completion_profile import (
     PI_MICRO_DRAIN_TIMEOUT_SECONDS as PI_MICRO_DRAIN_TIMEOUT_SECONDS,
@@ -426,6 +427,7 @@ class PiDrainCoordinator:
         self._coordinator = coordinator
         self._evidence = evidence
         self._profile = profile
+        self._policy: DrainPolicy = SingleTurnDrainPolicy()
 
     @classmethod
     def for_connection(
@@ -498,6 +500,7 @@ class PiDrainCoordinator:
         await self._coordinator.stop()
 
     def set_policy(self, policy: DrainPolicy) -> None:
+        self._policy = policy
         self._profile.set_policy(policy)
 
     def next_timeout(self) -> float | None:
@@ -506,6 +509,7 @@ class PiDrainCoordinator:
     async def observe_event(self, event: RawHarnessEvent, transition: str | None) -> bool:
         if event.event_type in {"agent_start", "turn_start"}:
             self._profile.begin_agent_run()
+            self._coordinator.invalidate_candidate()
         return await self._coordinator.observe_event(event, transition)
 
     def note_event_delivered(self, event: RawHarnessEvent) -> DrainLoopDecision:
@@ -525,15 +529,15 @@ class PiDrainCoordinator:
             return DrainTerminalDecision()
         if event.event_type == "agent_settled":
             outcome = self._profile.settled_outcome(outcome)
-            action = (
-                DrainAction(terminate=True, emit_turn_boundary=False)
-                if outcome.status != "succeeded"
-                else DrainAction(
-                    terminate=self.is_quiescent(),
-                    emit_turn_boundary=not self.is_quiescent(),
-                )
-            )
+            action = self._policy.classify(outcome)
         self._profile.observe_terminal_event(event, outcome)
+        if not self._profile.quiescence_enabled:
+            # Explicit single-turn/persistent policies do not request disk
+            # quiescence or its asynchronous success-validation fence.
+            return DrainTerminalDecision(
+                recorded_outcome=outcome if action.terminate else None,
+                emit_turn_boundary=action.emit_turn_boundary,
+            )
         return await self._coordinator.handle_terminal_event(event, outcome, action)
 
     async def handle_timeout(self) -> DrainLoopDecision:

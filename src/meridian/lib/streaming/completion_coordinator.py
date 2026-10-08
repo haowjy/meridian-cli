@@ -115,6 +115,17 @@ class CompletionCoordinator:
             self._active_turn = True
             self._success_validation = None
 
+    def invalidate_candidate(self) -> None:
+        """New work invalidates completion, not session-wide evidence or cleanup."""
+        self._candidate = None
+        self._success_validation = None
+        self._stabilization_at = None
+        self._stabilization_generation = None
+        self._deadline_at = None
+        self._deadline_latched = False
+        if not self._terminal_published:
+            self._phase = "running"
+
     async def start(self) -> None:
         await self._evidence.start()
 
@@ -183,11 +194,8 @@ class CompletionCoordinator:
             self._active_turn = False
             if action.terminate:
                 self._phase = "assessing"
-                return await self._evaluate_terminal(outcome, action)
-            # Settlement is the session-level boundary even when outstanding
-            # child or delivery work keeps the drain alive.  Refresh evidence
-            # now so any idle-only recovery window is anchored at settlement,
-            # not at a later timeout wake.
+            # Refresh even when outstanding work defers termination: profile
+            # deadlines must start at this boundary, not a later timeout wake.
             return await self._evaluate_terminal(outcome, action)
         return await self._evaluate_terminal(outcome, action, assess=False)
 

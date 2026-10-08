@@ -32,6 +32,7 @@ class TerminalOutcomeCause(StrEnum):
 
     REPLACEABLE_TRANSPORT_CLOSE = "replaceable_transport_close"
     PI_AGENT_END_PROVISIONAL = "pi_agent_end_provisional"
+    PI_AGENT_SETTLED = "pi_agent_settled"
 
 
 @dataclass(frozen=True)

@@ -475,6 +475,7 @@ async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_withou
         "      printf '%s\\n' '{\"type\":\"agent_start\"}'\n"
         "      printf '%s\\n' "
         '\'{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop"}]}\'\n'
+        "      printf '%s\\n' '{\"type\":\"agent_settled\",\"aborted\":false}'\n"
         "      ;;\n"
         '    *\'"type":"abort"\'*)\n'
         "      exit 0\n"
@@ -586,6 +587,7 @@ async def test_pi_spawn_manager_startup_diagnostics_report_outcome_and_marker(
             "      printf '%s\n' '{\"type\":\"agent_start\"}'\n"
             "      printf '%s\n' "
             '\'{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop"}]}\'\n'
+            "      printf '%s\\n' '{\"type\":\"agent_settled\",\"aborted\":false}'\n"
         )
     else:
         prompt_handler = "      sleep 30\n"

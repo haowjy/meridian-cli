@@ -25,14 +25,18 @@ batch as idle:
   the parent idle. `aborted` remains cancellation, and final provider errors remain
   failures with their diagnostics.
 
-Retry, automatic compaction, summarization-retry, queue-update, and agent-start
-events keep the parent active. Manual compaction is separate from an automatic run:
+Retry, automatic compaction, summarization-retry, nonempty queue updates, and
+agent-start events keep the parent active. An empty queue update does not change
+activity. A new run invalidates the previous success candidate and micro-drain;
+it must supply its own attempt and settlement. Manual compaction is separate from an automatic run:
 its `compaction_end` carries `reason: manual` and returns the parent to idle (an
 absent or unknown reason stays active rather than inventing idleness). A
 notification-delivery deadline is armed only while that settled parent is idle;
 starting a new run clears the old window, so active work cannot spend an earlier idle
 budget. Exact receipt/public-observation and causal response fences remain in force
-during every settlement.
+during every settlement. Explicit single-turn/persistent API drain policies retain
+their chosen termination behavior after settlement; only the normal Pi quiescence
+policy adds disk-work and success-validation fences.
 
 ### Ownership Boundary
 
@@ -102,9 +106,9 @@ An absent private-work file means no blocker. A file that exists but cannot be r
 validated produces typed unknown evidence instead of an empty snapshot. Boolean,
 nonfinite timestamp, wrong-parent, malformed member and version values are rejected.
 Unknown evidence and undelivered results have anchored recovery windows (configured
-child-wave window, otherwise 300 seconds). Delivery anchors at first idle and is not
-evaluated during intentional active-turn deferral; that activity never renews the
-anchor. Unknown evidence remains bounded while active too. Failure reports
+child-wave window, otherwise 300 seconds). Delivery anchors at the start of each genuinely idle delivery window. New active
+work clears that window; its later settlement receives a fresh idle budget.
+Ordinary idle polling does not renew the deadline. Unknown evidence remains bounded while active too. Failure reports
 `pi_evidence_unreadable` with original evidence detail or `pi_delivery_unresolved`.
 `done` may release known running execution or descendant liveness once the parent
 is idle. It cannot skip a native active turn, an owed result/publication, or unknown
@@ -141,11 +145,11 @@ signal-gated deadline/rearm model documented in [AGENTS.md](../AGENTS.md).
 
 ### Micro-Drain
 
-When a terminal event arrives but quiescence is not yet confirmed, `PiCompletionProfile`
+After a settled success has a ready work assessment, `PiCompletionProfile`
 enters micro-drain mode. It gives already-buffered or just-written disk/event activity a
 short chance to arrive before accepting the terminal event as the final outcome. This
 covers races where descendant state or causal delivery evidence lands immediately after
-`agent_end`. Micro-drain rechecks private evidence and requests qualifying descendant
+`agent_settled`. Micro-drain rechecks private evidence and requests qualifying descendant
 validation before finalizing. A slow initial descendant refresh does not move the
 idle/terminal anchor used by Pi's done-nudge delay.
 

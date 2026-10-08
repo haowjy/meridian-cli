@@ -93,6 +93,7 @@ def _configure_pi_runtime(
         "        if prompt_count > 1:\n"
         "            print(json.dumps({'type': 'agent_end', 'messages': "
         "[{'role': 'assistant', 'stopReason': 'stop'}]}), flush=True)\n"
+        "            print(json.dumps({'type': 'agent_settled', 'aborted': False}), flush=True)\n"
         "    elif command['type'] == 'abort':\n"
         "        raise SystemExit\n",
         encoding="utf-8",

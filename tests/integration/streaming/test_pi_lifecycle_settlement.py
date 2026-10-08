@@ -16,7 +16,12 @@ from meridian.lib.streaming.completion_contracts import (
     DiagnosticBlocker,
     WorkAssessment,
 )
-from meridian.lib.streaming.drain_policy import DrainAction, PiRpcQuiescenceDrainPolicy
+from meridian.lib.streaming.drain_policy import (
+    DrainAction,
+    PersistentDrainPolicy,
+    PiRpcQuiescenceDrainPolicy,
+    SingleTurnDrainPolicy,
+)
 from meridian.lib.streaming.pi_completion_profile import (
     PiCompletionProfile,
     PiOutstandingWork,
@@ -174,6 +179,81 @@ async def test_settled_abort_remains_cancelled(
         assert final.recorded_outcome.exit_code == 130
     finally:
         await started.stop()
+
+
+@pytest.mark.parametrize("messages", [
+    [], [{"role": "user"}], [{"role": "assistant"}],
+    [{"role": "assistant", "stopReason": "invented"}],
+])
+def test_attempt_requires_an_assistant_outcome(messages: list[dict[str, object]]) -> None:
+    outcome = normalize_event(pi_event("agent_end", {"messages": messages})).semantics.terminal
+    assert outcome is not None and outcome.status == "failed"
+
+
+def test_final_provider_diagnostic_is_preserved() -> None:
+    message = {
+        "role": "assistant", "stopReason": "error",
+        "errorMessage": "503 SPECIFIC_PROVIDER_FAILURE",
+    }
+    outcome = normalize_event(pi_event("agent_end", {"messages": [message]})).semantics.terminal
+    assert outcome is not None and "SPECIFIC_PROVIDER_FAILURE" in (outcome.error or "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("policy", [SingleTurnDrainPolicy(), PersistentDrainPolicy()])
+async def test_explicit_policy_survives_settlement_with_owed_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    policy: SingleTurnDrainPolicy | PersistentDrainPolicy,
+) -> None:
+    started = await PiDrainScenario.start(tmp_path, monkeypatch)
+    coordinator = started.coordinator
+    coordinator.set_policy(policy)
+    started.running_bash()
+    try:
+        for event in [
+            pi_event("agent_end", {"messages": [{"role": "assistant", "stopReason": "stop"}]}),
+            pi_event("agent_settled", {"aborted": False}),
+        ]:
+            semantics = normalize_event(event).semantics
+            await coordinator.observe_event(event, semantics.activity)
+            assert semantics.terminal is not None
+            result = await coordinator.handle_terminal_event(
+                event, semantics.terminal, policy.classify(semantics.terminal),
+            )
+        if isinstance(policy, SingleTurnDrainPolicy):
+            assert result.recorded_outcome is not None
+            assert result.recorded_outcome.status == "succeeded"
+        else:
+            assert result.recorded_outcome is None and result.emit_turn_boundary
+    finally:
+        await started.stop()
+
+
+@pytest.mark.asyncio
+async def test_new_run_discards_previous_close_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = await PiDrainScenario.start(tmp_path, monkeypatch, start_micro_drain=True)
+    try:
+        assert started.coordinator.handle_close(intentional_stop=False) is not None
+        await started.observe("agent_start", transition="turn_active")
+        assert started.coordinator.handle_close(intentional_stop=False) is None
+        assert not started.coordinator.should_defer_close()
+    finally:
+        await started.stop()
+
+
+@pytest.mark.parametrize("payload", [{}, {"aborted": "false"}, {"aborted": 0}])
+def test_invalid_settlement_cannot_refine_a_retained_attempt(payload: dict[str, object]) -> None:
+    outcome = normalize_event(pi_event("agent_settled", payload)).semantics.terminal
+    assert outcome is not None and outcome.error == "pi_invalid_agent_settled"
+    assert outcome.cause is None
+
+
+def test_empty_queue_update_does_not_start_new_work() -> None:
+    event = pi_event("queue_update", {"steering": [], "followUp": []})
+    assert normalize_event(event).semantics.activity is None
 
 
 def test_delivery_deadline_rearms_after_active_run(tmp_path: Path) -> None:

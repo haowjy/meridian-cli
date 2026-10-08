@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.pi_rpc import is_pi_subprocess_exit_error
+from meridian.lib.harness.semantics import TerminalOutcomeCause
 from meridian.lib.state.spawn_signals import consume_resident_signals
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
@@ -308,9 +309,6 @@ class PiCompletionProfile:
         event: RawHarnessEvent,
         outcome: TerminalEventOutcome,
     ) -> None:
-        if event.event_type == "agent_end":
-            self._latest_agent_attempt = outcome
-            return
         if event.event_type == "agent_settled":
             self._latest_agent_attempt = None
         if outcome.status != "succeeded":
@@ -327,16 +325,19 @@ class PiCompletionProfile:
         self._latest_agent_attempt = outcome
 
     def begin_agent_run(self) -> None:
-        """Discard the prior low-level result when Pi starts a new run."""
+        """A new run must supply its own outcome, never reuse prior success."""
 
         self._latest_agent_attempt = None
+        self.last_successful_terminal = None
+        self.micro_drain_active = False
 
     def settled_outcome(self, marker: TerminalEventOutcome) -> TerminalEventOutcome:
         """Resolve Pi's session-level outcome from the latest attempt marker."""
 
-        if marker.status == "cancelled":
+        if marker.cause != TerminalOutcomeCause.PI_AGENT_SETTLED:
             return marker
-        return self._latest_agent_attempt or marker
+        attempt = self._latest_agent_attempt
+        return replace(attempt, cause=None) if attempt is not None else marker
 
     def after_observed_event(self, transition: str | None) -> None:
         if transition == "turn_active":

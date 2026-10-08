@@ -40,7 +40,9 @@ def _write_recording_harness(path: Path, *, harness: HarnessId) -> None:
         "    payload = json.loads(line)\n"
         "    if payload.get('type') == 'prompt':\n"
         "        print(json.dumps({'type': 'agent_start'}), flush=True)\n"
-        "        print(json.dumps({'type': 'agent_end', 'messages': []}), flush=True)\n"
+        "        print(json.dumps({'type': 'agent_end', 'messages': "
+        "[{'role': 'assistant', 'stopReason': 'stop'}]}), flush=True)\n"
+        "        print(json.dumps({'type': 'agent_settled', 'aborted': False}), flush=True)\n"
         "    elif payload.get('type') == 'abort':\n"
         "        raise SystemExit(0)\n"
         if harness is HarnessId.PI
