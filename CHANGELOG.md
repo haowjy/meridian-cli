@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Load metadata-backed top-level and per-harness nested config tables generically,
+  with initial `idle.enabled` settings for global and harness-specific control.
+
 ### Fixed
 - Reconcile Pi docs and smoke guides with current extension loading, native session boundaries, task ownership and causal result delivery; remove obsolete integration phases and status tables.
 

@@ -101,6 +101,14 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _public_config("MERIDIAN_EFFORT", "Harness reasoning effort override."),
     _public_config("MERIDIAN_FORMAT", "CLI output format override."),
     _public_config("MERIDIAN_GUARDRAIL_TIMEOUT_MINUTES", "Guardrail execution timeout."),
+    _public_config(
+        "MERIDIAN_HARNESS_IDLE_ENABLED_CLAUDE", "Claude idle behavior toggle."
+    ),
+    _public_config("MERIDIAN_HARNESS_IDLE_ENABLED_CODEX", "Codex idle behavior toggle."),
+    _public_config(
+        "MERIDIAN_HARNESS_IDLE_ENABLED_OPENCODE", "OpenCode idle behavior toggle."
+    ),
+    _public_config("MERIDIAN_HARNESS_IDLE_ENABLED_PI", "Pi idle behavior toggle."),
     _public_config("MERIDIAN_HARNESS_MODEL_CLAUDE", "Claude harness model mapping."),
     _public_config("MERIDIAN_HARNESS_MODEL_CODEX", "Codex harness model mapping."),
     _public_config("MERIDIAN_HARNESS_MODEL_OPENCODE", "OpenCode harness model mapping."),
@@ -150,6 +158,7 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _public_config("MERIDIAN_HISTORY_ARCHIVE_AUTOMATIC", "Enable opt-in history ZIP retention."),
     _public_config("MERIDIAN_HISTORY_ARCHIVE_AFTER_DAYS", "History inactivity threshold in days."),
     _public_config("MERIDIAN_HISTORY_ARCHIVE_DESTINATION", "History ZIP destination directory."),
+    _public_config("MERIDIAN_IDLE_ENABLED", "Cross-harness idle behavior toggle."),
     _public_config("MERIDIAN_STATE_RETENTION_DAYS", "Runtime-state retention period."),
     _public_config("MERIDIAN_TIMEOUT", "Spawn timeout override."),
     _public_config("MERIDIAN_WAIT_TIMEOUT_MINUTES", "Wait operation timeout."),
