@@ -12,6 +12,25 @@ owns Pi evidence and cleanup collaborators; `pi_completion_profile.py` owns Pi
 precedence, phases, deadlines, nudges, and stream-exit policy.
 `drain_plan_factory.py` is the composition root for the full Pi drain plan.
 
+### Native Run Settlement
+
+Meridian follows Pi's session-level lifecycle rather than treating every assistant
+batch as idle:
+
+- `turn_end` closes one assistant/tool batch and does not change parent activity.
+- `agent_end` records the latest low-level attempt provisionally; retries,
+  compaction recovery, and queued continuation may still follow it.
+- `agent_settled` is the only automatic-work boundary. It resolves the retained
+  attempt outcome (or fails closed when the attempt is missing/malformed) and marks
+  the parent idle. `aborted` remains cancellation, and final provider errors remain
+  failures with their diagnostics.
+
+Retry, compaction, summarization-retry, queue-update, and agent-start events keep the
+parent active. A notification-delivery deadline is armed only while that settled
+parent is idle; starting a new run clears the old window, so active work cannot spend
+an earlier idle budget. Exact receipt/public-observation and causal response fences
+remain in force during every settlement.
+
 ### Ownership Boundary
 
 The Pi completion composition owns:
