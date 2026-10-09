@@ -201,11 +201,16 @@ test('a typed slash command is a return; /meridian-idle itself is not and prints
   await clock.advance(2000)
   expect(h.calls.filter(args => args[0] === 'return')).toEqual([])
 
+  await clock.advance(60_000) // push is due and fires; the listing says so
+  const later = await $.command.run({ command: 'meridian-idle', args: '', origin: COMPOSER, presentation: { isFullscreen: true, columns: 80 } })
+  expect(later.text).toContain('push    fired (act)')
+  expect(later.text).toContain('warn    in ')
+
   await $.command.run({ command: 'compact', args: '', origin: COMPOSER, presentation: { isFullscreen: true, columns: 80 } })
   await clock.advance(2000)
   expect(h.calls.filter(args => args[0] === 'return').length).toBe(1)
   await clock.advance(3_600_000)
-  expect(h.calls.filter(args => args[0] === 'fire')).toEqual([])
+  expect(h.calls.filter(args => args[0] === 'fire').map(args => args[1])).toEqual(['push']) // nothing after the return
 })
 
 test('compact: facts are mapped to flags, act triggers $.session.compact from the timer, done --result ok', async ($, on) => {

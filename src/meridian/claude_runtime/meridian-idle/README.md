@@ -60,6 +60,10 @@ The module is plain TypeScript the host runs directly: no build step, no
 dependencies. `hooks/register.test.ts` covers each hook path against a fake
 `meridian idle` and a fake host.
 
-Claude Code lays generated type files (`.claude-plugin/types/`, `tsconfig.json`)
-into a plugin directory it hot-reloads; they are git-ignored and excluded from
-the wheel.
+Claude Code lays build-specific type files into any plugin directory it loads
+with `--plugin-dir` or `CLAUDE_CODE_PLUGIN_DIRS`: `.claude-plugin/types/**`
+(about 800 KB, different per Claude version, with its own `.gitignore`) and a
+56-byte `tsconfig.json` that extends it. The repo ignores `.claude-plugin/types/`
+and the wheel excludes it; `tsconfig.json` is committed because it is tiny and
+never changes. Claude also loads the mod fine from a read-only directory (an
+installed wheel it cannot write to), so the launcher does not copy the mod.

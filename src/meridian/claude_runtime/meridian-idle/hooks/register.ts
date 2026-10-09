@@ -29,6 +29,8 @@ type Armed = {
   stretch: number
   anchor: number
   at: Partial<Record<Stage, number>>
+  /** What core answered when each stage's timer fired, for `/meridian-idle`. */
+  fired: Partial<Record<Stage, string>>
 }
 
 type State = {
@@ -156,6 +158,7 @@ async function checkGate($: EngineInterface, s: State): Promise<boolean> {
     note($, s, `inert: idle disabled (${typeof reply.reason === 'string' ? reply.reason : 'no reason given'})`)
     return false
   }
+  note($, s, 'active: idle enabled')
   return true
 }
 
@@ -223,7 +226,7 @@ async function recover($: EngineInterface, s: State, session: string, epoch: num
     if (done[stage] !== undefined) delete at[stage] // the stage already ran in this stretch
   }
   s.mayBeOpen = true
-  await adopt($, s, { session, stretch, anchor, at }, epoch)
+  await adopt($, s, { session, stretch, anchor, at, fired: {} }, epoch)
 }
 
 async function runningAgents($: EngineInterface): Promise<number | undefined> {
@@ -272,7 +275,7 @@ async function armTask($: EngineInterface, s: State, epoch: number): Promise<voi
       await recover($, s, session, epoch)
       return
     }
-    await adopt($, s, { session, stretch, anchor, at }, epoch)
+    await adopt($, s, { session, stretch, anchor, at, fired: {} }, epoch)
   } catch (err) {
     note($, s, `arm error: ${describeError(err)}`)
   }
@@ -384,6 +387,7 @@ async function onTimer($: EngineInterface, s: State, stage: Stage, armed: Armed,
       return
     }
     note($, s, `fire ${stage}: ${String(reply.decision)} (${String(reply.reason)})`)
+    armed.fired[stage] = reply.decision === 'act' ? 'act' : `skip: ${String(reply.reason)}`
     // Push and warn are core's job. Only a compact "act" asks anything of us.
     if (stage !== 'compact' || reply.decision !== 'act') return
 
@@ -416,17 +420,21 @@ async function startTask($: EngineInterface, s: State, epoch: number): Promise<v
 // -- /meridian-idle --------------------------------------------------------
 
 async function statusText($: EngineInterface, s: State): Promise<string> {
-  if (s.inert) return 'meridian-idle: inactive for this session'
+  // The host already prefixes a plugin command's output with the plugin's name.
+  if (s.inert) return 'inactive for this session'
   const now = await $.clock.now()
   const lines: string[] = []
   const armed = s.armed
   if (armed === undefined) {
-    lines.push('meridian-idle: no stretch armed')
+    lines.push('no stretch armed')
   } else {
-    lines.push(`meridian-idle: stretch ${armed.stretch}, anchor ${armed.anchor}`)
+    lines.push(`stretch ${armed.stretch}, anchor ${armed.anchor}`)
     for (const stage of STAGES) {
       const when = armed.at[stage]
-      if (when !== undefined) lines.push(`  ${stage.padEnd(7)} ${when <= now ? 'due' : `in ${Math.round((when - now) / 1000)}s`}`)
+      if (when === undefined) continue
+      const fired = armed.fired[stage]
+      const timing = fired !== undefined ? `fired (${fired})` : when <= now ? 'due' : `in ${Math.round((when - now) / 1000)}s`
+      lines.push(`  ${stage.padEnd(7)} ${timing}`)
     }
   }
   if (s.log.length > 0) {
