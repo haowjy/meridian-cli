@@ -37,6 +37,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Load Meridian's bundled idle plugin only in interactive Claude primaries.
 
 ### Fixed
+- Bound OpenCode idle backend requests and suppress false user returns when
+  compaction events arrive out of order.
 - Keep idle compaction completion alive across user returns, contain and offload
   sidecar policy calls, honor outside-Meridian interactive sessions, and close
   idle notification, timer, completion-result, and state-GC edge cases.

@@ -110,6 +110,79 @@ async def test_recorded_summarize_never_emits_user_return(tmp_path: Path) -> Non
         await asyncio.wait_for(anext(iterator), timeout=0.01)
 
 
+async def test_compact_suppresses_return_when_busy_precedes_compaction_part(
+    tmp_path: Path,
+) -> None:
+    post_started = asyncio.Event()
+    release_post = asyncio.Event()
+
+    async def request(
+        method: str,
+        _path: str,
+        _payload: Mapping[str, object] | None,
+    ) -> tuple[int, str]:
+        if method == "GET":
+            return 200, '{"model":{"providerID":"opencode","id":"big-pickle"}}'
+        post_started.set()
+        await release_post.wait()
+        return 200, "true"
+
+    sensor = opencode_idle.OpenCodeIdleSensor(
+        _context(tmp_path),
+        now=FakeClock(1_791_502_786.0),
+        request=request,
+    )
+    iterator = sensor.events()
+    events = _recorded_events("events-summarize.sse")
+    user_message = next(event for event in events if event.event_type == "message.updated")
+    compaction_part = next(
+        event
+        for event in events
+        if event.event_type == "message.part.updated"
+        and cast("Mapping[str, object]", event.payload["properties"])["part"]
+        and cast(
+            "Mapping[str, object]",
+            cast("Mapping[str, object]", event.payload["properties"])["part"],
+        )["type"]
+        == "compaction"
+    )
+    first_busy = next(
+        event
+        for event in events
+        if event.event_type == "session.status"
+        and cast(
+            "Mapping[str, object]",
+            cast("Mapping[str, object]", event.payload["properties"])["status"],
+        )["type"]
+        == "busy"
+    )
+    final_idle = next(
+        event
+        for event in events
+        if event.event_type == "session.status"
+        and cast(
+            "Mapping[str, object]",
+            cast("Mapping[str, object]", event.payload["properties"])["status"],
+        )["type"]
+        == "idle"
+    )
+    session_idle = next(event for event in events if event.event_type == "session.idle")
+
+    compact = asyncio.create_task(sensor.compact())
+    await post_started.wait()
+    for event in (user_message, first_busy, compaction_part):
+        sensor.on_raw_event(event)
+    release_post.set()
+    assert (await compact).result == "ok"
+    sensor.on_raw_event(final_idle)
+    sensor.on_raw_event(session_idle)
+
+    observed = await _take(iterator, 2)
+    assert [event.kind for event in observed] == ["busy", "turn_end"]
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(anext(iterator), timeout=0.01)
+
+
 async def test_startup_idle_is_ignored_until_busy(tmp_path: Path) -> None:
     sensor = opencode_idle.OpenCodeIdleSensor(_context(tmp_path), now=FakeClock(10.0))
     iterator = sensor.events()
@@ -233,6 +306,38 @@ async def test_compact_does_not_act_after_tui_exit(tmp_path: Path) -> None:
     assert result.result == "vetoed"
     assert result.reason == "tui-exited"
     assert requested is False
+
+
+@pytest.mark.parametrize("hanging_method", ["GET", "POST"])
+async def test_compact_maps_backend_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    hanging_method: str,
+) -> None:
+    never_returns = asyncio.Event()
+
+    async def request(
+        method: str,
+        _path: str,
+        _payload: Mapping[str, object] | None,
+    ) -> tuple[int, str]:
+        if method == hanging_method:
+            await never_returns.wait()
+        return 200, '{"model":{"providerID":"opencode","id":"big-pickle"}}'
+
+    monkeypatch.setattr(opencode_idle, "_GET_TIMEOUT_SECONDS", 0.01, raising=False)
+    monkeypatch.setattr(
+        opencode_idle,
+        "_SUMMARIZE_TIMEOUT_SECONDS",
+        0.01,
+        raising=False,
+    )
+    sensor = opencode_idle.OpenCodeIdleSensor(_context(tmp_path), request=request)
+
+    result = await asyncio.wait_for(sensor.compact(), timeout=0.1)
+
+    assert result.result == "failed"
+    assert result.reason == "timeout"
 
 
 def test_opencode_bundle_registers_idle_sensor_and_environment_facts() -> None:
