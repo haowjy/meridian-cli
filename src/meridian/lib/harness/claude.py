@@ -42,6 +42,7 @@ from meridian.lib.harness.bundle import (
     HarnessProjectionPorts,
     register_harness_bundle,
 )
+from meridian.lib.harness.claude_idle import detect_ttl, idle_env_facts
 from meridian.lib.harness.claude_preflight import (
     build_claude_preflight_result,
     ensure_claude_session_accessible,
@@ -553,5 +554,7 @@ register_harness_bundle(
             subprocess_cli_args=project_claude_spec_to_cli_args,
         ),
         semantics=CLAUDE_SEMANTICS,
+        idle_env_facts=idle_env_facts,
+        detect_ttl=detect_ttl,
     )
 )

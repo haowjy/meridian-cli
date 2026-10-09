@@ -49,6 +49,7 @@ from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.harness.extractors.pi import PI_EXTRACTOR
 from meridian.lib.harness.pi_boundary import read_boundary
 from meridian.lib.harness.pi_identity import mint_session_id, resolve_session_file, verify_identity
+from meridian.lib.harness.pi_idle import detect_ttl, idle_env_facts
 from meridian.lib.harness.pi_lifecycle_events import (
     PI_PHASE_EVENT_TYPE,
     redact_pi_command_for_history,
@@ -564,5 +565,7 @@ register_harness_bundle(
         ),
         semantics=PI_SEMANTICS,
         event_sinks=_event_sinks,
+        idle_env_facts=idle_env_facts,
+        detect_ttl=detect_ttl,
     )
 )

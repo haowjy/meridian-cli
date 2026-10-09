@@ -17,6 +17,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   add pure scheduling, ordered compaction guards, and active-child detection.
 - Add the injected idle service state machine and launcher sidecar for at-most-once
   push, warning, and compaction stages.
+- Detect Claude and Pi prompt-cache lifetimes and expose harness environment facts
+  through their idle bundle hooks.
 ### Changed
 - Load Meridian's bundled no-op idle plugin only in interactive Claude primaries.
 
