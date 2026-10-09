@@ -15,6 +15,7 @@ import {
 import { isTerminalBashStatus, parseBashRecordsFile, type BashRecord, type BashRecordsFile, type BashStatus } from "../../shared/schemas";
 import { BashLogStore, type BashLogPaths } from "./bash_log_store";
 import { ShellTask } from "./shell_task";
+import { waitForSpawn } from "./spawn_wait";
 
 export type BashParams = {
   command: string;
@@ -107,27 +108,6 @@ type ExecResult = {
   stderr: string;
   exit_code: number;
 };
-
-type SpawnWaitDetailWire = {
-  spawn_id?: unknown;
-  status?: unknown;
-  exit_code?: unknown;
-  duration_secs?: unknown;
-  report_body?: unknown;
-  report_summary?: unknown;
-  failure_reason?: unknown;
-};
-
-type SpawnWaitWire = {
-  any_failed?: unknown;
-  checkpoint?: unknown;
-  checkpoint_pending_ids?: unknown;
-  spawns?: unknown;
-};
-
-const TERMINAL_SPAWN_STATUSES = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
-const FAILED_SPAWN_STATUSES = new Set(["failed", "cancelled", "timed_out"]);
-const KNOWN_SPAWN_STATUSES = new Set(["queued", "running", "finalizing", ...TERMINAL_SPAWN_STATUSES]);
 
 const DEFAULT_TIMEOUT_MIN = 55;
 const DEFAULT_WAIT_TIMEOUT_MIN = 10;
@@ -598,14 +578,8 @@ export class BashRuntime {
         if (result.error) return { bash_id: spawnId, killed: false, message: result.stderr || result.error };
         return { bash_id: spawnId, killed: result.exitCode === 0, message: result.stdout || result.stderr };
       }
-      case "wait": {
-        const timeout = String(normalizeTimeoutMin(params.timeout_min, DEFAULT_WAIT_TIMEOUT_MIN));
-        const result = await runMeridianCommand(
-          ["--format", "json", "spawn", "wait", spawnId, "--timeout", timeout, "--full", "--quiet"],
-          (Number(timeout) * 60 + 5) * 1000,
-        );
-        return parseSpawnWaitResult(spawnId, result);
-      }
+      case "wait":
+        return waitForSpawn(spawnId, normalizeTimeoutMin(params.timeout_min, DEFAULT_WAIT_TIMEOUT_MIN));
       case "detach":
         return { bash_id: spawnId, detached: false, message: "detach only applies to b-* bash records" };
       default:
@@ -735,135 +709,6 @@ export class BashRuntime {
     };
     await writeJsonAtomic(this.recordsPath, file);
   }
-}
-
-function parseSpawnWaitResult(spawnId: string, result: Awaited<ReturnType<typeof runMeridianCommand>>): BashWaitResult {
-  const commandOutput = result.stderr.trim() || result.error || "";
-  if (result.error) {
-    return {
-      bash_id: spawnId,
-      status: "error",
-      error: `spawn wait query failed: ${result.error}`,
-      message: commandOutput,
-    };
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(result.stdout);
-  } catch {
-    const detail = commandOutput || result.stdout.trim() || `exit code ${result.exitCode ?? "unknown"}`;
-    return {
-      bash_id: spawnId,
-      status: "error",
-      error: `spawn wait returned invalid JSON: ${detail}`,
-      message: detail,
-    };
-  }
-  if (!isRecord(parsed)) {
-    return {
-      bash_id: spawnId,
-      status: "error",
-      error: "spawn wait returned a non-object result",
-      message: result.stdout.trim(),
-    };
-  }
-
-  const payload = parsed as SpawnWaitWire;
-  if (typeof payload.any_failed !== "boolean") {
-    return {
-      bash_id: spawnId,
-      status: "error",
-      error: "spawn wait returned an invalid structured result (missing any_failed)",
-      message: result.stdout.trim(),
-    };
-  }
-  const details = Array.isArray(payload.spawns) ? payload.spawns.filter(isRecord) as SpawnWaitDetailWire[] : [];
-  const target = details.find((detail) => detail.spawn_id === spawnId);
-  const status = target && typeof target.status === "string" ? target.status : undefined;
-  if (!target || !status) {
-    return {
-      bash_id: spawnId,
-      status: "error",
-      error: `spawn wait returned no structured outcome for ${spawnId}`,
-      message: result.stdout.trim(),
-    };
-  }
-
-  const checkpoint = payload.checkpoint === true;
-  const pendingIds = Array.isArray(payload.checkpoint_pending_ids)
-    ? payload.checkpoint_pending_ids.filter((id): id is string => typeof id === "string")
-    : [];
-  const output = typeof target.report_body === "string" && target.report_body.trim()
-    ? target.report_body
-    : typeof target.report_summary === "string" ? target.report_summary : "";
-  const exitCode = typeof target.exit_code === "number" ? target.exit_code : null;
-  const durationSecs = typeof target.duration_secs === "number" ? target.duration_secs : undefined;
-  const failureReason = typeof target.failure_reason === "string" ? target.failure_reason : undefined;
-
-  if (!KNOWN_SPAWN_STATUSES.has(status)) {
-    return {
-      bash_id: spawnId,
-      status: "error",
-      error: `spawn wait returned unknown target status for ${spawnId}: ${status}`,
-      message: output,
-    };
-  }
-
-  if (FAILED_SPAWN_STATUSES.has(status)) {
-    return {
-      bash_id: spawnId,
-      status,
-      exit_code: exitCode,
-      duration_secs: durationSecs,
-      output,
-      error: failureReason || `spawn ${spawnId} ${status}`,
-    };
-  }
-
-  if (status === "succeeded") {
-    if (payload.any_failed === true) {
-      return {
-        bash_id: spawnId,
-        status: "error",
-        error: `spawn wait returned inconsistent outcome for ${spawnId}: succeeded with any_failed=true`,
-        message: output,
-      };
-    }
-    return {
-      bash_id: spawnId,
-      status,
-      exit_code: exitCode,
-      duration_secs: durationSecs,
-      output,
-    };
-  }
-
-  if (checkpoint || !TERMINAL_SPAWN_STATUSES.has(status)) {
-    return {
-      bash_id: spawnId,
-      status,
-      exit_code: exitCode,
-      duration_secs: durationSecs,
-      output,
-      message: checkpoint
-        ? `Wait checkpoint for ${spawnId}; still pending${pendingIds.length ? `: ${pendingIds.join(", ")}` : ""}.`
-        : `Spawn ${spawnId} is still ${status}.`,
-      checkpoint,
-      ...(pendingIds.length ? { pending_ids: pendingIds } : {}),
-    };
-  }
-
-  return {
-    bash_id: spawnId,
-    status: "error",
-    error: `spawn wait returned inconsistent outcome for ${spawnId}: ${status}`,
-    message: output,
-  };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function taskPingIntervalMs(): number {

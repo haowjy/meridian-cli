@@ -23,77 +23,36 @@ import { readLogTail } from "./bash_log_store";
 
 const FOREGROUND_BASH_HINT_TEXT = "/ps to manage tasks · /ps:b to run in background";
 
-function isBashListRow(value: unknown): value is BashListRow {
-  return Boolean(value) && typeof value === "object" && typeof (value as { bash_id?: unknown }).bash_id === "string";
-}
-
 type FormattedToolResult = { text: string; isError: boolean };
 type ManagedBashToolResult = BashExecuteResult | BashManageResult;
+const FAILED_STATUSES = new Set(["failed", "cancelled", "timed_out", "killed", "error"]);
 
 function formatToolResult(result: ManagedBashToolResult): FormattedToolResult {
-  if ("error" in result && typeof result.error === "string") {
-    const status = "status" in result && typeof result.status === "string" ? result.status : "";
-    const exitCode = "exit_code" in result && typeof result.exit_code === "number" ? result.exit_code : null;
-    const outcome = status && "bash_id" in result
-      ? `${result.bash_id}: ${status}${exitCode === null ? "" : ` (exit code ${exitCode})`}`
-      : "";
-    return {
-      text: ["output" in result && typeof result.output === "string" ? result.output : "", outcome, `Error: ${result.error}`]
-        .filter(Boolean)
-        .join("\n"),
-      isError: true,
-    };
+  if ("stdout" in result) {
+    const output = result.stdout + result.stderr;
+    if (result.exit_code === 0) return { text: output, isError: false };
+    const failure = `Command failed with exit code ${result.exit_code ?? "unknown"}.`;
+    return { text: [output, failure].filter(Boolean).join("\n"), isError: true };
   }
+  if ("rows" in result) {
+    return { text: formatRows(result.rows), isError: result.rows.some((row) => Boolean(row.execution_error)) };
+  }
+  if ("killed" in result) return { text: result.message, isError: !result.killed };
+  if ("detached" in result) return { text: result.message, isError: !result.detached };
 
-  if (isForegroundResult(result)) {
-    const stdout = typeof result.stdout === "string" ? result.stdout : "";
-    const stderr = typeof result.stderr === "string" ? result.stderr : "";
-    const output = stdout + stderr;
-    const failed = typeof result.exit_code === "number" && result.exit_code !== 0;
-    if (!failed) return { text: output, isError: false };
-    const failure = `Command failed with exit code ${result.exit_code}.`;
-    return { text: output ? `${output}\n${failure}` : failure, isError: true };
-  }
-
-  if (isListResult(result)) {
-    const rows = result.rows.filter(isBashListRow);
-    return { text: formatRows(rows), isError: rows.some((row) => Boolean(row.execution_error)) };
-  }
-
-  if ("killed" in result) {
-    return { text: result.message, isError: !result.killed };
-  }
-  if ("detached" in result) {
-    return { text: result.message, isError: !result.detached };
-  }
-
+  const error = "error" in result && result.error ? `Error: ${result.error}` : "";
   if ("status" in result) {
-    const output = "output" in result && typeof result.output === "string" ? result.output : "";
-    const status = typeof result.status === "string" ? result.status : "";
-    const exitCode = "exit_code" in result && typeof result.exit_code === "number" ? result.exit_code : null;
-    const terminalFailure = status === "failed" || status === "cancelled" || status === "timed_out" || status === "killed" || (status === "exited" && exitCode !== null && exitCode !== 0);
-    const summary = terminalFailure
-      ? `Error: ${result.bash_id} ${status}${exitCode === null ? "" : ` (exit code ${exitCode})`}`
-      : "message" in result && typeof result.message === "string" ? result.message : status === "started" ? `${result.bash_id}: started` : "";
+    const exitCode = "exit_code" in result ? result.exit_code : null;
+    const summary = `${result.bash_id}: ${result.status}${exitCode == null ? "" : ` (exit code ${exitCode})`}`;
     return {
-      text: [output, summary].filter(Boolean).join(output && summary ? "\n" : ""),
-      isError: terminalFailure,
+      text: [summary, "output" in result ? result.output : "", "message" in result ? result.message : "", error]
+        .filter(Boolean).join("\n"),
+      isError: Boolean(error) || FAILED_STATUSES.has(result.status)
+        || (result.status === "exited" && exitCode != null && exitCode !== 0),
     };
   }
-
-  if ("output" in result) return { text: result.output, isError: false };
-  if ("message" in result && typeof result.message === "string") return { text: result.message, isError: false };
-
-  if ("bash_id" in result && "status" in result) return { text: `${result.bash_id}: ${result.status}`, isError: false };
-  return { text: String(result), isError: false };
-}
-
-function isForegroundResult(result: ManagedBashToolResult): result is Extract<BashExecuteResult, { stdout: string }> {
-  return "stdout" in result && "stderr" in result && "exit_code" in result;
-}
-
-function isListResult(result: ManagedBashToolResult): result is Extract<BashManageResult, { rows: BashListRow[] }> {
-  return "rows" in result && Array.isArray(result.rows);
+  if ("output" in result) return { text: [result.output, error].filter(Boolean).join("\n"), isError: Boolean(error) };
+  return { text: error, isError: true };
 }
 
 function formatRows(rows: BashListRow[]): string {

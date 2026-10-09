@@ -96,6 +96,36 @@ describe("managed Bash tool outcomes", () => {
     await runtime.shutdown();
   });
 
+  it.each([
+    { status: "succeeded", exit_code: 17 },
+    { status: "succeeded", exit_code: "zero" },
+    { status: "succeeded", exit_code: 0.5 },
+    { status: "succeeded", duration_secs: -1 },
+    { status: "succeeded", report_body: 42 },
+    { status: "failed", exit_code: 17 },
+  ])("rejects malformed or contradictory result fields: %j", async (fields) => {
+    const { runtime } = await runtimeFor("p-parent-invalid");
+    runMeridianCommand.mockResolvedValueOnce(jsonResult({
+      any_failed: false,
+      spawns: [{ spawn_id: "p128", ...fields }],
+    }));
+    await expect(runtime.manage({ action: "wait", bash_id: "p128" })).resolves.toMatchObject({
+      status: "error",
+      error: expect.any(String),
+    });
+    await runtime.shutdown();
+  });
+
+  it("preserves an explicitly empty full report instead of substituting a summary", async () => {
+    const { runtime } = await runtimeFor("p-parent-empty-body");
+    runMeridianCommand.mockResolvedValueOnce(jsonResult({
+      any_failed: false,
+      spawns: [{ spawn_id: "p128", status: "succeeded", exit_code: 0, report_body: "", report_summary: "old summary" }],
+    }));
+    await expect(runtime.manage({ action: "wait", bash_id: "p128" })).resolves.toMatchObject({ output: "" });
+    await runtime.shutdown();
+  });
+
   it("rejects an unknown target status instead of guessing that it is pending", async () => {
     const { runtime } = await runtimeFor("p-parent-unknown");
     runMeridianCommand.mockResolvedValueOnce(jsonResult({
@@ -134,6 +164,14 @@ describe("managed Bash native error semantics", () => {
     expect(childResult.isError).toBe(true);
     expect(childResult.content[0]?.text).toContain("p127: failed (exit code 17)");
     expect(childResult.content[0]?.text).toContain("worker failed");
+
+    runMeridianCommand.mockResolvedValueOnce(jsonResult({
+      any_failed: false,
+      spawns: [{ spawn_id: "p129", status: "succeeded", exit_code: 0 }],
+    }));
+    const success = await tools.get("bash_manage")!.execute("call", { action: "wait", bash_id: "p129" });
+    expect(success.isError).not.toBe(true);
+    expect(success.content[0]?.text).toContain("p129: succeeded (exit code 0)");
     await runtime.shutdown();
   });
 });
