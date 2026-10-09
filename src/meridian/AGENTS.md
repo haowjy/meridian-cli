@@ -63,6 +63,7 @@ config entry. If adding a feature requires editing 10 files, the abstraction is 
 | `lib/extensions/` | Extension command registry |
 | `lib/artifact/` | Detached static-artifact serving over Tailscale (`artifact serve/list/stop/gc`); no daemon — file is authority |
 | `lib/notify/` | Harness-agnostic notification labels, delivery policy, and channel registry |
+| `lib/idle/` | Harness-agnostic idle timeline, guards, persisted state machine, and sensor sidecar |
 | `lib/observability/` | Spawn-scoped JSONL tracing |
 | `lib/telemetry/` | Process telemetry routing, sinks, lifecycle correlation, and retention |
 | `lib/mermaid/` | Mermaid syntax validation and style checks |

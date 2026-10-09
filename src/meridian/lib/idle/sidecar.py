@@ -3,10 +3,32 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from contextlib import suppress
+from dataclasses import dataclass
+from typing import Protocol
 
-from meridian.lib.harness.idle_types import IdleSensor, IdleSensorContext
+from meridian.lib.harness.idle_types import IdleEvent, IdleSensor, IdleSensorContext
+from meridian.lib.idle.service import ArmResult, IdleService
 from meridian.lib.observability import DebugTracer
+from meridian.lib.state.idle_store import IdleState, Stage
+
+
+class SidecarClock(Protocol):
+    """Clock seam for deterministic absolute-deadline tests."""
+
+    def now_ms(self) -> int: ...
+
+    async def sleep_until_ms(self, deadline_ms: int) -> None: ...
+
+
+class _RealClock:
+    def now_ms(self) -> int:
+        return int(time.time() * 1000)
+
+    async def sleep_until_ms(self, deadline_ms: int) -> None:
+        delay = max(0.0, (deadline_ms - self.now_ms()) / 1000)
+        await asyncio.sleep(delay)
 
 
 def record_sensor_error(
@@ -36,16 +58,195 @@ def record_sensor_error(
         tracer.close()
 
 
-async def run(sensor: IdleSensor, ctx: IdleSensorContext) -> None:
-    """Drain sensor events until launcher teardown or a sensor failure."""
+@dataclass
+class _Coordinator:
+    sensor: IdleSensor
+    ctx: IdleSensorContext
+    service: IdleService
+    clock: SidecarClock
+    harness: str
+    schedule_task: asyncio.Task[None] | None = None
+    schedule_key: tuple[int, int] | None = None
 
+    async def cancel_schedule(self) -> None:
+        task = self.schedule_task
+        self.schedule_task = None
+        self.schedule_key = None
+        if task is None:
+            return
+        task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await task
+
+    async def apply_arm(self, result: ArmResult) -> None:
+        if result.stretch is None or result.anchor is None:
+            await self.cancel_schedule()
+            return
+        key = (result.stretch, result.anchor)
+        if key == self.schedule_key:
+            return
+        await self.cancel_schedule()
+        self.schedule_key = key
+        self.schedule_task = asyncio.create_task(self._drive_safely(result))
+
+    async def apply_state(self, state: IdleState | None) -> None:
+        if state is None:
+            await self.cancel_schedule()
+            return
+        await self.apply_arm(
+            ArmResult(
+                stretch=state.stretch,
+                anchor=state.anchor,
+                push_at=None if "push" in state.done else state.schedule.push_at,
+                warn_at=None if "warn" in state.done else state.schedule.warn_at,
+                compact_at=None if "compact" in state.done else state.schedule.compact_at,
+            )
+        )
+
+    async def _drive(self, arm: ArmResult) -> None:
+        assert arm.stretch is not None
+        assert arm.anchor is not None
+        candidates: tuple[tuple[int | None, Stage], ...] = (
+            (arm.push_at, "push"),
+            (arm.warn_at, "warn"),
+            (arm.compact_at, "compact"),
+        )
+        stages: list[tuple[int, Stage]] = [
+            (deadline, stage) for deadline, stage in candidates if deadline is not None
+        ]
+        stages.sort()
+        for deadline, stage in stages:
+            await self.clock.sleep_until_ms(deadline)
+            if not self.ctx.tui_alive():
+                return
+            if stage != "compact":
+                self.service.fire(
+                    stage,
+                    harness=self.harness,
+                    session=self.ctx.harness_session_id,
+                    stretch=arm.stretch,
+                    anchor=arm.anchor,
+                )
+                continue
+
+            facts = await self.sensor.facts()
+            decision = self.service.fire(
+                "compact",
+                harness=self.harness,
+                session=self.ctx.harness_session_id,
+                stretch=arm.stretch,
+                anchor=arm.anchor,
+                facts=facts,
+            )
+            if decision.decision != "act":
+                continue
+            try:
+                result = await self.sensor.compact()
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:
+                record_sensor_error(self.ctx, phase="compact", error=exc)
+                self.service.done(
+                    "compact",
+                    harness=self.harness,
+                    session=self.ctx.harness_session_id,
+                    stretch=arm.stretch,
+                    result="failed",
+                    detail=type(exc).__name__,
+                )
+                continue
+            self.service.done(
+                "compact",
+                harness=self.harness,
+                session=self.ctx.harness_session_id,
+                stretch=arm.stretch,
+                result=result.result,
+                detail=result.reason,
+            )
+
+    async def _drive_safely(self, arm: ArmResult) -> None:
+        try:
+            await self._drive(arm)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            record_sensor_error(self.ctx, phase="timer", error=exc)
+
+    async def handle(self, event: IdleEvent) -> None:
+        if event.kind == "user_prompt":
+            self.service.return_(
+                harness=self.harness,
+                session=event.harness_session_id,
+                user_prompt=True,
+            )
+            await self.cancel_schedule()
+            return
+        if event.kind not in {"turn_end", "idle"}:
+            return
+        result = self.service.arm(
+            harness=self.harness,
+            session=event.harness_session_id,
+            turn_id=event.turn_id,
+        )
+        await self.apply_arm(result)
+
+
+async def _consume_events(sensor: IdleSensor, coordinator: _Coordinator) -> None:
+    async for event in sensor.events():
+        if not coordinator.ctx.tui_alive():
+            return
+        await coordinator.handle(event)
+
+
+async def _poll_store(coordinator: _Coordinator, poll_seconds: float) -> None:
+    while coordinator.ctx.tui_alive():
+        await asyncio.sleep(poll_seconds)
+        states = coordinator.service.status(
+            harness=coordinator.harness,
+            session=coordinator.ctx.harness_session_id,
+        )
+        await coordinator.apply_state(states[0] if states else None)
+
+
+async def run(
+    sensor: IdleSensor,
+    ctx: IdleSensorContext,
+    *,
+    service: IdleService | None = None,
+    clock: SidecarClock | None = None,
+    poll_seconds: float = 5.0,
+) -> None:
+    """Drive idle policy until launcher teardown; contain every sensor failure."""
+
+    resolved_clock = clock if clock is not None else _RealClock()
+    resolved_service = service or IdleService(
+        env=ctx.env,
+        now_ms=resolved_clock.now_ms,
+    )
+    coordinator = _Coordinator(
+        sensor=sensor,
+        ctx=ctx,
+        service=resolved_service,
+        clock=resolved_clock,
+        harness=str(ctx.harness_id),
+    )
+    tasks = {
+        asyncio.create_task(_consume_events(sensor, coordinator)),
+        asyncio.create_task(_poll_store(coordinator, poll_seconds)),
+    }
     try:
-        async for _event in sensor.events():
-            pass
+        await asyncio.gather(*tasks)
     except asyncio.CancelledError:
         raise
     except BaseException as exc:
         record_sensor_error(ctx, phase="run", error=exc)
+    finally:
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with suppress(BaseException):
+                await task
+        await coordinator.cancel_schedule()
 
 
-__all__ = ["record_sensor_error", "run"]
+__all__ = ["SidecarClock", "record_sensor_error", "run"]

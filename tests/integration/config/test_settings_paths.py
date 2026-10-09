@@ -169,9 +169,18 @@ def test_load_config_reads_idle_tables_with_env_precedence(
     (project_root / "meridian.toml").write_text(
         "[idle]\n"
         "enabled = false\n"
+        "push_seconds = 12\n"
+        "warn_minutes = 9\n"
+        "warn_email = false\n"
+        "compact_minutes = 3\n"
+        "compact = false\n"
+        "min_compact_tokens = 12345\n"
+        "late_fire_tolerance_seconds = 7\n"
         "\n"
         "[harness.codex.idle]\n"
-        "enabled = false\n",
+        "enabled = false\n"
+        "compact = false\n"
+        "ttl_seconds = 900\n",
         encoding="utf-8",
     )
 
@@ -179,18 +188,36 @@ def test_load_config_reads_idle_tables_with_env_precedence(
         file_config = load_config(project_root, resolve_models=False)
 
     assert file_config.idle.enabled is False
+    assert file_config.idle.push_seconds == 12
+    assert file_config.idle.warn_minutes == 9
+    assert file_config.idle.warn_email is False
+    assert file_config.idle.compact_minutes == 3
+    assert file_config.idle.compact is False
+    assert file_config.idle.min_compact_tokens == 12_345
+    assert file_config.idle.late_fire_tolerance_seconds == 7
     assert file_config.harness.codex.idle.enabled is False
+    assert file_config.harness.codex.idle.compact is False
+    assert file_config.harness.codex.idle.ttl_seconds == 900
+    assert file_config.harness.opencode.idle.ttl_seconds == 300
+    assert file_config.harness.claude.idle.ttl_seconds is None
+    assert file_config.harness.pi.idle.ttl_seconds is None
     assert not any(
         "Ignoring unknown Meridian config key" in record.message for record in caplog.records
     )
 
     monkeypatch.setenv("MERIDIAN_IDLE_ENABLED", "true")
     monkeypatch.setenv("MERIDIAN_HARNESS_IDLE_ENABLED_CODEX", "true")
+    monkeypatch.setenv("MERIDIAN_IDLE_PUSH_SECONDS", "90")
+    monkeypatch.setenv("MERIDIAN_HARNESS_IDLE_COMPACT_CODEX", "true")
+    monkeypatch.setenv("MERIDIAN_HARNESS_IDLE_TTL_SECONDS_CODEX", "1800")
 
     env_config = load_config(project_root, resolve_models=False)
 
     assert env_config.idle.enabled is True
+    assert env_config.idle.push_seconds == 90
     assert env_config.harness.codex.idle.enabled is True
+    assert env_config.harness.codex.idle.compact is True
+    assert env_config.harness.codex.idle.ttl_seconds == 1800
 
     shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
     idle_value = next(item for item in shown.values if item.key == "idle.enabled")
@@ -213,6 +240,22 @@ def test_load_config_reads_idle_tables_with_env_precedence(
     assert catalog.resolve_key("harness.codex.idle.enabled").env_vars == (
         "MERIDIAN_HARNESS_IDLE_ENABLED_CODEX",
     )
+    expected_keys = {
+        "idle.enabled",
+        "idle.push_seconds",
+        "idle.warn_minutes",
+        "idle.warn_email",
+        "idle.compact_minutes",
+        "idle.compact",
+        "idle.min_compact_tokens",
+        "idle.late_fire_tolerance_seconds",
+        *{
+            f"harness.{harness}.idle.{field}"
+            for harness in ("claude", "codex", "opencode", "pi")
+            for field in ("enabled", "compact", "ttl_seconds")
+        },
+    }
+    assert expected_keys <= {item.key for item in shown.values}
 
 
 def test_load_config_reads_every_notify_field_with_env_precedence(
