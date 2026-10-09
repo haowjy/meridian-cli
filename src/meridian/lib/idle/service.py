@@ -186,10 +186,11 @@ def effective(
         if value is not None:
             return value
 
-    global_env = f"MERIDIAN_IDLE_{field.upper()}"
-    value = _env_value(values, global_env, field)
-    if value is not None:
-        return value
+    if hasattr(config.idle, field):
+        global_env = f"MERIDIAN_IDLE_{field.upper()}"
+        value = _env_value(values, global_env, field)
+        if value is not None:
+            return value
 
     if (
         field in _HARNESS_FIELDS
