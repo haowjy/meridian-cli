@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-09
+
 ### Fixed
 - Surface non-zero managed Bash outcomes as model-visible tool errors, and classify managed child waits from the structured JSON result rather than the CLI process exit code.
 - Pi `bash_manage(wait)` drop model-chosen `timeout_min`; wait blocks up to 55 min (bash default). Short waits timed out, model read output around tracking, idle watcher re-announced known result.
