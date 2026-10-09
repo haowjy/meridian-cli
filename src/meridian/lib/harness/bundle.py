@@ -13,6 +13,7 @@ from meridian.lib.harness.adapter import BootstrapMode, HarnessAdapter, HarnessC
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
 from meridian.lib.harness.extractors.base import HarnessExtractor
 from meridian.lib.harness.idle_types import (
+    DetectIdleTtl,
     IdleEnvFacts,
     IdleEvent,
     IdleSensor,
@@ -98,6 +99,7 @@ class HarnessBundle(Generic[SpecT]):
     primary_idle_sensor: PrimaryIdleSensor | None = None
     parse_idle_event: ParseIdleEvent | None = None
     idle_env_facts: IdleEnvFactsReader | None = None
+    detect_ttl: DetectIdleTtl | None = None
 
 
 _REGISTRY: dict[HarnessId, HarnessBundle[Any]] = {}
@@ -186,6 +188,7 @@ def register_harness_bundle(bundle: HarnessBundle[Any]) -> None:
         primary_idle_sensor=bundle.primary_idle_sensor,
         parse_idle_event=bundle.parse_idle_event,
         idle_env_facts=bundle.idle_env_facts,
+        detect_ttl=bundle.detect_ttl,
     )
 
 

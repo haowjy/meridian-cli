@@ -79,8 +79,22 @@ class IdleSensor(Protocol):
     async def compact(self) -> CompactResult: ...
 
 
+class DetectIdleTtl(Protocol):
+    """Resolve one harness session's prompt-cache lifetime, when observable."""
+
+    def __call__(
+        self,
+        *,
+        session_id: str,
+        cwd: Path | None,
+        provider: str | None,
+        env: Mapping[str, str],
+    ) -> int | None: ...
+
+
 __all__ = [
     "CompactResult",
+    "DetectIdleTtl",
     "IdleEnvFacts",
     "IdleEvent",
     "IdleFacts",

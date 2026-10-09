@@ -258,9 +258,7 @@ def cmd_idle_arm(
     )
 
 
-def _return_payload(
-    *, harness: str | None, session: str, user_prompt: bool
-) -> dict[str, object]:
+def _return_payload(*, harness: str | None, session: str, user_prompt: bool) -> dict[str, object]:
     if not user_prompt:
         raise ValueError("--user-prompt is required")
     result = _service().return_(
@@ -329,21 +327,18 @@ def _fire_payload(
         raise ValueError("--context-tokens must not be negative")
 
     normalized = _required_harness(harness)
-    env_facts: dict[str, object] = {}
+    env_autocompact_off = False
     if stage == "compact":
         idle_env_facts = _bundle(normalized).idle_env_facts
         if idle_env_facts is not None:
-            env_facts = idle_env_facts(os.environ)
+            env_autocompact_off = bool(idle_env_facts(os.environ).harness_autocompact_off)
 
     facts = IdleFacts(
         draft=_draft_fact(draft),
         busy=busy,
         agents_running=agents_running,
         context_tokens=context_tokens,
-        harness_autocompact_off=(
-            harness_autocompact_off
-            or bool(env_facts.get("harness_autocompact_off", False))
-        ),
+        harness_autocompact_off=harness_autocompact_off or env_autocompact_off,
     )
     result = _service().fire(
         cast("Literal['push', 'warn', 'compact']", stage),
