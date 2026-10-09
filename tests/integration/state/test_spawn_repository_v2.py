@@ -178,6 +178,22 @@ def test_dogfood_migration_isolates_malformed_rows(tmp_path: Path) -> None:
     assert loaded.continue_chat_id == "c3"
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [pytest.param("[]\n", id="array"), pytest.param("null\n", id="null")],
+)
+def test_non_object_state_root_is_quarantined(tmp_path: Path, payload: str) -> None:
+    state_path = tmp_path / "spawns" / "p1" / "state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(payload, encoding="utf-8")
+
+    with pytest.raises(SpawnStateQuarantined) as failure:
+        read_state(tmp_path / "spawns", "p1", include_prompt=False)
+
+    assert failure.value.report.state_path == state_path
+    assert "spawn state root must be an object" in str(failure.value.report.validation_errors)
+
+
 def test_dogfood_migration_only_clears_authority_failure(tmp_path: Path) -> None:
     from meridian.lib.state.history_index import SCHEMA_VERSION, HistoryIndex
 

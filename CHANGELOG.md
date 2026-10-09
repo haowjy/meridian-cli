@@ -7,6 +7,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Reconcile Pi docs and smoke guides with current extension loading, native session boundaries, task ownership and causal result delivery; remove obsolete integration phases and status tables.
 
+### Changed
+- Simplify duplicated CLI and platform test coverage while retaining recovery and integrity contracts.
+
 ## [0.9.0] - 2026-10-02
 
 ### Upgrade notes

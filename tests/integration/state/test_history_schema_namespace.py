@@ -122,19 +122,6 @@ def test_every_projection_path_is_named_by_the_schema(tmp_path: Path, monkeypatc
     assert changes.mutation_lock.name == "history-mutation.lock"
 
 
-def test_fresh_build_leaves_an_older_schema_projection_byte_identical(tmp_path: Path) -> None:
-    before = _legacy_projection(tmp_path)
-    key = _finished_spawn(tmp_path)
-
-    index = HistoryIndex(tmp_path)
-    assert [row.id for row in index.spawns()] == [key]
-    assert index.inspect().baseline == "current"
-    assert index.inspect().generation != _LEGACY_GENERATION
-    index.rebuild(reset=True)
-
-    _assert_legacy_untouched(tmp_path, before)
-
-
 def test_initialization_latch_is_scoped_to_this_schema_file(tmp_path: Path) -> None:
     _legacy_projection(tmp_path)
     # A pre-fix build wrote schema-6 failures to the unversioned latch.
@@ -194,9 +181,7 @@ def test_active_rows_and_session_log_follow_writers_that_mark_another_queue(
     assert stopped and stopped[0].stopped_at is not None
 
 
-def test_new_build_first_command_leaves_a_schema_2_runtime_unchanged(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_new_build_first_command_leaves_a_schema_2_runtime_unchanged(tmp_path: Path) -> None:
     """Overlap regression: 0.6.7 runners must keep reading their schema-2 index."""
     home = tmp_path / "home"
     root = tmp_path / "runtime"
@@ -224,5 +209,9 @@ def test_new_build_first_command_leaves_a_schema_2_runtime_unchanged(
     assert result.returncode == 0, result.stderr
     assert key in result.stdout
 
+    index = HistoryIndex(root)
+    assert [row.id for row in index.spawns()] == [key]
+    assert index.inspect().baseline == "current"
+    assert index.inspect().generation != _LEGACY_GENERATION
+    index.rebuild(reset=True)
     _assert_legacy_untouched(root, before)
-    assert HistoryIndex(root).inspect().baseline == "current"
