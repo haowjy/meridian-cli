@@ -21,7 +21,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `spawn`) instead; it is set for every harness.
 - New state directory `~/.meridian/idle/` (one JSON file per primary session,
   garbage-collected after 7 days). Older builds ignore it. See
-  [docs/upgrading.md](docs/upgrading.md#upgrading-to-091-idle-notifications-and-compaction).
+  [docs/upgrading.md](docs/upgrading.md#upgrading-to-092-idle-notifications-and-compaction).
 
 ### Added
 - Add `meridian notify "<message>"` with ntfy push, SMTP/Gmail email, and command backends.
@@ -50,6 +50,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Stop wheels from force-including generated Claude plugin type files.
+- Pi spawn-watch checks idle before reading result eligibility, so a result waited on
+  during the turn is no longer re-announced as a duplicate follow-up.
 
 ## [0.9.1] - 2026-10-09
 

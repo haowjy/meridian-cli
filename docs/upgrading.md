@@ -1,6 +1,6 @@
 # Upgrade notes
 
-## Upgrading to 0.9.1: idle notifications and compaction
+## Upgrading to 0.9.2: idle notifications and compaction
 
 Interactive primaries launched by Meridian now watch for idle time: a phone
 push after about a minute, a push and email 15 minutes before the prompt cache
