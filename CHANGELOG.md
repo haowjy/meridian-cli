@@ -23,6 +23,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   schedule operations, harness facts, event parsing, status, and Claude mod discovery.
 - Detect Claude and Pi prompt-cache lifetimes and expose harness environment facts
   through their idle bundle hooks.
+- Replace the no-op Claude idle plugin with the real `meridian-idle` mod: senses main-loop
+  idle and user return, drives `meridian idle` arm/return/fire/done, compacts only when core
+  says act, and adds `/meridian-idle`. Ignore Claude-generated plugin type files.
 ### Changed
 - Load Meridian's bundled no-op idle plugin only in interactive Claude primaries.
 
