@@ -86,7 +86,12 @@ def _service(
 
 
 def _configured_harness() -> str:
-    return _normalized_harness(os.environ.get("_MERIDIAN_HARNESS", "claude"))
+    from meridian.cli.main import get_global_options
+
+    resolved = get_global_options().harness or os.environ.get("_MERIDIAN_HARNESS")
+    if resolved is None:
+        raise ValueError("--harness is required")
+    return _normalized_harness(resolved)
 
 
 def _required_harness(value: str | None) -> str:
