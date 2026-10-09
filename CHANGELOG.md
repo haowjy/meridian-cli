@@ -16,7 +16,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `spawn`) instead; it is set for every harness.
 - New state directory `~/.meridian/idle/` (one JSON file per primary session,
   garbage-collected after 7 days). Older builds ignore it. See
-  [docs/upgrading.md](docs/upgrading.md#upgrading-to-010-idle-notifications-and-compaction).
+  [docs/upgrading.md](docs/upgrading.md#upgrading-to-091-idle-notifications-and-compaction).
 
 ### Added
 - Add `meridian notify "<message>"` with ntfy push, SMTP/Gmail email, and command backends.
