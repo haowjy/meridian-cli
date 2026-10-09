@@ -17,6 +17,11 @@ launches. Primary retains native ambient discovery; spawned RPC suppresses ambie
 extensions unless `load_all_pi_extensions = true`.
 See the [integration contract](../lib/harness/.context/pi-integration.md).
 
+Meridian-idle marks every core call `--interactive`. User input cancels timers
+synchronously and queues its return behind any in-flight arm without awaiting the
+CLI. A compact claim is acted on only after a second check confirms that the user
+has not returned and Pi remains idle with no pending messages or draft.
+
 ## Build and verify
 
 From the repository root:
