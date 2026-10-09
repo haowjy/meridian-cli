@@ -10,6 +10,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   with initial `idle.enabled` settings for global and harness-specific control.
 - Add harness-agnostic idle sensor contracts and an inert launcher-side task seam.
 - Add global idle scheduling policy and per-harness compaction and cache-TTL settings.
+- Persist idle stretches atomically with truncation recovery and seven-day garbage collection;
+  add pure scheduling, ordered compaction guards, and active-child detection.
 ### Changed
 - Load Meridian's bundled no-op idle plugin only in interactive Claude primaries.
 
