@@ -250,8 +250,7 @@ class CodexIdleSensor:
         return pane_facts(capture or "")
 
     async def _erase_compact_text(self, pane: str) -> None:
-        if self._ctx.tui_alive():
-            await self._tmux.send_keys(pane, *("BSpace",) * len(_COMPACT_COMMAND))
+        await self._tmux.send_keys(pane, *("BSpace",) * len(_COMPACT_COMMAND))
 
     async def compact(self) -> CompactResult:
         pane = self._ctx.tmux_pane
@@ -275,6 +274,9 @@ class CodexIdleSensor:
         if verified is None or _prompt_text(verified) != _COMPACT_COMMAND:
             await self._erase_compact_text(pane)
             return CompactResult("vetoed", "typed-text-changed")
+        if not self._ctx.tui_alive():
+            await self._erase_compact_text(pane)
+            return CompactResult("vetoed", "tui-exited-before-submit")
         if not await self._tmux.send_keys(pane, "Enter"):
             await self._erase_compact_text(pane)
             return CompactResult("vetoed", "submit-failed")
@@ -284,11 +286,8 @@ class CodexIdleSensor:
             if not self._ctx.tui_alive():
                 return CompactResult("failed", "tui-exited")
             capture = await self._tmux.capture(pane)
-            if capture is not None:
-                if capture.count(_COMPACT_MARKER) > prior_markers:
-                    return CompactResult("ok")
-                if _prompt_is_empty(capture):
-                    return CompactResult("ok")
+            if capture is not None and capture.count(_COMPACT_MARKER) > prior_markers:
+                return CompactResult("ok")
             await self._sleep(self._compact_poll_seconds)
         return CompactResult("failed", "timeout")
 
