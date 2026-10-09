@@ -38,5 +38,7 @@ if [[ "$has_branch_refs" == true ]]; then
   # Unset git-exported GIT_DIR so preflight subprocesses (pytest) don't
   # leak the real repo into test fixtures that create isolated git repos.
   unset GIT_DIR
-  exec "$ROOT_DIR/scripts/preflight.sh" full
+  # Routine pushes use the prepared-environment fast gate. Run
+  # scripts/preflight.sh extended explicitly before release/full validation.
+  exec "$ROOT_DIR/scripts/preflight.sh" fast
 fi

@@ -1,81 +1,82 @@
-# Smoke: Models Cache Auto-Refresh
+# Models cache refresh (network opt-in)
 
-Verifies that `meridian spawn` triggers mars's automatic models-cache
-refresh when the cache is empty or stale, and that `MARS_OFFLINE=1`
-produces a clean error instead of a hang.
+This guide probes the real Mars catalog/cache boundary. It is **never** part of
+the default smoke or automated gate: `mars models refresh` performs a network
+fetch, and a subsequent live spawn may be billable. No mtime-only assertion is
+used; inspect the cache JSON's `fetched_at` and model payload.
 
-## Setup
+## Disposable prerequisites
 
-1. Pick a project with at least one mars-managed agent that uses an
-   alias you know maps to a provider covered by the models cache (e.g.
-   an Anthropic alias).
-2. `rm -f .mars/models-cache.json` to force a cold state.
-
-## Case 0: `meridian mars add` then immediate spawn
-
-Background: `mars add` runs sync internally, so a fresh `mars add`
-already triggers `ensure_fresh(Auto)` inside sync. This case verifies
-the end-to-end story from requirements §Success Criteria #2.
+Run from a fresh shell and provide real, explicit fixtures. Do not run these
+commands in an existing project:
 
 ```bash
-rm -f .mars/models-cache.json
-meridian mars add <pkg-shipping-new-aliases>
-meridian spawn -a <agent-using-new-alias> -p "echo hello"
+. tests/smoke/scripts/setup.sh --git
+uv run meridian mars init --root "$SCRATCH"
+
+# Optional live-spawn case only: a local/known package and profile in SCRATCH.
+# There are no placeholder aliases; stop if these are not set deliberately.
+export SMOKE_MARS_PACKAGE=/absolute/path/to/a/disposable/mars-package
+export SMOKE_MARS_AGENT=known-agent-in-that-package
 ```
 
-**Expected:** the `mars add` already populated the cache via sync, so
-the spawn resolves instantly without another refresh.
+`SMOKE_MARS_PACKAGE` must be a package you own or have permission to read, and
+`SMOKE_MARS_AGENT` must be installed by the add below. A network fetch is still
+required for the catalog refresh; approve it explicitly.
 
-## Case 1: Cold cache, spawn succeeds
+## Cold and stale cache refresh
 
 ```bash
-meridian spawn -a <alias-agent> -p "echo hello"
+rm -f "$SCRATCH/.mars/models-cache.json"
+uv run meridian mars models refresh --root "$SCRATCH" --json >"$SCRATCH/refresh.json"
+uv run python - "$SCRATCH/.mars/models-cache.json" <<'PY'
+import json, sys
+cache = json.load(open(sys.argv[1], encoding="utf-8"))
+assert cache.get("fetched_at"), cache
+assert isinstance(cache.get("models"), list), cache
+PY
+
+uv run python - "$SCRATCH/.mars/models-cache.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+data = json.load(open(path, encoding="utf-8"))
+data["fetched_at"] = 1
+data["models"] = data.get("models", [])
+json.dump(data, open(path, "w", encoding="utf-8"))
+PY
+before=$(uv run python -c 'import json,sys; print(json.load(open(sys.argv[1]))["fetched_at"])' "$SCRATCH/.mars/models-cache.json")
+uv run meridian mars models refresh --root "$SCRATCH" --json >/dev/null
+after=$(uv run python -c 'import json,sys; print(json.load(open(sys.argv[1]))["fetched_at"])' "$SCRATCH/.mars/models-cache.json")
+[[ "$after" != "$before" ]] || { echo "cache timestamp did not refresh" >&2; exit 1; }
 ```
 
-**Expected:** spawn succeeds. `.mars/models-cache.json` now exists with a
-recent `fetched_at`.
+The content/timestamp checks establish a completed refresh; filesystem mtime is
+not evidence of how many requests occurred.
 
-## Case 2: Stale cache, spawn still succeeds
+## Offline failure is bounded
 
 ```bash
-# Hand-edit .mars/models-cache.json and set fetched_at to an old value,
-# e.g. 1 (Unix epoch + 1 sec).
-meridian spawn -a <alias-agent> -p "echo hello"
+rm -f "$SCRATCH/.mars/models-cache.json"
+if MARS_OFFLINE=1 uv run meridian mars models refresh --root "$SCRATCH" --json; then
+  echo "expected offline refresh to fail" >&2
+  exit 1
+fi
 ```
 
-**Expected:** spawn succeeds, cache `fetched_at` is now recent.
+Check the error names offline mode and the refresh operation, and that the
+command returns promptly rather than hanging.
 
-## Case 3: Empty cache, offline, spawn fails cleanly
+## Optional local-package spawn
+
+Only after the refresh checks, and only with explicit credentials/model approval:
 
 ```bash
-rm -f .mars/models-cache.json
-MARS_OFFLINE=1 meridian spawn -a <alias-agent> -p "echo hello"
+uv run meridian mars add --root "$SCRATCH" "$SMOKE_MARS_PACKAGE"
+uv run meridian mars agents list --root "$SCRATCH" --json
+uv run meridian --directory "$SCRATCH" spawn -a "$SMOKE_MARS_AGENT" \
+  --dry-run -p 'cache probe (no harness launch)'
 ```
 
-**Expected:** spawn fails fast with a clear error message mentioning
-`mars models refresh` and `MARS_OFFLINE`. No 60-second hang.
-
-## Case 4: Fresh cache, offline, spawn succeeds
-
-```bash
-# Ensure cache is fresh first.
-mars models refresh
-MARS_OFFLINE=1 meridian spawn -a <alias-agent> -p "echo hello"
-```
-
-**Expected:** spawn succeeds using the cached catalog; no network
-traffic.
-
-## Case 5: Concurrent spawns
-
-```bash
-rm -f .mars/models-cache.json
-meridian spawn -a <alias-agent> -p "echo 1" &
-meridian spawn -a <alias-agent> -p "echo 2" &
-meridian spawn -a <alias-agent> -p "echo 3" &
-wait
-```
-
-**Expected:** all three spawns succeed. Only one network fetch observed
-(verify via `.mars/models-cache.json` mtime; check with
-`stat .mars/models-cache.json`; and/or watch network activity).
+`--dry-run` avoids launching the harness, but catalog resolution can still use
+network/cache state. Keep this case opt-in and clean the entire `SMOKE_ROOT`
+with `smoke_cleanup` afterward.

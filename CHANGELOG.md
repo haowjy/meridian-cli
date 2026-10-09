@@ -5,7 +5,17 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Stop fast-gate descendants on timeout, launch failure or leader exit.
+- Reserve fast-gate leader PIDs until process-group cleanup.
+- Ignore inherited pytest selection filters in full/extended gates.
+- Wait for complete JSONL fixture records in harness environment probes.
 - Reconcile Pi docs and smoke guides with current extension loading, native session boundaries, task ownership and causal result delivery; remove obsolete integration phases and status tables.
+
+### Changed
+- Simplify duplicated CLI and platform test coverage while retaining recovery and integrity contracts; remove obsolete Windows compatibility-test selector.
+- Make the routine preflight a risk-based, single-budget fast gate; retain the complete automated suite as an explicit extended check and move three heavy state modules under `tests/extended/`.
+- Add isolated CLI smoke and explicit regression scripts; retire obsolete synthetic smoke guides.
+- Trim fork and dry-run manual matrices; keep real Mars, bootstrap ordering and native-session checks in private fixtures.
 
 ## [0.9.0] - 2026-10-02
 
