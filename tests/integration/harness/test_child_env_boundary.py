@@ -192,6 +192,7 @@ async def test_pi_main_process_receives_role_gated_bound_runtime_environment(
         permission_config=PermissionConfig(),
         runtime_env_overrides={
             "MERIDIAN_PI_BINARY": str(fake_pi),
+            "MERIDIAN_SESSION_ROLE": "primary" if role == "primary" else "spawn",
             "_MERIDIAN_PI_STATE_DIR": str(tmp_path / "runtime"),
         },
     )
@@ -244,7 +245,8 @@ async def test_pi_main_process_receives_role_gated_bound_runtime_environment(
         if "--version" not in record["argv"] and "--help" not in record["argv"]  # type: ignore[operator]
     )
     main_env = cast("dict[str, str]", main_record["env"])
-    assert main_env["_MERIDIAN_PI_SESSION_ROLE"] == role
+    expected_session_role = "primary" if role == "primary" else "spawn"
+    assert main_env["MERIDIAN_SESSION_ROLE"] == expected_session_role
     assert main_env["_MERIDIAN_PI_STATE_DIR"] == str(tmp_path / "runtime")
     assert main_env.get("_MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS") == expected_timeout
     assert main_env.get("_MERIDIAN_PI_TASK_PING_INTERVAL_MS") == expected_interval
