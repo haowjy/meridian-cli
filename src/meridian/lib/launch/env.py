@@ -183,11 +183,9 @@ def build_harness_child_env(
         env_overrides=merged_env,
         blocked=BLOCKED_CHILD_ENV_VARS | adapter_blocked | RUNTIME_OVERRIDE_ENV_VARS,
     )
-    adapter.apply_env_defaults(
-        child_env,
-        run=run_params,
-        config=permission_config,
-    )
+    for key, value in adapter.env_defaults(permission_config, run=run_params).items():
+        if not child_env.get(key, "").strip():
+            child_env[key] = value
     return child_env
 
 

@@ -41,11 +41,10 @@ instruction and user-turn channels. Declare every `SpawnParams` field in
 `consumed_fields` or `explicitly_ignored_fields`; import-time accounting rejects
 uncovered fields.
 
-Use `apply_env_defaults()` for launch-aware defaults that explicit child
-environment may override; its base implementation fills missing or blank values
-from `env_defaults()`. Reserve `env_overrides()` for forced adapter policy.
-Agent/auth directories and native transcript stores need explicit contracts,
-not blanket config isolation.
+Use `env_defaults()` for launch-aware values that explicit child environment may
+override, and reserve `env_overrides()` for forced adapter policy; agent/auth
+directories and native transcript stores need explicit contracts, not blanket
+config isolation.
 
 ### Native identity
 

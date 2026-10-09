@@ -163,6 +163,7 @@ def assert_prebound(root: Path, chat_id: str) -> tuple[str, Path]:
     [
         (True, None, "long"),
         (True, "short", "short"),
+        (True, "", "long"),
         (False, None, None),
     ],
 )

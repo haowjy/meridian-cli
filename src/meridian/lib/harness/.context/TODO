@@ -1,8 +1,10 @@
 # Harness follow-ups
 
-- `pi_idle.py`: Normalize `openai-*` provider identifiers to `openai` before
-  detecting cache retention, so Pi's `openai-codex` provider can schedule the
-  warning and compaction stages instead of falling back to push-only.
+- `pi_idle.py`: Keep `openai-codex` push-only. Pi 1.1.0's
+  `openai-codex-responses.js` sends `prompt_cache_key` but does not apply
+  `PI_CACHE_RETENTION`, so scheduling warning and compaction would target a cold
+  cache. Revisit when Pi applies `PI_CACHE_RETENTION` in its `openai-codex`
+  adapter; check `openai-codex-responses.js` in the installed package.
 - `opencode_idle.py`: Clear `_compacting` on the first `session.idle` after the
   compaction part has been seen, even if `POST /summarize` has not returned.
   On 1.18.32 the response beats `session.idle` by only 2–4 ms; if the order
