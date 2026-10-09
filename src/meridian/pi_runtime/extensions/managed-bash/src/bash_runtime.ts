@@ -27,7 +27,6 @@ export type BashManageParams = {
   action: "list" | "output" | "kill" | "wait" | "detach";
   bash_id?: string;
   include_completed?: boolean;
-  timeout_min?: number;
 };
 
 export type UserBashExecOptions = {
@@ -110,7 +109,9 @@ type ExecResult = {
 };
 
 const DEFAULT_TIMEOUT_MIN = 55;
-const DEFAULT_WAIT_TIMEOUT_MIN = 10;
+// Wait as long as a foreground command may run; a short wait lets the model fetch
+// results around consumption, so the idle watcher announces them again.
+const WAIT_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN;
 const MAX_TIMEOUT_MIN = 59;
 const LOG_TAIL_BYTES = 4 * 1024;
 const DEFAULT_TASK_PING_INTERVAL_MS = 55 * 60_000;
@@ -343,7 +344,7 @@ export class BashRuntime {
       case "kill":
         return await this.killBash(id, "killed");
       case "wait": {
-        const result = await this.waitBash(record, normalizeTimeoutMin(params.timeout_min, DEFAULT_WAIT_TIMEOUT_MIN));
+        const result = await this.waitBash(record, WAIT_TIMEOUT_MIN);
         if (isTerminalBashStatus(result.status)) {
           await this.persistWaitConsumption(record);
         }
@@ -506,7 +507,7 @@ export class BashRuntime {
       return {
         bash_id: record.bash_id,
         status: "running",
-        message: `Still running after timeout_min=${timeoutMin}. Use bash_manage(action='wait') again or bash_manage(action='kill') to terminate.`,
+        message: `Still running after ${timeoutMin} minutes. Use bash_manage(action='wait') again or bash_manage(action='kill') to terminate.`,
       };
     }
     return {
@@ -579,7 +580,7 @@ export class BashRuntime {
         return { bash_id: spawnId, killed: result.exitCode === 0, message: result.stdout || result.stderr };
       }
       case "wait":
-        return waitForSpawn(spawnId, normalizeTimeoutMin(params.timeout_min, DEFAULT_WAIT_TIMEOUT_MIN));
+        return waitForSpawn(spawnId, WAIT_TIMEOUT_MIN);
       case "detach":
         return { bash_id: spawnId, detached: false, message: "detach only applies to b-* bash records" };
       default:
