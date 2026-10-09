@@ -261,7 +261,6 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
       ]),
       bash_id: Type.Optional(Type.String()),
       include_completed: Type.Optional(Type.Boolean()),
-      timeout_min: Type.Optional(Type.Number({ minimum: 1, maximum: 59 })),
     }),
     async execute(_toolCallId, params: BashManageParams) {
       const result = await runtime.manage(params);

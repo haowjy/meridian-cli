@@ -152,9 +152,8 @@ describe("managed bash and spawn-watch completion notifications", () => {
       const wait = tools.get("bash_manage")!.execute("call", {
         action: "wait",
         bash_id: bashId,
-        timeout_min: 1,
       });
-      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.advanceTimersByTimeAsync(55 * 60_000);
       expect(((await wait).details as { status: string }).status).toBe("running");
       const records = JSON.parse(await readFile(recordsPath, "utf-8")) as BashRecordsFile;
       expect(records.records[bashId]?.notification_consumed_at_ms).toBeUndefined();
