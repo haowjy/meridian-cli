@@ -168,7 +168,7 @@ describe("managed bash and spawn-watch completion notifications", () => {
     }
   });
 
-  it("leaves a timed-out running wait eligible for later completion notification", async () => {
+  it("leaves a timed-out or interrupted wait eligible for later completion notification", async () => {
     const runtimeRoot = await mkdtemp(path.join(tmpdir(), "pi-bash-wait-timeout-"));
     setEnv("_MERIDIAN_PI_STATE_DIR", runtimeRoot);
     setEnv("MERIDIAN_SPAWN_ID", "p-notification-timeout");
@@ -198,6 +198,16 @@ describe("managed bash and spawn-watch completion notifications", () => {
       const records = JSON.parse(await readFile(recordsPath, "utf-8")) as BashRecordsFile;
       expect(records.records[bashId]?.notification_consumed_at_ms).toBeUndefined();
       vi.useRealTimers();
+
+      // Esc must not leave the turn blocked for the full wait, nor consume the result.
+      const abort = new AbortController();
+      const interrupted = tools.get("bash_manage")!.execute("call", { action: "wait", bash_id: bashId }, abort.signal);
+      setTimeout(() => abort.abort(), 50);
+      const interruptedDetails = (await interrupted).details as { status: string; message: string };
+      expect(interruptedDetails.status).toBe("running");
+      expect(interruptedDetails.message).toContain("interrupted");
+      const afterAbort = JSON.parse(await readFile(recordsPath, "utf-8")) as BashRecordsFile;
+      expect(afterAbort.records[bashId]?.notification_consumed_at_ms).toBeUndefined();
 
       const killed = await tools.get("bash_manage")!.execute("call", { action: "kill", bash_id: bashId });
       expect((killed.details as { killed: boolean }).killed).toBe(true);

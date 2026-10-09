@@ -23,14 +23,25 @@ const CommandError = Type.Object({ error: Type.String() });
 const FAILED = new Set(["failed", "cancelled", "timed_out"]);
 const ACTIVE = new Set(["queued", "running", "finalizing"]);
 
-export async function waitForSpawn(spawnId: string, timeoutMin: number): Promise<BashWaitResult> {
+// The CLI yields its checkpoint itself; this kill deadline only bounds a hung process,
+// so it leaves room for CLI startup and the final row reads.
+const CHECKPOINT_KILL_SLACK_SECS = 60;
+
+export async function waitForSpawn(spawnId: string, timeoutMin: number, signal?: AbortSignal): Promise<BashWaitResult> {
   const seconds = timeoutMin * 60;
   // A spent wait budget is a clean checkpoint, not an unstructured CLI timeout.
   const result = await runMeridianCommand(
     ["--format", "json", "spawn", "wait", spawnId, "--yield-after-secs", String(seconds), "--full", "--quiet"],
-    (seconds + 5) * 1000,
+    (seconds + CHECKPOINT_KILL_SLACK_SECS) * 1000,
+    signal,
   );
+  if (signal?.aborted) return interruptedWait(spawnId);
   return parseSpawnWaitResult(spawnId, result);
+}
+
+/** An interrupted wait delivered nothing, so the result stays owed to the watcher. */
+export function interruptedWait(id: string): BashWaitResult {
+  return { bash_id: id, status: "running", message: `Wait for ${id} interrupted; it is still running and a completion notice will follow.` };
 }
 
 function parseSpawnWaitResult(spawnId: string, result: CommandResult): BashWaitResult {

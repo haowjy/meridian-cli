@@ -11,6 +11,7 @@ export type CommandResult = {
 export async function runMeridianCommand(
   args: string[],
   timeoutMs = 8_000,
+  signal?: AbortSignal,
 ): Promise<CommandResult> {
   return await new Promise<CommandResult>((resolve) => {
     let stdout = "";
@@ -63,5 +64,14 @@ export async function runMeridianCommand(
       clearTimeout(timer);
       finalize();
     });
+    const abort = (): void => {
+      errorMessage = `meridian ${args.join(" ")} aborted`;
+      clearTimeout(timer);
+      child.kill("SIGTERM");
+      finalize();
+    };
+    if (signal?.aborted) abort();
+    else signal?.addEventListener("abort", abort, { once: true });
+    child.once("close", () => signal?.removeEventListener("abort", abort));
   });
 }

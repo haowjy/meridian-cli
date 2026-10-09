@@ -275,8 +275,8 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
       bash_id: Type.Optional(Type.String()),
       include_completed: Type.Optional(Type.Boolean()),
     }),
-    async execute(_toolCallId, params: BashManageParams) {
-      const result = await runtime.manage(params);
+    async execute(_toolCallId, params: BashManageParams, signal) {
+      const result = await runtime.manage(params, signal);
       const formatted = formatToolResult(result);
       return {
         content: [{ type: "text", text: formatted.text }],
