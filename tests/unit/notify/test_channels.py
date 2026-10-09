@@ -1,3 +1,4 @@
+from email.header import decode_header, make_header
 from urllib.request import Request
 
 import pytest
@@ -34,7 +35,7 @@ def test_ntfy_builds_expected_post_request() -> None:
     channel = NtfyChannel(transport=transport)
     result = channel.send(
         Notice(
-            title="[a2] meridian-cli · idle-cache-notify",
+            title="[a2] meridian-cli · idle → cache-notify",
             body="f1a smoke",
             priority=4,
             email=True,
@@ -50,7 +51,11 @@ def test_ntfy_builds_expected_post_request() -> None:
     assert request.full_url == "https://push.example/root/topic%20with%20space"
     assert request.method == "POST"
     assert request.data == b"f1a smoke"
-    assert request.get_header("Title") == "[a2] meridian-cli · idle-cache-notify"
+    title = request.get_header("Title")
+    assert title is not None
+    assert title.isascii()
+    assert title.lower().startswith("=?utf-8?b?")
+    assert str(make_header(decode_header(title))) == "[a2] meridian-cli · idle → cache-notify"
     assert request.get_header("Priority") == "4"
     assert request.get_header("Tags") == "manual"
 

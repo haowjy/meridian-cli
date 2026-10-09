@@ -94,6 +94,12 @@ class SMTPChannel:
     port: int | None = None
 
     def send(self, notice: Notice, cfg: NotifyConfig) -> SendResult:
+        if not (cfg.smtp_user or "").strip() or not (cfg.email_to or "").strip():
+            return SendResult(
+                channel=self.name,
+                status="none",
+                warning=f"smtp_user or email_to is unset; {self.name} delivery disabled",
+            )
         try:
             user = _required(cfg.smtp_user, "smtp_user")
             recipient = _required(cfg.email_to, "email_to")

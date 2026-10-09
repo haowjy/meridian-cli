@@ -79,6 +79,8 @@ def decide(
     scheduled_at = _scheduled_at(state, stage)
     if scheduled_at is None:
         return Decision.skip("not-scheduled")
+    if now_ms < scheduled_at - 1000:
+        return Decision.skip("early-fire")
     if now_ms - scheduled_at > cfg.late_fire_tolerance_seconds * 1000:
         return Decision.skip("late-fire")
 

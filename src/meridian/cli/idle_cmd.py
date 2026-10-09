@@ -72,18 +72,17 @@ def _bundle(harness: str) -> HarnessBundle[Any]:
     return get_harness_bundle(HarnessId(harness))
 
 
-def _service_env() -> dict[str, str]:
-    """Treat an unset role as the explicit outside-Meridian mod opt-in."""
-
-    env = dict(os.environ)
-    env.setdefault("MERIDIAN_SESSION_ROLE", "primary")
-    return env
-
-
-def _service(*, env: Mapping[str, str] | None = None) -> IdleService:
+def _service(
+    *,
+    env: Mapping[str, str] | None = None,
+    interactive: bool = False,
+) -> IdleService:
     from meridian.lib.idle.service import IdleService
 
-    return IdleService(env=_service_env() if env is None else env)
+    return IdleService(
+        env=os.environ if env is None else env,
+        interactive=interactive,
+    )
 
 
 def _configured_harness() -> str:
@@ -100,19 +99,15 @@ def _required_harness(value: str | None) -> str:
 
 
 def _config_payload(*, interactive: bool) -> dict[str, object]:
-    from meridian.lib.idle.service import IdleService
-
     harness = _configured_harness()
-    result = IdleService(env=os.environ).config_for(harness)
+    result = _service(interactive=interactive).config_for(harness)
     role = os.environ.get("MERIDIAN_SESSION_ROLE")
 
-    reason: str | None = None
-    if role not in {None, "primary"}:
-        reason = "role"
-    elif not interactive:
+    reason = result.reason
+    if result.reason == "not-primary" and role is None and not interactive:
         reason = "interactive"
-    elif not result.policy.enabled:
-        reason = "idle-disabled"
+    elif result.reason == "not-primary":
+        reason = "role"
 
     policy = result.policy
     payload: dict[str, object] = {
@@ -185,9 +180,10 @@ def _arm_payload(
     cwd: Path | None,
     implies_return: bool,
     turn_id: str | None,
+    interactive: bool,
 ) -> dict[str, object]:
     normalized = _required_harness(harness)
-    service = _service()
+    service = _service(interactive=interactive)
     detected_ttl = _detected_ttl(
         service=service,
         harness=normalized,
@@ -242,8 +238,15 @@ def cmd_idle_arm(
         str | None,
         Parameter(name="--turn-id", help="Turn id used for deduplication."),
     ] = None,
+    interactive: Annotated[
+        bool,
+        Parameter(
+            name="--interactive",
+            help="Required on every adapter call from a TUI outside Meridian.",
+        ),
+    ] = False,
 ) -> None:
-    """Open or re-anchor one idle stretch."""
+    """Open or re-anchor; same stretch and anchor means keep your timers."""
 
     _json_operation(
         lambda: _arm_payload(
@@ -254,19 +257,29 @@ def cmd_idle_arm(
             cwd=cwd,
             implies_return=implies_return,
             turn_id=turn_id,
+            interactive=interactive,
         )
     )
 
 
-def _return_payload(*, harness: str | None, session: str, user_prompt: bool) -> dict[str, object]:
+def _return_payload(
+    *,
+    harness: str | None,
+    session: str,
+    user_prompt: bool,
+    interactive: bool,
+) -> dict[str, object]:
     if not user_prompt:
         raise ValueError("--user-prompt is required")
-    result = _service().return_(
+    result = _service(interactive=interactive).return_(
         harness=_required_harness(harness),
         session=session,
         user_prompt=True,
     )
-    return {"stretch_closed": result.stretch_closed is not None}
+    return {
+        "stretch_closed": result.stretch_closed is not None,
+        "was_open": result.was_open,
+    }
 
 
 @idle_app.command(name="return")
@@ -281,6 +294,13 @@ def cmd_idle_return(
         bool,
         Parameter(name="--user-prompt", help="Confirm a positively identified user prompt."),
     ] = False,
+    interactive: Annotated[
+        bool,
+        Parameter(
+            name="--interactive",
+            help="Required on every adapter call from a TUI outside Meridian.",
+        ),
+    ] = False,
 ) -> None:
     """Close an idle stretch after a positively identified user prompt."""
 
@@ -289,6 +309,7 @@ def cmd_idle_return(
             harness=harness,
             session=session,
             user_prompt=user_prompt,
+            interactive=interactive,
         )
     )
 
@@ -312,6 +333,7 @@ def _fire_payload(
     agents_running: int,
     context_tokens: int | None,
     harness_autocompact_off: bool,
+    interactive: bool,
 ) -> dict[str, object]:
     from meridian.lib.harness.idle_types import IdleFacts
 
@@ -340,7 +362,7 @@ def _fire_payload(
         context_tokens=context_tokens,
         harness_autocompact_off=harness_autocompact_off or env_autocompact_off,
     )
-    result = _service().fire(
+    result = _service(interactive=interactive).fire(
         cast("Literal['push', 'warn', 'compact']", stage),
         harness=normalized,
         session=session,
@@ -385,6 +407,13 @@ def cmd_idle_fire(
             help="The harness's own automatic compaction is disabled.",
         ),
     ] = False,
+    interactive: Annotated[
+        bool,
+        Parameter(
+            name="--interactive",
+            help="Required on every adapter call from a TUI outside Meridian.",
+        ),
+    ] = False,
 ) -> None:
     """Evaluate guards and claim one due stage."""
 
@@ -400,6 +429,7 @@ def cmd_idle_fire(
             agents_running=agents_running,
             context_tokens=context_tokens,
             harness_autocompact_off=harness_autocompact_off,
+            interactive=interactive,
         )
     )
 
@@ -412,6 +442,7 @@ def _done_payload(
     stretch: int,
     result: str,
     reason: str | None,
+    interactive: bool,
 ) -> dict[str, object]:
     if stage != "compact":
         raise ValueError(f"unknown idle completion stage: {stage}")
@@ -419,7 +450,7 @@ def _done_payload(
         raise ValueError("--stretch must be greater than zero")
     if result not in {"ok", "failed", "vetoed"}:
         raise ValueError("--result must be one of: ok, failed, vetoed")
-    _service().done(
+    _service(interactive=interactive).done(
         "compact",
         harness=_required_harness(harness),
         session=session,
@@ -448,6 +479,13 @@ def cmd_idle_done(
         str | None,
         Parameter(name="--reason", help="Optional failure or veto detail."),
     ] = None,
+    interactive: Annotated[
+        bool,
+        Parameter(
+            name="--interactive",
+            help="Required on every adapter call from a TUI outside Meridian.",
+        ),
+    ] = False,
 ) -> None:
     """Record the result of a compaction attempt."""
 
@@ -459,11 +497,17 @@ def cmd_idle_done(
             stretch=stretch,
             result=result,
             reason=reason,
+            interactive=interactive,
         )
     )
 
 
-def _event_payload(*, harness: str | None, payload: str | None) -> dict[str, object]:
+def _event_payload(
+    *,
+    harness: str | None,
+    payload: str | None,
+    interactive: bool,
+) -> dict[str, object]:
     normalized = _required_harness(harness)
     raw_payload = payload if payload is not None else sys.stdin.read()
     if not raw_payload.strip():
@@ -475,7 +519,7 @@ def _event_payload(*, harness: str | None, payload: str | None) -> dict[str, obj
         raise ValueError(f"harness {normalized} does not accept idle events")
     event = parser(raw_payload)
     if event is not None:
-        _service().event(event, harness=normalized)
+        _service(interactive=interactive).event(event, harness=normalized)
     return {}
 
 
@@ -490,14 +534,27 @@ def cmd_idle_event(
         str | None,
         Parameter(name="--harness", help="Harness id."),
     ] = None,
+    interactive: Annotated[
+        bool,
+        Parameter(
+            name="--interactive",
+            help="Required on every adapter call from a TUI outside Meridian.",
+        ),
+    ] = False,
 ) -> None:
     """Parse and apply one harness-native idle event."""
 
-    _json_operation(lambda: _event_payload(harness=harness, payload=payload))
+    _json_operation(
+        lambda: _event_payload(
+            harness=harness,
+            payload=payload,
+            interactive=interactive,
+        )
+    )
 
 
-def _status_rows() -> list[dict[str, object]]:
-    states = _service().status()
+def _status_rows(*, interactive: bool = False) -> list[dict[str, object]]:
+    states = _service(interactive=interactive).status()
     return [cast("dict[str, object]", state.model_dump(mode="json")) for state in states]
 
 
@@ -527,11 +584,18 @@ def cmd_idle_status(
         bool,
         Parameter(name="--json", help="Print open stretches as JSON."),
     ] = False,
+    interactive: Annotated[
+        bool,
+        Parameter(
+            name="--interactive",
+            help="Required on every adapter call from a TUI outside Meridian.",
+        ),
+    ] = False,
 ) -> None:
     """List open stretches with their stored schedules."""
 
     try:
-        rows = _status_rows()
+        rows = _status_rows(interactive=interactive)
         from meridian.cli.main import get_global_options
 
         if json_mode or get_global_options().output.format == "json":

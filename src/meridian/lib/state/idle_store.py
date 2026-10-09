@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from collections.abc import Callable
 from contextlib import suppress
@@ -18,6 +19,7 @@ from meridian.lib.state.user_paths import get_user_home
 Stage = Literal["push", "warn", "compact"]
 CompactResultValue = Literal["ok", "failed", "vetoed"]
 _RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+_GC_INTERVAL_MS = 60 * 60 * 1000
 T = TypeVar("T")
 
 
@@ -118,6 +120,10 @@ class IdleStore:
     def _lock_path(self, path: Path) -> Path:
         return self.root / ".locks" / f"{path.name}.lock"
 
+    @property
+    def _gc_marker(self) -> Path:
+        return self.root / ".gc"
+
     def read(self, harness: str, session: str) -> IdleState | None:
         return self._read_path(self.path_for(harness, session))
 
@@ -176,9 +182,23 @@ class IdleStore:
 
         if not self.root.is_dir():
             return
-        cutoff = self._now_ms() - _RETENTION_MS
+        now_ms = self._now_ms()
+        with lock_file(self._lock_path(self._gc_marker)):
+            try:
+                last_gc_ms = int(self._gc_marker.stat().st_mtime * 1000)
+            except OSError:
+                last_gc_ms = None
+            if last_gc_ms is not None and now_ms - last_gc_ms < _GC_INTERVAL_MS:
+                return
+            self._gc_marker.touch()
+            marker_ns = now_ms * 1_000_000
+            self._gc_marker.chmod(0o600)
+            os.utime(self._gc_marker, ns=(marker_ns, marker_ns))
+
+        cutoff = now_ms - _RETENTION_MS
         for path in self.root.glob("*.json"):
-            with lock_file(self._lock_path(path)):
+            lock_path = self._lock_path(path)
+            with lock_file(lock_path):
                 state = self._read_path(path)
                 if state is not None:
                     stale = state.updated_at_ms < cutoff
@@ -190,6 +210,8 @@ class IdleStore:
                 if stale:
                     with suppress(FileNotFoundError):
                         path.unlink()
+                    with suppress(FileNotFoundError):
+                        lock_path.unlink()
 
 
 __all__ = [

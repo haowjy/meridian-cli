@@ -27,6 +27,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Load Meridian's bundled no-op idle plugin only in interactive Claude primaries.
 
 ### Fixed
+- Keep idle compaction completion alive across user returns, contain and offload
+  sidecar policy calls, honor outside-Meridian interactive sessions, and close
+  idle notification, timer, completion-result, and state-GC edge cases.
 - Stop primary idle sensors before connection/TUI teardown, carry adapter idle
   metadata into persisted state, rate-limit sensor diagnostics, and keep generated
   Claude type files out of distributions.

@@ -9,6 +9,7 @@ from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.harness.idle_types import IdleEvent, IdleFacts
 from meridian.lib.idle.service import (
     ArmResult,
+    ConfigResult,
     IdleService,
     NoticeSpec,
     NotifyReport,
@@ -84,6 +85,7 @@ def service(
     sender: Sender | None = None,
     config: MeridianConfig | None = None,
     env: dict[str, str] | None = None,
+    interactive: bool = False,
 ) -> tuple[IdleService, Clock, MemoryStore, Sender]:
     resolved_clock = clock or Clock()
     resolved_store = store or MemoryStore()
@@ -97,11 +99,56 @@ def service(
             now_ms=resolved_clock.now_ms,
             notify_sender=resolved_sender,
             spawn_reader=lambda: (),
+            interactive=interactive,
         ),
         resolved_clock,
         resolved_store,
         resolved_sender,
     )
+
+
+def test_interactive_role_resolution_only_promotes_an_unset_role() -> None:
+    def config(*, env: dict[str, str], interactive: bool) -> ConfigResult:
+        return IdleService(
+            store=MemoryStore(),
+            config=MeridianConfig(),
+            env=env,
+            notify_sender=Sender(),
+            spawn_reader=lambda: (),
+            interactive=interactive,
+        ).config_for("example")
+
+    assert config(env={}, interactive=True).enabled is True
+    assert config(env={}, interactive=False).reason == "not-primary"
+    assert config(env={"MERIDIAN_SESSION_ROLE": "spawn"}, interactive=True).reason == (
+        "not-primary"
+    )
+
+
+def test_interactive_effective_role_reaches_fire_guard() -> None:
+    clock = Clock()
+    idle = IdleService(
+        store=MemoryStore(),
+        config=MeridianConfig(),
+        env={},
+        now_ms=clock.now_ms,
+        notify_sender=Sender(),
+        spawn_reader=lambda: (),
+        interactive=True,
+    )
+    armed = idle.arm(harness="example", session="s1")
+    clock.value = armed.push_at or 0
+
+    result = idle.fire(
+        "push",
+        harness="example",
+        session="s1",
+        stretch=1,
+        anchor=1,
+    )
+
+    assert armed.stretch == 1
+    assert result.decision == "act"
 
 
 def test_effective_env_level_beats_more_specific_file_in_both_directions() -> None:
@@ -276,6 +323,34 @@ def test_compacted_stretch_implies_return_opens_new_stretch_after_window() -> No
     assert store.read("example", "s1").done == {}  # type: ignore[union-attr]
 
 
+def test_implies_return_opens_new_stretch_inside_claimed_window() -> None:
+    idle, clock, store, _ = service()
+    armed = idle.arm(harness="example", session="s1", ttl_seconds=3600)
+    clock.value = armed.compact_at or 0
+    idle.fire(
+        "compact",
+        harness="example",
+        session="s1",
+        stretch=1,
+        anchor=1,
+        facts=SAFE_FACTS,
+    )
+
+    opened = idle.arm(
+        harness="example",
+        session="s1",
+        ttl_seconds=3600,
+        implies_return=True,
+        turn_id="user-turn-2",
+    )
+
+    assert (opened.stretch, opened.anchor, opened.reason) == (2, 1, None)
+    current = store.read("example", "s1")
+    assert current is not None
+    assert current.done == {}
+    assert current.compact_window_until_ms is None
+
+
 def test_skipped_compaction_is_final_for_the_stretch() -> None:
     idle, clock, store, _ = service()
     armed = idle.arm(harness="example", session="s1", ttl_seconds=3600)
@@ -322,6 +397,30 @@ def test_done_failed_and_vetoed_leave_compaction_done_but_stretch_open() -> None
         assert current is not None
         assert current.stretch_open is True
         assert current.done["compact"] == result
+        assert current.expect_compaction_turn is False
+        assert current.compact_window_until_ms is None
+
+        next_arm = idle.arm(harness="example", session=result, ttl_seconds=3600)
+        assert (next_arm.stretch, next_arm.anchor, next_arm.reason) == (1, 2, None)
+
+
+def test_absorbed_arm_omits_deadlines_so_adapters_keep_existing_timers() -> None:
+    idle, clock, _, _ = service()
+    armed = idle.arm(harness="example", session="s1", ttl_seconds=3600)
+    clock.value = armed.compact_at or 0
+    idle.fire(
+        "compact",
+        harness="example",
+        session="s1",
+        stretch=1,
+        anchor=1,
+        facts=SAFE_FACTS,
+    )
+
+    absorbed = idle.arm(harness="example", session="s1", ttl_seconds=3600)
+
+    assert absorbed.reason == "compact-window"
+    assert (absorbed.push_at, absorbed.warn_at, absorbed.compact_at) == (None, None, None)
 
 
 def test_return_always_closes_during_compaction_and_late_done_records_same_stretch() -> None:

@@ -7,14 +7,13 @@ import time
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
-from importlib import import_module
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
 from pydantic import BaseModel
 
 from meridian.lib.config.schema import parse_env_scalar
-from meridian.lib.config.settings import MeridianConfig, load_config
+from meridian.lib.config.settings import MeridianConfig, NotifyConfig, load_config
 from meridian.lib.harness.idle_types import IdleEvent, IdleFacts
 from meridian.lib.idle.children import (
     SpawnStoreReader,
@@ -56,30 +55,17 @@ class NoticeSpec:
 class NotifySender(Protocol):
     """Notification seam; production imports lib/notify only when called."""
 
-    def send(self, notice: NoticeSpec, cfg: object) -> NotifyReport: ...
-
-
-class _SessionLabel(Protocol):
-    def titled(self, title: str | None = None) -> str: ...
+    def send(self, notice: NoticeSpec, cfg: NotifyConfig) -> NotifyReport: ...
 
 
 class _LazyNotifySender:
-    def send(self, notice: NoticeSpec, cfg: object) -> NotifyReport:
-        notice_type = cast(
-            "Callable[..., object]",
-            vars(import_module("meridian.lib.notify.notice"))["Notice"],
-        )
-        send = cast(
-            "Callable[[object, object], NotifyReport]",
-            vars(import_module("meridian.lib.notify.service"))["send"],
-        )
-        build_label = cast(
-            "Callable[[], _SessionLabel]",
-            vars(import_module("meridian.lib.notify.label"))["build_session_label"],
-        )
+    def send(self, notice: NoticeSpec, cfg: NotifyConfig) -> NotifyReport:
+        from meridian.lib.notify import Notice, send
+        from meridian.lib.notify.label import build_session_label
+
         return send(
-            notice_type(
-                title=build_label().titled(notice.title or None),
+            Notice(
+                title=build_session_label().titled(notice.title or None),
                 body=notice.body,
                 priority=notice.priority,
                 email=notice.email,
@@ -122,6 +108,7 @@ class ArmResult:
 @dataclass(frozen=True)
 class ReturnResult:
     stretch_closed: int | None
+    was_open: bool
 
 
 @dataclass(frozen=True)
@@ -237,9 +224,9 @@ def _result_for_state(state: IdleState, *, reason: str | None = None) -> ArmResu
     return ArmResult(
         stretch=state.stretch,
         anchor=state.anchor,
-        push_at=None if "push" in done else state.schedule.push_at,
-        warn_at=None if "warn" in done else state.schedule.warn_at,
-        compact_at=None if "compact" in done else state.schedule.compact_at,
+        push_at=None if reason is not None or "push" in done else state.schedule.push_at,
+        warn_at=None if reason is not None or "warn" in done else state.schedule.warn_at,
+        compact_at=None if reason is not None or "compact" in done else state.schedule.compact_at,
         reason=reason,
     )
 
@@ -265,8 +252,11 @@ class IdleService:
         notify_sender: NotifySender | None = None,
         spawn_reader: SpawnStoreReader | None = None,
         project_root: Path | None = None,
+        interactive: bool = False,
     ) -> None:
         self.env = dict(os.environ if env is None else env)
+        configured_role = self.env.get("MERIDIAN_SESSION_ROLE")
+        self.role = "primary" if configured_role is None and interactive else configured_role
         root = project_root or Path(self.env.get("MERIDIAN_PROJECT_DIR", Path.cwd()))
         self.config = config if config is not None else load_config(root, resolve_models=False)
         self._now_ms = now_ms
@@ -276,8 +266,7 @@ class IdleService:
 
     def config_for(self, harness: str) -> ConfigResult:
         policy = resolve_policy(harness, self.config, self.env)
-        role = self.env.get("MERIDIAN_SESSION_ROLE")
-        if role != "primary":
+        if self.role != "primary":
             return ConfigResult(enabled=False, reason="not-primary", policy=policy)
         if not policy.enabled:
             return ConfigResult(enabled=False, reason="idle-disabled", policy=policy)
@@ -328,7 +317,7 @@ class IdleService:
                     reason="duplicate-turn",
                 )
 
-            if current is not None:
+            if current is not None and not implies_return:
                 window_active = (
                     current.compact_window_until_ms is not None
                     and now_ms <= current.compact_window_until_ms
@@ -336,9 +325,7 @@ class IdleService:
                 if window_active:
                     next_state = current.model_copy(
                         update={
-                            "expect_compaction_turn": False
-                            if not implies_return
-                            else current.expect_compaction_turn,
+                            "expect_compaction_turn": False,
                             "last_input_count": (
                                 input_count
                                 if input_count is not None
@@ -347,7 +334,7 @@ class IdleService:
                         }
                     )
                     return next_state, _result_for_state(next_state, reason="compact-window")
-                if not implies_return and current.expect_compaction_turn:
+                if current.expect_compaction_turn:
                     next_state = current.model_copy(
                         update={
                             "expect_compaction_turn": False,
@@ -362,7 +349,7 @@ class IdleService:
                         next_state,
                         reason="expected-compaction-turn",
                     )
-                if not implies_return and current.done.get("compact") == "ok":
+                if current.done.get("compact") == "ok":
                     next_state = current.model_copy(
                         update={
                             "last_input_count": (
@@ -428,13 +415,13 @@ class IdleService:
         user_prompt: bool,
     ) -> ReturnResult:
         if not user_prompt:
-            return ReturnResult(stretch_closed=None)
+            return ReturnResult(stretch_closed=None, was_open=False)
 
         def transition(current: IdleState | None) -> tuple[IdleState | None, ReturnResult]:
             if current is None:
-                return None, ReturnResult(stretch_closed=None)
+                return None, ReturnResult(stretch_closed=None, was_open=False)
             if not current.stretch_open:
-                return current, ReturnResult(stretch_closed=current.stretch)
+                return current, ReturnResult(stretch_closed=current.stretch, was_open=False)
             next_state = current.model_copy(
                 update={
                     "stretch_open": False,
@@ -442,7 +429,7 @@ class IdleService:
                     "expect_compaction_turn": False,
                 }
             )
-            return next_state, ReturnResult(stretch_closed=current.stretch)
+            return next_state, ReturnResult(stretch_closed=current.stretch, was_open=True)
 
         return self.store.mutate(harness, session, transition)
 
@@ -476,7 +463,7 @@ class IdleService:
         guard_facts = GuardFacts(
             stretch=stretch,
             anchor=anchor,
-            role=self.env.get("MERIDIAN_SESSION_ROLE"),
+            role=self.role,
             harness_enabled=policy.enabled,
             draft=observed.draft,
             busy=observed.busy,
@@ -560,8 +547,8 @@ class IdleService:
         if not ok:
             self._mark_notification_failed(harness, session, stretch, stage)
 
-    def _notify_config(self) -> object:
-        return getattr(self.config, "notify", self.config)
+    def _notify_config(self) -> NotifyConfig:
+        return self.config.notify
 
     def _mark_notification_failed(
         self,
@@ -601,8 +588,13 @@ class IdleService:
             done = dict(current.done)
             done[stage] = result
             updates: dict[str, object] = {"done": done}
-            if current.stretch_open:
+            if result == "ok" and current.stretch_open:
                 updates["compact_window_until_ms"] = now_ms + _COMPACT_GRACE_MS
+            elif result != "ok":
+                updates.update(
+                    compact_window_until_ms=None,
+                    expect_compaction_turn=False,
+                )
             return current.model_copy(update=updates), DoneResult(recorded=True)
 
         done_result = self.store.mutate(harness, session, transition)

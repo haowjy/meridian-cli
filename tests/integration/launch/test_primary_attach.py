@@ -551,7 +551,10 @@ async def test_primary_attach_idle_sensor_failures_do_not_change_outcome_or_stde
         json.loads(line)
         for line in (spawn_dir / "debug.jsonl").read_text(encoding="utf-8").splitlines()
     ]
-    assert {record["data"]["phase"] for record in debug_records} == {"raw_event", "run"}
+    assert {record["data"]["phase"] for record in debug_records} == {
+        "events",
+        "raw_event",
+    }
     assert connection.sensor_cancelled_at_stop == [True]
 
 
