@@ -150,7 +150,7 @@ def _resolve_bundle_entrypoint(extension_name: str, relative_path: str) -> str:
     raise PiExtensionProjectionError(
         "Missing Pi extension artifact: "
         f"{source_path}. Build Pi extensions first "
-        "(cd src/meridian/pi_runtime && npm run build:extensions) "
+        "(cd src/meridian/pi_runtime && pnpm run build:extensions) "
         f"or install bundles under {install_root}."
     )
 

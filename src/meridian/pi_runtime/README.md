@@ -1,8 +1,9 @@
 # Meridian Pi extensions
 
 Meridian-owned TypeScript extensions run inside the separately installed Pi
-runtime, in both spawned RPC and primary native TUI sessions. Meridian does not
-bundle or control Pi itself.
+runtime. The three coordination bundles load in both spawned RPC and primary
+native TUI sessions; `meridian-idle` loads only for interactive primaries.
+Meridian does not bundle or control Pi itself.
 
 | Bundle | Responsibility |
 |---|---|

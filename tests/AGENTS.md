@@ -117,3 +117,14 @@ xdist worker imported the class at collection time, `isinstance` and
 `pytest.raises` compare against the stale class object and fail. Reference
 symbols through the live module object instead of binding at import time. See
 `tests/integration/launch/test_streaming_runner_watchdog.py` for the pattern.
+
+## Test packages and generated bundles
+
+Every new test directory gets an `__init__.py`. Under pytest's default import
+mode, same-named test files in two non-package directories collide at
+collection, and parallel lanes only find this after merge.
+
+A fresh worktree has no `pi_runtime/dist/`. Run
+`pnpm install --frozen-lockfile && pnpm run build:extensions` in
+`src/meridian/pi_runtime` before `uv run pytest-llm`, and again after any change
+under `pi_runtime/extensions/`.

@@ -110,7 +110,7 @@ primary and spawned RPC roles; the exact requirements live in
 | Primary | Native Pi TUI, no `--mode rpc`; native ambient discovery remains enabled |
 | Spawned | `pi --mode rpc`; suppress skills, context files, and prompt templates; suppress ambient extensions unless `load_all_pi_extensions = true` |
 
-Both roles load these stable `-e` bundles:
+Both roles load the stable bundles listed below where enabled; `meridian-idle` loads only for interactive primaries:
 
 - **managed-bash**, when `harness.pi.background_tasks.enabled` is true and
   `disable_managed_bash` is false: `bash`/`bash_manage`, `/ps*`, task records,
