@@ -3,10 +3,11 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.config.catalog import build_option_catalog
 from meridian.lib.config.project_config_state import resolve_project_config_state
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.project_root import resolve_project_root_resolution
-from meridian.lib.config.settings import load_config
+from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.ops.config import ConfigShowInput, config_show_sync
 from meridian.lib.ops.config_surface import build_config_surface
 from meridian.lib.ops.runtime import resolve_project_authority, resolve_runtime_authority_for_read
@@ -156,6 +157,62 @@ def test_load_config_reads_harness_wait_yield_settings(tmp_path: Path) -> None:
     assert config.wait_yield_seconds_for_harness("codex") == 45.0
     assert config.wait_yield_seconds_for_harness("unknown") == 120.0
     assert config.default_model_for_harness("codex") == "gpt-5.4"
+
+
+def test_load_config_reads_idle_tables_with_env_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "meridian.toml").write_text(
+        "[idle]\n"
+        "enabled = false\n"
+        "\n"
+        "[harness.codex.idle]\n"
+        "enabled = false\n",
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="meridian.lib.config.settings"):
+        file_config = load_config(project_root, resolve_models=False)
+
+    assert file_config.idle.enabled is False
+    assert file_config.harness.codex.idle.enabled is False
+    assert not any(
+        "Ignoring unknown Meridian config key" in record.message for record in caplog.records
+    )
+
+    monkeypatch.setenv("MERIDIAN_IDLE_ENABLED", "true")
+    monkeypatch.setenv("MERIDIAN_HARNESS_IDLE_ENABLED_CODEX", "true")
+
+    env_config = load_config(project_root, resolve_models=False)
+
+    assert env_config.idle.enabled is True
+    assert env_config.harness.codex.idle.enabled is True
+
+    shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
+    idle_value = next(item for item in shown.values if item.key == "idle.enabled")
+    codex_idle_value = next(
+        item for item in shown.values if item.key == "harness.codex.idle.enabled"
+    )
+    assert (idle_value.value, idle_value.source, idle_value.env_var) == (
+        True,
+        "env var",
+        "MERIDIAN_IDLE_ENABLED",
+    )
+    assert (codex_idle_value.value, codex_idle_value.source, codex_idle_value.env_var) == (
+        True,
+        "env var",
+        "MERIDIAN_HARNESS_IDLE_ENABLED_CODEX",
+    )
+
+    catalog = build_option_catalog(MeridianConfig)
+    assert catalog.resolve_key("idle.enabled").env_vars == ("MERIDIAN_IDLE_ENABLED",)
+    assert catalog.resolve_key("harness.codex.idle.enabled").env_vars == (
+        "MERIDIAN_HARNESS_IDLE_ENABLED_CODEX",
+    )
 
 
 def test_load_config_reads_spawn_deny_headless_harnesses(tmp_path: Path) -> None:

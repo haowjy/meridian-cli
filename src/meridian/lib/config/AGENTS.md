@@ -73,6 +73,8 @@ Claude profile includes:
 - `[harness.claude] model` — default model (string, env: `MERIDIAN_HARNESS_MODEL_CLAUDE`)
 - `[harness.claude] wait_yield_seconds` — polling interval (float, env:
   `MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_CLAUDE`)
+- `[harness.<id>.idle] enabled` — per-harness idle toggle. Each profile uses a model
+  built by `harness_idle_model()` so its canonical key, file alias, and env name stay unique.
 - `[harness.claude] allow_builtin_agents` — parsed Claude harness field from
   config release plumbing; Claude native Agent routing is still enforced by the
   harness projection.

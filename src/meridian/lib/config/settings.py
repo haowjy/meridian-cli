@@ -5,9 +5,9 @@ import os
 import tomllib
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Annotated, Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 from meridian.lib.config.catalog import build_option_catalog, file_alias
@@ -149,6 +149,46 @@ def _assign_nested_value(target: dict[str, object], path: tuple[str, ...], value
             continue
         current = cast("dict[str, object]", nested)
     current[path[-1]] = value
+
+
+def _normalize_catalog_table(
+    raw_value: dict[str, object],
+    *,
+    table_path: tuple[str, ...],
+    target: dict[str, object],
+    field_path_prefix: tuple[str, ...] = (),
+) -> None:
+    """Normalize one metadata-backed TOML table into a settings payload."""
+
+    for key, value in raw_value.items():
+        option = OPTION_CATALOG.find_file_alias(table_path=table_path, key=key)
+        if option is not None:
+            if option.field_path[: len(field_path_prefix)] != field_path_prefix:
+                raise ValueError(
+                    f"Config option '{option.canonical_key}' does not belong under "
+                    f"'{'.'.join(field_path_prefix)}'."
+                )
+            coerced = parse_toml_scalar(
+                value_kind=option.value_kind,
+                raw_value=value,
+                source=".".join((*table_path, key)),
+            )
+            _assign_nested_value(target, option.field_path[len(field_path_prefix) :], coerced)
+            continue
+
+        if isinstance(value, dict):
+            _normalize_catalog_table(
+                cast("dict[str, object]", value),
+                table_path=(*table_path, key),
+                target=target,
+                field_path_prefix=field_path_prefix,
+            )
+            continue
+
+        logger.warning(
+            "Ignoring unknown Meridian config key '%s'.",
+            ".".join((*table_path, key)),
+        )
 
 
 def _read_toml(path: Path) -> dict[str, object]:
@@ -413,6 +453,18 @@ def _normalize_harness_table(
                             )
                         nested["enabled"] = enabled
                     harness_values[harness_key] = nested
+                    continue
+                if OPTION_CATALOG.has_file_alias_table_prefix((source, key, harness_key)):
+                    if not isinstance(harness_value, dict):
+                        raise ValueError(
+                            f"Invalid value for '{source}.{key}.{harness_key}': expected table."
+                        )
+                    _normalize_catalog_table(
+                        cast("dict[str, object]", harness_value),
+                        table_path=(source, key, harness_key),
+                        target=harness_values,
+                        field_path_prefix=(source, key),
+                    )
                     continue
                 logger.warning(
                     "Ignoring unknown Meridian config key '%s.%s.%s'.",
@@ -923,24 +975,14 @@ def _normalize_toml_payload(
             )
             continue
 
-        if key in {"defaults", "timeouts"}:
+        if OPTION_CATALOG.has_file_alias_table_prefix((key,)):
             if not isinstance(raw_value, dict):
                 raise ValueError(f"Invalid value for '{key}' in '{path}': expected table.")
-            for section_key, section_value in cast("dict[str, object]", raw_value).items():
-                option = OPTION_CATALOG.find_file_alias(table_path=(key,), key=section_key)
-                if option is None:
-                    logger.warning(
-                        "Ignoring unknown Meridian config key '%s.%s'.",
-                        key,
-                        section_key,
-                    )
-                    continue
-                coerced = parse_toml_scalar(
-                    value_kind=option.value_kind,
-                    raw_value=section_value,
-                    source=f"{key}.{section_key}",
-                )
-                _assign_nested_value(normalized, option.field_path, coerced)
+            _normalize_catalog_table(
+                cast("dict[str, object]", raw_value),
+                table_path=(key,),
+                target=normalized,
+            )
             continue
 
         option = OPTION_CATALOG.find_file_alias(table_path=(), key=key)
@@ -1096,6 +1138,22 @@ class StateConfig(BaseModel):
         return value
 
 
+class IdleConfig(BaseModel):
+    """Cross-harness idle behavior settings."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    enabled: Annotated[
+        bool,
+        config_field(
+            "idle.enabled",
+            value_kind="bool",
+            file_aliases=(file_alias("idle", "enabled"),),
+            env_vars=("MERIDIAN_IDLE_ENABLED",),
+        ),
+    ] = True
+
+
 class WorkConfig(BaseModel):
     """Work-item behavior settings."""
 
@@ -1216,8 +1274,51 @@ class HarnessProfileConfig(BaseModel):
         return float(value)
 
 
+def harness_idle_model(harness_id: str) -> type[BaseModel]:
+    """Build the metadata-backed idle settings model for one harness."""
+
+    normalized = harness_id.strip().lower()
+    if normalized not in _HARNESS_TABLE_KEYS:
+        raise ValueError(f"Unsupported harness ID for idle config: {harness_id!r}.")
+    return create_model(
+        f"{normalized.title()}HarnessIdleConfig",
+        __config__=ConfigDict(frozen=True, extra="ignore"),
+        __module__=__name__,
+        enabled=(
+            Annotated[
+                bool,
+                config_field(
+                    f"harness.{normalized}.idle.enabled",
+                    value_kind="bool",
+                    file_aliases=(
+                        file_alias(("harness", normalized, "idle"), "enabled"),
+                    ),
+                    env_vars=(f"MERIDIAN_HARNESS_IDLE_ENABLED_{normalized.upper()}",),
+                ),
+            ],
+            True,
+        ),
+    )
+
+
+if TYPE_CHECKING:
+    class _HarnessIdleConfigType(BaseModel):
+        enabled: bool = True
+
+    ClaudeHarnessIdleConfig = _HarnessIdleConfigType
+    CodexHarnessIdleConfig = _HarnessIdleConfigType
+    OpenCodeHarnessIdleConfig = _HarnessIdleConfigType
+    PiHarnessIdleConfig = _HarnessIdleConfigType
+else:
+    ClaudeHarnessIdleConfig = harness_idle_model("claude")
+    CodexHarnessIdleConfig = harness_idle_model("codex")
+    OpenCodeHarnessIdleConfig = harness_idle_model("opencode")
+    PiHarnessIdleConfig = harness_idle_model("pi")
+
+
 class ClaudeHarnessProfileConfig(HarnessProfileConfig):
     allow_builtin_agents: bool = False
+    idle: ClaudeHarnessIdleConfig = Field(default_factory=ClaudeHarnessIdleConfig)
     model: Annotated[
         str,
         config_field(
@@ -1233,6 +1334,7 @@ class ClaudeHarnessProfileConfig(HarnessProfileConfig):
 
 
 class CodexHarnessProfileConfig(HarnessProfileConfig):
+    idle: CodexHarnessIdleConfig = Field(default_factory=CodexHarnessIdleConfig)
     model: Annotated[
         str,
         config_field(
@@ -1248,6 +1350,7 @@ class CodexHarnessProfileConfig(HarnessProfileConfig):
 
 
 class OpenCodeHarnessProfileConfig(HarnessProfileConfig):
+    idle: OpenCodeHarnessIdleConfig = Field(default_factory=OpenCodeHarnessIdleConfig)
     model: Annotated[
         str,
         config_field(
@@ -1291,6 +1394,7 @@ class PiBundleToggleConfig(BaseModel):
 
 
 class PiHarnessProfileConfig(HarnessProfileConfig):
+    idle: PiHarnessIdleConfig = Field(default_factory=PiHarnessIdleConfig)
     load_all_pi_extensions: bool = False
     extra_extension_paths: tuple[str, ...] = ()
     background_tasks: PiBundleToggleConfig = Field(default_factory=PiBundleToggleConfig)
@@ -1548,6 +1652,7 @@ class MeridianConfig(BaseSettings):
         ),
     ] = ()
     harness: HarnessConfig = Field(default_factory=HarnessConfig)
+    idle: IdleConfig = Field(default_factory=IdleConfig)
     primary: PrimaryConfig = Field(default_factory=PrimaryConfig)
     history: HistoryConfig = Field(default_factory=HistoryConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
