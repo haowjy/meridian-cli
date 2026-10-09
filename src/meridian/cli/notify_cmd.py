@@ -15,7 +15,7 @@ from meridian.lib.notify.notice import Notice
 from meridian.lib.notify.service import SendReport, send
 
 
-def _render_report(report: SendReport) -> None:
+def _render_report(report: SendReport, *, json_mode: bool = False) -> None:
     from meridian.cli.main import current_output_sink, get_global_options
 
     sink = current_output_sink()
@@ -30,7 +30,7 @@ def _render_report(report: SendReport) -> None:
         else:
             sink.error(message)
 
-    if get_global_options().output.format == "json":
+    if json_mode or get_global_options().output.format == "json":
         sink.result(report.to_dict())
         return
     if report.all_none:
@@ -57,6 +57,10 @@ def cmd_notify(
         int,
         Parameter(name="--priority", help="Notification priority from 1 to 5."),
     ] = 3,
+    json_mode: Annotated[
+        bool,
+        Parameter(name="--json", help="Print the delivery report as JSON."),
+    ] = False,
 ) -> None:
     """Send one manual notification."""
     from meridian.cli.main import current_output_sink, get_global_options
@@ -80,7 +84,7 @@ def cmd_notify(
         kind="manual",
     )
     report = send(notice, config).with_label(label)
-    _render_report(report)
+    _render_report(report, json_mode=json_mode)
     raise SystemExit(report.exit_code)
 
 
