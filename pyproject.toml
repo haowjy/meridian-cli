@@ -145,7 +145,19 @@ ignore = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = [
+  "tests/unit",
+  "tests/contract",
+  "tests/platform",
+  "tests/integration/config",
+  "tests/integration/catalog",
+  "tests/integration/safety",
+  "tests/integration/harness",
+  "tests/integration/hooks",
+  "tests/integration/prompt",
+  "tests/integration/telemetry",
+  "tests/integration/state",
+]
 addopts = "-ra -n 4"
 asyncio_mode = "auto"
 pythonpath = ["src"]

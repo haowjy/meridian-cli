@@ -15,10 +15,11 @@ clone, so every fresh checkout must run this once.
 Hook policy:
 
 - Pre-commit is not installed by default, so checkpoint commits stay fast. Humans who want a local fast `ruff` guardrail can opt in by copying or symlinking `.githooks/optional/pre-commit` into their active hooks path.
-- Pre-push is strict. It blocks direct `v*` tag pushes (`v*` tags are CI-owned;
-  they are created automatically after normal pushes to `main`), and for branch
-  pushes it runs `scripts/preflight.sh full`: Ruff, Pyright, the locked Pi
-  extension install and build, pytest, and `uv build --no-sources`.
+- Pre-push blocks direct `v*` tag pushes (`v*` tags are CI-owned; they are
+  created automatically after normal pushes to `main`) and runs the prepared
+  60-second routine gate: Ruff, Pyright, and the risk-based default pytest
+  paths. Run `scripts/preflight.sh extended` explicitly before a release or
+  when you need the complete suite, Pi extension build, and package build.
 - Git hooks run without a terminal, so every preflight step must run without
   prompting. Scope any automation setting to the step that needs it; don't export
   it for the whole gate.
@@ -104,24 +105,36 @@ When this matters:
 
 ## Test
 
-For the full local preflight used by pre-push and release preparation:
+For the routine local preflight used by pre-push:
 
 ```bash
 scripts/preflight.sh
 ```
 
-Fast mode (lint only):
+The fast gate has one monotonic 60-second budget across Ruff, Pyright, pytest,
+pytest-xdist startup, and command overhead in a prepared environment. Dependency
+downloads and native extension builds are setup/full-gate work, not part of
+that promise.
+
+For the complete opt-in preflight used before release promotion or on demand:
 
 ```bash
-scripts/preflight.sh fast
+scripts/preflight.sh extended
+# `full` remains a compatibility alias for existing release helpers.
+scripts/preflight.sh full
 ```
 
-Quicker Python-only check (lint, type check, unit and contract tests; not the
-pre-push gate):
+The default pytest paths are risk-based directory boundaries. To run every
+automated test explicitly (including `tests/extended/`), use:
 
 ```bash
-scripts/check.sh
+uv run pytest tests/
+uv run pytest-llm tests/
 ```
+
+`scripts/check.sh` delegates to the same fast preflight as the hook; it does
+not maintain a second test pipeline. `tests/smoke/` and `tests/e2e/` remain
+manual/runtime workflows, documented in their local guides.
 
 Individual checks:
 

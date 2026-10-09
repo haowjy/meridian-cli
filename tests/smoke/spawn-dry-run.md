@@ -1,243 +1,124 @@
 # Smoke: spawn dry-run
 
-Tests prompt assembly without harness invocation.
+Check CLI-visible prompt assembly without a model request. Dry-run can probe
+installed harnesses or refresh catalogs; it is not part of the cheap offline
+smoke script. Set `DRY_RUN_MODEL` to an available Codex model before starting.
+
+Routing/precedence matrices remain in [compiler](../unit/launch/test_compiler.py)
+and [task-dir](../integration/ops/test_task_dir_commands.py) regression tests.
+For actual Mars routing provenance, use the [packaged-workspace guide](../e2e/spawn/routing-provenance.md).
 
 ## Setup
 
+Run from the checkout in a fresh shell; all fixture paths stay under `SMOKE_ROOT`.
+If native eligibility requires login, set `CODEX_AUTH_FILE` to your auth.json
+before setup to deliberately copy only that file into the disposable store.
+
 ```bash
+: "${DRY_RUN_MODEL:?Set DRY_RUN_MODEL to an available Codex model}"
+export DRY_RUN_MODEL
 . tests/smoke/scripts/setup.sh
+trap smoke_cleanup EXIT
 smoke_add_agent reviewer
+printf '[settings]\ntargets = [".codex"]\n' > "$SCRATCH/mars.toml"
+if [[ -n "${CODEX_AUTH_FILE:-}" ]]; then
+  install -m 600 "$CODEX_AUTH_FILE" "$CODEX_HOME/auth.json"
+fi
 ```
 
-## Basic dry-run
+## Basic prompt and goal preview
 
 ```bash
-uv run meridian spawn -a reviewer -p "Write hello world" --dry-run --json
+uv run meridian spawn -a reviewer --harness codex -m "$DRY_RUN_MODEL" \
+  -p "Write hello world" --goal "ship phase 3" --dry-run --json
 ```
-- [ ] Exit 0
-- [ ] `"status": "dry-run"` in JSON
-- [ ] `composed_prompt` contains `Write hello world`
-- [ ] `model` field present
-- [ ] `terminal_surface_mode == "pty_mediated"`
+
+- [ ] Exit 0; `status == "dry-run"`; `composed_prompt` contains `Write hello world`
+- [ ] `model` present; `terminal_surface_mode == "pty_mediated"`
+- [ ] `goal == "ship phase 3"`; `goal_contract_preview` includes `# Spawn Goal` and the goal
 
 ## Pi RPC/native projection and runtime guidance
 
+Set `PI_DRY_RUN_MODEL` to a model exposed by your Pi installation.
+
 ```bash
-uv run meridian spawn --harness pi -m openai-codex/gpt-5.4-mini \
+: "${PI_DRY_RUN_MODEL:?Set an available Pi model}"
+uv run meridian spawn --harness pi -m "$PI_DRY_RUN_MODEL" \
   -p "Pi projection check" --dry-run --json
-uv run meridian --harness pi --dry-run --json
+uv run meridian --harness pi -m "$PI_DRY_RUN_MODEL" --dry-run --json
 ```
 
 - [ ] Spawned `cli_command` begins with `pi --mode rpc`; native primary argv begins
       with `pi` and omits `--mode rpc`
 - [ ] RPC argv contains `-e` for `meridian-spawn-watch`; native argv contains `-e` for both
       `managed-bash` and `meridian-spawn-watch`
-- [ ] With an incompatible Pi binary, the command fails before launch with guidance
-      to run `pi update` or set `MERIDIAN_PI_BINARY` to a compatible binary
+- [ ] Incompatible Pi fails before launch with `pi update` / `MERIDIAN_PI_BINARY` guidance
 
-## Goal contract preview
-
-```bash
-uv run meridian spawn -a reviewer -p "run" --goal "ship phase 3" --dry-run --json
-```
-- [ ] Exit 0
-- [ ] `goal == "ship phase 3"`
-- [ ] `goal_contract_preview` includes `# Spawn Goal`
-- [ ] `goal_contract_preview` includes `ship phase 3`
-
-## Model override
+## Template substitution and reference file
 
 ```bash
-# Write a profile with a declared model, add mars.toml
-cat > "$SCRATCH/.mars/agents/reviewer.md" << 'EOF'
----
-name: reviewer
-model: gpt-5.4
----
-# Reviewer
-EOF
-echo '[settings]' > "$SCRATCH/mars.toml"
-echo 'models_cache_ttl_hours = 24' >> "$SCRATCH/mars.toml"
-
-uv run meridian spawn -a reviewer -p "test" -m gpt-5.5 --dry-run --json
-```
-- [ ] Exit 0
-- [ ] `"status": "dry-run"` in JSON
-- [ ] `model == "gpt-5.5"`
-- [ ] `model_selection.requested_token == "gpt-5.5"`
-- [ ] `model_selection.canonical_model_id == "gpt-5.5"`
-- [ ] `harness_id == "codex"`
-- [ ] `terminal_surface_mode == "pty_mediated"`
-
-## Agent routing override precedence (mars.toml `[agents.<name>]`)
-
-```bash
-# mars routing config for this project
-cat > "$SCRATCH/mars.toml" << 'EOF'
-[settings]
-targets = [".claude", ".codex", ".opencode"]
-
-[agents.reviewer]
-model = "gpt-5.5"
-EOF
-
-# Without CLI override — project routing override wins
-uv run meridian spawn -a reviewer -p "test" --dry-run --json
-```
-- [ ] Exit 0
-- [ ] `model == "gpt-5.5"` (project `mars.toml` agent override applied)
-- [ ] `harness_id == "codex"`
-
-```bash
-# With CLI override — CLI wins over agent routing override
-uv run meridian spawn -a reviewer -p "test" -m gpt-5.4 --dry-run --json
-```
-- [ ] Exit 0
-- [ ] `model == "gpt-5.4"` (CLI flag beats `[agents.reviewer]` model)
-
-## Mars bundle round-trip + provenance fields
-
-```bash
-cat > "$SCRATCH/.mars/agents/reviewer.md" << 'EOF'
----
-name: reviewer
-model: gpt-5.4-mini
-model-policies:
-  - match: { alias: gpt55 }
-    override: { harness: opencode, effort: medium }
----
-# Reviewer
-EOF
-
-cat > "$SCRATCH/mars.toml" << 'EOF'
-[settings]
-targets = [".claude", ".codex", ".opencode"]
-EOF
-
-uv run meridian spawn -a reviewer -m gpt55 -p "bundle policy check" --dry-run --json
-```
-- [ ] Exit 0
-- [ ] `status == "dry-run"`
-- [ ] `harness_id == "opencode"` (bundle resolved route)
-- [ ] `cli_command` includes `--variant` and `medium` (effort projection)
-- [ ] `model_selection.requested_token == "gpt55"`
-- [ ] `model_selection.canonical_model_id` present
-- [ ] `model_selection.harness_provenance` present
-
-## Template variable substitution
-
-```bash
-uv run meridian spawn -a reviewer \
+printf '# Reference\n' > "$SMOKE_ROOT/reference.md"
+uv run meridian spawn -a reviewer --harness codex -m "$DRY_RUN_MODEL" \
   -p "Review {{FILE_PATH}} for {{CONCERN}}" \
-  --prompt-var FILE_PATH=src/main.py \
-  --prompt-var CONCERN=security \
-  --dry-run --json
+  --prompt-var FILE_PATH=src/main.py --prompt-var CONCERN=security \
+  -f "$SMOKE_ROOT/reference.md" --dry-run --json
 ```
-- [ ] Exit 0
-- [ ] `composed_prompt` contains `src/main.py`
-- [ ] `composed_prompt` contains `security`
-- [ ] `composed_prompt` does NOT contain `{{FILE_PATH}}`
-- [ ] `composed_prompt` does NOT contain `{{CONCERN}}`
 
-## Reference files
+- [ ] Exit 0; prompt contains `src/main.py` and `security`, not either template token
+- [ ] Reference filename appears in JSON or its `reference_files` array
+
+## Task CWD, relative references and authority root
+
+Use one selected work tree instead of repeating every precedence permutation.
 
 ```bash
-REF=$(mktemp)
-echo "# Reference" > "$REF"
-uv run meridian spawn -a reviewer -p "Review this file" -f "$REF" --dry-run --json
+TASK_DIR="$SMOKE_ROOT/task"
+mkdir -p "$TASK_DIR"
+printf 'relative ref\n' > "$TASK_DIR/notes.md"
+uv run meridian work start smoke-task-dir --task-dir "$TASK_DIR"
+uv run meridian spawn -a reviewer --harness codex -m "$DRY_RUN_MODEL" \
+  -p "Use relative ref" --work smoke-task-dir -f notes.md --dry-run --json
 ```
-- [ ] Exit 0
-- [ ] `reference_files` array present, or filename appears somewhere in JSON payload
 
-## Task CWD reporting + kb: path
+- [ ] `task_cwd` and `reference_anchor` equal `$TASK_DIR`
+- [ ] `task_cwd_source == "explicit-work-task-dir"`; `task_cwd_work_item == "smoke-task-dir"`
+- [ ] Resolved reference points to `$TASK_DIR/notes.md`; authority remains the scratch project
 
 ```bash
 KB_ROOT=$(uv run meridian context --json | uv run python -c 'import json,sys; print(json.load(sys.stdin)["kb_resolved"])')
 mkdir -p "$KB_ROOT/domain"
-echo "kb ref" > "$KB_ROOT/domain/page.md"
-uv run meridian spawn -a reviewer -p "Use kb ref" -f kb:domain/page.md --dry-run --json
+printf 'kb ref\n' > "$KB_ROOT/domain/page.md"
+uv run meridian spawn -a reviewer --harness codex -m "$DRY_RUN_MODEL" \
+  -p "Use kb ref" -f kb:domain/page.md --dry-run --json
 ```
-- [ ] Exit 0
-- [ ] JSON includes `task_cwd`, `reference_anchor`, `task_cwd_source`
-- [ ] JSON omits `authority_root`
-- [ ] `task_cwd_source == "authority-root"` in default no-task-dir case
 
-## --work uses work-item task_dir for relative refs
+- [ ] Exit 0; JSON reports `task_cwd`, `reference_anchor`, `task_cwd_source`, not `authority_root`
+- [ ] Without a work override, `task_cwd == "$SCRATCH"` and
+      `task_cwd_source == "inherited-task-dir"` (setup pins `MERIDIAN_TASK_DIR`)
+
+## Explicit project root from another CWD
 
 ```bash
-TASK_DIR=$(mktemp -d)
-echo "relative ref" > "$TASK_DIR/notes.md"
-uv run meridian work start smoke-task-dir --task-dir "$TASK_DIR"
-uv run meridian spawn -a reviewer -p "use relative ref" --work smoke-task-dir -f notes.md --dry-run --json
-```
-- [ ] Exit 0
-- [ ] `task_cwd` equals `$TASK_DIR`
-- [ ] `reference_anchor` equals `$TASK_DIR`
-- [ ] `task_cwd_source == "explicit-work-task-dir"`
-- [ ] `task_cwd_work_item == "smoke-task-dir"`
-- [ ] resolved `reference_files` entry points at `$TASK_DIR/notes.md`
-
-## --task-dir overrides work-item task_dir
-
-```bash
-OVERRIDE_DIR=$(mktemp -d)
-echo "override ref" > "$OVERRIDE_DIR/override.md"
-uv run meridian spawn -a reviewer -p "prefer explicit task dir" \
-  --work smoke-task-dir --task-dir "$OVERRIDE_DIR" -f override.md --dry-run --json
-```
-- [ ] Exit 0
-- [ ] `task_cwd` equals `$OVERRIDE_DIR`
-- [ ] `task_cwd_source == "explicit-task-dir"`
-- [ ] resolved `reference_files` entry points at `$OVERRIDE_DIR/override.md`
-
-## Removed work-item task_dir falls back; explicit override still wins
-
-```bash
-rm -rf "$TASK_DIR"
-uv run meridian spawn -a reviewer -p "stale worktree" --work smoke-task-dir --dry-run --json
-uv run meridian spawn -a reviewer -p "override stale worktree" \
-  --work smoke-task-dir --task-dir "$OVERRIDE_DIR" --dry-run --json
-```
-- [ ] First command exits 0, reports the project root as `task_cwd`, and includes a
-      structured `warning` field naming both stale `$TASK_DIR` and the project-root
-      fallback destination; JSON mode writes no extra warning text to stderr
-- [ ] First command reports `task_cwd_source == "explicit-work-authority-root"`
-- [ ] Second command exits 0 with `task_cwd == "$OVERRIDE_DIR"` and no stale-path warning
-
-## --task-dir requires existing directory
-
-```bash
-uv run meridian spawn -a reviewer -p "bad task dir" --task-dir "$SCRATCH/does-not-exist" --dry-run --json
-```
-- [ ] Fails with `task_dir does not exist` guidance
-
-```bash
-uv run meridian spawn -a reviewer -p "bad old prefix" -f @domain/page.md --dry-run --json
-```
-- [ ] Fails with message directing `@...` to `kb:...`
-
-## Empty prompt — no traceback
-
-```bash
-uv run meridian spawn -a reviewer -p "" --dry-run --json
-```
-- [ ] No `Traceback` in stdout or stderr (may exit 0 or non-zero)
-
-## MERIDIAN_PROJECT_DIR wins over worktree-like cwd
-
-```bash
-CANONICAL=$(mktemp -d)
-WORKTREE=$(mktemp -d)
-mkdir -p "$CANONICAL/.mars/agents"
-echo "# Reviewer" > "$CANONICAL/.mars/agents/reviewer.md"
-printf 'gitdir: /tmp/fake-worktree-git\n' > "$WORKTREE/.git"
-
+CANONICAL="$SMOKE_ROOT/canonical"
+WORKTREE="$SMOKE_ROOT/worktree"
+mkdir -p "$CANONICAL/.mars/agents" "$WORKTREE"
+cp "$SCRATCH/mars.toml" "$CANONICAL/"
+printf '# Reviewer\n' > "$CANONICAL/.mars/agents/reviewer.md"
+printf 'gitdir: %s\n' "$SMOKE_ROOT/missing-git-dir" > "$WORKTREE/.git"
 (
   cd "$WORKTREE"
-  MERIDIAN_PROJECT_DIR=$CANONICAL MERIDIAN_HOME=$(mktemp -d) \
-    uv run meridian spawn -a reviewer -p "test" --dry-run --json
+  MERIDIAN_PROJECT_DIR="$CANONICAL" MERIDIAN_TASK_DIR="$CANONICAL" \
+    uv run --project "$SMOKE_ORIGINAL_CWD" meridian spawn -a reviewer \
+      --harness codex -m "$DRY_RUN_MODEL" -p "Root targeting" --dry-run --json
 )
 ```
-- [ ] Exit 0
-- [ ] `resolved_authority.project_root` matches `$CANONICAL` (not the worktree cwd)
+
+- [ ] Exit 0; `resolved_authority.project_root` is `$CANONICAL`, not the worktree CWD
 - [ ] `resolved_authority.project_root_source == "explicit"`
+
+## Cleanup
+
+```bash
+smoke_cleanup
+trap - EXIT
+```

@@ -1,101 +1,73 @@
-# Spawn Return Report
+# Spawn return/report (live opt-in)
 
-Manual smoke checklist for foreground spawn and single-spawn wait output.
+This is a small live boundary probe for foreground output, background wait, and
+`MERIDIAN_TASK_DIR`. It is **not** part of automatic smoke: it launches a real
+harness and may spend money. Use a disposable project and an eligible cheap
+model only after deliberately supplying credentials.
 
-## Validation: spawn-return-report
+The maintained output variants and report assertions live in
+[`tests/integration/ops/test_spawn_execute_report_output.py`](../integration/ops/test_spawn_execute_report_output.py);
+this guide only checks the real process boundary.
 
-Use an isolated scratch project and a cheap model/agent. Replace `pNNN` with the
-spawn id printed by each command.
+## Setup
 
 ```bash
-export MERIDIAN_HOME="$(mktemp -d)"
-scratch="$(mktemp -d)"
-cd "$scratch"
-meridian init
+. tests/smoke/scripts/setup.sh
+smoke_add_agent test
+
+# Set these explicitly for the live run; no default or paid model is selected
+# for you.
+export SMOKE_LIVE_HARNESS="${SMOKE_LIVE_HARNESS:?set an installed harness explicitly}"
+export SMOKE_LIVE_MODEL="${SMOKE_LIVE_MODEL:?set an eligible cheap model explicitly}"
+printf 'harness=%s model=%s (live/possibly billable)\n' "$SMOKE_LIVE_HARNESS" "$SMOKE_LIVE_MODEL"
 ```
 
-1. Foreground default:
-   ```bash
-   meridian spawn -a meridian-subagent -m gpt-5.4-mini -p 'Reply with exactly OK'
-   ```
-   Expect compact text: one status line, report body, then
-   `Transcript: meridian session log <spawn_id>`. No token/cost/path block.
+`SMOKE_LIVE_HARNESS` must be an installed harness and
+`SMOKE_LIVE_MODEL` must be eligible for that harness in the current catalog.
+Do not substitute a fictional profile or alias. The shared setup keeps all
+Meridian/native state under `SMOKE_ROOT`; copy selected auth into its isolated
+store deliberately if needed.
 
-2. Foreground metadata:
-   ```bash
-   meridian spawn -a meridian-subagent -m gpt-5.4-mini -p 'Reply with exactly OK' --metadata
-   ```
-   Expect report body plus inline accounting fields such as model, duration,
-   tokens/cost when available, report path, and transcript command.
+## Foreground report
 
-3. Split-root task_dir runtime:
-   ```bash
-   task_dir="$(mktemp -d)"
-   meridian spawn -a meridian-subagent -m gpt-5.4-mini --task-dir "$task_dir" \
-     -p 'Run `pwd`, print `MERIDIAN_TASK_DIR`, then report both values exactly.'
-   ```
-   Expect the report to show process cwd as the scratch project root, not
-   `$task_dir`, and `MERIDIAN_TASK_DIR` equal to `$task_dir`. This proves the
-   harness launch keeps skill-loading cwd at the project root while projecting
-   the task directory through env/prompt context.
+```bash
+OUT=$(uv run meridian --format json spawn --harness "$SMOKE_LIVE_HARNESS" \
+  -m "$SMOKE_LIVE_MODEL" -a test --timeout 1 -p 'Reply with exactly OK')
+printf '%s\n' "$OUT"
+SPAWN_ID=$(printf '%s' "$OUT" | uv run python -c \
+  'import json,sys; p=json.load(sys.stdin); assert p["status"]=="succeeded", p; print(p["spawn_id"])')
+uv run meridian spawn show "$SPAWN_ID" --format json
+```
 
-4. Foreground JSON:
-   ```bash
-   meridian --format json spawn -a meridian-subagent -m gpt-5.4-mini -p 'Reply with exactly OK'
-   ```
-   Expect valid JSON on stdout with `report` and `transcript_command`. No
-   running-status preamble before the JSON object.
+Require success and an `OK` reply; a provider/auth failure is not a passing
+happy path. Check JSON report fields and the transcript hint in `show`.
+Do not require token/cost fields: those are adapter-specific and covered by the
+automated matrix.
 
-5. Agent-mode foreground default:
-   ```bash
-   _MERIDIAN_DEPTH=1 meridian spawn -a meridian-subagent -m gpt-5.4-mini -p 'Reply with exactly OK'
-   ```
-   Expect compact text, not JSON.
+## Background + wait
 
-6. Agent-mode background preservation:
-   ```bash
-   _MERIDIAN_DEPTH=1 meridian spawn -a meridian-subagent -m gpt-5.4-mini -p 'Reply with exactly OK' --bg
-   ```
-   Expect JSON wait-note wire output with `wait_required: true`; no compact
-   report view and no transcript pointer in the submission response.
+```bash
+OUT=$(uv run meridian --format json spawn --bg --harness "$SMOKE_LIVE_HARNESS" \
+  -m "$SMOKE_LIVE_MODEL" -a test --timeout 1 -p 'Reply with exactly OK')
+printf '%s\n' "$OUT"
+SPAWN_ID=$(printf '%s' "$OUT" | uv run python -c \
+  'import json,sys; print(json.load(sys.stdin)["spawn_id"])')
+uv run meridian spawn wait "$SPAWN_ID"
+```
 
-7. Wait default:
-   ```bash
-   meridian spawn wait pNNN
-   ```
-   Expect compact text with report body and transcript command.
+Check submission returns a wait-required/background status and wait returns one
+successful terminal report with `OK`. Drain the wait before leaving the shell.
 
-8. Wait no-report:
-   ```bash
-   meridian spawn wait pNNN --no-report
-   ```
-   Expect status and transcript command; report body omitted.
+## Task-directory probe
 
-9. Wait JSON:
-   ```bash
-   meridian --format json spawn wait pNNN
-   ```
-   Expect JSON with `report_body` and `transcript_command`.
+```bash
+TASK_DIR="$SMOKE_ROOT/task"
+mkdir -p "$TASK_DIR"
+uv run meridian --format json spawn --harness "$SMOKE_LIVE_HARNESS" \
+  -m "$SMOKE_LIVE_MODEL" -a test --timeout 1 --task-dir "$TASK_DIR" \
+  -p 'Print pwd and MERIDIAN_TASK_DIR, then report both values exactly.'
+```
 
-10. Multi-wait text, if two completed ids are available:
-   ```bash
-   meridian spawn wait pNNN pMMM
-   ```
-   Expect table plus `Report for <id>` sections; not the single-spawn compact
-   status format.
-
-11. Show/status progressive detail:
-   ```bash
-   meridian spawn show pNNN
-   meridian spawn show pNNN --no-report
-   meridian spawn status pNNN
-   meridian spawn status pNNN --report
-   meridian spawn status pNNN --verbose
-   ```
-   Expect `show` default text to include the moderate status/model/duration
-   summary, report path, report body, and transcript command. Expect
-   `show --no-report` and `status` to keep the summary/report path/transcript
-   while omitting the report body. Expect `status --report` to add the report
-   body. Expect `--verbose` to add internal diagnostics such as token/cost
-   fields or harness/session metadata when available; those internals should
-   not appear in the non-verbose `show`/`status` output.
+The report should show the harness process's project/control cwd while
+`MERIDIAN_TASK_DIR` names `TASK_DIR`. After inspection and draining all runs,
+call `smoke_cleanup` to remove the entire owned fixture.

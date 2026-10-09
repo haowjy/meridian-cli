@@ -1,23 +1,34 @@
 # Pi RPC quiescence smoke and diagnostics
 
+**Opt-in live tier:** these scenarios run a real Pi process and may invoke a
+paid provider. They are not part of automatic smoke. Run the short manual gate
+first and use only disposable state.
+
 Use a **real** installed Pi and a cheap model. Run the
 [manual gate](pi-manual.md) first. These scenarios verify current CLI workflows;
 automated fault coverage is listed separately below.
 
 ## Setup and evidence
 
-From the repository root:
+From the repository root in a fresh shell, prepare dependencies (network may
+be needed), then create one fixture:
 
 ```bash
-(cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions)
+(
+  cd src/meridian/pi_runtime
+  pnpm install --frozen-lockfile
+)
+. tests/smoke/scripts/pi-setup.sh --build-extensions
 pi --version
 pi --help
 ```
 
-Use Node 24+ (matching CI), a compatible `pi` on `PATH`, and provider auth under
-`~/.pi/agent` or `PI_CODING_AGENT_DIR`. Set `MERIDIAN_PI_BINARY` only to a real
-compatible installation. Use an isolated `MERIDIAN_HOME` for destructive process
-checks; finish or cancel all probe work afterwards.
+Use Node 24+ (matching CI), a compatible `pi` on `PATH`, and deliberately supplied
+provider auth as described in the [manual gate](pi-manual.md). Copy only
+`auth.json`, not the native agent tree, or supply the provider's API-key env var.
+`pi-setup.sh` isolates stores and task/control dirs below `SMOKE_ROOT`; extension
+bundles are read from the package. Managed prelaunch pins task state to the
+isolated project runtime. Finish/cancel all work before `smoke_cleanup`.
 
 Inspect a run with:
 
@@ -127,7 +138,7 @@ Run from the checkout root:
 ```bash
 PROJECT=$PWD
 MODEL='<eligible-pi-model>'  # choose a cheap Pi-native ID from the live listing
-MERIDIAN_HOME=$(mktemp -d) timeout 240s uv run meridian -C "$PROJECT" --harness pi spawn \
+timeout 240s uv run meridian -C "$PROJECT" --harness pi spawn \
   -m "$MODEL" \
   -p "Run exactly this command as a child spawn and wait for it: uv run meridian -C '$PROJECT' --harness pi spawn -m '$MODEL' -p 'Reply exactly NESTED_CHILD_OK and run no commands.' --timeout 1 --format json. After it completes, reply exactly PARENT_AFTER_CHILD_OK and include the child spawn id. Run no other commands." \
   --timeout 4 --format json
