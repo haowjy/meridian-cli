@@ -12,6 +12,7 @@ import pytest
 
 from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness.codex_idle import pane_facts
 from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.idle_types import (
     CompactResult,
@@ -132,6 +133,17 @@ class PersistentSensor(Sensor):
 
 class ExternalSensor(Sensor):
     external_events = True
+
+
+class BusyExternalSensor(ExternalSensor):
+    def __init__(self, events: tuple[IdleEvent, ...], alive: list[bool]) -> None:
+        super().__init__(events, alive)
+        self.facts_calls = 0
+
+    async def facts(self) -> IdleFacts:
+        self.facts_calls += 1
+        fixture = Path(__file__).parents[2] / "fixtures" / "codex_idle" / "captures" / "busy.txt"
+        return pane_facts(fixture.read_text(encoding="utf-8"))
 
 
 class RecordingService:
@@ -279,8 +291,7 @@ async def test_sidecar_user_return_cancels_pending_schedule(tmp_path: Path) -> N
     )
     await wait_until(
         lambda: bool(
-            (state := store.read("codex", "session-1")) is not None
-            and not state.stretch_open
+            (state := store.read("codex", "session-1")) is not None and not state.stretch_open
         ),
         description="user return",
     )
@@ -313,8 +324,7 @@ async def test_sidecar_user_return_does_not_cancel_inflight_compaction(tmp_path:
     await wait_until(sensor.compact_started.is_set, description="compaction start")
     await wait_until(
         lambda: bool(
-            (state := store.read("codex", "session-1")) is not None
-            and not state.stretch_open
+            (state := store.read("codex", "session-1")) is not None and not state.stretch_open
         ),
         description="user return",
     )
@@ -449,6 +459,43 @@ async def test_external_event_sensor_pins_session_and_polls_store(tmp_path: Path
 
 
 @pytest.mark.asyncio
+async def test_external_event_sensor_skips_push_and_warn_while_busy(tmp_path: Path) -> None:
+    alive = [True]
+    clock = Clock()
+    sender = Sender()
+    service, store = policy(tmp_path, clock, sender)
+    sensor = BusyExternalSensor(
+        (IdleEvent("turn_end", "session-1", "turn-1", 0),),
+        alive,
+    )
+
+    task = asyncio.create_task(
+        run(
+            sensor,
+            context(tmp_path, alive),
+            service=service,
+            clock=cast("SidecarClock", clock),
+            poll_seconds=0.001,
+        )
+    )
+    await wait_until(
+        lambda: bool(
+            (state := store.read("codex", "session-1")) is not None
+            and state.done.get("compact") == "skipped:busy"
+        ),
+        description="busy compaction skip",
+    )
+    alive[0] = False
+    await task
+
+    state = store.read("codex", "session-1")
+    assert sender.notices == []
+    assert sensor.facts_calls == 3
+    assert state is not None
+    assert state.done == {"compact": "skipped:busy"}
+
+
+@pytest.mark.asyncio
 async def test_sidecar_continues_after_one_event_handler_failure(tmp_path: Path) -> None:
     alive = [True]
     clock = Clock()
@@ -482,9 +529,9 @@ async def test_sidecar_continues_after_one_event_handler_failure(tmp_path: Path)
     state = store.read("codex", "session-1")
     assert state is not None
     assert state.last_turn_id is None
-    assert "transient store failure" in (
-        tmp_path / "p1" / "debug.jsonl"
-    ).read_text(encoding="utf-8")
+    assert "transient store failure" in (tmp_path / "p1" / "debug.jsonl").read_text(
+        encoding="utf-8"
+    )
 
 
 @pytest.mark.asyncio

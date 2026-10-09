@@ -37,6 +37,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Load Meridian's bundled idle plugin only in interactive Claude primaries.
 
 ### Fixed
+- Suppress Codex idle push and cache-warning notifications while an externally
+  observed turn is still running.
 - Record Codex compaction only after its completion marker appears, and re-check
   TUI liveness before submitting the verified command.
 - Bound OpenCode idle backend requests and suppress false user returns when

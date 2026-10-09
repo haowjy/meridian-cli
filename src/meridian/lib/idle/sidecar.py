@@ -175,6 +175,10 @@ class _Coordinator:
             if not self.ctx.tui_alive():
                 return
             if stage != "compact":
+                if getattr(self.sensor, "external_events", False):
+                    facts = await self.sensor.facts()
+                    if facts.busy:
+                        continue
                 await asyncio.to_thread(
                     self.service.fire,
                     stage,
