@@ -6,19 +6,33 @@ from meridian.lib.notify.label import build_session_label
 
 
 @pytest.mark.parametrize(
-    ("tmux_session", "project_dir", "work_id", "expected"),
+    ("tmux_session", "project_dir", "work_id", "cwd", "expected"),
     [
-        ("a2", "/repos/meridian-cli", "idle-cache-notify", "[a2] meridian-cli · idle-cache-notify"),
-        (None, "/repos/meridian-cli", "idle-cache-notify", "meridian-cli · idle-cache-notify"),
-        ("a2", None, "idle-cache-notify", "[a2] checkout · idle-cache-notify"),
-        ("a2", "/repos/meridian-cli", None, "[a2] meridian-cli"),
-        (None, None, None, "checkout"),
+        (
+            "a2",
+            "/repos/meridian-cli",
+            "idle-cache-notify",
+            "/repos/checkout",
+            "[a2] meridian-cli · idle-cache-notify",
+        ),
+        (
+            None,
+            "/repos/meridian-cli",
+            "idle-cache-notify",
+            "/repos/checkout",
+            "meridian-cli · idle-cache-notify",
+        ),
+        ("a2", None, "idle-cache-notify", "/", "[a2] idle-cache-notify"),
+        ("a2", "/repos/meridian-cli", None, "/repos/checkout", "[a2] meridian-cli"),
+        (None, None, None, "/", ""),
+        (None, None, None, "/repos/checkout", "checkout"),
     ],
 )
 def test_build_session_label_with_each_optional_part_missing(
     tmux_session: str | None,
     project_dir: str | None,
     work_id: str | None,
+    cwd: str,
     expected: str,
 ) -> None:
     environment = {}
@@ -31,7 +45,7 @@ def test_build_session_label_with_each_optional_part_missing(
 
     label = build_session_label(
         environ=environment,
-        cwd=Path("/repos/checkout"),
+        cwd=Path(cwd),
         resolve_tmux_session=lambda _pane: tmux_session,
     )
 
