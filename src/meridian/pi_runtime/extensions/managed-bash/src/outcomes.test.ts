@@ -35,6 +35,27 @@ function jsonResult(payload: unknown, exitCode = 0): { stdout: string; stderr: s
 }
 
 describe("managed Bash tool outcomes", () => {
+  it("reports an interrupted child wait as running unless the CLI already printed a terminal result", async () => {
+    const { runtime } = await runtimeFor("p-parent-abort");
+    const abortedAfter = (payload: unknown) => (_args: string[], _ms: number, signal: AbortSignal) =>
+      new Promise((resolve) => signal.addEventListener("abort", () =>
+        resolve({ ...(payload ? jsonResult(payload) : { stdout: "", stderr: "", exitCode: null }), error: "aborted" })));
+
+    const pending = new AbortController();
+    runMeridianCommand.mockImplementationOnce(abortedAfter(null));
+    const running = runtime.manage({ action: "wait", bash_id: "p124" }, pending.signal);
+    setTimeout(() => pending.abort(), 10);
+    await expect(running).resolves.toMatchObject({ bash_id: "p124", status: "running", message: expect.stringContaining("interrupted") });
+
+    const finished = new AbortController();
+    runMeridianCommand.mockImplementationOnce(abortedAfter({
+      any_failed: false, spawns: [{ spawn_id: "p125", status: "succeeded", exit_code: 0, report_body: "done" }],
+    }));
+    const raced = runtime.manage({ action: "wait", bash_id: "p125" }, finished.signal);
+    setTimeout(() => finished.abort(), 10);
+    await expect(raced).resolves.toMatchObject({ bash_id: "p125", status: "succeeded", output: "done" });
+  });
+
   it("preserves a failed child outcome instead of treating CLI exit 1 as running", async () => {
     const { runtime } = await runtimeFor("p-parent-failed");
     runMeridianCommand.mockResolvedValueOnce(jsonResult({

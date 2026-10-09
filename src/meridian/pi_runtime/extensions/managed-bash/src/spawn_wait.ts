@@ -35,13 +35,18 @@ export async function waitForSpawn(spawnId: string, timeoutMin: number, signal?:
     (seconds + CHECKPOINT_KILL_SLACK_SECS) * 1000,
     signal,
   );
-  if (signal?.aborted) return interruptedWait(spawnId);
+  if (signal?.aborted) {
+    // The CLI may have recorded a terminal observation and printed it just before
+    // the kill; prefer that over claiming the child is still running.
+    const printed = parseSpawnWaitResult(spawnId, { ...result, error: undefined, exitCode: result.exitCode ?? 0 });
+    return printed.status === "error" || printed.pending_ids ? interruptedWait(spawnId) : printed;
+  }
   return parseSpawnWaitResult(spawnId, result);
 }
 
 /** An interrupted wait delivered nothing, so the result stays owed to the watcher. */
 export function interruptedWait(id: string): BashWaitResult {
-  return { bash_id: id, status: "running", message: `Wait for ${id} interrupted; it is still running and a completion notice will follow.` };
+  return { bash_id: id, status: "running", message: `Wait for ${id} interrupted while it was still running. Wait again to collect the result.` };
 }
 
 function parseSpawnWaitResult(spawnId: string, result: CommandResult): BashWaitResult {

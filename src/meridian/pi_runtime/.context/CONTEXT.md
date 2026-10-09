@@ -97,7 +97,10 @@ Terminal tracked background Bash rows are durable result obligations. Their pers
 read (execution failures excluded); exact custom-message admission consumes an
 unattended notice. Sending or queueing is not consumption. Wait blocks up to the
 55-minute bash timeout with no model-chosen limit: a short wait let the model
-read results around consumption and receive the same completion again.
+read results around consumption and receive the same completion again. The
+tool abort signal (Esc) ends a wait early; an interrupted or timed-out wait
+returned no result, so it consumes nothing. Consumption is gated on the status
+the call returned, not the live record.
 Managed-bash serializes record snapshots; terminal state is persisted before
 waiters are released, and consumption is persisted before the terminal wait or
 output result returns. If consumption persistence fails, the marker is rolled back and
