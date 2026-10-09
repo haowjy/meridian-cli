@@ -267,7 +267,7 @@ class IdleService:
     ) -> None:
         self.env = dict(os.environ if env is None else env)
         root = project_root or Path(self.env.get("MERIDIAN_PROJECT_DIR", Path.cwd()))
-        self.config = config if config is not None else load_config(root)
+        self.config = config if config is not None else load_config(root, resolve_models=False)
         self._now_ms = now_ms
         self.store = store if store is not None else IdleStore(now_ms=now_ms)
         self._notify_sender = notify_sender if notify_sender is not None else _LazyNotifySender()

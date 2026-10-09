@@ -81,6 +81,12 @@ class RaisingSensor(Sensor):
         raise SensorFailure("broken stream")
 
 
+class RaisingFactsSensor(Sensor):
+    async def facts(self) -> IdleFacts:
+        self._alive[0] = False
+        raise SensorFailure("broken facts")
+
+
 class SensorFailure(BaseException):
     pass
 
@@ -191,3 +197,26 @@ async def test_sidecar_contains_base_exception_from_sensor(tmp_path: Path) -> No
 
     debug_path = tmp_path / "p1" / "debug.jsonl"
     assert "SensorFailure" in debug_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_sidecar_contains_base_exception_from_sensor_facts(tmp_path: Path) -> None:
+    alive = [True]
+    clock = Clock()
+    sender = Sender()
+    service, _ = policy(tmp_path, clock, sender)
+    sensor = RaisingFactsSensor(
+        (IdleEvent("turn_end", "session-1", "turn-1", 0),),
+        alive,
+    )
+
+    await run(
+        sensor,
+        context(tmp_path, alive),
+        service=service,
+        clock=cast("SidecarClock", clock),
+        poll_seconds=0.001,
+    )
+
+    assert sensor.compact_calls == 0
+    assert "broken facts" in (tmp_path / "p1" / "debug.jsonl").read_text(encoding="utf-8")

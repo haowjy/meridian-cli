@@ -87,7 +87,7 @@ class _Coordinator:
             return
         await self.cancel_schedule()
         self.schedule_key = key
-        self.schedule_task = asyncio.create_task(self._drive(result))
+        self.schedule_task = asyncio.create_task(self._drive_safely(result))
 
     async def apply_state(self, state: IdleState | None) -> None:
         if state is None:
@@ -163,6 +163,14 @@ class _Coordinator:
                 result=result.result,
                 detail=result.reason,
             )
+
+    async def _drive_safely(self, arm: ArmResult) -> None:
+        try:
+            await self._drive(arm)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            record_sensor_error(self.ctx, phase="timer", error=exc)
 
     async def handle(self, event: IdleEvent) -> None:
         if event.kind == "user_prompt":
