@@ -19,8 +19,11 @@ a harness adapter: **adapters report facts; core decides**.
 - Inject notification delivery. The production sender imports `lib/notify`
   lazily so this package's dependency direction remains one-way.
 - The sidecar is hosted in the primary TUI process. It must contain sensor
-  failures. Use stdlib logging for library diagnostics and the spawn-dir
-  `DebugTracer` for sensor failures; never use structlog or write to stderr.
+  failures, move synchronous service/store work off the launcher event loop,
+  and stop before the live connection is torn down. Its liveness follows the
+  TUI launch task, not the backend observer stream. Use stdlib logging for
+  library diagnostics and the spawn-dir `DebugTracer` for sensor failures;
+  never use structlog or write to stderr.
 
 ## Boundaries
 

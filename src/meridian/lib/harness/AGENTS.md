@@ -40,6 +40,12 @@ declares `consumed_fields` (fields it uses) and `explicitly_ignored_fields`
 `_enforce_spawn_params_accounting()` raises `ImportError` at startup if any field
 is uncovered. This is enforcement, not documentation.
 
+Idle integration uses optional `HarnessBundle` ports: `primary_idle_sensor` for
+launcher-hosted Codex/OpenCode sensing, `parse_idle_event` for native callbacks,
+`idle_env_facts` for harness-owned guards, and `detect_ttl` where the harness can
+observe cache retention. Keep all native parsing, facts, and actuators in
+`*_idle.py`; `lib/idle/` owns policy and state.
+
 ## Two Launch Paths
 
 **Subprocess path** (`lib/launch/`): forks a one-shot process. stdout/stderr read
@@ -192,6 +198,12 @@ parent signals, or supply the parent report.
   → [extractors/AGENTS.md](extractors/AGENTS.md)
 - **`passthrough/`** — TUI attach commands for managed-primary sessions.
   → [passthrough/AGENTS.md](passthrough/AGENTS.md)
+
+Interactive Claude primaries receive the bundled
+`../../claude_runtime/meridian-idle/` mod. Pi primaries receive the fourth
+bundled extension, `../../pi_runtime/extensions/meridian-idle/`; spawned Pi RPC
+sessions do not. Those runtimes translate native events into the same core idle
+contract rather than owning policy.
 
 ## Adding a Harness
 
