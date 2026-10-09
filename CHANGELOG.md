@@ -47,13 +47,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `_MERIDIAN_PI_SESSION_ROLE` variable.
 - Run the Pi extension build and Vitest suites in a parallel `runtime-extensions`
   CI job and in extended/full local preflight.
-- Simplify duplicated CLI and platform test coverage while retaining recovery and integrity contracts; remove obsolete Windows compatibility-test selector.
-- Make the routine preflight a risk-based, single-budget fast gate; retain the complete automated suite as an explicit extended check and move three heavy state modules under `tests/extended/`.
-- Add isolated CLI smoke and explicit regression scripts; retire obsolete synthetic smoke guides.
-- Trim fork and dry-run manual matrices; keep real Mars, bootstrap ordering and native-session checks in private fixtures.
 
 ### Fixed
 - Stop wheels from force-including generated Claude plugin type files.
+
+## [0.9.1] - 2026-10-09
+
+### Fixed
 - Surface non-zero managed Bash outcomes as model-visible tool errors, and classify managed child waits from the structured JSON result rather than the CLI process exit code.
 - Pi `bash_manage(wait)` drop model-chosen `timeout_min`; wait blocks up to 55 min (bash default). Short waits timed out, model read output around tracking, idle watcher re-announced known result.
 - Pi `bash_manage(output)` on finished task consume result like terminal wait; no later completion notice for output already read. Still-running wait message say wait again.
@@ -65,6 +65,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Separate Pi completion stabilization from its post-window validation read, remove unsupported queue/retry activity mappings, and reject unsupported runtimes before launch. Managed TUI and RPC now share the stable Pi >=1.1.0 <2 contract; build extensions against Pi 1.1.0. Drop duplicate test scaffolding, retain one outcome-based validation-interruption guard, and align fake runtimes with their emitted lifecycle and supported major version. Reconcile completion-phase and runtime guidance. Resolve SDK dependencies within CI's release-age safety policy.
 - Wait for Pi run settlement and compaction before accepting idle; retries no longer fail early, active work cannot spend delivery deadlines, and final errors retain their diagnostics. Reject stale/malformed success; preserve explicit drain policies. Spawned runs require the Pi 1.1 lifecycle contract.
 - Resolve Pi's private attempt only at native settlement before one policy/publication pass; completion stabilization now derives activity and validation from the shared coordinator state, and assistant outcomes are decoded once. Keep malformed-settlement failures and assistant-list boundaries type-safe. Clarify that raw attempt frames remain visible to hooks and subscribers.
+
+### Changed
+- Simplify duplicated CLI and platform test coverage while retaining recovery and integrity contracts; remove obsolete Windows compatibility-test selector.
+- Make the routine preflight a risk-based, single-budget fast gate; retain the complete automated suite as an explicit extended check and move three heavy state modules under `tests/extended/`.
+- Add isolated CLI smoke and explicit regression scripts; retire obsolete synthetic smoke guides.
+- Trim fork and dry-run manual matrices; keep real Mars, bootstrap ordering and native-session checks in private fixtures.
 
 ## [0.9.0] - 2026-10-02
 
