@@ -12,6 +12,14 @@ type CompactCallbacks = {
   onError?: (error: Error) => void;
 };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
 function commandResult(value: unknown) {
   return {
     exitCode: 0,
@@ -109,16 +117,73 @@ describe("meridian idle event mapping", () => {
 
     expect(run.mock.calls.map(([args]) => args)).toEqual([
       ["idle", "config", "--interactive"],
-      ["idle", "status", "--json"],
+      ["idle", "status", "--json", "--interactive"],
       [
         "idle", "arm", "--harness", "pi", "--session", "pi-session",
-        "--provider", "anthropic", "--cwd", "/work/project",
+        "--provider", "anthropic", "--cwd", "/work/project", "--interactive",
       ],
       [
         "idle", "return", "--harness", "pi", "--session", "pi-session",
-        "--user-prompt",
+        "--user-prompt", "--interactive",
       ],
     ]);
+    expect(run.mock.calls.every(([args]) => args.at(-1) === "--interactive")).toBe(true);
+  });
+
+  it("returns from the input hook without awaiting the idle return command", async () => {
+    const pendingReturn = deferred<ReturnType<typeof commandResult>>();
+    const returnStarted = deferred<void>();
+    const run = vi.fn<MeridianRunner>(async (args) => {
+      if (args[1] === "config") return commandResult({ enabled: true });
+      if (args[1] === "status") return commandResult([]);
+      if (args[1] === "return") {
+        returnStarted.resolve();
+        return pendingReturn.promise;
+      }
+      return commandResult({});
+    });
+    const { ctx } = context();
+    const { handlers } = host(run);
+
+    await event(handlers, "session_start", {}, ctx);
+    const result = handlers.get("input")!({ source: "interactive" }, ctx);
+
+    expect(result).toBeUndefined();
+    await returnStarted.promise;
+    expect(run.mock.calls.some(([args]) => args[1] === "return")).toBe(true);
+
+    pendingReturn.resolve(commandResult({ stretch_closed: true }));
+    await pendingReturn.promise;
+  });
+
+  it("serializes return behind an in-flight arm", async () => {
+    const pendingArm = deferred<ReturnType<typeof commandResult>>();
+    const armStarted = deferred<void>();
+    const run = vi.fn<MeridianRunner>(async (args) => {
+      if (args[1] === "config") return commandResult({ enabled: true });
+      if (args[1] === "status") return commandResult([]);
+      if (args[1] === "arm") {
+        armStarted.resolve();
+        return pendingArm.promise;
+      }
+      return commandResult({ stretch_closed: true });
+    });
+    const { ctx } = context();
+    const { handlers } = host(run);
+
+    await event(handlers, "session_start", {}, ctx);
+    await event(handlers, "agent_end", {}, ctx);
+    await vi.advanceTimersByTimeAsync(0);
+    await armStarted.promise;
+
+    expect(handlers.get("input")!({ source: "interactive" }, ctx)).toBeUndefined();
+    await Promise.resolve();
+    expect(run.mock.calls.filter(([args]) => ["arm", "return"].includes(args[1]!)).map(([args]) => args[1])).toEqual(["arm"]);
+
+    pendingArm.resolve(commandResult({ stretch: 1, anchor: 1 }));
+    await vi.waitFor(() => {
+      expect(run.mock.calls.filter(([args]) => ["arm", "return"].includes(args[1]!)).map(([args]) => args[1])).toEqual(["arm", "return"]);
+    });
   });
 
   it("maps live facts into fire and compacts only after act", async () => {
@@ -153,7 +218,7 @@ describe("meridian idle event mapping", () => {
     expect(run).toHaveBeenCalledWith([
       "idle", "fire", "push", "--harness", "pi", "--session", "pi-session",
       "--stretch", "7", "--anchor", "8", "--draft", "yes", "--busy",
-      "--context-tokens", "42000",
+      "--context-tokens", "42000", "--interactive",
     ]);
     expect(state.compact).not.toHaveBeenCalled();
 
@@ -164,7 +229,7 @@ describe("meridian idle event mapping", () => {
     expect(run).toHaveBeenCalledWith([
       "idle", "fire", "compact", "--harness", "pi", "--session", "pi-session",
       "--stretch", "7", "--anchor", "8", "--draft", "no",
-      "--context-tokens", "42000",
+      "--context-tokens", "42000", "--interactive",
     ]);
     expect(state.compact).toHaveBeenCalledOnce();
 
@@ -172,9 +237,67 @@ describe("meridian idle event mapping", () => {
     await vi.waitFor(() => {
       expect(run).toHaveBeenCalledWith([
         "idle", "done", "compact", "--harness", "pi", "--session", "pi-session",
-        "--stretch", "7", "--result", "ok",
+        "--stretch", "7", "--result", "ok", "--interactive",
       ]);
     });
+  });
+
+  it.each([
+    {
+      condition: "revision changed",
+      reason: "user returned",
+      change: (runtime: ReturnType<typeof host>["runtime"], ctx: ExtensionContext) => runtime.input("interactive", ctx),
+    },
+    {
+      condition: "context is busy",
+      reason: "busy",
+      change: (_runtime: ReturnType<typeof host>["runtime"], _ctx: ExtensionContext, state: ReturnType<typeof context>["state"]) => {
+        state.idle = false;
+      },
+    },
+    {
+      condition: "messages are pending",
+      reason: "pending messages",
+      change: (_runtime: ReturnType<typeof host>["runtime"], _ctx: ExtensionContext, state: ReturnType<typeof context>["state"]) => {
+        state.pending = true;
+      },
+    },
+    {
+      condition: "a draft appeared",
+      reason: "draft",
+      change: (_runtime: ReturnType<typeof host>["runtime"], _ctx: ExtensionContext, state: ReturnType<typeof context>["state"]) => {
+        state.editor = "new draft";
+      },
+    },
+  ])("vetoes compaction after act when $condition", async ({ reason, change }) => {
+    let runtime!: ReturnType<typeof host>["runtime"];
+    const { ctx, state } = context();
+    const run = vi.fn<MeridianRunner>(async (args) => {
+      if (args[1] === "config") return commandResult({ enabled: true });
+      if (args[1] === "status") return commandResult([]);
+      if (args[1] === "arm") {
+        return commandResult({ stretch: 7, anchor: 8, compact_at: Date.now() + 100 });
+      }
+      if (args[1] === "fire") {
+        change(runtime, ctx, state);
+        return commandResult({ decision: "act" });
+      }
+      return commandResult({});
+    });
+    const installed = host(run);
+    runtime = installed.runtime;
+
+    await event(installed.handlers, "session_start", {}, ctx);
+    await event(installed.handlers, "agent_end", {}, ctx);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(state.compact).not.toHaveBeenCalled();
+    const done = run.mock.calls.find(([args]) => args[1] === "done")?.[0];
+    expect(done).toEqual([
+      "idle", "done", "compact", "--harness", "pi", "--session", "pi-session",
+      "--stretch", "7", "--result", "vetoed", "--reason", reason, "--interactive",
+    ]);
   });
 
   it("reloads stored deadlines and keeps them after a window-absorbed arm", async () => {
@@ -211,7 +334,7 @@ describe("meridian idle event mapping", () => {
     expect(run).toHaveBeenCalledWith([
       "idle", "fire", "push", "--harness", "pi", "--session", "pi-session",
       "--stretch", "11", "--anchor", "12", "--draft", "no",
-      "--context-tokens", "42000",
+      "--context-tokens", "42000", "--interactive",
     ]);
   });
 });
