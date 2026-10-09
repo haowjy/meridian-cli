@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.semantics import TerminalEventOutcome
+from meridian.lib.harness.semantics import TerminalEventOutcome, normalize_event
 from meridian.lib.state import spawn_store
 from meridian.lib.streaming import descendant_evidence as descendant_evidence_module
 from meridian.lib.streaming.drain_coordinator import DrainTerminalDecision
@@ -17,7 +17,7 @@ from tests.support.pi import PiDrainScenario, pi_event, write_json, write_pi_bas
 from tests.support.resident_drain import start_row
 
 _ROOT_ID = SpawnId("p1")
-_AGENT_END = pi_event("agent_end")
+_AGENT_END = pi_event("agent_settled")
 _SUCCESS = TerminalEventOutcome(status="succeeded", exit_code=0)
 _TERMINATE = DrainAction(terminate=True, emit_turn_boundary=False)
 _start_pi = PiDrainScenario.start
@@ -39,7 +39,7 @@ async def _finish_after_refresh(started: PiDrainScenario):  # type: ignore[no-un
 
 
 async def _assess_terminal(started: PiDrainScenario) -> DrainTerminalDecision:
-    await started.coordinator.observe_event(_AGENT_END, "idle")
+    await started.coordinator.observe_event(normalize_event(_AGENT_END))
     return await started.coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, _TERMINATE)
 
 

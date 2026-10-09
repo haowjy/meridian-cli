@@ -17,6 +17,7 @@ CompletionPhase = Literal[
     "assessing",
     "waiting",
     "stabilizing",
+    "validating",
     "finalized",
 ]
 AssessmentTrigger = Literal[
@@ -199,9 +200,13 @@ class CompletionEvidence(Protocol):
         self, event: RawHarnessEvent, transition: str | None
     ) -> EvidenceEventDecision: ...
 
-    def note_event_delivered(self, event: RawHarnessEvent) -> EvidenceEventDecision: ...
+    def note_event_delivered(
+        self, event: RawHarnessEvent, state: CompletionState
+    ) -> EvidenceEventDecision: ...
 
-    async def assess(self, trigger: AssessmentTrigger) -> WorkAssessment: ...
+    async def assess(
+        self, trigger: AssessmentTrigger, state: CompletionState
+    ) -> WorkAssessment: ...
 
     def request_validation(self) -> int: ...
 

@@ -490,6 +490,40 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return resolve_session_file(config_root_hint, session_id, pending=True)
 
 
+def _latest_pi_assistant_candidate(
+    messages: list[object],
+) -> dict[str, object] | None:
+    for message_obj in reversed(messages):
+        if not isinstance(message_obj, dict):
+            continue
+        message = cast("dict[str, object]", message_obj)
+        # Pi emits the native role literally.  Do not accept a visually similar
+        # role here: validation and classification must select the same message.
+        if message.get("role") == "assistant":
+            return message
+    return None
+
+
+def _decode_pi_assistant_candidate(
+    candidate: dict[str, object],
+) -> TerminalEventOutcome | None:
+    reason_obj = candidate.get("stopReason")
+    if not isinstance(reason_obj, str):
+        return None
+    stop_reason = reason_obj.strip().lower()
+    if stop_reason == "error":
+        return TerminalEventOutcome(
+            status=SpawnStatus.FAILED,
+            exit_code=1,
+            error=stringify_terminal_error(candidate.get("errorMessage")) or "pi_stop_error",
+        )
+    if stop_reason in PI_CANCELLED_STOP_REASONS:
+        return TerminalEventOutcome(status=SpawnStatus.CANCELLED, exit_code=130, error="cancelled")
+    if stop_reason in {"stop", "tooluse", "length"}:
+        return TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0)
+    return None
+
+
 def _resolve_pi_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
     if event.event_type == MERIDIAN_CONNECTION_CLOSED_EVENT:
         return connection_closed_outcome(event)
@@ -501,25 +535,47 @@ def _resolve_pi_terminal(event: RawHarnessEvent) -> TerminalEventOutcome | None:
             return TerminalEventOutcome(status=SpawnStatus.FAILED, exit_code=1, error=error)
         return None
 
-    messages_obj = event.payload.get("messages")
-    if isinstance(messages_obj, list):
-        for message_obj in reversed(cast("list[object]", messages_obj)):
-            if not isinstance(message_obj, dict):
-                continue
-            message = cast("dict[str, object]", message_obj)
-            if str(message.get("role", "")).strip().lower() != "assistant":
-                continue
-            stop_reason = str(message.get("stopReason", "")).strip().lower()
-            if stop_reason == "error":
-                return TerminalEventOutcome(
-                    status=SpawnStatus.FAILED, exit_code=1, error="pi_stop_error"
-                )
-            if stop_reason in PI_CANCELLED_STOP_REASONS:
-                return TerminalEventOutcome(
-                    status=SpawnStatus.CANCELLED, exit_code=130, error="cancelled"
-                )
-            break
-    return TerminalEventOutcome(status=SpawnStatus.SUCCEEDED, exit_code=0)
+    return None
+
+
+def _resolve_pi_agent_end(event: RawHarnessEvent) -> TerminalEventOutcome | None:
+    """Resolve one low-level attempt without treating it as session completion."""
+
+    messages = event.payload.get("messages")
+    if not isinstance(messages, list):
+        return TerminalEventOutcome(
+            status=SpawnStatus.FAILED,
+            exit_code=1,
+            error="pi_agent_end_missing_messages",
+        )
+    candidate = _latest_pi_assistant_candidate(cast("list[object]", messages))
+    if candidate is None:
+        return TerminalEventOutcome(
+            status=SpawnStatus.FAILED, exit_code=1, error="pi_agent_end_missing_outcome",
+        )
+    outcome = _decode_pi_assistant_candidate(candidate)
+    if outcome is None:
+        return TerminalEventOutcome(
+            status=SpawnStatus.FAILED,
+            exit_code=1,
+            error="pi_agent_end_missing_outcome",
+        )
+    return outcome
+
+
+def _resolve_pi_settled(event: RawHarnessEvent) -> TerminalEventOutcome | None:
+    """Decode only explicit settlement failures; success is resolved per session."""
+
+    aborted = event.payload.get("aborted")
+    if not isinstance(aborted, bool):
+        return TerminalEventOutcome(
+            status=SpawnStatus.FAILED, exit_code=1, error="pi_invalid_agent_settled",
+        )
+    if aborted:
+        return TerminalEventOutcome(status=SpawnStatus.CANCELLED, exit_code=130, error="cancelled")
+    # A valid non-aborted settlement has no standalone outcome.  The per-session
+    # lifecycle owner resolves it from the private attempt retained at agent_end.
+    return None
 
 
 PI_SEMANTICS = HarnessSemantics(
@@ -530,13 +586,30 @@ PI_SEMANTICS = HarnessSemantics(
         "message_update": EventSemantics(activity="turn_active"),
         "tool_execution_start": EventSemantics(activity="turn_active"),
         "tool_execution_update": EventSemantics(activity="turn_active"),
-        "turn_end": EventSemantics(activity="idle"),
-        "agent_end": EventSemantics(activity="idle", clears_signal=True),
+        # A turn/low-level attempt is not a session-level idle boundary.  Pi
+        # may retry, compact, or continue after either event.
+        "turn_end": EventSemantics(),
+        "agent_end": EventSemantics(),
+        "agent_settled": EventSemantics(activity="idle", clears_signal=True),
+        "auto_retry_start": EventSemantics(activity="turn_active"),
+        "auto_retry_end": EventSemantics(activity="turn_active"),
+        "compaction_start": EventSemantics(activity="turn_active"),
+        # Ends the compaction operation, not the agent run. Pi's tracker
+        # combines both facts before exposing parent idleness.
+        "compaction_end": EventSemantics(activity="idle"),
+        # Branch-summary retries and queued continuations are not a complete
+        # native activity pair. Real compaction and run events carry supported
+        # execution activity; these notifications are retained as raw facts.
+        "summarization_retry_scheduled": EventSemantics(),
+        "summarization_retry_attempt_start": EventSemantics(),
+        "summarization_retry_finished": EventSemantics(),
+        "queue_update": EventSemantics(),
         "response": EventSemantics(),
         MERIDIAN_CONNECTION_CLOSED_EVENT: EventSemantics(),
     },
     payload_resolvers={
-        "agent_end": _resolve_pi_terminal,
+        "agent_end": _resolve_pi_agent_end,
+        "agent_settled": _resolve_pi_settled,
         "response": _resolve_pi_terminal,
         MERIDIAN_CONNECTION_CLOSED_EVENT: _resolve_pi_terminal,
     },

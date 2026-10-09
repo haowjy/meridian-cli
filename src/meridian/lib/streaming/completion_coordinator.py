@@ -32,7 +32,7 @@ from meridian.lib.streaming.drain_coordinator import (
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import RawHarnessEvent
-    from meridian.lib.harness.semantics import TerminalEventOutcome
+    from meridian.lib.harness.semantics import NormalizedHarnessEvent, TerminalEventOutcome
     from meridian.lib.streaming.drain_policy import DrainAction
 
 logger = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ class CompletionCoordinator:
         close_outcome = self._profile.close_outcome(self.state, False)
         return self._candidate is not None and (
             (
-                self._phase == "stabilizing"
+                self._phase in {"stabilizing", "validating"}
                 and close_outcome is not None
                 and close_outcome.status == "succeeded"
             )
@@ -114,6 +114,21 @@ class CompletionCoordinator:
         if transition == "turn_active":
             self._active_turn = True
             self._success_validation = None
+            if self._phase in {"stabilizing", "validating"}:
+                self._phase = "waiting"
+                self._stabilization_at = None
+                self._stabilization_generation = None
+
+    def invalidate_candidate(self) -> None:
+        """New work invalidates completion, not session-wide evidence or cleanup."""
+        self._candidate = None
+        self._success_validation = None
+        self._stabilization_at = None
+        self._stabilization_generation = None
+        self._deadline_at = None
+        self._deadline_latched = False
+        if not self._terminal_published:
+            self._phase = "running"
 
     async def start(self) -> None:
         await self._evidence.start()
@@ -146,7 +161,11 @@ class CompletionCoordinator:
             return None
         return max(min(candidates) - self._clock(), _TIMEOUT_FLOOR_SECONDS)
 
-    async def observe_event(self, event: RawHarnessEvent, transition: str | None) -> bool:
+    async def observe_event(
+        self, normalized_event: NormalizedHarnessEvent
+    ) -> NormalizedHarnessEvent | None:
+        event = normalized_event.raw
+        transition = normalized_event.semantics.activity
         self.note_activity_transition(transition)
         decision = await self._evidence.observe_event(event, transition)
         if (
@@ -154,12 +173,12 @@ class CompletionCoordinator:
             and self._profile.allows_evaluation_without_candidate()
         ):
             self._refresh_profile_deadline()
-        return decision.duplicate_canonical_event
+        return None if decision.duplicate_canonical_event else normalized_event
 
     def note_event_delivered(self, event: RawHarnessEvent) -> DrainLoopDecision:
-        decision = self._evidence.note_event_delivered(event)
+        decision = self._evidence.note_event_delivered(event, self.state)
         self._latch_evidence_decision(decision)
-        if decision.activity is not None and self._phase == "stabilizing":
+        if decision.activity is not None and self._phase in {"stabilizing", "validating"}:
             self._phase = "waiting"
             self._stabilization_at = None
             self._stabilization_generation = None
@@ -183,7 +202,9 @@ class CompletionCoordinator:
             self._active_turn = False
             if action.terminate:
                 self._phase = "assessing"
-                return await self._evaluate_terminal(outcome, action)
+            # Refresh even when outstanding work defers termination: profile
+            # deadlines must start at this boundary, not a later timeout wake.
+            return await self._evaluate_terminal(outcome, action)
         return await self._evaluate_terminal(outcome, action, assess=False)
 
     async def handle_timeout(self) -> DrainLoopDecision:
@@ -352,9 +373,10 @@ class CompletionCoordinator:
         self._pending_evidence_failure = None
 
     async def _fresh_assessment(self, trigger: AssessmentTrigger) -> WorkAssessment:
+        prior_state = self.state
         prior_phase = self._phase
         self._phase = "assessing"
-        assessment = await self._evidence.assess(trigger)
+        assessment = await self._evidence.assess(trigger, prior_state)
         self._assessment = assessment
         self._phase = prior_phase
         return assessment
@@ -375,6 +397,9 @@ class CompletionCoordinator:
             if outcome.status == "succeeded":
                 if self._success_validation is None:
                     self._success_validation = self._evidence.request_validation()
+                    self._phase = "validating"
+                    self._stabilization_at = None
+                    self._stabilization_generation = None
                     return DrainLoopDecision()
                 if not self._evidence.validation_complete(self._success_validation):
                     return DrainLoopDecision()

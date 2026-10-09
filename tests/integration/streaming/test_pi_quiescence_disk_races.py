@@ -16,7 +16,7 @@ from meridian.lib.harness.connections.base import (
     HarnessConnection,
     RawHarnessEvent,
 )
-from meridian.lib.harness.semantics import TerminalEventOutcome
+from meridian.lib.harness.semantics import TerminalEventOutcome, normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import spawn_store
@@ -67,8 +67,8 @@ async def _started_pi_coordinator(
 
 async def _put_pi_parent_idle_after_success(coordinator: PiDrainCoordinator) -> None:
     outcome = TerminalEventOutcome(status="succeeded", exit_code=0, error=None)
-    agent_end = _pi_event("agent_end")
-    await coordinator.observe_event(agent_end, "idle")
+    agent_end = _pi_event("agent_settled")
+    await coordinator.observe_event(normalize_event(agent_end))
     await coordinator.handle_terminal_event(
         agent_end, outcome, DrainAction(terminate=True, emit_turn_boundary=False)
     )
@@ -108,7 +108,7 @@ async def _started_micro_drain_coordinator(
 
 async def _arm_child_wave(started: PiDrainScenario) -> None:
     started.row("p-stuck-child", parent_id=str(started.spawn_id))
-    await started.coordinator.observe_event(_pi_event("agent_end"), "idle")
+    await started.coordinator.observe_event(normalize_event(_pi_event("agent_settled")))
 
 
 @pytest.mark.asyncio
@@ -583,6 +583,7 @@ async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
                 "agent_end",
                 {"messages": [{"role": "assistant", "stopReason": "stop"}]},
             )
+            yield _pi_event("agent_settled", {"aborted": False})
             await asyncio.sleep(60)
 
     fake_connection = _OpenAfterTerminalConnection([])

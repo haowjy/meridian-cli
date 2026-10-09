@@ -313,7 +313,7 @@ def test_pi_prepare_prelaunch_preserves_bound_agent_dir(
         return PiRuntimeResolution(
             binary_path="/bound/bin/pi",
             runtime_kind="override",
-            runtime_version="pi 3.0.0",
+            runtime_version="pi 1.1.0",
         )
 
     monkeypatch.setattr(

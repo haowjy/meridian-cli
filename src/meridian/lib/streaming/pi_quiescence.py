@@ -29,6 +29,7 @@ class PiQuiescenceTracker:
     enabled: bool
     _ledger: PiPrivateWorkLedger = field(default_factory=PiPrivateWorkLedger)
     _parent_idle: bool = False
+    _compacting: bool = False
     _disk_watcher: PiDiskWatcher | None = None
 
     @classmethod
@@ -51,7 +52,11 @@ class PiQuiescenceTracker:
 
     @property
     def parent_idle(self) -> bool:
-        return self._parent_idle
+        return self._parent_idle and not self._compacting
+
+    @property
+    def compacting(self) -> bool:
+        return self._compacting
 
     async def start(self) -> None:
         if not self.enabled:
@@ -74,6 +79,13 @@ class PiQuiescenceTracker:
     async def mark_idle(self) -> None:
         self._parent_idle = True
         await self.refresh_disk_state()
+
+    async def set_compacting(self, active: bool) -> None:
+        # Compaction can start inside a settlement handler, before the public
+        # agent_settled event. Neither event alone proves native idleness.
+        self._compacting = active
+        if not active:
+            await self.refresh_disk_state()
 
     def observe_delivery_message(self, delivery_id: str, work_ids: list[str]) -> None:
         """Fence a causal admission before acknowledging its public event."""

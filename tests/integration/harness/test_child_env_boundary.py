@@ -40,13 +40,15 @@ def _write_recording_harness(path: Path, *, harness: HarnessId) -> None:
         "    payload = json.loads(line)\n"
         "    if payload.get('type') == 'prompt':\n"
         "        print(json.dumps({'type': 'agent_start'}), flush=True)\n"
-        "        print(json.dumps({'type': 'agent_end', 'messages': []}), flush=True)\n"
+        "        print(json.dumps({'type': 'agent_end', 'messages': "
+        "[{'role': 'assistant', 'stopReason': 'stop'}]}), flush=True)\n"
+        "        print(json.dumps({'type': 'agent_settled', 'aborted': False}), flush=True)\n"
         "    elif payload.get('type') == 'abort':\n"
         "        raise SystemExit(0)\n"
         if harness is HarnessId.PI
         else "for _line in sys.stdin:\n    pass\n"
     )
-    version_output = "pi 3.0.0" if harness is HarnessId.PI else "2.1.0"
+    version_output = "pi 1.1.0" if harness is HarnessId.PI else "2.1.0"
     help_branch = (
         "if '--help' in sys.argv[1:]:\n"
         f"    print({_PI_HELP!r})\n"

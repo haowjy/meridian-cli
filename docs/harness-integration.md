@@ -102,9 +102,17 @@ guards, extractor wiring, then cross-adapter field accounting.
 
 Meridian resolves `MERIDIAN_PI_BINARY`, otherwise `pi` on `PATH`, and probes
 `--version`/`--help` before launch. It does not bundle Pi or provide a wrapper
-runtime. The compatibility probe checks different flag surfaces for native
-primary and spawned RPC roles; the exact requirements live in
+runtime. Both roles require stable Pi >=1.1.0 and <2, matching the managed
+extensions' peer contract. Older, prerelease, unrecognized and newer-major
+versions fail before model work. The compatibility probe additionally checks
+different flag surfaces for native primary and spawned RPC roles; requirements live in
 [`pi_runtime_resolver.py`](../src/meridian/lib/harness/pi_runtime_resolver.py).
+
+Spawned completion requires Pi's 1.1 lifecycle contract: `agent_settled` with a
+Boolean `aborted`, plus compaction start/end events. It is runtime-qualified on
+Pi 1.1.0, which is also the pinned extension-development SDK. The version and
+flag gates reject known unsupported runtimes early; actual settlement frames
+remain validated fail-closed.
 
 | Launch | Transport and discovery |
 |---|---|

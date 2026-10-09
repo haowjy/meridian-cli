@@ -6,15 +6,19 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
+from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
     CleanupReport,
     CompletionCleanupRequest,
+    CompletionState,
     DiagnosticBlocker,
     EvidenceEventDecision,
     EvidenceFailure,
@@ -53,7 +57,7 @@ from meridian.lib.streaming.pi_work_ledger import (
 
 if TYPE_CHECKING:
     from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
-    from meridian.lib.harness.semantics import TerminalEventOutcome
+    from meridian.lib.harness.semantics import NormalizedHarnessEvent
     from meridian.lib.launch.launch_types import ResolvedLaunchSpec
     from meridian.lib.streaming.spawn_session import DrainOutcome
 
@@ -122,7 +126,11 @@ class PiCompletionEvidence:
                 self.session_phase_emitted = True
                 if phase_value == "session_event_seen":
                     self.session_seen = True
-        if transition == "turn_active":
+        if event.event_type == "compaction_start":
+            await self.quiescence_tracker.set_compacting(True)
+        elif event.event_type == "compaction_end":
+            await self.quiescence_tracker.set_compacting(False)
+        elif transition == "turn_active":
             self.quiescence_tracker.mark_turn_active()
         elif transition == "idle":
             await self.quiescence_tracker.mark_idle()
@@ -142,10 +150,7 @@ class PiCompletionEvidence:
                 )
                 delivery_id = details.get("delivery_id")
                 work_ids = details.get("work_ids")
-                if (
-                    isinstance(delivery_id, str)
-                    and isinstance(work_ids, list)
-                ):
+                if isinstance(delivery_id, str) and isinstance(work_ids, list):
                     members = cast("list[object]", work_ids)
                     if all(isinstance(item, str) for item in members):
                         self.quiescence_tracker.observe_delivery_message(
@@ -153,12 +158,19 @@ class PiCompletionEvidence:
                         )
         profile = self._profile
         if profile is not None:
-            profile.after_observed_event(transition)
+            activity = transition
+            if transition is not None:
+                activity = "idle" if self.quiescence_tracker.parent_idle else "turn_active"
+            profile.after_observed_event(activity)
         return EvidenceEventDecision()
 
-    def note_event_delivered(self, event: RawHarnessEvent) -> EvidenceEventDecision:
+    def note_event_delivered(
+        self, event: RawHarnessEvent, state: CompletionState
+    ) -> EvidenceEventDecision:
         profile = self._profile
-        activity = profile.note_persisted_activity(event) if profile is not None else None
+        activity = (
+            profile.note_persisted_activity(event, state) if profile is not None else None
+        )
         lifecycle_error = self.lifecycle_tracker.lifecycle_tracking_invalidated_error
         failure = (
             EvidenceFailure(code="pi_lifecycle_tracking_invalidated", detail=lifecycle_error)
@@ -167,15 +179,17 @@ class PiCompletionEvidence:
         )
         return EvidenceEventDecision(activity=activity, failure=failure)
 
-    async def assess(self, trigger: AssessmentTrigger) -> WorkAssessment:
+    async def assess(
+        self, trigger: AssessmentTrigger, state: CompletionState
+    ) -> WorkAssessment:
         profile = self._profile
         if trigger == "aux_wake" or (
-            trigger == "timeout" and profile is not None and profile.micro_drain_active
+            trigger == "timeout" and state.phase == "stabilizing"
         ):
             await self.quiescence_tracker.refresh_disk_state()
         if trigger == "aux_wake" and profile is not None:
             profile.after_disk_change()
-        if trigger == "timeout" and profile is not None and profile.micro_drain_active:
+        if trigger == "timeout" and state.phase == "stabilizing":
             # A micro-drain acceptance boundary needs a read begun after the
             # timeout request; coalesce behind any initial read in flight.
             self._refresh.request()
@@ -426,6 +440,7 @@ class PiDrainCoordinator:
         self._coordinator = coordinator
         self._evidence = evidence
         self._profile = profile
+        self._latest_agent_attempt: TerminalEventOutcome | None = None
 
     @classmethod
     def for_connection(
@@ -495,6 +510,7 @@ class PiDrainCoordinator:
 
     async def stop(self) -> None:
         self._profile.stop()
+        self._latest_agent_attempt = None
         await self._coordinator.stop()
 
     def set_policy(self, policy: DrainPolicy) -> None:
@@ -503,8 +519,35 @@ class PiDrainCoordinator:
     def next_timeout(self) -> float | None:
         return self._coordinator.next_timeout()
 
-    async def observe_event(self, event: RawHarnessEvent, transition: str | None) -> bool:
-        return await self._coordinator.observe_event(event, transition)
+    async def observe_event(
+        self, event: NormalizedHarnessEvent
+    ) -> NormalizedHarnessEvent | None:
+        if event.raw.event_type in {"agent_start", "turn_start"}:
+            self._latest_agent_attempt = None
+            self._coordinator.invalidate_candidate()
+        refined = self._refine_native_event(event)
+        return await self._coordinator.observe_event(refined)
+
+    def _refine_native_event(
+        self, event: NormalizedHarnessEvent
+    ) -> NormalizedHarnessEvent:
+        if event.raw.event_type == "agent_end":
+            self._latest_agent_attempt = event.semantics.terminal
+            return _replace_terminal(event, None)
+        if event.raw.event_type != "agent_settled":
+            return event
+        marker = event.semantics.terminal
+        attempt = self._latest_agent_attempt
+        self._latest_agent_attempt = None
+        if marker is not None:
+            return event
+        if attempt is None:
+            attempt = TerminalEventOutcome(
+                status=SpawnStatus.FAILED,
+                exit_code=1,
+                error="pi_agent_settled_without_agent_end",
+            )
+        return _replace_terminal(event, attempt)
 
     def note_event_delivered(self, event: RawHarnessEvent) -> DrainLoopDecision:
         return self._coordinator.note_event_delivered(event)
@@ -516,6 +559,13 @@ class PiDrainCoordinator:
         action: DrainAction,
     ) -> DrainTerminalDecision:
         self._profile.observe_terminal_event(event, outcome)
+        if not self._profile.quiescence_enabled:
+            # Explicit single-turn/persistent policies do not request disk
+            # quiescence or its asynchronous success-validation fence.
+            return DrainTerminalDecision(
+                recorded_outcome=outcome if action.terminate else None,
+                emit_turn_boundary=action.emit_turn_boundary,
+            )
         return await self._coordinator.handle_terminal_event(event, outcome, action)
 
     async def handle_timeout(self) -> DrainLoopDecision:
@@ -577,3 +627,10 @@ class PiDrainCoordinator:
 
 
 __all__ = ["PiDrainCoordinator"]
+
+
+def _replace_terminal(
+    event: NormalizedHarnessEvent,
+    terminal: TerminalEventOutcome | None,
+) -> NormalizedHarnessEvent:
+    return replace(event, semantics=replace(event.semantics, terminal=terminal))
