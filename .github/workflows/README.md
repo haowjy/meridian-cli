@@ -6,8 +6,10 @@
 nightly schedule.
 
 - PRs get a non-blocking release-label warning.
-- Routine CI and the local pre-push hook run `scripts/preflight.sh fast`: default
-  pytest paths, lint and typecheck under one 60-second prepared-environment budget.
+- Routine CI and the local pre-push hook run the same `scripts/preflight.sh fast`
+  gate over default pytest paths, lint and typecheck; the 60-second promise is for
+  a prepared developer machine, while hosted CI uses a 120-second budget because
+  its runners are about 1.5× slower.
 - Full Python and compatibility jobs run only on dispatch/nightly. The explicit
   `scripts/preflight.sh full` gate still builds extensions, runs every Python
   test and builds packages; releases use it too.

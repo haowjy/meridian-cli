@@ -4,6 +4,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE="${1:-fast}"
+if (( $# > 0 )); then
+  shift
+fi
 
 run_step() {
   printf 'preflight: %s\n' "$*" >&2
@@ -13,10 +16,14 @@ run_step() {
 case "$MODE" in
   fast)
     cd "$ROOT_DIR"
-    # The Python runner owns one monotonic 60-second budget across all steps.
-    run_step uv run --extra dev python -m meridian.dev.preflight
+    # The Python runner defaults to one monotonic 60-second budget across all steps.
+    run_step uv run --extra dev python -m meridian.dev.preflight "$@"
     ;;
   extended|full)
+    if (( $# > 0 )); then
+      printf 'Usage: preflight.sh [fast [preflight arguments...]|extended|full]\n' >&2
+      exit 1
+    fi
     cd "$ROOT_DIR"
     printf 'preflight: extended gate (explicit tests/ collection)\n' >&2
     # A complete gate must not inherit a last-failed or filtered selection.
@@ -35,7 +42,7 @@ case "$MODE" in
     run_step uv build --no-sources
     ;;
   *)
-    printf 'Usage: preflight.sh [fast|extended|full]\n' >&2
+    printf 'Usage: preflight.sh [fast [preflight arguments...]|extended|full]\n' >&2
     exit 1
     ;;
 esac

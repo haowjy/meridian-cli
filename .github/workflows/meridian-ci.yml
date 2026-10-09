@@ -73,7 +73,7 @@ jobs:
         run: uv sync --extra dev
 
       - name: Run fast gate
-        run: scripts/preflight.sh fast
+        run: scripts/preflight.sh fast --budget 120
 
   runtime-extensions:
     runs-on: ubuntu-latest
