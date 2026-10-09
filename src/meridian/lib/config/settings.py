@@ -1152,6 +1152,74 @@ class IdleConfig(BaseModel):
             env_vars=("MERIDIAN_IDLE_ENABLED",),
         ),
     ] = True
+    push_seconds: Annotated[
+        int,
+        config_field(
+            "idle.push_seconds",
+            value_kind="int",
+            file_aliases=(file_alias("idle", "push_seconds"),),
+            env_vars=("MERIDIAN_IDLE_PUSH_SECONDS",),
+        ),
+        Field(ge=0),
+    ] = 60
+    warn_minutes: Annotated[
+        int,
+        config_field(
+            "idle.warn_minutes",
+            value_kind="int",
+            file_aliases=(file_alias("idle", "warn_minutes"),),
+            env_vars=("MERIDIAN_IDLE_WARN_MINUTES",),
+        ),
+        Field(ge=0),
+    ] = 15
+    warn_email: Annotated[
+        bool,
+        config_field(
+            "idle.warn_email",
+            value_kind="bool",
+            file_aliases=(file_alias("idle", "warn_email"),),
+            env_vars=("MERIDIAN_IDLE_WARN_EMAIL",),
+        ),
+    ] = True
+    compact_minutes: Annotated[
+        int,
+        config_field(
+            "idle.compact_minutes",
+            value_kind="int",
+            file_aliases=(file_alias("idle", "compact_minutes"),),
+            env_vars=("MERIDIAN_IDLE_COMPACT_MINUTES",),
+        ),
+        Field(ge=0),
+    ] = 5
+    compact: Annotated[
+        bool,
+        config_field(
+            "idle.compact",
+            value_kind="bool",
+            file_aliases=(file_alias("idle", "compact"),),
+            env_vars=("MERIDIAN_IDLE_COMPACT",),
+        ),
+    ] = True
+    min_compact_tokens: Annotated[
+        int,
+        config_field(
+            "idle.min_compact_tokens",
+            value_kind="int",
+            file_aliases=(file_alias("idle", "min_compact_tokens"),),
+            env_vars=("MERIDIAN_IDLE_MIN_COMPACT_TOKENS",),
+        ),
+        Field(ge=0),
+    ] = 40_000
+    late_fire_tolerance_seconds: Annotated[
+        int,
+        config_field(
+            "idle.late_fire_tolerance_seconds",
+            value_kind="int",
+            file_aliases=(file_alias("idle", "late_fire_tolerance_seconds"),),
+            env_vars=("MERIDIAN_IDLE_LATE_FIRE_TOLERANCE_SECONDS",),
+        ),
+        Field(ge=0),
+    ] = 120
 
 
 class WorkConfig(BaseModel):
@@ -1280,6 +1348,7 @@ def harness_idle_model(harness_id: str) -> type[BaseModel]:
     normalized = harness_id.strip().lower()
     if normalized not in _HARNESS_TABLE_KEYS:
         raise ValueError(f"Unsupported harness ID for idle config: {harness_id!r}.")
+    ttl_default = {"codex": 1800, "opencode": 300}.get(normalized)
     return create_model(
         f"{normalized.title()}HarnessIdleConfig",
         __config__=ConfigDict(frozen=True, extra="ignore"),
@@ -1298,12 +1367,45 @@ def harness_idle_model(harness_id: str) -> type[BaseModel]:
             ],
             True,
         ),
+        compact=(
+            Annotated[
+                bool,
+                config_field(
+                    f"harness.{normalized}.idle.compact",
+                    value_kind="bool",
+                    file_aliases=(
+                        file_alias(("harness", normalized, "idle"), "compact"),
+                    ),
+                    env_vars=(f"MERIDIAN_HARNESS_IDLE_COMPACT_{normalized.upper()}",),
+                ),
+            ],
+            True,
+        ),
+        ttl_seconds=(
+            Annotated[
+                int | None,
+                config_field(
+                    f"harness.{normalized}.idle.ttl_seconds",
+                    value_kind="int",
+                    file_aliases=(
+                        file_alias(("harness", normalized, "idle"), "ttl_seconds"),
+                    ),
+                    env_vars=(
+                        f"MERIDIAN_HARNESS_IDLE_TTL_SECONDS_{normalized.upper()}",
+                    ),
+                ),
+                Field(gt=0),
+            ],
+            ttl_default,
+        ),
     )
 
 
 if TYPE_CHECKING:
     class _HarnessIdleConfigType(BaseModel):
         enabled: bool = True
+        compact: bool = True
+        ttl_seconds: int | None = None
 
     ClaudeHarnessIdleConfig = _HarnessIdleConfigType
     CodexHarnessIdleConfig = _HarnessIdleConfigType

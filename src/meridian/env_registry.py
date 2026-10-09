@@ -104,11 +104,27 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _public_config(
         "MERIDIAN_HARNESS_IDLE_ENABLED_CLAUDE", "Claude idle behavior toggle."
     ),
+    _public_config(
+        "MERIDIAN_HARNESS_IDLE_COMPACT_CLAUDE", "Claude idle compaction toggle."
+    ),
+    _public_config(
+        "MERIDIAN_HARNESS_IDLE_TTL_SECONDS_CLAUDE", "Claude idle cache TTL."
+    ),
+    _public_config("MERIDIAN_HARNESS_IDLE_COMPACT_CODEX", "Codex idle compaction toggle."),
     _public_config("MERIDIAN_HARNESS_IDLE_ENABLED_CODEX", "Codex idle behavior toggle."),
+    _public_config("MERIDIAN_HARNESS_IDLE_TTL_SECONDS_CODEX", "Codex idle cache TTL."),
     _public_config(
         "MERIDIAN_HARNESS_IDLE_ENABLED_OPENCODE", "OpenCode idle behavior toggle."
     ),
+    _public_config(
+        "MERIDIAN_HARNESS_IDLE_COMPACT_OPENCODE", "OpenCode idle compaction toggle."
+    ),
+    _public_config(
+        "MERIDIAN_HARNESS_IDLE_TTL_SECONDS_OPENCODE", "OpenCode idle cache TTL."
+    ),
+    _public_config("MERIDIAN_HARNESS_IDLE_COMPACT_PI", "Pi idle compaction toggle."),
     _public_config("MERIDIAN_HARNESS_IDLE_ENABLED_PI", "Pi idle behavior toggle."),
+    _public_config("MERIDIAN_HARNESS_IDLE_TTL_SECONDS_PI", "Pi idle cache TTL."),
     _public_config("MERIDIAN_HARNESS_MODEL_CLAUDE", "Claude harness model mapping."),
     _public_config("MERIDIAN_HARNESS_MODEL_CODEX", "Codex harness model mapping."),
     _public_config("MERIDIAN_HARNESS_MODEL_OPENCODE", "OpenCode harness model mapping."),
@@ -159,6 +175,15 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _public_config("MERIDIAN_HISTORY_ARCHIVE_AFTER_DAYS", "History inactivity threshold in days."),
     _public_config("MERIDIAN_HISTORY_ARCHIVE_DESTINATION", "History ZIP destination directory."),
     _public_config("MERIDIAN_IDLE_ENABLED", "Cross-harness idle behavior toggle."),
+    _public_config("MERIDIAN_IDLE_COMPACT", "Cross-harness idle compaction toggle."),
+    _public_config("MERIDIAN_IDLE_COMPACT_MINUTES", "Idle compaction lead time."),
+    _public_config(
+        "MERIDIAN_IDLE_LATE_FIRE_TOLERANCE_SECONDS", "Idle timer late-fire tolerance."
+    ),
+    _public_config("MERIDIAN_IDLE_MIN_COMPACT_TOKENS", "Minimum idle compaction size."),
+    _public_config("MERIDIAN_IDLE_PUSH_SECONDS", "Idle push delay."),
+    _public_config("MERIDIAN_IDLE_WARN_EMAIL", "Idle warning email toggle."),
+    _public_config("MERIDIAN_IDLE_WARN_MINUTES", "Idle cache warning lead time."),
     _public_config("MERIDIAN_STATE_RETENTION_DAYS", "Runtime-state retention period."),
     _public_config("MERIDIAN_TIMEOUT", "Spawn timeout override."),
     _public_config("MERIDIAN_WAIT_TIMEOUT_MINUTES", "Wait operation timeout."),
