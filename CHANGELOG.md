@@ -37,6 +37,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Load Meridian's bundled idle plugin only in interactive Claude primaries.
 
 ### Fixed
+- Keep harness adapters independent of idle policy while preserving pinned Codex
+  event parsing and user-notify chaining at the CLI boundary.
 - Suppress Codex idle push and cache-warning notifications while an externally
   observed turn is still running.
 - Record Codex compaction only after its completion marker appears, and re-check

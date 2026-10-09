@@ -18,6 +18,7 @@ from meridian.lib.harness.idle_types import (
     IdleEvent,
     IdleSensor,
     IdleSensorContext,
+    PinnedIdleSession,
 )
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.semantics import HarnessSemantics
@@ -74,7 +75,21 @@ class HarnessProjectionPorts(Generic[SpecT]):
 
 EventSinks = Callable[[Path, SpawnId], tuple[Callable[[RawHarnessEvent], None], ...]]
 PrimaryIdleSensor = Callable[[IdleSensorContext], IdleSensor | None]
-ParseIdleEvent = Callable[[str], IdleEvent | None]
+IdleSessionReader = Callable[[str], PinnedIdleSession | None]
+
+
+class ParseIdleEvent(Protocol):
+    """Harness-native callback parser with caller-owned state lookup."""
+
+    def __call__(
+        self,
+        payload: str,
+        *,
+        session_reader: IdleSessionReader,
+    ) -> IdleEvent | None: ...
+
+
+IdleEventApplied = Callable[[str, Mapping[str, str]], None]
 IdleEnvFactsReader = Callable[[Mapping[str, str]], IdleEnvFacts]
 
 
@@ -98,6 +113,7 @@ class HarnessBundle(Generic[SpecT]):
     event_sinks: EventSinks = _no_event_sinks
     primary_idle_sensor: PrimaryIdleSensor | None = None
     parse_idle_event: ParseIdleEvent | None = None
+    idle_event_applied: IdleEventApplied | None = None
     idle_env_facts: IdleEnvFactsReader | None = None
     detect_ttl: DetectIdleTtl | None = None
 
@@ -187,6 +203,7 @@ def register_harness_bundle(bundle: HarnessBundle[Any]) -> None:
         event_sinks=bundle.event_sinks,
         primary_idle_sensor=bundle.primary_idle_sensor,
         parse_idle_event=bundle.parse_idle_event,
+        idle_event_applied=bundle.idle_event_applied,
         idle_env_facts=bundle.idle_env_facts,
         detect_ttl=bundle.detect_ttl,
     )

@@ -10,12 +10,11 @@ import pytest
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.codex_idle import (
     CodexIdleSensor,
-    PinnedIdleSession,
     pane_facts,
     parse_idle_event,
 )
 from meridian.lib.harness.connections.base import HarnessConnection
-from meridian.lib.harness.idle_types import IdleEvent, IdleSensorContext
+from meridian.lib.harness.idle_types import IdleEvent, IdleSensorContext, PinnedIdleSession
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "codex_idle"
 MAIN_THREAD = "01a11de2-ce9f-7c41-970f-a07df19fa0e4"
@@ -75,7 +74,6 @@ def test_parse_idle_event_pins_main_thread_and_tracks_input_growth() -> None:
         event = parse_idle_event(
             payload,
             session_reader=read_session,
-            chain_user_notify=False,
         )
         parsed.append(event)
         if event is not None:
@@ -97,7 +95,6 @@ def test_parse_idle_event_pins_main_thread_and_tracks_input_growth() -> None:
     repeated = parse_idle_event(
         _probe_payloads()[-1],
         session_reader=read_session,
-        chain_user_notify=False,
     )
     assert repeated is not None
     assert repeated.implies_return is False

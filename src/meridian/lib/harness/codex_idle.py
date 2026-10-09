@@ -5,13 +5,11 @@ from __future__ import annotations
 import asyncio
 import atexit
 import json
-import os
 import subprocess
 import time
 import tomllib
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import suppress
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
@@ -22,6 +20,7 @@ from meridian.lib.harness.idle_types import (
     IdleFacts,
     IdleSensor,
     IdleSensorContext,
+    PinnedIdleSession,
 )
 from meridian.lib.platform import get_home_path
 
@@ -30,13 +29,6 @@ _PROMPT_MARKER = "\u203a"
 _COMPACT_COMMAND = "/compact"
 _COMPACT_MARKER = "Context compacted"
 IDLE_NOTIFY_COMMAND = ("meridian", "idle", "event", "--harness", "codex")
-
-
-@dataclass(frozen=True)
-class PinnedIdleSession:
-    """Minimum persisted fact needed to accept one Codex notify event."""
-
-    last_input_count: int | None
 
 
 class TmuxClient(Protocol):
@@ -113,17 +105,6 @@ def pane_facts(capture: str) -> IdleFacts:
     )
 
 
-def _read_pinned_session(session: str) -> PinnedIdleSession | None:
-    # The service is the adapter-facing read seam. The harness module never
-    # derives or opens an idle-store path itself.
-    from meridian.lib.idle.service import IdleService
-
-    states = IdleService(env=os.environ).status(harness="codex", session=session)
-    if not states:
-        return None
-    return PinnedIdleSession(last_input_count=states[0].last_input_count)
-
-
 def _codex_config_path(env: Mapping[str, str]) -> Path:
     configured = env.get("CODEX_HOME", "").strip()
     home = Path(configured).expanduser() if configured else get_home_path() / ".codex"
@@ -156,24 +137,23 @@ def _run_user_notify(command: tuple[str, ...], payload: str) -> None:
         )
 
 
-def _chain_user_notify(payload: str, env: Mapping[str, str]) -> None:
+def chain_user_notify(payload: str, env: Mapping[str, str]) -> None:
+    """Queue the user's Codex notify command to run after Meridian exits."""
+
     command = _read_user_notify(env)
     if command is not None and command[: len(IDLE_NOTIFY_COMMAND)] != IDLE_NOTIFY_COMMAND:
-        # The CLI applies the parsed event after this function returns. Process
-        # exit therefore runs the user's handler after Meridian's own work.
+        # The CLI has already applied the event. Process exit keeps the user's
+        # handler after Meridian's JSON response and remaining teardown.
         atexit.register(_run_user_notify, command, payload)
 
 
 def parse_idle_event(
     payload: str,
     *,
-    session_reader: Callable[[str], PinnedIdleSession | None] = _read_pinned_session,
-    chain_user_notify: bool = True,
+    session_reader: Callable[[str], PinnedIdleSession | None],
 ) -> IdleEvent | None:
     """Parse one Codex ``notify`` argv payload pinned to an active primary."""
 
-    if chain_user_notify:
-        _chain_user_notify(payload, os.environ)
     try:
         parsed: object = json.loads(payload)
     except json.JSONDecodeError:
@@ -301,7 +281,7 @@ def primary_idle_sensor(ctx: IdleSensorContext) -> IdleSensor:
 __all__ = [
     "IDLE_NOTIFY_COMMAND",
     "CodexIdleSensor",
-    "PinnedIdleSession",
+    "chain_user_notify",
     "pane_facts",
     "parse_idle_event",
     "primary_idle_sensor",

@@ -39,7 +39,11 @@ from meridian.lib.harness.bundle import (
     ManagedPrimaryProjectionPorts,
     register_harness_bundle,
 )
-from meridian.lib.harness.codex_idle import parse_idle_event, primary_idle_sensor
+from meridian.lib.harness.codex_idle import (
+    chain_user_notify,
+    parse_idle_event,
+    primary_idle_sensor,
+)
 from meridian.lib.harness.codex_rollout import (
     CODEX_ROLLOUT_FILENAME_RE,
     materialize_fork_rollout,
@@ -657,5 +661,6 @@ register_harness_bundle(
         semantics=CODEX_SEMANTICS,
         primary_idle_sensor=primary_idle_sensor,
         parse_idle_event=parse_idle_event,
+        idle_event_applied=chain_user_notify,
     )
 )

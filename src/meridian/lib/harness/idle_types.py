@@ -27,6 +27,13 @@ class IdleEvent:
 
 
 @dataclass(frozen=True)
+class PinnedIdleSession:
+    """Minimum persisted state exposed to a harness-native event parser."""
+
+    last_input_count: int | None
+
+
+@dataclass(frozen=True)
 class IdleEnvFacts:
     """Harness environment facts that affect idle policy."""
 
@@ -100,4 +107,5 @@ __all__ = [
     "IdleFacts",
     "IdleSensor",
     "IdleSensorContext",
+    "PinnedIdleSession",
 ]
