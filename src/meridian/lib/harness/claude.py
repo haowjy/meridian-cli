@@ -47,6 +47,10 @@ from meridian.lib.harness.claude_preflight import (
     ensure_claude_session_accessible,
     validate_claude_session_file,
 )
+from meridian.lib.harness.claude_runtime_resolver import (
+    missing_claude_runtime_warning,
+    resolve_claude_runtime,
+)
 from meridian.lib.harness.claude_sessions import (
     candidate_claude_project_dirs,
     reconcile_tui_trampoline_session_id,
@@ -82,6 +86,7 @@ from meridian.lib.launch.constants import (
     PRIMARY_BASE_COMMAND_CLAUDE,
 )
 from meridian.lib.launch.launch_types import (
+    CompositionWarning,
     PreflightResult,
     ResolvedLaunchSpec,
     TerminalSurfaceMode,
@@ -283,6 +288,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             disallowed_tools = (
                 "Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)",
             )
+        claude_runtime = resolve_claude_runtime() if run.interactive else None
         return ResolvedLaunchSpec(
             harness=HarnessId.CLAUDE,
             model=str(run.model).strip() if run.model else None,
@@ -301,7 +307,17 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             prompt_file_path=prompt_file_path,
             user_turn_content=user_turn_content,
             disallowed_tools=disallowed_tools,
+            claude_plugin_dirs=(
+                claude_runtime.plugin_dirs if claude_runtime is not None else ()
+            ),
         )
+
+    def launch_spec_warnings(
+        self, spec: ResolvedLaunchSpec
+    ) -> tuple[CompositionWarning, ...]:
+        if not spec.interactive or spec.claude_plugin_dirs:
+            return ()
+        return (missing_claude_runtime_warning(),)
 
     def preflight(
         self,

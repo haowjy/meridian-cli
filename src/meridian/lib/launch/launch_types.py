@@ -110,6 +110,7 @@ class ResolvedLaunchSpec(BaseModel):
     prompt_file_path: str | None = None
     claude_native_agents_enabled: bool = False
     disallowed_tools: tuple[str, ...] = ()
+    claude_plugin_dirs: tuple[str, ...] = ()
 
     # Claude + Codex
     user_turn_content: str | None = None

@@ -9,6 +9,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Load metadata-backed top-level and per-harness nested config tables generically,
   with initial `idle.enabled` settings for global and harness-specific control.
 - Add harness-agnostic idle sensor contracts and an inert launcher-side task seam.
+### Changed
+- Load Meridian's bundled no-op idle plugin only in interactive Claude primaries.
 
 ### Fixed
 - Reconcile Pi docs and smoke guides with current extension loading, native session boundaries, task ownership and causal result delivery; remove obsolete integration phases and status tables.

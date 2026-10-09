@@ -311,6 +311,7 @@ class MaterializedLaunchArtifacts:
     permission_config: PermissionConfig
     perms: PermissionResolver
     spec: ResolvedLaunchSpec
+    warnings: tuple[CompositionWarning, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -619,6 +620,7 @@ def materialize_launch_artifacts(
         permission_config=permission_config,
         perms=perms,
         spec=spec,
+        warnings=harness.launch_spec_warnings(spec),
     )
 
 
@@ -2036,6 +2038,7 @@ def bind_launch_context(
     permission_config = materialized.permission_config
     perms = materialized.perms
     spec = materialized.spec
+    composition_warnings = (*composition_warnings, *materialized.warnings)
     opencode_version: str | None = None
     if harness.id == HarnessId.OPENCODE:
         # Resolve once and carry the preference on the spec so the dry-run argv

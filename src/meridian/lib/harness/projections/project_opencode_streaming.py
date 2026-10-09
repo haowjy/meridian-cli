@@ -49,6 +49,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "native_identity",
         "agents_payload",
         "claude_native_agents_enabled",
+        "claude_plugin_dirs",
         "base_instructions",
         "developer_instructions",
         "harness",

@@ -75,7 +75,11 @@ build-backend = "hatchling.build"
 path = "src/meridian/__init__.py"
 
 [tool.hatch.build]
-artifacts = ["src/meridian/pi_runtime/dist/extensions/*"]
+artifacts = [
+  "src/meridian/pi_runtime/dist/extensions/*",
+  "src/meridian/claude_runtime/**",
+  "src/meridian/claude_runtime/meridian-idle/.claude-plugin/plugin.json",
+]
 
 [tool.hatch.build.targets.sdist]
 include = [
