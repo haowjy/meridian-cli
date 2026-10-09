@@ -6,6 +6,9 @@ on:
     branches:
       - main
       - master
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
 
 jobs:
   pr-changelog-note:
@@ -48,33 +51,6 @@ jobs:
             echo "::notice::CHANGELOG.md is unchanged in this PR."
           fi
 
-  lint:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          version: "0.9.18"
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.14"
-
-      - name: Install dependencies
-        run: uv sync --extra dev
-
-      - name: Lint
-        run: uv run --extra dev ruff check .
-
-      - name: Typecheck
-        run: uv run --extra dev python -m pyright
-
   fast-gate:
     runs-on: ubuntu-latest
     permissions:
@@ -96,21 +72,11 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-
-      - name: Enable pnpm
-        run: corepack enable
-
-      - name: Build Pi extensions
-        run: cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
-
       - name: Run fast gate
-        run: uv run --extra dev pytest -n auto -m "not slow"
+        run: scripts/preflight.sh fast
 
   full-gate:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -139,13 +105,11 @@ jobs:
       - name: Enable pnpm
         run: corepack enable
 
-      - name: Build Pi extensions
-        run: cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
-
       - name: Run full gate
         run: scripts/preflight.sh full
 
   compat:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -178,4 +142,4 @@ jobs:
         run: cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
 
       - name: Run compatibility gate
-        run: uv run --extra dev pytest -n auto
+        run: uv run --extra dev pytest -n auto tests/

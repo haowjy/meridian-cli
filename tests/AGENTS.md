@@ -8,9 +8,20 @@ decisions, security/env sanitization, algorithms, and parsing edges.
 ## Running
 
 ```bash
-uv run pytest-llm              # Unit tests (token-efficient output)
+uv run pytest-llm              # Risk-based default paths (prepared fast gate)
+uv run pytest tests/           # Complete automated suite, including extended/
 uv run meridian                # Smoke test the CLI directly
 ```
+
+Bare `pytest` and `pytest-llm` use the directory-level default paths in
+`pyproject.toml` (unit, contract, platform, and selected integration seams).
+Those seams are `integration/config`, `catalog`, `safety`, `harness`, `hooks`,
+`prompt`, `telemetry`, and `state`.
+The default is intentionally not the complete suite. Use an explicit `tests/`
+path for release, nightly, or full regression checks; focused paths continue to
+override `testpaths`, including files under `tests/extended/`. Tests in
+`tests/smoke/` and `tests/e2e/` are not part of pytest collection and remain
+manual/runtime workflows.
 
 Use `uv run pytest --runner-history=off <tests>` to trap implicit reads of legacy
 spawn/artifact runner `history.jsonl` (Meridian no longer writes it). The trap is

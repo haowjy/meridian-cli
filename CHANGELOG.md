@@ -9,6 +9,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Simplify duplicated CLI and platform test coverage while retaining recovery and integrity contracts; remove obsolete Windows compatibility-test selector.
+- Make the routine preflight a risk-based, single-budget fast gate; retain the complete automated suite as an explicit extended check and move three heavy state modules under `tests/extended/`.
 
 ## [0.9.0] - 2026-10-02
 
