@@ -59,6 +59,10 @@ class NotifySender(Protocol):
     def send(self, notice: NoticeSpec, cfg: object) -> NotifyReport: ...
 
 
+class _SessionLabel(Protocol):
+    def titled(self, title: str | None = None) -> str: ...
+
+
 class _LazyNotifySender:
     def send(self, notice: NoticeSpec, cfg: object) -> NotifyReport:
         notice_type = cast(
@@ -69,9 +73,13 @@ class _LazyNotifySender:
             "Callable[[object, object], NotifyReport]",
             vars(import_module("meridian.lib.notify.service"))["send"],
         )
+        build_label = cast(
+            "Callable[[], _SessionLabel]",
+            vars(import_module("meridian.lib.notify.label"))["build_session_label"],
+        )
         return send(
             notice_type(
-                title=notice.title,
+                title=build_label().titled(notice.title or None),
                 body=notice.body,
                 priority=notice.priority,
                 email=notice.email,
@@ -483,7 +491,7 @@ class IdleService:
     ) -> None:
         if stage == "push":
             notice = NoticeSpec(
-                title="Meridian idle",
+                title="",
                 body="waiting on you",
                 priority=3,
                 email=False,
@@ -491,7 +499,7 @@ class IdleService:
             )
         else:
             notice = NoticeSpec(
-                title="Meridian idle",
+                title="",
                 body=f"cache cold in {policy.warn_minutes}m",
                 priority=4,
                 email=policy.warn_email,
@@ -560,7 +568,7 @@ class IdleService:
             if detail:
                 body = f"{body} ({detail})"
             notice = NoticeSpec(
-                title="Meridian idle",
+                title="",
                 body=body,
                 priority=3 if result == "ok" else 4,
                 email=False,

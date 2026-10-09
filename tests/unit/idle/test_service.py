@@ -177,7 +177,7 @@ def test_warn_sends_push_and_email_notice() -> None:
 
     assert result.decision == "act"
     assert sender.notices == [
-        NoticeSpec("Meridian idle", "cache cold in 15m", 4, True, "idle")
+        NoticeSpec("", "cache cold in 15m", 4, True, "idle")
     ]
 
 
@@ -226,6 +226,73 @@ def test_compaction_claim_window_done_ok_and_compacted_state() -> None:
     assert still_compacted.reason == "already-compacted"
     assert current is not None and current.done["compact"] == "ok"
     assert sender.notices[-1].body == "compacted (100k → summary)"
+
+
+def test_compacted_stretch_closes_on_user_return() -> None:
+    idle, clock, store, _ = service()
+    armed = idle.arm(harness="example", session="s1", ttl_seconds=3600)
+    clock.value = armed.compact_at or 0
+    idle.fire(
+        "compact",
+        harness="example",
+        session="s1",
+        stretch=1,
+        anchor=1,
+        facts=SAFE_FACTS,
+    )
+    idle.done("compact", harness="example", session="s1", stretch=1, result="ok")
+
+    closed = idle.return_(harness="example", session="s1", user_prompt=True)
+
+    assert closed.stretch_closed == 1
+    assert store.read("example", "s1").stretch_open is False  # type: ignore[union-attr]
+
+
+def test_compacted_stretch_implies_return_opens_new_stretch_after_window() -> None:
+    idle, clock, store, _ = service()
+    armed = idle.arm(harness="example", session="s1", ttl_seconds=3600)
+    clock.value = armed.compact_at or 0
+    idle.fire(
+        "compact",
+        harness="example",
+        session="s1",
+        stretch=1,
+        anchor=1,
+        facts=SAFE_FACTS,
+    )
+    idle.done("compact", harness="example", session="s1", stretch=1, result="ok")
+    clock.value += 31_000
+
+    opened = idle.arm(
+        harness="example",
+        session="s1",
+        ttl_seconds=3600,
+        implies_return=True,
+        turn_id="user-turn-2",
+    )
+
+    assert (opened.stretch, opened.anchor) == (2, 1)
+    assert store.read("example", "s1").done == {}  # type: ignore[union-attr]
+
+
+def test_skipped_compaction_is_final_for_the_stretch() -> None:
+    idle, clock, store, _ = service()
+    armed = idle.arm(harness="example", session="s1", ttl_seconds=3600)
+    clock.value = armed.compact_at or 0
+
+    skipped = idle.fire(
+        "compact",
+        harness="example",
+        session="s1",
+        stretch=1,
+        anchor=1,
+        facts=IdleFacts("no", True, 0, 100_000, False),
+    )
+
+    assert skipped.reason == "busy"
+    assert store.read("example", "s1").done == {  # type: ignore[union-attr]
+        "compact": "skipped:busy"
+    }
 
 
 def test_done_failed_and_vetoed_leave_compaction_done_but_stretch_open() -> None:
