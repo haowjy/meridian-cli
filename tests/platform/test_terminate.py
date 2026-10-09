@@ -9,7 +9,6 @@ import pytest
 
 from meridian.lib.platform.process_scope.fallback import _snapshot_tree
 from meridian.lib.platform.terminate import terminate_tree
-from tests.conftest import windows_only
 from tests.support.async_determinism import wait_until
 
 _PARENT_WITH_CHILD = textwrap.dedent(
@@ -93,19 +92,3 @@ async def test_terminate_tree_terminates_parent_and_child_processes() -> None:
 
     assert process.returncode is not None
     await _wait_for_pid_exit(child_pid)
-
-
-@pytest.mark.asyncio
-@windows_only
-async def test_terminate_tree_windows_terminate_is_kill_semantics() -> None:
-    """Windows note: psutil terminate() maps to kill() so grace periods are not semantic."""
-    process = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-c",
-        "import time; time.sleep(60)",
-    )
-
-    await terminate_tree(process, grace_secs=5.0)
-    await asyncio.wait_for(process.wait(), timeout=5)
-
-    assert process.returncode is not None

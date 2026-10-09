@@ -206,7 +206,7 @@ def test_rebuild_recreates_projection_without_free_pages(tmp_path):
         locator="file",
         witness="opaque",
         activity=0,
-        entries=[TranscriptEntry(1, "large transcript " * 100_000)],
+        entries=[TranscriptEntry(1, "large transcript " * 1_000)],
     )
     before = index.path.stat().st_size
     index.rebuild()

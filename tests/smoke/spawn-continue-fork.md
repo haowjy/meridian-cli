@@ -2,17 +2,23 @@
 
 Background spawn + continue + fork + wait + transcript/report path.
 
+**Opt-in live tier:** every seed/continue/fork command launches a real harness
+and may spend money. It is not part of automatic smoke. Set an eligible cheap
+model explicitly and use only disposable state.
+
 ## Setup
 
 ```bash
 . tests/smoke/scripts/setup.sh
 smoke_add_agent reviewer
+# Set a current, eligible model for this live probe; no model is chosen for you.
+export SMOKE_LIVE_MODEL="${SMOKE_LIVE_MODEL:?set an eligible cheap model explicitly}"
 ```
 
 ## 1) Seed background spawn
 
 ```bash
-uv run meridian spawn -a reviewer -m gpt-5.4-mini -p "Reply with exactly: SEED" --bg --json
+uv run meridian spawn -a reviewer -m "$SMOKE_LIVE_MODEL" -p "Reply with exactly: SEED" --bg --json
 ```
 - [ ] Exit 0
 - [ ] JSON has `status == "running"`

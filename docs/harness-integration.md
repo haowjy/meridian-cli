@@ -195,9 +195,11 @@ Verify the smallest useful seam first, then the full project gate:
    [quiescence scenarios](../tests/smoke/pi-rpc-quiescence.md).
 4. Built wheel/sdist contents and an installed-package launch. Pi artifact
    checks live in `scripts/verify-pi-extension-artifacts.py`.
-5. `scripts/preflight.sh full`: Ruff, Pyright, locked Pi dependency install and
-   bundle build, pytest, and `uv build --no-sources`. The pre-push hook runs it
-   for branch pushes; see [development setup](../DEVELOPMENT.md).
+5. Before shipping harness/lifecycle changes, run the explicit
+   `scripts/preflight.sh full`: Ruff, Pyright, locked Pi dependency install and
+   bundle build, every Python test, and `uv build --no-sources`. Routine branch
+   pushes run the 60-second fast gate instead; full/compatibility CI runs on
+   dispatch/nightly. See [development setup](../DEVELOPMENT.md).
 
 Automated fault fixtures protect destructive or hard-to-reproduce boundaries;
 real-runtime smoke proves the CLI workflow. Report those evidence types separately.

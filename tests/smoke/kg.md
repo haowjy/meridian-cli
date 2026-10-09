@@ -82,7 +82,7 @@ uv run meridian kg check "$SCRATCH/docs"
 
 ## kg check — ignores findings inside fenced code blocks
 
-```bash
+`````bash
 mkdir -p "$SCRATCH/docs"
 cat > "$SCRATCH/docs/example.md" << 'EOF'
 # Example docs
@@ -98,7 +98,7 @@ Here is a code example:
 EOF
 
 uv run meridian kg check "$SCRATCH/docs"
-```
+`````
 - [ ] Exit 0 (fenced content is not flagged)
 
 ## kg check — ignores inline code and prose mentions of flag syntax
