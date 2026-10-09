@@ -521,6 +521,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _read_rootless(("artifact", "list"), "List active artifact serves."),
     _write_rootless(("artifact", "stop"), "Stop an artifact serve."),
     _write_rootless(("artifact", "gc"), "Garbage-collect expired artifact serves."),
+    _write_rootless(("notify",), "Send a push and optional email notification."),
     _read_rootless(("qi",), "Show inline knowledge for current path."),
     _read_rootless(("qi", "list"), "List all inline knowledge locations."),
     _read_rootless(("qi", "check"), "Check inline knowledge health."),
