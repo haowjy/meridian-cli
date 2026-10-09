@@ -73,6 +73,7 @@ function install(on: On, h: Host) {
   })
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('session.end', () => ({ sessionId: 'sess-1' }))
+  on('turn.start', () => ({ turnId: 't1' }))
   on('turn.complete', () => ({ text: '' }))
   on('prompt.submit', (_$, e) => ({ text: e.text }))
   on('command.run', () => ({ text: '' }))
@@ -260,6 +261,22 @@ test('compact facts: a draft is yes, running agents are counted, unknown tokens 
   // a skip means: do nothing
   expect(h.compactCalls).toBe(0)
   expect(h.calls.filter(args => args[0] === 'done')).toEqual([])
+})
+
+test('a main-loop turn still running when the compact timer fires is reported --busy', async ($, on) => {
+  const h = host()
+  h.reply.fire = (args: string[]) => (args[1] === 'compact' ? { decision: 'skip', reason: 'busy' } : { decision: 'act', reason: 'guards-passed' })
+  const clock = install(on, h)
+  await $.session.start(TUI)
+  await clock.advance(2000)
+  await $.turn.complete(MAIN_TURN)
+  await clock.advance(1_000_000)
+  // an injected turn (a finished background task) starts before compact_at and has not completed
+  await $.turn.start({ text: '<task-notification>', turnId: 't2' })
+  await clock.advance(600_000)
+  const [fire] = fireCalls(h, 'compact')
+  expect(fire?.includes('--busy')).toBe(true)
+  expect(h.compactCalls).toBe(0)
 })
 
 function doneMapping(outcome: 'veto' | 'reject', expected: string[]) {

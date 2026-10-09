@@ -15,7 +15,7 @@ from inside itself.
 | `turn.complete` without `agentId` | `meridian idle arm --harness claude --session <id> --cwd <dir>` | A main-loop turn ended. Skipped while a subagent still runs; the hand-back turn arms later. Core returns absolute `push_at` / `warn_at` / `compact_at`, and the mod sets one `$.clock.after` per stage. |
 | `prompt.submit` or `command.run` with origin `composer` (or `bridge`, the user's phone) | `meridian idle return --harness claude --session <id> --user-prompt` | The user is back. Timers are cancelled first, synchronously. |
 | timer: push, warn | `meridian idle fire push\|warn …` | Core sends the notification itself. The mod only reports that the timer fired. |
-| timer: compact | `meridian idle fire compact … <facts>`, then `$.session.compact()` on `act`, then `meridian idle done compact … --result ok\|vetoed\|failed` | Facts: `--draft yes\|no` from `$.prompt.read()`, `--agents-running N` from `$.agent.list()`, `--context-tokens N` from `$.session.usage()`, `--harness-autocompact-off` from the `autoCompact` config row. |
+| timer: compact | `meridian idle fire compact … <facts>`, then `$.session.compact()` on `act`, then `meridian idle done compact … --result ok\|vetoed\|failed` | Facts: `--draft yes\|no` from `$.prompt.read()`, `--agents-running N` from `$.agent.list()`, `--busy` while a main-loop turn is running (or the agent list is unreadable), `--context-tokens N` from `$.session.usage()`, `--harness-autocompact-off` from the `autoCompact` config row. |
 
 Injected prompts (`task-notification`, `peer`, `plugin`, `sdk`, scheduled
 triggers, Stop-hook continuations) are not returns. Compaction emits no turn

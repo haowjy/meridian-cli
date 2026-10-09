@@ -46,6 +46,8 @@ type State = {
   epoch: number
   /** An `arm` reached core since the last `return`, so a `return` call has something to close. */
   mayBeOpen: boolean
+  /** A main-loop turn is running (turn.start seen, its turn.complete not yet): `$.session.compact()` would be rejected. */
+  busy: boolean
   /** Serialises the short `meridian idle` calls so arm/return/fire/done reach core in hook order. */
   queue: Promise<unknown>
   log: string[]
@@ -60,6 +62,7 @@ function newState(): State {
     timers: [],
     epoch: 0,
     mayBeOpen: false,
+    busy: false,
     queue: Promise.resolve(),
     log: [],
   }
@@ -336,7 +339,7 @@ async function autoCompactOff($: EngineInterface): Promise<boolean> {
 }
 
 /** Facts `idle fire compact` needs. A fact the host will not give is omitted, so core applies its own unknown-fact rule. */
-async function compactFacts($: EngineInterface): Promise<string[]> {
+async function compactFacts($: EngineInterface, busy: boolean): Promise<string[]> {
   const [draft, agents, tokens, autoOff] = await Promise.all([
     draftState($),
     runningAgents($),
@@ -344,9 +347,9 @@ async function compactFacts($: EngineInterface): Promise<string[]> {
     autoCompactOff($),
   ])
   const facts = ['--draft', draft]
-  // Agents we cannot list are not "none": report busy so core skips instead of compacting under them.
-  if (agents === undefined) facts.push('--busy')
-  else facts.push('--agents-running', String(agents))
+  // A running turn, or agents we cannot list, is not "idle": report busy so core skips instead of compacting under them.
+  if (busy || agents === undefined) facts.push('--busy')
+  if (agents !== undefined) facts.push('--agents-running', String(agents))
   if (tokens !== undefined) facts.push('--context-tokens', String(tokens))
   if (autoOff) facts.push('--harness-autocompact-off')
   return facts
@@ -377,7 +380,7 @@ async function compactNow($: EngineInterface, s: State, armed: Armed, epoch: num
 async function onTimer($: EngineInterface, s: State, stage: Stage, armed: Armed, epoch: number): Promise<void> {
   try {
     if (s.armed !== armed || s.epoch !== epoch) return
-    const facts = stage === 'compact' ? await compactFacts($) : []
+    const facts = stage === 'compact' ? await compactFacts($, s.busy) : []
     if (s.armed !== armed || s.epoch !== epoch) return
     const args = ['fire', stage, ...who(armed), '--anchor', String(armed.anchor), ...facts]
     const reply = await enqueue(s, () => cli($, s, args))
@@ -461,9 +464,16 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // A subagent's run raises no turn.start, so this is always the main loop.
+  on('turn.start', async ($, e, next) => {
+    s.busy = true
+    return next(e)
+  })
+
   on('turn.complete', async ($, e, next) => {
     // A subagent's turn carries agentId; only the main loop's end is the user-visible idle.
     if (e.agentId === undefined && !s.inert) {
+      s.busy = false
       const epoch = s.epoch
       void enqueue(s, () => armTask($, s, epoch))
     }
