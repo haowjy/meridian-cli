@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from meridian.lib.core.types import HarnessId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
 
 
@@ -51,6 +51,7 @@ class IdleSensorContext:
     tmux_pane: str | None
     tui_alive: Callable[[], bool]
     spawn_dir: Path
+    spawn_id: SpawnId | None = None
 
 
 class IdleSensor(Protocol):

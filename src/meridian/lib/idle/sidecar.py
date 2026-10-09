@@ -40,7 +40,7 @@ def record_sensor_error(
     """Best-effort sensor diagnostics that never touch the TUI's stderr."""
 
     tracer = DebugTracer(
-        spawn_id=ctx.spawn_dir.name,
+        spawn_id=str(ctx.spawn_id or ""),
         debug_path=ctx.spawn_dir / "debug.jsonl",
         report_failures=False,
     )

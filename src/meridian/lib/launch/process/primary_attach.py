@@ -274,7 +274,7 @@ class PrimaryAttachLauncher:
         *,
         session_id: str,
         env: dict[str, str],
-        running_process: RunningProcess,
+        launch_task: asyncio.Future[LaunchedProcess],
     ) -> None:
         sensor_factory = self._harness_bundle.primary_idle_sensor
         if sensor_factory is None:
@@ -286,8 +286,9 @@ class PrimaryAttachLauncher:
             harness_session_id=session_id,
             env=MappingProxyType(dict(env)),
             tmux_pane=env.get("TMUX_PANE"),
-            tui_alive=lambda: self._running_process is running_process,
+            tui_alive=lambda: not launch_task.done(),
             spawn_dir=self._spawn_dir,
+            spawn_id=self._spawn_id,
         )
         try:
             sensor = sensor_factory(ctx)
@@ -305,6 +306,17 @@ class PrimaryAttachLauncher:
 
         self._event_hooks += (_on_raw_event,)
         self._idle_task = asyncio.create_task(idle_sidecar.run(sensor, ctx))
+
+    async def _stop_idle_task(self) -> None:
+        """Stop the sensor before tearing down resources it may still use."""
+
+        idle_task = self._idle_task
+        self._idle_task = None
+        if idle_task is None:
+            return
+        idle_task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await idle_task
 
     async def run(
         self,
@@ -399,7 +411,7 @@ class PrimaryAttachLauncher:
             self._start_idle_sensor(
                 session_id=session_id,
                 env=env,
-                running_process=running_process,
+                launch_task=launch_task,
             )
             telemetry.clear()
 
@@ -423,7 +435,9 @@ class PrimaryAttachLauncher:
                         session_id=session_id,
                         tui_pid=launched.pid,
                     )
+                await self._stop_idle_task()
                 await self._connection.stop(reason="event_stream_closed")
+                await self._stop_idle_task()
                 await self._stop_tui_launch_task(
                     running_process,
                     launch_task,
@@ -445,6 +459,7 @@ class PrimaryAttachLauncher:
             cancelled = self._signal_cancel_requested and launched.exit_code == 130
             if cancelled:
                 # The relay stopped on the signal, so the TUI child is still alive.
+                await self._stop_idle_task()
                 await self._stop_tui_launch_task(
                     running_process,
                     launch_task,
@@ -487,12 +502,7 @@ class PrimaryAttachLauncher:
                 consumer_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await consumer_task
-            idle_task = self._idle_task
-            if idle_task is not None:
-                idle_task.cancel()
-                with suppress(asyncio.CancelledError, Exception):
-                    await idle_task
-                self._idle_task = None
+            await self._stop_idle_task()
             heartbeat_task = self._heartbeat_task
             if heartbeat_task is not None:
                 heartbeat_task.cancel()
@@ -504,6 +514,7 @@ class PrimaryAttachLauncher:
                 and launch_task is not None
                 and not tui_lifecycle_finished
             ):
+                await self._stop_idle_task()
                 await self._stop_tui_launch_task(
                     running_process,
                     launch_task,

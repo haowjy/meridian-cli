@@ -96,6 +96,7 @@ def _install_idle_sensor_bundle(
     *,
     harness_id: HarnessId,
     sensor: RecordingIdleSensor,
+    connection: FakeManagedConnection,
 ) -> tuple[list[IdleSensorContext], list[bool]]:
     contexts: list[IdleSensorContext] = []
     alive_at_creation: list[bool] = []
@@ -108,6 +109,7 @@ def _install_idle_sensor_bundle(
 
     idle_bundle = replace(original_bundle, primary_idle_sensor=_create_sensor)
     monkeypatch.setattr(primary_attach_module, "get_harness_bundle", lambda _h: idle_bundle)
+    connection.idle_sensor = sensor
     return contexts, alive_at_creation
 
 
@@ -201,6 +203,8 @@ class FakeManagedConnection:
         self._stop_event = asyncio.Event()
         self.stop_called = False
         self.stop_reasons: list[str | None] = []
+        self.idle_sensor: RecordingIdleSensor | None = None
+        self.sensor_cancelled_at_stop: list[bool] = []
         self.started_primary_observer_mode: bool | None = None
         self.started_ports: list[int] = []
         self.start_calls = 0
@@ -301,6 +305,8 @@ class FakeManagedConnection:
     async def stop(self, *, reason: str | None = None) -> None:
         self.stop_called = True
         self.stop_reasons.append(reason)
+        if self.idle_sensor is not None:
+            self.sensor_cancelled_at_stop.append(self.idle_sensor.cancelled.is_set())
         self.state = "stopped"
         self._stop_event.set()
 
@@ -460,6 +466,7 @@ async def test_primary_attach_idle_sensor_runs_with_tui_and_receives_raw_events(
         monkeypatch,
         harness_id=HarnessId.CODEX,
         sensor=sensor,
+        connection=connection,
     )
     launcher = PrimaryAttachLauncher(
         spawn_id=SpawnId("p-idle-normal"),
@@ -488,7 +495,9 @@ async def test_primary_attach_idle_sensor_runs_with_tui_and_receives_raw_events(
     assert contexts[0].env == {"TMUX_PANE": "%9", "IDLE_TEST": "yes"}
     assert contexts[0].tmux_pane == "%9"
     assert contexts[0].spawn_dir == spawn_dir
+    assert contexts[0].spawn_id == SpawnId("p-idle-normal")
     assert contexts[0].tui_alive() is False
+    assert connection.sensor_cancelled_at_stop == [True]
 
 
 @pytest.mark.asyncio
@@ -508,6 +517,7 @@ async def test_primary_attach_idle_sensor_failures_do_not_change_outcome_or_stde
         monkeypatch,
         harness_id=HarnessId.CODEX,
         sensor=sensor,
+        connection=connection,
     )
     launcher = PrimaryAttachLauncher(
         spawn_id=SpawnId("p-idle-errors"),
@@ -532,6 +542,7 @@ async def test_primary_attach_idle_sensor_failures_do_not_change_outcome_or_stde
         for line in (spawn_dir / "debug.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     assert {record["data"]["phase"] for record in debug_records} == {"raw_event", "run"}
+    assert connection.sensor_cancelled_at_stop == [True]
 
 
 def test_primary_attach_scope_snapshot_records_unknown_birth_sentinel_when_create_time_fails(
@@ -571,6 +582,13 @@ async def test_primary_attach_event_writer_failure_stops_connection_and_tui(
         harness_id=HarnessId.OPENCODE,
     )
     process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir)
+    sensor = RecordingIdleSensor()
+    _install_idle_sensor_bundle(
+        monkeypatch,
+        harness_id=HarnessId.OPENCODE,
+        sensor=sensor,
+        connection=connection,
+    )
     terminated_scopes: list[str] = []
 
     def _terminate_scope(scope: Any, *, grace_seconds: float, reason: str) -> None:
@@ -602,6 +620,7 @@ async def test_primary_attach_event_writer_failure_stops_connection_and_tui(
 
     assert outcome.exit_code == 1
     assert connection.stop_reasons == ["event_stream_closed", None]
+    assert connection.sensor_cancelled_at_stop == [True, True]
     assert terminated_scopes == ["tui:event_stream_closed"]
     assert _read_metadata(spawn_dir)["tui_pid"] == 5252
 
@@ -728,6 +747,7 @@ async def test_primary_attach_codex_event_stream_closure_does_not_stop_backend_o
         monkeypatch,
         harness_id=HarnessId.CODEX,
         sensor=sensor,
+        connection=connection,
     )
     terminated_scopes: list[str] = []
 
@@ -770,6 +790,7 @@ async def test_primary_attach_codex_event_stream_closure_does_not_stop_backend_o
     assert outcome.exit_code == 143
     assert sensor.cancelled.is_set()
     assert connection.stop_reasons == [None]
+    assert connection.sensor_cancelled_at_stop == [True]
     assert terminated_scopes == []
     assert _read_metadata(spawn_dir)["tui_pid"] == 5252
 
@@ -1205,6 +1226,7 @@ async def test_primary_attach_signal_cancel_records_cancelled_and_restores_handl
         monkeypatch,
         harness_id=HarnessId.CODEX,
         sensor=sensor,
+        connection=connection,
     )
     terminated_scopes: list[str] = []
     installed_handlers: list[Any] = []
@@ -1250,6 +1272,7 @@ async def test_primary_attach_signal_cancel_records_cancelled_and_restores_handl
     assert outcome.cancelled is True
     assert outcome.exit_code == 130
     assert sensor.cancelled.is_set()
+    assert connection.sensor_cancelled_at_stop == [True]
     assert terminated_scopes == ["tui:signal_cancelled"]
     assert signal.getsignal(signal.SIGTERM) is before_term
     assert signal.getsignal(signal.SIGHUP) is before_hup
