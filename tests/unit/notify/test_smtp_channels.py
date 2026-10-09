@@ -152,6 +152,19 @@ def test_missing_smtp_password_fails_the_only_email_backend(
     assert report.exit_code == 1
 
 
+def test_unconfigured_default_email_backend_degrades_to_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MERIDIAN_NOTIFY_SMTP_PASSWORD", raising=False)
+
+    report = send(_NOTICE, NotifyConfig(push_backend="none"))
+
+    assert [result.status for result in report.results] == ["none", "none"]
+    assert report.results[1].channel == "gmail"
+    assert report.results[1].warning is not None
+    assert report.exit_code == 0
+
+
 def test_gmail_fixes_host_and_port_but_shares_smtp_delivery(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
