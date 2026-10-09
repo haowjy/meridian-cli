@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Add catalog-backed `[notify]` configuration and `MERIDIAN_NOTIFY_*` environment inputs.
+
 ### Added
 - Expose `MERIDIAN_SESSION_ROLE=primary|spawn` to every launched harness.
 - Load metadata-backed top-level and per-harness nested config tables generically,

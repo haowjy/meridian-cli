@@ -1154,6 +1154,130 @@ class IdleConfig(BaseModel):
     ] = True
 
 
+class NotifyConfig(BaseModel):
+    """Notification delivery settings shared by manual and idle notices."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    push_backend: Annotated[
+        str,
+        config_field(
+            "notify.push_backend",
+            value_kind="str",
+            file_aliases=(file_alias("notify", "push_backend"),),
+            env_vars=("MERIDIAN_NOTIFY_PUSH_BACKEND",),
+        ),
+    ] = "ntfy"
+    email_backend: Annotated[
+        str,
+        config_field(
+            "notify.email_backend",
+            value_kind="str",
+            file_aliases=(file_alias("notify", "email_backend"),),
+            env_vars=("MERIDIAN_NOTIFY_EMAIL_BACKEND",),
+        ),
+    ] = "gmail"
+    ntfy_server: Annotated[
+        str,
+        config_field(
+            "notify.ntfy_server",
+            value_kind="str",
+            file_aliases=(file_alias("notify", "ntfy_server"),),
+            env_vars=("MERIDIAN_NOTIFY_NTFY_SERVER",),
+        ),
+    ] = "https://ntfy.sh"
+    ntfy_topic: Annotated[
+        str | None,
+        config_field(
+            "notify.ntfy_topic",
+            value_kind="str",
+            file_aliases=(file_alias("notify", "ntfy_topic"),),
+            env_vars=("MERIDIAN_NOTIFY_NTFY_TOPIC",),
+        ),
+    ] = None
+    email_to: Annotated[
+        str | None,
+        config_field(
+            "notify.email_to",
+            value_kind="str",
+            file_aliases=(file_alias("notify", "email_to"),),
+            env_vars=("MERIDIAN_NOTIFY_EMAIL_TO",),
+        ),
+    ] = None
+    email_from: Annotated[
+        str | None,
+        config_field(
+            "notify.email_from",
+            value_kind="str",
+            file_aliases=(file_alias("notify", "email_from"),),
+            env_vars=("MERIDIAN_NOTIFY_EMAIL_FROM",),
+        ),
+    ] = None
+    smtp_user: Annotated[
+        str | None,
+        config_field(
+            "notify.smtp_user",
+            value_kind="str",
+            file_aliases=(file_alias("notify", "smtp_user"),),
+            env_vars=("MERIDIAN_NOTIFY_SMTP_USER",),
+        ),
+    ] = None
+    smtp_host: Annotated[
+        str,
+        config_field(
+            "notify.smtp_host",
+            value_kind="str",
+            file_aliases=(file_alias("notify", "smtp_host"),),
+            env_vars=("MERIDIAN_NOTIFY_SMTP_HOST",),
+        ),
+    ] = "smtp.gmail.com"
+    smtp_port: Annotated[
+        int,
+        config_field(
+            "notify.smtp_port",
+            value_kind="int",
+            file_aliases=(file_alias("notify", "smtp_port"),),
+            env_vars=("MERIDIAN_NOTIFY_SMTP_PORT",),
+        ),
+    ] = 587
+    smtp_password_file: Annotated[
+        str | None,
+        config_field(
+            "notify.smtp_password_file",
+            value_kind="str",
+            file_aliases=(file_alias("notify", "smtp_password_file"),),
+            env_vars=("MERIDIAN_NOTIFY_SMTP_PASSWORD_FILE",),
+        ),
+    ] = None
+    push_command: Annotated[
+        str | None,
+        config_field(
+            "notify.push_command",
+            value_kind="str",
+            file_aliases=(file_alias("notify", "push_command"),),
+            env_vars=("MERIDIAN_NOTIFY_PUSH_COMMAND",),
+        ),
+    ] = None
+    email_command: Annotated[
+        str | None,
+        config_field(
+            "notify.email_command",
+            value_kind="str",
+            file_aliases=(file_alias("notify", "email_command"),),
+            env_vars=("MERIDIAN_NOTIFY_EMAIL_COMMAND",),
+        ),
+    ] = None
+
+    @field_validator("smtp_port")
+    @classmethod
+    def _validate_smtp_port(cls, value: int) -> int:
+        if isinstance(value, bool) or not 1 <= value <= 65535:
+            raise ValueError(
+                f"Invalid value for 'notify.smtp_port': expected 1..65535, got {value!r}."
+            )
+        return value
+
+
 class WorkConfig(BaseModel):
     """Work-item behavior settings."""
 
@@ -1653,6 +1777,7 @@ class MeridianConfig(BaseSettings):
     ] = ()
     harness: HarnessConfig = Field(default_factory=HarnessConfig)
     idle: IdleConfig = Field(default_factory=IdleConfig)
+    notify: NotifyConfig = Field(default_factory=NotifyConfig)
     primary: PrimaryConfig = Field(default_factory=PrimaryConfig)
     history: HistoryConfig = Field(default_factory=HistoryConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
