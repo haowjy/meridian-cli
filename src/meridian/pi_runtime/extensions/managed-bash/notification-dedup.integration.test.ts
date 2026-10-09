@@ -128,6 +128,46 @@ describe("managed bash and spawn-watch completion notifications", () => {
     }
   });
 
+  it("consumes a terminal result read through output, but not a running one", async () => {
+    const runtimeRoot = await mkdtemp(path.join(tmpdir(), "pi-bash-output-consumption-"));
+    setEnv("_MERIDIAN_PI_STATE_DIR", runtimeRoot);
+    setEnv("MERIDIAN_SPAWN_ID", "p-output-consumption");
+    const host = makeManagedBashHost();
+    const { tools } = host;
+    const messages: unknown[] = [];
+    let idle = false;
+    const spawnWatch = new SpawnWatchRuntime({
+      sendMessage: (message: unknown) => messages.push(message),
+    } as unknown as ConstructorParameters<typeof SpawnWatchRuntime>[0], () => idle);
+    spawnWatch.start();
+
+    try {
+      const bashId = ((await tools.get("bash")!.execute("call", {
+        command: "sleep 0.2; printf done",
+        background: true,
+      })).details as { bash_id: string }).bash_id;
+      const recordsPath = path.join(runtimeRoot, "pi-bash", "p-output-consumption", "bash-records.json");
+      await tools.get("bash_manage")!.execute("call", { action: "output", bash_id: bashId });
+      const running = JSON.parse(await readFile(recordsPath, "utf-8")) as BashRecordsFile;
+      expect(running.records[bashId]?.notification_consumed_at_ms).toBeUndefined();
+
+      await waitForTerminalRecord(recordsPath, bashId);
+      const read = await tools.get("bash_manage")!.execute("call", { action: "output", bash_id: bashId });
+      expect((read.details as { output: string }).output).toContain("done");
+      const records = JSON.parse(await readFile(recordsPath, "utf-8")) as BashRecordsFile;
+      expect(typeof records.records[bashId]?.notification_consumed_at_ms).toBe("number");
+
+      idle = true;
+      spawnWatch.observeIdle(() => idle);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(messages).toHaveLength(0);
+    } finally {
+      await host.shutdown();
+      spawnWatch.stop();
+      await rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
   it("leaves a timed-out running wait eligible for later completion notification", async () => {
     const runtimeRoot = await mkdtemp(path.join(tmpdir(), "pi-bash-wait-timeout-"));
     setEnv("_MERIDIAN_PI_STATE_DIR", runtimeRoot);

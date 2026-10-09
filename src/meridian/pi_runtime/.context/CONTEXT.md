@@ -51,7 +51,7 @@ upgrading Pi; never infer exit from current/target session or the last-seen ID.
 
 | Extension | Owns | Writes / observes |
 |---|---|---|
-| `managed-bash` | `bash` / `bash_manage`, tracked vs detached bash records, `/ps*` slash commands, `_MERIDIAN_PI_BASH_ID` injection into child processes | `runtime_root/pi-bash/<spawn-id>/bash-records.json` and bash logs; terminal waits mark their record's notification as consumed |
+| `managed-bash` | `bash` / `bash_manage`, tracked vs detached bash records, `/ps*` slash commands, `_MERIDIAN_PI_BASH_ID` injection into child processes | `runtime_root/pi-bash/<spawn-id>/bash-records.json` and bash logs; terminal waits and terminal output reads mark their record's notification as consumed |
 | `meridian-spawn-watch` | canonical direct-child discovery, `/spawn*` slash commands, idle-turn completion notifications | observes scoped child rows, task consumption and wait leases; writes exact admission receipts and delivery faults |
 
 `managed-bash` is the mechanism extension. `meridian-spawn-watch` is the policy extension.
@@ -93,11 +93,14 @@ Shell launch propagates its own Bash ID in `_MERIDIAN_PI_BASH_ID`, and its
 durable record retains the enclosing originating Bash ID. Canonical child
 spawn rows carry parent/origin membership; no origin sidecar is produced.
 Terminal tracked background Bash rows are durable result obligations. Their persisted
-`notification_consumed_at_ms` consumes a terminal wait; exact custom-message
-admission consumes an unattended notice. Sending or queueing is not consumption.
+`notification_consumed_at_ms` consumes a terminal wait or a terminal `output`
+read (execution failures excluded); exact custom-message admission consumes an
+unattended notice. Sending or queueing is not consumption. Wait blocks up to the
+55-minute bash timeout with no model-chosen limit: a short wait let the model
+read results around consumption and receive the same completion again.
 Managed-bash serializes record snapshots; terminal state is persisted before
-waiters are released, and consumption is persisted before the terminal wait
-result returns. If consumption persistence fails, the marker is rolled back and
+waiters are released, and consumption is persisted before the terminal wait or
+output result returns. If consumption persistence fails, the marker is rolled back and
 the wait returns an error, leaving the completion eligible for notification.
 Spawn-watch publishes only while native `ctx.isIdle()`, and rereads consumption
 and live wait reservations after formatting. A changed child selection rebuilds

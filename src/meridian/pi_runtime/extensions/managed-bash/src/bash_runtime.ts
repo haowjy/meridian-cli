@@ -339,14 +339,20 @@ export class BashRuntime {
     }
 
     switch (action) {
-      case "output":
-        return { bash_id: id, output: await this.readLog(record, LOG_TAIL_BYTES), truncated: true };
+      case "output": {
+        // Terminal is published after queued output, so this read is the final log;
+        // the completion notice would only point back here.
+        const terminal = isTerminalBashStatus(record.status) && !record.execution_error;
+        const output = await this.readLog(record, LOG_TAIL_BYTES);
+        if (terminal) await this.persistConsumption(record);
+        return { bash_id: id, output, truncated: true };
+      }
       case "kill":
         return await this.killBash(id, "killed");
       case "wait": {
         const result = await this.waitBash(record, WAIT_TIMEOUT_MIN);
         if (isTerminalBashStatus(result.status)) {
-          await this.persistWaitConsumption(record);
+          await this.persistConsumption(record);
         }
         return result;
       }
@@ -507,7 +513,7 @@ export class BashRuntime {
       return {
         bash_id: record.bash_id,
         status: "running",
-        message: `Still running after ${timeoutMin} minutes. Use bash_manage(action='wait') again or bash_manage(action='kill') to terminate.`,
+        message: `Still running after ${timeoutMin} minutes. Call bash_manage(action='wait') again, or bash_manage(action='kill') to terminate. Reading its output any other way leaves the result unconsumed, and a completion notice will follow.`,
       };
     }
     return {
@@ -677,7 +683,7 @@ export class BashRuntime {
     record.rejectFinished(new Error(record.execution_error));
   }
 
-  private persistWaitConsumption(record: RuntimeRecord): Promise<void> {
+  private persistConsumption(record: RuntimeRecord): Promise<void> {
     return this.enqueuePersist(async () => {
       const previous = record.notification_consumed_at_ms;
       record.notification_consumed_at_ms = Date.now();
