@@ -208,6 +208,7 @@ def test_new_build_first_command_leaves_a_schema_2_runtime_unchanged(tmp_path: P
     )
     assert result.returncode == 0, result.stderr
     assert key in result.stdout
+    _assert_legacy_untouched(root, before)
 
     index = HistoryIndex(root)
     assert [row.id for row in index.spawns()] == [key]
