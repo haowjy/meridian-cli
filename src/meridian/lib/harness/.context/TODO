@@ -3,3 +3,14 @@
 - `pi_idle.py`: Normalize `openai-*` provider identifiers to `openai` before
   detecting cache retention, so Pi's `openai-codex` provider can schedule the
   warning and compaction stages instead of falling back to push-only.
+- `opencode_idle.py`: Clear `_compacting` on the first `session.idle` after the
+  compaction part has been seen, even if `POST /summarize` has not returned.
+  On 1.18.32 the response beats `session.idle` by only 2–4 ms; if the order
+  flips, the user's next prompt is filed as a compaction and one whole idle
+  period gets no push, warn or compaction (G2-X N1). Add a test that delivers
+  `session.idle` before the POST is released.
+- `codex_idle.py`: `compact()` reports `failed: timeout` when an older
+  `Context compacted` line scrolls off screen as the new one appears (visible
+  pane count does not rise) or when compaction exceeds 60 s. Capture with
+  `-S -200`, or also accept "marker visible and `Working (` gone" after a busy
+  frame (G2-X N2). Only the report is wrong; the stretch does not loop.

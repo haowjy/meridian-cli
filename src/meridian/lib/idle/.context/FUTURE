@@ -5,3 +5,8 @@
   `arm` with a dedicated persisted pin operation that records the main thread
   without opening a scheduled stretch or showing deadlines that cannot fire
   in `meridian idle status` (G2 K5).
+- `sidecar.py` and `harness/idle_types.py`: `external_events` is a duck-typed
+  `getattr` flag that steers two sidecar branches (busy guard, pin-and-poll
+  arm). Declare it on `IdleSensor` (or a `returns_observable` capability) so a
+  new adapter cannot get OpenCode semantics silently, and add the missing
+  scope test that a busy non-external sensor still pushes (G2-X N3).
