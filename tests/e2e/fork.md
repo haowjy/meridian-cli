@@ -1,45 +1,44 @@
 # Fork
 
-**Opt-in live tier:** several cases launch real harness sessions and can spend
-money. Use an eligible cheap model, disposable state, and drain every
-background run. This guide is not part of automatic smoke.
+**Opt-in live tier:** these checks launch paid harness sessions. Choose cheap
+models available to your account. Run from the checkout in a fresh shell;
+explicitly supply credentials to the isolated native stores if needed. For OAuth,
+set `CODEX_AUTH_FILE`, `CLAUDE_AUTH_FILE` or `OPENCODE_AUTH_FILE` before setup;
+only the named auth file is copied, never the native agent/config tree.
+Run cleanup even after a failed check. This is not automatic smoke.
 
-These checks validate fork flows on both root and spawn commands:
-- `--fork [ref]` (identity-preserving)
-- `--fork-fresh [ref]` (identity-changing)
-- `--from [ref]` (reference-only context seeding)
+Keep live fork/session boundaries here. Flag conflicts, environment aliases and
+policy permutations belong to [argv normalization](../unit/cli/test_argv_normalization.py)
+and [continue policy](../integration/ops/test_spawn_continue.py) regression tests.
 
-This suite requires a working harness because several scenarios execute real forks.
+## Setup: one completed source session
 
-## Setup
+Set `FORK_MODEL` to an eligible cheap model and `FORK_HARNESS` to its harness
+(default: `codex`) before sourcing setup. No model is chosen implicitly.
 
 ```bash
+: "${FORK_MODEL:?Set FORK_MODEL to an eligible cheap model}"
+export FORK_MODEL FORK_HARNESS="${FORK_HARNESS:-codex}"
 . tests/smoke/scripts/setup.sh --git
-export REPO_ROOT="$SMOKE_ORIGINAL_CWD"
-export SMOKE_REPO="$SCRATCH"
-export RUNTIME_ROOT="$(uv run python tests/e2e/resolve-runtime-root.py)"
-mkdir -p "$SMOKE_REPO/.mars/agents"
-cat > "$SMOKE_REPO/.mars/agents/reviewer.md" <<'EOF'
-# Reviewer
-
-Fork smoke reviewer. Keep answers short.
-EOF
-cat > "$SMOKE_REPO/.mars/agents/architect.md" <<'EOF'
-# Architect
-
-Fork smoke architect. Keep answers short.
-EOF
-cd "$REPO_ROOT"
-uv run meridian --json spawn -a reviewer -p "Seed session for fork smoke tests." > /tmp/meridian-fork-source-create.json && \
-SOURCE_SPAWN_ID="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-doc = json.loads(Path('/tmp/meridian-fork-source-create.json').read_text(encoding='utf-8'))
-print(doc.get('spawn_id', ''))
-PY
-)" && \
-[ -n "$SOURCE_SPAWN_ID" ] && \
-uv run meridian spawn wait "$SOURCE_SPAWN_ID" >/tmp/meridian-fork-source-wait.txt 2>&1 || true
+export FORK_OUTPUT="$SMOKE_ROOT/fork"
+mkdir -p "$FORK_OUTPUT"
+printf '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n' > "$SCRATCH/mars.toml"
+if [[ -n "${CODEX_AUTH_FILE:-}" ]]; then
+  install -m 600 "$CODEX_AUTH_FILE" "$CODEX_HOME/auth.json"
+fi
+if [[ -n "${CLAUDE_AUTH_FILE:-}" ]]; then
+  install -m 600 "$CLAUDE_AUTH_FILE" "$CLAUDE_CONFIG_DIR/.credentials.json"
+fi
+if [[ -n "${OPENCODE_AUTH_FILE:-}" ]]; then
+  mkdir -p "$XDG_DATA_HOME/opencode"
+  install -m 600 "$OPENCODE_AUTH_FILE" "$XDG_DATA_HOME/opencode/auth.json"
+fi
+smoke_add_agent reviewer
+smoke_add_agent architect
+uv run meridian --json --harness "$FORK_HARNESS" spawn -a reviewer \
+  -m "$FORK_MODEL" -p "Reply briefly: fork smoke source." > "$FORK_OUTPUT/source.json"
+export SOURCE_SPAWN_ID="$(uv run python -c 'import json,os; from pathlib import Path; print(json.loads((Path(os.environ["FORK_OUTPUT"])/"source.json").read_text())["spawn_id"])')"
+uv run meridian spawn wait "$SOURCE_SPAWN_ID"
 uv run python - <<'PY'
 import json
 import os
@@ -47,429 +46,31 @@ from pathlib import Path
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_runtime_paths
 
-doc = json.loads(Path("/tmp/meridian-fork-source-create.json").read_text(encoding="utf-8"))
-source_spawn_id = doc.get("spawn_id")
-assert source_spawn_id
-project_root = Path(os.environ["MERIDIAN_PROJECT_DIR"])
-runtime_root = resolve_runtime_paths(project_root).root_dir
-row = spawn_store.get_spawn(runtime_root, source_spawn_id)
-assert row is not None
-assert row.chat_id
-assert row.harness_session_id
-meta = {
-    "source_spawn_id": row.id,
-    "source_chat_id": row.chat_id,
-    "source_harness_session_id": row.harness_session_id,
-    "source_harness": row.harness,
-    "source_model": row.model,
-    "source_agent": row.agent,
-    "source_work_id": row.work_id,
-}
-Path("/tmp/meridian-fork-source-meta.json").write_text(
-    json.dumps(meta, sort_keys=True), encoding="utf-8"
+root = resolve_runtime_paths(Path(os.environ['MERIDIAN_PROJECT_DIR'])).root_dir
+row = spawn_store.get_spawn(root, os.environ['SOURCE_SPAWN_ID'])
+assert row is not None and row.chat_id and row.harness_session_id
+fields = ('chat_id', 'harness', 'harness_session_id', 'model', 'agent', 'work_id', 'prompt')
+(Path(os.environ['FORK_OUTPUT']) / 'source-meta.json').write_text(
+    json.dumps({field: getattr(row, field) for field in fields})
 )
-row_before = {
-    "chat_id": row.chat_id,
-    "harness": row.harness,
-    "harness_session_id": row.harness_session_id,
-    "model": row.model,
-    "agent": row.agent,
-    "work_id": row.work_id,
-    "prompt": row.prompt,
-}
-Path("/tmp/meridian-fork-source-row-before.json").write_text(
-    json.dumps(row_before, sort_keys=True), encoding="utf-8"
-)
-print("PASS: fork smoke setup complete")
+print('PASS: source completed and native identity recorded')
 PY
+export SOURCE_CHAT_ID="$(uv run python -c 'import json,os; from pathlib import Path; print(json.loads((Path(os.environ["FORK_OUTPUT"])/"source-meta.json").read_text())["chat_id"])')"
+export SOURCE_HARNESS_ID="$(uv run python -c 'import json,os; from pathlib import Path; print(json.loads((Path(os.environ["FORK_OUTPUT"])/"source-meta.json").read_text())["harness_session_id"])')"
 ```
 
-### FORK-1. `spawn --fork <spawn_id> -p` creates a new spawn and chat [CRITICAL]
+## Live forks from spawn and session references
+
+Both references must create a distinct spawn, chat and native session. Wait for
+each fork before inspecting persisted identity.
 
 ```bash
-SOURCE_SPAWN_ID="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-print(meta['source_spawn_id'])
-PY
-)" && \
-uv run meridian --json spawn --fork "$SOURCE_SPAWN_ID" -p "Branch from source spawn." > /tmp/meridian-fork-1.json && \
-uv run python - <<'PY'
-import json
-import os
-from pathlib import Path
-from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_runtime_paths
-
-meta = json.loads(Path("/tmp/meridian-fork-source-meta.json").read_text(encoding="utf-8"))
-doc = json.loads(Path("/tmp/meridian-fork-1.json").read_text(encoding="utf-8"))
-new_spawn_id = doc.get("spawn_id")
-assert new_spawn_id and new_spawn_id != meta["source_spawn_id"]
-assert doc.get("forked_from") == meta["source_chat_id"]
-runtime_root = resolve_runtime_paths(Path(os.environ["MERIDIAN_PROJECT_DIR"])).root_dir
-source_row = spawn_store.get_spawn(runtime_root, meta["source_spawn_id"])
-new_row = spawn_store.get_spawn(runtime_root, new_spawn_id)
-assert source_row is not None and new_row is not None
-assert new_row.chat_id and source_row.chat_id and new_row.chat_id != source_row.chat_id
-print("PASS: fork from spawn id created a distinct spawn/session")
-PY
-```
-
-### FORK-2. `--fork <session_id>` root flow exposes fork output contract [CRITICAL]
-
-```bash
-SOURCE_CHAT_ID="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-print(meta['source_chat_id'])
-PY
-)" && \
-uv run meridian --json --fork "$SOURCE_CHAT_ID" --dry-run > /tmp/meridian-fork-2.json && \
-uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path("/tmp/meridian-fork-source-meta.json").read_text(encoding="utf-8"))
-doc = json.loads(Path("/tmp/meridian-fork-2.json").read_text(encoding="utf-8"))
-assert doc["message"] == "Fork dry-run."
-assert doc["forked_from"] == meta["source_chat_id"]
-assert isinstance(doc.get("command"), list) and doc["command"]
-print("PASS: root --fork dry-run emits fork-specific output")
-PY
-```
-
-### FORK-3. `spawn --fork <session_id> -p` works from session refs [CRITICAL]
-
-```bash
-SOURCE_CHAT_ID="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-print(meta['source_chat_id'])
-PY
-)" && \
-uv run meridian --json spawn --fork "$SOURCE_CHAT_ID" -p "Branch from source session." > /tmp/meridian-fork-3.json && \
-uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path("/tmp/meridian-fork-source-meta.json").read_text(encoding="utf-8"))
-doc = json.loads(Path("/tmp/meridian-fork-3.json").read_text(encoding="utf-8"))
-assert doc.get("spawn_id")
-assert doc.get("forked_from") == meta["source_chat_id"]
-print("PASS: spawn --fork accepts session ids")
-PY
-```
-
-### FORK-3b. Bare `--fork` uses `$MERIDIAN_SPAWN_ID` [CRITICAL]
-
-```bash
-SOURCE_SPAWN_ID="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-print(meta['source_spawn_id'])
-PY
-)" && \
-SOURCE_CHAT_ID="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-print(meta['source_chat_id'])
-PY
-)" && \
-MERIDIAN_SPAWN_ID="$SOURCE_SPAWN_ID" uv run meridian --json spawn --fork -p "Bare fork from env." --dry-run > /tmp/meridian-fork-3b-spawn.json && \
-MERIDIAN_SPAWN_ID="$SOURCE_SPAWN_ID" uv run meridian --json --fork --dry-run > /tmp/meridian-fork-3b-root.json && \
-SOURCE_CHAT_ID="$SOURCE_CHAT_ID" uv run python - <<'PY'
-import json
-import os
-from pathlib import Path
-
-spawn_doc = json.loads(Path("/tmp/meridian-fork-3b-spawn.json").read_text(encoding="utf-8"))
-root_doc = json.loads(Path("/tmp/meridian-fork-3b-root.json").read_text(encoding="utf-8"))
-assert spawn_doc["status"] == "dry-run"
-assert spawn_doc.get("forked_from") == os.environ["SOURCE_CHAT_ID"]
-assert root_doc["message"] == "Fork dry-run."
-assert root_doc.get("forked_from") == os.environ["SOURCE_CHAT_ID"]
-print("PASS: bare --fork resolved from MERIDIAN_SPAWN_ID for spawn and root")
-PY
-```
-
-### FORK-3c. Bare `--from` uses `$MERIDIAN_SPAWN_ID` [NORMAL]
-
-```bash
-SOURCE_SPAWN_ID="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-print(meta['source_spawn_id'])
-PY
-)" && \
-MERIDIAN_SPAWN_ID="$SOURCE_SPAWN_ID" uv run meridian --json spawn --from -p "review what I just did" --dry-run > /tmp/meridian-fork-3c.json && \
-SOURCE_SPAWN_ID="$SOURCE_SPAWN_ID" uv run python - <<'PY'
-import json
-import os
-from pathlib import Path
-
-doc = json.loads(Path("/tmp/meridian-fork-3c.json").read_text(encoding="utf-8"))
-assert doc["status"] == "dry-run"
-assert doc.get("context_from") == [os.environ["SOURCE_SPAWN_ID"]]
-print("PASS: bare --from resolved from MERIDIAN_SPAWN_ID")
-PY
-```
-
-### FORK-3d. `--from` and `--continue` are mutually exclusive [CRITICAL]
-
-```bash
-SOURCE_SPAWN_ID="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-print(meta['source_spawn_id'])
-PY
-)"
-if uv run meridian spawn --from "$SOURCE_SPAWN_ID" --continue "$SOURCE_SPAWN_ID" -p "should fail" >/tmp/meridian-fork-3d.out 2>&1; then
-  echo "FAIL: --from + --continue unexpectedly succeeded"
-elif grep -q "Cannot combine --from with --continue." /tmp/meridian-fork-3d.out; then
-  echo "PASS: --from + --continue rejected cleanly"
-else
-  echo "FAIL: --from + --continue error text was not useful"
-fi
-```
-
-### FORK-4. `--fork` and `--from` are mutually exclusive [CRITICAL]
-
-```bash
-SOURCE_SPAWN_ID="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-print(meta['source_spawn_id'])
-PY
-)"
-if uv run meridian spawn --fork "$SOURCE_SPAWN_ID" --from "$SOURCE_SPAWN_ID" -p "should fail" >/tmp/meridian-fork-4.out 2>&1; then
-  echo "FAIL: --fork + --from unexpectedly succeeded"
-elif grep -q "Cannot combine --fork with --from" /tmp/meridian-fork-4.out; then
-  echo "PASS: --fork + --from rejected cleanly"
-else
-  echo "FAIL: --fork + --from error text was not useful"
-fi
-```
-
-### FORK-5. Root `--fork` and `--continue` are mutually exclusive [CRITICAL]
-
-```bash
-SOURCE_CHAT_ID="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-print(meta['source_chat_id'])
-PY
-)"
-if uv run meridian --fork "$SOURCE_CHAT_ID" --continue "$SOURCE_CHAT_ID" --dry-run >/tmp/meridian-fork-5.out 2>&1; then
-  echo "FAIL: --fork + --continue unexpectedly succeeded"
-elif grep -q "Cannot combine --fork with --continue" /tmp/meridian-fork-5.out; then
-  echo "PASS: root --fork + --continue rejected cleanly"
-else
-  echo "FAIL: root conflict error text was not useful"
-fi
-```
-
-### FORK-6. Model override on `--fork` is rejected [IMPORTANT]
-
-```bash
-MODEL_OVERRIDE="${MODEL_OVERRIDE:-gpt-5.4}"
-SOURCE_SPAWN_ID="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-print(meta['source_spawn_id'])
-PY
-)" && \
-if uv run meridian spawn --fork "$SOURCE_SPAWN_ID" -m "$MODEL_OVERRIDE" -p "Model override smoke." --dry-run >/tmp/meridian-fork-6.out 2>&1; then
-  echo "FAIL: --fork + -m unexpectedly succeeded"
-elif grep -q -- "--fork preserves launch identity. Use --fork-fresh to change agent, model, or skills." /tmp/meridian-fork-6.out; then
-  echo "PASS: --fork + -m rejected with identity-lock guidance"
-else
-  echo "FAIL: --fork + -m error text was not useful"
-fi
-```
-
-### FORK-7. Agent override on `--fork` is rejected [IMPORTANT]
-
-```bash
-SOURCE_SPAWN_ID="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-print(meta['source_spawn_id'])
-PY
-)" && \
-if uv run meridian spawn --fork "$SOURCE_SPAWN_ID" --agent architect -p "Agent override smoke." --dry-run >/tmp/meridian-fork-7.out 2>&1; then
-  echo "FAIL: --fork + --agent unexpectedly succeeded"
-elif grep -q -- "--fork preserves launch identity. Use --fork-fresh to change agent, model, or skills." /tmp/meridian-fork-7.out; then
-  echo "PASS: --fork + --agent rejected with identity-lock guidance"
-else
-  echo "FAIL: --fork + --agent error text was not useful"
-fi
-```
-
-### FORK-7b. `--fork-fresh` honors model override [IMPORTANT]
-
-```bash
-MODEL_OVERRIDE="${MODEL_OVERRIDE:-gpt-5.4}"
-SOURCE_SPAWN_ID="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-print(meta['source_spawn_id'])
-PY
-)" && \
-uv run meridian --json spawn --fork-fresh "$SOURCE_SPAWN_ID" -m "$MODEL_OVERRIDE" -p "Model override smoke." --dry-run > /tmp/meridian-fork-7b.json && \
-MODEL_OVERRIDE="$MODEL_OVERRIDE" uv run python - <<'PY'
-import json
-import os
-from pathlib import Path
-doc = json.loads(Path("/tmp/meridian-fork-7b.json").read_text(encoding="utf-8"))
-assert doc["status"] == "dry-run"
-assert doc.get("model") == os.environ["MODEL_OVERRIDE"]
-print("PASS: --fork-fresh dry-run honored model override")
-PY
-```
-
-### FORK-7c. `--fork-fresh` honors agent override [IMPORTANT]
-
-```bash
-SOURCE_SPAWN_ID="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-print(meta['source_spawn_id'])
-PY
-)" && \
-uv run meridian --json spawn --fork-fresh "$SOURCE_SPAWN_ID" --agent architect -p "Agent override smoke." --dry-run > /tmp/meridian-fork-7c.json && \
-uv run python - <<'PY'
-import json
-from pathlib import Path
-doc = json.loads(Path("/tmp/meridian-fork-7c.json").read_text(encoding="utf-8"))
-assert doc["status"] == "dry-run"
-assert doc.get("agent") == "architect"
-print("PASS: --fork-fresh dry-run honored agent override")
-PY
-```
-
-### FORK-8. Fork works with `--yolo` [IMPORTANT]
-
-```bash
-SOURCE_SPAWN_ID="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-print(meta['source_spawn_id'])
-PY
-)" && \
-uv run meridian --json spawn --fork "$SOURCE_SPAWN_ID" --yolo -p "YOLO fork smoke." --dry-run > /tmp/meridian-fork-8.json && \
-uv run python - <<'PY'
-import json
-from pathlib import Path
-doc = json.loads(Path("/tmp/meridian-fork-8.json").read_text(encoding="utf-8"))
-assert doc["status"] == "dry-run"
-print("PASS: fork + --yolo was accepted")
-PY
-```
-
-### FORK-9. Fork can target a different work item [IMPORTANT]
-
-```bash
-SOURCE_SPAWN_ID="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-print(meta['source_spawn_id'])
-PY
-)" && \
-ALT_WORK="fork-smoke-alt-work" && \
-uv run meridian --json spawn --fork "$SOURCE_SPAWN_ID" --work "$ALT_WORK" -p "Fork into different work item." > /tmp/meridian-fork-9.json && \
-uv run python - <<'PY'
-import json
-import os
-from pathlib import Path
-from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_runtime_paths
-
-doc = json.loads(Path("/tmp/meridian-fork-9.json").read_text(encoding="utf-8"))
-spawn_id = doc.get("spawn_id")
-assert spawn_id
-runtime_root = resolve_runtime_paths(Path(os.environ["MERIDIAN_PROJECT_DIR"])).root_dir
-row = spawn_store.get_spawn(runtime_root, spawn_id)
-assert row is not None
-assert row.work_id == "fork-smoke-alt-work"
-print("PASS: fork spawn attached to override work item")
-PY
-```
-
-### FORK-10. Harness matrix (claude/codex/opencode) [IMPORTANT]
-
-```bash
-FAIL=0
-for HARNESS in claude codex opencode; do
-  if ! uv run meridian --json --harness "$HARNESS" spawn -a reviewer -p "Seed $HARNESS fork smoke." > "/tmp/meridian-fork-10-${HARNESS}-seed.json"; then
-    echo "FAIL: could not create $HARNESS seed spawn"
-    FAIL=1
-    continue
-  fi
-
-  SEED_SPAWN_ID="$(HARNESS="$HARNESS" uv run python - <<'PY'
-import json
-import os
-from pathlib import Path
-harness = os.environ["HARNESS"]
-doc = json.loads(Path(f"/tmp/meridian-fork-10-{harness}-seed.json").read_text(encoding="utf-8"))
-print(doc.get("spawn_id", ""))
-PY
-)" || FAIL=1
-  [ -n "$SEED_SPAWN_ID" ] || FAIL=1
-  uv run meridian spawn wait "$SEED_SPAWN_ID" >/tmp/meridian-fork-10-wait-"$HARNESS".txt 2>&1 || true
-
-  if ! uv run meridian --json --harness "$HARNESS" spawn --fork "$SEED_SPAWN_ID" -p "Fork on $HARNESS." > "/tmp/meridian-fork-10-${HARNESS}-fork.json"; then
-    echo "FAIL: could not fork on $HARNESS"
-    FAIL=1
-    continue
-  fi
-
-  if ! HARNESS="$HARNESS" SEED_SPAWN_ID="$SEED_SPAWN_ID" uv run python - <<'PY'
-import json
-import os
-from pathlib import Path
-from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_runtime_paths
-
-harness = os.environ["HARNESS"]
-seed_spawn_id = os.environ["SEED_SPAWN_ID"]
-fork_doc = json.loads(Path(f"/tmp/meridian-fork-10-{harness}-fork.json").read_text(encoding="utf-8"))
-fork_spawn_id = fork_doc.get("spawn_id")
-assert fork_spawn_id
-runtime_root = resolve_runtime_paths(Path(os.environ["MERIDIAN_PROJECT_DIR"])).root_dir
-seed_row = spawn_store.get_spawn(runtime_root, seed_spawn_id)
-fork_row = spawn_store.get_spawn(runtime_root, fork_spawn_id)
-assert seed_row is not None and fork_row is not None
-assert seed_row.harness == harness
-assert fork_row.harness == harness
-assert seed_row.harness_session_id
-assert fork_row.harness_session_id
-assert seed_row.harness_session_id != fork_row.harness_session_id
-print(f"PASS: {harness} fork captured a distinct harness session")
-PY
-  then
-    FAIL=1
-  fi
+for REF in "$SOURCE_SPAWN_ID" "$SOURCE_CHAT_ID"; do
+  uv run meridian --json spawn --fork "$REF" -p "Reply briefly: forked branch." \
+    > "$FORK_OUTPUT/$REF.json"
+  FORK_ID="$(uv run python -c 'import json,sys; print(json.load(open(sys.argv[1]))["spawn_id"])' "$FORK_OUTPUT/$REF.json")"
+  uv run meridian spawn wait "$FORK_ID"
 done
-[ "$FAIL" -eq 0 ] && echo "PASS: harness matrix passed" || echo "FAIL: harness matrix had failures"
-```
-
-### FORK-11. Source session remains untouched after fork [CRITICAL]
-
-```bash
 uv run python - <<'PY'
 import json
 import os
@@ -477,226 +78,202 @@ from pathlib import Path
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_runtime_paths
 
-meta = json.loads(Path("/tmp/meridian-fork-source-meta.json").read_text(encoding="utf-8"))
-before = json.loads(Path("/tmp/meridian-fork-source-row-before.json").read_text(encoding="utf-8"))
-runtime_root = resolve_runtime_paths(Path(os.environ["MERIDIAN_PROJECT_DIR"])).root_dir
-row = spawn_store.get_spawn(runtime_root, meta["source_spawn_id"])
-assert row is not None
-after = {
-    "chat_id": row.chat_id,
-    "harness": row.harness,
-    "harness_session_id": row.harness_session_id,
-    "model": row.model,
-    "agent": row.agent,
-    "work_id": row.work_id,
-    "prompt": row.prompt,
-}
-assert after == before
-print("PASS: source spawn/session metadata stayed unchanged")
+out = Path(os.environ['FORK_OUTPUT'])
+meta = json.loads((out / 'source-meta.json').read_text())
+root = resolve_runtime_paths(Path(os.environ['MERIDIAN_PROJECT_DIR'])).root_dir
+for ref in (os.environ['SOURCE_SPAWN_ID'], os.environ['SOURCE_CHAT_ID']):
+    doc = json.loads((out / f'{ref}.json').read_text())
+    assert doc['spawn_id'] != os.environ['SOURCE_SPAWN_ID']
+    assert doc['forked_from'] == meta['chat_id']
+    row = spawn_store.get_spawn(root, doc['spawn_id'])
+    assert row is not None and row.chat_id != meta['chat_id']
+    assert row.harness == meta['harness']
+    assert row.harness_session_id and row.harness_session_id != meta['harness_session_id']
+print('PASS: spawn/session references produced distinct native forks')
 PY
 ```
 
-### FORK-12. Forking a nonexistent reference fails cleanly [IMPORTANT]
+## Root preview and fork-specific guidance
 
 ```bash
-BAD_REF="fork-smoke-missing-$(date +%s)"
-if uv run meridian spawn --fork "$BAD_REF" -p "missing fork smoke" >/tmp/meridian-fork-12.out 2>&1; then
-  echo "FAIL: nonexistent fork ref unexpectedly succeeded"
-elif grep -q "Traceback" /tmp/meridian-fork-12.out; then
-  echo "FAIL: nonexistent fork ref produced a traceback"
-elif grep -Eiq 'not found|cannot|unknown|missing|session' /tmp/meridian-fork-12.out; then
-  echo "PASS: nonexistent fork ref failed with a clear message"
-else
-  echo "FAIL: nonexistent fork ref failed with unclear output"
-fi
-```
-
-### FORK-13. Unsupported harness path fails clearly [IMPORTANT]
-
-```bash
-SOURCE_SPAWN_ID="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-print(meta['source_spawn_id'])
-PY
-)"
-if uv run meridian --harness definitely-not-a-harness spawn --fork "$SOURCE_SPAWN_ID" -p "bad harness smoke" >/tmp/meridian-fork-13.out 2>&1; then
-  echo "FAIL: unsupported harness unexpectedly succeeded"
-elif grep -q "Traceback" /tmp/meridian-fork-13.out; then
-  echo "FAIL: unsupported harness produced a traceback"
-elif grep -Eiq 'harness|unsupported|unknown' /tmp/meridian-fork-13.out; then
-  echo "PASS: unsupported harness failed with a clear message"
-else
-  echo "FAIL: unsupported harness error text was unclear"
-fi
-```
-
-### FORK-14. `--fork` + `--dry-run` previews without executing [CRITICAL]
-
-```bash
-SOURCE_SPAWN_ID="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-print(meta['source_spawn_id'])
-PY
-)" && \
-uv run meridian --json spawn --fork "$SOURCE_SPAWN_ID" -p "dry-run preview fork" --dry-run > /tmp/meridian-fork-14.json && \
+uv run meridian -C "$SCRATCH" --json --fork "$SOURCE_CHAT_ID" --dry-run > "$FORK_OUTPUT/root-preview.json"
+uv run meridian --json spawn --fork "$SOURCE_SPAWN_ID" \
+  -p "Check fork guidance." --dry-run > "$FORK_OUTPUT/guidance.json"
 uv run python - <<'PY'
 import json
-from pathlib import Path
-doc = json.loads(Path("/tmp/meridian-fork-14.json").read_text(encoding="utf-8"))
-assert doc["status"] == "dry-run"
-assert isinstance(doc.get("cli_command"), list) and doc["cli_command"]
-assert doc.get("forked_from")
-assert "spawn_id" not in doc
-print("PASS: fork dry-run returned preview data without launching")
-PY
-```
-
-### FORK-15. Cross-harness fork is rejected [CRITICAL]
-
-```bash
-TARGET_HARNESS="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-source = (meta.get('source_harness') or '').strip()
-for candidate in ('claude', 'codex', 'opencode'):
-    if candidate and candidate != source:
-        print(candidate)
-        break
-PY
-)"
-SOURCE_SPAWN_ID="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-print(meta['source_spawn_id'])
-PY
-)"
-if uv run meridian --harness "$TARGET_HARNESS" spawn --fork "$SOURCE_SPAWN_ID" -p "cross harness fork" >/tmp/meridian-fork-15.out 2>&1; then
-  echo "FAIL: cross-harness fork unexpectedly succeeded"
-elif grep -q "Cannot fork across harnesses" /tmp/meridian-fork-15.out; then
-  echo "PASS: cross-harness fork rejected with explicit message"
-else
-  echo "FAIL: cross-harness fork error text was unclear"
-fi
-```
-
-### FORK-16. Forking a spawn without harness session id fails [CRITICAL]
-
-```bash
-MISSING_SPAWN_ID="$(uv run python - <<'PY'
 import os
-import time
+from pathlib import Path
+out = Path(os.environ['FORK_OUTPUT'])
+root = json.loads((out / 'root-preview.json').read_text())
+assert root['message'] == 'Fork dry-run.'
+assert root['forked_from'] == os.environ['SOURCE_CHAT_ID']
+assert root['command']
+spawn = json.loads((out / 'guidance.json').read_text())
+assert spawn['status'] == 'dry-run' and 'spawn_id' not in spawn
+assert spawn['cli_command'] and spawn['forked_from'] == os.environ['SOURCE_CHAT_ID']
+prompt = spawn['composed_prompt']
+assert 'You are working in a forked Meridian session' in prompt
+assert 'You are resuming an existing Meridian session' not in prompt
+print('PASS: root/spawn previews retain fork identity and guidance without launching')
+PY
+```
+
+## Representative identity policy check
+
+The automated suite owns the full override/conflict matrix. Keep one CLI-visible
+identity rejection and one `--fork-fresh` override preview.
+
+```bash
+if uv run meridian spawn --fork "$SOURCE_SPAWN_ID" --agent architect \
+  -p "Identity override." --dry-run > "$FORK_OUTPUT/identity-error.txt" 2>&1; then
+  echo 'FAIL: identity-preserving fork accepted an agent override'; false
+fi
+grep -q -- '--fork preserves launch identity. Use --fork-fresh' "$FORK_OUTPUT/identity-error.txt"
+uv run meridian --json spawn --fork-fresh "$SOURCE_SPAWN_ID" --agent architect \
+  -p "Fresh identity." --dry-run > "$FORK_OUTPUT/fresh.json"
+uv run python - <<'PY'
+import json
+import os
+from pathlib import Path
+doc = json.loads((Path(os.environ['FORK_OUTPUT']) / 'fresh.json').read_text())
+assert doc['status'] == 'dry-run' and doc['agent'] == 'architect'
+print('PASS: fork locks identity; fork-fresh permits a new agent')
+PY
+```
+
+## Live harness matrix
+
+Set `FORK_CLAUDE_MODEL`, `FORK_CODEX_MODEL` and `FORK_OPENCODE_MODEL` to cheap,
+eligible models. Each row uses the real harness, not a fake executable; it
+creates and drains both the source and the fork.
+
+```bash
+: "${FORK_CLAUDE_MODEL:?Set a cheap Claude model}"
+: "${FORK_CODEX_MODEL:?Set a cheap Codex model}"
+: "${FORK_OPENCODE_MODEL:?Set a cheap OpenCode model}"
+for HARNESS in claude codex opencode; do
+  case "$HARNESS" in
+    claude) MODEL="$FORK_CLAUDE_MODEL" ;;
+    codex) MODEL="$FORK_CODEX_MODEL" ;;
+    opencode) MODEL="$FORK_OPENCODE_MODEL" ;;
+  esac
+  uv run meridian --json --harness "$HARNESS" spawn -a reviewer -m "$MODEL" \
+    -p "Reply briefly: matrix source." > "$FORK_OUTPUT/$HARNESS-source.json"
+  SEED_ID="$(uv run python -c 'import json,sys; print(json.load(open(sys.argv[1]))["spawn_id"])' "$FORK_OUTPUT/$HARNESS-source.json")"
+  uv run meridian spawn wait "$SEED_ID"
+  uv run meridian --json --harness "$HARNESS" spawn --fork "$SEED_ID" \
+    -p "Reply briefly: matrix fork." > "$FORK_OUTPUT/$HARNESS-fork.json"
+  FORK_ID="$(uv run python -c 'import json,sys; print(json.load(open(sys.argv[1]))["spawn_id"])' "$FORK_OUTPUT/$HARNESS-fork.json")"
+  uv run meridian spawn wait "$FORK_ID"
+  HARNESS="$HARNESS" SEED_ID="$SEED_ID" FORK_ID="$FORK_ID" uv run python - <<'PY'
+import os
 from pathlib import Path
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_runtime_paths
-
-runtime_root = resolve_runtime_paths(Path(os.environ["MERIDIAN_PROJECT_DIR"])).root_dir
-spawn_id = f"p{int(time.time())}"
-spawn_store.start_spawn(
-    runtime_root,
-    spawn_id=spawn_id,
-    chat_id="c900001",
-    model="gpt-5.4",
-    agent="reviewer",
-    skills=(),
-    harness="codex",
-    prompt="missing harness session id seed",
-    harness_session_id=None,
-)
-print(spawn_id)
+root = resolve_runtime_paths(Path(os.environ['MERIDIAN_PROJECT_DIR'])).root_dir
+seed = spawn_store.get_spawn(root, os.environ['SEED_ID'])
+fork = spawn_store.get_spawn(root, os.environ['FORK_ID'])
+assert seed is not None and fork is not None
+assert seed.harness == fork.harness == os.environ['HARNESS']
+assert seed.harness_session_id and fork.harness_session_id
+assert seed.harness_session_id != fork.harness_session_id
+print(f"PASS: {os.environ['HARNESS']} captured a distinct native fork")
 PY
-)"
-if uv run meridian spawn --fork "$MISSING_SPAWN_ID" -p "should fail" >/tmp/meridian-fork-16.out 2>&1; then
-  echo "FAIL: fork from missing harness session unexpectedly succeeded"
-elif grep -q "has no recorded session" /tmp/meridian-fork-16.out; then
-  echo "PASS: missing harness session id rejected cleanly"
-else
-  echo "FAIL: missing harness session id error text was unclear"
-fi
+done
 ```
 
-### FORK-17. Legacy `--continue ... --fork` syntax gets helpful error [IMPORTANT]
+## Raw native session reference
+
+The source is already tracked by Meridian. Looking it up by its native ID must
+preserve the same chat lineage, not falsely classify it as an untracked session.
 
 ```bash
-SOURCE_SPAWN_ID="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-print(meta['source_spawn_id'])
-PY
-)"
-if uv run meridian spawn --continue "$SOURCE_SPAWN_ID" --fork "$SOURCE_SPAWN_ID" -p "legacy syntax" >/tmp/meridian-fork-17.out 2>&1; then
-  echo "FAIL: legacy --continue + --fork unexpectedly succeeded"
-elif grep -q "Cannot combine --fork with --continue" /tmp/meridian-fork-17.out; then
-  echo "PASS: legacy syntax path shows the new conflict guidance"
-else
-  echo "FAIL: legacy syntax error message was unclear"
-fi
-```
-
-### FORK-18. Raw harness session id forks with no meridian lineage [IMPORTANT]
-
-```bash
-SOURCE_HARNESS_ID="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-print(meta['source_harness_session_id'])
-PY
-)" && \
-SOURCE_HARNESS="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-print(meta['source_harness'])
-PY
-)" && \
-uv run meridian --json --harness "$SOURCE_HARNESS" spawn --fork "$SOURCE_HARNESS_ID" -p "Raw harness fork." > /tmp/meridian-fork-18.json && \
+uv run meridian --json --harness "$FORK_HARNESS" spawn --fork "$SOURCE_HARNESS_ID" \
+  -p "Reply briefly: raw native fork." > "$FORK_OUTPUT/raw.json"
+RAW_ID="$(uv run python -c 'import json,os; from pathlib import Path; print(json.loads((Path(os.environ["FORK_OUTPUT"])/"raw.json").read_text())["spawn_id"])')"
+uv run meridian spawn wait "$RAW_ID"
 uv run python - <<'PY'
 import json
 import os
 from pathlib import Path
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_runtime_paths
-
-source_harness_id = json.loads(Path("/tmp/meridian-fork-source-meta.json").read_text(encoding="utf-8"))["source_harness_session_id"]
-doc = json.loads(Path("/tmp/meridian-fork-18.json").read_text(encoding="utf-8"))
-fork_spawn_id = doc.get("spawn_id")
-assert fork_spawn_id
-assert doc.get("forked_from") == source_harness_id
-runtime_root = resolve_runtime_paths(Path(os.environ["MERIDIAN_PROJECT_DIR"])).root_dir
-row = spawn_store.get_spawn(runtime_root, fork_spawn_id)
+root = resolve_runtime_paths(Path(os.environ['MERIDIAN_PROJECT_DIR'])).root_dir
+doc = json.loads((Path(os.environ['FORK_OUTPUT']) / 'raw.json').read_text())
+assert doc['forked_from'] == os.environ['SOURCE_CHAT_ID']
+row = spawn_store.get_spawn(root, doc['spawn_id'])
 assert row is not None and row.chat_id
-records = session_store.get_session_records(runtime_root, {row.chat_id})
-assert records
-assert records[0].forked_from_chat_id is None
-print("PASS: raw harness fork worked without session lineage")
+records = session_store.get_session_records(root, {row.chat_id})
+assert records and records[0].forked_from_chat_id == os.environ['SOURCE_CHAT_ID']
+assert row.harness_session_id and row.harness_session_id != os.environ['SOURCE_HARNESS_ID']
+print('PASS: raw native reference preserved tracked lineage and forked native identity')
 PY
 ```
 
-### FORK-19. Fork prompt guidance is used (not continuation guidance) [CRITICAL]
+## Source immutability
 
 ```bash
-SOURCE_SPAWN_ID="$(uv run python - <<'PY'
-import json
-from pathlib import Path
-meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
-print(meta['source_spawn_id'])
-PY
-)" && \
-uv run meridian --json spawn --fork "$SOURCE_SPAWN_ID" -p "Check fork guidance text." --dry-run > /tmp/meridian-fork-19.json && \
 uv run python - <<'PY'
 import json
+import os
 from pathlib import Path
-doc = json.loads(Path("/tmp/meridian-fork-19.json").read_text(encoding="utf-8"))
-prompt = doc.get("composed_prompt", "")
-assert "You are working in a forked Meridian session" in prompt
-assert "You are resuming an existing Meridian session" not in prompt
-print("PASS: fork guidance is present and continuation guidance is absent")
+from meridian.lib.state import spawn_store
+from meridian.lib.state.paths import resolve_runtime_paths
+before = json.loads((Path(os.environ['FORK_OUTPUT']) / 'source-meta.json').read_text())
+root = resolve_runtime_paths(Path(os.environ['MERIDIAN_PROJECT_DIR'])).root_dir
+row = spawn_store.get_spawn(root, os.environ['SOURCE_SPAWN_ID'])
+assert row is not None
+assert {field: getattr(row, field) for field in before} == before
+print('PASS: source spawn/session metadata remained unchanged')
 PY
+```
+
+## Native boundary failures
+
+```bash
+TARGET_HARNESS=claude
+[ "$FORK_HARNESS" != claude ] || TARGET_HARNESS=codex
+if uv run meridian --harness "$TARGET_HARNESS" spawn --fork "$SOURCE_SPAWN_ID" \
+  -p "Cross-harness fork." > "$FORK_OUTPUT/cross-error.txt" 2>&1; then
+  echo 'FAIL: cross-harness fork succeeded'; false
+fi
+grep -q 'Cannot fork across harnesses' "$FORK_OUTPUT/cross-error.txt"
+if uv run meridian spawn --fork p999999999 -p "Missing source." > "$FORK_OUTPUT/missing-error.txt" 2>&1; then
+  echo 'FAIL: nonexistent source succeeded'; false
+fi
+! grep -q 'Traceback' "$FORK_OUTPUT/missing-error.txt"
+grep -Eiq 'not found|cannot|unknown|missing|session' "$FORK_OUTPUT/missing-error.txt"
+MISSING_ID="$(uv run python - <<'PY'
+import os
+from pathlib import Path
+from meridian.lib.state import spawn_store
+from meridian.lib.state.paths import resolve_runtime_paths
+root = resolve_runtime_paths(Path(os.environ['MERIDIAN_PROJECT_DIR'])).root_dir
+sid = spawn_store.start_spawn(root, chat_id='c900001', model=os.environ['FORK_MODEL'],
+    agent='reviewer', harness=os.environ['FORK_HARNESS'], prompt='Unbound fixture',
+    harness_session_id=None)
+spawn_store.finalize_spawn(root, str(sid), status='failed', exit_code=1, origin='runner')
+print(sid)
+PY
+)"
+if uv run meridian spawn --fork "$MISSING_ID" -p "Unbound source." > "$FORK_OUTPUT/unbound-error.txt" 2>&1; then
+  echo 'FAIL: unbound source succeeded'; false
+fi
+grep -q 'has no recorded session' "$FORK_OUTPUT/unbound-error.txt"
+echo 'PASS: native boundary failures were explicit'
+```
+
+## Cleanup
+
+Every successful live command above waits for completion. If interrupted, first
+cancel and drain the spawn IDs recorded in the output JSON files; do not remove
+state while a runner is still active.
+
+```bash
+uv run meridian spawn list --view active
+# If this lists active fixture spawns, cancel each ID and wait for it:
+# uv run meridian spawn cancel <id>
+# uv run meridian spawn wait <id>
+# Only after the active list is empty:
+smoke_cleanup
 ```

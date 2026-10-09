@@ -1,223 +1,112 @@
-# Spawn `--from` Context References
+# Spawn `--from` context references
 
-These checks validate the `--from` flag which injects prior context into a new spawn's prompt. Spawn refs include report/files pointers; chat/session refs point at the exact session transcript and primary spawn.
+Check packaged CLI prompt rendering for spawn and session references. These are
+synthetic-state dry-runs, not live harness/session verification. Dry-run may probe
+installed harnesses or refresh catalogs; it makes no model request. Use a Codex
+model available in your installation via `CONTEXT_MODEL`. If native eligibility
+requires login, set `CODEX_AUTH_FILE` to your auth.json before setup to deliberately
+copy only that file into the disposable store; no agent/config tree is copied.
+
+Flag conflicts are covered by [argv normalization](../../unit/cli/test_argv_normalization.py);
+reference resolution is covered by [context-ref integration](../../integration/ops/test_context_ref.py).
+Keep the rendered report/transcript boundary here rather than a second policy matrix.
 
 ## Setup
 
+Run from the checkout in a fresh shell. All state and outputs stay in owned scratch.
+
 ```bash
+: "${CONTEXT_MODEL:?Set CONTEXT_MODEL to an available Codex model}"
+export CONTEXT_MODEL
 . tests/smoke/scripts/setup.sh --git
-export REPO_ROOT="$SMOKE_ORIGINAL_CWD"
-export SMOKE_REPO="$SCRATCH/context-from"
-mkdir -p "$SMOKE_REPO"
-git -C "$SMOKE_REPO" init --quiet
-export MERIDIAN_PROJECT_DIR="$SMOKE_REPO"
-export MERIDIAN_TASK_DIR="$SMOKE_REPO"
-export RUNTIME_ROOT="$(uv run python tests/e2e/resolve-runtime-root.py)"
-
-# Create a minimal agent for dry-run
-mkdir -p "$SMOKE_REPO/.mars/agents"
-cat > "$SMOKE_REPO/.mars/agents/coder.md" <<'EOF'
----
-name: coder
-description: test coder
-model: gpt-5.3-codex
-sandbox: workspace-write
----
-# Coder
-EOF
-
-cd "$REPO_ROOT"
-echo "PASS: context-from setup complete"
-```
-
-### FROM-1. Basic --from with spawn ID [CRITICAL]
-
-Seed a spawn with a report, then dry-run a second spawn referencing it.
-
-```bash
-# Seed a completed spawn
-SEED_ID=$(uv run python -c "
-from pathlib import Path
-from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_runtime_paths
-repo = Path('$SMOKE_REPO')
-sp = resolve_runtime_paths(repo)
-sid = spawn_store.start_spawn(sp.root_dir, chat_id='c1', model='gpt', agent='coder', harness='codex', kind='child', prompt='seed', desc='Phase 1')
-spawn_store.finalize_spawn(sp.root_dir, str(sid), status='succeeded', exit_code=0, origin='runner')
-rp = sp.root_dir / 'spawns' / str(sid) / 'report.md'
-rp.parent.mkdir(parents=True, exist_ok=True)
-rp.write_text('# Phase 1 Report\n\nImplemented data model.\n')
-print(sid)
-")
-
-# Dry-run with --from
-uv run meridian --json spawn -a coder --from "$SEED_ID" --dry-run -p "Phase 2: build on phase 1" > /tmp/meridian-from-basic.json 2>&1
-
-python3 -c "
+trap smoke_cleanup EXIT
+smoke_add_agent coder
+printf '[settings]\ntargets = [".codex"]\n' > "$SCRATCH/mars.toml"
+if [[ -n "${CODEX_AUTH_FILE:-}" ]]; then
+  install -m 600 "$CODEX_AUTH_FILE" "$CODEX_HOME/auth.json"
+fi
+export FROM_OUTPUT="$SMOKE_ROOT/context-from"
+mkdir -p "$FROM_OUTPUT"
+uv run python - <<'PY'
 import json
-d = json.load(open('/tmp/meridian-from-basic.json'))
-assert d['status'] == 'dry-run', 'not dry-run'
-assert d['context_from_resolved'] == ['$SEED_ID'], f'wrong resolved: {d[\"context_from_resolved\"]}'
-p = d['composed_prompt']
-assert '<prior-spawn-context spawn=\"$SEED_ID\">' in p, 'missing context block'
-assert '## Report' in p, 'missing report section'
-assert 'Phase 1 Report' in p, 'missing report content'
-assert '## Explore Further' in p, 'missing explore section'
-assert 'meridian spawn show $SEED_ID' in p, 'missing show command'
-print('PASS: FROM-1 basic --from')
-" || echo "FAIL: FROM-1"
+import os
+from pathlib import Path
+from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.paths import resolve_runtime_paths
+
+root = resolve_runtime_paths(Path(os.environ['MERIDIAN_PROJECT_DIR'])).root_dir
+chat = session_store.start_session(root, harness='codex', harness_session_id='',
+    model=os.environ['CONTEXT_MODEL'], kind='primary')
+ids = []
+for kind, status in (('primary', 'succeeded'), ('child', 'succeeded'), ('child', 'failed')):
+    sid = str(spawn_store.start_spawn(root, chat_id=chat, model=os.environ['CONTEXT_MODEL'],
+        agent='coder', harness='codex', kind=kind, prompt='Context fixture'))
+    spawn_store.finalize_spawn(root, sid, status=status,
+        exit_code=0 if status == 'succeeded' else 1, origin='runner')
+    ids.append(sid)
+(root / 'spawns' / ids[1] / 'report.md').write_text('# Phase 1 Report\nImplemented data model.\n')
+session_store.stop_session(root, chat)
+(Path(os.environ['FROM_OUTPUT']) / 'seed.json').write_text(json.dumps({
+    'chat': chat, 'primary': ids[0], 'report': ids[1], 'no_report': ids[2],
+}))
+PY
+export SEED_ID="$(uv run python -c 'import json,os; from pathlib import Path; print(json.loads((Path(os.environ["FROM_OUTPUT"])/"seed.json").read_text())["report"])')"
+export NO_REPORT_ID="$(uv run python -c 'import json,os; from pathlib import Path; print(json.loads((Path(os.environ["FROM_OUTPUT"])/"seed.json").read_text())["no_report"])')"
+export CHAT_ID="$(uv run python -c 'import json,os; from pathlib import Path; print(json.loads((Path(os.environ["FROM_OUTPUT"])/"seed.json").read_text())["chat"])')"
 ```
 
-### FROM-2. --from with session ID [CRITICAL]
-
-Reference a session ID instead of a spawn ID. Should resolve to the primary spawn for that exact session, not the latest child spawn.
+## Spawn references: multiple blocks, report and missing-report fallback
 
 ```bash
-# Seed a primary spawn plus failed/succeeded child spawns in session c1
-PRIMARY_ID=$(uv run python -c "
-from pathlib import Path
-from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_runtime_paths
-repo = Path('$SMOKE_REPO')
-sp = resolve_runtime_paths(repo)
-sid = spawn_store.start_spawn(sp.root_dir, chat_id='c1', model='gpt', agent='coder', harness='codex', kind='primary', prompt='primary', desc='Primary')
-print(sid)
-")
-
-uv run python -c "
-from pathlib import Path
-from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_runtime_paths
-repo = Path('$SMOKE_REPO')
-sp = resolve_runtime_paths(repo)
-sid = spawn_store.start_spawn(sp.root_dir, chat_id='c1', model='gpt', agent='coder', harness='codex', kind='child', prompt='fail', desc='Failed attempt')
-spawn_store.finalize_spawn(
-    sp.root_dir,
-    str(sid),
-    status='failed',
-    exit_code=1,
-    origin='runner',
-    error='oops',
-)
-"
-
-uv run python -c "
-from pathlib import Path
-from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_runtime_paths
-repo = Path('$SMOKE_REPO')
-sp = resolve_runtime_paths(repo)
-sid = spawn_store.start_spawn(sp.root_dir, chat_id='c1', model='gpt', agent='coder', harness='codex', kind='child', prompt='seed', desc='Succeeded child')
-spawn_store.finalize_spawn(sp.root_dir, str(sid), status='succeeded', exit_code=0, origin='runner')
-rp = sp.root_dir / 'spawns' / str(sid) / 'report.md'
-rp.parent.mkdir(parents=True, exist_ok=True)
-rp.write_text('# Phase 1 Report\n\nImplemented data model.\n')
-"
-
-# Dry-run with session ref
-uv run meridian --json spawn -a coder --from c1 --dry-run -p "Continue from session" > /tmp/meridian-from-session.json 2>&1
-
-python3 -c "
+uv run meridian --json spawn -a coder --harness codex -m "$CONTEXT_MODEL" \
+  --from "$SEED_ID" --from "$NO_REPORT_ID" --dry-run -p "Build on prior work." \
+  > "$FROM_OUTPUT/spawns.json"
+uv run python - <<'PY'
 import json
-d = json.load(open('/tmp/meridian-from-session.json'))
-resolved = d['context_from_resolved']
-assert len(resolved) == 1, f'expected 1 resolved, got {len(resolved)}'
-assert resolved == ['c1'], f'should preserve chat ref, got {resolved}'
-p = d['composed_prompt']
-assert '<prior-session-context chat=\"c1\" primary_spawn=\"$PRIMARY_ID\">' in p, 'missing session context block'
-assert 'Phase 1 Report' not in p, 'session ref should not inline child spawn report'
-assert 'meridian session log c1' in p, 'missing session log command'
-assert 'meridian spawn show $PRIMARY_ID' in p, 'missing primary spawn command'
-print(f'PASS: FROM-2 session ref preserved {resolved[0]} and points to primary spawn $PRIMARY_ID')
-" || echo "FAIL: FROM-2"
-```
-
-### FROM-3. Multiple --from flags [HIGH]
-
-Pass two spawn references. Both context blocks should appear.
-
-```bash
-# Seed a second spawn
-SEED2_ID=$(uv run python -c "
+import os
 from pathlib import Path
-from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_runtime_paths
-repo = Path('$SMOKE_REPO')
-sp = resolve_runtime_paths(repo)
-sid = spawn_store.start_spawn(sp.root_dir, chat_id='c2', model='gpt', agent='coder', harness='codex', kind='child', prompt='seed2', desc='Phase 2')
-spawn_store.finalize_spawn(sp.root_dir, str(sid), status='succeeded', exit_code=0, origin='runner')
-rp = sp.root_dir / 'spawns' / str(sid) / 'report.md'
-rp.parent.mkdir(parents=True, exist_ok=True)
-rp.write_text('# Phase 2 Report\n\nBuilt API layer.\n')
-print(sid)
-")
-
-uv run meridian --json spawn -a coder --from "$SEED_ID" --from "$SEED2_ID" --dry-run -p "Phase 3" > /tmp/meridian-from-multi.json 2>&1
-
-python3 -c "
-import json
-d = json.load(open('/tmp/meridian-from-multi.json'))
-assert len(d['context_from_resolved']) == 2, 'should have 2 resolved refs'
-p = d['composed_prompt']
-assert p.count('<prior-spawn-context') == 2, 'should have 2 context blocks'
-assert 'Phase 1 Report' in p, 'missing first report'
-assert 'Phase 2 Report' in p, 'missing second report'
-print('PASS: FROM-3 multiple --from')
-" || echo "FAIL: FROM-3"
+out = Path(os.environ['FROM_OUTPUT'])
+seed = json.loads((out / 'seed.json').read_text())
+doc = json.loads((out / 'spawns.json').read_text())
+assert doc['status'] == 'dry-run'
+assert doc['context_from_resolved'] == [seed['report'], seed['no_report']]
+prompt = doc['composed_prompt']
+assert prompt.count('<prior-spawn-context') == 2
+for sid in (seed['report'], seed['no_report']):
+    assert f'<prior-spawn-context spawn="{sid}">' in prompt
+    assert f'meridian spawn show {sid}' in prompt
+assert '## Report' in prompt and 'Phase 1 Report' in prompt
+assert 'No report available.' in prompt and '## Explore Further' in prompt
+assert '## Files Modified' not in prompt
+print('PASS: spawn references preserve both blocks and report availability')
+PY
 ```
 
-### FROM-4. --from with no report [HIGH]
-
-Spawn has no report file. Should render "No report available." gracefully.
+## Session reference: primary transcript, not a child report
 
 ```bash
-NO_REPORT_ID=$(uv run python -c "
+uv run meridian --json spawn -a coder --harness codex -m "$CONTEXT_MODEL" \
+  --from "$CHAT_ID" --dry-run -p "Review the prior session." > "$FROM_OUTPUT/session.json"
+uv run python - <<'PY'
+import json
+import os
 from pathlib import Path
-from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import resolve_runtime_paths
-repo = Path('$SMOKE_REPO')
-sp = resolve_runtime_paths(repo)
-sid = spawn_store.start_spawn(sp.root_dir, chat_id='c3', model='gpt', agent='coder', harness='codex', kind='child', prompt='no-report', desc='No report spawn')
-spawn_store.finalize_spawn(sp.root_dir, str(sid), status='succeeded', exit_code=0, origin='runner')
-print(sid)
-")
-
-uv run meridian --json spawn -a coder --from "$NO_REPORT_ID" --dry-run -p "test" > /tmp/meridian-from-noreport.json 2>&1
-
-python3 -c "
-import json
-d = json.load(open('/tmp/meridian-from-noreport.json'))
-p = d['composed_prompt']
-assert 'No report available.' in p, 'missing no-report fallback'
-assert '## Files Modified' not in p, 'should not have files section when no files'
-print('PASS: FROM-4 no report')
-" || echo "FAIL: FROM-4"
-```
-
-### FROM-5. --from + --continue conflict [HIGH]
-
-Should fail with a clear error.
-
-```bash
-uv run meridian spawn --from "$SEED_ID" --continue "$SEED_ID" -p "test" 2>/tmp/meridian-from-conflict.err; RC=$?
-test $RC -ne 0 && grep -q "Cannot combine --from with --continue." /tmp/meridian-from-conflict.err && \
-  echo "PASS: FROM-5 conflict rejected" || echo "FAIL: FROM-5"
-```
-
-### FROM-6. --from with invalid spawn ID [HIGH]
-
-Should fail with a clear error message.
-
-```bash
-uv run meridian spawn --from p99999 --dry-run -p "test" 2>/tmp/meridian-from-invalid.err; RC=$?
-test $RC -ne 0 && grep -qi "not found" /tmp/meridian-from-invalid.err && \
-  echo "PASS: FROM-6 invalid ID error" || echo "FAIL: FROM-6"
+out = Path(os.environ['FROM_OUTPUT'])
+seed = json.loads((out / 'seed.json').read_text())
+doc = json.loads((out / 'session.json').read_text())
+assert doc['status'] == 'dry-run' and doc['context_from_resolved'] == [seed['chat']]
+prompt = doc['composed_prompt']
+assert f'<prior-session-context chat="{seed["chat"]}" primary_spawn="{seed["primary"]}">' in prompt
+assert 'Phase 1 Report' not in prompt
+assert f'meridian session log {seed["chat"]}' in prompt
+assert f'meridian spawn show {seed["primary"]}' in prompt
+print('PASS: session reference points to its primary transcript, not either child')
+PY
 ```
 
 ## Cleanup
 
 ```bash
-rm -rf "$SMOKE_REPO" /tmp/meridian-from-*.json /tmp/meridian-from-*.err
-unset MERIDIAN_PROJECT_DIR RUNTIME_ROOT SMOKE_REPO
-echo "PASS: cleanup complete"
+smoke_cleanup
+trap - EXIT
 ```
