@@ -4,6 +4,20 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Upgrade notes
+- Idle compaction is **on by default** for interactive primaries (5 min before the
+  prompt cache expires, guarded). Turn it off per tmux session with
+  `MERIDIAN_IDLE_COMPACT=0`, or in config with `[idle] compact = false`
+  (`[harness.<harness>.idle] compact = false` per harness).
+- Nothing is sent until `[notify]` has an `ntfy_topic` (push) or `email_to`,
+  `smtp_user` and `smtp_password_file` (email); unconfigured backends degrade to
+  `none` with a warning.
+- `_MERIDIAN_PI_SESSION_ROLE` is gone. Read `MERIDIAN_SESSION_ROLE` (`primary` or
+  `spawn`) instead; it is set for every harness.
+- New state directory `~/.meridian/idle/` (one JSON file per primary session,
+  garbage-collected after 7 days). Older builds ignore it. See
+  [docs/upgrading.md](docs/upgrading.md#upgrading-to-010-idle-notifications-and-compaction).
+
 ### Added
 - Add `meridian notify "<message>"` with ntfy push, SMTP/Gmail email, and command backends.
 - Add idle push, cache-expiry warning, and guarded compaction for interactive Claude,
