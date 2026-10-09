@@ -59,8 +59,9 @@ Expect:
 - Spawned/RPC `cli_command` starts with `pi --mode rpc`; the native primary command
   starts with `pi` and does **not** contain `--mode rpc`.
 - Both commands include `managed-bash`, `meridian-spawn-watch`, and
-  `session-boundary` with default config. Managed-bash and spawn-watch respect
-  their `[harness.pi]` toggles; session-boundary stays loaded.
+  `session-boundary` with default config. The primary additionally includes
+  `meridian-idle`; the spawned/RPC command must not. Managed-bash and spawn-watch
+  respect their `[harness.pi]` toggles; session-boundary stays loaded.
 - Spawned RPC includes `--no-extensions` unless `load_all_pi_extensions = true`;
   primary does not suppress native discovery. Both include `--session-dir` and
   an assigned `--session-id` for a fresh create.

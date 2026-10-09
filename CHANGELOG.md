@@ -26,6 +26,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Replace the no-op Claude idle plugin with the real `meridian-idle` mod: senses main-loop
   idle and user return, drives `meridian idle` arm/return/fire/done, compacts only when core
   says act, and adds `/meridian-idle`. Ignore Claude-generated plugin type files.
+- Add the primary-only Pi idle extension for native idle/return sensing, durable
+  timer reload, core-gated notifications, and compaction.
 ### Changed
 - Load Meridian's bundled no-op idle plugin only in interactive Claude primaries.
 

@@ -22,6 +22,10 @@ _MERIDIAN_SPAWN_WATCH_EXTENSION_RELATIVE_PATH: Final[tuple[str, str]] = (
     "meridian-spawn-watch",
     "meridian-spawn-watch/index.js",
 )
+_MERIDIAN_IDLE_EXTENSION_RELATIVE_PATH: Final[tuple[str, str]] = (
+    "meridian-idle",
+    "meridian-idle/index.js",
+)
 
 
 class PiExtensionProjectionError(RuntimeError):
@@ -56,6 +60,12 @@ def resolve_pi_spawn_watch_entrypoint() -> tuple[str, ...]:
     return (_resolve_bundle_entrypoint(*_MERIDIAN_SPAWN_WATCH_EXTENSION_RELATIVE_PATH),)
 
 
+def resolve_pi_idle_entrypoint() -> tuple[str, ...]:
+    """Resolve the primary-only Meridian idle Pi extension entrypoint."""
+
+    return (_resolve_bundle_entrypoint(*_MERIDIAN_IDLE_EXTENSION_RELATIVE_PATH),)
+
+
 def resolve_pi_lifecycle_extension_entrypoint() -> tuple[str, ...]:
     """Legacy alias for the spawn-watch policy extension."""
 
@@ -82,6 +92,8 @@ def resolve_pi_extension_entrypoints(
         entrypoints.append(
             _resolve_bundle_entrypoint("session-boundary", "session-boundary/index.js")
         )
+    if profile.interactive:
+        entrypoints.extend(resolve_pi_idle_entrypoint())
     return tuple(entrypoints)
 
 
@@ -171,6 +183,7 @@ __all__ = [
     "resolve_pi_all_extension_entrypoints",
     "resolve_pi_background_tasks_entrypoint",
     "resolve_pi_extension_entrypoints",
+    "resolve_pi_idle_entrypoint",
     "resolve_pi_lifecycle_extension_entrypoint",
     "resolve_pi_managed_bash_entrypoint",
     "resolve_pi_spawn_watch_entrypoint",

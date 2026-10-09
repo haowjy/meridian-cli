@@ -9,10 +9,12 @@ bundle or control Pi itself.
 | `managed-bash` | `bash` / `bash_manage`, owned shell tasks, logs, `/ps*` |
 | `meridian-spawn-watch` | Canonical child-spawn observation, result notifications, `/spawn*` |
 | `session-boundary` | Bounded launch-correlated native entry/exit observations |
+| `meridian-idle` | Primary TUI idle sensing and core-directed compaction |
 
 Both launch roles load managed-bash and spawn-watch when enabled in `[harness.pi]`.
-Session-boundary is always loaded. Primary retains native ambient discovery;
-spawned RPC suppresses ambient extensions unless `load_all_pi_extensions = true`.
+Session-boundary is always loaded. Meridian-idle loads only for interactive primary
+launches. Primary retains native ambient discovery; spawned RPC suppresses ambient
+extensions unless `load_all_pi_extensions = true`.
 See the [integration contract](../lib/harness/.context/pi-integration.md).
 
 ## Build and verify
@@ -27,7 +29,7 @@ pnpm run verify:extensions:loop     # repeat locally
 ```
 
 `pnpm run build:extensions` builds without running tests. It writes stable bundles
-under `dist/extensions/<name>/index.js` for all three extensions. Change source,
+under `dist/extensions/<name>/index.js` for all four extensions. Change source,
 never generated output. Projection prefers the package's built bundles, then the
 stable install root `~/.meridian/pi/extensions/`; missing artifacts fail launch.
 
