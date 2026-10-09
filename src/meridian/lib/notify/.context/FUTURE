@@ -1,0 +1,7 @@
+- `channels/base.py`, `service.py`, `channels/command.py`: `Channel.send(notice,
+  cfg)` does not tell the channel which role (push or email) it serves, so
+  `CommandChannel` re-reads `cfg.push_backend` / `cfg.email_backend` to pick its
+  command, repeating the fan-out decision `service.send` already made; because
+  `send` dedupes backends, a single call may run both commands. Pass the role
+  (`send(notice, cfg, role)`) or have `service.send` resolve `(role, channel)`
+  pairs (thermo F9).

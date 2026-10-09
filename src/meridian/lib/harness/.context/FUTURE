@@ -1,3 +1,13 @@
 - `opencode_idle.py`: During a live OpenCode smoke, switch models and verify
   that `session.model` follows the active model before summarize; if it lags,
   source the compaction model from the newest user event's `info.model` (G2 O3).
+- `projections/*`: `ResolvedLaunchSpec.claude_plugin_dirs` is Claude-only but
+  forced a `_DELEGATED_FIELDS` edit in six non-Claude projections, following the
+  `disallowed_tools` / `pi_extension_entrypoints` / `opencode_version`
+  precedent. That is the 10-file-edit smell from `AGENTS.md`; the next
+  harness-specific spec field should go on a per-harness spec extension rather
+  than another row in every projection (thermo F7).
+- `codex_idle.py`, `opencode_idle.py` and `../notify/label.py`: three separate
+  `tmux` subprocess helpers, only OpenCode's with a timeout. One
+  `capture_pane(pane, timeout)` in `lib/platform/` (or a harness-level
+  `tmux.py`) serves both sensors and the label (thermo F10).
