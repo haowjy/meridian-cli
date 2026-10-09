@@ -12,10 +12,10 @@ per-harness mechanics are in [harness-integration.md](harness-integration.md).
 
 Interactive Pi primaries now run with `PI_CACHE_RETENTION=long` unless that
 variable is already set. For recognized Anthropic and OpenAI providers this
-makes Pi's warning and compaction stages fit; OpenAI is scheduled against a
-30-minute cache (its typical `24h` lifetime), while one-hour Anthropic cache
-writes cost more than five-minute writes. Export `PI_CACHE_RETENTION=short` to
-keep Pi's default retention and spend.
+makes Pi's warning and compaction stages fit. `openai` is scheduled against 30
+minutes, because OpenAI's `24h` retention typically lasts about that long.
+One-hour Anthropic cache writes cost more than five-minute writes. Export
+`PI_CACHE_RETENTION=short` to keep Pi's default retention and spend.
 
 ### What changed, and why
 
@@ -55,8 +55,7 @@ keep Pi's default retention and spend.
   a Gmail app password) for email. `MERIDIAN_NOTIFY_SMTP_PASSWORD` works as a
   fallback but is inherited by every spawn and can land in transcripts.
 - Per-harness defaults: Claude senses its cache lifetime from the transcript
-  (1 h or 5 min); Meridian gives interactive Pi primaries long cache retention,
-  with OpenAI scheduled against a 30-minute cache (its typical `24h` lifetime);
+  (1 h or 5 min); Meridian gives interactive Pi primaries long cache retention;
   Codex assumes 30 minutes (`[harness.codex.idle] ttl_seconds = 1800`); OpenCode
   is push-only (`ttl_seconds = 300`). Pi provider IDs other than `anthropic` and
   `openai` remain push-only.
