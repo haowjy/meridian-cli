@@ -154,6 +154,7 @@ testpaths = [
   "tests/integration/safety",
   "tests/integration/harness",
   "tests/integration/hooks",
+  "tests/integration/idle",
   "tests/integration/prompt",
   "tests/integration/telemetry",
   "tests/integration/state",

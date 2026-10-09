@@ -27,7 +27,7 @@ case "$MODE" in
       cd "$ROOT_DIR/src/meridian/pi_runtime"
       # Git hooks have no TTY; allow dependency-tree recreation without prompting.
       run_step pnpm install --frozen-lockfile --config.confirmModulesPurge=false
-      run_step pnpm run build:extensions
+      run_step pnpm run verify:extensions
     )
     # Explicit tests/ bypasses the fast testpaths allowlist and retains the
     # complete automated regression suite for release/manual/nightly runs.

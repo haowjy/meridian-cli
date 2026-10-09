@@ -75,6 +75,30 @@ jobs:
       - name: Run fast gate
         run: scripts/preflight.sh fast
 
+  runtime-extensions:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install Pi extension dependencies
+        working-directory: src/meridian/pi_runtime
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify Pi extensions
+        working-directory: src/meridian/pi_runtime
+        run: pnpm run verify:extensions
+
   full-gate:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest

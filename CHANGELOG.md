@@ -44,6 +44,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   lifetime); spawns and explicit values are unchanged.
 - Set `MERIDIAN_SESSION_ROLE=primary|spawn` for every harness and remove the Pi-only
   `_MERIDIAN_PI_SESSION_ROLE` variable.
+- Run the Pi extension build and Vitest suites in a parallel `runtime-extensions`
+  CI job and in extended/full local preflight.
 - Simplify duplicated CLI and platform test coverage while retaining recovery and integrity contracts; remove obsolete Windows compatibility-test selector.
 - Make the routine preflight a risk-based, single-budget fast gate; retain the complete automated suite as an explicit extended check and move three heavy state modules under `tests/extended/`.
 - Add isolated CLI smoke and explicit regression scripts; retire obsolete synthetic smoke guides.
