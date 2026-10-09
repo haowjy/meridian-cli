@@ -8,6 +8,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Add catalog-backed `[notify]` configuration and `MERIDIAN_NOTIFY_*` environment inputs.
 - Add harness-agnostic notification labels, channel registry, and ntfy/none delivery.
 - Add STARTTLS SMTP and Gmail notification channels with protected password-file credentials.
+- Add a command notification channel with structured stdin, text argv, and bounded execution.
 - Add `meridian notify` with session labels, backend fan-out, and JSON reporting.
 - Expose `MERIDIAN_SESSION_ROLE=primary|spawn` to every launched harness.
 - Load metadata-backed top-level and per-harness nested config tables generically,

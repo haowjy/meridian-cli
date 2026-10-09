@@ -13,6 +13,7 @@ def test_registry_resolves_builtin_channels() -> None:
     assert resolve_channel("none").name == "none"
     assert resolve_channel("smtp").name == "smtp"
     assert resolve_channel("gmail").name == "gmail"
+    assert resolve_channel("command").name == "command"
 
 
 def test_registry_rejects_unknown_channel() -> None:
