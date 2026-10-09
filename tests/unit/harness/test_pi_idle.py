@@ -17,7 +17,7 @@ from meridian.lib.harness.bundle import get_harness_bundle
         ("Anthropic", {"PI_CACHE_RETENTION": " LONG "}, 3600),
         ("openai", {}, None),
         ("openai", {"PI_CACHE_RETENTION": "short"}, None),
-        ("OpenAI", {"PI_CACHE_RETENTION": "long"}, 86400),
+        ("OpenAI", {"PI_CACHE_RETENTION": "long"}, 1800),
         ("google", {"PI_CACHE_RETENTION": "long"}, None),
         (None, {"PI_CACHE_RETENTION": "long"}, None),
     ],
@@ -43,6 +43,6 @@ def test_pi_bundle_registers_idle_hooks() -> None:
             provider="openai",
             env={"PI_CACHE_RETENTION": "long"},
         )
-        == 86400
+        == 1800
     )
     assert bundle.autocompact_off is None

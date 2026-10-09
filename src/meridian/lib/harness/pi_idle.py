@@ -5,6 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
+# OpenAI's "24h" retention typically lasts 30 minutes, so schedule conservatively.
+_OPENAI_LONG_RETENTION_TTL_SECONDS = 1800
+
 
 def detect_ttl(
     provider: str | None,
@@ -21,7 +24,7 @@ def detect_ttl(
     if normalized_provider == "anthropic":
         return 3600 if long_retention else 300
     if normalized_provider == "openai" and long_retention:
-        return 86400
+        return _OPENAI_LONG_RETENTION_TTL_SECONDS
     return None
 
 __all__ = ["detect_ttl"]

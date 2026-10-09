@@ -143,7 +143,9 @@ absent; spawned RPC sessions are untouched and an inherited or configured value
 always wins. Set `PI_CACHE_RETENTION=short` to retain Pi's short-cache default.
 This launch default is independent of `[idle]`: the idle extension reads the
 effective variable and Pi's reported provider to schedule cache warning and
-compaction for `anthropic` and `openai`; unknown provider IDs remain push-only.
+compaction for `anthropic` and `openai`; `openai` is scheduled against a
+30-minute cache (OpenAI's typical `24h` lifetime), while unknown provider IDs
+remain push-only.
 
 ### Build and package
 

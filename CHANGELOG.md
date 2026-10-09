@@ -7,6 +7,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Upgrade notes
 - Interactive Pi primaries now default to `PI_CACHE_RETENTION=long`. For recognized
   Anthropic and OpenAI providers this enables the full idle warning/compaction flow,
+  with OpenAI scheduled against a 30-minute cache (its typical `24h` lifetime),
   but one-hour Anthropic cache writes cost more than five-minute writes. Set
   `PI_CACHE_RETENTION=short` to opt out.
 - Idle compaction is **on by default** for interactive primaries (5 min before the
@@ -26,8 +27,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Add `meridian notify "<message>"` with ntfy push, SMTP/Gmail email, and command backends.
 - Add idle push, cache-expiry warning, and guarded compaction for interactive Claude,
   Pi, Codex, and OpenCode primaries. Claude and Pi sense cache lifetime; Pi primaries
-  default to long retention, OpenCode's 5-minute default is push-only, and Codex
-  defaults to 30 minutes.
+  default to long retention with OpenAI scheduled against a 30-minute cache (its
+  typical `24h` lifetime), OpenCode's 5-minute default is push-only, and Codex defaults
+  to 30 minutes.
 - Add `[notify]`, `[idle]`, and `[harness.<harness>.idle]` config with
   `MERIDIAN_NOTIFY_*`, `MERIDIAN_IDLE_*`, and `MERIDIAN_HARNESS_IDLE_*_<H>` overrides.
 - Add the bundled Claude `meridian-idle` mod, automatic for Meridian primaries and
@@ -38,7 +40,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Default `PI_CACHE_RETENTION=long` for interactive Pi primaries when the variable
-  is absent; spawns and explicit values are unchanged.
+  is absent, scheduling OpenAI against a 30-minute cache (its typical `24h`
+  lifetime); spawns and explicit values are unchanged.
 - Set `MERIDIAN_SESSION_ROLE=primary|spawn` for every harness and remove the Pi-only
   `_MERIDIAN_PI_SESSION_ROLE` variable.
 
