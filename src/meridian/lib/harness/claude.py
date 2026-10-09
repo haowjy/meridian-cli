@@ -152,7 +152,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "mcp_tools",
             "projected_roots",
             "user_turn_content",
-            "claude_allow_builtin_agents",
+            "allow_builtin_agents",
         }
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
@@ -279,7 +279,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         # Extract user_turn_content from run params if available
         user_turn_content = getattr(run, "user_turn_content", None)
         disallowed_tools: tuple[str, ...] = ()
-        if not run.claude_allow_builtin_agents:
+        if not run.allow_builtin_agents:
             disallowed_tools = (
                 "Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)",
             )

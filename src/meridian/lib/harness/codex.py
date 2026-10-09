@@ -206,6 +206,18 @@ def _owns_session(project_root: Path, session_ref: str) -> bool:
     return False
 
 
+# Codex's own multi-agent tools are invisible to Meridian, and v2 tells a lone
+# spawn it is `/root` of a team, so it can message itself and wait forever.
+# Codex 0.162: disabling the v2 feature falls back to v1, whose tools survive
+# `--disable multi_agent`; only a zero spawn depth removes them.
+_DISABLE_BUILTIN_AGENT_FLAGS: tuple[str, ...] = (
+    "--disable",
+    "multi_agent_v2",
+    "-c",
+    "agents.max_depth=0",
+)
+
+
 class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """SubprocessHarness implementation for `codex`."""
 
@@ -231,6 +243,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "adhoc_agent_payload",
             "appended_system_prompt",
             "user_turn_content",
+            "allow_builtin_agents",
         }
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
@@ -240,7 +253,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "reference_items",
             "task_cwd",
             "pi_harness_profile",
-            "claude_allow_builtin_agents",
         }
     )
 
@@ -378,7 +390,11 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             continue_session_id=continue_session_id,
             continue_fork=run.continue_fork and continue_session_id is not None,
             permission_resolver=perms,
-            extra_args=run.extra_args,
+            # Ahead of passthrough args so an explicit override still wins.
+            extra_args=(
+                *(() if run.allow_builtin_agents else _DISABLE_BUILTIN_AGENT_FLAGS),
+                *run.extra_args,
+            ),
             interactive=run.interactive,
             mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,

@@ -73,9 +73,11 @@ Claude profile includes:
 - `[harness.claude] model` — default model (string, env: `MERIDIAN_HARNESS_MODEL_CLAUDE`)
 - `[harness.claude] wait_yield_seconds` — polling interval (float, env:
   `MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_CLAUDE`)
-- `[harness.claude] allow_builtin_agents` — parsed Claude harness field from
-  config release plumbing; Claude native Agent routing is still enforced by the
-  harness projection.
+- `[harness.<claude|codex>] allow_builtin_agents` (default `false`) — whether the
+  harness's own subagents are available. Meridian is the orchestrator, so
+  harness-native subagents are off by default: Claude denies built-in `Agent`
+  types; Codex launches with `--disable multi_agent_v2 -c agents.max_depth=0`
+  (on Codex 0.162 `features.multi_agent=false` leaves the v1 tools available).
 - Claude native Agent routing is not a `meridian.toml` harness policy. Built-in
   Claude agents stay denied; generic `Agent` follows Mars `[settings.meridian.agent_copy]`
   with `.claude` target materialization.
