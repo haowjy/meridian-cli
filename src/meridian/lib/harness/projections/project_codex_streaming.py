@@ -19,6 +19,8 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 logger = logging.getLogger(__name__)
 
+_IDLE_NOTIFY_COMMAND = ["meridian", "idle", "event", "--harness", "codex"]
+
 _APP_SERVER_ARG_FIELDS: frozenset[str] = frozenset(
     {
         "permission_resolver",
@@ -114,11 +116,6 @@ def _consume_streaming_lifecycle_fields(spec: ResolvedLaunchSpec) -> None:
     # Prompt is sent in codex_ws after thread bootstrap, but we still account
     # for the field in this projection module to keep drift checks complete.
     _ = spec.prompt
-    if spec.interactive:
-        logger.debug(
-            "Codex streaming ignores interactive launch flag; "
-            "websocket transport remains interactive"
-        )
 
 
 # Flags accepted by `codex app-server` (from `codex app-server --help`). Unlike
@@ -165,6 +162,9 @@ def project_codex_spec_to_appserver_command(
         "--listen",
         f"ws://{host}:{port}",
     ]
+
+    if spec.interactive:
+        command.extend(("-c", f"notify={json.dumps(_IDLE_NOTIFY_COMMAND)}"))
 
     sandbox_mode = map_codex_sandbox_mode(spec.permission_resolver.config.sandbox)
     if sandbox_mode is not None:

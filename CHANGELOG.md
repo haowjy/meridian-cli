@@ -28,6 +28,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   says act, and adds `/meridian-idle`. Ignore Claude-generated plugin type files.
 - Add the primary-only Pi idle extension for native idle/return sensing, durable
   timer reload, core-gated notifications, and compaction.
+- Add Codex idle-event injection for interactive app-server launches only.
 ### Changed
 - Load Meridian's bundled no-op idle plugin only in interactive Claude primaries.
 
