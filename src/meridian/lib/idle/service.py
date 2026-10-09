@@ -22,6 +22,8 @@ from meridian.lib.idle.children import (
 )
 from meridian.lib.idle.guards import DecisionKind, GuardFacts, decide
 from meridian.lib.idle.timeline import Schedule, schedule
+from meridian.lib.notify import Notice, SendReport, send
+from meridian.lib.notify.label import build_session_label
 from meridian.lib.state.idle_store import (
     CompactResultValue,
     IdleSchedule,
@@ -34,45 +36,10 @@ from meridian.lib.state.idle_store import (
 _COMPACT_GRACE_MS = 30_000
 
 
-class NotifyReport(Protocol):
-    """Minimum report contract needed from notification delivery."""
-
-    @property
-    def ok(self) -> bool: ...
-
-
-@dataclass(frozen=True)
-class NoticeSpec:
-    """Dependency-neutral notice payload for injected senders."""
-
-    title: str
-    body: str
-    priority: int
-    email: bool
-    kind: str
-
-
 class NotifySender(Protocol):
-    """Notification seam; production imports lib/notify only when called."""
+    """Notification delivery seam for tests."""
 
-    def send(self, notice: NoticeSpec, cfg: NotifyConfig) -> NotifyReport: ...
-
-
-class _LazyNotifySender:
-    def send(self, notice: NoticeSpec, cfg: NotifyConfig) -> NotifyReport:
-        from meridian.lib.notify import Notice, send
-        from meridian.lib.notify.label import build_session_label
-
-        return send(
-            Notice(
-                title=build_session_label().titled(notice.title or None),
-                body=notice.body,
-                priority=notice.priority,
-                email=notice.email,
-                kind=notice.kind,
-            ),
-            cfg,
-        )
+    def __call__(self, notice: Notice, cfg: NotifyConfig) -> SendReport: ...
 
 
 @dataclass(frozen=True)
@@ -261,7 +228,7 @@ class IdleService:
         self.config = config if config is not None else load_config(root, resolve_models=False)
         self._now_ms = now_ms
         self.store = store if store is not None else IdleStore(now_ms=now_ms)
-        self._notify_sender = notify_sender if notify_sender is not None else _LazyNotifySender()
+        self._notify_sender = notify_sender if notify_sender is not None else send
         self._spawn_reader = spawn_reader or spawn_store_reader(self.env)
 
     def config_for(self, harness: str) -> ConfigResult:
@@ -281,8 +248,6 @@ class IdleService:
         implies_return: bool = False,
         turn_id: str | None = None,
         input_count: int | None = None,
-        spawn_id: str | None = None,
-        main_thread_id: str | None = None,
     ) -> ArmResult:
         config_result = self.config_for(harness)
         if not config_result.enabled:
@@ -294,8 +259,6 @@ class IdleService:
         if input_count is not None and input_count < 0:
             raise ValueError("input_count must be zero or greater")
         now_ms = self._now_ms()
-        resolved_spawn_id = spawn_id or self.env.get("MERIDIAN_SPAWN_ID") or None
-
         def transition(current: IdleState | None) -> tuple[IdleState, ArmResult]:
             if (
                 implies_return
@@ -376,12 +339,6 @@ class IdleService:
             next_state = IdleState(
                 harness=harness,
                 session=session,
-                spawn_id=resolved_spawn_id,
-                main_thread_id=(
-                    main_thread_id
-                    if main_thread_id is not None
-                    else (current.main_thread_id if current is not None else None)
-                ),
                 stretch=stretch,
                 stretch_open=True,
                 last_turn_id=(
@@ -523,25 +480,26 @@ class IdleService:
         stretch: int,
         policy: IdlePolicyConfig,
     ) -> None:
-        if stage == "push":
-            notice = NoticeSpec(
-                title="",
-                body="waiting on you",
-                priority=3,
-                email=False,
-                kind="idle",
-            )
-        else:
-            notice = NoticeSpec(
-                title="",
-                body=f"cache cold in {policy.warn_minutes}m",
-                priority=4,
-                email=policy.warn_email,
-                kind="idle",
-            )
         ok = False
         try:
-            ok = self._notify_sender.send(notice, self._notify_config()).ok
+            title = build_session_label().titled()
+            if stage == "push":
+                notice = Notice(
+                    title=title,
+                    body="waiting on you",
+                    priority=3,
+                    email=False,
+                    kind="idle",
+                )
+            else:
+                notice = Notice(
+                    title=title,
+                    body=f"cache cold in {policy.warn_minutes}m",
+                    priority=4,
+                    email=policy.warn_email,
+                    kind="idle",
+                )
+            ok = self._notify_sender(notice, self._notify_config()).ok
         except Exception:
             ok = False
         if not ok:
@@ -606,15 +564,17 @@ class IdleService:
             }[result]
             if detail:
                 body = f"{body} ({detail})"
-            notice = NoticeSpec(
-                title="",
-                body=body,
-                priority=3 if result == "ok" else 4,
-                email=False,
-                kind="idle",
-            )
             with suppress(Exception):
-                self._notify_sender.send(notice, self._notify_config())
+                self._notify_sender(
+                    Notice(
+                        title=build_session_label().titled(),
+                        body=body,
+                        priority=3 if result == "ok" else 4,
+                        email=False,
+                        kind="idle",
+                    ),
+                    self._notify_config(),
+                )
         return done_result
 
     def event(
@@ -623,8 +583,8 @@ class IdleService:
         *,
         harness: str,
         ttl_seconds: int | None = None,
-    ) -> ArmResult | ReturnResult | None:
-        if event.kind in {"turn_end", "idle"}:
+    ) -> ArmResult | ReturnResult:
+        if event.kind == "turn_end":
             resolved_ttl = event.ttl_seconds if ttl_seconds is None else ttl_seconds
             return self.arm(
                 harness=harness,
@@ -634,13 +594,11 @@ class IdleService:
                 turn_id=event.turn_id,
                 input_count=event.input_count,
             )
-        if event.kind == "user_prompt":
-            return self.return_(
-                harness=harness,
-                session=event.harness_session_id,
-                user_prompt=True,
-            )
-        return None
+        return self.return_(
+            harness=harness,
+            session=event.harness_session_id,
+            user_prompt=True,
+        )
 
     def status(
         self,
@@ -665,8 +623,6 @@ __all__ = [
     "FireResult",
     "IdlePolicyConfig",
     "IdleService",
-    "NoticeSpec",
-    "NotifyReport",
     "NotifySender",
     "ReturnResult",
     "effective",

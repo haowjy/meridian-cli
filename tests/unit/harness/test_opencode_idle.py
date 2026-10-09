@@ -12,7 +12,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness import opencode_idle
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
-from meridian.lib.harness.idle_types import IdleEnvFacts, IdleEvent, IdleSensorContext
+from meridian.lib.harness.idle_types import IdleEvent, IdleSensorContext
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "opencode_idle"
 SESSION_ID = "ses_ee21d9d97ffeN9m0VxoYy7qFQf"
@@ -86,8 +86,8 @@ async def test_recorded_normal_prompt_emits_one_return_and_one_turn_end(
     for event in _recorded_events("events-normal.sse"):
         sensor.on_raw_event(event)
 
-    observed = await _take(iterator, 3)
-    assert [event.kind for event in observed] == ["user_prompt", "busy", "turn_end"]
+    observed = await _take(iterator, 2)
+    assert [event.kind for event in observed] == ["user_prompt", "turn_end"]
     assert sum(event.kind == "user_prompt" for event in observed) == 1
     assert sum(event.kind == "turn_end" for event in observed) == 1
     with pytest.raises(TimeoutError):
@@ -104,8 +104,8 @@ async def test_recorded_summarize_never_emits_user_return(tmp_path: Path) -> Non
     for event in _recorded_events("events-summarize.sse"):
         sensor.on_raw_event(event)
 
-    observed = await _take(iterator, 2)
-    assert [event.kind for event in observed] == ["busy", "turn_end"]
+    observed = await _take(iterator, 1)
+    assert [event.kind for event in observed] == ["turn_end"]
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(anext(iterator), timeout=0.01)
 
@@ -177,8 +177,8 @@ async def test_compact_suppresses_return_when_busy_precedes_compaction_part(
     sensor.on_raw_event(final_idle)
     sensor.on_raw_event(session_idle)
 
-    observed = await _take(iterator, 2)
-    assert [event.kind for event in observed] == ["busy", "turn_end"]
+    observed = await _take(iterator, 1)
+    assert [event.kind for event in observed] == ["turn_end"]
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(anext(iterator), timeout=0.01)
 
@@ -340,17 +340,13 @@ async def test_compact_maps_backend_timeout(
     assert result.reason == "timeout"
 
 
-def test_opencode_bundle_registers_idle_sensor_and_environment_facts() -> None:
+def test_opencode_bundle_registers_idle_sensor_and_autocompact_guard() -> None:
     bundle = get_harness_bundle(HarnessId.OPENCODE)
-    facts = bundle.idle_env_facts
+    autocompact_off = bundle.autocompact_off
 
     assert bundle.primary_idle_sensor is opencode_idle.primary_idle_sensor
     assert bundle.detect_ttl is None
-    assert facts is opencode_idle.idle_env_facts
-    assert facts is not None
-    assert facts({"OPENCODE_DISABLE_AUTOCOMPACT": "set"}) == IdleEnvFacts(
-        harness_autocompact_off=True, cache_retention=None
-    )
-    assert facts({"OPENCODE_DISABLE_AUTOCOMPACT": ""}) == IdleEnvFacts(
-        harness_autocompact_off=False, cache_retention=None
-    )
+    assert autocompact_off is opencode_idle.autocompact_off
+    assert autocompact_off is not None
+    assert autocompact_off({"OPENCODE_DISABLE_AUTOCOMPACT": "set"}) is True
+    assert autocompact_off({"OPENCODE_DISABLE_AUTOCOMPACT": ""}) is False

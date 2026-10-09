@@ -64,12 +64,7 @@ class RecordingIdleSensor:
 
     async def events(self) -> AsyncIterator[IdleEvent]:
         if False:
-            yield IdleEvent(
-                kind="idle",
-                harness_session_id="unreachable",
-                turn_id=None,
-                timestamp=0.0,
-            )
+            yield
         self.started.set()
         try:
             if self.events_error is not None:

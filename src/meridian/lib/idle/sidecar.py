@@ -330,8 +330,6 @@ async def run(
                 resolved_service.arm,
                 harness=str(ctx.harness_id),
                 session=ctx.harness_session_id,
-                spawn_id=str(ctx.spawn_id) if ctx.spawn_id is not None else None,
-                main_thread_id=ctx.harness_session_id,
             )
             # This first state is an identity pin, not an observed idle turn.
             # Remember its version so polling ignores it until an external

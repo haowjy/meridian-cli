@@ -14,7 +14,6 @@ from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessE
 from meridian.lib.harness.extractors.base import HarnessExtractor
 from meridian.lib.harness.idle_types import (
     DetectIdleTtl,
-    IdleEnvFacts,
     IdleEvent,
     IdleSensor,
     IdleSensorContext,
@@ -90,7 +89,7 @@ class ParseIdleEvent(Protocol):
 
 
 IdleEventApplied = Callable[[str, Mapping[str, str]], None]
-IdleEnvFactsReader = Callable[[Mapping[str, str]], IdleEnvFacts]
+AutocompactOffReader = Callable[[Mapping[str, str]], bool | None]
 
 
 def _no_event_sinks(
@@ -114,7 +113,7 @@ class HarnessBundle(Generic[SpecT]):
     primary_idle_sensor: PrimaryIdleSensor | None = None
     parse_idle_event: ParseIdleEvent | None = None
     idle_event_applied: IdleEventApplied | None = None
-    idle_env_facts: IdleEnvFactsReader | None = None
+    autocompact_off: AutocompactOffReader | None = None
     detect_ttl: DetectIdleTtl | None = None
 
 
@@ -204,7 +203,7 @@ def register_harness_bundle(bundle: HarnessBundle[Any]) -> None:
         primary_idle_sensor=bundle.primary_idle_sensor,
         parse_idle_event=bundle.parse_idle_event,
         idle_event_applied=bundle.idle_event_applied,
-        idle_env_facts=bundle.idle_env_facts,
+        autocompact_off=bundle.autocompact_off,
         detect_ttl=bundle.detect_ttl,
     )
 

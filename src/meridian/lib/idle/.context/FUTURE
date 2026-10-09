@@ -2,9 +2,9 @@
   stretches but the sensor reports no user return, so harness-event drift is
   visible instead of silently disabling later idle cycles (G2 X4).
 - `sidecar.py` and `service.py`: Replace the Codex external-event identity-pin
-  `arm` with a dedicated persisted pin operation that records the main thread
-  without opening a scheduled stretch or showing deadlines that cannot fire
-  in `meridian idle status` (G2 K5).
+  `arm` with a dedicated persisted pin operation that only creates the state
+  file Codex's `session_reader` looks for, without opening a scheduled stretch
+  or showing deadlines that cannot fire in `meridian idle status` (G2 K5).
 - `sidecar.py` and `harness/idle_types.py`: `external_events` is a duck-typed
   `getattr` flag that steers two sidecar branches (busy guard, pin-and-poll
   arm). Declare it on `IdleSensor` (or a `returns_observable` capability) so a

@@ -7,7 +7,7 @@ import os
 import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Never, Protocol, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Never, cast
 
 from cyclopts import Parameter
 
@@ -15,23 +15,10 @@ from meridian.cli.app_tree import idle_app
 
 if TYPE_CHECKING:
     from meridian.lib.harness.bundle import HarnessBundle
-    from meridian.lib.harness.idle_types import PinnedIdleSession
+    from meridian.lib.harness.idle_types import DetectIdleTtl, PinnedIdleSession
     from meridian.lib.idle.service import IdleService
 
 DraftFact = Literal["yes", "no", "unknown"]
-
-
-class DetectIdleTtl(Protocol):
-    """F2c bundle hook consumed without importing harness implementations."""
-
-    def __call__(
-        self,
-        *,
-        session_id: str,
-        cwd: Path | None,
-        provider: str | None,
-        env: Mapping[str, str],
-    ) -> int | None: ...
 
 
 def _emit_json(payload: object) -> None:
@@ -163,10 +150,7 @@ def _detected_ttl(
         return None
 
     bundle = _bundle(harness)
-    detector = cast(
-        "DetectIdleTtl | None",
-        getattr(bundle, "detect_ttl", None),
-    )
+    detector: DetectIdleTtl | None = bundle.detect_ttl
     if detector is None:
         return None
     return detector(
@@ -357,9 +341,9 @@ def _fire_payload(
     normalized = _required_harness(harness)
     env_autocompact_off = False
     if stage == "compact":
-        idle_env_facts = _bundle(normalized).idle_env_facts
-        if idle_env_facts is not None:
-            env_autocompact_off = bool(idle_env_facts(os.environ).harness_autocompact_off)
+        autocompact_off = _bundle(normalized).autocompact_off
+        if autocompact_off is not None:
+            env_autocompact_off = bool(autocompact_off(os.environ))
 
     facts = IdleFacts(
         draft=_draft_fact(draft),

@@ -16,8 +16,8 @@ a harness adapter: **adapters report facts; core decides**.
   match is the reported reason.
 - Authoritative state lives in `../state/idle_store.py`; sidecar timers are
   disposable and reconstructed from that state.
-- Inject notification delivery. The production sender imports `lib/notify`
-  lazily so this package's dependency direction remains one-way.
+- Inject notification delivery. This package constructs `lib/notify.Notice`
+  values and depends on `lib/notify` in the designed one-way direction.
 - The sidecar is hosted in the primary TUI process. It must contain sensor
   failures, move synchronous service/store work off the launcher event loop,
   and stop before the live connection is torn down. Its liveness follows the

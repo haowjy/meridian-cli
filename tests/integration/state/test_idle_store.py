@@ -10,8 +10,6 @@ def _state(*, updated_at_ms: int = 0) -> IdleState:
     return IdleState(
         harness="example",
         session="native-1",
-        spawn_id="p1",
-        main_thread_id=None,
         stretch=12,
         stretch_open=True,
         last_turn_id="turn-1",

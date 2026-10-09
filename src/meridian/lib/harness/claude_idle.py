@@ -12,7 +12,6 @@ from meridian.lib.harness.claude_sessions import (
     candidate_claude_project_dirs,
     resolve_claude_config_root,
 )
-from meridian.lib.harness.idle_types import IdleEnvFacts
 
 _TAIL_CHUNK_BYTES = 64 * 1024
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
@@ -115,14 +114,11 @@ def detect_ttl(
         return None
 
 
-def idle_env_facts(env: Mapping[str, str]) -> IdleEnvFacts:
-    """Read Claude idle facts that are visible only in the process environment."""
+def autocompact_off(env: Mapping[str, str]) -> bool:
+    """Return whether Claude's own automatic compaction is disabled."""
 
     raw = env.get("DISABLE_AUTO_COMPACT", "")
-    return IdleEnvFacts(
-        harness_autocompact_off=raw.strip().lower() in _TRUTHY,
-        cache_retention=None,
-    )
+    return raw.strip().lower() in _TRUTHY
 
 
-__all__ = ["detect_ttl", "idle_env_facts"]
+__all__ = ["autocompact_off", "detect_ttl"]

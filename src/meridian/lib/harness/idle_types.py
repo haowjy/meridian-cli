@@ -15,14 +15,11 @@ from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessE
 class IdleEvent:
     """One harness observation relevant to an idle stretch."""
 
-    kind: Literal["turn_end", "user_prompt", "busy", "idle"]
+    kind: Literal["turn_end", "user_prompt"]
     harness_session_id: str
     turn_id: str | None
-    timestamp: float
     implies_return: bool = False
     input_count: int | None = None
-    message_id: str | None = None
-    provider: str | None = None
     ttl_seconds: int | None = None
 
 
@@ -31,14 +28,6 @@ class PinnedIdleSession:
     """Minimum persisted state exposed to a harness-native event parser."""
 
     last_input_count: int | None
-
-
-@dataclass(frozen=True)
-class IdleEnvFacts:
-    """Harness environment facts that affect idle policy."""
-
-    harness_autocompact_off: bool | None
-    cache_retention: str | None
 
 
 @dataclass(frozen=True)
@@ -102,7 +91,6 @@ class DetectIdleTtl(Protocol):
 __all__ = [
     "CompactResult",
     "DetectIdleTtl",
-    "IdleEnvFacts",
     "IdleEvent",
     "IdleFacts",
     "IdleSensor",

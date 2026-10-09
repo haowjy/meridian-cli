@@ -5,8 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
-from meridian.lib.harness.idle_types import IdleEnvFacts
-
 
 def detect_ttl(
     provider: str | None,
@@ -26,14 +24,4 @@ def detect_ttl(
         return 86400
     return None
 
-
-def idle_env_facts(env: Mapping[str, str]) -> IdleEnvFacts:
-    """Read Pi's environment-visible cache-retention fact."""
-
-    return IdleEnvFacts(
-        cache_retention=env.get("PI_CACHE_RETENTION"),
-        harness_autocompact_off=None,
-    )
-
-
-__all__ = ["detect_ttl", "idle_env_facts"]
+__all__ = ["detect_ttl"]

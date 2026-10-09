@@ -184,7 +184,6 @@ def parse_idle_event(
         kind="turn_end",
         harness_session_id=thread_id,
         turn_id=turn_id,
-        timestamp=time.time(),
         implies_return=input_count > previous_count,
         input_count=input_count,
     )
@@ -220,7 +219,7 @@ class CodexIdleSensor:
     async def events(self) -> AsyncIterator[IdleEvent]:
         # Codex's observer stream closes when its TUI takes over the endpoint.
         if False:
-            yield IdleEvent("idle", self._ctx.harness_session_id, None, time.time())
+            yield
 
     async def facts(self) -> IdleFacts:
         pane = self._ctx.tmux_pane

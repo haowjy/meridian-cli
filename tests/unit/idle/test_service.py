@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from threading import Lock
 from typing import TypeVar
 
@@ -11,10 +10,10 @@ from meridian.lib.idle.service import (
     ArmResult,
     ConfigResult,
     IdleService,
-    NoticeSpec,
-    NotifyReport,
     effective,
 )
+from meridian.lib.notify import Notice, SendReport
+from meridian.lib.notify.channels.base import SendResult
 from meridian.lib.state.idle_store import IdleState
 
 T = TypeVar("T")
@@ -53,20 +52,16 @@ class MemoryStore:
         return tuple(self.states.values())
 
 
-@dataclass(frozen=True)
-class Report:
-    ok: bool
-
-
 class Sender:
     def __init__(self, *, ok: bool = True) -> None:
         self.ok = ok
-        self.notices: list[NoticeSpec] = []
+        self.notices: list[Notice] = []
 
-    def send(self, notice: NoticeSpec, cfg: object) -> NotifyReport:
+    def __call__(self, notice: Notice, cfg: object) -> SendReport:
         _ = cfg
         self.notices.append(notice)
-        return Report(ok=self.ok)
+        status = "sent" if self.ok else "failed"
+        return SendReport(results=(SendResult(channel="test", status=status),))
 
 
 SAFE_FACTS = IdleFacts(
@@ -224,8 +219,12 @@ def test_warn_sends_push_and_email_notice() -> None:
     result = idle.fire("warn", harness="example", session="s1", stretch=1, anchor=1)
 
     assert result.decision == "act"
-    assert sender.notices == [
-        NoticeSpec("", "cache cold in 15m", 4, True, "idle")
+    observed = [
+        (notice.body, notice.priority, notice.email, notice.kind)
+        for notice in sender.notices
+    ]
+    assert observed == [
+        ("cache cold in 15m", 4, True, "idle")
     ]
 
 
@@ -547,14 +546,14 @@ def test_event_and_status_route_harness_agnostic_events() -> None:
     idle, _, _, _ = service()
 
     armed = idle.event(
-        IdleEvent("turn_end", "s1", "turn-1", 0),
+        IdleEvent("turn_end", "s1", "turn-1"),
         harness="example",
         ttl_seconds=3600,
     )
     assert armed is not None
     assert len(idle.status(harness="example")) == 1
 
-    idle.event(IdleEvent("user_prompt", "s1", None, 1), harness="example")
+    idle.event(IdleEvent("user_prompt", "s1", None), harness="example")
     assert idle.status() == ()
 
 
@@ -566,7 +565,6 @@ def test_event_honors_adapter_metadata() -> None:
             "turn_end",
             "s1",
             "turn-1",
-            0,
             implies_return=True,
             input_count=4,
             ttl_seconds=300,
@@ -578,7 +576,6 @@ def test_event_honors_adapter_metadata() -> None:
             "turn_end",
             "s1",
             "turn-1",
-            1,
             implies_return=True,
             input_count=5,
         ),

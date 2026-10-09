@@ -4,7 +4,6 @@ import asyncio
 import json
 import threading
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -20,8 +19,10 @@ from meridian.lib.harness.idle_types import (
     IdleFacts,
     IdleSensorContext,
 )
-from meridian.lib.idle.service import IdleService, NoticeSpec, NotifyReport
+from meridian.lib.idle.service import IdleService
 from meridian.lib.idle.sidecar import SensorErrorReporter, SidecarClock, run
+from meridian.lib.notify import Notice, SendReport
+from meridian.lib.notify.channels.base import SendResult
 from meridian.lib.state.idle_store import IdleStore
 from tests.support.async_determinism import wait_until
 
@@ -48,19 +49,14 @@ class PendingClock(Clock):
         await self.release.wait()
 
 
-@dataclass(frozen=True)
-class Report:
-    ok: bool = True
-
-
 class Sender:
     def __init__(self) -> None:
-        self.notices: list[NoticeSpec] = []
+        self.notices: list[Notice] = []
 
-    def send(self, notice: NoticeSpec, cfg: object) -> NotifyReport:
+    def __call__(self, notice: Notice, cfg: object) -> SendReport:
         _ = cfg
         self.notices.append(notice)
-        return Report()
+        return SendReport(results=(SendResult(channel="test", status="sent"),))
 
 
 class Sensor:
@@ -90,7 +86,7 @@ class Sensor:
 class RaisingSensor(Sensor):
     async def events(self) -> AsyncIterator[IdleEvent]:
         if False:
-            yield IdleEvent("idle", "unused", None, 0)
+            yield
         raise SensorFailure("broken stream")
 
 
@@ -108,9 +104,9 @@ class BlockingCompactionSensor(Sensor):
         self.compact_cancelled = False
 
     async def events(self) -> AsyncIterator[IdleEvent]:
-        yield IdleEvent("turn_end", "session-1", "turn-1", 0)
+        yield IdleEvent("turn_end", "session-1", "turn-1")
         await self.compact_started.wait()
-        yield IdleEvent("user_prompt", "session-1", None, 1)
+        yield IdleEvent("user_prompt", "session-1", None)
         while self._alive[0]:
             await asyncio.sleep(0.001)
 
@@ -232,7 +228,7 @@ async def test_sidecar_drives_idle_push_warn_compact_and_done(tmp_path: Path) ->
     clock = Clock()
     sender = Sender()
     service, store = policy(tmp_path, clock, sender)
-    sensor = Sensor((IdleEvent("turn_end", "session-1", "turn-1", 0),), alive)
+    sensor = Sensor((IdleEvent("turn_end", "session-1", "turn-1"),), alive)
 
     task = asyncio.create_task(
         run(
@@ -275,8 +271,8 @@ async def test_sidecar_user_return_cancels_pending_schedule(tmp_path: Path) -> N
     sender = Sender()
     service, store = policy(tmp_path, clock, sender)
     events = (
-        IdleEvent("turn_end", "session-1", "turn-1", 0),
-        IdleEvent("user_prompt", "session-1", None, 1),
+        IdleEvent("turn_end", "session-1", "turn-1"),
+        IdleEvent("user_prompt", "session-1", None),
     )
     sensor = Sensor(events, alive)
 
@@ -388,7 +384,7 @@ async def test_sidecar_offloads_every_synchronous_service_call(tmp_path: Path) -
     service, _ = policy(tmp_path, clock, sender)
     recording = RecordingService(service)
     sensor = ExternalSensor(
-        (IdleEvent("turn_end", "session-1", "turn-1", 0),),
+        (IdleEvent("turn_end", "session-1", "turn-1"),),
         alive,
     )
     loop_thread = threading.get_ident()
@@ -437,8 +433,7 @@ async def test_external_event_sensor_pins_session_and_polls_store(tmp_path: Path
     )
     await wait_until(
         lambda: bool(
-            (state := store.read("codex", "session-1")) is not None
-            and state.main_thread_id == "session-1"
+            store.read("codex", "session-1") is not None
         ),
         description="external session pin",
     )
@@ -451,7 +446,6 @@ async def test_external_event_sensor_pins_session_and_polls_store(tmp_path: Path
 
     state = store.read("codex", "session-1")
     assert state is not None
-    assert state.spawn_id == "p1"
     assert sender.notices == []
     assert sensor.compact_calls == 0
     assert recording.thread_ids["arm"][0] != loop_thread
@@ -465,7 +459,7 @@ async def test_external_event_sensor_skips_push_and_warn_while_busy(tmp_path: Pa
     sender = Sender()
     service, store = policy(tmp_path, clock, sender)
     sensor = BusyExternalSensor(
-        (IdleEvent("turn_end", "session-1", "turn-1", 0),),
+        (IdleEvent("turn_end", "session-1", "turn-1"),),
         alive,
     )
 
@@ -504,8 +498,8 @@ async def test_sidecar_continues_after_one_event_handler_failure(tmp_path: Path)
     faulty = FailingOnceService(service)
     sensor = Sensor(
         (
-            IdleEvent("turn_end", "session-1", "turn-1", 0),
-            IdleEvent("turn_end", "session-1", "turn-2", 1),
+            IdleEvent("turn_end", "session-1", "turn-1"),
+            IdleEvent("turn_end", "session-1", "turn-2"),
         ),
         alive,
     )
@@ -542,9 +536,9 @@ async def test_sidecar_drops_events_for_another_session_and_records_once(tmp_pat
     service, store = policy(tmp_path, clock, sender)
     sensor = Sensor(
         (
-            IdleEvent("turn_end", "other-session", "other-turn-1", 0),
-            IdleEvent("turn_end", "other-session", "other-turn-2", 1),
-            IdleEvent("turn_end", "session-1", "turn-1", 2),
+            IdleEvent("turn_end", "other-session", "other-turn-1"),
+            IdleEvent("turn_end", "other-session", "other-turn-2"),
+            IdleEvent("turn_end", "session-1", "turn-1"),
         ),
         alive,
     )
@@ -601,7 +595,7 @@ async def test_sidecar_contains_base_exception_from_sensor_facts(tmp_path: Path)
     sender = Sender()
     service, _ = policy(tmp_path, clock, sender)
     sensor = RaisingFactsSensor(
-        (IdleEvent("turn_end", "session-1", "turn-1", 0),),
+        (IdleEvent("turn_end", "session-1", "turn-1"),),
         alive,
     )
 

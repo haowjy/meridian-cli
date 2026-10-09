@@ -14,7 +14,6 @@ import aiohttp
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.idle_types import (
     CompactResult,
-    IdleEnvFacts,
     IdleEvent,
     IdleFacts,
     IdleSensorContext,
@@ -196,16 +195,15 @@ class OpenCodeIdleSensor:
 
     def _emit(
         self,
-        kind: Literal["turn_end", "user_prompt", "busy", "idle"],
-        **kwargs: object,
+        kind: Literal["turn_end", "user_prompt"],
+        *,
+        turn_id: str | None = None,
     ) -> None:
         self._events.put_nowait(
             IdleEvent(
                 kind=kind,
                 harness_session_id=self._ctx.harness_session_id,
-                turn_id=cast("str | None", kwargs.get("turn_id")),
-                timestamp=self._now(),
-                message_id=cast("str | None", kwargs.get("message_id")),
+                turn_id=turn_id,
             )
         )
 
@@ -214,7 +212,7 @@ class OpenCodeIdleSensor:
             self._pending_user_messages.discard(message_id)
             self._seen_user_messages.add(message_id)
             if message_id not in self._compaction_messages:
-                self._emit("user_prompt", message_id=message_id)
+                self._emit("user_prompt")
             self._compaction_messages.discard(message_id)
         self._compaction_messages.clear()
 
@@ -251,7 +249,6 @@ class OpenCodeIdleSensor:
             self._saw_busy = True
             if not self._busy:
                 self._busy = True
-                self._emit("busy")
             return
         if status == "idle":
             self._busy = False
@@ -284,7 +281,7 @@ class OpenCodeIdleSensor:
             busy=self._busy,
             agents_running=0,
             context_tokens=None,
-            harness_autocompact_off=bool(idle_env_facts(self._ctx.env).harness_autocompact_off),
+            harness_autocompact_off=autocompact_off(self._ctx.env),
         )
 
     async def compact(self) -> CompactResult:
@@ -340,13 +337,10 @@ def primary_idle_sensor(ctx: IdleSensorContext) -> OpenCodeIdleSensor:
     return OpenCodeIdleSensor(ctx)
 
 
-def idle_env_facts(env: Mapping[str, str]) -> IdleEnvFacts:
-    """Read OpenCode facts that are visible only in the process environment."""
+def autocompact_off(env: Mapping[str, str]) -> bool:
+    """Return whether OpenCode's own automatic compaction is disabled."""
 
-    return IdleEnvFacts(
-        harness_autocompact_off=bool(env.get("OPENCODE_DISABLE_AUTOCOMPACT")),
-        cache_retention=None,
-    )
+    return bool(env.get("OPENCODE_DISABLE_AUTOCOMPACT"))
 
 
-__all__ = ["OpenCodeIdleSensor", "idle_env_facts", "primary_idle_sensor"]
+__all__ = ["OpenCodeIdleSensor", "autocompact_off", "primary_idle_sensor"]

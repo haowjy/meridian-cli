@@ -10,7 +10,6 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness import claude_idle
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.claude_sessions import project_slug
-from meridian.lib.harness.idle_types import IdleEnvFacts
 
 
 def _assistant_row(*, one_hour: int = 0, five_minutes: int = 0) -> bytes:
@@ -118,10 +117,8 @@ def test_detect_ttl_reads_only_the_tail_of_a_transcript_larger_than_four_mib(
     ("raw", "expected"),
     [("1", True), ("TRUE", True), ("yes", True), ("on", True), ("0", False), ("", False)],
 )
-def test_claude_idle_env_facts(raw: str, expected: bool) -> None:
-    assert claude_idle.idle_env_facts({"DISABLE_AUTO_COMPACT": raw}) == IdleEnvFacts(
-        harness_autocompact_off=expected, cache_retention=None
-    )
+def test_claude_autocompact_off(raw: str, expected: bool) -> None:
+    assert claude_idle.autocompact_off({"DISABLE_AUTO_COMPACT": raw}) is expected
 
 
 def test_claude_bundle_registers_idle_hooks() -> None:
@@ -131,4 +128,4 @@ def test_claude_bundle_registers_idle_hooks() -> None:
     assert detector is claude_idle.detect_ttl
     assert detector is not None
     assert detector(session_id="", cwd=None, provider=None, env={}) is None
-    assert bundle.idle_env_facts is claude_idle.idle_env_facts
+    assert bundle.autocompact_off is claude_idle.autocompact_off

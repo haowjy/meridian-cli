@@ -45,8 +45,6 @@ class IdleState(BaseModel):
     v: Literal[1] = 1
     harness: str
     session: str
-    spawn_id: str | None = None
-    main_thread_id: str | None = None
     stretch: int = Field(ge=1)
     stretch_open: bool
     last_turn_id: str | None = None

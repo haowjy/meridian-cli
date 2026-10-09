@@ -7,7 +7,6 @@ import pytest
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness import pi_idle
 from meridian.lib.harness.bundle import get_harness_bundle
-from meridian.lib.harness.idle_types import IdleEnvFacts
 
 
 @pytest.mark.parametrize(
@@ -31,20 +30,6 @@ def test_pi_detect_ttl_provider_retention_matrix(
     assert pi_idle.detect_ttl(provider, env) == expected
 
 
-@pytest.mark.parametrize(
-    ("env", "expected"),
-    [
-        ({}, None),
-        ({"PI_CACHE_RETENTION": "short"}, "short"),
-        ({"PI_CACHE_RETENTION": "long"}, "long"),
-    ],
-)
-def test_pi_idle_env_facts(env: Mapping[str, str], expected: str | None) -> None:
-    assert pi_idle.idle_env_facts(env) == IdleEnvFacts(
-        harness_autocompact_off=None, cache_retention=expected
-    )
-
-
 def test_pi_bundle_registers_idle_hooks() -> None:
     bundle = get_harness_bundle(HarnessId.PI)
     detector = bundle.detect_ttl
@@ -60,4 +45,4 @@ def test_pi_bundle_registers_idle_hooks() -> None:
         )
         == 86400
     )
-    assert bundle.idle_env_facts is pi_idle.idle_env_facts
+    assert bundle.autocompact_off is None
