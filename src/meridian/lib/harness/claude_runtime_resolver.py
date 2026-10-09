@@ -14,10 +14,9 @@ _IDLE_PLUGIN_NAME: Final[str] = "meridian-idle"
 
 @dataclass(frozen=True)
 class ClaudeRuntimeResolution:
-    """Resolved plugin directories and non-fatal launch diagnostics."""
+    """Resolved plugin directories for one Claude launch."""
 
     plugin_dirs: tuple[str, ...]
-    warnings: tuple[CompositionWarning, ...] = ()
 
 
 def _default_package_runtime_root() -> Path:
@@ -68,15 +67,7 @@ def resolve_claude_runtime(
         if (candidate / ".claude-plugin" / "plugin.json").is_file():
             return ClaudeRuntimeResolution(plugin_dirs=(str(candidate),))
 
-    return ClaudeRuntimeResolution(
-        plugin_dirs=(),
-        warnings=(
-            missing_claude_runtime_warning(
-                package_runtime_root=package_runtime_root,
-                install_root=install_root,
-            ),
-        ),
-    )
+    return ClaudeRuntimeResolution(plugin_dirs=())
 
 
 __all__ = [
