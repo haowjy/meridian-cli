@@ -352,6 +352,25 @@ async def test_post_stabilization_success_rechecks_evidence_started_after_reques
 
 
 @pytest.mark.asyncio
+async def test_activity_during_validation_withholds_stale_success() -> None:
+    clock = FakeClock()
+    evidence = _Evidence(_ready(), auto_validate=False)
+    coordinator, _ = _coordinator(clock, evidence, _Profile(stabilization=0.05))
+    await coordinator.handle_terminal_event(None, _SUCCESS, _TERMINATE)  # type: ignore[arg-type]
+    clock.advance(0.05)
+    assert (await coordinator.handle_timeout()).recorded_outcome is None
+
+    coordinator.note_activity_transition("turn_active")
+    evidence.finish_validation()
+    assert (await coordinator.handle_aux_wake()).recorded_outcome is None
+
+    clock.advance(0.05)
+    await coordinator.handle_timeout()
+    evidence.finish_validation()
+    assert (await coordinator.handle_aux_wake()).recorded_outcome == _SUCCESS
+
+
+@pytest.mark.asyncio
 async def test_stabilization_can_hold_then_abandon_candidate() -> None:
     clock = FakeClock()
     coordinator, _ = _coordinator(

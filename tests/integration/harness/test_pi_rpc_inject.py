@@ -74,7 +74,7 @@ def _configure_pi_runtime(
         "import json, os, sys\n"
         f"HELP = {_PI_HELP_SURFACE!r}\n"
         f"REJECTION = {error!r}\n"
-        "if '--version' in sys.argv[1:]: print('pi 0.80.7'); raise SystemExit\n"
+        "if '--version' in sys.argv[1:]: print('pi 1.1.0'); raise SystemExit\n"
         "if '--help' in sys.argv[1:]: print(HELP); raise SystemExit\n"
         "prompt_count = 0\n"
         "for line in sys.stdin:\n"

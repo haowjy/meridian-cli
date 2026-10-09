@@ -144,11 +144,7 @@ class HarnessSemantics:
         return EventSemantics(
             activity=descriptor.activity,
             clears_signal=descriptor.clears_signal,
-            terminal=(
-                payload_resolver(event)
-                if payload_resolver is not None
-                else descriptor.terminal
-            ),
+            terminal=payload_resolver(event),
         )
 
     def _matches_scope(

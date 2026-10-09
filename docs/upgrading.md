@@ -2,11 +2,16 @@
 
 ## Pi spawned-run settlement
 
-Update Pi before using the settlement-based spawned-run completion policy. The
-verified runtime is Pi 1.1.0; older lifecycle shapes are unsupported. In
-particular, Pi 1.0.4's settlement event lacks the Boolean `aborted` field and is
-rejected with `pi_invalid_agent_settled`. A successful `--help` compatibility
-probe does not validate this event contract.
+Managed Pi sessions now require a stable **Pi >=1.1.0 and <2**, for both native
+TUI primaries and spawned RPC workers. Update Pi before launching either role.
+Meridian rejects older, prerelease, unrecognized and newer-major versions during
+runtime resolution, before model work. This matches the managed extensions'
+peer contract; their development SDK is pinned to the qualified Pi 1.1.0.
+
+The resolver also checks each role's required CLI flags. Spawned sessions still
+validate the actual settlement event: missing/non-Boolean `aborted` fails closed
+with `pi_invalid_agent_settled`. Pi 1.0.4 lacked that field; it is now refused at
+launch rather than after spending model work.
 
 A tool batch ending no longer means the parent is idle. Meridian waits for
 native settlement and any open compaction; retries and queued continuations can

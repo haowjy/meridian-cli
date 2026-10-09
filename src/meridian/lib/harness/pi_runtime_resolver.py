@@ -14,8 +14,15 @@ PiLaunchRole = Literal["primary", "spawned"]
 
 _PI_BINARY_ENV: Final[str] = "MERIDIAN_PI_BINARY"
 _PI_BINARY_NAME: Final[str] = "pi"
-_MIN_SPAWNED_RUNTIME_VERSION: Final[tuple[int, int, int]] = (1, 1, 0)
-_SEMVER_RE: Final[re.Pattern[str]] = re.compile(r"(?<!\d)(\d+)\.(\d+)\.(\d+)(?!\d)")
+_MIN_RUNTIME_VERSION: Final[tuple[int, int, int]] = (1, 1, 0)
+_MAX_RUNTIME_VERSION: Final[tuple[int, int, int]] = (2, 0, 0)
+# Managed extensions share one stable-runtime contract across TUI and RPC.
+# Accept Pi's bare version, conventional prefixes and build metadata, not
+# prereleases or a version number embedded in unrelated diagnostic output.
+_STABLE_VERSION_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:pi |v)?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+)
 
 _REQUIRED_HELP_SURFACE_TOKEN_GROUPS_PRIMARY: Final[tuple[tuple[str, ...], ...]] = (
     ("--model",),
@@ -126,27 +133,18 @@ def _probe_runtime_compatibility(
             None,
         )
     runtime_version = _runtime_version_from_probe(version_probe)
-    if role == "spawned":
-        parsed_version = _parse_runtime_version(runtime_version)
-        if parsed_version is None:
-            return (
-                _ProbeFailure(
-                    kind="compatibility",
-                    detail="`--version` output does not identify a semantic version; "
-                    "spawned runs require Pi >=1.1.0",
-                ),
-                runtime_version,
-            )
-        if parsed_version < _MIN_SPAWNED_RUNTIME_VERSION:
-            minimum = ".".join(str(part) for part in _MIN_SPAWNED_RUNTIME_VERSION)
-            actual = ".".join(str(part) for part in parsed_version)
-            return (
-                _ProbeFailure(
-                    kind="compatibility",
-                    detail=f"spawned runs require Pi >={minimum}; detected {actual}",
-                ),
-                runtime_version,
-            )
+    parsed_version = _parse_runtime_version(runtime_version)
+    if parsed_version is None or not (
+        _MIN_RUNTIME_VERSION <= parsed_version < _MAX_RUNTIME_VERSION
+    ):
+        return (
+            _ProbeFailure(
+                kind="compatibility",
+                detail="managed TUI and RPC sessions require stable Pi >=1.1.0 <2; "
+                f"detected {runtime_version or 'unrecognized --version output'}",
+            ),
+            runtime_version,
+        )
 
     help_probe = _run_probe_command((binary_path, "--help"), env)
     if isinstance(help_probe, _ProbeFailure):
@@ -200,7 +198,7 @@ def _runtime_version_from_probe(completed: subprocess.CompletedProcess[str]) -> 
 def _parse_runtime_version(value: str | None) -> tuple[int, int, int] | None:
     if value is None:
         return None
-    match = _SEMVER_RE.search(value)
+    match = _STABLE_VERSION_RE.fullmatch(value.strip())
     if match is None:
         return None
     return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
