@@ -106,7 +106,7 @@ def pane_facts(capture: str) -> IdleFacts:
         draft = "yes"
     return IdleFacts(
         draft=draft,
-        busy="• Working (" in capture,
+        busy="Working (" in capture,
         agents_running=0,
         context_tokens=None,
         harness_autocompact_off=False,

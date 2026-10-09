@@ -123,6 +123,12 @@ def test_pane_facts_match_probe_captures(
     assert pane_facts(capture).busy is busy
 
 
+def test_pane_facts_accepts_spinnerless_working_line() -> None:
+    capture = f"Working (8s • esc to interrupt)\n\n{PROMPT} Ask Codex to do anything\n"
+
+    assert pane_facts(capture).busy is True
+
+
 @pytest.mark.asyncio
 async def test_compact_types_verifies_and_waits_for_success_marker() -> None:
     tmux = FakeTmux(
