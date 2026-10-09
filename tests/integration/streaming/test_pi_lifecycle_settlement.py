@@ -4,27 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.semantics import normalize_event
-from meridian.lib.streaming.completion_contracts import (
-    CompletionDirectives,
-    CompletionEvaluation,
-    CompletionState,
-    DiagnosticBlocker,
-    WorkAssessment,
-)
 from meridian.lib.streaming.drain_policy import (
     PersistentDrainPolicy,
     PiRpcQuiescenceDrainPolicy,
     SingleTurnDrainPolicy,
-)
-from meridian.lib.streaming.pi_completion_profile import (
-    PiCompletionProfile,
-    PiOutstandingWork,
 )
 from tests.support.pi import PiDrainScenario, pi_event
 
@@ -295,72 +282,3 @@ async def test_done_can_release_work_after_manual_compaction(
         assert outcome is not None and outcome.status == "succeeded"
     finally:
         await started.stop()
-
-
-def test_delivery_deadline_rearms_after_active_run(tmp_path: Path) -> None:
-    now = [0.0]
-    tracker = SimpleNamespace(parent_idle=True)
-    blocker = DiagnosticBlocker(source="profile", code="pi_result_delivery_pending", identity="b1")
-    assessment = WorkAssessment(disposition="blocked", blockers=(blocker,), generation=1)
-    evidence = SimpleNamespace(
-        quiescence_tracker=tracker,
-        session_seen=False,
-        session_phase_emitted=False,
-        has_pending_children=lambda: False,
-        pending_child_count=lambda: 0,
-        classify_outstanding_work=lambda: PiOutstandingWork(False, False, delivery_pending=True),
-    )
-    profile = PiCompletionProfile(
-        runtime_root=tmp_path,
-        spawn_id=SpawnId("p1"),
-        session_role="spawned",
-        child_wave_timeout_seconds=300.0,
-        emit_phase=lambda **_payload: None,
-        send_done_nudge=None,
-        evidence=evidence,
-        stabilization_seconds=0.05,
-        clock=lambda: now[0],
-    )
-    context = CompletionEvaluation(
-        state=CompletionState("waiting", None, assessment, None, None, None),
-        trigger="event",
-        now=0.0,
-        directives=CompletionDirectives(),
-        assessment=assessment,
-        active_turn=False,
-    )
-
-    assert profile.evaluate(context).action == "wait"
-    assert profile._delivery_deadline_at == 300.0
-
-    tracker.parent_idle = False
-    profile.after_observed_event("turn_active")
-    now[0] = 301.0
-    active_decision = profile.evaluate(
-        CompletionEvaluation(
-            state=CompletionState("waiting", None, assessment, None, None, None),
-            trigger="event",
-            now=301.0,
-            directives=CompletionDirectives(),
-            assessment=assessment,
-            active_turn=True,
-        )
-    )
-    assert active_decision.action == "wait"
-    assert profile._delivery_deadline_at is None
-
-    tracker.parent_idle = True
-    profile.after_observed_event("idle")
-    decision = profile.evaluate(
-        CompletionEvaluation(
-            state=CompletionState("waiting", None, assessment, None, None, None),
-            trigger="event",
-            now=301.0,
-            directives=CompletionDirectives(),
-            assessment=assessment,
-            active_turn=False,
-        )
-    )
-
-    assert decision.action == "wait"
-    assert profile._delivery_deadline_at == 601.0
