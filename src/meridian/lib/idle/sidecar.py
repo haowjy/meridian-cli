@@ -329,7 +329,11 @@ async def run(
                 spawn_id=str(ctx.spawn_id) if ctx.spawn_id is not None else None,
                 main_thread_id=ctx.harness_session_id,
             )
-            await coordinator.apply_arm(initial)
+            # This first state is an identity pin, not an observed idle turn.
+            # Remember its version so polling ignores it until an external
+            # event advances the anchor or stretch.
+            if initial.stretch is not None and initial.anchor is not None:
+                coordinator.schedule_key = (initial.stretch, initial.anchor)
         except asyncio.CancelledError:
             raise
         except BaseException as exc:

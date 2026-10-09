@@ -409,7 +409,7 @@ async def test_sidecar_offloads_every_synchronous_service_call(tmp_path: Path) -
 @pytest.mark.asyncio
 async def test_external_event_sensor_pins_session_and_polls_store(tmp_path: Path) -> None:
     alive = [True]
-    clock = PendingClock()
+    clock = Clock()
     sender = Sender()
     service, store = policy(tmp_path, clock, sender)
     recording = RecordingService(service)
@@ -437,12 +437,13 @@ async def test_external_event_sensor_pins_session_and_polls_store(tmp_path: Path
         description="external store poll",
     )
     alive[0] = False
-    clock.release.set()
     await task
 
     state = store.read("codex", "session-1")
     assert state is not None
     assert state.spawn_id == "p1"
+    assert sender.notices == []
+    assert sensor.compact_calls == 0
     assert recording.thread_ids["arm"][0] != loop_thread
     assert recording.thread_ids["status"][0] != loop_thread
 
