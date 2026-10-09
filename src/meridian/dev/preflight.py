@@ -17,11 +17,11 @@ DEFAULT_BUDGET_SECONDS = 60.0
 EXIT_BUDGET_EXHAUSTED = 124
 
 
-def _stop_command(process: subprocess.Popen[bytes]) -> None:
-    """Kill the owned POSIX group, including descendants of an exited leader."""
+def _stop_command(process: subprocess.Popen[bytes]) -> int:
+    """Kill the owned group before reaping its leader and releasing its id."""
     with suppress(ProcessLookupError):
         os.killpg(process.pid, signal.SIGKILL)
-    process.wait()
+    return process.wait()
 
 
 def run_commands(
@@ -49,11 +49,15 @@ def run_commands(
                 print(f"preflight: fast budget exhausted ({budget_seconds:g}s)", file=sys.stderr)
                 return EXIT_BUDGET_EXHAUSTED
             for process in tuple(active):
-                status = process.poll()
-                if status is None:
+                # Peek without reaping: the leader reserves the numeric group
+                # id until cleanup, even if all other members already exited.
+                exited = os.waitid(
+                    os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT
+                )
+                if exited is None or exited.si_pid == 0:
                     continue
                 # A completed leader does not prove that its descendants exited.
-                _stop_command(process)
+                status = _stop_command(process)
                 active.remove(process)
                 if status != 0:
                     return status
