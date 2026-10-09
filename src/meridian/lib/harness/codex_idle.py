@@ -63,7 +63,8 @@ async def _run_tmux(*args: str, capture: bool = False) -> tuple[bool, str]:
         return False, ""
     if process.returncode != 0:
         return False, ""
-    return True, stdout.decode("utf-8", errors="replace")
+    output = stdout.decode("utf-8", errors="replace") if capture else ""
+    return True, output
 
 
 class _Tmux:
