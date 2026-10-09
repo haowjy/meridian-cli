@@ -759,6 +759,11 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
 
             _ = _notify_cmd
 
+        def _register_idle() -> None:
+            import meridian.cli.idle_cmd as _idle_cmd
+
+            _ = _idle_cmd
+
         def _register_qi() -> None:
             import meridian.cli.qi_cmd as _qi_cmd
 
@@ -793,6 +798,7 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
             "mermaid": _register_mermaid,
             "artifact": _register_artifact,
             "notify": _register_notify,
+            "idle": _register_idle,
             "qi": _register_qi,
             "report": _register_report,
             "migrate": _register_migrate,
@@ -833,6 +839,14 @@ def _operation_error_message(exc: Exception) -> str:
     if message:
         return message
     return exc.__class__.__name__
+
+
+def _emit_idle_error(message: str) -> None:
+    """Emit the adapter-facing idle error envelope on stdout."""
+
+    import json
+
+    print(json.dumps({"error": message}, separators=(",", ":")))
 
 
 def _emit_error(
@@ -1052,7 +1066,14 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
     verbose_count = args.count("--verbose")
     configure_logging(json_mode=json_mode, verbosity=verbose_count)
 
-    cleaned_args, options = _extract_global_options(args)
+    idle_invocation = _bootstrap_first_positional_token(args) == "idle"
+    try:
+        cleaned_args, options = _extract_global_options(args)
+    except SystemExit as exc:
+        if idle_invocation and isinstance(exc.code, str):
+            _emit_idle_error(exc.code)
+            raise SystemExit(1) from None
+        raise
     if not (cleaned_args and cleaned_args[0] == "mars"):
         cleaned_args, passthrough_args = _split_passthrough_args(cleaned_args)
         options = options.model_copy(update={"passthrough_args": passthrough_args})
@@ -1175,7 +1196,16 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
                 temporary_config_env(options.config_file),
             ):
                 try:
-                    app(cleaned_args)
+                    if cleaned_args[:1] == ["idle"]:
+                        from cyclopts.exceptions import CycloptsError
+
+                        try:
+                            app(cleaned_args, print_error=False, exit_on_error=False)
+                        except CycloptsError as exc:
+                            _emit_idle_error(_operation_error_message(exc))
+                            raise SystemExit(1) from None
+                    else:
+                        app(cleaned_args)
                 except SystemExit:
                     raise
                 except TimeoutError as exc:
