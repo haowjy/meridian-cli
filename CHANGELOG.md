@@ -4,11 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
 - Add catalog-backed `[notify]` configuration and `MERIDIAN_NOTIFY_*` environment inputs.
 - Add harness-agnostic notification labels, channel registry, and ntfy/none delivery.
 - Add `meridian notify` with session labels, backend fan-out, and JSON reporting.
-
-### Added
 - Expose `MERIDIAN_SESSION_ROLE=primary|spawn` to every launched harness.
 - Load metadata-backed top-level and per-harness nested config tables generically,
   with initial `idle.enabled` settings for global and harness-specific control.
