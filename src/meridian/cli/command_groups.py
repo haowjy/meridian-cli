@@ -39,6 +39,7 @@ class CommandGroupSpec:
     human_root_order: int | None = None
     registration_bucket: str | None = None
     has_group_app: bool = False
+    hidden_from_root_help: bool = False
 
 
 _group_apps: dict[str, App] = {}
@@ -144,6 +145,21 @@ _GROUP_HELP: dict[str, GroupHelp] = {
         long_help='Send one notification through the configured push and email backends. Delivery is attempted once per backend and is never retried in-process.',
         examples=(("meridian notify \"waiting on your decision\"", ''),),
         agent_notes='Use for a blocking decision, requested long-running completion, or failure that needs attention — not routine progress.',
+    ),
+    "idle": GroupHelp(
+        summary="Manage harness idle schedules.",
+        long_help="Adapter-facing idle scheduling and safety decisions.",
+        agent_notes="Called by harness adapters; humans use `idle status`.",
+        agent_subcommands=(
+            "config",
+            "arm",
+            "return",
+            "fire",
+            "done",
+            "event",
+            "status",
+            "mod-path",
+        ),
     ),
     "telemetry": GroupHelp(
         summary='Telemetry inspection: tail, query, and status over local segments.',
@@ -303,6 +319,12 @@ COMMAND_GROUP_SPECS: dict[str, CommandGroupSpec] = {
         registration_bucket='notify',
         has_group_app=True,
     ),
+    "idle": CommandGroupSpec(
+        help=_GROUP_HELP["idle"],
+        registration_bucket="idle",
+        has_group_app=True,
+        hidden_from_root_help=True,
+    ),
     "telemetry": CommandGroupSpec(
         help=_GROUP_HELP["telemetry"],
         human_root_order=12,
@@ -355,6 +377,10 @@ HUMAN_ROOT_ORDER: tuple[str, ...] = tuple(
         ),
         key=lambda item: item[1],
     )
+)
+
+HIDDEN_ROOT_COMMANDS: frozenset[str] = frozenset(
+    name for name, spec in COMMAND_GROUP_SPECS.items() if spec.hidden_from_root_help
 )
 
 AGENT_DESCRIPTION_OVERRIDES: dict[str, str] = {
@@ -457,6 +483,7 @@ __all__ = [
     "COMMAND_REGISTRATION",
     "GROUPS",
     "GROUP_DESCRIPTIONS",
+    "HIDDEN_ROOT_COMMANDS",
     "HUMAN_ROOT_ORDER",
     "CommandGroupSpec",
     "GroupHelp",
