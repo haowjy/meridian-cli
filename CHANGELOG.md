@@ -29,6 +29,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Add the primary-only Pi idle extension for native idle/return sensing, durable
   timer reload, core-gated notifications, and compaction.
 - Add Codex idle-event injection for interactive app-server launches only.
+- Pin Codex idle events to managed primary threads, poll their external schedule,
+  sense pane drafts/activity, and compact through a verified tmux command.
 ### Changed
 - Load Meridian's bundled no-op idle plugin only in interactive Claude primaries.
 

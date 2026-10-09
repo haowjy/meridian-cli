@@ -130,6 +130,10 @@ class PersistentSensor(Sensor):
         return CompactResult("ok", "100k → summary")
 
 
+class ExternalSensor(Sensor):
+    external_events = True
+
+
 class RecordingService:
     def __init__(self, delegate: IdleService) -> None:
         self.delegate = delegate
@@ -141,6 +145,10 @@ class RecordingService:
     def event(self, *args: Any, **kwargs: Any) -> Any:
         self._record("event")
         return self.delegate.event(*args, **kwargs)
+
+    def arm(self, *args: Any, **kwargs: Any) -> Any:
+        self._record("arm")
+        return self.delegate.arm(*args, **kwargs)
 
     def status(self, *args: Any, **kwargs: Any) -> Any:
         self._record("status")
@@ -369,7 +377,7 @@ async def test_sidecar_offloads_every_synchronous_service_call(tmp_path: Path) -
     sender = Sender()
     service, _ = policy(tmp_path, clock, sender)
     recording = RecordingService(service)
-    sensor = PersistentSensor(
+    sensor = ExternalSensor(
         (IdleEvent("turn_end", "session-1", "turn-1", 0),),
         alive,
     )
@@ -385,7 +393,7 @@ async def test_sidecar_offloads_every_synchronous_service_call(tmp_path: Path) -
         )
     )
     await wait_until(
-        lambda: {"event", "status", "fire", "done"} <= recording.thread_ids.keys(),
+        lambda: {"arm", "event", "status", "fire", "done"} <= recording.thread_ids.keys(),
         description="all service calls",
     )
     alive[0] = False
@@ -396,6 +404,47 @@ async def test_sidecar_offloads_every_synchronous_service_call(tmp_path: Path) -
         for thread_ids in recording.thread_ids.values()
         for thread_id in thread_ids
     )
+
+
+@pytest.mark.asyncio
+async def test_external_event_sensor_pins_session_and_polls_store(tmp_path: Path) -> None:
+    alive = [True]
+    clock = PendingClock()
+    sender = Sender()
+    service, store = policy(tmp_path, clock, sender)
+    recording = RecordingService(service)
+    sensor = ExternalSensor((), alive)
+    loop_thread = threading.get_ident()
+
+    task = asyncio.create_task(
+        run(
+            sensor,
+            context(tmp_path, alive),
+            service=cast("IdleService", recording),
+            clock=cast("SidecarClock", clock),
+            poll_seconds=0.001,
+        )
+    )
+    await wait_until(
+        lambda: bool(
+            (state := store.read("codex", "session-1")) is not None
+            and state.main_thread_id == "session-1"
+        ),
+        description="external session pin",
+    )
+    await wait_until(
+        lambda: "status" in recording.thread_ids,
+        description="external store poll",
+    )
+    alive[0] = False
+    clock.release.set()
+    await task
+
+    state = store.read("codex", "session-1")
+    assert state is not None
+    assert state.spawn_id == "p1"
+    assert recording.thread_ids["arm"][0] != loop_thread
+    assert recording.thread_ids["status"][0] != loop_thread
 
 
 @pytest.mark.asyncio

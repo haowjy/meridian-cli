@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 
+from meridian.lib.harness.codex_idle import IDLE_NOTIFY_COMMAND
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
@@ -18,8 +19,6 @@ from meridian.lib.launch.constants import BASE_COMMAND_CODEX_STREAMING
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 logger = logging.getLogger(__name__)
-
-_IDLE_NOTIFY_COMMAND = ["meridian", "idle", "event", "--harness", "codex"]
 
 _APP_SERVER_ARG_FIELDS: frozenset[str] = frozenset(
     {
@@ -164,7 +163,7 @@ def project_codex_spec_to_appserver_command(
     ]
 
     if spec.interactive:
-        command.extend(("-c", f"notify={json.dumps(_IDLE_NOTIFY_COMMAND)}"))
+        command.extend(("-c", f"notify={json.dumps(IDLE_NOTIFY_COMMAND)}"))
 
     sandbox_mode = map_codex_sandbox_mode(spec.permission_resolver.config.sandbox)
     if sandbox_mode is not None:
