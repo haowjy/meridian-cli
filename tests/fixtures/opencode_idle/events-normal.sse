@@ -1,0 +1,47 @@
+data: {"id":"evt_11de2c4dc001p7bb7xc0LDoYC5","type":"server.connected","properties":{}}
+
+data: {"id":"evt_11de2c909001nEsrAx9l4GR23W","type":"message.updated","properties":{"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","info":{"id":"msg_11de2c908001aYYR0RSsOpIZlE","role":"user","sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","time":{"created":1791502764296},"agent":"build","model":{"providerID":"opencode","modelID":"big-pickle"}}}}
+
+data: {"id":"evt_11de2c90d001o6Esw2Q8YMl9rz","type":"message.part.updated","properties":{"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","part":{"type":"text","text":"say exactly P0C_NORMAL_OK","messageID":"msg_11de2c908001aYYR0RSsOpIZlE","sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","id":"prt_11de2c908002GjGDjQ4R0rpXA8"},"time":1791502764301}}
+
+data: {"id":"evt_11de2c912001C447R0NSrnMVnS","type":"session.updated","properties":{"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","info":{"id":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","slug":"hidden-cabin","projectID":"2d6b2b7e5ea9c3623ecab32e838cda8c9f15875d","directory":"/home/jimyao/gitrepos/meridian-cli.worktrees/idle-cache-notify","path":"","title":"Quick check-in","agent":"build","model":{"id":"big-pickle","providerID":"opencode","variant":"default"},"version":"1.18.32","summary":{"additions":0,"deletions":0,"files":0},"cost":0,"tokens":{"input":10332,"output":22,"reasoning":290,"cache":{"read":1792,"write":0}},"time":{"created":1791502738024,"updated":1791502764305}}}}
+
+data: {"id":"evt_11de2c9160012gafWZ4r4hlPeC","type":"session.status","properties":{"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","status":{"type":"busy"}}}
+
+data: {"id":"evt_11de2c918001chJMYCe4RU7rQm","type":"message.updated","properties":{"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","info":{"id":"msg_11de2c9180016St8yO0b0cymju","parentID":"msg_11de2c908001aYYR0RSsOpIZlE","role":"assistant","mode":"build","agent":"build","path":{"cwd":"/home/jimyao/gitrepos/meridian-cli.worktrees/idle-cache-notify","root":"/home/jimyao/gitrepos/meridian-cli.worktrees/idle-cache-notify"},"cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"modelID":"big-pickle","providerID":"opencode","time":{"created":1791502764312},"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf"}}}
+
+data: {"id":"evt_11de2c937001U8HEN3ztKdYP4W","type":"session.updated","properties":{"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","info":{"id":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","slug":"hidden-cabin","projectID":"2d6b2b7e5ea9c3623ecab32e838cda8c9f15875d","directory":"/home/jimyao/gitrepos/meridian-cli.worktrees/idle-cache-notify","path":"","title":"Quick check-in","agent":"build","model":{"id":"big-pickle","providerID":"opencode","variant":"default"},"version":"1.18.32","summary":{"additions":0,"deletions":0,"files":0},"cost":0,"tokens":{"input":10332,"output":22,"reasoning":290,"cache":{"read":1792,"write":0}},"time":{"created":1791502738024,"updated":1791502764342}}}}
+
+data: {"id":"evt_11de2c93a001g3JVu7YGuMAcGc","type":"session.diff","properties":{"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","diff":[]}}
+
+data: {"id":"evt_11de2c93c001FI09A1007qt40k","type":"message.updated","properties":{"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","info":{"role":"user","time":{"created":1791502764296},"agent":"build","model":{"providerID":"opencode","modelID":"big-pickle"},"id":"msg_11de2c908001aYYR0RSsOpIZlE","sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","summary":{"diffs":[]}}}}
+
+data: {"id":"evt_11de2c94c0014LZr7yciAxQC7O","type":"session.status","properties":{"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","status":{"type":"busy"}}}
+
+data: {"id":"evt_11de2cdcf001D5FFHpJW7TiXUT","type":"message.part.updated","properties":{"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","part":{"id":"prt_11de2cdce001DctfQRRAr4QtM2","messageID":"msg_11de2c9180016St8yO0b0cymju","sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","snapshot":"30d98b8dff924f3f7cb92c9c360375725a382980","type":"step-start"},"time":1791502765518}}
+
+data: {"id":"evt_11de2ce1a001GUldPHoaaWtk7p","type":"message.part.updated","properties":{"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","part":{"id":"prt_11de2ce19001JxT4yPQLQctVCd","messageID":"msg_11de2c9180016St8yO0b0cymju","sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","type":"text","text":"","time":{"start":1791502765593}},"time":1791502765594}}
+
+data: {"id":"evt_11de2ce1c001NrDB65skRtwlfU","type":"message.part.delta","properties":{"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","messageID":"msg_11de2c9180016St8yO0b0cymju","partID":"prt_11de2ce19001JxT4yPQLQctVCd","field":"text","delta":"P0C_NORMAL_OK"}}
+
+data: {"id":"evt_11de2ce1d001JO8sF4zELCqKF4","type":"message.part.updated","properties":{"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","part":{"id":"prt_11de2ce19001JxT4yPQLQctVCd","messageID":"msg_11de2c9180016St8yO0b0cymju","sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","type":"text","text":"P0C_NORMAL_OK","time":{"start":1791502765593,"end":1791502765597}},"time":1791502765597}}
+
+data: {"id":"evt_11de2ce2d001ul3AQM9im7d9MO","type":"message.part.updated","properties":{"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","part":{"id":"prt_11de2ce2d001kOTzDJWYxPRjIW","reason":"stop","snapshot":"30d98b8dff924f3f7cb92c9c360375725a382980","messageID":"msg_11de2c9180016St8yO0b0cymju","sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","type":"step-finish","tokens":{"total":12100,"input":7997,"output":7,"reasoning":0,"cache":{"write":0,"read":4096}},"cost":0},"time":1791502765613}}
+
+data: {"id":"evt_11de2ce31001jxJeb2tY5P0FrX","type":"message.updated","properties":{"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","info":{"id":"msg_11de2c9180016St8yO0b0cymju","parentID":"msg_11de2c908001aYYR0RSsOpIZlE","role":"assistant","mode":"build","agent":"build","path":{"cwd":"/home/jimyao/gitrepos/meridian-cli.worktrees/idle-cache-notify","root":"/home/jimyao/gitrepos/meridian-cli.worktrees/idle-cache-notify"},"cost":0,"tokens":{"total":12100,"input":7997,"output":7,"reasoning":0,"cache":{"write":0,"read":4096}},"modelID":"big-pickle","providerID":"opencode","time":{"created":1791502764312},"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","finish":"stop"}}}
+
+data: {"id":"evt_11de2ce4f001ynj1cyZTRX6SGe","type":"message.updated","properties":{"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","info":{"id":"msg_11de2c9180016St8yO0b0cymju","parentID":"msg_11de2c908001aYYR0RSsOpIZlE","role":"assistant","mode":"build","agent":"build","path":{"cwd":"/home/jimyao/gitrepos/meridian-cli.worktrees/idle-cache-notify","root":"/home/jimyao/gitrepos/meridian-cli.worktrees/idle-cache-notify"},"cost":0,"tokens":{"total":12100,"input":7997,"output":7,"reasoning":0,"cache":{"write":0,"read":4096}},"modelID":"big-pickle","providerID":"opencode","time":{"created":1791502764312,"completed":1791502765647},"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","finish":"stop"}}}
+
+data: {"id":"evt_11de2ce51001Vb5cYqYLtfND7s","type":"session.status","properties":{"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","status":{"type":"busy"}}}
+
+data: {"id":"evt_11de2ce53001rgVTDvKPGPh0XU","type":"session.status","properties":{"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","status":{"type":"idle"}}}
+
+data: {"id":"evt_11de2ce53002Rwr1oIDyQ9tz0d","type":"session.idle","properties":{"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf"}}
+
+data: {"id":"evt_11de2ce54001coQ2Czi447wEg6","type":"session.updated","properties":{"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","info":{"id":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","slug":"hidden-cabin","projectID":"2d6b2b7e5ea9c3623ecab32e838cda8c9f15875d","directory":"/home/jimyao/gitrepos/meridian-cli.worktrees/idle-cache-notify","path":"","title":"Quick check-in","agent":"build","model":{"id":"big-pickle","providerID":"opencode","variant":"default"},"version":"1.18.32","summary":{"additions":0,"deletions":0,"files":0},"cost":0,"tokens":{"input":18329,"output":29,"reasoning":290,"cache":{"read":5888,"write":0}},"time":{"created":1791502738024,"updated":1791502765652}}}}
+
+data: {"id":"evt_11de2ce57001YmuT2JPt4Df0oZ","type":"session.diff","properties":{"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","diff":[]}}
+
+data: {"id":"evt_11de2ce650010kLnjLyWGFKfM4","type":"message.updated","properties":{"sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf","info":{"role":"user","time":{"created":1791502764296},"agent":"build","model":{"providerID":"opencode","modelID":"big-pickle"},"summary":{"diffs":[]},"id":"msg_11de2c908001aYYR0RSsOpIZlE","sessionID":"ses_ee21d9d97ffeN9m0VxoYy7qFQf"}}}
+
+data: {"id":"evt_11de2ebed001Lzp3YkN5pCM7XR","type":"server.heartbeat","properties":{}}
