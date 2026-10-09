@@ -291,6 +291,7 @@ class IdleService:
         ttl_seconds: int | None = None,
         implies_return: bool = False,
         turn_id: str | None = None,
+        input_count: int | None = None,
         spawn_id: str | None = None,
         main_thread_id: str | None = None,
     ) -> ArmResult:
@@ -301,6 +302,8 @@ class IdleService:
         resolved_ttl = ttl_seconds if ttl_seconds is not None else policy.ttl_seconds
         if resolved_ttl is not None and resolved_ttl <= 0:
             raise ValueError("ttl_seconds must be greater than zero")
+        if input_count is not None and input_count < 0:
+            raise ValueError("input_count must be zero or greater")
         now_ms = self._now_ms()
         resolved_spawn_id = spawn_id or self.env.get("MERIDIAN_SPAWN_ID") or None
 
@@ -311,7 +314,19 @@ class IdleService:
                 and current is not None
                 and current.last_turn_id == turn_id
             ):
-                return current, _result_for_state(current, reason="duplicate-turn")
+                next_state = current.model_copy(
+                    update={
+                        "last_input_count": (
+                            input_count
+                            if input_count is not None
+                            else current.last_input_count
+                        )
+                    }
+                )
+                return next_state, _result_for_state(
+                    next_state,
+                    reason="duplicate-turn",
+                )
 
             if current is not None:
                 window_active = (
@@ -323,18 +338,44 @@ class IdleService:
                         update={
                             "expect_compaction_turn": False
                             if not implies_return
-                            else current.expect_compaction_turn
+                            else current.expect_compaction_turn,
+                            "last_input_count": (
+                                input_count
+                                if input_count is not None
+                                else current.last_input_count
+                            ),
                         }
                     )
                     return next_state, _result_for_state(next_state, reason="compact-window")
                 if not implies_return and current.expect_compaction_turn:
-                    next_state = current.model_copy(update={"expect_compaction_turn": False})
+                    next_state = current.model_copy(
+                        update={
+                            "expect_compaction_turn": False,
+                            "last_input_count": (
+                                input_count
+                                if input_count is not None
+                                else current.last_input_count
+                            ),
+                        }
+                    )
                     return next_state, _result_for_state(
                         next_state,
                         reason="expected-compaction-turn",
                     )
                 if not implies_return and current.done.get("compact") == "ok":
-                    return current, _result_for_state(current, reason="already-compacted")
+                    next_state = current.model_copy(
+                        update={
+                            "last_input_count": (
+                                input_count
+                                if input_count is not None
+                                else current.last_input_count
+                            )
+                        }
+                    )
+                    return next_state, _result_for_state(
+                        next_state,
+                        reason="already-compacted",
+                    )
 
             opens_new = current is None or not current.stretch_open or implies_return
             if current is None:
@@ -360,6 +401,11 @@ class IdleService:
                     turn_id
                     if implies_return
                     else (current.last_turn_id if current is not None and not opens_new else None)
+                ),
+                last_input_count=(
+                    input_count
+                    if input_count is not None
+                    else (current.last_input_count if current is not None else None)
                 ),
                 anchor=anchor,
                 idle_since_ms=now_ms,
@@ -587,11 +633,14 @@ class IdleService:
         ttl_seconds: int | None = None,
     ) -> ArmResult | ReturnResult | None:
         if event.kind in {"turn_end", "idle"}:
+            resolved_ttl = event.ttl_seconds if ttl_seconds is None else ttl_seconds
             return self.arm(
                 harness=harness,
                 session=event.harness_session_id,
-                ttl_seconds=ttl_seconds,
+                ttl_seconds=resolved_ttl,
+                implies_return=event.implies_return,
                 turn_id=event.turn_id,
+                input_count=event.input_count,
             )
         if event.kind == "user_prompt":
             return self.return_(

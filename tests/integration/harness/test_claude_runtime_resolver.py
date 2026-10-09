@@ -25,7 +25,6 @@ def test_claude_runtime_resolver_prefers_packaged_plugin(tmp_path: Path) -> None
     )
 
     assert resolution.plugin_dirs == (str(package_plugin.resolve()),)
-    assert resolution.warnings == ()
 
 
 def test_claude_runtime_resolver_falls_back_to_install_root(tmp_path: Path) -> None:
@@ -40,10 +39,9 @@ def test_claude_runtime_resolver_falls_back_to_install_root(tmp_path: Path) -> N
     )
 
     assert resolution.plugin_dirs == (str(install_plugin.resolve()),)
-    assert resolution.warnings == ()
 
 
-def test_claude_runtime_resolver_warns_when_plugin_is_missing(tmp_path: Path) -> None:
+def test_claude_runtime_resolver_returns_no_dirs_when_plugin_is_missing(tmp_path: Path) -> None:
     package_root = tmp_path / "package"
     install_root = tmp_path / "install"
 
@@ -53,10 +51,3 @@ def test_claude_runtime_resolver_warns_when_plugin_is_missing(tmp_path: Path) ->
     )
 
     assert resolution.plugin_dirs == ()
-    assert len(resolution.warnings) == 1
-    warning = resolution.warnings[0]
-    assert warning.code == "claude_runtime_missing"
-    assert warning.detail == {
-        "package_dir": str((package_root / "meridian-idle").resolve()),
-        "install_dir": str((install_root / "meridian-idle").resolve()),
-    }

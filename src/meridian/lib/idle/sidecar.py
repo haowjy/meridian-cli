@@ -31,31 +31,61 @@ class _RealClock:
         await asyncio.sleep(delay)
 
 
-def record_sensor_error(
-    ctx: IdleSensorContext,
-    *,
-    phase: str,
-    error: BaseException,
-) -> None:
-    """Best-effort sensor diagnostics that never touch the TUI's stderr."""
+class SensorErrorReporter:
+    """Task-scoped, repeat-limited sensor diagnostics."""
 
-    tracer = DebugTracer(
-        spawn_id=ctx.spawn_dir.name,
-        debug_path=ctx.spawn_dir / "debug.jsonl",
-        report_failures=False,
-    )
-    with suppress(BaseException):
-        tracer.emit(
-            "idle",
-            "idle.sensor_error",
-            data={
-                "phase": phase,
-                "error_type": type(error).__name__,
-                "error": str(error),
-            },
+    def __init__(self, ctx: IdleSensorContext) -> None:
+        self._tracer = DebugTracer(
+            spawn_id=str(ctx.spawn_id or ""),
+            debug_path=ctx.spawn_dir / "debug.jsonl",
+            report_failures=False,
         )
-    with suppress(BaseException):
-        tracer.close()
+        self._counts: dict[tuple[str, str, str], int] = {}
+        self._closed = False
+
+    def record(self, *, phase: str, error: BaseException) -> None:
+        """Emit the first matching failure and count later repeats."""
+
+        if self._closed:
+            return
+        key = (phase, type(error).__name__, str(error))
+        count = self._counts.get(key, 0) + 1
+        self._counts[key] = count
+        if count > 1:
+            return
+        with suppress(BaseException):
+            self._tracer.emit(
+                "idle",
+                "idle.sensor_error",
+                data={
+                    "phase": phase,
+                    "error_type": key[1],
+                    "error": key[2],
+                },
+            )
+
+    def close(self) -> None:
+        """Emit repeat summaries and close the tracer. Idempotent."""
+
+        if self._closed:
+            return
+        self._closed = True
+        for (phase, error_type, error), count in self._counts.items():
+            if count < 2:
+                continue
+            with suppress(BaseException):
+                self._tracer.emit(
+                    "idle",
+                    "idle.sensor_error_repeats",
+                    data={
+                        "phase": phase,
+                        "error_type": error_type,
+                        "error": error,
+                        "repeat_count": count - 1,
+                    },
+                )
+        with suppress(BaseException):
+            self._tracer.close()
 
 
 @dataclass
@@ -65,6 +95,7 @@ class _Coordinator:
     service: IdleService
     clock: SidecarClock
     harness: str
+    error_reporter: SensorErrorReporter
     schedule_task: asyncio.Task[None] | None = None
     schedule_key: tuple[int, int] | None = None
 
@@ -145,7 +176,7 @@ class _Coordinator:
             except asyncio.CancelledError:
                 raise
             except BaseException as exc:
-                record_sensor_error(self.ctx, phase="compact", error=exc)
+                self.error_reporter.record(phase="compact", error=exc)
                 self.service.done(
                     "compact",
                     harness=self.harness,
@@ -170,25 +201,15 @@ class _Coordinator:
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
-            record_sensor_error(self.ctx, phase="timer", error=exc)
+            self.error_reporter.record(phase="timer", error=exc)
 
     async def handle(self, event: IdleEvent) -> None:
+        result = self.service.event(event, harness=self.harness)
         if event.kind == "user_prompt":
-            self.service.return_(
-                harness=self.harness,
-                session=event.harness_session_id,
-                user_prompt=True,
-            )
             await self.cancel_schedule()
             return
-        if event.kind not in {"turn_end", "idle"}:
-            return
-        result = self.service.arm(
-            harness=self.harness,
-            session=event.harness_session_id,
-            turn_id=event.turn_id,
-        )
-        await self.apply_arm(result)
+        if isinstance(result, ArmResult):
+            await self.apply_arm(result)
 
 
 async def _consume_events(sensor: IdleSensor, coordinator: _Coordinator) -> None:
@@ -215,6 +236,7 @@ async def run(
     service: IdleService | None = None,
     clock: SidecarClock | None = None,
     poll_seconds: float = 5.0,
+    error_reporter: SensorErrorReporter | None = None,
 ) -> None:
     """Drive idle policy until launcher teardown; contain every sensor failure."""
 
@@ -223,12 +245,14 @@ async def run(
         env=ctx.env,
         now_ms=resolved_clock.now_ms,
     )
+    resolved_error_reporter = error_reporter or SensorErrorReporter(ctx)
     coordinator = _Coordinator(
         sensor=sensor,
         ctx=ctx,
         service=resolved_service,
         clock=resolved_clock,
         harness=str(ctx.harness_id),
+        error_reporter=resolved_error_reporter,
     )
     tasks = {
         asyncio.create_task(_consume_events(sensor, coordinator)),
@@ -239,14 +263,18 @@ async def run(
     except asyncio.CancelledError:
         raise
     except BaseException as exc:
-        record_sensor_error(ctx, phase="run", error=exc)
+        resolved_error_reporter.record(phase="run", error=exc)
     finally:
         for task in tasks:
             task.cancel()
         for task in tasks:
             with suppress(BaseException):
                 await task
-        await coordinator.cancel_schedule()
+        try:
+            await coordinator.cancel_schedule()
+        finally:
+            if error_reporter is None:
+                resolved_error_reporter.close()
 
 
-__all__ = ["SidecarClock", "record_sensor_error", "run"]
+__all__ = ["SensorErrorReporter", "SidecarClock", "run"]

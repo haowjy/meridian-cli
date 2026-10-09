@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from meridian.lib.core.types import HarnessId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
 
 
@@ -19,6 +19,19 @@ class IdleEvent:
     harness_session_id: str
     turn_id: str | None
     timestamp: float
+    implies_return: bool = False
+    input_count: int | None = None
+    message_id: str | None = None
+    provider: str | None = None
+    ttl_seconds: int | None = None
+
+
+@dataclass(frozen=True)
+class IdleEnvFacts:
+    """Harness environment facts that affect idle policy."""
+
+    harness_autocompact_off: bool | None
+    cache_retention: str | None
 
 
 @dataclass(frozen=True)
@@ -51,6 +64,7 @@ class IdleSensorContext:
     tmux_pane: str | None
     tui_alive: Callable[[], bool]
     spawn_dir: Path
+    spawn_id: SpawnId | None = None
 
 
 class IdleSensor(Protocol):
@@ -67,6 +81,7 @@ class IdleSensor(Protocol):
 
 __all__ = [
     "CompactResult",
+    "IdleEnvFacts",
     "IdleEvent",
     "IdleFacts",
     "IdleSensor",

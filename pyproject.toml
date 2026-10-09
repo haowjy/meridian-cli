@@ -77,9 +77,8 @@ path = "src/meridian/__init__.py"
 [tool.hatch.build]
 artifacts = [
   "src/meridian/pi_runtime/dist/extensions/*",
-  "src/meridian/claude_runtime/**",
-  "src/meridian/claude_runtime/meridian-idle/.claude-plugin/plugin.json",
 ]
+exclude = ["src/meridian/claude_runtime/*/.claude-plugin/types"]
 
 [tool.hatch.build.targets.sdist]
 include = [

@@ -3,6 +3,7 @@
 import logging
 import os
 import tomllib
+from collections.abc import Mapping
 from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, cast
@@ -1466,79 +1467,70 @@ class HarnessProfileConfig(BaseModel):
         return float(value)
 
 
-def harness_idle_model(harness_id: str) -> type[BaseModel]:
+class _HarnessIdleFields(BaseModel):
+    """Shared typed fields for every harness-specific idle config."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    enabled: bool = True
+    compact: bool = True
+    ttl_seconds: Annotated[int | None, Field(gt=0)] = None
+
+
+def harness_idle_model(
+    harness_id: str,
+    *,
+    defaults: Mapping[str, object] | None = None,
+) -> type[_HarnessIdleFields]:
     """Build the metadata-backed idle settings model for one harness."""
 
     normalized = harness_id.strip().lower()
     if normalized not in _HARNESS_TABLE_KEYS:
         raise ValueError(f"Unsupported harness ID for idle config: {harness_id!r}.")
-    ttl_default = {"codex": 1800, "opencode": 300}.get(normalized)
+    resolved_defaults = dict(defaults or {})
+    unknown_defaults = resolved_defaults.keys() - _HarnessIdleFields.model_fields.keys()
+    if unknown_defaults:
+        names = ", ".join(sorted(unknown_defaults))
+        raise ValueError(f"Unsupported idle defaults for {normalized}: {names}.")
+
+    fields: dict[str, Any] = {}
+    for field_name, model_field in _HarnessIdleFields.model_fields.items():
+        option = config_field(
+            f"harness.{normalized}.idle.{field_name}",
+            value_kind="int" if field_name == "ttl_seconds" else "bool",
+            file_aliases=(
+                file_alias(("harness", normalized, "idle"), field_name),
+            ),
+            env_vars=(
+                f"MERIDIAN_HARNESS_IDLE_{field_name.upper()}_{normalized.upper()}",
+            ),
+        )
+        annotation = Annotated[(model_field.annotation, *model_field.metadata, option)]
+        fields[field_name] = (
+            annotation,
+            resolved_defaults.get(field_name, model_field.default),
+        )
+
     return create_model(
         f"{normalized.title()}HarnessIdleConfig",
-        __config__=ConfigDict(frozen=True, extra="ignore"),
+        __base__=_HarnessIdleFields,
         __module__=__name__,
-        enabled=(
-            Annotated[
-                bool,
-                config_field(
-                    f"harness.{normalized}.idle.enabled",
-                    value_kind="bool",
-                    file_aliases=(
-                        file_alias(("harness", normalized, "idle"), "enabled"),
-                    ),
-                    env_vars=(f"MERIDIAN_HARNESS_IDLE_ENABLED_{normalized.upper()}",),
-                ),
-            ],
-            True,
-        ),
-        compact=(
-            Annotated[
-                bool,
-                config_field(
-                    f"harness.{normalized}.idle.compact",
-                    value_kind="bool",
-                    file_aliases=(
-                        file_alias(("harness", normalized, "idle"), "compact"),
-                    ),
-                    env_vars=(f"MERIDIAN_HARNESS_IDLE_COMPACT_{normalized.upper()}",),
-                ),
-            ],
-            True,
-        ),
-        ttl_seconds=(
-            Annotated[
-                int | None,
-                config_field(
-                    f"harness.{normalized}.idle.ttl_seconds",
-                    value_kind="int",
-                    file_aliases=(
-                        file_alias(("harness", normalized, "idle"), "ttl_seconds"),
-                    ),
-                    env_vars=(
-                        f"MERIDIAN_HARNESS_IDLE_TTL_SECONDS_{normalized.upper()}",
-                    ),
-                ),
-                Field(gt=0),
-            ],
-            ttl_default,
-        ),
+        **fields,
     )
 
 
 if TYPE_CHECKING:
-    class _HarnessIdleConfigType(BaseModel):
-        enabled: bool = True
-        compact: bool = True
-        ttl_seconds: int | None = None
-
-    ClaudeHarnessIdleConfig = _HarnessIdleConfigType
-    CodexHarnessIdleConfig = _HarnessIdleConfigType
-    OpenCodeHarnessIdleConfig = _HarnessIdleConfigType
-    PiHarnessIdleConfig = _HarnessIdleConfigType
+    ClaudeHarnessIdleConfig = _HarnessIdleFields
+    CodexHarnessIdleConfig = _HarnessIdleFields
+    OpenCodeHarnessIdleConfig = _HarnessIdleFields
+    PiHarnessIdleConfig = _HarnessIdleFields
 else:
     ClaudeHarnessIdleConfig = harness_idle_model("claude")
-    CodexHarnessIdleConfig = harness_idle_model("codex")
-    OpenCodeHarnessIdleConfig = harness_idle_model("opencode")
+    CodexHarnessIdleConfig = harness_idle_model("codex", defaults={"ttl_seconds": 1800})
+    OpenCodeHarnessIdleConfig = harness_idle_model(
+        "opencode",
+        defaults={"ttl_seconds": 300},
+    )
     PiHarnessIdleConfig = harness_idle_model("pi")
 
 

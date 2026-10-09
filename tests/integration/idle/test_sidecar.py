@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,7 +10,7 @@ from typing import Any, cast
 import pytest
 
 from meridian.lib.config.settings import MeridianConfig
-from meridian.lib.core.types import HarnessId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.idle_types import (
     CompactResult,
@@ -18,7 +19,7 @@ from meridian.lib.harness.idle_types import (
     IdleSensorContext,
 )
 from meridian.lib.idle.service import IdleService, NoticeSpec, NotifyReport
-from meridian.lib.idle.sidecar import SidecarClock, run
+from meridian.lib.idle.sidecar import SensorErrorReporter, SidecarClock, run
 from meridian.lib.state.idle_store import IdleStore
 
 
@@ -100,6 +101,7 @@ def context(tmp_path: Path, alive: list[bool]) -> IdleSensorContext:
         tmux_pane=None,
         tui_alive=lambda: alive[0],
         spawn_dir=tmp_path / "p1",
+        spawn_id=SpawnId("p1"),
     )
 
 
@@ -220,3 +222,21 @@ async def test_sidecar_contains_base_exception_from_sensor_facts(tmp_path: Path)
 
     assert sensor.compact_calls == 0
     assert "broken facts" in (tmp_path / "p1" / "debug.jsonl").read_text(encoding="utf-8")
+
+
+def test_sensor_error_reporter_rate_limits_repeated_failures(tmp_path: Path) -> None:
+    reporter = SensorErrorReporter(context(tmp_path, [True]))
+    for _ in range(3):
+        reporter.record(phase="raw_event", error=RuntimeError("repeated"))
+    reporter.close()
+    reporter.close()
+
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "p1" / "debug.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["event"] for record in records] == [
+        "idle.sensor_error",
+        "idle.sensor_error_repeats",
+    ]
+    assert records[1]["data"]["repeat_count"] == 2
