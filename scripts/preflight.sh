@@ -19,6 +19,8 @@ case "$MODE" in
   extended|full)
     cd "$ROOT_DIR"
     printf 'preflight: extended gate (explicit tests/ collection)\n' >&2
+    # A complete gate must not inherit a last-failed or filtered selection.
+    unset PYTEST_ADDOPTS PYTESTS_LAST_FAILED
     run_step uv run --extra dev ruff check .
     run_step uv run --extra dev python -m pyright
     (

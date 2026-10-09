@@ -20,8 +20,9 @@ Those seams are `integration/config`, `catalog`, `safety`, `harness`, `hooks`,
 The default is intentionally not the complete suite. Use an explicit `tests/`
 path for release, nightly, or full regression checks; focused paths continue to
 override `testpaths`, including files under `tests/extended/`. Tests in
-`tests/smoke/` and `tests/e2e/` are not part of pytest collection and remain
-manual/runtime workflows.
+`tests/smoke/` and `tests/e2e/` are not pytest-collected: they contain opt-in
+scripts and manual/runtime guides. The [smoke index](smoke/README.md) distinguishes
+cheap executable checks from live/network probes.
 
 Use `uv run pytest --runner-history=off <tests>` to trap implicit reads of legacy
 spawn/artifact runner `history.jsonl` (Meridian no longer writes it). The trap is
@@ -35,7 +36,8 @@ tests/unit/         Pure functional cores. <2s total.
 tests/integration/  Real seams: filesystem, subprocesses, cross-module wiring.
 tests/contract/     API payload/retry shapes and type contracts that must not drift.
 tests/platform/     OS behavior: signals, process scope, encoding, locking.
-tests/smoke/        Markdown guides for CLI-visible behavior.
+tests/extended/     Expensive state lifecycle contracts; explicit paths only.
+tests/smoke/        Opt-in scripts and guides for CLI-visible behavior.
 ```
 
 Mock choreography around a real seam does not make a unit test. Exercise that

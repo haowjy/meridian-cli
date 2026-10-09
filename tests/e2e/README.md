@@ -1,66 +1,55 @@
-# Meridian E2E Tests (Manual)
+# Meridian E2E workflows (opt-in)
 
-Manual end-to-end tests for flows that require a working harness, network access,
-or human judgment. Quick manual CLI checklists live in `tests/smoke/`; neither
-`tests/e2e/` nor `tests/smoke/` is a pytest-collected suite.
+These guides exercise runtime seams that require a real subprocess/harness or
+operator judgment. They are not pytest-collected or part of the default gate.
+Live cases require deliberate cost approval.
 
-## When to Use Manual E2E Tests
+## Choose a tier
 
-Use these guides when the test:
+| Tier | Guides | Requirements |
+|---|---|---|
+| Local, no model request | `project-resolution.md`, `spawn/routing-provenance.md`, `spawn/skill-injection.md` | Disposable setup; some dry-runs probe installed harnesses/catalogs. Prefer `tests/smoke/scripts/cli.sh` for the maintained cheap path. |
+| Local opt-in integration | `spawn/bootstrap.md`, `hooks/git-autosync.md` | Disposable project and (for autosync) a local bare remote. Keep destructive fixtures under the scratch path. |
+| Live/credentialed | `fork.md`, `spawn/context-from.md`, `opencode-orphan-cleanup.md` | Explicit human opt-in, eligible cheap model/harness, isolated native stores, and a timeout. These may spend money or terminate a worker. |
+| Network/cache | `models-cache-auto-refresh.md` | Disposable fixture only; explicit network approval and prerequisites. Never run in a default gate. |
 
-- Requires a working harness (Claude, Codex, OpenCode) running live
-- Involves network/cache freshness behavior
-- Is intentionally open-ended or exploratory
-- Tests harness-specific transport or lineage behavior
+`tests/smoke/README.md` explains default automatic versus executable smoke,
+complete automated regression, local manual, and live/manual tiers. The complete
+pytest wrapper is `tests/smoke/scripts/extended.sh`.
 
-## Manual Guides
+## Isolation
 
-| Guide | What it tests |
-|-------|---------------|
-| `adversarial.md` | Intentionally open-ended adversarial exploration |
-| `fork.md` | Real harness lineage with `--fork` |
-| `models-cache-auto-refresh.md` | Network/cache freshness behavior |
-| `opencode-orphan-cleanup.md` | Real OpenCode backend orphan cleanup after hard worker crash |
-| `project-resolution.md` | `-C`/`MERIDIAN_PROJECT_DIR` project selection with stale runtime env |
-| `state-integrity.md` | Reconciliation after manual state corruption |
-| `streaming-adapter-parity.md` | Cross-harness streaming behavior |
-| `spawn/bootstrap.md` | Spawn bootstrap against a live harness |
-| `spawn/context-from.md` | Live `--from` with real sessions |
-| `spawn/lifecycle.md` | Background spawn lifecycle with working harness |
-| `spawn/routing-provenance.md` | Dry-run routing provenance and resolved harness/model display |
-| `spawn/skill-injection.md` | Harness-specific skill transport |
-| `hooks/git-autosync.md` | Real git push/rebase integration |
-
-## Moved to Quick Smoke Guides
-
-These flows are now markdown guides under `tests/smoke/`:
-
-- `agent-mode.md`
-- `config.md`
-- `hooks.md`
-- `output-formats.md`
-- `sanity.md`
-- `spawn-dry-run.md`
-- `spawn-errors.md`
-- `workspace.md`
-- `work-items.md`
-
-## How to Run
-
-1. Pick one guide.
-2. Run each bash block exactly as written.
-3. Treat any `FAIL` line, traceback, or hang as a test failure.
-
-## Setup
-
-For scratch repo setup, see the individual guide preambles. Most guides expect:
+From a fresh shell, source the shared helper rather than copying partial setup:
 
 ```bash
-export REPO_ROOT=/abs/path/to/meridian-cli
-export SMOKE_REPO="$(mktemp -d)"
-git -C "$SMOKE_REPO" init --quiet
-for var in $(env | awk -F= '/^MERIDIAN_/ {print $1}'); do unset "$var"; done
-export MERIDIAN_PROJECT_DIR="$SMOKE_REPO"
-cd "$REPO_ROOT"
-export RUNTIME_ROOT="$(uv run python tests/e2e/resolve-runtime-root.py)"
+. tests/smoke/scripts/setup.sh       # add --git only for git scenarios
+# work in "$SCRATCH"; the helper leaves the caller's cwd unchanged
+smoke_cleanup
 ```
+
+The helper clears inherited `MERIDIAN_*` and `_MERIDIAN_*` context, isolates
+HOME/XDG/Meridian/native harness stores, and disables global/system git config
+and signing for `--git`. Both control and task dirs are pinned to `SCRATCH`;
+rebind both under `SMOKE_ROOT` when creating fixture subprojects. The caller's
+cwd remains unchanged for source-package commands. `SMOKE_ORIGINAL_HOME` is retained only so a human can
+copy selected auth into an isolated store deliberately. It is never an implicit
+credential source. Do not run an e2e block against a real project or native
+store.
+
+## Guide notes
+
+- `fork.md` and `spawn/context-from.md` are the single lineage references; use
+  their short happy path before any rejection matrix.
+- Foreground/background lifecycle and reports have one [live guide](../smoke/spawn-return-report.md).
+- State persistence/recovery is automated in `tests/integration/state/`, with
+  expensive cancellation/history checks in `tests/extended/state/`. Obsolete
+  v2 manual fixtures were retired rather than preserving a second test suite.
+- Cross-transport projection parity is a default automated contract in
+  `tests/contract/harness/test_launch_spec_parity.py`; the stale manual duplicate
+  and its dead test paths were retired.
+- `hooks/git-autosync.md` must use a disposable local bare remote; it must not
+  push to a developer or public remote.
+- `opencode-orphan-cleanup.md` may kill a worker by design; use a disposable
+  process and bounded timeout.
+- `models-cache-auto-refresh.md` is network-sensitive and documents explicit
+  fixture prerequisites; mtime alone is not proof of a fetch.

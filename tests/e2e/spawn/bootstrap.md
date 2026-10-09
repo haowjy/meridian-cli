@@ -5,11 +5,14 @@ Validate the user-facing bootstrap flow with a disposable workspace. Use dry-run
 ## Setup
 
 ```bash
-export REPO_ROOT=/abs/path/to/meridian-cli
-export SMOKE_REPO="$(mktemp -d /tmp/meridian-bootstrap.XXXXXX)"
+. tests/smoke/scripts/setup.sh --git
+export REPO_ROOT="$SMOKE_ORIGINAL_CWD"
+export SMOKE_REPO="$SCRATCH/bootstrap"
+mkdir -p "$SMOKE_REPO"
 git -C "$SMOKE_REPO" init --quiet
-for var in $(env | awk -F= '/^MERIDIAN_/ {print $1}'); do unset "$var"; done
-export UV_CACHE_DIR=/tmp/uv-cache
+export MERIDIAN_PROJECT_DIR="$SMOKE_REPO"
+export MERIDIAN_TASK_DIR="$SMOKE_REPO"
+export UV_CACHE_DIR="$SMOKE_ROOT/uv-cache"
 
 cat > "$SMOKE_REPO/mars.toml" <<'EOF_MARS'
 [settings]
@@ -83,7 +86,7 @@ PY
 ### BOOT-2. Bootstrap still launches when no docs exist [CRITICAL]
 
 ```bash
-EMPTY_REPO="$(mktemp -d /tmp/meridian-bootstrap-empty.XXXXXX)" && \
+EMPTY_REPO="$SMOKE_ROOT/bootstrap-empty" && mkdir -p "$EMPTY_REPO" && \
 cat > "$EMPTY_REPO/mars.toml" <<'EOF_MARS'
 [settings]
 targets = [".claude"]

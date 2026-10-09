@@ -1,5 +1,9 @@
 # Fork
 
+**Opt-in live tier:** several cases launch real harness sessions and can spend
+money. Use an eligible cheap model, disposable state, and drain every
+background run. This guide is not part of automatic smoke.
+
 These checks validate fork flows on both root and spawn commands:
 - `--fork [ref]` (identity-preserving)
 - `--fork-fresh [ref]` (identity-changing)
@@ -10,12 +14,9 @@ This suite requires a working harness because several scenarios execute real for
 ## Setup
 
 ```bash
-export REPO_ROOT=/abs/path/to/meridian-channel
-export SMOKE_REPO="$(mktemp -d /tmp/meridian-fork.XXXXXX)"
-git -C "$SMOKE_REPO" init --quiet
-for var in $(env | awk -F= '/^MERIDIAN_/ {print $1}'); do unset "$var"; done
-export MERIDIAN_PROJECT_DIR="$SMOKE_REPO"
-cd "$REPO_ROOT"
+. tests/smoke/scripts/setup.sh --git
+export REPO_ROOT="$SMOKE_ORIGINAL_CWD"
+export SMOKE_REPO="$SCRATCH"
 export RUNTIME_ROOT="$(uv run python tests/e2e/resolve-runtime-root.py)"
 mkdir -p "$SMOKE_REPO/.mars/agents"
 cat > "$SMOKE_REPO/.mars/agents/reviewer.md" <<'EOF'

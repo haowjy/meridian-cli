@@ -4,7 +4,6 @@ import os
 import subprocess
 import sys
 from collections.abc import Sequence
-from pathlib import Path
 
 DEFAULT_ARGS: tuple[str, ...] = (
     "-q",
@@ -40,18 +39,12 @@ def build_pytest_args(
 
 def main(argv: Sequence[str] | None = None) -> int:
     user_args = list(sys.argv[1:] if argv is None else argv)
-    explicit_paths = [
-        argument
-        for argument in user_args
-        if not argument.startswith("-") and Path(argument).exists()
-    ]
-    if explicit_paths:
-        print(
-            f"pytest-llm: explicit test path ({' '.join(explicit_paths)})",
-            file=sys.stderr,
-        )
-    else:
-        print("pytest-llm: default fast paths from pyproject.toml", file=sys.stderr)
+    selection = (
+        f"explicit pytest arguments: {' '.join(user_args)}"
+        if user_args
+        else "default fast paths from pyproject.toml (unless pytest options override them)"
+    )
+    print(f"pytest-llm: {selection}", file=sys.stderr)
     command = build_pytest_args(
         user_args, include_last_failed=_is_truthy_env("PYTESTS_LAST_FAILED")
     )

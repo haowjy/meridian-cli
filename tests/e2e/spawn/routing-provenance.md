@@ -5,12 +5,13 @@ Validate the Phase 12 dry-run routing provenance surface in a realistic packaged
 ## Setup
 
 ```bash
-export REPO_ROOT=/abs/path/to/meridian-cli
-export SMOKE_REPO="$(mktemp -d /tmp/meridian-routing.XXXXXX)"
+. tests/smoke/scripts/setup.sh --git
+export REPO_ROOT="$SMOKE_ORIGINAL_CWD"
+export SMOKE_REPO="$SCRATCH/routing"
+mkdir -p "$SMOKE_REPO"
 git -C "$SMOKE_REPO" init --quiet
-for var in $(env | awk -F= '/^MERIDIAN_/ {print $1}'); do unset "$var"; done
 export MERIDIAN_PROJECT_DIR="$SMOKE_REPO"
-cd "$REPO_ROOT"
+export MERIDIAN_TASK_DIR="$SMOKE_REPO"
 export RUNTIME_ROOT="$(uv run python tests/e2e/resolve-runtime-root.py)"
 
 cat > "$SMOKE_REPO/mars.toml" <<'TOML'

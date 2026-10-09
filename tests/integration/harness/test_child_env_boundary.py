@@ -74,7 +74,13 @@ def _write_recording_harness(path: Path, *, harness: HarnessId) -> None:
 async def _wait_for_records(path: Path, count: int) -> list[dict[str, object]]:
     for _ in range(100):
         if path.exists():
-            records = [json.loads(line) for line in path.read_text().splitlines()]
+            # The child appends JSONL while this observer polls. A visible file
+            # can still end in an unfinished write; only consume committed lines.
+            records = [
+                json.loads(line)
+                for line in path.read_text().splitlines(keepends=True)
+                if line.endswith("\n")
+            ]
             if len(records) >= count:
                 return records
         await asyncio.sleep(0.01)

@@ -32,6 +32,8 @@ switch ($Mode) {
     }
     { $_ -in @('extended', 'full') } {
         [Console]::Error.WriteLine('preflight: extended gate (explicit tests/ collection)')
+        Remove-Item Env:PYTEST_ADDOPTS -ErrorAction SilentlyContinue
+        Remove-Item Env:PYTESTS_LAST_FAILED -ErrorAction SilentlyContinue
         Invoke-Step uv, run, ruff, check, '.'
         Invoke-Step uv, run, --extra, dev, python, '-m', pyright
         Push-Location (Join-Path $RootDir 'src\meridian\pi_runtime')
