@@ -76,11 +76,13 @@ Claude profile includes:
 - `[harness.<claude|codex>] allow_builtin_agents` (default `false`) — whether the
   harness's own subagents are available. Meridian is the orchestrator, so
   harness-native subagents are off by default: Claude denies built-in `Agent`
-  types; Codex launches with `--disable multi_agent_v2 -c agents.max_depth=0`
-  (on Codex 0.162 `features.multi_agent=false` leaves the v1 tools available).
-- Claude native Agent routing is not a `meridian.toml` harness policy. Built-in
-  Claude agents stay denied; generic `Agent` follows Mars `[settings.meridian.agent_copy]`
-  with `.claude` target materialization.
+  types; Codex launches with `-c features.multi_agent_v2=false -c agents.max_depth=0`
+  (on Codex 0.162 `features.multi_agent=false` leaves the v1 tools available, and
+  `--disable` would fail on a Codex build that lacks the feature). Every harness
+  profile parses the key, but only Claude and Codex act on it.
+- Generic Claude `Agent` routing is not a `meridian.toml` harness policy: it follows
+  Mars `[settings.meridian.agent_copy]` with `.claude` target materialization. Built-in
+  Claude agent types are denied unless `allow_builtin_agents = true`.
 
 ## Depth
 

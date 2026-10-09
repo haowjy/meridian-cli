@@ -208,11 +208,13 @@ def _owns_session(project_root: Path, session_ref: str) -> bool:
 
 # Codex's own multi-agent tools are invisible to Meridian, and v2 tells a lone
 # spawn it is `/root` of a team, so it can message itself and wait forever.
-# Codex 0.162: disabling the v2 feature falls back to v1, whose tools survive
-# `--disable multi_agent`; only a zero spawn depth removes them.
+# Codex 0.162: disabling v2 falls back to v1, whose tools survive
+# `--disable multi_agent`; only a zero spawn depth removes them. Config
+# overrides, not `--disable`: Codex rejects `--disable` for a feature it does
+# not know (older builds), but ignores an unknown `features.<name>=false`.
 _DISABLE_BUILTIN_AGENT_FLAGS: tuple[str, ...] = (
-    "--disable",
-    "multi_agent_v2",
+    "-c",
+    "features.multi_agent_v2=false",
     "-c",
     "agents.max_depth=0",
 )
@@ -390,7 +392,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             continue_session_id=continue_session_id,
             continue_fork=run.continue_fork and continue_session_id is not None,
             permission_resolver=perms,
-            # Ahead of passthrough args so an explicit override still wins.
+            # Ahead of passthrough args so a later `-c` override still wins.
             extra_args=(
                 *(() if run.allow_builtin_agents else _DISABLE_BUILTIN_AGENT_FLAGS),
                 *run.extra_args,

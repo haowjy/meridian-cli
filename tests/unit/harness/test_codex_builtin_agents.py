@@ -12,7 +12,7 @@ from meridian.lib.harness.projections.project_codex_streaming import (
 )
 from meridian.lib.safety.permissions import PermissionConfig, TieredPermissionResolver
 
-_DISABLED = ["--disable", "multi_agent_v2", "-c", "agents.max_depth=0"]
+_DISABLED = ["-c", "features.multi_agent_v2=false", "-c", "agents.max_depth=0"]
 
 
 def _appserver_command(params: SpawnParams) -> list[str]:
@@ -54,7 +54,15 @@ def test_codex_builtin_agents_follow_harness_config(
     assert _contains(command, _DISABLED) is not expected
 
 
-def test_codex_passthrough_override_follows_default_disable() -> None:
-    command = _appserver_command(SpawnParams(prompt="x", extra_args=("-c", "agents.max_depth=1")))
+@pytest.mark.parametrize(
+    "default, override",
+    [
+        ("agents.max_depth=0", "agents.max_depth=1"),
+        ("features.multi_agent_v2=false", "features.multi_agent_v2=true"),
+    ],
+)
+def test_codex_passthrough_override_follows_default_disable(default: str, override: str) -> None:
+    # Codex applies `-c` overrides in order, so a later passthrough value wins.
+    command = _appserver_command(SpawnParams(prompt="x", extra_args=("-c", override)))
 
-    assert command.index("agents.max_depth=1") > command.index("agents.max_depth=0")
+    assert command.index(override) > command.index(default)

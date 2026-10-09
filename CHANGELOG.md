@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- Codex spawns/primaries launch without Codex's own subagents (`--disable multi_agent_v2 -c agents.max_depth=0`). Lone spawn told it was `/root` of a team messaged itself, waited 25 min per call. Opt back in: `[harness.codex] allow_builtin_agents = true`. Setting now per harness, not Claude-only.
+- Codex spawns/primaries launch without Codex's own subagents (`-c features.multi_agent_v2=false -c agents.max_depth=0`). Lone spawn told it was `/root` of a team messaged itself, waited 25 min per call. Opt back in: `[harness.codex] allow_builtin_agents = true`. Setting now per harness, not Claude-only.
 
 ## [0.9.1] - 2026-10-09
 
