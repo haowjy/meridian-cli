@@ -5,55 +5,24 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- Add catalog-backed `[notify]` configuration and `MERIDIAN_NOTIFY_*` environment inputs.
-- Add harness-agnostic notification labels, channel registry, and ntfy/none delivery.
-- Add STARTTLS SMTP and Gmail notification channels with protected password-file credentials.
-- Add a command notification channel with structured stdin, text argv, and bounded execution.
-- Add `meridian notify` with session labels, backend fan-out, and JSON reporting.
-- Expose `MERIDIAN_SESSION_ROLE=primary|spawn` to every launched harness.
-- Load metadata-backed top-level and per-harness nested config tables generically,
-  with initial `idle.enabled` settings for global and harness-specific control.
-- Add harness-agnostic idle sensor contracts and an inert launcher-side task seam.
-- Add global idle scheduling policy and per-harness compaction and cache-TTL settings.
-- Persist idle stretches atomically with truncation recovery and seven-day garbage collection;
-  add pure scheduling, ordered compaction guards, and active-child detection.
-- Add the injected idle service state machine and launcher sidecar for at-most-once
-  push, warning, and compaction stages.
-- Add the hidden `meridian idle` adapter CLI with role-gated config, durable
-  schedule operations, harness facts, event parsing, status, and Claude mod discovery.
-- Detect Claude and Pi prompt-cache lifetimes and expose harness environment facts
-  through their idle bundle hooks.
-- Replace the no-op Claude idle plugin with the real `meridian-idle` mod: senses main-loop
-  idle and user return, drives `meridian idle` arm/return/fire/done, compacts only when core
-  says act, and adds `/meridian-idle`. Ignore Claude-generated plugin type files.
-- Add the primary-only Pi idle extension for native idle/return sensing, durable
-  timer reload, core-gated notifications, and compaction.
-- Add managed-primary OpenCode idle sensing, pane draft guards, and native summarize
-  compaction through the launcher's backend.
-- Add Codex idle-event injection for interactive app-server launches only.
-- Pin Codex idle events to managed primary threads, poll their external schedule,
-  sense pane drafts/activity, and compact through a verified tmux command.
+- Add `meridian notify "<message>"` with ntfy push, SMTP/Gmail email, and command backends.
+- Add idle push, cache-expiry warning, and guarded compaction for interactive Claude,
+  Pi, Codex, and OpenCode primaries. Claude and Pi sense cache lifetime; Pi's short-cache
+  default and OpenCode's 5-minute default are push-only; Codex defaults to 30 minutes.
+- Add `[notify]`, `[idle]`, and `[harness.<harness>.idle]` config with
+  `MERIDIAN_NOTIFY_*`, `MERIDIAN_IDLE_*`, and `MERIDIAN_HARNESS_IDLE_*_<H>` overrides.
+- Add the bundled Claude `meridian-idle` mod, automatic for Meridian primaries and
+  opt-in elsewhere with `CLAUDE_CODE_PLUGIN_DIRS="$(meridian idle mod-path)"`.
+- Add the primary-only Pi `meridian-idle` bundle.
+- Inject Meridian's idle callback through Codex `notify` while preserving a configured
+  user callback.
+
 ### Changed
-- Load Meridian's bundled idle plugin only in interactive Claude primaries.
+- Set `MERIDIAN_SESSION_ROLE=primary|spawn` for every harness and remove the Pi-only
+  `_MERIDIAN_PI_SESSION_ROLE` variable.
 
 ### Fixed
-- Keep Claude and Pi idle calls interactive outside managed launches, make Pi
-  prompt returns non-blocking and ordered behind arms, and re-check Pi's live
-  idle, pending-message, and draft state before compaction.
-- Keep harness adapters independent of idle policy while preserving pinned Codex
-  event parsing and user-notify chaining at the CLI boundary.
-- Suppress Codex idle push and cache-warning notifications while an externally
-  observed turn is still running.
-- Record Codex compaction only after its completion marker appears, and re-check
-  TUI liveness before submitting the verified command.
-- Bound OpenCode idle backend requests and suppress false user returns when
-  compaction events arrive out of order.
-- Keep idle compaction completion alive across user returns, contain and offload
-  sidecar policy calls, honor outside-Meridian interactive sessions, and close
-  idle notification, timer, completion-result, and state-GC edge cases.
-- Stop primary idle sensors before connection/TUI teardown, carry adapter idle
-  metadata into persisted state, rate-limit sensor diagnostics, and keep generated
-  Claude type files out of distributions.
+- Stop wheels from force-including generated Claude plugin type files.
 - Reconcile Pi docs and smoke guides with current extension loading, native session boundaries, task ownership and causal result delivery; remove obsolete integration phases and status tables.
 
 ## [0.9.0] - 2026-10-02

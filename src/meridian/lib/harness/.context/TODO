@@ -1,4 +1,5 @@
 # Harness follow-ups
 
-No open report-namespace items. OpenCode report fallback reads only event-named
-native replies from the recorded store; ambient DB/session-file fallbacks are gone.
+- `pi_idle.py`: Normalize `openai-*` provider identifiers to `openai` before
+  detecting cache retention, so Pi's `openai-codex` provider can schedule the
+  warning and compaction stages instead of falling back to push-only.

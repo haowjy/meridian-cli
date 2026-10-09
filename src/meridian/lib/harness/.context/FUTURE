@@ -1,0 +1,3 @@
+- `opencode_idle.py`: During a live OpenCode smoke, switch models and verify
+  that `session.model` follows the active model before summarize; if it lags,
+  source the compaction model from the newest user event's `info.model` (G2 O3).
