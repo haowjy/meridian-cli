@@ -48,7 +48,7 @@ def _write_recording_harness(path: Path, *, harness: HarnessId) -> None:
         if harness is HarnessId.PI
         else "for _line in sys.stdin:\n    pass\n"
     )
-    version_output = "pi 3.0.0" if harness is HarnessId.PI else "2.1.0"
+    version_output = "pi 1.1.0" if harness is HarnessId.PI else "2.1.0"
     help_branch = (
         "if '--help' in sys.argv[1:]:\n"
         f"    print({_PI_HELP!r})\n"

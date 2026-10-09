@@ -8,3 +8,9 @@
   protocol of its own; request-sequenced refresh narrows stale evidence but is not an
   atomic admission barrier. Do not add a ledger, counter, or notification bus without
   establishing that stronger requirement.
+- `pi_drain.py`, `pi_quiescence.py`, and Pi's native event contract: before supporting
+  arbitrary third-party branch-summary work inside spawned sessions, establish a
+  paired lifecycle signal and qualify it with a native replay. Queue updates and
+  summarization-retry telemetry cannot establish either busy or idle on their own.
+  Current qualification covers agent runs and ordinary compaction, not arbitrary
+  branch-summary/session-tree operations; do not restore an unpaired activity latch.

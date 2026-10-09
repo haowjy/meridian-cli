@@ -6,7 +6,8 @@ core mechanism that moves events from the harness outward to persistence, observ
 and the subscriber queue.
 
 Mostly mechanism. Generic terminal classification lives in `DrainPolicy`; shared
-candidate/deadline/stabilization mechanics live in `CompletionCoordinator`, behind
+candidate/deadline mechanics and the stabilization/validation phases live in
+`CompletionCoordinator`, behind
 the outer `DrainCoordinator` seam. Plain streaming harnesses intentionally run with
 `coordinator=None`; Pi and resident Codex/OpenCode paths get narrow coordinators only
 when their connection exposes the needed seam. Keep Pi child-wave,
@@ -135,7 +136,8 @@ orphaned; deletion, normal completion, cancellation, and shutdown stop it intent
 - `drain_teardown.py` — harness-neutral plan-owned connection-stop contract and default
 - `pi_drain_teardown.py` — Pi connection-stop cleanup-phase policy
 - `completion_contracts.py` — typed evidence, profile, and cleanup collaborator contracts
-- `completion_coordinator.py` — shared candidate/wait/deadline/stabilization state machine
+- `completion_coordinator.py` — shared candidate/wait/deadline state machine, with
+  distinct stabilization and fresh-evidence validation phases
 - `descendant_evidence.py` — shared reconciled, transitive persisted-descendant assessment
 - `spawn_session.py` — `SpawnSession`, `DrainOutcome`
 - `pi_completion_profile.py` — Pi precedence, phases, deadlines, nudges, and stream-exit

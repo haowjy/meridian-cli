@@ -123,12 +123,16 @@ projection contract.
 
 Every proposed success receives a request sequence and waits for a refresh that covers
 that request before policy is reevaluated. A cached `ready` assessment cannot publish
-success. Explicit `done` may override known `blocked` evidence under resident policy;
+success. The coordinator's `stabilizing` phase has its own policy timer; when it elapses,
+the coordinator disarms that timer and enters a distinct `validating` phase while it
+awaits the already-requested fresh read. Activity interrupts either phase and
+invalidates pending validation. Clearing the retained candidate is a separate
+operation. Explicit `done` may override known `blocked` evidence under resident policy;
 Pi additionally requires parent idle and no owed result/publication. Neither policy
 overrides `unknown`. Refresh completions and other auxiliary or lifecycle wakes
 only request reevaluation; they are not completion authority. After event EOF, the same
-waiter stops event reads but continues refresh, poll, stabilization, nudge, and deadline
-arbitration until the candidate is accepted or rejected.
+waiter stops event reads but continues refresh, poll, stabilization, validation, nudge,
+and deadline arbitration until the candidate is accepted or rejected.
 
 ### DrainOutcome Classification
 

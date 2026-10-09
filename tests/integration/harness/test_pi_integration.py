@@ -200,7 +200,7 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
         "import os\n"
         "import sys\n"
         "if len(sys.argv) > 1 and sys.argv[1] == '--version':\n"
-        "    print('pi 3.0.0')\n"
+        "    print('pi 1.1.0')\n"
         "    raise SystemExit(0)\n"
         "if len(sys.argv) > 1 and sys.argv[1] == '--help':\n"
         f"    print({json.dumps(_PI_HELP_SURFACE)})\n"
