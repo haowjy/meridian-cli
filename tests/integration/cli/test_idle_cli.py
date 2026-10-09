@@ -221,6 +221,63 @@ def test_idle_config_honors_flag_falls_back_to_env_and_requires_harness(
     assert missing.returncode == 1
     assert json.loads(missing.stdout) == {"error": "--harness is required"}
     assert missing.stderr == ""
+def test_codex_idle_event_chains_user_notify_after_state_update(tmp_path: Path) -> None:
+    env = _idle_env(tmp_path)
+    thread_id = "01a11e8c-4466-7771-8f11-14286723b1bb"
+    codex_home = tmp_path / "codex"
+    codex_home.mkdir()
+    observed_state = tmp_path / "observed-state.json"
+    observed_payload = Path(f"{observed_state}.payload")
+    state_path = Path(env["MERIDIAN_HOME"]) / "idle" / f"codex-{thread_id}.json"
+    handler = tmp_path / "notify.sh"
+    handler.write_text(
+        '#!/bin/sh\ncat "$2" > "$1"\nprintf %s "$3" > "$1.payload"\n',
+        encoding="utf-8",
+    )
+    handler.chmod(0o700)
+    notify = ["/bin/sh", handler.as_posix(), observed_state.as_posix(), state_path.as_posix()]
+    (codex_home / "config.toml").write_text(
+        f"notify = {json.dumps(notify)}\n",
+        encoding="utf-8",
+    )
+    env["CODEX_HOME"] = codex_home.as_posix()
+
+    _json_success(
+        tmp_path,
+        env,
+        "idle",
+        "arm",
+        "--harness",
+        "codex",
+        "--session",
+        thread_id,
+        "--ttl",
+        "240",
+    )
+    payload = json.dumps(
+        {
+            "type": "agent-turn-complete",
+            "thread-id": thread_id,
+            "turn-id": "turn-1",
+            "input-messages": ["hello"],
+        },
+        separators=(",", ":"),
+    )
+
+    assert _json_success(
+        tmp_path,
+        env,
+        "idle",
+        "event",
+        "--harness",
+        "codex",
+        payload,
+    ) == {}
+
+    chained_state = json.loads(observed_state.read_text(encoding="utf-8"))
+    assert chained_state["last_input_count"] == 1
+    assert chained_state["stretch"] == 2
+    assert observed_payload.read_text(encoding="utf-8") == payload
 
 
 @pytest.mark.integration

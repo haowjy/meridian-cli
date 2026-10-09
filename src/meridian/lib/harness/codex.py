@@ -39,6 +39,7 @@ from meridian.lib.harness.bundle import (
     ManagedPrimaryProjectionPorts,
     register_harness_bundle,
 )
+from meridian.lib.harness.codex_idle import parse_idle_event, primary_idle_sensor
 from meridian.lib.harness.codex_rollout import (
     CODEX_ROLLOUT_FILENAME_RE,
     materialize_fork_rollout,
@@ -52,6 +53,8 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.connections.codex_ws import CodexConnection
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
+from meridian.lib.harness.launch_types import ManagedPrimaryPreview
+from meridian.lib.harness.passthrough.codex import build_codex_attach_command
 from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
@@ -157,6 +160,42 @@ def project_codex_spec_to_thread_request_for_project(
     """Project Codex managed-primary bootstrap payload for one project root."""
 
     return project_codex_spec_to_thread_request(spec, cwd=str(project_root))
+
+
+def project_codex_primary_preview(
+    spec: ResolvedLaunchSpec,
+    *,
+    project_root: Path,
+    env: Mapping[str, str] | None = None,
+) -> ManagedPrimaryPreview:
+    """Describe the managed Codex backend, JSON-RPC bootstrap, and TUI attach."""
+
+    _ = env
+    backend = project_codex_spec_to_appserver_command(spec, host="127.0.0.1", port=0)
+    listen_index = backend.index("--listen") + 1
+    backend[listen_index] = "ws://127.0.0.1:<port>"
+    method, payload = project_codex_spec_to_thread_request_for_project(
+        spec,
+        project_root=project_root,
+    )
+    session_id = spec.continue_session_id or "<session>"
+    return ManagedPrimaryPreview(
+        backend_command=tuple(backend),
+        bootstrap_method="POST",
+        bootstrap_path=method,
+        bootstrap_payload=payload,
+        attach_command=build_codex_attach_command(
+            session_id,
+            "ws://127.0.0.1:<port>",
+            spec.user_turn_content,
+        ),
+        steps=(
+            "Start the owned Codex app-server and wait for its WebSocket endpoint.",
+            "Bootstrap or resume the native thread over JSON-RPC.",
+            "Attach the Codex TUI to the managed thread; no black-box fallback.",
+        ),
+        model=spec.model,
+    )
 
 
 def _owns_session(project_root: Path, session_ref: str) -> bool:
@@ -612,8 +651,11 @@ register_harness_bundle(
             managed_primary=ManagedPrimaryProjectionPorts(
                 backend_command=project_codex_spec_to_appserver_command,
                 bootstrap_payload=project_codex_spec_to_thread_request_for_project,
+                preview=project_codex_primary_preview,
             ),
         ),
         semantics=CODEX_SEMANTICS,
+        primary_idle_sensor=primary_idle_sensor,
+        parse_idle_event=parse_idle_event,
     )
 )

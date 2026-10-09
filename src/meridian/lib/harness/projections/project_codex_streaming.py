@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 
+from meridian.lib.harness.codex_idle import IDLE_NOTIFY_COMMAND
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
@@ -114,11 +115,6 @@ def _consume_streaming_lifecycle_fields(spec: ResolvedLaunchSpec) -> None:
     # Prompt is sent in codex_ws after thread bootstrap, but we still account
     # for the field in this projection module to keep drift checks complete.
     _ = spec.prompt
-    if spec.interactive:
-        logger.debug(
-            "Codex streaming ignores interactive launch flag; "
-            "websocket transport remains interactive"
-        )
 
 
 # Flags accepted by `codex app-server` (from `codex app-server --help`). Unlike
@@ -165,6 +161,9 @@ def project_codex_spec_to_appserver_command(
         "--listen",
         f"ws://{host}:{port}",
     ]
+
+    if spec.interactive:
+        command.extend(("-c", f"notify={json.dumps(IDLE_NOTIFY_COMMAND)}"))
 
     sandbox_mode = map_codex_sandbox_mode(spec.permission_resolver.config.sandbox)
     if sandbox_mode is not None:

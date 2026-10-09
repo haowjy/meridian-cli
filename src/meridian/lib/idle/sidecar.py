@@ -318,10 +318,28 @@ async def run(
         harness=str(ctx.harness_id),
         error_reporter=resolved_error_reporter,
     )
-    tasks = {
-        asyncio.create_task(_consume_events(sensor, coordinator)),
-        asyncio.create_task(_poll_store(coordinator, poll_seconds)),
-    }
+    external_events = bool(getattr(sensor, "external_events", False))
+    tasks: set[asyncio.Task[None]] = set()
+    if external_events:
+        try:
+            initial = await asyncio.to_thread(
+                resolved_service.arm,
+                harness=str(ctx.harness_id),
+                session=ctx.harness_session_id,
+                spawn_id=str(ctx.spawn_id) if ctx.spawn_id is not None else None,
+                main_thread_id=ctx.harness_session_id,
+            )
+            # This first state is an identity pin, not an observed idle turn.
+            # Remember its version so polling ignores it until an external
+            # event advances the anchor or stretch.
+            if initial.stretch is not None and initial.anchor is not None:
+                coordinator.schedule_key = (initial.stretch, initial.anchor)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            resolved_error_reporter.record(phase="external_start", error=exc)
+        tasks.add(asyncio.create_task(_poll_store(coordinator, poll_seconds)))
+    tasks.add(asyncio.create_task(_consume_events(sensor, coordinator)))
     try:
         await asyncio.gather(*tasks)
     except asyncio.CancelledError:
