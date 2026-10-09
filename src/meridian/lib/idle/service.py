@@ -314,7 +314,19 @@ class IdleService:
                 and current is not None
                 and current.last_turn_id == turn_id
             ):
-                return current, _result_for_state(current, reason="duplicate-turn")
+                next_state = current.model_copy(
+                    update={
+                        "last_input_count": (
+                            input_count
+                            if input_count is not None
+                            else current.last_input_count
+                        )
+                    }
+                )
+                return next_state, _result_for_state(
+                    next_state,
+                    reason="duplicate-turn",
+                )
 
             if current is not None:
                 window_active = (

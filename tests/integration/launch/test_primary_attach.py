@@ -468,6 +468,15 @@ async def test_primary_attach_idle_sensor_runs_with_tui_and_receives_raw_events(
         sensor=sensor,
         connection=connection,
     )
+    alive_after_launch: list[bool] = []
+    real_shield = asyncio.shield
+
+    async def _observe_completed_tui(awaitable: Any) -> Any:
+        result = await real_shield(awaitable)
+        alive_after_launch.append(contexts[0].tui_alive())
+        return result
+
+    monkeypatch.setattr(primary_attach_module.asyncio, "shield", _observe_completed_tui)
     launcher = PrimaryAttachLauncher(
         spawn_id=SpawnId("p-idle-normal"),
         spawn_dir=spawn_dir,
@@ -488,6 +497,7 @@ async def test_primary_attach_idle_sensor_runs_with_tui_and_receives_raw_events(
     assert sensor.cancelled.is_set()
     assert sensor.raw_events == [event]
     assert alive_at_creation == [True]
+    assert alive_after_launch == [False]
     assert len(contexts) == 1
     assert contexts[0].connection is connection
     assert contexts[0].harness_id is HarnessId.CODEX

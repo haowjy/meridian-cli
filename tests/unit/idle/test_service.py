@@ -8,6 +8,7 @@ from typing import TypeVar
 from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.harness.idle_types import IdleEvent, IdleFacts
 from meridian.lib.idle.service import (
+    ArmResult,
     IdleService,
     NoticeSpec,
     NotifyReport,
@@ -450,9 +451,23 @@ def test_event_honors_adapter_metadata() -> None:
         ),
         harness="example",
     )
+    duplicate = idle.event(
+        IdleEvent(
+            "turn_end",
+            "s1",
+            "turn-1",
+            1,
+            implies_return=True,
+            input_count=5,
+        ),
+        harness="example",
+    )
 
     state = store.read("example", "s1")
     assert state is not None
+    assert isinstance(duplicate, ArmResult)
+    assert duplicate.reason == "duplicate-turn"
+    assert state.stretch == 1
     assert state.last_turn_id == "turn-1"
-    assert state.last_input_count == 4
+    assert state.last_input_count == 5
     assert state.ttl_seconds == 300
