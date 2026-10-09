@@ -257,6 +257,7 @@ class PrimaryAttachLauncher:
         self._event_consumer_task: asyncio.Task[None] | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._idle_task: asyncio.Task[None] | None = None
+        self._idle_error_reporter: idle_sidecar.SensorErrorReporter | None = None
         self._tui_scope_snapshot: ProcessScopeSnapshot | None = None
         self._running_process: RunningProcess | None = None
         self._signal_cancel_requested = False
@@ -290,33 +291,47 @@ class PrimaryAttachLauncher:
             spawn_dir=self._spawn_dir,
             spawn_id=self._spawn_id,
         )
+        error_reporter = idle_sidecar.SensorErrorReporter(ctx)
         try:
             sensor = sensor_factory(ctx)
         except BaseException as exc:
-            idle_sidecar.record_sensor_error(ctx, phase="create", error=exc)
+            error_reporter.record(phase="create", error=exc)
+            error_reporter.close()
             return
         if sensor is None:
+            error_reporter.close()
             return
+        self._idle_error_reporter = error_reporter
 
         def _on_raw_event(event: RawHarnessEvent) -> None:
             try:
                 sensor.on_raw_event(event)
             except BaseException as exc:
-                idle_sidecar.record_sensor_error(ctx, phase="raw_event", error=exc)
+                error_reporter.record(phase="raw_event", error=exc)
 
         self._event_hooks += (_on_raw_event,)
-        self._idle_task = asyncio.create_task(idle_sidecar.run(sensor, ctx))
+        self._idle_task = asyncio.create_task(
+            idle_sidecar.run(sensor, ctx, error_reporter=error_reporter)
+        )
 
     async def _stop_idle_task(self) -> None:
         """Stop the sensor before tearing down resources it may still use."""
 
         idle_task = self._idle_task
+        error_reporter = self._idle_error_reporter
         self._idle_task = None
+        self._idle_error_reporter = None
         if idle_task is None:
+            if error_reporter is not None:
+                error_reporter.close()
             return
         idle_task.cancel()
-        with suppress(asyncio.CancelledError, Exception):
-            await idle_task
+        try:
+            with suppress(asyncio.CancelledError, Exception):
+                await idle_task
+        finally:
+            if error_reporter is not None:
+                error_reporter.close()
 
     async def run(
         self,
