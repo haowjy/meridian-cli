@@ -156,6 +156,20 @@ def test_idle_cli_round_trip(tmp_path: Path) -> None:
         "--user-prompt",
     )
     assert returned == {"stretch_closed": True, "was_open": True}
+
+    rearmed = _json_success(
+        tmp_path,
+        env,
+        "idle",
+        "arm",
+        *identity,
+        "--ttl",
+        "61",
+    )
+    assert isinstance(rearmed, dict)
+    assert (rearmed["stretch"], rearmed["anchor"]) == (2, 1)
+    assert all(isinstance(rearmed[field], int) for field in ("push_at", "compact_at"))
+
     returned_again = _json_success(
         tmp_path,
         env,
@@ -164,7 +178,16 @@ def test_idle_cli_round_trip(tmp_path: Path) -> None:
         *identity,
         "--user-prompt",
     )
-    assert returned_again == {"stretch_closed": True, "was_open": False}
+    assert returned_again == {"stretch_closed": True, "was_open": True}
+    returned_closed = _json_success(
+        tmp_path,
+        env,
+        "idle",
+        "return",
+        *identity,
+        "--user-prompt",
+    )
+    assert returned_closed == {"stretch_closed": True, "was_open": False}
     assert _json_success(tmp_path, env, "idle", "status", "--json") == []
 
 

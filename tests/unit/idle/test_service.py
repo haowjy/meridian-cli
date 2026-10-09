@@ -276,7 +276,7 @@ def test_compaction_claim_window_done_ok_and_compacted_state() -> None:
     assert sender.notices[-1].body == "compacted (100k → summary)"
 
 
-def test_compacted_stretch_closes_on_user_return() -> None:
+def test_closed_compacted_stretch_opens_a_new_stretch_on_arm() -> None:
     idle, clock, store, _ = service()
     armed = idle.arm(harness="example", session="s1", ttl_seconds=3600)
     clock.value = armed.compact_at or 0
@@ -291,9 +291,32 @@ def test_compacted_stretch_closes_on_user_return() -> None:
     idle.done("compact", harness="example", session="s1", stretch=1, result="ok")
 
     closed = idle.return_(harness="example", session="s1", user_prompt=True)
+    opened = idle.arm(harness="example", session="s1", ttl_seconds=3600)
 
     assert closed.stretch_closed == 1
-    assert store.read("example", "s1").stretch_open is False  # type: ignore[union-attr]
+    assert (opened.stretch, opened.anchor, opened.reason) == (2, 1, None)
+    current = store.read("example", "s1")
+    assert current is not None
+    assert current.stretch_open is True
+    assert current.done == {}
+
+
+def test_closed_stretch_ignores_stale_expected_compaction_turn_on_arm() -> None:
+    idle, _, store, _ = service()
+    idle.arm(harness="example", session="s1", ttl_seconds=3600)
+    current = store.read("example", "s1")
+    assert current is not None
+    store.states[("example", "s1")] = current.model_copy(
+        update={"stretch_open": False, "expect_compaction_turn": True}
+    )
+
+    opened = idle.arm(harness="example", session="s1", ttl_seconds=3600)
+
+    assert (opened.stretch, opened.anchor, opened.reason) == (2, 1, None)
+    current = store.read("example", "s1")
+    assert current is not None
+    assert current.stretch_open is True
+    assert current.expect_compaction_turn is False
 
 
 def test_compacted_stretch_implies_return_opens_new_stretch_after_window() -> None:
