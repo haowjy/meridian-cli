@@ -18,4 +18,3 @@ class NoneChannel:
 CHANNEL = NoneChannel()
 
 __all__ = ["CHANNEL", "NoneChannel"]
-

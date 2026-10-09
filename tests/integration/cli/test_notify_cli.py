@@ -45,4 +45,3 @@ def test_notify_json_all_none_exits_zero_without_project_state(
         }
     ]
     assert "every selected backend is none" in captured.err
-

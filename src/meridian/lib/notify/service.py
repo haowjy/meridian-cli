@@ -68,4 +68,3 @@ def send(notice: Notice, cfg: NotifyConfig) -> SendReport:
 
 
 __all__ = ["SendReport", "send"]
-

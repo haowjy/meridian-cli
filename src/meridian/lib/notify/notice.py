@@ -49,4 +49,3 @@ class Notice:
     def __post_init__(self) -> None:
         if not 1 <= self.priority <= 5:
             raise ValueError(f"priority must be between 1 and 5, got {self.priority}")
-

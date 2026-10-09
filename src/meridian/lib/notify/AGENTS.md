@@ -18,4 +18,3 @@ This package never writes stdout/stderr. Expected failures and warnings travel
 in `SendReport`; CLI callers render them through the CLI output sink, while
 in-process callers decide where they belong. This matches sibling
 `lib/artifact`: no library logger is used for user-facing diagnostics.
-

@@ -37,4 +37,3 @@ def test_build_session_label_with_each_optional_part_missing(
 
     assert str(label) == expected
     assert label.tmux_session == tmux_session
-

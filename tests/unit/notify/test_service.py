@@ -70,4 +70,3 @@ def test_send_treats_all_none_as_success_with_warning() -> None:
     assert report.exit_code == 0
     assert [result.status for result in report.results] == ["none"]
     assert report.warnings == ("notification disabled: every selected backend is none",)
-
