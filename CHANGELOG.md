@@ -40,6 +40,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Keep Claude and Pi idle calls interactive outside managed launches, make Pi
   prompt returns non-blocking and ordered behind arms, and re-check Pi's live
   idle, pending-message, and draft state before compaction.
+- Keep harness adapters independent of idle policy while preserving pinned Codex
+  event parsing and user-notify chaining at the CLI boundary.
+- Suppress Codex idle push and cache-warning notifications while an externally
+  observed turn is still running.
+- Record Codex compaction only after its completion marker appears, and re-check
+  TUI liveness before submitting the verified command.
+- Bound OpenCode idle backend requests and suppress false user returns when
+  compaction events arrive out of order.
 - Keep idle compaction completion alive across user returns, contain and offload
   sidecar policy calls, honor outside-Meridian interactive sessions, and close
   idle notification, timer, completion-result, and state-GC edge cases.

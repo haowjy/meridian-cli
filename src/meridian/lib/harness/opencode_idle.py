@@ -21,9 +21,10 @@ from meridian.lib.harness.idle_types import (
 )
 
 CapturePane = Callable[[str], Awaitable[str | None]]
-BackendRequest = Callable[
-    [str, str, Mapping[str, object] | None], Awaitable[tuple[int, str]]
-]
+BackendRequest = Callable[[str, str, Mapping[str, object] | None], Awaitable[tuple[int, str]]]
+
+_GET_TIMEOUT_SECONDS = 10.0
+_SUMMARIZE_TIMEOUT_SECONDS = 300.0
 
 
 def _mapping(value: object) -> Mapping[str, object] | None:
@@ -190,6 +191,8 @@ class OpenCodeIdleSensor:
         self._seen_user_messages: set[str] = set()
         self._pending_user_messages: set[str] = set()
         self._compaction_messages: set[str] = set()
+        self._compacting = False
+        self._compaction_request_returned = False
 
     def _emit(
         self,
@@ -231,6 +234,8 @@ class OpenCodeIdleSensor:
         user_message = _user_message(event)
         if user_message is not None:
             message_id, created_ms = user_message
+            if self._compacting:
+                self._compaction_messages.add(message_id)
             if (
                 message_id not in self._seen_user_messages
                 and message_id not in self._pending_user_messages
@@ -251,7 +256,12 @@ class OpenCodeIdleSensor:
         if status == "idle":
             self._busy = False
             return
-        if event.event_type != "session.idle" or not self._saw_busy or self._busy:
+        if event.event_type != "session.idle":
+            return
+        if self._compacting and self._compaction_request_returned:
+            self._compacting = False
+            self._compaction_request_returned = False
+        if not self._saw_busy or self._busy:
             return
 
         self._saw_busy = False
@@ -274,9 +284,7 @@ class OpenCodeIdleSensor:
             busy=self._busy,
             agents_running=0,
             context_tokens=None,
-            harness_autocompact_off=bool(
-                idle_env_facts(self._ctx.env).harness_autocompact_off
-            ),
+            harness_autocompact_off=bool(idle_env_facts(self._ctx.env).harness_autocompact_off),
         )
 
     async def compact(self) -> CompactResult:
@@ -285,7 +293,10 @@ class OpenCodeIdleSensor:
         session_id = quote(self._ctx.harness_session_id, safe="")
         session_path = f"/session/{session_id}"
         try:
-            status, body = await self._request("GET", session_path, None)
+            status, body = await asyncio.wait_for(
+                self._request("GET", session_path, None),
+                timeout=_GET_TIMEOUT_SECONDS,
+            )
             if status != 200:
                 return CompactResult("failed", body)
             session = _mapping(json.loads(body))
@@ -301,11 +312,21 @@ class OpenCodeIdleSensor:
                 return CompactResult("failed", "session model is unavailable")
             if not self._ctx.tui_alive():
                 return CompactResult("vetoed", "tui-exited")
-            status, body = await self._request(
-                "POST",
-                f"{session_path}/summarize",
-                {"providerID": provider, "modelID": model_id},
-            )
+            self._compacting = True
+            self._compaction_request_returned = False
+            try:
+                status, body = await asyncio.wait_for(
+                    self._request(
+                        "POST",
+                        f"{session_path}/summarize",
+                        {"providerID": provider, "modelID": model_id},
+                    ),
+                    timeout=_SUMMARIZE_TIMEOUT_SECONDS,
+                )
+            finally:
+                self._compaction_request_returned = True
+        except TimeoutError:
+            return CompactResult("failed", "timeout")
         except (OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError) as exc:
             return CompactResult("failed", str(exc))
         if status == 200 and body.strip() == "true":

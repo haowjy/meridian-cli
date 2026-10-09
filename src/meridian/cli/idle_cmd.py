@@ -15,6 +15,7 @@ from meridian.cli.app_tree import idle_app
 
 if TYPE_CHECKING:
     from meridian.lib.harness.bundle import HarnessBundle
+    from meridian.lib.harness.idle_types import PinnedIdleSession
     from meridian.lib.idle.service import IdleService
 
 DraftFact = Literal["yes", "no", "unknown"]
@@ -519,12 +520,25 @@ def _event_payload(
         raise ValueError("idle event requires a payload argument or stdin")
 
     bundle = _bundle(normalized)
-    parser = getattr(bundle, "parse_idle_event", None)
+    parser = bundle.parse_idle_event
     if parser is None:
         raise ValueError(f"harness {normalized} does not accept idle events")
-    event = parser(raw_payload)
+    service = _service(interactive=interactive)
+
+    def read_session(session: str) -> PinnedIdleSession | None:
+        from meridian.lib.harness.idle_types import PinnedIdleSession
+
+        states = service.status(harness=normalized, session=session)
+        if not states:
+            return None
+        return PinnedIdleSession(last_input_count=states[0].last_input_count)
+
+    event = parser(raw_payload, session_reader=read_session)
     if event is not None:
-        _service(interactive=interactive).event(event, harness=normalized)
+        service.event(event, harness=normalized)
+        event_applied = bundle.idle_event_applied
+        if event_applied is not None:
+            event_applied(raw_payload, os.environ)
     return {}
 
 
