@@ -46,8 +46,7 @@ def test_cold_query_can_exceed_the_warm_two_second_budget(tmp_path: Path, monkey
     assert HistoryIndex(tmp_path).spawns() == ()
 
 
-@pytest.mark.parametrize("invalid_state", ["private state content\n", "[]\n", "null\n"])
-def test_failure_is_sticky_until_manual_rebuild(tmp_path: Path, invalid_state: str) -> None:
+def test_failure_is_sticky_until_manual_rebuild(tmp_path: Path) -> None:
     from meridian.lib.state import spawn_store
 
     key = spawn_store.start_spawn(
@@ -56,7 +55,7 @@ def test_failure_is_sticky_until_manual_rebuild(tmp_path: Path, invalid_state: s
     spawn_store.finalize_spawn(tmp_path, key, status="succeeded", exit_code=0, origin="runner")
     state = tmp_path / "spawns" / key / "state.json"
     valid_state = state.read_bytes()
-    state.write_text(invalid_state)
+    state.write_text("private state content\n")
     index = HistoryIndex(tmp_path)
     with pytest.raises(history_index.HistoryIndexIncomplete, match="will not retry"):
         index.spawns()

@@ -8,12 +8,13 @@ Validate that skills are correctly injected into spawn prompts across harness ty
 ## Setup
 
 ```bash
-export REPO_ROOT=/abs/path/to/meridian-channel
-export SMOKE_REPO="$(mktemp -d /tmp/meridian-skill-inject.XXXXXX)"
+. tests/smoke/scripts/setup.sh --git
+export REPO_ROOT="$SMOKE_ORIGINAL_CWD"
+export SMOKE_REPO="$SCRATCH/skill-inject"
+mkdir -p "$SMOKE_REPO"
 git -C "$SMOKE_REPO" init --quiet
-for var in $(env | awk -F= '/^MERIDIAN_/ {print $1}'); do unset "$var"; done
 export MERIDIAN_PROJECT_DIR="$SMOKE_REPO"
-cd "$REPO_ROOT"
+export MERIDIAN_TASK_DIR="$SMOKE_REPO"
 export RUNTIME_ROOT="$(uv run python tests/e2e/resolve-runtime-root.py)"
 mkdir -p \
   "$SMOKE_REPO/.mars/agents" \

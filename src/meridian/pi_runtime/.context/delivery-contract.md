@@ -7,7 +7,7 @@ one launch-scoped notification owner, and one Python public-event observer.
 
 | File | Writer | Shape and purpose |
 |---|---|---|
-| `bash-records.json` | managed Bash | v1 task records; tracked terminal background rows stay owed until wait consumption or admission. `execution_error` on a row and file-level `runtime_error` preserve unresolved execution/storage evidence. |
+| `bash-records.json` | managed Bash | v1 task records; tracked terminal background rows stay owed until wait/output consumption or admission. `execution_error` on a row and file-level `runtime_error` preserve unresolved execution/storage evidence. |
 | `delivery-receipts.json` | spawn watcher | `{v:1,spawn_id,messages:{delivery_id:work_ids[]}}`; exact native custom-message admission, never `sendMessage()` return. |
 | `delivery-observations.json` | Python | `{v:1,spawn_id,observed_message_ids:[]}`; exact public admission event observed after marking the parent active. |
 | `observed-spawns.json` | CLI wait | v1 parent, durable `observed_spawn_ids`, diagnostic `waiting_spawn_ids`, `wait_reservations` keyed by caller with `owner_pid`, `owner_birth_epoch`, `expires_at_epoch`, `spawn_ids`. Only live matching process leases suppress temporarily. |

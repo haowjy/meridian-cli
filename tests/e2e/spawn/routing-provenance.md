@@ -1,140 +1,89 @@
-# Spawn Dry-Run Routing Provenance
+# Spawn dry-run routing provenance
 
-Validate the Phase 12 dry-run routing provenance surface in a realistic packaged workspace. This covers the user-visible gap between basic dry-run metadata and the new provenance output: preserve the requested model token, surface the resolved canonical model ID, and show the winning routing source in text mode.
+Check the actual Mars bundle → Meridian JSON/text boundary in a packaged
+workspace. No model request is made, but catalog refresh and native capability
+probes may use the network. Use an installed Claude harness and an available
+model alias (`sonnet` by default). Native eligibility may require authentication:
+set `ROUTING_AUTH_FILE` to your Claude .credentials.json before setup to deliberately
+copy only that file into the disposable store. API-key environment variables are
+also retained; do not copy an entire native config/agent tree.
+
+The [selection-report tests](../../integration/launch/test_selection_report.py)
+protect protocol validation using a fake Mars executable. This guide keeps the
+real integration check; the config/default precedence matrix belongs to
+[spawn preparation](../../integration/ops/test_spawn_prepare_fork.py).
 
 ## Setup
 
+Run from the checkout in a fresh shell.
+
 ```bash
-export REPO_ROOT=/abs/path/to/meridian-cli
-export SMOKE_REPO="$(mktemp -d /tmp/meridian-routing.XXXXXX)"
-git -C "$SMOKE_REPO" init --quiet
-for var in $(env | awk -F= '/^MERIDIAN_/ {print $1}'); do unset "$var"; done
-export MERIDIAN_PROJECT_DIR="$SMOKE_REPO"
-cd "$REPO_ROOT"
-export RUNTIME_ROOT="$(uv run python tests/e2e/resolve-runtime-root.py)"
-
-cat > "$SMOKE_REPO/mars.toml" <<'TOML'
-[settings]
-targets = [".claude"]
-TOML
-
-mkdir -p "$SMOKE_REPO/.mars/agents"
-cat > "$SMOKE_REPO/.mars/agents/reviewer.md" <<'EOF_AGENT'
----
-name: reviewer
-description: routing provenance smoke reviewer
-model: sonnet
----
-# Reviewer
-
-Reply briefly.
-EOF_AGENT
-
-cd "$REPO_ROOT"
-echo "PASS: routing provenance workspace ready"
+export ROUTING_TOKEN="${ROUTING_TOKEN:-sonnet}"
+. tests/smoke/scripts/setup.sh --git
+trap smoke_cleanup EXIT
+export ROUTING_OUTPUT="$SMOKE_ROOT/routing"
+if [[ -n "${ROUTING_AUTH_FILE:-}" ]]; then
+  install -m 600 "$ROUTING_AUTH_FILE" "$CLAUDE_CONFIG_DIR/.credentials.json"
+fi
+mkdir -p "$ROUTING_OUTPUT" "$SCRATCH/.mars/agents"
+printf '[settings]\ntargets = [".claude"]\n' > "$SCRATCH/mars.toml"
+printf '%s\n' '---' 'name: reviewer' 'description: routing smoke reviewer' \
+  "model: $ROUTING_TOKEN" '---' '# Reviewer' > "$SCRATCH/.mars/agents/reviewer.md"
+# An empty cache cannot prove alias canonicalization. This is a network probe.
+uv run meridian mars models refresh
 ```
 
-### ROUTE-1. JSON dry-run preserves requested token and canonical model [CRITICAL]
-
-Request `sonnet` through the packaged agent profile. Dry-run JSON should preserve the requested token for provenance while also surfacing the resolved canonical model and routing source.
+## JSON: requested alias, canonical model and routing source
 
 ```bash
-uv run meridian --json spawn -a reviewer -p "probe routing provenance" --dry-run \
-  > /tmp/meridian-routing-provenance.json && \
+uv run meridian --json spawn -a reviewer -p "Probe routing provenance." --dry-run \
+  > "$ROUTING_OUTPUT/provenance.json"
 uv run python - <<'PY'
 import json
-
-payload = json.load(open('/tmp/meridian-routing-provenance.json'))
-selection = payload.get('model_selection') or {}
-
-assert payload['status'] == 'dry-run'
-assert payload['harness_id'] == 'claude', payload['harness_id']
-assert selection['requested_token'] == 'sonnet', selection
-assert selection['canonical_model_id'] == payload['model'], selection
-assert selection['canonical_model_id'] != 'sonnet', selection
-assert selection['harness_provenance'] == 'mars-provided', selection
-print('PASS: ROUTE-1 dry-run JSON exposed requested token, canonical model, and routing provenance')
+import os
+from pathlib import Path
+payload = json.loads((Path(os.environ['ROUTING_OUTPUT']) / 'provenance.json').read_text())
+selection = payload['model_selection']
+assert payload['status'] == 'dry-run' and payload['harness_id'] == 'claude'
+assert selection['requested_token'] == os.environ['ROUTING_TOKEN']
+assert selection['canonical_model_id'] == payload['model']
+assert selection['canonical_model_id'] != os.environ['ROUTING_TOKEN']
+report = payload['selection_report']
+assert report['version'] == 3 and report['outcome'] == 'selected'
+chosen = report['selected']
+attempt = report['model_attempts'][chosen['attempt_index']]
+assessment = attempt['assessments'][chosen['assessment_index']]
+assert attempt['model_token'] == selection['requested_token']
+assert attempt['canonical_model'] == selection['canonical_model_id']
+assert assessment['harness'] == payload['harness_id']
+assert attempt['model_source'] == 'profile'
+assert selection['harness_provenance']
+print('PASS: real Mars routing preserved alias, canonical model and selected route')
 PY
 ```
 
-### ROUTE-2. Text dry-run shows routing provenance summary [CRITICAL]
-
-Text-mode dry-run should show the same resolved model and a routing summary line so a human can understand why that harness won without opening JSON.
+## Text: same model and routing source
 
 ```bash
-EXPECTED_MODEL="$(uv run python - <<'PY'
-import json
-print(json.load(open('/tmp/meridian-routing-provenance.json'))['model'])
-PY
-)" && \
-uv run meridian spawn -a reviewer -p "probe routing provenance" --dry-run \
-  > /tmp/meridian-routing-provenance.txt && \
-grep -q '^Dry run complete\.$' /tmp/meridian-routing-provenance.txt && \
-grep -q "^Model: ${EXPECTED_MODEL} (claude)$" /tmp/meridian-routing-provenance.txt && \
-grep -q '^Routing: mars-provided$' /tmp/meridian-routing-provenance.txt && \
-echo "PASS: ROUTE-2 text dry-run surfaced routing provenance"
-```
-
-### ROUTE-3. Mars settings defaults own spawn routing when Meridian defaults are present [CRITICAL]
-
-Project routing defaults belong in `mars.toml [settings]`, not `meridian.toml`.
-This probe intentionally writes stale Meridian default keys and primary defaults,
-then verifies a spawn with no explicit model/harness follows the Mars bundle
-route instead of forwarding Meridian config values.
-
-```bash
-cat > "$SMOKE_REPO/mars.toml" <<'TOML'
-[settings]
-targets = [".claude", ".codex", ".opencode"]
-default_model = "local-default-model"
-default_harness = "opencode"
-TOML
-
-cat > "$SMOKE_REPO/.mars/agents/reviewer.md" <<'EOF_AGENT'
----
-name: reviewer
-description: project default routing smoke reviewer
----
-# Reviewer
-
-Reply briefly.
-EOF_AGENT
-
-cat > "$SMOKE_REPO/meridian.toml" <<'TOML'
-[defaults]
-model = "legacy-default-should-not-win"
-harness = "claude"
-
-[primary]
-model = "primary-default-should-not-win"
-harness = "opencode"
-TOML
-
-uv run meridian --json spawn -a reviewer -p "probe mars project defaults" --dry-run \
-  > /tmp/meridian-routing-project-defaults.json && \
+uv run meridian spawn -a reviewer -p "Probe routing provenance." --dry-run \
+  > "$ROUTING_OUTPUT/provenance.txt"
 uv run python - <<'PY'
 import json
-
-payload = json.load(open('/tmp/meridian-routing-project-defaults.json'))
-selection = payload.get('model_selection') or {}
-
-assert payload['status'] == 'dry-run'
-assert payload['model'] == 'local-default-model', payload
-assert payload['harness_id'] == 'opencode', payload
-assert selection['requested_token'] == 'local-default-model', selection
-assert selection['canonical_model_id'] == 'local-default-model', selection
-assert selection['harness_provenance'] == 'provider', selection
-print('PASS: ROUTE-3 mars settings defaults drove spawn routing; Meridian defaults were ignored')
+import os
+from pathlib import Path
+out = Path(os.environ['ROUTING_OUTPUT'])
+payload = json.loads((out / 'provenance.json').read_text())
+lines = (out / 'provenance.txt').read_text().splitlines()
+assert 'Dry run complete.' in lines
+assert f"Model: {payload['model']} (claude)" in lines
+assert f"Routing: {payload['model_selection']['harness_provenance']}" in lines
+print('PASS: text output agrees with the real bundle JSON')
 PY
 ```
 
 ## Cleanup
 
 ```bash
-rm -rf "$SMOKE_REPO" \
-  /tmp/meridian-routing-provenance.json \
-  /tmp/meridian-routing-provenance.txt \
-  /tmp/meridian-routing-project-defaults.json
-unset MERIDIAN_PROJECT_DIR RUNTIME_ROOT SMOKE_REPO REPO_ROOT
-echo "PASS: cleanup complete"
+smoke_cleanup
+trap - EXIT
 ```

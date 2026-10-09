@@ -2,11 +2,17 @@
 
 ## Normal CI
 
-`meridian-ci.yml` runs on pull requests and pushes to `main`.
+`meridian-ci.yml` runs on pull requests, pushes to `main`, manual dispatch and a
+nightly schedule.
 
 - PRs get a non-blocking release-label warning.
-- The shared full gate is `scripts/preflight.sh full`.
-- The local pre-push hook runs the same full gate before branch pushes.
+- Routine CI and the local pre-push hook run `scripts/preflight.sh fast`: default
+  pytest paths, lint and typecheck under one 60-second prepared-environment budget.
+- Full Python and compatibility jobs run only on dispatch/nightly. The explicit
+  `scripts/preflight.sh full` gate still builds extensions, runs every Python
+  test and builds packages; releases use it too.
+- Both gates clear inherited pytest selection filters. Focused developer test
+  commands remain available separately.
 
 ## Auto-Release
 

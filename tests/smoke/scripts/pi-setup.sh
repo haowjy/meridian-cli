@@ -1,68 +1,48 @@
 #!/usr/bin/env bash
-# Pi smoke setup only — env, extension build, PATH checks. Does not run tests.
-#
-# Usage:
-#   . tests/smoke/scripts/pi-setup.sh
-#   . tests/smoke/scripts/pi-setup.sh --build-extensions
-#   . tests/smoke/scripts/pi-setup.sh --isolated-state
-#
-# After sourcing:
-#   - pi must be on PATH (real install; no fake binaries)
-#   - node should be v24+ when building extensions
-
+# Source once from a fresh shell for an opt-in real-Pi probe. No model is run.
+# Auth is never inherited from the native store: deliberately copy auth.json
+# afterward, or supply the provider's API-key environment variable.
 set -euo pipefail
 
-_PI_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+_PI_SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+_PI_RUNTIME_ROOT=$(cd "$_PI_SCRIPT_DIR/../../../src/meridian/pi_runtime" && pwd)
 _BUILD_EXTENSIONS=0
-_ISOLATED_STATE=0
-
 for _arg in "$@"; do
   case "$_arg" in
     --build-extensions) _BUILD_EXTENSIONS=1 ;;
-    --isolated-state) _ISOLATED_STATE=1 ;;
-    *)
-      echo "pi-setup.sh: unknown option: $_arg" >&2
-      return 2 2>/dev/null || exit 2
-      ;;
+    *) echo "pi-setup.sh: unknown option: $_arg" >&2; return 2 2>/dev/null || exit 2 ;;
   esac
 done
 
-# Prefer Node 24+ on PATH (match CI / extension toolchain).
+# A fresh fixture is simpler and safer than trusting an inherited ownership
+# marker while other state/config variables may have changed.
+. "$_PI_SCRIPT_DIR/setup.sh"
+export MERIDIAN_PI_EXTENSION_INSTALL_ROOT="$_PI_RUNTIME_ROOT/dist/extensions"
+
+if ! command -v pi >/dev/null 2>&1 || ! pi --version >/dev/null 2>&1; then
+  echo "ERROR: a working real Pi install is required for this opt-in probe." >&2
+  return 1 2>/dev/null || exit 1
+fi
 if command -v node >/dev/null 2>&1; then
-  _node_major="$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0)"
-  if [[ "${_node_major:-0}" -lt 24 ]]; then
-    echo "WARN: node is v$(node -v); Pi extension builds expect Node 24+." >&2
+  _node_major=$(node -p "process.versions.node.split('.')[0]")
+  if [[ "$_node_major" -lt 24 ]]; then
+    echo "WARN: Pi extension builds expect Node 24+." >&2
   fi
-else
-  echo "WARN: node not on PATH; skip --build-extensions or install Node 24+." >&2
 fi
-
-if ! command -v pi >/dev/null 2>&1; then
-  echo "ERROR: real 'pi' not found on PATH. Install Pi, run 'pi update', then retry." >&2
-  return 1 2>/dev/null || exit 1
-fi
-
-if ! pi --version >/dev/null 2>&1; then
-  echo "ERROR: 'pi --version' failed; fix the install before smoke." >&2
-  return 1 2>/dev/null || exit 1
-fi
-
-# Meridian sets PI_CODING_AGENT_DIR for subprocess Pi (default ~/.pi/agent).
-export PI_CODING_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
-
-if [[ "$_ISOLATED_STATE" -eq 1 ]]; then
-  _pi_state="$(mktemp -d)"
-  export _MERIDIAN_PI_STATE_DIR="$_pi_state"
-  echo "Pi setup: _MERIDIAN_PI_STATE_DIR=$_pi_state (isolated extension task state)"
-fi
-
 if [[ "$_BUILD_EXTENSIONS" -eq 1 ]]; then
-  echo "Pi setup: building extensions in $_PI_REPO_ROOT/src/meridian/pi_runtime ..."
-  (cd "$_PI_REPO_ROOT/src/meridian/pi_runtime" && npm run build:extensions)
+  (cd "$_PI_RUNTIME_ROOT" && pnpm run build:extensions)
 fi
+for _bundle in managed-bash meridian-spawn-watch session-boundary; do
+  if [[ ! -f "$MERIDIAN_PI_EXTENSION_INSTALL_ROOT/$_bundle/index.js" ]]; then
+    echo "WARN: missing $_bundle; prepare dependencies and use --build-extensions." >&2
+  fi
+done
 
-echo "Pi setup ready:"
-echo "  pi=$(command -v pi) ($(pi --version 2>/dev/null | head -1 || echo unknown))"
+echo "Pi setup ready (no model launched):"
 echo "  PI_CODING_AGENT_DIR=$PI_CODING_AGENT_DIR"
-echo "  spawn sessions -> \${MERIDIAN_HOME:-~/.meridian}/meridian-pi/sessions/<spawn-id>/"
-echo "  extensions -> $PI_CODING_AGENT_DIR/extensions/meridian/<launch-id>/"
+echo "  PI_CODING_AGENT_SESSION_DIR=$PI_CODING_AGENT_SESSION_DIR"
+echo "  MERIDIAN_PI_EXTENSION_INSTALL_ROOT=$MERIDIAN_PI_EXTENSION_INSTALL_ROOT"
+echo "  Managed task state is pinned by prelaunch to the project's runtime under MERIDIAN_HOME."
+echo "  Auth must be supplied deliberately; never copy the entire native agent tree."
+
+unset _PI_SCRIPT_DIR _PI_RUNTIME_ROOT _BUILD_EXTENSIONS _arg _bundle _node_major

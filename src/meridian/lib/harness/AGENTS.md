@@ -155,8 +155,11 @@ parent signals, or supply the parent report.
 - `semantics.py` — `HarnessSemantics` port and typed `EventSemantics` descriptor.
   Each adapter's `HarnessBundle` registers its own event-name descriptors and
   optional payload resolvers. `normalize_event()` dispatches by `HarnessId` before
-  event name and returns raw evidence with its one normalized descriptor; shared
-  `semantics.py` contains no harness event names.
+  event name and returns raw evidence with its one normalized descriptor. A
+  completion coordinator may drop duplicate events or refine their descriptors
+  before delivery; refinement preserves the raw frame. For Pi, only an `agent_end`
+  attempt outcome is retained privately until `agent_settled`; the frame remains visible to hooks and
+  subscribers. Shared `semantics.py` contains no harness event names.
 - `pi_failure.py` — Pi failure output formatting (`compact_pi_failure_output`) and
   per-event failure extraction (`pi_failure_from_payload`). Harness-owned;
   consumed by `connections/pi_rpc.py` (stderr compaction), `extractors/pi.py` (report

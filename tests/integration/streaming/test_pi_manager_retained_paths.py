@@ -34,7 +34,11 @@ async def test_spawn_manager_derives_direct_followup_transitions_from_pi_events(
 
     class _FollowupConnection(FakePiConnection):
         async def events(self):  # type: ignore[no-untyped-def]
-            yield pi_event("agent_end")
+            yield pi_event(
+                "agent_end",
+                {"messages": [{"role": "assistant", "stopReason": "stop"}]},
+            )
+            yield pi_event("agent_settled", {"aborted": False})
             await followup_ready.wait()
             yield pi_event(
                 "message_start",
@@ -50,7 +54,11 @@ async def test_spawn_manager_derives_direct_followup_transitions_from_pi_events(
                     },
                 },
             )
-            yield pi_event("agent_end")
+            yield pi_event(
+                "agent_end",
+                {"messages": [{"role": "assistant", "stopReason": "stop"}]},
+            )
+            yield pi_event("agent_settled", {"aborted": False})
             await asyncio.Event().wait()
 
     start_row(tmp_path, str(child_id), HarnessId.CODEX, str(spawn_id))
@@ -90,10 +98,10 @@ async def test_spawn_manager_derives_direct_followup_transitions_from_pi_events(
         assert outcome is not None
         assert outcome.status == "succeeded"
         event_types = [event.event_type for event in observed]
-        assert event_types.count("agent_end") == 2
-        first_idle = event_types.index("agent_end")
+        assert event_types.count("agent_settled") == 2
+        first_idle = event_types.index("agent_settled")
         followup_start = event_types.index("message_start")
-        second_idle = event_types.index("agent_end", first_idle + 1)
+        second_idle = event_types.index("agent_settled", first_idle + 1)
         assert first_idle < followup_start < second_idle
         assert not any(
             event_type.startswith(("meridian.notification.", "meridian.subspawn."))
@@ -118,7 +126,11 @@ async def test_spawn_manager_child_wave_timeout_publishes_before_descendant_canc
     class _GatedIdleConnection(FakePiConnection):
         async def events(self):  # type: ignore[no-untyped-def]
             await parent_idle.wait()
-            yield pi_event("agent_end")
+            yield pi_event(
+                "agent_end",
+                {"messages": [{"role": "assistant", "stopReason": "stop"}]},
+            )
+            yield pi_event("agent_settled", {"aborted": False})
             await asyncio.Event().wait()
 
     class _GatedCleanupService:
@@ -154,7 +166,8 @@ async def test_spawn_manager_child_wave_timeout_publishes_before_descendant_canc
         # from the unrelated initial threaded-projection recovery window.
         await wait_until(
             lambda: coordinator._evidence._refresh.assessment.disposition == "blocked",
-            timeout=2.0,
+            # Bounds a hang only: the threaded projection is slow on a loaded host.
+            timeout=10.0,
             description="initial persisted-child assessment",
         )
         assert {

@@ -59,7 +59,7 @@ def install_shim(root: Path, *, behavior: str = "ok") -> None:
     shim = scratch / "fake-bin" / "pi"
     shim.write_text(
         "#!/bin/sh\n"
-        'if [ "$1" = "--version" ]; then echo "0.87.1"; exit 0; fi\n'
+        'if [ "$1" = "--version" ]; then echo "1.1.0"; exit 0; fi\n'
         f'if [ "$1" = "--help" ]; then echo {shlex.quote(HELP)}; exit 0; fi\n'
         f"cp {shlex.quote(str(root / '.meridian' / 'sessions.jsonl'))} "
         f"{shlex.quote(str(scratch / 'binding-at-exec'))}\n"
@@ -97,7 +97,8 @@ def install_shim(root: Path, *, behavior: str = "ok") -> None:
         ' *\'"type":"prompt"\'*)\n'
         " printf '%s\\n' '{\"type\":\"agent_start\"}' "
         '\'{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop",'
-        '"content":[{"type":"text","text":"done"}]}]}\' ;;\n'
+        '"content":[{"type":"text","text":"done"}]}]}\' '
+        "'{\"type\":\"agent_settled\",\"aborted\":false}' ;;\n"
         ' *\'"type":"abort"\'*) exit 0 ;;\n'
         " esac\ndone\n"
     )
