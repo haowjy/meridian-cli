@@ -41,9 +41,11 @@ instruction and user-turn channels. Declare every `SpawnParams` field in
 `consumed_fields` or `explicitly_ignored_fields`; import-time accounting rejects
 uncovered fields.
 
-Use `env_defaults()` for values that explicit child environment may override.
-Reserve `env_overrides()` for forced adapter policy. Agent/auth directories and
-native transcript stores need explicit contracts, not blanket config isolation.
+Use `apply_env_defaults()` for launch-aware defaults that explicit child
+environment may override; its base implementation fills missing or blank values
+from `env_defaults()`. Reserve `env_overrides()` for forced adapter policy.
+Agent/auth directories and native transcript stores need explicit contracts,
+not blanket config isolation.
 
 ### Native identity
 
@@ -136,6 +138,13 @@ Managed native sessions default to `~/.meridian/meridian-pi/sessions/`, honoring
 primaries use the flat root, and resumes retain their recorded store. Identity
 projection passes `--session-dir` plus an assigned `--session-id` for create/fork,
 or the exact `--session <file>` for resume. Fork also passes `--fork <source-file>`.
+
+Interactive primaries also default `PI_CACHE_RETENTION=long` when the variable is
+absent; spawned RPC sessions are untouched and an inherited or configured value
+always wins. Set `PI_CACHE_RETENTION=short` to retain Pi's short-cache default.
+This launch default is independent of `[idle]`: the idle extension reads the
+effective variable and Pi's reported provider to schedule cache warning and
+compaction for `anthropic` and `openai`; unknown provider IDs remain push-only.
 
 ### Build and package
 

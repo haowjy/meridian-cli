@@ -194,9 +194,13 @@ local config. Environment always beats every file, so a per-tmux
 | Harness | Default behavior |
 |---|---|
 | Claude | Push, warning, and compaction; the mod reads the cache TTL from the transcript |
-| Pi | Push only with the default short cache; `PI_CACHE_RETENTION=long` enables warning and compaction when Pi reports the provider as `openai` or `anthropic` (unknown provider IDs remain push-only) |
+| Pi | Push, warning, and compaction: Meridian defaults `PI_CACHE_RETENTION=long` for interactive primaries when it is absent. Set `PI_CACHE_RETENTION=short` to keep Pi's short-cache default. Unknown provider IDs remain push-only. |
 | Codex | Push, warning, and compaction with a conservative 1800-second TTL |
 | OpenCode | Push only with the 300-second default because the warning and compaction do not fit; raise `ttl_seconds` to schedule them |
+
+The Pi cache-retention default is launch behavior, independent of whether
+`[idle]` is enabled. It gives an interactive session a one-hour Anthropic cache
+or extended OpenAI cache even when idle notifications and compaction are off.
 
 Idle automation runs only in an interactive primary session. Each stage is
 claimed at most once between user prompts. A compaction is skipped when the

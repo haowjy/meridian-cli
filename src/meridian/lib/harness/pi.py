@@ -473,6 +473,17 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             **pi_spawn_session_root_env_override(),
         }
 
+    def apply_env_defaults(
+        self,
+        child_env: dict[str, str],
+        *,
+        run: SpawnParams,
+        config: PermissionConfig,
+    ) -> None:
+        super().apply_env_defaults(child_env, run=run, config=config)
+        if run.interactive:
+            child_env.setdefault("PI_CACHE_RETENTION", "long")
+
     def resolve_session_file(
         self,
         *,

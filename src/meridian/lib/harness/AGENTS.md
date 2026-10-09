@@ -89,10 +89,12 @@ published-spawn artifact mutation seam at the write point. An awaited send or di
 can cross spawn deletion; a late journal or cursor write must not recreate the directory.
 Pi runtime metadata uses that same publication gate.
 
-**Environment defaults differ from overrides.** `env_defaults()` fills missing or
-blank child values after explicit inherited/runtime values are bound. Pi agent
-and session directory defaults use this seam; forced adapter policy remains in
-`env_overrides()`.
+**Environment defaults differ from overrides.** `apply_env_defaults()` runs after
+explicit inherited/runtime values are bound; its base implementation fills missing
+or blank values from `env_defaults()`. Pi uses the launch-aware hook for its agent
+and session directories and to default `PI_CACHE_RETENTION=long` only for
+interactive primaries when the variable is absent. Forced adapter policy remains
+in `env_overrides()`.
 
 **Pi usage is per assistant message.** Fold each `message_end` increment once;
 `agent_end.messages` is repeated history. Unknown usage operands leave totals

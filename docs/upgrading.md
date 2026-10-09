@@ -10,6 +10,12 @@ with `meridian notify "<message>"`. Configuration, defaults per harness and
 every environment variable are in [configuration.md](configuration.md); the
 per-harness mechanics are in [harness-integration.md](harness-integration.md).
 
+Interactive Pi primaries now run with `PI_CACHE_RETENTION=long` unless that
+variable is already set. For recognized Anthropic and OpenAI providers this
+makes Pi's warning and compaction stages fit, but one-hour Anthropic cache writes
+cost more than five-minute writes; export `PI_CACHE_RETENTION=short` to keep Pi's
+default retention and spend.
+
 ### What changed, and why
 
 - A new state directory, `~/.meridian/idle/`, holds one small JSON file per
@@ -48,9 +54,10 @@ per-harness mechanics are in [harness-integration.md](harness-integration.md).
   a Gmail app password) for email. `MERIDIAN_NOTIFY_SMTP_PASSWORD` works as a
   fallback but is inherited by every spawn and can land in transcripts.
 - Per-harness defaults: Claude senses its cache lifetime from the transcript
-  (1 h or 5 min); Pi is push-only unless `PI_CACHE_RETENTION=long`; Codex assumes
-  30 minutes (`[harness.codex.idle] ttl_seconds = 1800`); OpenCode is push-only
-  (`ttl_seconds = 300`).
+  (1 h or 5 min); Meridian gives interactive Pi primaries long cache retention;
+  Codex assumes 30 minutes (`[harness.codex.idle] ttl_seconds = 1800`); OpenCode
+  is push-only (`ttl_seconds = 300`). Pi provider IDs other than `anthropic` and
+  `openai` remain push-only.
 - Claude sessions you start yourself (not through `meridian claude`) can opt in:
   `CLAUDE_CODE_PLUGIN_DIRS="$(meridian idle mod-path)" claude`.
 

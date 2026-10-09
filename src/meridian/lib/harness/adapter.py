@@ -467,6 +467,14 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
 
     def env_defaults(self, config: PermissionConfig) -> dict[str, str]: ...
 
+    def apply_env_defaults(
+        self,
+        child_env: dict[str, str],
+        *,
+        run: SpawnParams,
+        config: PermissionConfig,
+    ) -> None: ...
+
     def blocked_child_env_vars(self) -> frozenset[str]: ...
 
     def prepare_prelaunch(
@@ -770,6 +778,20 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     def env_defaults(self, config: PermissionConfig) -> dict[str, str]:
         """Optional process defaults; explicit inherited or launch values win."""
         return {}
+
+    def apply_env_defaults(
+        self,
+        child_env: dict[str, str],
+        *,
+        run: SpawnParams,
+        config: PermissionConfig,
+    ) -> None:
+        """Apply adapter defaults after the resolved child environment is bound."""
+
+        _ = run
+        for key, value in self.env_defaults(config).items():
+            if not child_env.get(key, "").strip():
+                child_env[key] = value
 
     def prepare_prelaunch(
         self,
