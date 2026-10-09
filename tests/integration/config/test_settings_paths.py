@@ -215,6 +215,104 @@ def test_load_config_reads_idle_tables_with_env_precedence(
     )
 
 
+def test_load_config_reads_every_notify_field_with_env_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "meridian.toml").write_text(
+        "[notify]\n"
+        'push_backend = "none"\n'
+        'email_backend = "ntfy"\n'
+        'ntfy_server = "https://push.example"\n'
+        'ntfy_topic = "file-topic"\n'
+        'email_to = "to-file@example.com"\n'
+        'email_from = "from-file@example.com"\n'
+        'smtp_user = "user-file@example.com"\n'
+        'smtp_host = "smtp.file.example"\n'
+        "smtp_port = 2525\n"
+        'smtp_password_file = "/file/password"\n'
+        'push_command = "push --file value"\n'
+        'email_command = "email --file value"\n',
+        encoding="utf-8",
+    )
+
+    file_config = load_config(project_root, resolve_models=False)
+
+    assert file_config.notify.model_dump() == {
+        "push_backend": "none",
+        "email_backend": "ntfy",
+        "ntfy_server": "https://push.example",
+        "ntfy_topic": "file-topic",
+        "email_to": "to-file@example.com",
+        "email_from": "from-file@example.com",
+        "smtp_user": "user-file@example.com",
+        "smtp_host": "smtp.file.example",
+        "smtp_port": 2525,
+        "smtp_password_file": "/file/password",
+        "push_command": "push --file value",
+        "email_command": "email --file value",
+    }
+
+    env_values = {
+        "MERIDIAN_NOTIFY_PUSH_BACKEND": "ntfy",
+        "MERIDIAN_NOTIFY_EMAIL_BACKEND": "none",
+        "MERIDIAN_NOTIFY_NTFY_SERVER": "https://env.example",
+        "MERIDIAN_NOTIFY_NTFY_TOPIC": "env-topic",
+        "MERIDIAN_NOTIFY_EMAIL_TO": "to-env@example.com",
+        "MERIDIAN_NOTIFY_EMAIL_FROM": "from-env@example.com",
+        "MERIDIAN_NOTIFY_SMTP_USER": "user-env@example.com",
+        "MERIDIAN_NOTIFY_SMTP_HOST": "smtp.env.example",
+        "MERIDIAN_NOTIFY_SMTP_PORT": "465",
+        "MERIDIAN_NOTIFY_SMTP_PASSWORD_FILE": "/env/password",
+        "MERIDIAN_NOTIFY_PUSH_COMMAND": "push --env value",
+        "MERIDIAN_NOTIFY_EMAIL_COMMAND": "email --env value",
+    }
+    for name, value in env_values.items():
+        monkeypatch.setenv(name, value)
+
+    env_config = load_config(project_root, resolve_models=False)
+    assert env_config.notify.model_dump() == {
+        "push_backend": "ntfy",
+        "email_backend": "none",
+        "ntfy_server": "https://env.example",
+        "ntfy_topic": "env-topic",
+        "email_to": "to-env@example.com",
+        "email_from": "from-env@example.com",
+        "smtp_user": "user-env@example.com",
+        "smtp_host": "smtp.env.example",
+        "smtp_port": 465,
+        "smtp_password_file": "/env/password",
+        "push_command": "push --env value",
+        "email_command": "email --env value",
+    }
+
+    shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
+    shown_notify = {
+        item.key: item
+        for item in shown.values
+        if item.key.startswith("notify.")
+    }
+    assert set(shown_notify) == {
+        "notify.push_backend",
+        "notify.email_backend",
+        "notify.ntfy_server",
+        "notify.ntfy_topic",
+        "notify.email_to",
+        "notify.email_from",
+        "notify.smtp_user",
+        "notify.smtp_host",
+        "notify.smtp_port",
+        "notify.smtp_password_file",
+        "notify.push_command",
+        "notify.email_command",
+    }
+    for key, item in shown_notify.items():
+        assert item.source == "env var"
+        assert item.env_var == f"MERIDIAN_NOTIFY_{key.removeprefix('notify.').upper()}"
+
+
 def test_load_config_reads_spawn_deny_headless_harnesses(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()

@@ -139,6 +139,12 @@ _GROUP_HELP: dict[str, GroupHelp] = {
         agent_notes='URLs are tailnet-only — the recipient must be on your tailnet; use --funnel for a public URL (rare). Serves expire after 2h by default; --persistent keeps one, stop/gc remove them. Point it at a built structured-artifact directory to share with a human or another agent.',
         agent_subcommands=('serve', 'list', 'stop', 'gc'),
     ),
+    "notify": GroupHelp(
+        summary='Send a push and optional email notification.',
+        long_help='Send one notification through the configured push and email backends. Delivery is attempted once per backend and is never retried in-process.',
+        examples=(("meridian notify \"waiting on your decision\"", ''),),
+        agent_notes='Use for a blocking decision, requested long-running completion, or failure that needs attention — not routine progress.',
+    ),
     "telemetry": GroupHelp(
         summary='Telemetry inspection: tail, query, and status over local segments.',
         long_help='Telemetry inspection: tail, query, and status over local segments.\n\nNote: Rootless MCP stdio server processes write telemetry to stderr only and are not visible in local segment readers.',
@@ -287,6 +293,14 @@ COMMAND_GROUP_SPECS: dict[str, CommandGroupSpec] = {
         agent_root=True,
         human_root_order=17,
         registration_bucket='artifact',
+        has_group_app=True,
+    ),
+    "notify": CommandGroupSpec(
+        help=_GROUP_HELP["notify"],
+        agent_root_description='Notify the user when work is blocked, requested long work completes, or a failure needs attention.',
+        agent_root=True,
+        human_root_order=18,
+        registration_bucket='notify',
         has_group_app=True,
     ),
     "telemetry": CommandGroupSpec(
