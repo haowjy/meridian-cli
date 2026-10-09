@@ -136,6 +136,15 @@ configured. It is deliberately not a TOML key: every spawned agent inherits the
 variable and can write it into a transcript, so use it only when that exposure
 is acceptable.
 
+For the `gmail` backend the password must be a Google app password, not the
+account password: turn on 2-Step Verification for the account, create an app
+password at <https://myaccount.google.com/apppasswords>, and store it in
+`smtp_password_file`. `smtp_user` is the Gmail address that owns the app
+password and is the default sender; `email_to` can be any address. Check the
+setup with `meridian notify "test" --json`: `"channel": "gmail", "status":
+"sent"` means it went out, and a `535` error means the app password is wrong
+or 2-Step Verification is off.
+
 ### `[idle]`
 
 | Key | Default | Environment variable | Meaning |
