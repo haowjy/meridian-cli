@@ -23,6 +23,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   schedule operations, harness facts, event parsing, status, and Claude mod discovery.
 - Detect Claude and Pi prompt-cache lifetimes and expose harness environment facts
   through their idle bundle hooks.
+- Add the primary-only Pi idle extension for native idle/return sensing, durable
+  timer reload, core-gated notifications, and compaction.
 ### Changed
 - Load Meridian's bundled no-op idle plugin only in interactive Claude primaries.
 
