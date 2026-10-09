@@ -97,7 +97,7 @@ its recorded store. Stderr is diagnostic, not identity or completion authority.
 Bootstrap order is load-bearing: adapter bundle registration, projection drift
 guards, extractor wiring, then cross-adapter field accounting.
 
-## Pi: installed runtime and three extensions
+## Pi: installed runtime and four extensions
 
 Meridian resolves `MERIDIAN_PI_BINARY`, otherwise `pi` on `PATH`, and probes
 `--version`/`--help` before launch. It does not bundle Pi or provide a wrapper
@@ -121,6 +121,9 @@ Both roles load these stable `-e` bundles:
   launch nonce and Pi PID. Only a final readable `session_shutdown(reason=quit)`
   verifies exit identity; a switch, reload, stale context, or corrupt record does
   not authorize a last-seen-session fallback.
+- **meridian-idle**, interactive primaries only: translates Pi idle/input events
+  and live context facts into core idle decisions. It never loads in spawned RPC
+  sessions.
 
 Primary child notifications do not auto-stop the TUI. Spawned completion uses
 quiescence: parent idle, reconciled transitive descendants finished, private work
@@ -137,7 +140,7 @@ or the exact `--session <file>` for resume. Fork also passes `--fork <source-fil
 ### Build and package
 
 TypeScript sources live under `src/meridian/pi_runtime/extensions/`. Build all
-three bundles before launch:
+four bundles before launch:
 
 ```bash
 cd src/meridian/pi_runtime

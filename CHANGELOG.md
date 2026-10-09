@@ -34,7 +34,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pin Codex idle events to managed primary threads, poll their external schedule,
   sense pane drafts/activity, and compact through a verified tmux command.
 ### Changed
-- Load Meridian's bundled no-op idle plugin only in interactive Claude primaries.
+- Load Meridian's bundled idle plugin only in interactive Claude primaries.
 
 ### Fixed
 - Keep idle compaction completion alive across user returns, contain and offload
