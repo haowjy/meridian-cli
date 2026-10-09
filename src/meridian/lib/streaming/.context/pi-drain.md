@@ -12,6 +12,40 @@ owns Pi evidence and cleanup collaborators; `pi_completion_profile.py` owns Pi
 precedence, phases, deadlines, nudges, and stream-exit policy.
 `drain_plan_factory.py` is the composition root for the full Pi drain plan.
 
+### Native Run Settlement
+
+Meridian follows Pi's session-level lifecycle rather than treating every assistant
+batch as idle:
+
+- `turn_end` closes one assistant/tool batch and does not change parent activity.
+- `agent_end` records the latest low-level attempt provisionally; retries,
+  compaction recovery, and queued continuation may still follow it. Its raw frame
+  remains observable; only the decoded attempt outcome is retained privately.
+- `agent_settled` resolves that retained attempt (or fails closed when the attempt
+  is missing/malformed). Native idleness requires settlement **and no open
+  compaction**: `aborted` remains cancellation, and final provider errors retain
+  their diagnostics. Either event order is valid; `compaction_end` does not need a
+  second settlement after an already-settled run, and it cannot settle an active run.
+
+Retry, automatic compaction, and agent-start events keep the parent active. Pi's
+summarization-retry and queue-update notifications are retained as raw facts but
+do not establish activity: branch-summary retries have no paired compaction
+boundary, and an idle queued continuation has no run until a later prompt.
+The tracker keeps agent settlement and compaction-in-progress separately:
+a manual compaction can start inside a settlement hook before the public settlement
+event arrives. Both facts must permit idleness; neither event overwrites the other. A new run invalidates the previous success candidate and micro-drain;
+it must supply its own attempt and settlement. Manual compaction is separate from an automatic run:
+its `compaction_end` closes that operation without creating another agent run.
+Compaction retries belong to the open compaction, not a new agent run. An end event
+cannot settle an otherwise active agent. Pi's combined idle observation also gates
+`done`; the generic coordinator's turn flag is not a second native-idle authority. A
+notification-delivery deadline is armed only while that settled parent is idle;
+starting a new run clears the old window, so active work cannot spend an earlier idle
+budget. Exact receipt/public-observation and causal response fences remain in force
+during every settlement. Explicit single-turn/persistent API drain policies retain
+their chosen termination behavior after settlement; only the normal Pi quiescence
+policy adds disk-work and success-validation fences.
+
 ### Ownership Boundary
 
 The Pi completion composition owns:
@@ -80,9 +114,9 @@ An absent private-work file means no blocker. A file that exists but cannot be r
 validated produces typed unknown evidence instead of an empty snapshot. Boolean,
 nonfinite timestamp, wrong-parent, malformed member and version values are rejected.
 Unknown evidence and undelivered results have anchored recovery windows (configured
-child-wave window, otherwise 300 seconds). Delivery anchors at first idle and is not
-evaluated during intentional active-turn deferral; that activity never renews the
-anchor. Unknown evidence remains bounded while active too. Failure reports
+child-wave window, otherwise 300 seconds). Delivery anchors at the start of each genuinely idle delivery window. New active
+work clears that window; its later settlement receives a fresh idle budget.
+Ordinary idle polling does not renew the deadline. Unknown evidence remains bounded while active too. Failure reports
 `pi_evidence_unreadable` with original evidence detail or `pi_delivery_unresolved`.
 `done` may release known running execution or descendant liveness once the parent
 is idle. It cannot skip a native active turn, an owed result/publication, or unknown
@@ -119,13 +153,15 @@ signal-gated deadline/rearm model documented in [AGENTS.md](../AGENTS.md).
 
 ### Micro-Drain
 
-When a terminal event arrives but quiescence is not yet confirmed, `PiCompletionProfile`
-enters micro-drain mode. It gives already-buffered or just-written disk/event activity a
-short chance to arrive before accepting the terminal event as the final outcome. This
-covers races where descendant state or causal delivery evidence lands immediately after
-`agent_end`. Micro-drain rechecks private evidence and requests qualifying descendant
-validation before finalizing. A slow initial descendant refresh does not move the
-idle/terminal anchor used by Pi's done-nudge delay.
+After a settled success has a ready work assessment, the shared
+`CompletionCoordinator` enters its `stabilizing` phase. Once that window elapses,
+the coordinator enters an explicit `validating` phase and requests one fresh
+descendant read. The refresh commit wakes the drain; it does not re-arm the
+stabilization timer or synchronously rescan on every wake. Activity during either
+phase invalidates the candidate. The Pi profile supplies the short policy window,
+while activity and fresh descendant validation are owned by that coordinator state
+(there is no second Pi phase gate). A slow initial descendant refresh does not move
+the idle/terminal anchor used by Pi's done-nudge delay.
 
 Receipt persistence precedes the native public RPC message event. Until Python observes
 that exact delivery ID and membership, evidence remains unknown; once observed, the
@@ -145,9 +181,9 @@ An inline phase sink atomically updates `spawns/<id>/pi-lifecycle.json`;
 | `session_event_seen` / `session_event_absent` | Pi session event observed (or not) |
 | `waiting_for_tracked_children` | Parent idle, children still running |
 | `pi_child_wave_timeout` | Wave deadline expired |
-| `quiescence_micro_drain_started` | Terminal event seen, polling for quiescence |
+| `quiescence_micro_drain_started` | Settled success candidate seen, polling for quiescence |
 | `quiescence_micro_drain_extended` | Additional event during micro-drain |
-| `quiescence_deferred` | Terminal event but still waiting for children/private disk evidence |
+| `quiescence_deferred` | Settled candidate but still waiting for children/private disk evidence |
 | `cleanup_running` / `cleanup_completed` / `cleanup_escalated` / `cleanup_failed` | Connection cleanup phases |
 | `finalized` | Drain complete; final status/exit_code/error |
 

@@ -128,7 +128,47 @@ describe("managed bash and spawn-watch completion notifications", () => {
     }
   });
 
-  it("leaves a timed-out running wait eligible for later completion notification", async () => {
+  it("consumes a terminal result read through output, but not a running one", async () => {
+    const runtimeRoot = await mkdtemp(path.join(tmpdir(), "pi-bash-output-consumption-"));
+    setEnv("_MERIDIAN_PI_STATE_DIR", runtimeRoot);
+    setEnv("MERIDIAN_SPAWN_ID", "p-output-consumption");
+    const host = makeManagedBashHost();
+    const { tools } = host;
+    const messages: unknown[] = [];
+    let idle = false;
+    const spawnWatch = new SpawnWatchRuntime({
+      sendMessage: (message: unknown) => messages.push(message),
+    } as unknown as ConstructorParameters<typeof SpawnWatchRuntime>[0], () => idle);
+    spawnWatch.start();
+
+    try {
+      const bashId = ((await tools.get("bash")!.execute("call", {
+        command: "sleep 0.2; printf done",
+        background: true,
+      })).details as { bash_id: string }).bash_id;
+      const recordsPath = path.join(runtimeRoot, "pi-bash", "p-output-consumption", "bash-records.json");
+      await tools.get("bash_manage")!.execute("call", { action: "output", bash_id: bashId });
+      const running = JSON.parse(await readFile(recordsPath, "utf-8")) as BashRecordsFile;
+      expect(running.records[bashId]?.notification_consumed_at_ms).toBeUndefined();
+
+      await waitForTerminalRecord(recordsPath, bashId);
+      const read = await tools.get("bash_manage")!.execute("call", { action: "output", bash_id: bashId });
+      expect((read.details as { output: string }).output).toContain("done");
+      const records = JSON.parse(await readFile(recordsPath, "utf-8")) as BashRecordsFile;
+      expect(typeof records.records[bashId]?.notification_consumed_at_ms).toBe("number");
+
+      idle = true;
+      spawnWatch.observeIdle(() => idle);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(messages).toHaveLength(0);
+    } finally {
+      await host.shutdown();
+      spawnWatch.stop();
+      await rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves a timed-out or interrupted wait eligible for later completion notification", async () => {
     const runtimeRoot = await mkdtemp(path.join(tmpdir(), "pi-bash-wait-timeout-"));
     setEnv("_MERIDIAN_PI_STATE_DIR", runtimeRoot);
     setEnv("MERIDIAN_SPAWN_ID", "p-notification-timeout");
@@ -152,13 +192,22 @@ describe("managed bash and spawn-watch completion notifications", () => {
       const wait = tools.get("bash_manage")!.execute("call", {
         action: "wait",
         bash_id: bashId,
-        timeout_min: 1,
       });
-      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.advanceTimersByTimeAsync(55 * 60_000);
       expect(((await wait).details as { status: string }).status).toBe("running");
       const records = JSON.parse(await readFile(recordsPath, "utf-8")) as BashRecordsFile;
       expect(records.records[bashId]?.notification_consumed_at_ms).toBeUndefined();
       vi.useRealTimers();
+
+      // Esc must not leave the turn blocked for the full wait, nor consume the result.
+      const abort = new AbortController();
+      const interrupted = tools.get("bash_manage")!.execute("call", { action: "wait", bash_id: bashId }, abort.signal);
+      setTimeout(() => abort.abort(), 50);
+      const interruptedDetails = (await interrupted).details as { status: string; message: string };
+      expect(interruptedDetails.status).toBe("running");
+      expect(interruptedDetails.message).toContain("interrupted");
+      const afterAbort = JSON.parse(await readFile(recordsPath, "utf-8")) as BashRecordsFile;
+      expect(afterAbort.records[bashId]?.notification_consumed_at_ms).toBeUndefined();
 
       const killed = await tools.get("bash_manage")!.execute("call", { action: "kill", bash_id: bashId });
       expect((killed.details as { killed: boolean }).killed).toBe(true);

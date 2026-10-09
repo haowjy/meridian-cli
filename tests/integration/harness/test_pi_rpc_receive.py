@@ -49,7 +49,7 @@ async def rpc_process(
     shim = root / "pi"
     shim.write_text(
         f"#!{sys.executable}\nimport json,os,sys,time\n"
-        "if '--version' in sys.argv: print('0.87.1'); raise SystemExit\n"
+        "if '--version' in sys.argv: print('1.1.0'); raise SystemExit\n"
         f"if '--help' in sys.argv: print({HELP!r}); raise SystemExit\n"
         + startup + "\nfor line in sys.stdin:\n"
         " command=json.loads(line)\n"

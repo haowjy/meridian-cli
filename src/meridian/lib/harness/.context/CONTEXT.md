@@ -139,7 +139,9 @@ classifies each event through the per-bundle semantic port into a typed
 `clears_signal` (bool), and `terminal` (`TerminalEventOutcome | None`).
 The result is `NormalizedHarnessEvent` carrying the raw event and its single
 descriptor. Each event is normalized exactly once; downstream consumers read
-the descriptor.
+the descriptor. A completion coordinator may replace that descriptor over the
+same raw envelope before delivery (for example, Pi moves an `agent_end` attempt
+outcome to the following `agent_settled` event); it does not hide the raw frame.
 
 Each adapter's `HarnessBundle` registers a `HarnessSemantics` with:
 - `events`: event-name to `EventSemantics` descriptor table
@@ -159,9 +161,12 @@ Key mappings:
 - OpenCode: parent-session `session.idle` → succeeded; parent-session `session.error` → failed
 - Cursor: `meridian/error/connectionClosed` → failed; no explicit success event — stdout EOF
   + process exit code 0 is the success boundary (see `CursorSubprocessConnection.events()`).
-- Pi: `agent_end` → succeeded candidate; `cancelled`/`error` → failed.
-  The succeeded candidate is finalized only when `PiDrainCoordinator` confirms
-  quiescence (parent idle, no pending children/bash, no pending notifications).
+- Pi: `agent_end` decodes one low-level attempt outcome but is not a session-level
+  terminal or idle boundary. `agent_settled` resolves that outcome; `aborted` is
+  cancellation, and missing/malformed settlement or attempt data fails closed.
+  Native idle additionally requires no open compaction. `PiDrainCoordinator` then
+  applies quiescence/stabilization (parent idle, no pending children/bash, no
+  pending notifications).
 
 `PrimaryEventScope` is the parent-conversation identity used for this filtering.
 Connections own primary scope construction: Codex builds it from the bootstrapped
@@ -385,8 +390,10 @@ child spawn completion and deliver wave notifications. This means process exit
 is not a valid completion signal. Instead, Meridian reads the reconciled
 transitive spawn tree plus disk-backed private state (bash records and
 notification markers). The drain loop delegates this policy to
-`PiDrainCoordinator`, which only lets an `agent_end` success candidate finalize
-after the quiescence check passes.
+`PiDrainCoordinator`, which only lets a settled success candidate finalize after
+the native idle and quiescence checks pass. The shared `CompletionCoordinator`
+is the single owner of completion phase and validation state; native run facts
+and compaction-in-progress remain independent evidence.
 
 Pi completes by quiescence rather than a terminal event. Resident Codex and
 OpenCode also hold terminal-event completion until their persisted descendant

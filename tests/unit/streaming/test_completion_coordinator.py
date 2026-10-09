@@ -78,12 +78,16 @@ class _Evidence:
         del event, transition
         return EvidenceEventDecision()
 
-    def note_event_delivered(self, event: RawHarnessEvent) -> EvidenceEventDecision:
-        del event
+    def note_event_delivered(
+        self, event: RawHarnessEvent, state: CompletionState
+    ) -> EvidenceEventDecision:
+        del event, state
         return self.persisted
 
-    async def assess(self, trigger: AssessmentTrigger) -> WorkAssessment:
-        del trigger
+    async def assess(
+        self, trigger: AssessmentTrigger, state: CompletionState
+    ) -> WorkAssessment:
+        del trigger, state
         if self.assessments:
             self.last = self.assessments.popleft()
         return self.last
@@ -155,6 +159,10 @@ class _Profile:
             return ProfileDecision(action="cleanup", outcome=_TIMEOUT, cleanup_reason="deadline")
         if context.evidence_activity is not None:
             return ProfileDecision(action="stabilize", restart_stabilization=True)
+        if context.state.phase == "validating":
+            if context.assessment.disposition == "ready":
+                return ProfileDecision(action="complete", outcome=candidate)
+            return ProfileDecision(action="wait")
         if context.state.phase == "stabilizing":
             if (
                 context.assessment.disposition == "ready"
@@ -341,6 +349,25 @@ async def test_post_stabilization_success_rechecks_evidence_started_after_reques
     assert before_post_request_read.recorded_outcome is None
     assert after_post_request_read.recorded_outcome is None
     assert coordinator.state.assessment == _blocked(2)
+
+
+@pytest.mark.asyncio
+async def test_activity_during_validation_withholds_stale_success() -> None:
+    clock = FakeClock()
+    evidence = _Evidence(_ready(), auto_validate=False)
+    coordinator, _ = _coordinator(clock, evidence, _Profile(stabilization=0.05))
+    await coordinator.handle_terminal_event(None, _SUCCESS, _TERMINATE)  # type: ignore[arg-type]
+    clock.advance(0.05)
+    assert (await coordinator.handle_timeout()).recorded_outcome is None
+
+    coordinator.note_activity_transition("turn_active")
+    evidence.finish_validation()
+    assert (await coordinator.handle_aux_wake()).recorded_outcome is None
+
+    clock.advance(0.05)
+    await coordinator.handle_timeout()
+    evidence.finish_validation()
+    assert (await coordinator.handle_aux_wake()).recorded_outcome == _SUCCESS
 
 
 @pytest.mark.asyncio

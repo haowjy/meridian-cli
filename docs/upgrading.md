@@ -1,5 +1,25 @@
 # Upgrade notes
 
+## Pi spawned-run settlement
+
+Managed Pi sessions now require a stable **Pi >=1.1.0 and <2**, for both native
+TUI primaries and spawned RPC workers. Update Pi before launching either role.
+Meridian rejects older, prerelease, unrecognized and newer-major versions during
+runtime resolution, before model work. This matches the managed extensions'
+peer contract; their development SDK is pinned to the qualified Pi 1.1.0.
+
+The resolver also checks each role's required CLI flags. Spawned sessions still
+validate the actual settlement event: missing/non-Boolean `aborted` fails closed
+with `pi_invalid_agent_settled`. Pi 1.0.4 lacked that field; it is now refused at
+launch rather than after spending model work.
+
+A tool batch ending no longer means the parent is idle. Meridian waits for
+native settlement and any open compaction; retries and queued continuations can
+finish before completion is chosen. Active work clears the idle result-delivery
+window, while genuinely idle undeliverable results still have a bounded failure.
+This changes no private-file schema. Restart workers to load the new Python code;
+do not replace their installed environment while they are running.
+
 ## Upgrading to 0.9: Pi task ownership and result delivery
 
 Before reinstalling, finish or cancel managed shell tasks and spawned Pi runs,

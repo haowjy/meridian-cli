@@ -109,6 +109,7 @@ async def test_spawn_manager_pi_primary_role_does_not_auto_stop_at_quiescence(
             "agent_end",
             {"messages": [{"role": "assistant", "stopReason": "stop"}]},
         ),
+        _pi_event("agent_settled", {"aborted": False}),
         _pi_event(
             "meridian.quiescence.ready",
             {
@@ -163,6 +164,7 @@ async def test_spawn_manager_pi_cleanup_escalation_does_not_block_terminal_succe
             "agent_end",
             {"messages": [{"role": "assistant", "stopReason": "stop"}]},
         ),
+        _pi_event("agent_settled", {"aborted": False}),
     ]
     fake_connection = _EscalatedButSuccessfulStopConnection(events)
 
@@ -249,6 +251,7 @@ async def test_spawn_manager_pi_cleanup_publishes_terminal_before_async_teardown
                 "agent_end",
                 {"messages": [{"role": "assistant", "stopReason": "stop"}]},
             ),
+            _pi_event("agent_settled", {"aborted": False}),
         ]
     )
     spawn_id = SpawnId(f"p-pi-cleanup-{'failed' if stop_error else 'completed'}")
@@ -294,6 +297,7 @@ async def test_spawn_manager_pi_micro_drain_resolves_with_bounded_timeout(
                 "agent_end",
                 {"messages": [{"role": "assistant", "stopReason": "stop"}]},
             )
+            yield _pi_event("agent_settled", {"aborted": False})
             await asyncio.sleep(60)
 
     fake_connection = _OpenAfterTerminalConnection([])
