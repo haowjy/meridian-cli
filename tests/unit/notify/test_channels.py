@@ -11,6 +11,8 @@ from meridian.lib.notify.notice import Notice
 def test_registry_resolves_builtin_channels() -> None:
     assert resolve_channel("ntfy").name == "ntfy"
     assert resolve_channel("none").name == "none"
+    assert resolve_channel("smtp").name == "smtp"
+    assert resolve_channel("gmail").name == "gmail"
 
 
 def test_registry_rejects_unknown_channel() -> None:

@@ -22,8 +22,10 @@ class _LazyChannel:
 
 
 REGISTRY: dict[str, Channel] = {
+    "gmail": _LazyChannel("gmail", "meridian.lib.notify.channels.gmail"),
     "none": _LazyChannel("none", "meridian.lib.notify.channels.none"),
     "ntfy": _LazyChannel("ntfy", "meridian.lib.notify.channels.ntfy"),
+    "smtp": _LazyChannel("smtp", "meridian.lib.notify.channels.smtp"),
 }
 
 
