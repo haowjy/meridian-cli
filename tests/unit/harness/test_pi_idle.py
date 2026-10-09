@@ -44,6 +44,17 @@ def test_pi_idle_env_facts(env: Mapping[str, str], expected: dict[str, object]) 
 
 def test_pi_bundle_registers_idle_hooks() -> None:
     bundle = get_harness_bundle(HarnessId.PI)
+    detector = bundle.detect_ttl
 
-    assert bundle.detect_ttl is pi_idle.detect_ttl
+    assert detector is pi_idle.detect_ttl
+    assert detector is not None
+    assert (
+        detector(
+            session_id="session-id",
+            cwd=None,
+            provider="openai",
+            env={"PI_CACHE_RETENTION": "long"},
+        )
+        == 86400
+    )
     assert bundle.idle_env_facts is pi_idle.idle_env_facts

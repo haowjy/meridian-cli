@@ -125,6 +125,9 @@ def test_claude_idle_env_facts(raw: str, expected: bool) -> None:
 
 def test_claude_bundle_registers_idle_hooks() -> None:
     bundle = get_harness_bundle(HarnessId.CLAUDE)
+    detector = bundle.detect_ttl
 
-    assert bundle.detect_ttl is claude_idle.detect_ttl
+    assert detector is claude_idle.detect_ttl
+    assert detector is not None
+    assert detector(session_id="", cwd=None, provider=None, env={}) is None
     assert bundle.idle_env_facts is claude_idle.idle_env_facts
