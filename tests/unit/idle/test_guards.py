@@ -62,6 +62,7 @@ def state(**updates: object) -> IdleState:
             "stretch-closed",
         ),
         ("push", GuardFacts(1, 2), state(), Config(), 60_000, "stale-anchor"),
+        ("push", GuardFacts(1, 1), state(), Config(), 58_999, "early-fire"),
         ("push", GuardFacts(1, 1), state(), Config(), 181_001, "late-fire"),
         (
             "compact",
@@ -134,6 +135,7 @@ def state(**updates: object) -> IdleState:
         "3-done",
         "4-closed",
         "4-stale-anchor",
+        "5-early",
         "5-late",
         "6-compact-enabled",
         "7-cache-cold",

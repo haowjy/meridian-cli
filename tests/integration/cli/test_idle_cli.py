@@ -23,6 +23,8 @@ def _idle_env(tmp_path: Path, *, role: str | None = "primary") -> dict[str, str]
         MERIDIAN_HOME=(home / ".meridian").as_posix(),
         MERIDIAN_NOTIFY_PUSH_BACKEND="none",
         MERIDIAN_NOTIFY_EMAIL_BACKEND="none",
+        MERIDIAN_IDLE_PUSH_SECONDS="0",
+        MERIDIAN_IDLE_COMPACT_MINUTES="1",
         _MERIDIAN_HARNESS="claude",
     )
     if role is not None:
@@ -73,18 +75,19 @@ def test_idle_cli_round_trip(tmp_path: Path) -> None:
         "arm",
         *identity,
         "--ttl",
-        "3600",
+        "61",
     )
     assert isinstance(armed, dict)
     assert armed["stretch"] == 1
     assert armed["anchor"] == 1
-    assert all(isinstance(armed[field], int) for field in ("push_at", "warn_at", "compact_at"))
+    assert all(isinstance(armed[field], int) for field in ("push_at", "compact_at"))
+    assert "warn_at" not in armed
 
     status = _json_success(tmp_path, env, "idle", "status", "--json")
     assert isinstance(status, list)
     assert status[0]["schedule"] == {
         "push_at": armed["push_at"],
-        "warn_at": armed["warn_at"],
+        "warn_at": None,
         "compact_at": armed["compact_at"],
     }
     assert status[0]["done"] == {}
@@ -152,7 +155,16 @@ def test_idle_cli_round_trip(tmp_path: Path) -> None:
         *identity,
         "--user-prompt",
     )
-    assert returned == {"stretch_closed": True}
+    assert returned == {"stretch_closed": True, "was_open": True}
+    returned_again = _json_success(
+        tmp_path,
+        env,
+        "idle",
+        "return",
+        *identity,
+        "--user-prompt",
+    )
+    assert returned_again == {"stretch_closed": True, "was_open": False}
     assert _json_success(tmp_path, env, "idle", "status", "--json") == []
 
 
@@ -225,6 +237,80 @@ def test_idle_outside_meridian_requires_interactive_assertion(tmp_path: Path) ->
     assert isinstance(enabled, dict)
     assert enabled["enabled"] is True
     assert "reason" not in enabled
+
+    disabled_arm = _json_success(
+        tmp_path,
+        env,
+        "idle",
+        "arm",
+        "--harness",
+        "claude",
+        "--session",
+        "outside-session",
+        "--ttl",
+        "3600",
+    )
+    assert disabled_arm == {"anchor": None, "stretch": None}
+
+    armed = _json_success(
+        tmp_path,
+        env,
+        "idle",
+        "arm",
+        "--harness",
+        "claude",
+        "--session",
+        "outside-session",
+        "--ttl",
+        "3600",
+        "--interactive",
+    )
+    assert isinstance(armed, dict)
+    assert (armed["stretch"], armed["anchor"]) == (1, 1)
+
+    fired = _json_success(
+        tmp_path,
+        env,
+        "idle",
+        "fire",
+        "push",
+        "--harness",
+        "claude",
+        "--session",
+        "outside-session",
+        "--stretch",
+        "1",
+        "--anchor",
+        "1",
+        "--interactive",
+    )
+    assert fired == {"decision": "act", "reason": "guards-passed"}
+
+    returned = _json_success(
+        tmp_path,
+        env,
+        "idle",
+        "return",
+        "--harness",
+        "claude",
+        "--session",
+        "outside-session",
+        "--user-prompt",
+        "--interactive",
+    )
+    assert returned == {"stretch_closed": True, "was_open": True}
+
+    spawn_env = _idle_env(tmp_path, role="spawn")
+    spawn_config = _json_success(
+        tmp_path,
+        spawn_env,
+        "idle",
+        "config",
+        "--interactive",
+    )
+    assert isinstance(spawn_config, dict)
+    assert spawn_config["enabled"] is False
+    assert spawn_config["reason"] == "role"
 
 
 @pytest.mark.integration
