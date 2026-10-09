@@ -433,3 +433,26 @@ def test_event_and_status_route_harness_agnostic_events() -> None:
 
     idle.event(IdleEvent("user_prompt", "s1", None, 1), harness="example")
     assert idle.status() == ()
+
+
+def test_event_honors_adapter_metadata() -> None:
+    idle, _, store, _ = service()
+
+    idle.event(
+        IdleEvent(
+            "turn_end",
+            "s1",
+            "turn-1",
+            0,
+            implies_return=True,
+            input_count=4,
+            ttl_seconds=300,
+        ),
+        harness="example",
+    )
+
+    state = store.read("example", "s1")
+    assert state is not None
+    assert state.last_turn_id == "turn-1"
+    assert state.last_input_count == 4
+    assert state.ttl_seconds == 300

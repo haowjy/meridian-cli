@@ -173,22 +173,12 @@ class _Coordinator:
             record_sensor_error(self.ctx, phase="timer", error=exc)
 
     async def handle(self, event: IdleEvent) -> None:
+        result = self.service.event(event, harness=self.harness)
         if event.kind == "user_prompt":
-            self.service.return_(
-                harness=self.harness,
-                session=event.harness_session_id,
-                user_prompt=True,
-            )
             await self.cancel_schedule()
             return
-        if event.kind not in {"turn_end", "idle"}:
-            return
-        result = self.service.arm(
-            harness=self.harness,
-            session=event.harness_session_id,
-            turn_id=event.turn_id,
-        )
-        await self.apply_arm(result)
+        if isinstance(result, ArmResult):
+            await self.apply_arm(result)
 
 
 async def _consume_events(sensor: IdleSensor, coordinator: _Coordinator) -> None:
