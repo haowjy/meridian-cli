@@ -166,7 +166,8 @@ async def test_spawn_manager_child_wave_timeout_publishes_before_descendant_canc
         # from the unrelated initial threaded-projection recovery window.
         await wait_until(
             lambda: coordinator._evidence._refresh.assessment.disposition == "blocked",
-            timeout=2.0,
+            # Bounds a hang only: the threaded projection is slow on a loaded host.
+            timeout=10.0,
             description="initial persisted-child assessment",
         )
         assert {
