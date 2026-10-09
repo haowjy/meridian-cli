@@ -156,6 +156,20 @@ def test_idle_cli_round_trip(tmp_path: Path) -> None:
         "--user-prompt",
     )
     assert returned == {"stretch_closed": True, "was_open": True}
+
+    rearmed = _json_success(
+        tmp_path,
+        env,
+        "idle",
+        "arm",
+        *identity,
+        "--ttl",
+        "61",
+    )
+    assert isinstance(rearmed, dict)
+    assert (rearmed["stretch"], rearmed["anchor"]) == (2, 1)
+    assert all(isinstance(rearmed[field], int) for field in ("push_at", "compact_at"))
+
     returned_again = _json_success(
         tmp_path,
         env,
@@ -164,8 +178,49 @@ def test_idle_cli_round_trip(tmp_path: Path) -> None:
         *identity,
         "--user-prompt",
     )
-    assert returned_again == {"stretch_closed": True, "was_open": False}
+    assert returned_again == {"stretch_closed": True, "was_open": True}
+    returned_closed = _json_success(
+        tmp_path,
+        env,
+        "idle",
+        "return",
+        *identity,
+        "--user-prompt",
+    )
+    assert returned_closed == {"stretch_closed": True, "was_open": False}
     assert _json_success(tmp_path, env, "idle", "status", "--json") == []
+
+
+@pytest.mark.integration
+def test_idle_config_honors_flag_falls_back_to_env_and_requires_harness(
+    tmp_path: Path,
+) -> None:
+    env = _idle_env(tmp_path)
+    env["MERIDIAN_HARNESS_IDLE_ENABLED_CLAUDE"] = "0"
+    env["MERIDIAN_HARNESS_IDLE_ENABLED_CODEX"] = "1"
+
+    flagged = _json_success(
+        tmp_path,
+        env,
+        "idle",
+        "config",
+        "--harness",
+        "codex",
+        "--interactive",
+    )
+    fallback = _json_success(tmp_path, env, "idle", "config", "--interactive")
+
+    assert isinstance(flagged, dict)
+    assert flagged["enabled"] is True
+    assert isinstance(fallback, dict)
+    assert fallback["enabled"] is False
+    assert fallback["reason"] == "idle-disabled"
+
+    env.pop("_MERIDIAN_HARNESS")
+    missing = _run(tmp_path, env, "idle", "config", "--interactive")
+    assert missing.returncode == 1
+    assert json.loads(missing.stdout) == {"error": "--harness is required"}
+    assert missing.stderr == ""
 
 
 @pytest.mark.integration

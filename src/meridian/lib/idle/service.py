@@ -334,7 +334,7 @@ class IdleService:
                         }
                     )
                     return next_state, _result_for_state(next_state, reason="compact-window")
-                if current.expect_compaction_turn:
+                if current.stretch_open and current.expect_compaction_turn:
                     next_state = current.model_copy(
                         update={
                             "expect_compaction_turn": False,
@@ -349,7 +349,7 @@ class IdleService:
                         next_state,
                         reason="expected-compaction-turn",
                     )
-                if current.done.get("compact") == "ok":
+                if current.stretch_open and current.done.get("compact") == "ok":
                     next_state = current.model_copy(
                         update={
                             "last_input_count": (
