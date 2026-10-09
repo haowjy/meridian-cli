@@ -222,6 +222,7 @@ class CodexIdleSensor:
         tmux: TmuxClient | None = None,
         compact_timeout_seconds: float = 60.0,
         compact_poll_seconds: float = 0.5,
+        verification_delay_seconds: float = 0.2,
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
@@ -229,6 +230,7 @@ class CodexIdleSensor:
         self._tmux = tmux or _Tmux()
         self._compact_timeout_seconds = compact_timeout_seconds
         self._compact_poll_seconds = compact_poll_seconds
+        self._verification_delay_seconds = verification_delay_seconds
         self._monotonic = monotonic
         self._sleep = sleep
 
@@ -266,6 +268,9 @@ class CodexIdleSensor:
         if not self._ctx.tui_alive():
             return CompactResult("vetoed", "tui-exited-before-submit")
 
+        # send-keys returning only means tmux accepted the input. Give the TUI
+        # one render tick before verifying the editor contents.
+        await self._sleep(self._verification_delay_seconds)
         verified = await self._tmux.capture(pane)
         if verified is None or _prompt_text(verified) != _COMPACT_COMMAND:
             await self._erase_compact_text(pane)

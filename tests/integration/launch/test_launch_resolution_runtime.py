@@ -298,7 +298,8 @@ def test_primary_launch_resolves_reference_files_from_work_task_dir(
         harness_registry=get_default_harness_registry(),
     )
 
-    prompt = result.command[-1]
+    assert result.launch_plan is not None
+    prompt = result.launch_plan.attach_command[-1]
     assert (task_dir / "task-only.txt").as_posix() in prompt
     assert "task marker" in prompt
     assert "project shadow" not in prompt
@@ -333,7 +334,8 @@ def test_primary_launch_resolves_reference_files_from_explicit_task_dir(
         harness_registry=get_default_harness_registry(),
     )
 
-    prompt = result.command[-1]
+    assert result.launch_plan is not None
+    prompt = result.launch_plan.attach_command[-1]
     assert (task_dir / "task-only.txt").as_posix() in prompt
     assert "task marker" in prompt
     assert "project shadow" not in prompt
