@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, Literal, Protocol, TypeVar
+from typing import Literal, Protocol, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -18,6 +18,7 @@ from meridian.lib.state.user_paths import get_user_home
 Stage = Literal["push", "warn", "compact"]
 CompactResultValue = Literal["ok", "failed", "vetoed"]
 _RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+T = TypeVar("T")
 
 
 class IdleSchedule(BaseModel):
@@ -79,13 +80,10 @@ class IdleStoreReader(Protocol):
         self,
         harness: str,
         session: str,
-        mutation: Callable[[IdleState | None], tuple[IdleState | None, Any]],
-    ) -> Any: ...
+        mutation: Callable[[IdleState | None], tuple[IdleState | None, T]],
+    ) -> T: ...
 
     def list_states(self) -> tuple[IdleState, ...]: ...
-
-
-T = TypeVar("T")
 
 
 def _default_now_ms() -> int:
@@ -157,11 +155,14 @@ class IdleStore:
     def write(self, state: IdleState) -> IdleState:
         """Replace one state under its file lock and return the stamped value."""
 
-        def replace(_current: IdleState | None) -> tuple[IdleState, IdleState]:
-            stamped = state.model_copy(update={"updated_at_ms": self._now_ms()})
-            return stamped, stamped
+        def replace(_current: IdleState | None) -> tuple[IdleState, None]:
+            return state, None
 
-        return self.mutate(state.harness, state.session, replace)
+        self.mutate(state.harness, state.session, replace)
+        written = self.read(state.harness, state.session)
+        if written is None:  # pragma: no cover - atomic replacement made this unreachable
+            raise OSError("Idle state disappeared after atomic write")
+        return written
 
     def list_states(self) -> tuple[IdleState, ...]:
         if not self.root.is_dir():

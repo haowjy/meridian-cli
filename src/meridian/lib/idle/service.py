@@ -1,0 +1,624 @@
+"""Harness-agnostic idle state machine and notification policy."""
+
+from __future__ import annotations
+
+import os
+import time
+from collections.abc import Callable, Mapping
+from contextlib import suppress
+from dataclasses import dataclass
+from importlib import import_module
+from pathlib import Path
+from typing import Literal, Protocol, cast
+
+from pydantic import BaseModel
+
+from meridian.lib.config.schema import parse_env_scalar
+from meridian.lib.config.settings import MeridianConfig, load_config
+from meridian.lib.harness.idle_types import IdleEvent, IdleFacts
+from meridian.lib.idle.children import (
+    SpawnStoreReader,
+    active_child_count,
+    spawn_store_reader,
+)
+from meridian.lib.idle.guards import DecisionKind, GuardFacts, decide
+from meridian.lib.idle.timeline import Schedule, schedule
+from meridian.lib.state.idle_store import (
+    CompactResultValue,
+    IdleSchedule,
+    IdleState,
+    IdleStore,
+    IdleStoreReader,
+    Stage,
+)
+
+_COMPACT_GRACE_MS = 30_000
+
+
+class NotifyReport(Protocol):
+    """Minimum report contract needed from notification delivery."""
+
+    @property
+    def ok(self) -> bool: ...
+
+
+@dataclass(frozen=True)
+class NoticeSpec:
+    """Dependency-neutral notice payload for injected senders."""
+
+    title: str
+    body: str
+    priority: int
+    email: bool
+    kind: str
+
+
+class NotifySender(Protocol):
+    """Notification seam; production imports lib/notify only when called."""
+
+    def send(self, notice: NoticeSpec, cfg: object) -> NotifyReport: ...
+
+
+class _LazyNotifySender:
+    def send(self, notice: NoticeSpec, cfg: object) -> NotifyReport:
+        notice_type = cast(
+            "Callable[..., object]",
+            vars(import_module("meridian.lib.notify.notice"))["Notice"],
+        )
+        send = cast(
+            "Callable[[object, object], NotifyReport]",
+            vars(import_module("meridian.lib.notify.service"))["send"],
+        )
+        return send(
+            notice_type(
+                title=notice.title,
+                body=notice.body,
+                priority=notice.priority,
+                email=notice.email,
+                kind=notice.kind,
+            ),
+            cfg,
+        )
+
+
+@dataclass(frozen=True)
+class IdlePolicyConfig:
+    enabled: bool
+    push_seconds: int
+    warn_minutes: int
+    warn_email: bool
+    compact_minutes: int
+    compact: bool
+    min_compact_tokens: int
+    late_fire_tolerance_seconds: int
+    ttl_seconds: int | None
+
+
+@dataclass(frozen=True)
+class ConfigResult:
+    enabled: bool
+    reason: str | None
+    policy: IdlePolicyConfig
+
+
+@dataclass(frozen=True)
+class ArmResult:
+    stretch: int | None
+    anchor: int | None
+    push_at: int | None = None
+    warn_at: int | None = None
+    compact_at: int | None = None
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class ReturnResult:
+    stretch_closed: int | None
+
+
+@dataclass(frozen=True)
+class FireResult:
+    decision: DecisionKind
+    reason: str
+
+
+@dataclass(frozen=True)
+class DoneResult:
+    recorded: bool
+
+
+def _default_now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+_FIELD_KINDS: dict[str, Literal["bool", "int"]] = {
+    "enabled": "bool",
+    "push_seconds": "int",
+    "warn_minutes": "int",
+    "warn_email": "bool",
+    "compact_minutes": "int",
+    "compact": "bool",
+    "min_compact_tokens": "int",
+    "late_fire_tolerance_seconds": "int",
+    "ttl_seconds": "int",
+}
+_HARNESS_FIELDS = frozenset({"enabled", "compact", "ttl_seconds"})
+
+
+def _env_value(env: Mapping[str, str], name: str, field: str) -> object | None:
+    raw = env.get(name)
+    if raw is None:
+        return None
+    return parse_env_scalar(value_kind=_FIELD_KINDS[field], raw_value=raw, env_name=name)
+
+
+def _harness_idle_config(config: MeridianConfig, harness: str) -> BaseModel | None:
+    profile = getattr(config.harness, harness.strip().lower(), None)
+    idle = getattr(profile, "idle", None)
+    return idle if isinstance(idle, BaseModel) else None
+
+
+def effective(
+    field: str,
+    harness: str,
+    config: MeridianConfig,
+    env: Mapping[str, str] | None = None,
+) -> object:
+    """Resolve level-first, then most-specific idle precedence."""
+
+    if field not in _FIELD_KINDS:
+        raise ValueError(f"Unknown idle config field: {field!r}")
+    values = os.environ if env is None else env
+    normalized_harness = harness.strip().lower()
+    harness_idle = _harness_idle_config(config, normalized_harness)
+
+    if field in _HARNESS_FIELDS:
+        specific_env = f"MERIDIAN_HARNESS_IDLE_{field.upper()}_{normalized_harness.upper()}"
+        value = _env_value(values, specific_env, field)
+        if value is not None:
+            return value
+
+    global_env = f"MERIDIAN_IDLE_{field.upper()}"
+    value = _env_value(values, global_env, field)
+    if value is not None:
+        return value
+
+    if (
+        field in _HARNESS_FIELDS
+        and harness_idle is not None
+        and field in harness_idle.model_fields_set
+    ):
+        return getattr(harness_idle, field)
+    if hasattr(config.idle, field):
+        return getattr(config.idle, field)
+    if harness_idle is not None and hasattr(harness_idle, field):
+        return getattr(harness_idle, field)
+    return None
+
+
+def resolve_policy(
+    harness: str,
+    config: MeridianConfig,
+    env: Mapping[str, str] | None = None,
+) -> IdlePolicyConfig:
+    """Resolve all policy fields once for an operation."""
+
+    values = {field: effective(field, harness, config, env) for field in _FIELD_KINDS}
+    return IdlePolicyConfig(
+        enabled=bool(values["enabled"]),
+        push_seconds=int(cast("int", values["push_seconds"])),
+        warn_minutes=int(cast("int", values["warn_minutes"])),
+        warn_email=bool(values["warn_email"]),
+        compact_minutes=int(cast("int", values["compact_minutes"])),
+        compact=bool(values["compact"]),
+        min_compact_tokens=int(cast("int", values["min_compact_tokens"])),
+        late_fire_tolerance_seconds=int(
+            cast("int", values["late_fire_tolerance_seconds"])
+        ),
+        ttl_seconds=(
+            int(cast("int", values["ttl_seconds"]))
+            if values["ttl_seconds"] is not None
+            else None
+        ),
+    )
+
+
+def _result_for_state(state: IdleState, *, reason: str | None = None) -> ArmResult:
+    done = state.done
+    return ArmResult(
+        stretch=state.stretch,
+        anchor=state.anchor,
+        push_at=None if "push" in done else state.schedule.push_at,
+        warn_at=None if "warn" in done else state.schedule.warn_at,
+        compact_at=None if "compact" in done else state.schedule.compact_at,
+        reason=reason,
+    )
+
+
+def _persisted_schedule(value: Schedule) -> IdleSchedule:
+    return IdleSchedule(
+        push_at=value.push_at,
+        warn_at=value.warn_at,
+        compact_at=value.compact_at,
+    )
+
+
+class IdleService:
+    """Synchronous policy API shared by the CLI and launcher sidecar."""
+
+    def __init__(
+        self,
+        *,
+        store: IdleStoreReader | None = None,
+        config: MeridianConfig | None = None,
+        env: Mapping[str, str] | None = None,
+        now_ms: Callable[[], int] = _default_now_ms,
+        notify_sender: NotifySender | None = None,
+        spawn_reader: SpawnStoreReader | None = None,
+        project_root: Path | None = None,
+    ) -> None:
+        self.env = dict(os.environ if env is None else env)
+        root = project_root or Path(self.env.get("MERIDIAN_PROJECT_DIR", Path.cwd()))
+        self.config = config if config is not None else load_config(root)
+        self._now_ms = now_ms
+        self.store = store if store is not None else IdleStore(now_ms=now_ms)
+        self._notify_sender = notify_sender if notify_sender is not None else _LazyNotifySender()
+        self._spawn_reader = spawn_reader or spawn_store_reader(self.env)
+
+    def config_for(self, harness: str) -> ConfigResult:
+        policy = resolve_policy(harness, self.config, self.env)
+        role = self.env.get("MERIDIAN_SESSION_ROLE")
+        if role != "primary":
+            return ConfigResult(enabled=False, reason="not-primary", policy=policy)
+        if not policy.enabled:
+            return ConfigResult(enabled=False, reason="idle-disabled", policy=policy)
+        return ConfigResult(enabled=True, reason=None, policy=policy)
+
+    def arm(
+        self,
+        *,
+        harness: str,
+        session: str,
+        ttl_seconds: int | None = None,
+        implies_return: bool = False,
+        turn_id: str | None = None,
+        spawn_id: str | None = None,
+        main_thread_id: str | None = None,
+    ) -> ArmResult:
+        config_result = self.config_for(harness)
+        if not config_result.enabled:
+            return ArmResult(None, None, reason=config_result.reason)
+        policy = config_result.policy
+        resolved_ttl = ttl_seconds if ttl_seconds is not None else policy.ttl_seconds
+        if resolved_ttl is not None and resolved_ttl <= 0:
+            raise ValueError("ttl_seconds must be greater than zero")
+        now_ms = self._now_ms()
+        resolved_spawn_id = spawn_id or self.env.get("MERIDIAN_SPAWN_ID") or None
+
+        def transition(current: IdleState | None) -> tuple[IdleState, ArmResult]:
+            if (
+                implies_return
+                and turn_id is not None
+                and current is not None
+                and current.last_turn_id == turn_id
+            ):
+                return current, _result_for_state(current, reason="duplicate-turn")
+
+            if current is not None:
+                window_active = (
+                    current.compact_window_until_ms is not None
+                    and now_ms <= current.compact_window_until_ms
+                )
+                if window_active:
+                    next_state = current.model_copy(
+                        update={
+                            "expect_compaction_turn": False
+                            if not implies_return
+                            else current.expect_compaction_turn
+                        }
+                    )
+                    return next_state, _result_for_state(next_state, reason="compact-window")
+                if not implies_return and current.expect_compaction_turn:
+                    next_state = current.model_copy(update={"expect_compaction_turn": False})
+                    return next_state, _result_for_state(
+                        next_state,
+                        reason="expected-compaction-turn",
+                    )
+                if not implies_return and current.done.get("compact") == "ok":
+                    return current, _result_for_state(current, reason="already-compacted")
+
+            opens_new = current is None or not current.stretch_open or implies_return
+            if current is None:
+                stretch = 1
+                anchor = 1
+            else:
+                stretch = current.stretch + int(opens_new)
+                anchor = 1 if opens_new else current.anchor + 1
+            done = {} if opens_new or current is None else dict(current.done)
+            placed = schedule(now_ms, resolved_ttl, policy)
+            next_state = IdleState(
+                harness=harness,
+                session=session,
+                spawn_id=resolved_spawn_id,
+                main_thread_id=(
+                    main_thread_id
+                    if main_thread_id is not None
+                    else (current.main_thread_id if current is not None else None)
+                ),
+                stretch=stretch,
+                stretch_open=True,
+                last_turn_id=(
+                    turn_id
+                    if implies_return
+                    else (current.last_turn_id if current is not None and not opens_new else None)
+                ),
+                anchor=anchor,
+                idle_since_ms=now_ms,
+                ttl_seconds=resolved_ttl,
+                schedule=_persisted_schedule(placed),
+                done=done,
+                compact_window_until_ms=None,
+                expect_compaction_turn=False,
+                updated_at_ms=now_ms,
+            )
+            return next_state, _result_for_state(next_state)
+
+        return self.store.mutate(harness, session, transition)
+
+    def return_(
+        self,
+        *,
+        harness: str,
+        session: str,
+        user_prompt: bool,
+    ) -> ReturnResult:
+        if not user_prompt:
+            return ReturnResult(stretch_closed=None)
+
+        def transition(current: IdleState | None) -> tuple[IdleState | None, ReturnResult]:
+            if current is None:
+                return None, ReturnResult(stretch_closed=None)
+            if not current.stretch_open:
+                return current, ReturnResult(stretch_closed=current.stretch)
+            next_state = current.model_copy(
+                update={
+                    "stretch_open": False,
+                    "compact_window_until_ms": None,
+                    "expect_compaction_turn": False,
+                }
+            )
+            return next_state, ReturnResult(stretch_closed=current.stretch)
+
+        return self.store.mutate(harness, session, transition)
+
+    def _children_active(self) -> bool:
+        spawn_id = self.env.get("MERIDIAN_SPAWN_ID")
+        if not spawn_id:
+            return False
+        try:
+            return active_child_count(spawn_id, self._spawn_reader()) > 0
+        except Exception:
+            return True
+
+    def fire(
+        self,
+        stage: Stage,
+        *,
+        harness: str,
+        session: str,
+        stretch: int,
+        anchor: int,
+        facts: IdleFacts | None = None,
+    ) -> FireResult:
+        policy = resolve_policy(harness, self.config, self.env)
+        observed = facts or IdleFacts(
+            draft="unknown",
+            busy=False,
+            agents_running=0,
+            context_tokens=None,
+            harness_autocompact_off=False,
+        )
+        guard_facts = GuardFacts(
+            stretch=stretch,
+            anchor=anchor,
+            role=self.env.get("MERIDIAN_SESSION_ROLE"),
+            harness_enabled=policy.enabled,
+            draft=observed.draft,
+            busy=observed.busy,
+            agents_running=observed.agents_running,
+            child_spawns_active=self._children_active() if stage == "compact" else False,
+            context_tokens=observed.context_tokens,
+            harness_autocompact_off=observed.harness_autocompact_off,
+        )
+        now_ms = self._now_ms()
+
+        def transition(current: IdleState | None) -> tuple[IdleState | None, FireResult]:
+            decision = decide(stage, guard_facts, current, policy, now_ms)
+            result = FireResult(decision.decision, decision.reason)
+            if decision.decision == "skip":
+                transient = {
+                    "not-primary",
+                    "idle-disabled",
+                    "stage-done",
+                    "stretch-closed",
+                    "stale-anchor",
+                    "not-scheduled",
+                }
+                if current is None or decision.reason in transient:
+                    return current, result
+                done = dict(current.done)
+                done[stage] = f"skipped:{decision.reason}"
+                return current.model_copy(update={"done": done}), result
+
+            assert current is not None
+            done = dict(current.done)
+            done[stage] = "claimed" if stage == "compact" else "sent"
+            updates: dict[str, object] = {"done": done}
+            if stage == "compact":
+                updates.update(
+                    compact_window_until_ms=now_ms + _COMPACT_GRACE_MS,
+                    expect_compaction_turn=True,
+                )
+            return current.model_copy(update=updates), result
+
+        result = self.store.mutate(harness, session, transition)
+        if result.decision == "act" and (stage == "push" or stage == "warn"):
+            self._send_stage_notice(
+                stage,
+                harness=harness,
+                session=session,
+                stretch=stretch,
+                policy=policy,
+            )
+        return result
+
+    def _send_stage_notice(
+        self,
+        stage: Literal["push", "warn"],
+        *,
+        harness: str,
+        session: str,
+        stretch: int,
+        policy: IdlePolicyConfig,
+    ) -> None:
+        if stage == "push":
+            notice = NoticeSpec(
+                title="Meridian idle",
+                body="waiting on you",
+                priority=3,
+                email=False,
+                kind="idle",
+            )
+        else:
+            notice = NoticeSpec(
+                title="Meridian idle",
+                body=f"cache cold in {policy.warn_minutes}m",
+                priority=4,
+                email=policy.warn_email,
+                kind="idle",
+            )
+        ok = False
+        try:
+            ok = self._notify_sender.send(notice, self._notify_config()).ok
+        except Exception:
+            ok = False
+        if not ok:
+            self._mark_notification_failed(harness, session, stretch, stage)
+
+    def _notify_config(self) -> object:
+        return getattr(self.config, "notify", self.config)
+
+    def _mark_notification_failed(
+        self,
+        harness: str,
+        session: str,
+        stretch: int,
+        stage: Literal["push", "warn"],
+    ) -> None:
+        def transition(current: IdleState | None) -> tuple[IdleState | None, None]:
+            if current is None or current.stretch != stretch or current.done.get(stage) != "sent":
+                return current, None
+            done = dict(current.done)
+            done[stage] = "failed"
+            return current.model_copy(update={"done": done}), None
+
+        self.store.mutate(harness, session, transition)
+
+    def done(
+        self,
+        stage: Literal["compact"],
+        *,
+        harness: str,
+        session: str,
+        stretch: int,
+        result: CompactResultValue,
+        detail: str | None = None,
+    ) -> DoneResult:
+        now_ms = self._now_ms()
+
+        def transition(current: IdleState | None) -> tuple[IdleState | None, DoneResult]:
+            if (
+                current is None
+                or current.stretch != stretch
+                or current.done.get(stage) != "claimed"
+            ):
+                return current, DoneResult(recorded=False)
+            done = dict(current.done)
+            done[stage] = result
+            updates: dict[str, object] = {"done": done}
+            if current.stretch_open:
+                updates["compact_window_until_ms"] = now_ms + _COMPACT_GRACE_MS
+            return current.model_copy(update=updates), DoneResult(recorded=True)
+
+        done_result = self.store.mutate(harness, session, transition)
+        if done_result.recorded:
+            body = {
+                "ok": "compacted",
+                "failed": "compaction failed",
+                "vetoed": "compaction vetoed",
+            }[result]
+            if detail:
+                body = f"{body} ({detail})"
+            notice = NoticeSpec(
+                title="Meridian idle",
+                body=body,
+                priority=3 if result == "ok" else 4,
+                email=False,
+                kind="idle",
+            )
+            with suppress(Exception):
+                self._notify_sender.send(notice, self._notify_config())
+        return done_result
+
+    def event(
+        self,
+        event: IdleEvent,
+        *,
+        harness: str,
+        ttl_seconds: int | None = None,
+    ) -> ArmResult | ReturnResult | None:
+        if event.kind in {"turn_end", "idle"}:
+            return self.arm(
+                harness=harness,
+                session=event.harness_session_id,
+                ttl_seconds=ttl_seconds,
+                turn_id=event.turn_id,
+            )
+        if event.kind == "user_prompt":
+            return self.return_(
+                harness=harness,
+                session=event.harness_session_id,
+                user_prompt=True,
+            )
+        return None
+
+    def status(
+        self,
+        *,
+        harness: str | None = None,
+        session: str | None = None,
+    ) -> tuple[IdleState, ...]:
+        states = self.store.list_states()
+        return tuple(
+            state
+            for state in states
+            if state.stretch_open
+            and (harness is None or state.harness == harness)
+            and (session is None or state.session == session)
+        )
+
+
+__all__ = [
+    "ArmResult",
+    "ConfigResult",
+    "DoneResult",
+    "FireResult",
+    "IdlePolicyConfig",
+    "IdleService",
+    "NoticeSpec",
+    "NotifyReport",
+    "NotifySender",
+    "ReturnResult",
+    "effective",
+    "resolve_policy",
+]

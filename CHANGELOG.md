@@ -12,6 +12,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Add global idle scheduling policy and per-harness compaction and cache-TTL settings.
 - Persist idle stretches atomically with truncation recovery and seven-day garbage collection;
   add pure scheduling, ordered compaction guards, and active-child detection.
+- Add the injected idle service state machine and launcher sidecar for at-most-once
+  push, warning, and compaction stages.
 ### Changed
 - Load Meridian's bundled no-op idle plugin only in interactive Claude primaries.
 
