@@ -107,6 +107,9 @@ jobs:
       - name: Build Pi extensions
         run: cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
 
+      - name: Test Pi extensions
+        run: cd src/meridian/pi_runtime && pnpm test
+
       - name: Run fast gate
         run: uv run --extra dev pytest -n auto -m "not slow"
 
