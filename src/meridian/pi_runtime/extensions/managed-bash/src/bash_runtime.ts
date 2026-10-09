@@ -340,20 +340,18 @@ export class BashRuntime {
 
     switch (action) {
       case "output": {
-        // Terminal is published after queued output, so this read is the final log;
-        // the completion notice would only point back here.
-        const terminal = isTerminalBashStatus(record.status) && !record.execution_error;
+        // Terminal is published after queued output, so a read that starts after
+        // terminal is final; one that races completion has not seen the result.
+        const wasTerminal = isTerminalBashStatus(record.status);
         const output = await this.readLog(record, LOG_TAIL_BYTES);
-        if (terminal) await this.persistConsumption(record);
+        if (wasTerminal) await this.consumeDeliveredResult(record);
         return { bash_id: id, output, truncated: true };
       }
       case "kill":
         return await this.killBash(id, "killed");
       case "wait": {
-        const result = await this.waitBash(record, WAIT_TIMEOUT_MIN);
-        if (isTerminalBashStatus(result.status)) {
-          await this.persistConsumption(record);
-        }
+        const result = await this.waitBash(record);
+        await this.consumeDeliveredResult(record);
         return result;
       }
       case "detach":
@@ -497,11 +495,11 @@ export class BashRuntime {
     return { bash_id: bashId, killed: true, message: `${bashId} killed` };
   }
 
-  private async waitBash(record: RuntimeRecord, timeoutMin: number): Promise<BashWaitResult> {
+  private async waitBash(record: RuntimeRecord): Promise<BashWaitResult> {
     if (record.status === "running" && !record.task) throw new Error(`${record.bash_id}: ownership_lost after restart; inspect manually or detach to release tracking`);
     if (record.status === "running") {
       await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, timeoutMin * 60_000);
+        const timer = setTimeout(resolve, WAIT_TIMEOUT_MIN * 60_000);
         void record.finished.then(() => {
           clearTimeout(timer);
           resolve();
@@ -513,7 +511,7 @@ export class BashRuntime {
       return {
         bash_id: record.bash_id,
         status: "running",
-        message: `Still running after ${timeoutMin} minutes. Call bash_manage(action='wait') again, or bash_manage(action='kill') to terminate. Reading its output any other way leaves the result unconsumed, and a completion notice will follow.`,
+        message: `Still running after ${WAIT_TIMEOUT_MIN} minutes. Call bash_manage(action='wait') again, or bash_manage(action='kill') to terminate. Reading its output any other way leaves the result unconsumed, and a completion notice will follow.`,
       };
     }
     return {
@@ -683,8 +681,11 @@ export class BashRuntime {
     record.rejectFinished(new Error(record.execution_error));
   }
 
-  private persistConsumption(record: RuntimeRecord): Promise<void> {
-    return this.enqueuePersist(async () => {
+  /** The model received this terminal result, so its completion notice would repeat it.
+   * Execution failures stay owed: their notice carries the error the log lacks. */
+  private async consumeDeliveredResult(record: RuntimeRecord): Promise<void> {
+    if (!isTerminalBashStatus(record.status) || record.execution_error) return;
+    await this.enqueuePersist(async () => {
       const previous = record.notification_consumed_at_ms;
       record.notification_consumed_at_ms = Date.now();
       try {
