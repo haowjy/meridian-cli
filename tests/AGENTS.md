@@ -12,6 +12,19 @@ uv run pytest-llm              # Unit tests (token-efficient output)
 uv run meridian                # Smoke test the CLI directly
 ```
 
+Runtime adapter changes also have local package gates:
+
+```bash
+cd src/meridian/pi_runtime && pnpm run verify:extensions
+claude plugin validate src/meridian/claude_runtime/meridian-idle
+claude plugin test src/meridian/claude_runtime/meridian-idle
+```
+
+The Claude commands are required for every change under
+`src/meridian/claude_runtime/`; CI does not provide the `claude` binary. The Pi
+gate builds the projected bundles and runs their Vitest suites; CI runs those
+tests in the fast gate as well.
+
 Use `uv run pytest --runner-history=off <tests>` to trap implicit reads of legacy
 spawn/artifact runner `history.jsonl` (Meridian no longer writes it). The trap is
 inherited by CLI subprocesses through a test-only `sitecustomize`; legacy archive

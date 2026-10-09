@@ -40,6 +40,7 @@ export class IdleRuntime {
   private active: ActiveStretch | null = null;
   private readonly timers = new Map<IdleStage, NodeJS.Timeout>();
   private readonly deadlines = new Map<IdleStage, number>();
+  private transitionQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly run: MeridianRunner = runMeridianCommand) {}
 
@@ -49,7 +50,7 @@ export class IdleRuntime {
     this.clearSchedule();
     this.active = null;
 
-    const config = await this.runJson(["idle", "config", "--interactive"]);
+    const config = await this.runJson(["idle", "config"]);
     if (revision !== this.revision || !isRecord(config) || config.enabled !== true) {
       return;
     }
@@ -68,32 +69,38 @@ export class IdleRuntime {
     }
 
     const revision = this.revision;
-    const previous = this.active;
-    const previousDeadlines = new Map(this.deadlines);
-    this.clearTimers();
+    await this.enqueueTransition(async () => {
+      if (revision !== this.revision || !this.enabled) {
+        return;
+      }
 
-    const session = ctx.sessionManager.getSessionId();
-    const args = [
-      "idle", "arm", "--harness", "pi", "--session", session,
-    ];
-    const provider = ctx.model?.provider;
-    if (provider) {
-      args.push("--provider", provider);
-    }
-    args.push("--cwd", ctx.cwd);
+      const previous = this.active;
+      const previousDeadlines = new Map(this.deadlines);
+      this.clearTimers();
 
-    const reply = await this.runJson(args);
-    if (revision !== this.revision) {
-      return;
-    }
-    if (!isRecord(reply)) {
-      this.restorePrevious(previous, previousDeadlines);
-      return;
-    }
-    this.applyArmReply(reply, ctx, previous, previousDeadlines);
+      const session = ctx.sessionManager.getSessionId();
+      const args = [
+        "idle", "arm", "--harness", "pi", "--session", session,
+      ];
+      const provider = ctx.model?.provider;
+      if (provider) {
+        args.push("--provider", provider);
+      }
+      args.push("--cwd", ctx.cwd);
+
+      const reply = await this.runJson(args);
+      if (revision !== this.revision) {
+        return;
+      }
+      if (!isRecord(reply)) {
+        this.restorePrevious(previous, previousDeadlines);
+        return;
+      }
+      this.applyArmReply(reply, ctx, previous, previousDeadlines);
+    });
   }
 
-  async input(source: string, ctx: ExtensionContext): Promise<void> {
+  input(source: string, ctx: ExtensionContext): void {
     if (!this.enabled || source !== "interactive") {
       return;
     }
@@ -101,10 +108,13 @@ export class IdleRuntime {
     ++this.revision;
     this.clearSchedule();
     this.active = null;
-    await this.runJson([
-      "idle", "return", "--harness", "pi",
-      "--session", ctx.sessionManager.getSessionId(), "--user-prompt",
-    ]);
+    const session = ctx.sessionManager.getSessionId();
+    void this.enqueueTransition(async () => {
+      await this.runJson([
+        "idle", "return", "--harness", "pi",
+        "--session", session, "--user-prompt",
+      ]);
+    });
   }
 
   stop(): void {
@@ -221,6 +231,7 @@ export class IdleRuntime {
   }
 
   private async fire(stage: IdleStage, active: ActiveStretch): Promise<void> {
+    const revision = this.revision;
     const args = [
       "idle", "fire", stage,
       "--harness", "pi",
@@ -242,6 +253,12 @@ export class IdleRuntime {
       return;
     }
 
+    const veto = this.compactionVeto(active.ctx, revision);
+    if (veto !== null) {
+      await this.done(active, "vetoed", veto);
+      return;
+    }
+
     try {
       active.ctx.compact({
         onComplete: () => {
@@ -258,7 +275,7 @@ export class IdleRuntime {
 
   private async done(
     active: ActiveStretch,
-    result: "ok" | "failed",
+    result: "ok" | "failed" | "vetoed",
     reason?: string,
   ): Promise<void> {
     const args = [
@@ -274,9 +291,31 @@ export class IdleRuntime {
     await this.runJson(args);
   }
 
+  private compactionVeto(ctx: ExtensionContext, revision: number): string | null {
+    if (revision !== this.revision) {
+      return "user returned";
+    }
+    if (!safeIsIdle(ctx)) {
+      return "busy";
+    }
+    if (hasPendingMessages(ctx)) {
+      return "pending messages";
+    }
+    if (draftFact(ctx) !== "no") {
+      return "draft";
+    }
+    return null;
+  }
+
+  private enqueueTransition(task: () => Promise<void>): Promise<void> {
+    const next = this.transitionQueue.then(task).catch(() => undefined);
+    this.transitionQueue = next;
+    return next;
+  }
+
   private async runJson(args: string[]): Promise<unknown> {
     try {
-      const result = await this.run(args);
+      const result = await this.run([...args, "--interactive"]);
       if (result.exitCode !== 0) {
         return undefined;
       }
@@ -312,6 +351,14 @@ function safeIsIdle(ctx: ExtensionContext): boolean {
     return ctx.isIdle();
   } catch {
     return false;
+  }
+}
+
+function hasPendingMessages(ctx: ExtensionContext): boolean {
+  try {
+    return ctx.hasPendingMessages();
+  } catch {
+    return true;
   }
 }
 
@@ -354,7 +401,7 @@ export function registerMeridianIdleExtension(
     }, 0);
     timer.unref();
   });
-  pi.on("input", async (event, ctx) => runtime.input(event.source, ctx));
+  pi.on("input", (event, ctx) => runtime.input(event.source, ctx));
   pi.on("session_shutdown", () => runtime.stop());
   return runtime;
 }

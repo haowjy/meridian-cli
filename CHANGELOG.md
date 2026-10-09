@@ -37,6 +37,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Load Meridian's bundled idle plugin only in interactive Claude primaries.
 
 ### Fixed
+- Keep Claude and Pi idle calls interactive outside managed launches, make Pi
+  prompt returns non-blocking and ordered behind arms, and re-check Pi's live
+  idle, pending-message, and draft state before compaction.
 - Keep idle compaction completion alive across user returns, contain and offload
   sidecar policy calls, honor outside-Meridian interactive sessions, and close
   idle notification, timer, completion-result, and state-GC edge cases.

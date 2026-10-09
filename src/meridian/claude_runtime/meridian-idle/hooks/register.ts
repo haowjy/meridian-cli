@@ -108,7 +108,7 @@ function enqueue(s: State, task: () => Promise<unknown>): Promise<unknown> {
 /** Runs `meridian idle <args>` in the session's environment and returns the parsed stdout (a JSON object or array). Never throws. */
 async function cli($: EngineInterface, s: State, args: string[]): Promise<unknown> {
   try {
-    const out = await $.process.run(['meridian', 'idle', ...args], { timeoutMs: CLI_TIMEOUT_MS })
+    const out = await $.process.run(['meridian', 'idle', ...args, '--interactive'], { timeoutMs: CLI_TIMEOUT_MS })
     const text = out.stdout.trim()
     if (text === '') return { error: `no output (exit ${out.exitCode}): ${out.stderr.trim().slice(0, 200)}` }
     try {
@@ -145,10 +145,13 @@ async function checkGate($: EngineInterface, s: State): Promise<boolean> {
       }
     } catch (err) {
       note($, s, `inert: cannot read surfaces: ${describeError(err)}`)
+      // Surface discovery can fail transiently during startup or reload. Keep
+      // the gate fail-closed for this call, but let the next event retry it.
+      s.gate = undefined
       return false
     }
   }
-  const reply = await cli($, s, ['config', '--harness', HARNESS, '--interactive'])
+  const reply = await cli($, s, ['config', '--harness', HARNESS])
   const problem = failure(reply)
   if (problem !== undefined || !isRecord(reply)) {
     // Not memoised: a transient failure (meridian not on PATH yet) should not disable idle for the whole session.

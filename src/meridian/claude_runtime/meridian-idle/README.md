@@ -8,9 +8,12 @@ from inside itself.
 
 ## What it does
 
+Every `meridian idle` command below carries `--interactive`; the table omits
+that common flag for readability.
+
 | Claude hook | Meridian call | Why |
 |---|---|---|
-| `session.start` (TUI only) | `meridian idle config --harness claude --interactive` | Stays inert unless the role gate and the config say `enabled`. Under `claude -p` (`isInteractive === false`, no surface) it never calls Meridian. |
+| `session.start` (TUI only) | `meridian idle config --harness claude` | Stays inert unless the role gate and the config say `enabled`. Under `claude -p` (`isInteractive === false`, no surface) it never calls Meridian. |
 | `session.start`, after a reload or resume | `meridian idle status --json` | Rebuilds timers from the stored schedule of this session's open stretch, skipping stages already done. |
 | `turn.complete` without `agentId` | `meridian idle arm --harness claude --session <id> --cwd <dir>` | A main-loop turn ended. Skipped while a subagent still runs; the hand-back turn arms later. Core returns absolute `push_at` / `warn_at` / `compact_at`, and the mod sets one `$.clock.after` per stage. |
 | `prompt.submit` or `command.run` with origin `composer` (or `bridge`, the user's phone) | `meridian idle return --harness claude --session <id> --user-prompt` | The user is back. Timers are cancelled first, synchronously. |

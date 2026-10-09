@@ -141,13 +141,13 @@ test('a main-loop turn.complete arms and sets one timer per returned stage; a su
   await $.turn.complete(MAIN_TURN)
   await clock.advance(2000)
   const arms = h.calls.filter(args => args[0] === 'arm')
-  expect(arms).toEqual([['arm', '--harness', 'claude', '--session', 'sess-1', '--cwd', '/work/project']])
+  expect(arms).toEqual([['arm', '--harness', 'claude', '--session', 'sess-1', '--cwd', '/work/project', '--interactive']])
 
   // push is due at START + 60 s, absolute: fires once the clock crosses it
   await clock.advance(50_000)
   expect(fireCalls(h, 'push')).toEqual([])
   await clock.advance(10_000)
-  expect(fireCalls(h, 'push')).toEqual([['fire', 'push', '--harness', 'claude', '--session', 'sess-1', '--stretch', '1', '--anchor', '1']])
+  expect(fireCalls(h, 'push')).toEqual([['fire', 'push', '--harness', 'claude', '--session', 'sess-1', '--stretch', '1', '--anchor', '1', '--interactive']])
 })
 
 test('arm is skipped while a subagent is still running', async ($, on) => {
@@ -182,7 +182,7 @@ test('a composer prompt cancels the timers and calls return --user-prompt; injec
 
   await $.prompt.submit({ text: 'I am back', wait: false, origin: COMPOSER })
   await clock.advance(2000)
-  expect(h.calls.filter(args => args[0] === 'return')).toEqual([['return', '--harness', 'claude', '--session', 'sess-1', '--user-prompt']])
+  expect(h.calls.filter(args => args[0] === 'return')).toEqual([['return', '--harness', 'claude', '--session', 'sess-1', '--user-prompt', '--interactive']])
 
   await clock.advance(3_600_000)
   expect(h.calls.filter(args => args[0] === 'fire')).toEqual([])
@@ -226,15 +226,20 @@ test('compact: facts are mapped to flags, act triggers $.session.compact from th
   const [fire] = fireCalls(h, 'compact')
   expect(fire).toEqual([
     'fire', 'compact', '--harness', 'claude', '--session', 'sess-1', '--stretch', '1', '--anchor', '1',
-    '--draft', 'no', '--agents-running', '0', '--context-tokens', '120000', '--harness-autocompact-off',
+    '--draft', 'no', '--agents-running', '0', '--context-tokens', '120000', '--harness-autocompact-off', '--interactive',
   ])
   expect(h.compactCalls).toBe(1)
   const done = h.calls.find(args => args[0] === 'done')
-  expect(done).toEqual(['done', 'compact', '--harness', 'claude', '--session', 'sess-1', '--stretch', '1', '--result', 'ok', '--reason', '120k -> 30k tokens'])
+  expect(done).toEqual(['done', 'compact', '--harness', 'claude', '--session', 'sess-1', '--stretch', '1', '--result', 'ok', '--reason', '120k -> 30k tokens', '--interactive'])
   // push and warn went through fire too, once each, with no facts
   expect(fireCalls(h, 'push').length).toBe(1)
   expect(fireCalls(h, 'warn').length).toBe(1)
   expect(flag(fireCalls(h, 'push')[0], '--draft')).toBeUndefined()
+
+  await $.prompt.submit({ text: 'back', wait: false, origin: COMPOSER })
+  await clock.advance(2000)
+  expect(h.calls.some(args => args[0] === 'return')).toBe(true)
+  expect(h.calls.every(args => args.at(-1) === '--interactive')).toBe(true)
 })
 
 test('compact facts: a draft is yes, running agents are counted, unknown tokens are omitted', async ($, on) => {
@@ -292,7 +297,7 @@ function doneMapping(outcome: 'veto' | 'reject', expected: string[]) {
     await $.turn.complete(MAIN_TURN)
     await clock.advance(1_600_000)
     expect(h.compactCalls).toBe(1)
-    const done = h.calls.find(args => args[0] === 'done') ?? []
+    const done = (h.calls.find(args => args[0] === 'done') ?? []).filter(arg => arg !== '--interactive')
     if (outcome === 'veto') {
       expect(done.slice(-4)).toEqual(expected)
     } else {
@@ -319,7 +324,7 @@ test('a draft typed after core said act vetoes the compaction instead of compact
   await $.turn.complete(MAIN_TURN)
   await clock.advance(1_600_000)
   expect(h.compactCalls).toBe(0)
-  expect(h.calls.find(args => args[0] === 'done')?.slice(-4)).toEqual(['--result', 'vetoed', '--reason', 'draft'])
+  expect(h.calls.find(args => args[0] === 'done')?.filter(arg => arg !== '--interactive').slice(-4)).toEqual(['--result', 'vetoed', '--reason', 'draft'])
 })
 
 test('a re-arm with a new anchor replaces the old timers; the same stretch and anchor keeps them', async ($, on) => {
@@ -362,10 +367,10 @@ test('after a reload the mod rebuilds timers from `idle status --json`, skipping
   await $.session.start(TUI)
   await clock.advance(2000)
   expect(h.calls.map(args => args[0])).toEqual(['config', 'status'])
-  expect(h.calls[1]).toEqual(['status', '--json'])
+  expect(h.calls[1]).toEqual(['status', '--json', '--interactive'])
   await clock.advance(40_000)
   expect(fireCalls(h, 'push')).toEqual([])
-  expect(fireCalls(h, 'warn')).toEqual([['fire', 'warn', '--harness', 'claude', '--session', 'sess-1', '--stretch', '4', '--anchor', '3']])
+  expect(fireCalls(h, 'warn')).toEqual([['fire', 'warn', '--harness', 'claude', '--session', 'sess-1', '--stretch', '4', '--anchor', '3', '--interactive']])
   await clock.advance(30_000)
   expect(fireCalls(h, 'compact').length).toBe(1)
 })
