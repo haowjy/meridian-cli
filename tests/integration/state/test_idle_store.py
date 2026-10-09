@@ -3,6 +3,7 @@ from pathlib import Path
 from meridian.lib.state.idle_store import IdleSchedule, IdleState, IdleStore
 
 DAY_MS = 24 * 60 * 60 * 1000
+HOUR_MS = 60 * 60 * 1000
 
 
 def _state(*, updated_at_ms: int = 0) -> IdleState:
@@ -67,4 +68,32 @@ def test_idle_store_lazy_gc_removes_state_older_than_seven_days(tmp_path: Path) 
     )
 
     assert not stale_path.exists()
+    assert not current_store._lock_path(stale_path).exists()
     assert current_store.read("example", "native-2") is not None
+
+
+def test_idle_store_gc_runs_at_most_once_per_hour(tmp_path: Path) -> None:
+    root = tmp_path / "idle"
+    now = [10 * DAY_MS]
+    store = IdleStore(root, now_ms=lambda: now[0])
+    store.write(_state())
+
+    stale_path = store.path_for("example", "stale-after-gc")
+    stale_path.write_text(
+        _state(updated_at_ms=0)
+        .model_copy(update={"session": "stale-after-gc"})
+        .model_dump_json(),
+        encoding="utf-8",
+    )
+    stale_lock = store._lock_path(stale_path)
+    stale_lock.parent.mkdir(parents=True, exist_ok=True)
+    stale_lock.touch()
+
+    store.write(_state().model_copy(update={"session": "native-2", "done": {}}))
+    assert stale_path.exists()
+    assert stale_lock.exists()
+
+    now[0] += HOUR_MS + 1
+    store.write(_state().model_copy(update={"session": "native-3", "done": {}}))
+    assert not stale_path.exists()
+    assert not stale_lock.exists()
