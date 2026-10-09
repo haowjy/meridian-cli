@@ -157,8 +157,9 @@ parent signals, or supply the parent report.
   optional payload resolvers. `normalize_event()` dispatches by `HarnessId` before
   event name and returns raw evidence with its one normalized descriptor; shared
   `semantics.py` contains no harness event names.
-- `claude_idle.py` / `pi_idle.py` / `opencode_idle.py` — harness-owned prompt-cache
-  TTL detection and environment facts registered through the optional idle bundle ports.
+- `claude_idle.py` / `pi_idle.py` / `codex_idle.py` / `opencode_idle.py` — harness-owned
+  cache facts, native-event parsing, live observations, and actuators registered through
+  the optional idle bundle ports.
 - `pi_failure.py` — Pi failure output formatting (`compact_pi_failure_output`) and
   per-event failure extraction (`pi_failure_from_payload`). Harness-owned;
   consumed by `connections/pi_rpc.py` (stderr compaction), `extractors/pi.py` (report
