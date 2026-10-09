@@ -18,3 +18,9 @@ This package never writes stdout/stderr. Expected failures and warnings travel
 in `SendReport`; CLI callers render them through the CLI output sink, while
 in-process callers decide where they belong. This matches sibling
 `lib/artifact`: no library logger is used for user-facing diagnostics.
+
+SMTP credentials come from `smtp_password_file` first, and that file is refused
+when group/world readable; `MERIDIAN_NOTIFY_SMTP_PASSWORD` is only a documented
+fallback. `MERIDIAN_SECRET_*` variables are stripped at the child boundary in
+`lib/launch/env.py`, while the plain fallback reaches every spawn and can land
+in transcripts, so prefer a mode-0600 password file.

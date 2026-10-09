@@ -45,3 +45,42 @@ def test_notify_json_all_none_exits_zero_without_project_state(
         }
     ]
     assert "every selected backend is none" in captured.err
+
+
+def test_notify_json_reports_failed_email_channel(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cwd = tmp_path / "checkout"
+    cwd.mkdir()
+    user_home = tmp_path / "user-home"
+    user_home.mkdir()
+    for key in list(os.environ):
+        if key.upper().startswith("MERIDIAN") or key == "TMUX_PANE":
+            monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("MERIDIAN_HOME", user_home.as_posix())
+    monkeypatch.setenv("MERIDIAN_NOTIFY_PUSH_BACKEND", "none")
+    monkeypatch.setenv("MERIDIAN_NOTIFY_EMAIL_BACKEND", "smtp")
+    monkeypatch.setenv("MERIDIAN_NOTIFY_SMTP_USER", "sender@example.com")
+    monkeypatch.setenv("MERIDIAN_NOTIFY_EMAIL_TO", "recipient@example.com")
+    monkeypatch.chdir(cwd)
+
+    from meridian.cli.main import main
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(["notify", "hello", "--json"])
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["ok"] is False
+    assert payload["exit_code"] == 1
+    assert [result["channel"] for result in payload["results"]] == ["none", "smtp"]
+    assert payload["results"][1] == {
+        "channel": "smtp",
+        "error": "no SMTP password configured",
+        "ok": False,
+        "status": "failed",
+        "warning": None,
+    }
