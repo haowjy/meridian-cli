@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
@@ -9,15 +9,13 @@ const bundlePath = join(
   "../../dist/extensions/meridian-idle/index.js",
 );
 
-const bundleExists = existsSync(bundlePath);
+describe.skipIf(!existsSync(bundlePath))("meridian-idle bundle smoke", () => {
+  it("loads and registers only the idle lifecycle sensors", async () => {
+    const bundle = await import(/* @vite-ignore */ pathToFileURL(bundlePath).href);
+    const events: string[] = [];
 
-describe.skipIf(!bundleExists)("meridian-idle bundle smoke", () => {
-  it("registers only the idle lifecycle sensors", () => {
-    const src = readFileSync(bundlePath, "utf8");
-    expect(src).toContain('pi.on("session_start"');
-    expect(src).toContain('pi.on("agent_end"');
-    expect(src).toContain('pi.on("input"');
-    expect(src).not.toContain("registerTool");
-    expect(src).not.toContain("registerCommand");
+    bundle.default({ on: (name: string) => events.push(name) });
+
+    expect(events).toEqual(["session_start", "agent_end", "input", "session_shutdown"]);
   });
 });
