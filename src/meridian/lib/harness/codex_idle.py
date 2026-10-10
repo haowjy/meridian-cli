@@ -13,6 +13,12 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
+from meridian.lib.core.native_identity import NativeIdentityError
+from meridian.lib.harness.codex_bootstrap import is_bootstrap_turn_prompt
+from meridian.lib.harness.codex_rollout import (
+    find_rollout,
+    resolve_codex_home,
+)
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.idle_types import (
     CompactResult,
@@ -27,7 +33,6 @@ from meridian.lib.platform import get_home_path
 _EMPTY_PROMPT = "Ask Codex to do anything"
 _PROMPT_MARKER = "\u203a"
 _COMPACT_COMMAND = "/compact"
-_COMPACT_MARKER = "Context compacted"
 IDLE_NOTIFY_COMMAND = ("meridian", "idle", "event", "--harness", "codex")
 
 
@@ -84,6 +89,37 @@ def _prompt_text(capture: str) -> str | None:
 def _prompt_is_empty(capture: str) -> bool:
     prompt = _prompt_text(capture)
     return prompt in {"", _EMPTY_PROMPT}
+
+
+def _session_rollout(ctx: IdleSensorContext) -> Path | None:
+    sessions_root = resolve_codex_home(ctx.env) / "sessions"
+    try:
+        return find_rollout(sessions_root, ctx.harness_session_id)
+    except (OSError, NativeIdentityError):
+        return None
+
+
+def _has_appended_compaction(path: Path, offset: int) -> bool:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(offset)
+            appended = handle.read()
+    except OSError:
+        return False
+
+    for line in appended.splitlines(keepends=True):
+        if not line.endswith(b"\n"):
+            continue
+        try:
+            parsed: object = json.loads(line)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        record = cast("dict[str, object]", parsed)
+        if record.get("type") == "compacted" and isinstance(record.get("payload"), dict):
+            return True
+    return False
 
 
 def pane_facts(capture: str) -> IdleFacts:
@@ -178,14 +214,23 @@ def parse_idle_event(
     pinned = session_reader(thread_id)
     if pinned is None:
         return None
-    input_count = len(cast("list[object]", input_messages))
+    inputs = cast("list[object]", input_messages)
+    input_count = len(inputs)
     previous_count = pinned.last_input_count or 0
+    last_input = inputs[-1] if inputs else None
+    if is_bootstrap_turn_prompt(last_input):
+        return None
+    last_assistant = raw.get("last-assistant-message")
     return IdleEvent(
         kind="turn_end",
         harness_session_id=thread_id,
         turn_id=turn_id,
         implies_return=input_count > previous_count,
         input_count=input_count,
+        last_user_text=last_input if isinstance(last_input, str) else None,
+        last_assistant_text=(
+            last_assistant if isinstance(last_assistant, str) else None
+        ),
     )
 
 
@@ -199,7 +244,7 @@ class CodexIdleSensor:
         ctx: IdleSensorContext,
         *,
         tmux: TmuxClient | None = None,
-        compact_timeout_seconds: float = 60.0,
+        compact_timeout_seconds: float = 300.0,
         compact_poll_seconds: float = 0.5,
         verification_delay_seconds: float = 0.2,
         monotonic: Callable[[], float] = time.monotonic,
@@ -239,7 +284,14 @@ class CodexIdleSensor:
         before = await self._tmux.capture(pane)
         if before is None or not _prompt_is_empty(before):
             return CompactResult("vetoed", "prompt-not-empty")
-        prior_markers = before.count(_COMPACT_MARKER)
+
+        rollout = _session_rollout(self._ctx)
+        if rollout is None:
+            return CompactResult("vetoed", "rollout-not-found")
+        try:
+            rollout_offset = rollout.stat().st_size
+        except OSError:
+            return CompactResult("vetoed", "rollout-unavailable")
 
         if not await self._tmux.send_literal(pane, _COMPACT_COMMAND):
             return CompactResult("vetoed", "type-failed")
@@ -264,8 +316,7 @@ class CodexIdleSensor:
         while self._monotonic() < deadline:
             if not self._ctx.tui_alive():
                 return CompactResult("failed", "tui-exited")
-            capture = await self._tmux.capture(pane)
-            if capture is not None and capture.count(_COMPACT_MARKER) > prior_markers:
+            if _has_appended_compaction(rollout, rollout_offset):
                 return CompactResult("ok")
             await self._sleep(self._compact_poll_seconds)
         return CompactResult("failed", "timeout")

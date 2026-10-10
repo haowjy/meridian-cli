@@ -39,7 +39,7 @@ def build_session_label(
     cwd: Path | None = None,
     resolve_tmux_session: TmuxSessionResolver = _tmux_session,
 ) -> SessionLabel:
-    """Resolve the optional tmux, project, and work-id label parts."""
+    """Resolve the optional actor, work, project, and tmux label parts."""
     env = os.environ if environ is None else environ
     working_directory = Path.cwd() if cwd is None else cwd
     pane = _clean(env.get("TMUX_PANE"))
@@ -47,7 +47,15 @@ def build_session_label(
     project_path = _clean(env.get("MERIDIAN_PROJECT_DIR"))
     project = _clean(Path(project_path).name if project_path else working_directory.name)
     work_id = _clean(env.get("MERIDIAN_ACTIVE_WORK_ID"))
-    return SessionLabel(tmux_session=tmux_session, project=project, work_id=work_id)
+    agent = _clean(env.get("MERIDIAN_SESSION_AGENT"))
+    harness = _clean(env.get("_MERIDIAN_HARNESS"))
+    return SessionLabel(
+        tmux_session=tmux_session,
+        project=project,
+        work_id=work_id,
+        agent=agent,
+        harness=harness,
+    )
 
 
 __all__ = ["build_session_label"]

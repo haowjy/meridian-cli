@@ -34,6 +34,13 @@ ImpliesReturnOption = Annotated[
     bool, _option("--implies-return", "This turn proves a user return.")
 ]
 TurnIdOption = Annotated[str | None, _option("--turn-id", "Turn id used for deduplication.")]
+UserTextOption = Annotated[
+    str | None, _option("--user-text", "Last user message for notification excerpts.")
+]
+AssistantTextOption = Annotated[
+    str | None,
+    _option("--assistant-text", "Last assistant message for notification excerpts."),
+]
 UserPromptOption = Annotated[bool, _option("--user-prompt", "Confirm a user prompt.")]
 DraftOption = Annotated[str, _option("--draft", "Draft state: yes, no, or unknown.")]
 BusyOption = Annotated[bool, _option("--busy", "The harness is currently busy.")]
@@ -148,6 +155,8 @@ def cmd_idle_arm(
     cwd: CwdOption = None,
     implies_return: ImpliesReturnOption = False,
     turn_id: TurnIdOption = None,
+    user_text: UserTextOption = None,
+    assistant_text: AssistantTextOption = None,
     interactive: InteractiveOption = False,
 ) -> None:
     """Open or re-anchor; same stretch and anchor means keep your timers."""
@@ -163,6 +172,8 @@ def cmd_idle_arm(
             cwd=cwd,
             implies_return=implies_return,
             turn_id=turn_id,
+            last_user_text=user_text,
+            last_assistant_text=assistant_text,
         ),
     )
 
@@ -321,7 +332,13 @@ def cmd_idle_status(
 
     try:
         rows = [
-            cast("dict[str, object]", state.model_dump(mode="json"))
+            cast(
+                "dict[str, object]",
+                state.model_dump(
+                    mode="json",
+                    exclude={"last_user_text", "last_assistant_text"},
+                ),
+            )
             for state in _service(interactive=interactive).status()
         ]
         from meridian.cli.main import get_global_options

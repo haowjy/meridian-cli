@@ -113,6 +113,7 @@ warning, and compaction-result messages.
 |---|---|---|---|
 | `push_backend` | `"ntfy"` | `MERIDIAN_NOTIFY_PUSH_BACKEND` | `ntfy`, `command`, or `none` |
 | `email_backend` | `"gmail"` | `MERIDIAN_NOTIFY_EMAIL_BACKEND` | `gmail`, `smtp`, `ntfy`, `command`, or `none` |
+| `include_messages` | `true` | `MERIDIAN_NOTIFY_INCLUDE_MESSAGES` | Include the last user and assistant excerpts in idle push and warning notifications |
 | `ntfy_server` | `"https://ntfy.sh"` | `MERIDIAN_NOTIFY_NTFY_SERVER` | Base URL for the ntfy server |
 | `ntfy_topic` | unset | `MERIDIAN_NOTIFY_NTFY_TOPIC` | ntfy topic; an unset topic disables ntfy delivery with a warning |
 | `email_to` | unset | `MERIDIAN_NOTIFY_EMAIL_TO` | Email recipient |
@@ -128,6 +129,14 @@ The command backends split their configured command with `shlex`, append the
 notice title and body as arguments, and pass the complete notice as JSON on
 stdin. Delivery is attempted once per selected backend; one backend failing does
 not prevent the other from running.
+
+Notification headlines identify the agent and work item (or project). Bodies put
+each fact on its own line: message excerpts are labelled `You` and `Assistant`,
+and `tmux: <session>` appears last when the process is inside tmux. Excerpts are
+plain text, whitespace-collapsed, and shortened before storage. Because they leave
+the machine through ntfy or email, set `include_messages = false` to omit both.
+For `meridian notify`, `--title` replaces the headline and moves the agent/work
+description into the body so the context remains visible.
 
 Put SMTP credentials in `smtp_password_file` and set its mode to `0600`.
 Meridian refuses a password file readable by the group or other users. The

@@ -21,6 +21,8 @@ class IdleEvent:
     implies_return: bool = False
     input_count: int | None = None
     ttl_seconds: int | None = None
+    last_user_text: str | None = None
+    last_assistant_text: str | None = None
 
 
 @dataclass(frozen=True)

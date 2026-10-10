@@ -16,7 +16,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`[harness.<harness>.idle] compact = false` per harness).
 - Nothing is sent until `[notify]` has an `ntfy_topic` (push) or `email_to`,
   `smtp_user` and `smtp_password_file` (email); unconfigured backends degrade to
-  `none` with a warning.
+  `none` with a warning. Idle notices include short conversation excerpts by
+  default; set `[notify] include_messages = false` to omit message text.
 - `_MERIDIAN_PI_SESSION_ROLE` is gone. Read `MERIDIAN_SESSION_ROLE` (`primary` or
   `spawn`) instead; it is set for every harness.
 - New state directory `~/.meridian/idle/` (one JSON file per primary session,
@@ -24,12 +25,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   [docs/upgrading.md](docs/upgrading.md#upgrading-to-093-idle-notifications-and-compaction).
 
 ### Added
-- Add `meridian notify "<message>"` with ntfy push, SMTP/Gmail email, and command backends.
+- Add `meridian notify "<message>"` with ntfy push, SMTP/Gmail email, command
+  backends, and agent/work/tmux context in every notification.
 - Add idle push, cache-expiry warning, and guarded compaction for interactive Claude,
   Pi, Codex, and OpenCode primaries. Claude and Pi sense cache lifetime; Pi primaries
   default to long retention, OpenCode's 5-minute default is push-only, and Codex
   defaults to 30 minutes. The waiting push follows a long turn (at least 2 minutes)
-  by 60 seconds and a quick or unknown-length turn by 10 minutes.
+  by 60 seconds and a quick or unknown-length turn by 10 minutes. Pushes and warnings
+  label short user and assistant excerpts and name the tmux session when present.
 - Add `[notify]`, `[idle]`, and `[harness.<harness>.idle]` config with
   `MERIDIAN_NOTIFY_*`, `MERIDIAN_IDLE_*`, and `MERIDIAN_HARNESS_IDLE_*_<H>` overrides.
 - Add the bundled Claude `meridian-idle` mod, automatic for Meridian primaries and
@@ -44,7 +47,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Default `PI_CACHE_RETENTION=long` for interactive Pi primaries when the variable
   is absent; spawns and explicit values are unchanged. `openai` is scheduled against
   30 minutes, because OpenAI's `24h` retention typically lasts about that long.
-- Set `MERIDIAN_SESSION_ROLE=primary|spawn` for every harness and remove the Pi-only
+- Set `MERIDIAN_SESSION_ROLE=primary|spawn` and the resolved
+  `MERIDIAN_SESSION_AGENT` for every harness launch, and remove the Pi-only
   `_MERIDIAN_PI_SESSION_ROLE` variable.
 - Run the Pi extension build and Vitest suites in a parallel `runtime-extensions`
   CI job and in extended/full local preflight.

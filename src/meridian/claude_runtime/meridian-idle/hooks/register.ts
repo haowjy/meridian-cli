@@ -20,6 +20,7 @@ const HARNESS = 'claude'
 const COMMAND = 'meridian-idle'
 const CLI_TIMEOUT_MS = 20_000
 const LOG_LIMIT = 100
+const EXCERPT_CHAR_CAP = 4_000
 
 type Json = Record<string, unknown>
 
@@ -51,6 +52,8 @@ type State = {
   /** Serialises the short `meridian idle` calls so arm/return/fire/done reach core in hook order. */
   queue: Promise<unknown>
   log: string[]
+  /** Last prompt typed by the human; tool results and injected hook turns never enter here. */
+  lastUserText: string | undefined
 }
 
 function newState(): State {
@@ -65,6 +68,7 @@ function newState(): State {
     busy: false,
     queue: Promise.resolve(),
     log: [],
+    lastUserText: undefined,
   }
 }
 
@@ -81,6 +85,10 @@ function isRecord(value: unknown): value is Json {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function capExcerpt(value: string | undefined): string | undefined {
+  return value?.slice(0, EXCERPT_CHAR_CAP)
 }
 
 /** A prompt or command the user themselves sent. Injected origins (task-notification, peer, plugin, sdk, ...) are not returns. */
@@ -243,7 +251,7 @@ async function runningAgents($: EngineInterface): Promise<number | undefined> {
   }
 }
 
-async function armTask($: EngineInterface, s: State, epoch: number): Promise<void> {
+async function armTask($: EngineInterface, s: State, epoch: number, assistantText?: string): Promise<void> {
   if (!(await gate($, s))) return
   try {
     // The main loop can finish while a subagent still runs; the hand-back turn ends the main loop again, and arms then.
@@ -254,7 +262,12 @@ async function armTask($: EngineInterface, s: State, epoch: number): Promise<voi
     }
     const session = await $.session.id()
     const cwd = await $.session.cwd()
-    const reply = await cli($, s, ['arm', '--harness', HARNESS, '--session', session, '--cwd', cwd])
+    const args = ['arm', '--harness', HARNESS, '--session', session, '--cwd', cwd]
+    const userExcerpt = capExcerpt(s.lastUserText)
+    const assistantExcerpt = capExcerpt(assistantText)
+    if (userExcerpt !== undefined) args.push(`--user-text=${userExcerpt}`)
+    if (assistantExcerpt !== undefined) args.push(`--assistant-text=${assistantExcerpt}`)
+    const reply = await cli($, s, args)
     const problem = failure(reply)
     if (problem !== undefined || !isRecord(reply)) {
       note($, s, `arm failed: ${problem ?? 'unexpected reply'}`)
@@ -478,13 +491,16 @@ export const register: Register = on => {
     if (e.agentId === undefined && !s.inert) {
       s.busy = false
       const epoch = s.epoch
-      void enqueue(s, () => armTask($, s, epoch))
+      void enqueue(s, () => armTask($, s, epoch, e.answer))
     }
     return next(e)
   })
 
   on('prompt.submit', async ($, e, next) => {
-    if (!s.inert && isUserOrigin(e.origin)) userReturned($, s)
+    if (!s.inert && isUserOrigin(e.origin)) {
+      s.lastUserText = e.text
+      userReturned($, s)
+    }
     return next(e)
   })
 
@@ -495,7 +511,10 @@ export const register: Register = on => {
   })
 
   on('command.run', async ($, e, next) => {
-    if (!s.inert && e.command !== COMMAND && isUserOrigin(e.origin)) userReturned($, s)
+    if (!s.inert && e.command !== COMMAND && isUserOrigin(e.origin)) {
+      s.lastUserText = `/${e.command}${e.args ? ` ${e.args}` : ''}`
+      userReturned($, s)
+    }
     return next(e)
   })
 

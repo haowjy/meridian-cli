@@ -154,6 +154,9 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _public_config("MERIDIAN_NOTIFY_EMAIL_COMMAND", "Email notification command."),
     _public_config("MERIDIAN_NOTIFY_EMAIL_FROM", "Notification sender address."),
     _public_config("MERIDIAN_NOTIFY_EMAIL_TO", "Notification recipient address."),
+    _public_config(
+        "MERIDIAN_NOTIFY_INCLUDE_MESSAGES", "Include turn excerpts in notifications."
+    ),
     _public_config("MERIDIAN_NOTIFY_NTFY_SERVER", "ntfy server URL."),
     _public_config("MERIDIAN_NOTIFY_NTFY_TOPIC", "ntfy topic name."),
     _public_config("MERIDIAN_NOTIFY_PUSH_BACKEND", "Push notification backend."),
@@ -216,6 +219,7 @@ ENV_VARS: tuple[EnvVar, ...] = (
         hook_field="project_root",
     ),
     _public_handle("MERIDIAN_SESSION_ROLE", "Meridian launch role: primary or spawn."),
+    _public_handle("MERIDIAN_SESSION_AGENT", "Resolved agent profile for this launch."),
     _public_handle("MERIDIAN_SPAWN_ID", "Current spawn identifier.", hook_field="spawn_id"),
     _public_handle("MERIDIAN_TASK_DIR", "Logical task checkout directory."),
     # Public hook payload fields.

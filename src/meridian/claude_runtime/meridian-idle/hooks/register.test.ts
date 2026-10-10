@@ -121,7 +121,10 @@ test('a completed turn arms every returned deadline and reports a successful com
   await clock.advance(30_000)
 
   expect(calls(h, 'arm')).toEqual([
-    ['arm', '--harness', 'claude', '--session', 'sess-1', '--cwd', '/work/project', '--interactive'],
+    [
+      'arm', '--harness', 'claude', '--session', 'sess-1', '--cwd', '/work/project',
+      '--assistant-text=done', '--interactive',
+    ],
   ])
   expect(calls(h, 'fire').map(args => args[1])).toEqual(['push', 'warn', 'compact'])
   expect(calls(h, 'fire')[2]).toEqual([
@@ -209,7 +212,8 @@ test('reload recovery skips completed stages and an absorbed arm keeps its timer
 
   expect(calls(h, 'status')).toEqual([['status', '--json', '--interactive']])
   expect(calls(h, 'arm')).toEqual([[
-    'arm', '--harness', 'claude', '--session', 'sess-1', '--cwd', '/work/project', '--interactive',
+    'arm', '--harness', 'claude', '--session', 'sess-1', '--cwd', '/work/project',
+    '--assistant-text=done', '--interactive',
   ]])
   expect(calls(h, 'fire').map(args => args[1])).toEqual(['warn'])
   expect(calls(h, 'fire')[0]).toEqual([
@@ -217,4 +221,26 @@ test('reload recovery skips completed stages and an absorbed arm keeps its timer
     '--stretch', '4', '--anchor', '3', '--interactive',
   ])
   expectCliContract(h)
+})
+
+test('arm excerpts use equals-form argv and only apply a safety length cap', async ($, on) => {
+  const h = host()
+  const clock = install(on, h)
+  const answer = `- ${'answer '.repeat(700)}`
+
+  await $.session.start(TUI)
+  await clock.advance(2000)
+  await $.prompt.submit({
+    text: '  can u test this?\n',
+    wait: false,
+    origin: COMPOSER,
+  })
+  await $.turn.complete({ ...MAIN_TURN, answer })
+  await clock.advance(0)
+
+  const arm = calls(h, 'arm')[0]
+  expect(arm).toContain('--user-text=  can u test this?\n')
+  const assistant = arm.find(arg => arg.startsWith('--assistant-text='))
+  expect(assistant?.slice('--assistant-text='.length)).toBe(answer.slice(0, 4000))
+  expect(assistant).toContain('--assistant-text=- ')
 })

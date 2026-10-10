@@ -11,7 +11,7 @@ from meridian.cli.app_tree import notify_app
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.config.settings import load_config
 from meridian.lib.notify.label import build_session_label
-from meridian.lib.notify.notice import Notice
+from meridian.lib.notify.notice import manual_notice
 from meridian.lib.notify.service import SendReport, send
 
 
@@ -47,7 +47,10 @@ def cmd_notify(
     *,
     title: Annotated[
         str | None,
-        Parameter(name="--title", help="Title appended to the session label."),
+        Parameter(
+            name="--title",
+            help="Override the headline; the session description moves into the body.",
+        ),
     ] = None,
     no_email: Annotated[
         bool,
@@ -76,12 +79,12 @@ def cmd_notify(
     ).project_root
     config = load_config(project_root, resolve_models=False).notify
     label = build_session_label()
-    notice = Notice(
-        title=label.titled(title),
-        body=message,
+    notice = manual_notice(
+        message,
+        label,
+        title=title,
         priority=priority,
         email=not no_email,
-        kind="manual",
     )
     report = send(notice, config).with_label(label)
     _render_report(report, json_mode=json_mode)

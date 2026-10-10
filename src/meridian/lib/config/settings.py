@@ -1266,6 +1266,15 @@ class NotifyConfig(BaseModel):
             env_vars=("MERIDIAN_NOTIFY_EMAIL_BACKEND",),
         ),
     ] = "gmail"
+    include_messages: Annotated[
+        bool,
+        config_field(
+            "notify.include_messages",
+            value_kind="bool",
+            file_aliases=(file_alias("notify", "include_messages"),),
+            env_vars=("MERIDIAN_NOTIFY_INCLUDE_MESSAGES",),
+        ),
+    ] = True
     ntfy_server: Annotated[
         str,
         config_field(

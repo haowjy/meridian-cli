@@ -54,7 +54,10 @@ One-hour Anthropic cache writes cost more than five-minute writes. Export
 - Notifications are silent until configured: set `[notify] ntfy_topic` for push
   and `email_to`, `smtp_user` and `smtp_password_file` (a `0600` file holding
   a Gmail app password) for email. `MERIDIAN_NOTIFY_SMTP_PASSWORD` works as a
-  fallback but is inherited by every spawn and can land in transcripts.
+  fallback but is inherited by every spawn and can land in transcripts. Idle
+  notifications name the agent, work item and tmux session and include short
+  labelled user/assistant excerpts by default. Set
+  `[notify] include_messages = false` to keep message text on the machine.
 - Per-harness defaults: Claude senses its cache lifetime from the transcript
   (1 h or 5 min); Meridian gives interactive Pi primaries long cache retention;
   Codex assumes 30 minutes (`[harness.codex.idle] ttl_seconds = 1800`); OpenCode

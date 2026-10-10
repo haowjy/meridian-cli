@@ -85,6 +85,57 @@ async def test_recorded_normal_prompt_emits_one_return_and_one_turn_end(
         await asyncio.wait_for(anext(iterator), timeout=0.01)
 
 
+async def test_turn_end_fetches_last_user_and_assistant_text_parts(tmp_path: Path) -> None:
+    async def request(
+        method: str,
+        path: str,
+        _payload: Mapping[str, object] | None,
+    ) -> tuple[int, str]:
+        assert (method, path) == ("GET", f"/session/{SESSION_ID}/message?limit=20")
+        return 200, json.dumps(
+            [
+                {"info": {"role": "user"}, "parts": [{"type": "text", "text": "old"}]},
+                {
+                    "info": {"role": "user"},
+                    "parts": [
+                        {"type": "text", "text": "attached file", "synthetic": True},
+                        {"type": "text", "text": "ignored prompt", "ignored": 1},
+                    ],
+                },
+                {
+                    "info": {"role": "assistant"},
+                    "parts": [
+                        {"type": "reasoning", "text": "private"},
+                        {"type": "text", "text": "answer one"},
+                        {"type": "text", "text": "answer two"},
+                    ],
+                },
+                {
+                    "info": {"role": "user"},
+                    "parts": [
+                        {"type": "text", "text": "latest"},
+                        {"type": "text", "text": "mode reminder", "synthetic": True},
+                        {"type": "text", "text": "hidden", "ignored": True},
+                    ],
+                },
+            ]
+        )
+
+    sensor = opencode_idle.OpenCodeIdleSensor(
+        _context(tmp_path),
+        now=lambda: 1_791_502_764.0,
+        request=request,
+    )
+    iterator = sensor.events()
+    for event in _recorded_events("events-normal.sse"):
+        sensor.on_raw_event(event)
+
+    observed = await _take(iterator, 2)
+    turn_end = observed[-1]
+    assert turn_end.last_user_text == "latest"
+    assert turn_end.last_assistant_text == "answer one answer two"
+
+
 async def test_recorded_summarize_never_emits_user_return(tmp_path: Path) -> None:
     sensor = opencode_idle.OpenCodeIdleSensor(_context(tmp_path), now=lambda: 1_791_502_786.0)
     iterator = sensor.events()
