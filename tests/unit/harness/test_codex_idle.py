@@ -250,7 +250,8 @@ async def test_compact_accepts_appended_rollout_compacted_record(tmp_path: Path)
 
 @pytest.mark.asyncio
 async def test_compact_times_out_when_rollout_does_not_grow(tmp_path: Path) -> None:
-    _write_rollout(tmp_path)
+    rollout = _write_rollout(tmp_path)
+    _append(rollout, (FIXTURES / "compacted-0.162.1.jsonl").read_bytes())
     idle = (FIXTURES / "captures" / "idle.txt").read_text(encoding="utf-8")
     tmux = FakeTmux([idle, idle.replace("Ask Codex to do anything", "/compact")])
     clock = FakeClock()

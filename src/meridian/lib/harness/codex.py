@@ -46,6 +46,7 @@ from meridian.lib.harness.codex_idle import (
 )
 from meridian.lib.harness.codex_rollout import (
     CODEX_ROLLOUT_FILENAME_RE,
+    find_rollout,
     materialize_fork_rollout,
 )
 from meridian.lib.harness.common import extract_codex_thread_id
@@ -392,14 +393,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         child_env["CODEX_HOME"] = str(Path(store).parent)
 
     def resolve_native_session_file(self, *, session_id: str, native_store: Path) -> Path | None:
-        from meridian.lib.harness.codex_rollout import resolve_exact_rollout
-
-        matches = [
-            candidate
-            for candidate in native_store.rglob(f"rollout-*-{session_id}.jsonl")
-            if CODEX_ROLLOUT_FILENAME_RE.match(candidate.name) is not None
-        ]
-        return resolve_exact_rollout(session_id, matches)
+        return find_rollout(native_store, session_id)
 
     def native_store_for_launch(
         self,

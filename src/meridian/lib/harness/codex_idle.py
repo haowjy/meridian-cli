@@ -16,9 +16,8 @@ from typing import Literal, Protocol, cast
 from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.harness.codex_bootstrap import is_bootstrap_turn_prompt
 from meridian.lib.harness.codex_rollout import (
-    CODEX_ROLLOUT_FILENAME_RE,
+    find_rollout,
     resolve_codex_home,
-    resolve_exact_rollout,
 )
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.idle_types import (
@@ -95,12 +94,7 @@ def _prompt_is_empty(capture: str) -> bool:
 def _session_rollout(ctx: IdleSensorContext) -> Path | None:
     sessions_root = resolve_codex_home(ctx.env) / "sessions"
     try:
-        matches = [
-            candidate
-            for candidate in sessions_root.rglob(f"rollout-*-{ctx.harness_session_id}.jsonl")
-            if CODEX_ROLLOUT_FILENAME_RE.match(candidate.name) is not None
-        ]
-        return resolve_exact_rollout(ctx.harness_session_id, matches)
+        return find_rollout(sessions_root, ctx.harness_session_id)
     except (OSError, NativeIdentityError):
         return None
 
@@ -250,7 +244,7 @@ class CodexIdleSensor:
         ctx: IdleSensorContext,
         *,
         tmux: TmuxClient | None = None,
-        compact_timeout_seconds: float = 60.0,
+        compact_timeout_seconds: float = 300.0,
         compact_poll_seconds: float = 0.5,
         verification_delay_seconds: float = 0.2,
         monotonic: Callable[[], float] = time.monotonic,

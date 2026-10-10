@@ -557,10 +557,10 @@ class IdleService:
             harness_autocompact_off=(observed.harness_autocompact_off or env_autocompact_off),
         )
         now_ms = self._now_ms()
-        claimed_state: IdleState | None = None
 
-        def transition(current: IdleState | None) -> tuple[IdleState | None, FireResult]:
-            nonlocal claimed_state
+        def transition(
+            current: IdleState | None,
+        ) -> tuple[IdleState | None, tuple[FireResult, IdleState | None]]:
             decision = decide(stage, guard_facts, current, policy, now_ms)
             result = FireResult(decision.decision, decision.reason)
             if decision.decision == "skip":
@@ -573,12 +573,14 @@ class IdleService:
                     "not-scheduled",
                 }
                 if current is None or decision.reason in transient:
-                    return current, result
+                    return current, (result, None)
                 done = dict(current.done)
                 done[stage] = f"skipped:{decision.reason}"
-                return current.model_copy(update={"done": done}), result
+                next_state = current.model_copy(update={"done": done})
+                return next_state, (result, None)
 
-            assert current is not None
+            if current is None:  # pragma: no cover - guarded by decide()
+                raise RuntimeError("idle stage cannot be claimed without state")
             done = dict(current.done)
             done[stage] = "claimed" if stage == "compact" else "sent"
             updates: dict[str, object] = {"done": done}
@@ -588,11 +590,14 @@ class IdleService:
                     expect_compaction_turn=True,
                 )
             claimed_state = current.model_copy(update=updates)
-            return claimed_state, result
+            return claimed_state, (result, claimed_state)
 
-        result = self.store.mutate(harness, session, transition)
-        if result.decision == "act" and (stage == "push" or stage == "warn"):
-            assert claimed_state is not None
+        result, claimed_state = self.store.mutate(harness, session, transition)
+        if (
+            result.decision == "act"
+            and claimed_state is not None
+            and (stage == "push" or stage == "warn")
+        ):
             self._send_stage_notice(
                 stage,
                 harness=harness,
