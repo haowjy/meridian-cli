@@ -1,0 +1,36 @@
+- `sidecar.py`: Emit a diagnostic when arms keep arriving across multiple
+  stretches but the sensor reports no user return, so harness-event drift is
+  visible instead of silently disabling later idle cycles (G2 X4).
+- `sidecar.py` and `service.py`: Replace the Codex external-event identity-pin
+  `arm` with a dedicated persisted pin operation that only creates the state
+  file Codex's `session_reader` looks for, without opening a scheduled stretch
+  or showing deadlines that cannot fire in `meridian idle status` (G2 K5).
+- `sidecar.py` and `harness/idle_types.py`: `external_events` is a duck-typed
+  `getattr` flag that steers two sidecar branches (busy guard, pin-and-poll
+  arm). Declare it on `IdleSensor` (or a `returns_observable` capability) so a
+  new adapter cannot get OpenCode semantics silently, and add the missing
+  scope test that a busy non-external sensor still pushes (G2-X N3).
+  The cleaner end state splits `IdleSensor` into an actuator (`facts`,
+  `compact`) plus an optional event source: the sidecar polls the store when
+  no event source exists, and Codex stops implementing `on_raw_event` /
+  `events()` as no-ops (thermo p7493).
+- `service.py`: every transition is already a pure closure
+  `IdleState | None -> (IdleState, Result)` handed to `store.mutate`, nested in
+  methods that also resolve config, read env and send notices. Lift them into
+  `machine.py` as top-level pure functions (`arm`, `close`, `claim`,
+  `record_done`, `mark_failed`) so `IdleService` becomes resolve policy →
+  `store.mutate(partial(machine.x, …))` → notify. Apply
+  `with_input_count(current, input_count)` once at the top of `machine.arm` so
+  the four early returns stop repeating it; move `fire`'s inline `transient`
+  reason set onto `Decision.skip(reason, terminal=…)` so the classification
+  sits next to the guards that produce it; give `IdleState.done` a
+  `StageOutcome` union instead of `"skipped:<reason>"` strings checked by a
+  validator. Machine tests become table-driven with no store fake (thermo F5,
+  about a day, mostly moves).
+- `sidecar.py` and `launch/process/primary_attach.py` (`_start_idle_task` /
+  `_stop_idle_task`): the launcher builds `IdleSensorContext`, owns the
+  `SensorErrorReporter`, wraps `on_raw_event`, creates the task and closes the
+  reporter, while `sidecar.run` closes it only when `error_reporter is None`.
+  Replace with `sidecar.start(factory, ctx) -> IdleHandle | None`
+  (`on_raw_event`, `async stop()`) so the launcher keeps three lines and the
+  reporter has one owner (thermo F8, about −40 lines).

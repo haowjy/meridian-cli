@@ -22,15 +22,18 @@ pi_runtime/
 │   └── extensions/
 │       ├── managed-bash/index.js
 │       ├── meridian-spawn-watch/index.js
-│       └── session-boundary/index.js
+│       ├── session-boundary/index.js
+│       └── meridian-idle/index.js
 └── extensions/
     ├── shared/               # ids, json files, panels, pi state paths, meridian CLI helpers
     ├── managed-bash/
     │   └── src/index.ts      # bash/bash_manage override, b-* records, /ps* UI
     ├── meridian-spawn-watch/
     │   └── src/index.ts      # spawn disk watcher, implicit-wait notifications, /spawn* UI
-    └── session-boundary/
-        └── src/index.ts      # native lifecycle observations, no journal writes
+    ├── session-boundary/
+    │   └── src/index.ts      # native lifecycle observations, no journal writes
+    └── meridian-idle/
+        └── src/index.ts      # primary idle/input sensor and compact actuator
 ```
 
 ### Extension Responsibilities
@@ -53,6 +56,7 @@ upgrading Pi; never infer exit from current/target session or the last-seen ID.
 |---|---|---|
 | `managed-bash` | `bash` / `bash_manage`, tracked vs detached bash records, `/ps*` slash commands, `_MERIDIAN_PI_BASH_ID` injection into child processes | `runtime_root/pi-bash/<spawn-id>/bash-records.json` and bash logs; terminal waits and terminal output reads mark their record's notification as consumed |
 | `meridian-spawn-watch` | canonical direct-child discovery, `/spawn*` slash commands, idle-turn completion notifications | observes scoped child rows, task consumption and wait leases; writes exact admission receipts and delivery faults |
+| `meridian-idle` | native idle and interactive-return sensing in primary TUIs | shells out to the hidden `meridian idle` API; owns only in-memory timers and calls `ctx.compact` after an `act` decision |
 
 `managed-bash` is the mechanism extension. `meridian-spawn-watch` is the policy extension.
 Keep that split: shell task execution and task record persistence belong in managed-bash;
@@ -120,12 +124,13 @@ and the bounded receipt-to-public-observation crash window.
 
 ### Build Pipeline
 
-`pnpm run build:extensions` runs four scripts in sequence:
+`pnpm run build:extensions` cleans once, then builds four extension entrypoints:
 
 1. `build:extensions:clean` — removes `./dist/extensions`
 2. `build:extensions:managed-bash` — `tsup` bundles `managed-bash/src/index.ts` → ESM, Node 20, single-file output
 3. `build:extensions:meridian-spawn-watch` — bundles `meridian-spawn-watch/src/index.ts` the same way
 4. `build:extensions:session-boundary` — bundles the native session observer
+5. `build:extensions:meridian-idle` — bundles the primary idle sensor/actuator
 
 `pnpm run verify:extensions` rebuilds and runs Vitest coverage for the extension sources.
 
@@ -139,7 +144,11 @@ A missing bundle raises `PiExtensionProjectionError` with the build command.
 Pi loads stable bundles via explicit `-e <path>` flags; projection does not copy
 extensions into per-launch agent directories. Both roles load managed-bash and
 spawn-watch when their `[harness.pi]` toggles are enabled. Session-boundary is
-always loaded by the adapter and has no config toggle.
+always loaded by the adapter and has no config toggle. Meridian-idle is selected
+only when the launch profile is interactive. It passes `--interactive` on every
+`meridian idle` call, serializes arm/return transitions without making user input
+wait for the CLI, and re-checks live idle, pending-message, and draft state after
+a compact claim before calling Pi's aborting `ctx.compact()`.
 
 - **Spawned RPC**: suppress ambient extensions by default (`--no-extensions`),
   skills, context files, and prompt templates. `load_all_pi_extensions = true`
@@ -148,7 +157,7 @@ always loaded by the adapter and has no config toggle.
   managed-bash overrides bash when enabled. No spawned-session quiescence auto-stop.
 
 Both projectors reject passthrough mode and extension-loading selectors.
-`_MERIDIAN_PI_SESSION_ROLE` gates role-specific behavior;
+`MERIDIAN_SESSION_ROLE` gates role-specific behavior;
 `_MERIDIAN_PI_STATE_DIR` points extension disk state at the project runtime.
 
 ## Contracts

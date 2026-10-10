@@ -156,3 +156,25 @@ def test_interactive_prompt_is_unconsumable_after_passthrough(continuation: bool
         assert command[command.index("--resume") + 1] == "claude-session"
     else:
         assert "--resume" not in command
+
+
+@pytest.mark.parametrize("interactive", [False, True])
+def test_claude_projection_loads_plugin_dirs_only_for_interactive_launches(
+    interactive: bool,
+) -> None:
+    plugin_dirs = ("/plugins/first", "/plugins/second")
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.CLAUDE,
+        interactive=interactive,
+        claude_plugin_dirs=plugin_dirs,
+        permission_resolver=TieredPermissionResolver(config=PermissionConfig()),
+    )
+
+    command = project_claude_spec_to_cli_args(spec, base_command=("claude",))
+
+    projected_dirs = tuple(
+        command[index + 1]
+        for index, token in enumerate(command)
+        if token == "--plugin-dir"
+    )
+    assert projected_dirs == (plugin_dirs if interactive else ())

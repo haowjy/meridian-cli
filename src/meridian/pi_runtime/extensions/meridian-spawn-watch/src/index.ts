@@ -176,8 +176,13 @@ export class SpawnWatchRuntime {
       const batch = [...this.pending.values()];
       const spawnItems = batch.filter((item) => item.kind === "spawn");
       const spawnContent = spawnItems.length ? await formatSpawnWaitNotification(spawnItems.map((item) => item.id), spawnItems) : "";
-      // Formatter crosses a CLI await. Reservations/explicit consumption can
-      // have changed while it ran, so eligibility is read again before queueing.
+      // Do not take the final eligibility snapshot while a tool call can still
+      // consume a result. Consumption is persisted before the host becomes
+      // idle; reading first and observing idle afterward can queue stale work.
+      if (!this.running || !this.isIdle()) return;
+      // The formatter crosses a CLI await, so reservations and consumption are
+      // read only after formatting and observed idleness, immediately before
+      // queueing. Idleness is checked again after these asynchronous reads.
       const [receipts, observed, bash, cleared] = await Promise.all([
         readDeliveryReceipts(this.currentSpawnId, this.receiptsPath), readSpawnObservations(this.currentSpawnId, this.observationsPath), this.readBash(), this.readCleared(),
       ]);

@@ -5,7 +5,8 @@ import json
 import signal
 import threading
 import time
-from dataclasses import dataclass, field
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -13,12 +14,15 @@ import psutil
 import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness import opencode_idle
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
     ObserverEndpoint,
     RawHarnessEvent,
 )
+from meridian.lib.harness.idle_types import CompactResult, IdleEvent, IdleFacts, IdleSensorContext
+from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.launch.constants import HISTORY_FILENAME, PRIMARY_META_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import primary_attach as primary_attach_module
@@ -35,6 +39,63 @@ from meridian.lib.state.process_scope_projection import read_scopes_from_disk, r
 from meridian.lib.state.spawn_store import start_spawn
 
 _BACKEND_SCOPE_EPOCH = 12_345.0
+
+
+class SensorCrash(BaseException):
+    """A non-Exception sensor failure used to prove the sidecar boundary."""
+
+
+@dataclass
+class RecordingIdleSensor:
+    started: asyncio.Event = field(default_factory=asyncio.Event)
+    cancelled: asyncio.Event = field(default_factory=asyncio.Event)
+    raw_events: list[RawHarnessEvent] = field(default_factory=list)
+    raw_error: BaseException | None = None
+    events_error: BaseException | None = None
+
+    def on_raw_event(self, event: RawHarnessEvent) -> None:
+        self.raw_events.append(event)
+        if self.raw_error is not None:
+            raise self.raw_error
+
+    async def events(self) -> AsyncIterator[IdleEvent]:
+        if False:
+            yield
+        self.started.set()
+        try:
+            if self.events_error is not None:
+                raise self.events_error
+            await asyncio.Event().wait()
+        finally:
+            self.cancelled.set()
+
+    async def facts(self) -> IdleFacts:
+        return IdleFacts("no", False, 0, None, False)
+
+    async def compact(self) -> CompactResult:
+        return CompactResult("vetoed", "test")
+
+
+def _install_idle_sensor_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    harness_id: HarnessId,
+    sensor: RecordingIdleSensor,
+    connection: FakeManagedConnection,
+) -> tuple[list[IdleSensorContext], list[bool]]:
+    contexts: list[IdleSensorContext] = []
+    alive_at_creation: list[bool] = []
+    original_bundle = get_harness_bundle(harness_id)
+
+    def _create_sensor(ctx: IdleSensorContext) -> RecordingIdleSensor:
+        contexts.append(ctx)
+        alive_at_creation.append(ctx.tui_alive())
+        return sensor
+
+    idle_bundle = replace(original_bundle, primary_idle_sensor=_create_sensor)
+    monkeypatch.setattr(primary_attach_module, "get_harness_bundle", lambda _h: idle_bundle)
+    connection.idle_sensor = sensor
+    return contexts, alive_at_creation
 
 
 @pytest.mark.asyncio
@@ -127,6 +188,8 @@ class FakeManagedConnection:
         self._stop_event = asyncio.Event()
         self.stop_called = False
         self.stop_reasons: list[str | None] = []
+        self.idle_sensor: RecordingIdleSensor | None = None
+        self.sensor_cancelled_at_stop: list[bool] = []
         self.started_primary_observer_mode: bool | None = None
         self.started_ports: list[int] = []
         self.start_calls = 0
@@ -227,6 +290,8 @@ class FakeManagedConnection:
     async def stop(self, *, reason: str | None = None) -> None:
         self.stop_called = True
         self.stop_reasons.append(reason)
+        if self.idle_sensor is not None:
+            self.sensor_cancelled_at_stop.append(self.idle_sensor.cancelled.is_set())
         self.state = "stopped"
         self._stop_event.set()
 
@@ -366,6 +431,115 @@ def _read_metadata(spawn_dir: Path) -> dict[str, object]:
         "dict[str, object]",
         json.loads((spawn_dir / PRIMARY_META_FILENAME).read_text(encoding="utf-8")),
     )
+
+
+@pytest.mark.asyncio
+async def test_primary_attach_idle_sensor_failures_do_not_change_outcome_or_stderr(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    spawn_dir = tmp_path / "spawns" / "p-idle-errors"
+    event = RawHarnessEvent(event_type="test.noop", payload={}, harness_id="codex")
+    connection = FakeManagedConnection(events=[event], session_id="sess-idle-errors")
+    sensor = RecordingIdleSensor(
+        raw_error=RuntimeError("raw sensor failed"),
+        events_error=SensorCrash("sensor iterator failed"),
+    )
+    _install_idle_sensor_bundle(
+        monkeypatch,
+        harness_id=HarnessId.CODEX,
+        sensor=sensor,
+        connection=connection,
+    )
+    launcher = PrimaryAttachLauncher(
+        spawn_id=SpawnId("p-idle-errors"),
+        spawn_dir=spawn_dir,
+        connection=connection,
+        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
+        process_launcher=FakeProcessLauncher(spawn_dir=spawn_dir),
+    )
+
+    outcome = await launcher.run(
+        config=_build_config(spawn_id=SpawnId("p-idle-errors"), control_root=tmp_path),
+        spec=_build_spec(),
+        cwd=tmp_path,
+        env={},
+    )
+
+    assert outcome.exit_code == 0
+    assert sensor.raw_events == [event]
+    assert capsys.readouterr().err == ""
+    debug_records = [
+        json.loads(line)
+        for line in (spawn_dir / "debug.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert {record["data"]["phase"] for record in debug_records} == {
+        "events",
+        "raw_event",
+    }
+    assert connection.sensor_cancelled_at_stop == [True]
+
+
+@pytest.mark.asyncio
+async def test_opencode_bundle_registers_idle_sensor_and_autocompact_guard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = get_harness_bundle(HarnessId.OPENCODE)
+    autocompact_off = bundle.autocompact_off
+    sensor = RecordingIdleSensor()
+    spawn_dir = tmp_path / "spawns" / "p-opencode-idle"
+    connection = FakeManagedConnection(
+        events=[],
+        session_id="sess-opencode-idle",
+        harness_id=HarnessId.OPENCODE,
+    )
+    _install_idle_sensor_bundle(
+        monkeypatch,
+        harness_id=HarnessId.OPENCODE,
+        sensor=sensor,
+        connection=connection,
+    )
+    sidecar_hooks: list[tuple[object, object]] = []
+    real_sidecar_run = primary_attach_module.idle_sidecar.run
+
+    async def _record_sidecar_hooks(
+        sidecar_sensor: object,
+        ctx: IdleSensorContext,
+        **kwargs: Any,
+    ) -> None:
+        sidecar_hooks.append((kwargs.get("autocompact_off"), kwargs.get("detect_ttl")))
+        await real_sidecar_run(sidecar_sensor, ctx, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(primary_attach_module.idle_sidecar, "run", _record_sidecar_hooks)
+    launcher = PrimaryAttachLauncher(
+        spawn_id=SpawnId("p-opencode-idle"),
+        spawn_dir=spawn_dir,
+        connection=connection,
+        tui_command_builder=lambda session_id: ("opencode", "attach", session_id),
+        process_launcher=FakeProcessLauncher(spawn_dir=spawn_dir),
+    )
+
+    outcome = await launcher.run(
+        config=_build_config(
+            spawn_id=SpawnId("p-opencode-idle"),
+            control_root=tmp_path,
+            harness_id=HarnessId.OPENCODE,
+        ),
+        spec=_build_spec(),
+        cwd=tmp_path,
+        env={},
+    )
+
+    assert bundle.primary_idle_sensor is opencode_idle.primary_idle_sensor
+    assert bundle.detect_ttl is None
+    assert autocompact_off is opencode_idle.autocompact_off
+    assert autocompact_off is not None
+    assert autocompact_off({"OPENCODE_DISABLE_AUTOCOMPACT": "set"}) is True
+    assert autocompact_off({"OPENCODE_DISABLE_AUTOCOMPACT": ""}) is False
+    assert outcome.exit_code == 0
+    assert sidecar_hooks == [(autocompact_off, None)]
 
 
 def test_primary_attach_scope_snapshot_records_unknown_birth_sentinel_when_create_time_fails(

@@ -40,6 +40,13 @@ declares `consumed_fields` (fields it uses) and `explicitly_ignored_fields`
 `_enforce_spawn_params_accounting()` raises `ImportError` at startup if any field
 is uncovered. This is enforcement, not documentation.
 
+Idle integration uses optional `HarnessBundle` ports: `primary_idle_sensor` for
+launcher-hosted Codex/OpenCode sensing, `parse_idle_event` for native callbacks,
+`idle_event_applied` for post-parse native callback chaining, `autocompact_off` for
+the harness-owned compaction guard, and `detect_ttl` where the harness can observe
+cache retention. Keep all native parsing, facts, and actuators in `*_idle.py`;
+`lib/idle/` owns policy and state.
+
 ## Two Launch Paths
 
 **Subprocess path** (`lib/launch/`): forks a one-shot process. stdout/stderr read
@@ -82,10 +89,11 @@ published-spawn artifact mutation seam at the write point. An awaited send or di
 can cross spawn deletion; a late journal or cursor write must not recreate the directory.
 Pi runtime metadata uses that same publication gate.
 
-**Environment defaults differ from overrides.** `env_defaults()` fills missing or
-blank child values after explicit inherited/runtime values are bound. Pi agent
-and session directory defaults use this seam; forced adapter policy remains in
-`env_overrides()`.
+**Environment defaults differ from overrides.** `env_defaults()` receives launch
+context and fills missing or blank child values after explicit inherited/runtime
+values are bound; Pi uses it for agent and session directories and to default
+`PI_CACHE_RETENTION=long` only for interactive primaries, while forced adapter
+policy remains in `env_overrides()`.
 
 **Pi usage is per assistant message.** Fold each `message_end` increment once;
 `agent_end.messages` is repeated history. Unknown usage operands leave totals
@@ -158,8 +166,12 @@ parent signals, or supply the parent report.
   event name and returns raw evidence with its one normalized descriptor. A
   completion coordinator may drop duplicate events or refine their descriptors
   before delivery; refinement preserves the raw frame. For Pi, only an `agent_end`
-  attempt outcome is retained privately until `agent_settled`; the frame remains visible to hooks and
-  subscribers. Shared `semantics.py` contains no harness event names.
+  attempt outcome is retained privately until `agent_settled`; the frame remains
+  visible to hooks and subscribers. Shared `semantics.py` contains no harness event
+  names.
+- `claude_idle.py` / `pi_idle.py` / `codex_idle.py` / `opencode_idle.py` — harness-owned
+  cache facts, native-event parsing, live observations, and actuators registered through
+  the optional idle bundle ports.
 - `pi_failure.py` — Pi failure output formatting (`compact_pi_failure_output`) and
   per-event failure extraction (`pi_failure_from_payload`). Harness-owned;
   consumed by `connections/pi_rpc.py` (stderr compaction), `extractors/pi.py` (report
@@ -192,6 +204,12 @@ parent signals, or supply the parent report.
   → [extractors/AGENTS.md](extractors/AGENTS.md)
 - **`passthrough/`** — TUI attach commands for managed-primary sessions.
   → [passthrough/AGENTS.md](passthrough/AGENTS.md)
+
+Interactive Claude primaries receive the bundled
+`../../claude_runtime/meridian-idle/` mod. Pi primaries receive the fourth
+bundled extension, `../../pi_runtime/extensions/meridian-idle/`; spawned Pi RPC
+sessions do not. Those runtimes translate native events into the same core idle
+contract rather than owning policy.
 
 ## Adding a Harness
 

@@ -12,6 +12,13 @@ from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import BootstrapMode, HarnessAdapter, HarnessContract
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
 from meridian.lib.harness.extractors.base import HarnessExtractor
+from meridian.lib.harness.idle_types import (
+    DetectIdleTtl,
+    IdleEvent,
+    IdleSensor,
+    IdleSensorContext,
+    PinnedIdleSession,
+)
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.semantics import HarnessSemantics
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, SpecT
@@ -66,6 +73,23 @@ class HarnessProjectionPorts(Generic[SpecT]):
 
 
 EventSinks = Callable[[Path, SpawnId], tuple[Callable[[RawHarnessEvent], None], ...]]
+PrimaryIdleSensor = Callable[[IdleSensorContext], IdleSensor | None]
+IdleSessionReader = Callable[[str], PinnedIdleSession | None]
+
+
+class ParseIdleEvent(Protocol):
+    """Harness-native callback parser with caller-owned state lookup."""
+
+    def __call__(
+        self,
+        payload: str,
+        *,
+        session_reader: IdleSessionReader,
+    ) -> IdleEvent | None: ...
+
+
+IdleEventApplied = Callable[[str, Mapping[str, str]], None]
+AutocompactOffReader = Callable[[Mapping[str, str]], bool | None]
 
 
 def _no_event_sinks(
@@ -86,6 +110,11 @@ class HarnessBundle(Generic[SpecT]):
     projections: HarnessProjectionPorts[SpecT]
     semantics: HarnessSemantics
     event_sinks: EventSinks = _no_event_sinks
+    primary_idle_sensor: PrimaryIdleSensor | None = None
+    parse_idle_event: ParseIdleEvent | None = None
+    idle_event_applied: IdleEventApplied | None = None
+    autocompact_off: AutocompactOffReader | None = None
+    detect_ttl: DetectIdleTtl | None = None
 
 
 _REGISTRY: dict[HarnessId, HarnessBundle[Any]] = {}
@@ -171,6 +200,11 @@ def register_harness_bundle(bundle: HarnessBundle[Any]) -> None:
         projections=bundle.projections,
         semantics=bundle.semantics,
         event_sinks=bundle.event_sinks,
+        primary_idle_sensor=bundle.primary_idle_sensor,
+        parse_idle_event=bundle.parse_idle_event,
+        idle_event_applied=bundle.idle_event_applied,
+        autocompact_off=bundle.autocompact_off,
+        detect_ttl=bundle.detect_ttl,
     )
 
 

@@ -4,6 +4,60 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Upgrade notes
+- Interactive Pi primaries now default to `PI_CACHE_RETENTION=long`. For recognized
+  Anthropic and OpenAI providers this enables the full idle warning/compaction flow.
+  `openai` is scheduled against 30 minutes, because OpenAI's `24h` retention typically
+  lasts about that long. One-hour Anthropic cache writes cost more than five-minute
+  writes. Set `PI_CACHE_RETENTION=short` to opt out.
+- Idle compaction is **on by default** for interactive primaries (5 min before the
+  prompt cache expires, guarded). Turn it off per tmux session with
+  `MERIDIAN_IDLE_COMPACT=0`, or in config with `[idle] compact = false`
+  (`[harness.<harness>.idle] compact = false` per harness).
+- Nothing is sent until `[notify]` has an `ntfy_topic` (push) or `email_to`,
+  `smtp_user` and `smtp_password_file` (email); unconfigured backends degrade to
+  `none` with a warning. Idle notices include short conversation excerpts by
+  default; set `[notify] include_messages = false` to omit message text.
+- `_MERIDIAN_PI_SESSION_ROLE` is gone. Read `MERIDIAN_SESSION_ROLE` (`primary` or
+  `spawn`) instead; it is set for every harness.
+- New state directory `~/.meridian/idle/` (one JSON file per primary session,
+  garbage-collected after 7 days). Older builds ignore it. See
+  [docs/upgrading.md](docs/upgrading.md#upgrading-to-093-idle-notifications-and-compaction).
+
+### Added
+- Add `meridian notify "<message>"` with ntfy push, SMTP/Gmail email, command
+  backends, and agent/work/tmux context in every notification.
+- Add idle push, cache-expiry warning, and guarded compaction for interactive Claude,
+  Pi, Codex, and OpenCode primaries. Claude and Pi sense cache lifetime; Pi primaries
+  default to long retention, OpenCode's 5-minute default is push-only, and Codex
+  defaults to 30 minutes. The waiting push follows a long turn (at least 2 minutes)
+  by 60 seconds and a quick or unknown-length turn by 10 minutes. Pushes and warnings
+  label short user and assistant excerpts and name the tmux session when present.
+- Add `[notify]`, `[idle]`, and `[harness.<harness>.idle]` config with
+  `MERIDIAN_NOTIFY_*`, `MERIDIAN_IDLE_*`, and `MERIDIAN_HARNESS_IDLE_*_<H>` overrides.
+- Add the bundled Claude `meridian-idle` mod, automatic for Meridian primaries and
+  opt-in elsewhere with `CLAUDE_CODE_PLUGIN_DIRS="$(meridian idle mod-path)"`.
+- Add the primary-only Pi `meridian-idle` bundle.
+- Inject Meridian's idle callback through Codex `notify` while preserving a configured
+  user callback.
+
+### Changed
+- Make the fast gate's 60-second budget a warning target that no longer kills or
+  fails a run that goes over.
+- Default `PI_CACHE_RETENTION=long` for interactive Pi primaries when the variable
+  is absent; spawns and explicit values are unchanged. `openai` is scheduled against
+  30 minutes, because OpenAI's `24h` retention typically lasts about that long.
+- Set `MERIDIAN_SESSION_ROLE=primary|spawn` and the resolved
+  `MERIDIAN_SESSION_AGENT` for every harness launch, and remove the Pi-only
+  `_MERIDIAN_PI_SESSION_ROLE` variable.
+- Run the Pi extension build and Vitest suites in a parallel `runtime-extensions`
+  CI job and in extended/full local preflight.
+
+### Fixed
+- Stop wheels from force-including generated Claude plugin type files.
+- Pi spawn-watch checks idle before reading result eligibility, so a result waited on
+  during the turn is no longer re-announced as a duplicate follow-up.
+
 ## [0.9.2] - 2026-10-10
 
 ### Changed

@@ -16,13 +16,26 @@ uv run meridian                # Smoke test the CLI directly
 Bare `pytest` and `pytest-llm` use the directory-level default paths in
 `pyproject.toml` (unit, contract, platform, and selected integration seams).
 Those seams are `integration/config`, `catalog`, `safety`, `harness`, `hooks`,
-`prompt`, `telemetry`, and `state`.
+`idle`, `prompt`, `telemetry`, and `state`.
 The default is intentionally not the complete suite. Use an explicit `tests/`
 path for release, nightly, or full regression checks; focused paths continue to
 override `testpaths`, including files under `tests/extended/`. Tests in
 `tests/smoke/` and `tests/e2e/` are not pytest-collected: they contain opt-in
 scripts and manual/runtime guides. The [smoke index](smoke/README.md) distinguishes
 cheap executable checks from live/network probes.
+
+Runtime adapter changes also have local package gates:
+
+```bash
+cd src/meridian/pi_runtime && pnpm run verify:extensions
+claude plugin validate src/meridian/claude_runtime/meridian-idle
+claude plugin test src/meridian/claude_runtime/meridian-idle
+```
+
+The Claude commands are required for every change under
+`src/meridian/claude_runtime/`; CI does not provide the `claude` binary. The Pi
+gate builds the projected bundles and runs their Vitest suites; CI runs the Pi
+Vitest suites in the `runtime-extensions` job.
 
 Use `uv run pytest --runner-history=off <tests>` to trap implicit reads of legacy
 spawn/artifact runner `history.jsonl` (Meridian no longer writes it). The trap is
@@ -117,3 +130,9 @@ xdist worker imported the class at collection time, `isinstance` and
 `pytest.raises` compare against the stale class object and fail. Reference
 symbols through the live module object instead of binding at import time. See
 `tests/integration/launch/test_streaming_runner_watchdog.py` for the pattern.
+
+## Test packages
+
+Every new test directory gets an `__init__.py`. Under pytest's default import
+mode, same-named test files in two non-package directories collide at
+collection, and parallel lanes only find this after merge.

@@ -1,0 +1,5 @@
+{
+  "name": "meridian-idle",
+  "version": "0.1.0",
+  "description": "Senses Claude Code idle time and user return for Meridian: arms push, cache-expiry warning and idle compaction timers through `meridian idle`, and compacts only when Meridian says to."
+}

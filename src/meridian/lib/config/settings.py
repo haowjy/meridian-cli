@@ -3,11 +3,12 @@
 import logging
 import os
 import tomllib
+from collections.abc import Mapping
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Annotated, Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 from meridian.lib.config.catalog import build_option_catalog, file_alias
@@ -149,6 +150,46 @@ def _assign_nested_value(target: dict[str, object], path: tuple[str, ...], value
             continue
         current = cast("dict[str, object]", nested)
     current[path[-1]] = value
+
+
+def _normalize_catalog_table(
+    raw_value: dict[str, object],
+    *,
+    table_path: tuple[str, ...],
+    target: dict[str, object],
+    field_path_prefix: tuple[str, ...] = (),
+) -> None:
+    """Normalize one metadata-backed TOML table into a settings payload."""
+
+    for key, value in raw_value.items():
+        option = OPTION_CATALOG.find_file_alias(table_path=table_path, key=key)
+        if option is not None:
+            if option.field_path[: len(field_path_prefix)] != field_path_prefix:
+                raise ValueError(
+                    f"Config option '{option.canonical_key}' does not belong under "
+                    f"'{'.'.join(field_path_prefix)}'."
+                )
+            coerced = parse_toml_scalar(
+                value_kind=option.value_kind,
+                raw_value=value,
+                source=".".join((*table_path, key)),
+            )
+            _assign_nested_value(target, option.field_path[len(field_path_prefix) :], coerced)
+            continue
+
+        if isinstance(value, dict):
+            _normalize_catalog_table(
+                cast("dict[str, object]", value),
+                table_path=(*table_path, key),
+                target=target,
+                field_path_prefix=field_path_prefix,
+            )
+            continue
+
+        logger.warning(
+            "Ignoring unknown Meridian config key '%s'.",
+            ".".join((*table_path, key)),
+        )
 
 
 def _read_toml(path: Path) -> dict[str, object]:
@@ -413,6 +454,18 @@ def _normalize_harness_table(
                             )
                         nested["enabled"] = enabled
                     harness_values[harness_key] = nested
+                    continue
+                if OPTION_CATALOG.has_file_alias_table_prefix((source, key, harness_key)):
+                    if not isinstance(harness_value, dict):
+                        raise ValueError(
+                            f"Invalid value for '{source}.{key}.{harness_key}': expected table."
+                        )
+                    _normalize_catalog_table(
+                        cast("dict[str, object]", harness_value),
+                        table_path=(source, key, harness_key),
+                        target=harness_values,
+                        field_path_prefix=(source, key),
+                    )
                     continue
                 logger.warning(
                     "Ignoring unknown Meridian config key '%s.%s.%s'.",
@@ -923,24 +976,14 @@ def _normalize_toml_payload(
             )
             continue
 
-        if key in {"defaults", "timeouts"}:
+        if OPTION_CATALOG.has_file_alias_table_prefix((key,)):
             if not isinstance(raw_value, dict):
                 raise ValueError(f"Invalid value for '{key}' in '{path}': expected table.")
-            for section_key, section_value in cast("dict[str, object]", raw_value).items():
-                option = OPTION_CATALOG.find_file_alias(table_path=(key,), key=section_key)
-                if option is None:
-                    logger.warning(
-                        "Ignoring unknown Meridian config key '%s.%s'.",
-                        key,
-                        section_key,
-                    )
-                    continue
-                coerced = parse_toml_scalar(
-                    value_kind=option.value_kind,
-                    raw_value=section_value,
-                    source=f"{key}.{section_key}",
-                )
-                _assign_nested_value(normalized, option.field_path, coerced)
+            _normalize_catalog_table(
+                cast("dict[str, object]", raw_value),
+                table_path=(key,),
+                target=normalized,
+            )
             continue
 
         option = OPTION_CATALOG.find_file_alias(table_path=(), key=key)
@@ -1096,6 +1139,243 @@ class StateConfig(BaseModel):
         return value
 
 
+class IdleConfig(BaseModel):
+    """Cross-harness idle behavior settings."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    enabled: Annotated[
+        bool,
+        config_field(
+            "idle.enabled",
+            value_kind="bool",
+            file_aliases=(file_alias("idle", "enabled"),),
+            env_vars=("MERIDIAN_IDLE_ENABLED",),
+        ),
+    ] = True
+    push_seconds: Annotated[
+        int,
+        config_field(
+            "idle.push_seconds",
+            value_kind="int",
+            file_aliases=(file_alias("idle", "push_seconds"),),
+            env_vars=("MERIDIAN_IDLE_PUSH_SECONDS",),
+        ),
+        Field(ge=0),
+    ] = 60
+    long_turn_seconds: Annotated[
+        int,
+        config_field(
+            "idle.long_turn_seconds",
+            value_kind="int",
+            file_aliases=(file_alias("idle", "long_turn_seconds"),),
+            env_vars=("MERIDIAN_IDLE_LONG_TURN_SECONDS",),
+        ),
+        Field(ge=0),
+    ] = 120
+    quick_turn_push_seconds: Annotated[
+        int,
+        config_field(
+            "idle.quick_turn_push_seconds",
+            value_kind="int",
+            file_aliases=(file_alias("idle", "quick_turn_push_seconds"),),
+            env_vars=("MERIDIAN_IDLE_QUICK_TURN_PUSH_SECONDS",),
+        ),
+        Field(gt=0),
+    ] = 600
+    warn_minutes: Annotated[
+        int,
+        config_field(
+            "idle.warn_minutes",
+            value_kind="int",
+            file_aliases=(file_alias("idle", "warn_minutes"),),
+            env_vars=("MERIDIAN_IDLE_WARN_MINUTES",),
+        ),
+        Field(ge=0),
+    ] = 15
+    warn_email: Annotated[
+        bool,
+        config_field(
+            "idle.warn_email",
+            value_kind="bool",
+            file_aliases=(file_alias("idle", "warn_email"),),
+            env_vars=("MERIDIAN_IDLE_WARN_EMAIL",),
+        ),
+    ] = True
+    compact_minutes: Annotated[
+        int,
+        config_field(
+            "idle.compact_minutes",
+            value_kind="int",
+            file_aliases=(file_alias("idle", "compact_minutes"),),
+            env_vars=("MERIDIAN_IDLE_COMPACT_MINUTES",),
+        ),
+        Field(ge=0),
+    ] = 5
+    compact: Annotated[
+        bool,
+        config_field(
+            "idle.compact",
+            value_kind="bool",
+            file_aliases=(file_alias("idle", "compact"),),
+            env_vars=("MERIDIAN_IDLE_COMPACT",),
+        ),
+    ] = True
+    min_compact_tokens: Annotated[
+        int,
+        config_field(
+            "idle.min_compact_tokens",
+            value_kind="int",
+            file_aliases=(file_alias("idle", "min_compact_tokens"),),
+            env_vars=("MERIDIAN_IDLE_MIN_COMPACT_TOKENS",),
+        ),
+        Field(ge=0),
+    ] = 40_000
+    late_fire_tolerance_seconds: Annotated[
+        int,
+        config_field(
+            "idle.late_fire_tolerance_seconds",
+            value_kind="int",
+            file_aliases=(file_alias("idle", "late_fire_tolerance_seconds"),),
+            env_vars=("MERIDIAN_IDLE_LATE_FIRE_TOLERANCE_SECONDS",),
+        ),
+        Field(ge=0),
+    ] = 120
+
+
+class NotifyConfig(BaseModel):
+    """Notification delivery settings shared by manual and idle notices."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    push_backend: Annotated[
+        str,
+        config_field(
+            "notify.push_backend",
+            value_kind="str",
+            file_aliases=(file_alias("notify", "push_backend"),),
+            env_vars=("MERIDIAN_NOTIFY_PUSH_BACKEND",),
+        ),
+    ] = "ntfy"
+    email_backend: Annotated[
+        str,
+        config_field(
+            "notify.email_backend",
+            value_kind="str",
+            file_aliases=(file_alias("notify", "email_backend"),),
+            env_vars=("MERIDIAN_NOTIFY_EMAIL_BACKEND",),
+        ),
+    ] = "gmail"
+    include_messages: Annotated[
+        bool,
+        config_field(
+            "notify.include_messages",
+            value_kind="bool",
+            file_aliases=(file_alias("notify", "include_messages"),),
+            env_vars=("MERIDIAN_NOTIFY_INCLUDE_MESSAGES",),
+        ),
+    ] = True
+    ntfy_server: Annotated[
+        str,
+        config_field(
+            "notify.ntfy_server",
+            value_kind="str",
+            file_aliases=(file_alias("notify", "ntfy_server"),),
+            env_vars=("MERIDIAN_NOTIFY_NTFY_SERVER",),
+        ),
+    ] = "https://ntfy.sh"
+    ntfy_topic: Annotated[
+        str | None,
+        config_field(
+            "notify.ntfy_topic",
+            value_kind="str",
+            file_aliases=(file_alias("notify", "ntfy_topic"),),
+            env_vars=("MERIDIAN_NOTIFY_NTFY_TOPIC",),
+        ),
+    ] = None
+    email_to: Annotated[
+        str | None,
+        config_field(
+            "notify.email_to",
+            value_kind="str",
+            file_aliases=(file_alias("notify", "email_to"),),
+            env_vars=("MERIDIAN_NOTIFY_EMAIL_TO",),
+        ),
+    ] = None
+    email_from: Annotated[
+        str | None,
+        config_field(
+            "notify.email_from",
+            value_kind="str",
+            file_aliases=(file_alias("notify", "email_from"),),
+            env_vars=("MERIDIAN_NOTIFY_EMAIL_FROM",),
+        ),
+    ] = None
+    smtp_user: Annotated[
+        str | None,
+        config_field(
+            "notify.smtp_user",
+            value_kind="str",
+            file_aliases=(file_alias("notify", "smtp_user"),),
+            env_vars=("MERIDIAN_NOTIFY_SMTP_USER",),
+        ),
+    ] = None
+    smtp_host: Annotated[
+        str,
+        config_field(
+            "notify.smtp_host",
+            value_kind="str",
+            file_aliases=(file_alias("notify", "smtp_host"),),
+            env_vars=("MERIDIAN_NOTIFY_SMTP_HOST",),
+        ),
+    ] = "smtp.gmail.com"
+    smtp_port: Annotated[
+        int,
+        config_field(
+            "notify.smtp_port",
+            value_kind="int",
+            file_aliases=(file_alias("notify", "smtp_port"),),
+            env_vars=("MERIDIAN_NOTIFY_SMTP_PORT",),
+        ),
+    ] = 587
+    smtp_password_file: Annotated[
+        str | None,
+        config_field(
+            "notify.smtp_password_file",
+            value_kind="str",
+            file_aliases=(file_alias("notify", "smtp_password_file"),),
+            env_vars=("MERIDIAN_NOTIFY_SMTP_PASSWORD_FILE",),
+        ),
+    ] = None
+    push_command: Annotated[
+        str | None,
+        config_field(
+            "notify.push_command",
+            value_kind="str",
+            file_aliases=(file_alias("notify", "push_command"),),
+            env_vars=("MERIDIAN_NOTIFY_PUSH_COMMAND",),
+        ),
+    ] = None
+    email_command: Annotated[
+        str | None,
+        config_field(
+            "notify.email_command",
+            value_kind="str",
+            file_aliases=(file_alias("notify", "email_command"),),
+            env_vars=("MERIDIAN_NOTIFY_EMAIL_COMMAND",),
+        ),
+    ] = None
+
+    @field_validator("smtp_port")
+    @classmethod
+    def _validate_smtp_port(cls, value: int) -> int:
+        if isinstance(value, bool) or not 1 <= value <= 65535:
+            raise ValueError(
+                f"Invalid value for 'notify.smtp_port': expected 1..65535, got {value!r}."
+            )
+        return value
+
+
 class WorkConfig(BaseModel):
     """Work-item behavior settings."""
 
@@ -1219,7 +1499,75 @@ class HarnessProfileConfig(BaseModel):
         return float(value)
 
 
+class _HarnessIdleFields(BaseModel):
+    """Shared typed fields for every harness-specific idle config."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    enabled: bool = True
+    compact: bool = True
+    ttl_seconds: Annotated[int | None, Field(gt=0)] = None
+
+
+def harness_idle_model(
+    harness_id: str,
+    *,
+    defaults: Mapping[str, object] | None = None,
+) -> type[_HarnessIdleFields]:
+    """Build the metadata-backed idle settings model for one harness."""
+
+    normalized = harness_id.strip().lower()
+    if normalized not in _HARNESS_TABLE_KEYS:
+        raise ValueError(f"Unsupported harness ID for idle config: {harness_id!r}.")
+    resolved_defaults = dict(defaults or {})
+    unknown_defaults = resolved_defaults.keys() - _HarnessIdleFields.model_fields.keys()
+    if unknown_defaults:
+        names = ", ".join(sorted(unknown_defaults))
+        raise ValueError(f"Unsupported idle defaults for {normalized}: {names}.")
+
+    fields: dict[str, Any] = {}
+    for field_name, model_field in _HarnessIdleFields.model_fields.items():
+        option = config_field(
+            f"harness.{normalized}.idle.{field_name}",
+            value_kind="int" if field_name == "ttl_seconds" else "bool",
+            file_aliases=(
+                file_alias(("harness", normalized, "idle"), field_name),
+            ),
+            env_vars=(
+                f"MERIDIAN_HARNESS_IDLE_{field_name.upper()}_{normalized.upper()}",
+            ),
+        )
+        annotation = Annotated[(model_field.annotation, *model_field.metadata, option)]
+        fields[field_name] = (
+            annotation,
+            resolved_defaults.get(field_name, model_field.default),
+        )
+
+    return create_model(
+        f"{normalized.title()}HarnessIdleConfig",
+        __base__=_HarnessIdleFields,
+        __module__=__name__,
+        **fields,
+    )
+
+
+if TYPE_CHECKING:
+    ClaudeHarnessIdleConfig = _HarnessIdleFields
+    CodexHarnessIdleConfig = _HarnessIdleFields
+    OpenCodeHarnessIdleConfig = _HarnessIdleFields
+    PiHarnessIdleConfig = _HarnessIdleFields
+else:
+    ClaudeHarnessIdleConfig = harness_idle_model("claude")
+    CodexHarnessIdleConfig = harness_idle_model("codex", defaults={"ttl_seconds": 1800})
+    OpenCodeHarnessIdleConfig = harness_idle_model(
+        "opencode",
+        defaults={"ttl_seconds": 300},
+    )
+    PiHarnessIdleConfig = harness_idle_model("pi")
+
+
 class ClaudeHarnessProfileConfig(HarnessProfileConfig):
+    idle: ClaudeHarnessIdleConfig = Field(default_factory=ClaudeHarnessIdleConfig)
     model: Annotated[
         str,
         config_field(
@@ -1235,6 +1583,7 @@ class ClaudeHarnessProfileConfig(HarnessProfileConfig):
 
 
 class CodexHarnessProfileConfig(HarnessProfileConfig):
+    idle: CodexHarnessIdleConfig = Field(default_factory=CodexHarnessIdleConfig)
     model: Annotated[
         str,
         config_field(
@@ -1250,6 +1599,7 @@ class CodexHarnessProfileConfig(HarnessProfileConfig):
 
 
 class OpenCodeHarnessProfileConfig(HarnessProfileConfig):
+    idle: OpenCodeHarnessIdleConfig = Field(default_factory=OpenCodeHarnessIdleConfig)
     model: Annotated[
         str,
         config_field(
@@ -1293,6 +1643,7 @@ class PiBundleToggleConfig(BaseModel):
 
 
 class PiHarnessProfileConfig(HarnessProfileConfig):
+    idle: PiHarnessIdleConfig = Field(default_factory=PiHarnessIdleConfig)
     load_all_pi_extensions: bool = False
     extra_extension_paths: tuple[str, ...] = ()
     background_tasks: PiBundleToggleConfig = Field(default_factory=PiBundleToggleConfig)
@@ -1550,6 +1901,8 @@ class MeridianConfig(BaseSettings):
         ),
     ] = ()
     harness: HarnessConfig = Field(default_factory=HarnessConfig)
+    idle: IdleConfig = Field(default_factory=IdleConfig)
+    notify: NotifyConfig = Field(default_factory=NotifyConfig)
     primary: PrimaryConfig = Field(default_factory=PrimaryConfig)
     history: HistoryConfig = Field(default_factory=HistoryConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)

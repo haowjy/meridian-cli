@@ -1,0 +1,21 @@
+› Reply with OK only.
+
+  Worked for 2s • 6:40 PM
+
+
+› Run sleep 3 in shell, then reply done.
+
+
+• Ran sleep 3
+  └ (no output)
+
+• done
+  └ Tip: Press f3 to search this conversation.
+
+  Worked for 5s • 6:41 PM
+
+
+› Ask Codex to do anything
+
+  GPT-6-Luna low · ~/gitrepos/meridian-cli.worktrees/idle-cache-notify · Monitor Meridian …
+  ? for shortcuts

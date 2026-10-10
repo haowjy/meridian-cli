@@ -1,0 +1,17 @@
+- `../idle/service.py` (`effective`) and `settings.py`: `effective()` re-derives
+  catalog metadata by hand: f-string env names (`MERIDIAN_HARNESS_IDLE_{FIELD}_{H}`,
+  `MERIDIAN_IDLE_{FIELD}`) that `config_field(env_vars=…)` already declares, a
+  parallel `_FIELD_KINDS` table of `value_kind`, and `getattr(config.harness, h)`
+  + `isinstance(BaseModel)` to find the harness model. It also reads `self.env`
+  after `load_config` has already applied process env through
+  `layered_env_source`, so one value has two env readers. Keep the level-first
+  rule (that is the designed part) but drive it from `OPTION_CATALOG` as
+  `lib/config/idle.py::resolve_idle_policy(config, harness, env)`, and delete
+  `_FIELD_KINDS`, `_HARNESS_FIELDS` and the six `cast("int", …)` calls in
+  `resolve_policy` (thermo F6).
+- `settings.py`: `IdleConfig`, `NotifyConfig` and the per-harness idle factory
+  (about 340 lines; `create_model` plus four `TYPE_CHECKING` aliases) would sit
+  better in `lib/config/idle.py` and `lib/config/notify.py`, imported by
+  `settings.py` the way the catalog already pulls annotated models. Keep the
+  factory: the unique canonical keys and env names per harness are its point
+  (thermo F6).

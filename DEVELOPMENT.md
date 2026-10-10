@@ -111,10 +111,9 @@ For the routine local preflight used by pre-push:
 scripts/preflight.sh
 ```
 
-The fast gate has one monotonic 60-second budget across Ruff, Pyright, pytest,
-pytest-xdist startup, and command overhead in a prepared environment. Dependency
-downloads and native extension builds are setup/full-gate work, not part of
-that promise.
+The fast gate's 60-second budget is a target for Ruff, Pyright, pytest,
+pytest-xdist startup, and command overhead on a prepared machine; the gate warns
+when it runs over and never fails or stops checks because of time.
 
 For the complete opt-in preflight used before release promotion or on demand:
 

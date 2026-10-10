@@ -1,5 +1,80 @@
 # Upgrade notes
 
+## Upgrading to 0.9.3: idle notifications and compaction
+
+Interactive primaries launched by Meridian now watch for idle time: a phone
+push one minute after a turn lasting at least two minutes, or after 10 minutes
+of silence following a quicker turn; a push and email 15 minutes before the
+prompt cache expires; and a guarded compaction 5 minutes before expiry so the
+eventual return is cheap. Spawns get none of this. Agents can also ping you on
+purpose with `meridian notify "<message>"`. Configuration, defaults per harness
+and every environment variable are in [configuration.md](configuration.md); the
+per-harness mechanics are in [harness-integration.md](harness-integration.md).
+
+Interactive Pi primaries now run with `PI_CACHE_RETENTION=long` unless that
+variable is already set. For recognized Anthropic and OpenAI providers this
+makes Pi's warning and compaction stages fit. `openai` is scheduled against 30
+minutes, because OpenAI's `24h` retention typically lasts about that long.
+One-hour Anthropic cache writes cost more than five-minute writes. Export
+`PI_CACHE_RETENTION=short` to keep Pi's default retention and spend.
+
+### What changed, and why
+
+- A new state directory, `~/.meridian/idle/`, holds one small JSON file per
+  primary session (`<harness>-<session>.json`): the current idle stretch and
+  which notifications and compactions already happened, so a reloaded adapter
+  never notifies twice. Files are written atomically and deleted after 7 days.
+- New config tables `[notify]`, `[idle]` and `[harness.<harness>.idle]`, each key
+  with a `MERIDIAN_NOTIFY_*`, `MERIDIAN_IDLE_*` or `MERIDIAN_HARNESS_IDLE_<KEY>_<H>`
+  environment variable. Environment beats files at every level; within a level
+  the per-harness key wins.
+- Every session Meridian launches gets `MERIDIAN_SESSION_ROLE=primary|spawn`.
+  The Pi-only `_MERIDIAN_PI_SESSION_ROLE` is removed.
+- Interactive Claude primaries load a bundled mod (`--plugin-dir`), interactive
+  Pi primaries load a fourth extension bundle, interactive Codex primaries get a
+  `notify` hook on the app-server, and OpenCode primaries run a sensor inside
+  Meridian's launcher.
+
+### Before you upgrade
+
+- Nothing to migrate. If any of your tooling reads `_MERIDIAN_PI_SESSION_ROLE`,
+  switch it to `MERIDIAN_SESSION_ROLE` (values `primary` and `spawn`).
+- Close interactive Pi sessions: a running Pi process keeps its loaded bundles,
+  and the idle bundle loads at session start.
+
+### After installing
+
+- Compaction is **on by default** for interactive primaries. To turn it off for
+  one tmux session, export `MERIDIAN_IDLE_COMPACT=0` before launching; for
+  everything, set `[idle] compact = false`; for one harness,
+  `[harness.codex.idle] compact = false`. Compaction never runs over a draft in
+  the prompt box, while agents are running, under about 40k tokens of context,
+  when the timer fired late (machine asleep), or when the harness's own
+  auto-compaction is off.
+- Notifications are silent until configured: set `[notify] ntfy_topic` for push
+  and `email_to`, `smtp_user` and `smtp_password_file` (a `0600` file holding
+  a Gmail app password) for email. `MERIDIAN_NOTIFY_SMTP_PASSWORD` works as a
+  fallback but is inherited by every spawn and can land in transcripts. Idle
+  notifications name the agent, work item and tmux session and include short
+  labelled user/assistant excerpts by default. Set
+  `[notify] include_messages = false` to keep message text on the machine.
+- Per-harness defaults: Claude senses its cache lifetime from the transcript
+  (1 h or 5 min); Meridian gives interactive Pi primaries long cache retention;
+  Codex assumes 30 minutes (`[harness.codex.idle] ttl_seconds = 1800`); OpenCode
+  is push-only (`ttl_seconds = 300`). Pi provider IDs other than `anthropic` and
+  `openai` remain push-only.
+- Claude sessions you start yourself (not through `meridian claude`) can opt in:
+  `CLAUDE_CODE_PLUGIN_DIRS="$(meridian idle mod-path)" claude`.
+
+### Rolling back
+
+Rollback works. A 0.9 build ignores `~/.meridian/idle/` and logs
+"Ignoring unknown Meridian config key" for the new tables while loading the rest
+of your config (this is the 0.9 loader's observed behaviour for unknown tables;
+the directory can also be deleted outright). Pi sessions started under 0.9 get
+`_MERIDIAN_PI_SESSION_ROLE` again; nothing else reads `MERIDIAN_SESSION_ROLE`.
+No data the harnesses keep is touched by this release.
+
 ## Pi spawned-run settlement
 
 Managed Pi sessions now require a stable **Pi >=1.1.0 and <2**, for both native

@@ -9,6 +9,7 @@ from meridian.cli.command_groups import (
     AGENT_DESCRIPTION_OVERRIDES,
     AGENT_ROOT_COMMANDS,
     GROUP_DESCRIPTIONS,
+    HIDDEN_ROOT_COMMANDS,
     HUMAN_ROOT_ORDER,
 )
 from meridian.cli.startup.catalog import COMMAND_CATALOG
@@ -86,7 +87,7 @@ def _render_table(rows: tuple[tuple[str, str], ...] | list[tuple[str, str]]) -> 
 
 
 def _human_command_names() -> list[str]:
-    names = COMMAND_CATALOG.top_level_names()
+    names = COMMAND_CATALOG.top_level_names() - HIDDEN_ROOT_COMMANDS
     ordered = [name for name in HUMAN_ROOT_ORDER if name in names]
     ordered.extend(sorted(names - set(ordered)))
     return ordered

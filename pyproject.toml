@@ -75,7 +75,10 @@ build-backend = "hatchling.build"
 path = "src/meridian/__init__.py"
 
 [tool.hatch.build]
-artifacts = ["src/meridian/pi_runtime/dist/extensions/*"]
+artifacts = [
+  "src/meridian/pi_runtime/dist/extensions/*",
+]
+exclude = ["src/meridian/claude_runtime/*/.claude-plugin/types"]
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -151,6 +154,7 @@ testpaths = [
   "tests/integration/safety",
   "tests/integration/harness",
   "tests/integration/hooks",
+  "tests/integration/idle",
   "tests/integration/prompt",
   "tests/integration/telemetry",
   "tests/integration/state",

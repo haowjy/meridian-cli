@@ -33,6 +33,10 @@ so an uncooperative relay cannot be re-joined by `asyncio.run()` during loop shu
 
 ## Managed Attach vs Black-Box
 
+An optional harness idle sensor runs as a task in the managed-attach event loop.
+It starts only after the TUI is running and is cancelled before the live
+connection stops; the black-box fallback never starts it.
+
 `_execute_primary_process()` checks `harness_contract.bootstrap.mode`. When mode is
 `managed_primary_attach`:
 
