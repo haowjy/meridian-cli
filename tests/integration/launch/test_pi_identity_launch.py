@@ -159,15 +159,27 @@ def assert_prebound(root: Path, chat_id: str) -> tuple[str, Path]:
     return native_id, store
 
 
-@pytest.mark.parametrize(("primary", "expected"), [(True, "long"), (False, None)])
+@pytest.mark.parametrize(
+    ("primary", "configured_retention", "expected_retention"),
+    [
+        (True, None, "long"),
+        (True, "short", "short"),
+        (False, None, None),
+    ],
+)
 def test_pi_cache_retention_default_is_primary_only(
     pi_runtime: Path,
+    monkeypatch: pytest.MonkeyPatch,
     primary: bool,
-    expected: str | None,
+    configured_retention: str | None,
+    expected_retention: str | None,
 ) -> None:
+    if configured_retention is not None:
+        monkeypatch.setenv("PI_CACHE_RETENTION", configured_retention)
+
     child_env = context(pi_runtime, primary=primary).binding.environment.final_env
 
-    assert child_env.get("PI_CACHE_RETENTION") == expected
+    assert child_env.get("PI_CACHE_RETENTION") == expected_retention
 
 
 @pytest.mark.parametrize("behavior", ["ok", "fail", "mismatch"])

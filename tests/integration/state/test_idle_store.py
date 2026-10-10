@@ -2,8 +2,10 @@ from pathlib import Path
 
 from meridian.lib.state.idle_store import IdleSchedule, IdleState, IdleStore
 
+DAY_MS = 24 * 60 * 60 * 1000
 
-def _state() -> IdleState:
+
+def _state(*, updated_at_ms: int = 0) -> IdleState:
     return IdleState(
         harness="example",
         session="native-1",
@@ -21,7 +23,7 @@ def _state() -> IdleState:
         done={"push": "sent", "compact": "claimed"},
         compact_window_until_ms=1_760_003_330_000,
         expect_compaction_turn=True,
-        updated_at_ms=0,
+        updated_at_ms=updated_at_ms,
     )
 
 
@@ -49,3 +51,19 @@ def test_idle_store_treats_truncated_file_as_no_stretch(tmp_path: Path) -> None:
 
     assert store.read("example", "native-1") is None
     assert store.list_states() == ()
+
+
+def test_idle_store_lazy_gc_removes_state_older_than_seven_days(tmp_path: Path) -> None:
+    root = tmp_path / "idle"
+    old_now = 10 * DAY_MS
+    old_store = IdleStore(root, now_ms=lambda: old_now)
+    old_store.write(_state())
+    stale_path = old_store.path_for("example", "native-1")
+
+    current_now = old_now + 8 * DAY_MS
+    current_store = IdleStore(root, now_ms=lambda: current_now)
+    current_store.write(_state().model_copy(update={"session": "native-2", "done": {}}))
+
+    assert not stale_path.exists()
+    assert not current_store._lock_path(stale_path).exists()
+    assert current_store.read("example", "native-2") is not None

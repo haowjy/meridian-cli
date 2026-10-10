@@ -469,3 +469,21 @@ def test_late_done_for_previous_stretch_never_touches_new_stretch() -> None:
     ).recorded
     current = store.read("example", "s1")
     assert current is not None and current.stretch == 2 and current.done == {}
+
+
+def test_closed_stretch_ignores_stale_expected_compaction_turn_on_arm() -> None:
+    idle, _, store, _ = service()
+    idle.arm(harness="example", session="s1", ttl_seconds=3600)
+    current = store.read("example", "s1")
+    assert current is not None
+    store.states[("example", "s1")] = current.model_copy(
+        update={"stretch_open": False, "expect_compaction_turn": True}
+    )
+
+    opened = idle.arm(harness="example", session="s1", ttl_seconds=3600)
+
+    assert (opened.stretch, opened.anchor, opened.reason) == (2, 1, None)
+    current = store.read("example", "s1")
+    assert current is not None
+    assert current.stretch_open is True
+    assert current.expect_compaction_turn is False

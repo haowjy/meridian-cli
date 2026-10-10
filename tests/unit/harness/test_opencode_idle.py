@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -19,6 +19,14 @@ SESSION_ID = "ses_ee21d9d97ffeN9m0VxoYy7qFQf"
 
 class FakeConnection:
     observer_endpoint = None
+
+
+class FakeClock:
+    def __init__(self, now: float) -> None:
+        self.value = now
+
+    def __call__(self) -> float:
+        return self.value
 
 
 def _context(tmp_path: Path) -> IdleSensorContext:
@@ -85,6 +93,79 @@ async def test_recorded_summarize_never_emits_user_return(tmp_path: Path) -> Non
         sensor.on_raw_event(event)
 
     assert [event.kind for event in await _take(iterator, 1)] == ["turn_end"]
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(anext(iterator), timeout=0.01)
+
+
+async def test_compact_suppresses_return_when_busy_precedes_compaction_part(
+    tmp_path: Path,
+) -> None:
+    post_started = asyncio.Event()
+    release_post = asyncio.Event()
+
+    async def request(
+        method: str,
+        _path: str,
+        _payload: Mapping[str, object] | None,
+    ) -> tuple[int, str]:
+        if method == "GET":
+            return 200, '{"model":{"providerID":"opencode","id":"big-pickle"}}'
+        post_started.set()
+        await release_post.wait()
+        return 200, "true"
+
+    sensor = opencode_idle.OpenCodeIdleSensor(
+        _context(tmp_path),
+        now=FakeClock(1_791_502_786.0),
+        request=request,
+    )
+    iterator = sensor.events()
+    events = _recorded_events("events-summarize.sse")
+    user_message = next(event for event in events if event.event_type == "message.updated")
+    compaction_part = next(
+        event
+        for event in events
+        if event.event_type == "message.part.updated"
+        and cast("Mapping[str, object]", event.payload["properties"])["part"]
+        and cast(
+            "Mapping[str, object]",
+            cast("Mapping[str, object]", event.payload["properties"])["part"],
+        )["type"]
+        == "compaction"
+    )
+    first_busy = next(
+        event
+        for event in events
+        if event.event_type == "session.status"
+        and cast(
+            "Mapping[str, object]",
+            cast("Mapping[str, object]", event.payload["properties"])["status"],
+        )["type"]
+        == "busy"
+    )
+    final_idle = next(
+        event
+        for event in events
+        if event.event_type == "session.status"
+        and cast(
+            "Mapping[str, object]",
+            cast("Mapping[str, object]", event.payload["properties"])["status"],
+        )["type"]
+        == "idle"
+    )
+    session_idle = next(event for event in events if event.event_type == "session.idle")
+
+    compact = asyncio.create_task(sensor.compact())
+    await post_started.wait()
+    for event in (user_message, first_busy, compaction_part):
+        sensor.on_raw_event(event)
+    release_post.set()
+    assert (await compact).result == "ok"
+    sensor.on_raw_event(final_idle)
+    sensor.on_raw_event(session_idle)
+
+    observed = await _take(iterator, 1)
+    assert [event.kind for event in observed] == ["turn_end"]
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(anext(iterator), timeout=0.01)
 

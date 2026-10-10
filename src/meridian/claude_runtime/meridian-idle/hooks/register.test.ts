@@ -169,6 +169,25 @@ test('only composer input returns, and both prompts and slash commands clear tim
   expectCliContract(h)
 })
 
+test('a draft typed after core said act vetoes the compaction instead of compacting over it', async ($, on) => {
+  const h = host()
+  h.reply.fire = (args: string[]) => {
+    if (args[1] === 'compact') h.draft = 'typed while fire ran'
+    return { decision: 'act', reason: 'guards-passed' }
+  }
+  const clock = install(on, h)
+
+  await $.session.start(TUI)
+  await clock.advance(2000)
+  await $.turn.complete(MAIN_TURN)
+  await clock.advance(30_000)
+
+  expect(h.compactCalls).toBe(0)
+  expect(h.calls.find(args => args[0] === 'done')?.filter(arg => arg !== '--interactive').slice(-4)).toEqual([
+    '--result', 'vetoed', '--reason', 'draft',
+  ])
+})
+
 test('reload recovery skips completed stages and an absorbed arm keeps its timers', async ($, on) => {
   const h = host()
   h.reply.status = [{

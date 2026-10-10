@@ -12,6 +12,14 @@ type CompactCallbacks = {
   onError?: (error: Error) => void;
 };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
 function commandResult(value: unknown) {
   return { exitCode: 0, stdout: JSON.stringify(value), stderr: "" };
 }
@@ -171,6 +179,75 @@ describe("meridian idle event mapping", () => {
     const calls = run.mock.calls.map(([args]) => args);
     expect(calls.filter((args) => args[1] === "fire")).toEqual([]);
     expectCliContract(calls);
+  });
+
+  it("serializes return behind an in-flight arm", async () => {
+    const pendingArm = deferred<ReturnType<typeof commandResult>>();
+    const armStarted = deferred<void>();
+    const run = vi.fn<MeridianRunner>(async (args) => {
+      if (args[1] === "config") return commandResult({ enabled: true });
+      if (args[1] === "status") return commandResult([]);
+      if (args[1] === "arm") {
+        armStarted.resolve();
+        return pendingArm.promise;
+      }
+      return commandResult({ stretch_closed: true });
+    });
+    const { ctx } = context();
+    const { handlers } = host(run);
+
+    await event(handlers, "session_start", {}, ctx);
+    await event(handlers, "agent_end", {}, ctx);
+    await vi.advanceTimersByTimeAsync(0);
+    await armStarted.promise;
+
+    expect(handlers.get("input")!({ source: "interactive" }, ctx)).toBeUndefined();
+    await Promise.resolve();
+    expect(run.mock.calls.filter(([args]) => ["arm", "return"].includes(args[1]!)).map(([args]) => args[1])).toEqual(["arm"]);
+
+    pendingArm.resolve(commandResult({ stretch: 1, anchor: 1 }));
+    await vi.waitFor(() => {
+      expect(run.mock.calls.filter(([args]) => ["arm", "return"].includes(args[1]!)).map(([args]) => args[1])).toEqual(["arm", "return"]);
+    });
+  });
+
+  it.each([
+    {
+      condition: "a draft appeared",
+      reason: "draft",
+      change: (_runtime: ReturnType<typeof host>["runtime"], _ctx: ExtensionContext, state: ReturnType<typeof context>["state"]) => {
+        state.editor = "new draft";
+      },
+    },
+  ])("vetoes compaction after act when $condition", async ({ reason, change }) => {
+    let runtime!: ReturnType<typeof host>["runtime"];
+    const { ctx, state } = context();
+    const run = vi.fn<MeridianRunner>(async (args) => {
+      if (args[1] === "config") return commandResult({ enabled: true });
+      if (args[1] === "status") return commandResult([]);
+      if (args[1] === "arm") {
+        return commandResult({ stretch: 7, anchor: 8, compact_at: Date.now() + 100 });
+      }
+      if (args[1] === "fire") {
+        change(runtime, ctx, state);
+        return commandResult({ decision: "act" });
+      }
+      return commandResult({});
+    });
+    const installed = host(run);
+    runtime = installed.runtime;
+
+    await event(installed.handlers, "session_start", {}, ctx);
+    await event(installed.handlers, "agent_end", {}, ctx);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(state.compact).not.toHaveBeenCalled();
+    const done = run.mock.calls.find(([args]) => args[1] === "done")?.[0];
+    expect(done).toEqual([
+      "idle", "done", "compact", "--harness", "pi", "--session", "pi-session",
+      "--stretch", "7", "--result", "vetoed", "--reason", reason, "--interactive",
+    ]);
   });
 
   it("reload recovery skips completed stages and an absorbed arm keeps its timers", async () => {

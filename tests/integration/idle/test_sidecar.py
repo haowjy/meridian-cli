@@ -9,6 +9,7 @@ import pytest
 
 from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness.codex_idle import pane_facts
 from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.idle_types import (
     CompactResult,
@@ -114,6 +115,17 @@ class BlockingCompactionSensor(Sensor):
 
 class ExternalSensor(Sensor):
     external_events = True
+
+
+class BusyExternalSensor(ExternalSensor):
+    def __init__(self, events: tuple[IdleEvent, ...], alive: list[bool]) -> None:
+        super().__init__(events, alive)
+        self.facts_calls = 0
+
+    async def facts(self) -> IdleFacts:
+        self.facts_calls += 1
+        fixture = Path(__file__).parents[2] / "fixtures" / "codex_idle" / "captures" / "busy.txt"
+        return pane_facts(fixture.read_text(encoding="utf-8"))
 
 
 class FailingOnceService:
@@ -366,6 +378,43 @@ async def test_external_sensor_recovers_an_externally_written_arm(tmp_path: Path
         "cache cold in 15m",
         "compacted (100k → summary)",
     ]
+
+
+@pytest.mark.asyncio
+async def test_external_event_sensor_skips_push_and_warn_while_busy(tmp_path: Path) -> None:
+    alive = [True]
+    clock = Clock()
+    sender = Sender()
+    service, store = policy(tmp_path, clock, sender)
+    sensor = BusyExternalSensor(
+        (IdleEvent("turn_end", "session-1", "turn-1"),),
+        alive,
+    )
+
+    task = asyncio.create_task(
+        run(
+            sensor,
+            context(tmp_path, alive),
+            service=service,
+            clock=cast("SidecarClock", clock),
+            poll_seconds=0.001,
+        )
+    )
+    await wait_until(
+        lambda: bool(
+            (state := store.read("codex", "session-1")) is not None
+            and state.done.get("compact") == "skipped:busy"
+        ),
+        description="busy compaction skip",
+    )
+    alive[0] = False
+    await task
+
+    state = store.read("codex", "session-1")
+    assert sender.notices == []
+    assert sensor.facts_calls == 3
+    assert state is not None
+    assert state.done == {"compact": "skipped:busy"}
 
 
 @pytest.mark.asyncio
