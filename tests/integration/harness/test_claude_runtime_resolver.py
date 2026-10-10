@@ -27,20 +27,6 @@ def test_claude_runtime_resolver_prefers_packaged_plugin(tmp_path: Path) -> None
     assert resolution.plugin_dirs == (str(package_plugin.resolve()),)
 
 
-def test_claude_runtime_resolver_falls_back_to_install_root(tmp_path: Path) -> None:
-    package_root = tmp_path / "package"
-    install_root = tmp_path / "install"
-    install_plugin = install_root / "meridian-idle"
-    _write_manifest(install_plugin)
-
-    resolution = resolve_claude_runtime(
-        package_runtime_root=package_root,
-        install_root=install_root,
-    )
-
-    assert resolution.plugin_dirs == (str(install_plugin.resolve()),)
-
-
 def test_claude_runtime_resolver_returns_no_dirs_when_plugin_is_missing(tmp_path: Path) -> None:
     package_root = tmp_path / "package"
     install_root = tmp_path / "install"

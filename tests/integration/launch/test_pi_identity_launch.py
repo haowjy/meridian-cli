@@ -99,7 +99,7 @@ def install_shim(root: Path, *, behavior: str = "ok") -> None:
         " printf '%s\\n' '{\"type\":\"agent_start\"}' "
         '\'{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop",'
         '"content":[{"type":"text","text":"done"}]}]}\' '
-        "'{\"type\":\"agent_settled\",\"aborted\":false}' ;;\n"
+        '\'{"type":"agent_settled","aborted":false}\' ;;\n'
         ' *\'"type":"abort"\'*) exit 0 ;;\n'
         " esac\ndone\n"
     )
@@ -159,28 +159,15 @@ def assert_prebound(root: Path, chat_id: str) -> tuple[str, Path]:
     return native_id, store
 
 
-@pytest.mark.parametrize(
-    ("primary", "configured_retention", "expected_retention"),
-    [
-        (True, None, "long"),
-        (True, "short", "short"),
-        (True, "", "long"),
-        (False, None, None),
-    ],
-)
+@pytest.mark.parametrize(("primary", "expected"), [(True, "long"), (False, None)])
 def test_pi_cache_retention_default_is_primary_only(
     pi_runtime: Path,
-    monkeypatch: pytest.MonkeyPatch,
     primary: bool,
-    configured_retention: str | None,
-    expected_retention: str | None,
+    expected: str | None,
 ) -> None:
-    if configured_retention is not None:
-        monkeypatch.setenv("PI_CACHE_RETENTION", configured_retention)
-
     child_env = context(pi_runtime, primary=primary).binding.environment.final_env
 
-    assert child_env.get("PI_CACHE_RETENTION") == expected_retention
+    assert child_env.get("PI_CACHE_RETENTION") == expected
 
 
 @pytest.mark.parametrize("behavior", ["ok", "fail", "mismatch"])

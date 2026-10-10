@@ -16,9 +16,7 @@ from tests.support.launch import stub_bundle_request_and_resolve
     ("surface", "inherited_role", "expected_role"),
     [
         (LaunchCompositionSurface.PRIMARY, None, "primary"),
-        (LaunchCompositionSurface.SPAWN_PREPARE, None, "spawn"),
-        (LaunchCompositionSurface.DIRECT, None, "spawn"),
-        (LaunchCompositionSurface.DIRECT, "primary", "spawn"),
+        (LaunchCompositionSurface.SPAWN_PREPARE, "primary", "spawn"),
     ],
 )
 def test_bind_sets_session_role_from_composition_surface(

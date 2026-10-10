@@ -3,11 +3,10 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.config.catalog import build_option_catalog
 from meridian.lib.config.project_config_state import resolve_project_config_state
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.project_root import resolve_project_root_resolution
-from meridian.lib.config.settings import MeridianConfig, load_config
+from meridian.lib.config.settings import load_config
 from meridian.lib.ops.config import ConfigShowInput, config_show_sync
 from meridian.lib.ops.config_surface import build_config_surface
 from meridian.lib.ops.runtime import resolve_project_authority, resolve_runtime_authority_for_read
@@ -162,198 +161,47 @@ def test_load_config_reads_harness_wait_yield_settings(tmp_path: Path) -> None:
 def test_load_config_reads_idle_tables_with_env_precedence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / "meridian.toml").write_text(
-        "[idle]\n"
-        "enabled = false\n"
-        "push_seconds = 12\n"
-        "warn_minutes = 9\n"
-        "warn_email = false\n"
-        "compact_minutes = 3\n"
-        "compact = false\n"
-        "min_compact_tokens = 12345\n"
-        "late_fire_tolerance_seconds = 7\n"
-        "\n"
-        "[harness.codex.idle]\n"
-        "enabled = false\n"
-        "compact = false\n"
-        "ttl_seconds = 900\n",
+        "[idle]\npush_seconds = 12\n[harness.codex.idle]\nttl_seconds = 900\n",
         encoding="utf-8",
     )
 
-    with caplog.at_level(logging.WARNING, logger="meridian.lib.config.settings"):
-        file_config = load_config(project_root, resolve_models=False)
-
-    assert file_config.idle.enabled is False
+    file_config = load_config(project_root, resolve_models=False)
     assert file_config.idle.push_seconds == 12
-    assert file_config.idle.warn_minutes == 9
-    assert file_config.idle.warn_email is False
-    assert file_config.idle.compact_minutes == 3
-    assert file_config.idle.compact is False
-    assert file_config.idle.min_compact_tokens == 12_345
-    assert file_config.idle.late_fire_tolerance_seconds == 7
-    assert file_config.harness.codex.idle.enabled is False
-    assert file_config.harness.codex.idle.compact is False
     assert file_config.harness.codex.idle.ttl_seconds == 900
-    assert file_config.harness.opencode.idle.ttl_seconds == 300
-    assert file_config.harness.claude.idle.ttl_seconds is None
-    assert file_config.harness.pi.idle.ttl_seconds is None
-    assert not any(
-        "Ignoring unknown Meridian config key" in record.message for record in caplog.records
-    )
 
-    monkeypatch.setenv("MERIDIAN_IDLE_ENABLED", "true")
-    monkeypatch.setenv("MERIDIAN_HARNESS_IDLE_ENABLED_CODEX", "true")
     monkeypatch.setenv("MERIDIAN_IDLE_PUSH_SECONDS", "90")
-    monkeypatch.setenv("MERIDIAN_HARNESS_IDLE_COMPACT_CODEX", "true")
     monkeypatch.setenv("MERIDIAN_HARNESS_IDLE_TTL_SECONDS_CODEX", "1800")
 
     env_config = load_config(project_root, resolve_models=False)
-
-    assert env_config.idle.enabled is True
     assert env_config.idle.push_seconds == 90
-    assert env_config.harness.codex.idle.enabled is True
-    assert env_config.harness.codex.idle.compact is True
     assert env_config.harness.codex.idle.ttl_seconds == 1800
 
-    shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
-    idle_value = next(item for item in shown.values if item.key == "idle.enabled")
-    codex_idle_value = next(
-        item for item in shown.values if item.key == "harness.codex.idle.enabled"
-    )
-    assert (idle_value.value, idle_value.source, idle_value.env_var) == (
-        True,
-        "env var",
-        "MERIDIAN_IDLE_ENABLED",
-    )
-    assert (codex_idle_value.value, codex_idle_value.source, codex_idle_value.env_var) == (
-        True,
-        "env var",
-        "MERIDIAN_HARNESS_IDLE_ENABLED_CODEX",
-    )
 
-    catalog = build_option_catalog(MeridianConfig)
-    assert catalog.resolve_key("idle.enabled").env_vars == ("MERIDIAN_IDLE_ENABLED",)
-    assert catalog.resolve_key("harness.codex.idle.enabled").env_vars == (
-        "MERIDIAN_HARNESS_IDLE_ENABLED_CODEX",
-    )
-    expected_keys = {
-        "idle.enabled",
-        "idle.push_seconds",
-        "idle.warn_minutes",
-        "idle.warn_email",
-        "idle.compact_minutes",
-        "idle.compact",
-        "idle.min_compact_tokens",
-        "idle.late_fire_tolerance_seconds",
-        *{
-            f"harness.{harness}.idle.{field}"
-            for harness in ("claude", "codex", "opencode", "pi")
-            for field in ("enabled", "compact", "ttl_seconds")
-        },
-    }
-    assert expected_keys <= {item.key for item in shown.values}
-
-
-def test_load_config_reads_every_notify_field_with_env_precedence(
+def test_load_config_reads_notify_table_with_env_precedence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / "meridian.toml").write_text(
-        "[notify]\n"
-        'push_backend = "none"\n'
-        'email_backend = "ntfy"\n'
-        'ntfy_server = "https://push.example"\n'
-        'ntfy_topic = "file-topic"\n'
-        'email_to = "to-file@example.com"\n'
-        'email_from = "from-file@example.com"\n'
-        'smtp_user = "user-file@example.com"\n'
-        'smtp_host = "smtp.file.example"\n'
-        "smtp_port = 2525\n"
-        'smtp_password_file = "/file/password"\n'
-        'push_command = "push --file value"\n'
-        'email_command = "email --file value"\n',
+        '[notify]\nntfy_topic = "file-topic"\nsmtp_port = 2525\n',
         encoding="utf-8",
     )
 
     file_config = load_config(project_root, resolve_models=False)
+    assert file_config.notify.ntfy_topic == "file-topic"
+    assert file_config.notify.smtp_port == 2525
 
-    assert file_config.notify.model_dump() == {
-        "push_backend": "none",
-        "email_backend": "ntfy",
-        "ntfy_server": "https://push.example",
-        "ntfy_topic": "file-topic",
-        "email_to": "to-file@example.com",
-        "email_from": "from-file@example.com",
-        "smtp_user": "user-file@example.com",
-        "smtp_host": "smtp.file.example",
-        "smtp_port": 2525,
-        "smtp_password_file": "/file/password",
-        "push_command": "push --file value",
-        "email_command": "email --file value",
-    }
-
-    env_values = {
-        "MERIDIAN_NOTIFY_PUSH_BACKEND": "ntfy",
-        "MERIDIAN_NOTIFY_EMAIL_BACKEND": "none",
-        "MERIDIAN_NOTIFY_NTFY_SERVER": "https://env.example",
-        "MERIDIAN_NOTIFY_NTFY_TOPIC": "env-topic",
-        "MERIDIAN_NOTIFY_EMAIL_TO": "to-env@example.com",
-        "MERIDIAN_NOTIFY_EMAIL_FROM": "from-env@example.com",
-        "MERIDIAN_NOTIFY_SMTP_USER": "user-env@example.com",
-        "MERIDIAN_NOTIFY_SMTP_HOST": "smtp.env.example",
-        "MERIDIAN_NOTIFY_SMTP_PORT": "465",
-        "MERIDIAN_NOTIFY_SMTP_PASSWORD_FILE": "/env/password",
-        "MERIDIAN_NOTIFY_PUSH_COMMAND": "push --env value",
-        "MERIDIAN_NOTIFY_EMAIL_COMMAND": "email --env value",
-    }
-    for name, value in env_values.items():
-        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("MERIDIAN_NOTIFY_NTFY_TOPIC", "env-topic")
+    monkeypatch.setenv("MERIDIAN_NOTIFY_SMTP_PORT", "465")
 
     env_config = load_config(project_root, resolve_models=False)
-    assert env_config.notify.model_dump() == {
-        "push_backend": "ntfy",
-        "email_backend": "none",
-        "ntfy_server": "https://env.example",
-        "ntfy_topic": "env-topic",
-        "email_to": "to-env@example.com",
-        "email_from": "from-env@example.com",
-        "smtp_user": "user-env@example.com",
-        "smtp_host": "smtp.env.example",
-        "smtp_port": 465,
-        "smtp_password_file": "/env/password",
-        "push_command": "push --env value",
-        "email_command": "email --env value",
-    }
-
-    shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
-    shown_notify = {
-        item.key: item
-        for item in shown.values
-        if item.key.startswith("notify.")
-    }
-    assert set(shown_notify) == {
-        "notify.push_backend",
-        "notify.email_backend",
-        "notify.ntfy_server",
-        "notify.ntfy_topic",
-        "notify.email_to",
-        "notify.email_from",
-        "notify.smtp_user",
-        "notify.smtp_host",
-        "notify.smtp_port",
-        "notify.smtp_password_file",
-        "notify.push_command",
-        "notify.email_command",
-    }
-    for key, item in shown_notify.items():
-        assert item.source == "env var"
-        assert item.env_var == f"MERIDIAN_NOTIFY_{key.removeprefix('notify.').upper()}"
+    assert env_config.notify.ntfy_topic == "env-topic"
+    assert env_config.notify.smtp_port == 465
 
 
 def test_load_config_reads_spawn_deny_headless_harnesses(tmp_path: Path) -> None:

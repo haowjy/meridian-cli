@@ -36,7 +36,14 @@ def state(**updates: object) -> IdleState:
 @pytest.mark.parametrize(
     ("stage", "facts", "current", "cfg", "now_ms", "reason"),
     [
-        ("push", GuardFacts(1, 1, role="spawn"), state(), Config(), 60_000, "not-primary"),
+        (
+            "push",
+            GuardFacts(1, 2, role="spawn", harness_enabled=False),
+            state(done={"push": "sent"}, stretch_open=False),
+            Config(),
+            0,
+            "not-primary",
+        ),
         (
             "push",
             GuardFacts(1, 1, harness_enabled=False),
@@ -128,23 +135,6 @@ def state(**updates: object) -> IdleState:
             3_300_000,
             "harness-autocompact-off",
         ),
-    ],
-    ids=[
-        "1-role",
-        "2-enabled",
-        "3-done",
-        "4-closed",
-        "4-stale-anchor",
-        "5-early",
-        "5-late",
-        "6-compact-enabled",
-        "7-cache-cold",
-        "8-busy",
-        "9-draft",
-        "10-agents",
-        "11-children",
-        "12-context",
-        "13-harness-autocompact",
     ],
 )
 def test_guard_order_first_match(

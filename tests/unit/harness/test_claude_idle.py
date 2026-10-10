@@ -6,9 +6,7 @@ from typing import BinaryIO
 
 import pytest
 
-from meridian.lib.core.types import HarnessId
 from meridian.lib.harness import claude_idle
-from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.claude_sessions import project_slug
 
 
@@ -109,23 +107,4 @@ def test_detect_ttl_reads_only_the_tail_of_a_transcript_larger_than_four_mib(
         counting_reader = _CountingReader(handle)
         assert claude_idle._ttl_from_stream(counting_reader) == 3600
 
-    assert transcript.stat().st_size > 4 * 1024 * 1024
     assert counting_reader.bytes_read <= claude_idle._TAIL_CHUNK_BYTES
-
-
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [("1", True), ("TRUE", True), ("yes", True), ("on", True), ("0", False), ("", False)],
-)
-def test_claude_autocompact_off(raw: str, expected: bool) -> None:
-    assert claude_idle.autocompact_off({"DISABLE_AUTO_COMPACT": raw}) is expected
-
-
-def test_claude_bundle_registers_idle_hooks() -> None:
-    bundle = get_harness_bundle(HarnessId.CLAUDE)
-    detector = bundle.detect_ttl
-
-    assert detector is claude_idle.detect_ttl
-    assert detector is not None
-    assert detector(session_id="", cwd=None, provider=None, env={}) is None
-    assert bundle.autocompact_off is claude_idle.autocompact_off

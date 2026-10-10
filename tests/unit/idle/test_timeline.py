@@ -15,10 +15,10 @@ class Config:
 @pytest.mark.parametrize(
     ("ttl_seconds", "expected"),
     [
-        (3600, Schedule(push_at=60_000, warn_at=2_700_000, compact_at=3_300_000)),
-        (1800, Schedule(push_at=60_000, warn_at=900_000, compact_at=1_500_000)),
-        (300, Schedule(push_at=60_000)),
-        (None, Schedule(push_at=60_000)),
+        (3600, Schedule(push_at=183_000, warn_at=2_823_000, compact_at=3_423_000)),
+        (1800, Schedule(push_at=183_000, warn_at=1_023_000, compact_at=1_623_000)),
+        (300, Schedule(push_at=183_000)),
+        (None, Schedule(push_at=183_000)),
     ],
     ids=["one-hour", "thirty-minutes", "five-minutes", "unknown"],
 )
@@ -26,10 +26,10 @@ def test_schedule_places_only_windows_that_fit(
     ttl_seconds: int | None,
     expected: Schedule,
 ) -> None:
-    assert schedule(0, ttl_seconds, Config()) == expected
+    assert schedule(123_000, ttl_seconds, Config()) == expected
 
 
 def test_schedule_uses_strict_stage_order() -> None:
     cfg = Config(push_seconds=60, warn_minutes=4, compact_minutes=4)
 
-    assert schedule(0, 300, cfg) == Schedule(push_at=60_000)
+    assert schedule(123_000, 300, cfg) == Schedule(push_at=183_000)
