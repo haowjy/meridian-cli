@@ -1163,6 +1163,26 @@ class IdleConfig(BaseModel):
         ),
         Field(ge=0),
     ] = 60
+    long_turn_seconds: Annotated[
+        int,
+        config_field(
+            "idle.long_turn_seconds",
+            value_kind="int",
+            file_aliases=(file_alias("idle", "long_turn_seconds"),),
+            env_vars=("MERIDIAN_IDLE_LONG_TURN_SECONDS",),
+        ),
+        Field(ge=0),
+    ] = 120
+    quick_turn_push_seconds: Annotated[
+        int,
+        config_field(
+            "idle.quick_turn_push_seconds",
+            value_kind="int",
+            file_aliases=(file_alias("idle", "quick_turn_push_seconds"),),
+            env_vars=("MERIDIAN_IDLE_QUICK_TURN_PUSH_SECONDS",),
+        ),
+        Field(gt=0),
+    ] = 600
     warn_minutes: Annotated[
         int,
         config_field(

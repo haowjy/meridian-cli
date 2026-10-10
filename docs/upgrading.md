@@ -3,11 +3,12 @@
 ## Upgrading to 0.9.3: idle notifications and compaction
 
 Interactive primaries launched by Meridian now watch for idle time: a phone
-push after about a minute, a push and email 15 minutes before the prompt cache
-expires, and a guarded compaction 5 minutes before expiry so the eventual
-return is cheap. Spawns get none of this. Agents can also ping you on purpose
-with `meridian notify "<message>"`. Configuration, defaults per harness and
-every environment variable are in [configuration.md](configuration.md); the
+push one minute after a turn lasting at least two minutes, or after 10 minutes
+of silence following a quicker turn; a push and email 15 minutes before the
+prompt cache expires; and a guarded compaction 5 minutes before expiry so the
+eventual return is cheap. Spawns get none of this. Agents can also ping you on
+purpose with `meridian notify "<message>"`. Configuration, defaults per harness
+and every environment variable are in [configuration.md](configuration.md); the
 per-harness mechanics are in [harness-integration.md](harness-integration.md).
 
 Interactive Pi primaries now run with `PI_CACHE_RETENTION=long` unless that

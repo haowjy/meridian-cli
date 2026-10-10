@@ -178,6 +178,35 @@ def test_arm_resolves_explicit_configured_then_detected_ttl() -> None:
     assert configured_store.read("codex", "configured").ttl_seconds == 900  # type: ignore[union-attr]
 
 
+def test_return_then_long_turn_uses_the_short_push_delay() -> None:
+    idle, clock, store, _ = service()
+    clock.value = 1_000
+    idle.return_(harness="example", session="s1", user_prompt=True)
+    clock.value += 120_000
+
+    armed = idle.arm(harness="example", session="s1")
+
+    assert armed.push_at == clock.value + 60_000
+    assert store.read("example", "s1").returned_at_ms == 1_000  # type: ignore[union-attr]
+
+
+def test_arm_without_a_recorded_return_uses_the_quick_turn_delay() -> None:
+    idle, clock, _, _ = service()
+
+    armed = idle.arm(harness="example", session="s1")
+
+    assert armed.push_at == clock.value + 600_000
+
+
+def test_zero_long_turn_threshold_always_uses_the_short_push_delay() -> None:
+    config = MeridianConfig.model_validate({"idle": {"long_turn_seconds": 0}})
+    idle, clock, _, _ = service(config=config)
+
+    armed = idle.arm(harness="example", session="s1")
+
+    assert armed.push_at == clock.value + 60_000
+
+
 def test_arm_opens_reanchors_and_never_reenables_a_done_stage() -> None:
     idle, clock, store, sender = service()
     first = idle.arm(harness="example", session="s1", ttl_seconds=3600)

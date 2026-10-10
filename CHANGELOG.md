@@ -28,7 +28,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Add idle push, cache-expiry warning, and guarded compaction for interactive Claude,
   Pi, Codex, and OpenCode primaries. Claude and Pi sense cache lifetime; Pi primaries
   default to long retention, OpenCode's 5-minute default is push-only, and Codex
-  defaults to 30 minutes.
+  defaults to 30 minutes. The waiting push follows a long turn (at least 2 minutes)
+  by 60 seconds and a quick or unknown-length turn by 10 minutes.
 - Add `[notify]`, `[idle]`, and `[harness.<harness>.idle]` config with
   `MERIDIAN_NOTIFY_*`, `MERIDIAN_IDLE_*`, and `MERIDIAN_HARNESS_IDLE_*_<H>` overrides.
 - Add the bundled Claude `meridian-idle` mod, automatic for Meridian primaries and

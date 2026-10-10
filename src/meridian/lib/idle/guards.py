@@ -88,7 +88,7 @@ def decide(
         return Decision.act()
     if not cfg.compact:
         return Decision.skip("compaction-disabled")
-    if state.ttl_seconds is not None and now_ms >= (
+    if state.ttl_seconds is not None and state.idle_since_ms is not None and now_ms >= (
         state.idle_since_ms + state.ttl_seconds * 1000
     ):
         return Decision.skip("cache-cold")

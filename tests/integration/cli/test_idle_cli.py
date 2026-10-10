@@ -24,6 +24,7 @@ def _idle_env(tmp_path: Path, *, role: str | None = "primary") -> dict[str, str]
         MERIDIAN_NOTIFY_PUSH_BACKEND="none",
         MERIDIAN_NOTIFY_EMAIL_BACKEND="none",
         MERIDIAN_IDLE_PUSH_SECONDS="0",
+        MERIDIAN_IDLE_LONG_TURN_SECONDS="0",
         MERIDIAN_IDLE_COMPACT_MINUTES="1",
         _MERIDIAN_HARNESS="claude",
     )
@@ -84,6 +85,7 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
         "last_input_count": None,
         "anchor": 1,
         "idle_since_ms": armed["push_at"],
+        "returned_at_ms": None,
         "ttl_seconds": 61,
         "schedule": {
             "push_at": armed["push_at"],

@@ -65,6 +65,8 @@ class NativeEventParser(Protocol):
 class IdlePolicyConfig:
     enabled: bool
     push_seconds: int
+    long_turn_seconds: int
+    quick_turn_push_seconds: int
     warn_minutes: int
     warn_email: bool
     compact_minutes: int
@@ -147,6 +149,8 @@ def _default_now_ms() -> int:
 _FIELD_KINDS: dict[str, Literal["bool", "int"]] = {
     "enabled": "bool",
     "push_seconds": "int",
+    "long_turn_seconds": "int",
+    "quick_turn_push_seconds": "int",
     "warn_minutes": "int",
     "warn_email": "bool",
     "compact_minutes": "int",
@@ -221,6 +225,8 @@ def resolve_policy(
     return IdlePolicyConfig(
         enabled=bool(values["enabled"]),
         push_seconds=int(cast("int", values["push_seconds"])),
+        long_turn_seconds=int(cast("int", values["long_turn_seconds"])),
+        quick_turn_push_seconds=int(cast("int", values["quick_turn_push_seconds"])),
         warn_minutes=int(cast("int", values["warn_minutes"])),
         warn_email=bool(values["warn_email"]),
         compact_minutes=int(cast("int", values["compact_minutes"])),
@@ -399,14 +405,39 @@ class IdleService:
                     )
 
             opens_new = current is None or not current.stretch_open or implies_return
-            if current is None:
+            never_armed = current is None or current.idle_since_ms is None
+            if never_armed:
                 stretch = 1
                 anchor = 1
             else:
+                assert current is not None
                 stretch = current.stretch + int(opens_new)
                 anchor = 1 if opens_new else current.anchor + 1
             done = {} if opens_new or current is None else dict(current.done)
-            placed = schedule(now_ms, resolved_ttl, policy)
+            returned_at_ms = (
+                now_ms
+                if implies_return
+                else (current.returned_at_ms if current is not None else None)
+            )
+            previous_anchor_ms = current.idle_since_ms if current is not None else None
+            fresh_return = returned_at_ms is not None and (
+                previous_anchor_ms is None or returned_at_ms > previous_anchor_ms
+            )
+            if policy.long_turn_seconds == 0:
+                long_turn = True
+            elif returned_at_ms is None or not fresh_return:
+                long_turn = False
+            else:
+                long_turn = now_ms - returned_at_ms >= policy.long_turn_seconds * 1000
+            push_delay_seconds = (
+                policy.push_seconds if long_turn else policy.quick_turn_push_seconds
+            )
+            placed = schedule(
+                now_ms,
+                resolved_ttl,
+                policy,
+                push_delay_seconds=push_delay_seconds,
+            )
             next_state = IdleState(
                 harness=harness,
                 session=session,
@@ -424,6 +455,7 @@ class IdleService:
                 ),
                 anchor=anchor,
                 idle_since_ms=now_ms,
+                returned_at_ms=returned_at_ms,
                 ttl_seconds=resolved_ttl,
                 schedule=_persisted_schedule(placed),
                 done=done,
@@ -445,14 +477,31 @@ class IdleService:
         if not user_prompt:
             raise ValueError("--user-prompt is required")
 
+        now_ms = self._now_ms()
+
         def transition(current: IdleState | None) -> tuple[IdleState | None, ReturnResult]:
             if current is None:
-                return None, ReturnResult(stretch_closed=None, was_open=False)
+                next_state = IdleState(
+                    harness=harness,
+                    session=session,
+                    stretch=1,
+                    stretch_open=False,
+                    anchor=1,
+                    idle_since_ms=None,
+                    returned_at_ms=now_ms,
+                    ttl_seconds=None,
+                    schedule=IdleSchedule(),
+                    updated_at_ms=now_ms,
+                )
+                return next_state, ReturnResult(stretch_closed=None, was_open=False)
             if not current.stretch_open:
-                return current, ReturnResult(stretch_closed=current.stretch, was_open=False)
+                next_state = current.model_copy(update={"returned_at_ms": now_ms})
+                stretch_closed = current.stretch if current.idle_since_ms is not None else None
+                return next_state, ReturnResult(stretch_closed=stretch_closed, was_open=False)
             next_state = current.model_copy(
                 update={
                     "stretch_open": False,
+                    "returned_at_ms": now_ms,
                     "compact_window_until_ms": None,
                     "expect_compaction_turn": False,
                 }

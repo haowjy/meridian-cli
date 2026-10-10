@@ -28,7 +28,7 @@ class IdleSchedule(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    push_at: int
+    push_at: int | None = None
     warn_at: int | None = None
     compact_at: int | None = None
 
@@ -50,7 +50,8 @@ class IdleState(BaseModel):
     last_turn_id: str | None = None
     last_input_count: int | None = Field(default=None, ge=0)
     anchor: int = Field(ge=1)
-    idle_since_ms: int
+    idle_since_ms: int | None
+    returned_at_ms: int | None = None
     ttl_seconds: int | None = Field(default=None, gt=0)
     schedule: IdleSchedule
     done: dict[Stage, str] = Field(default_factory=_empty_done)

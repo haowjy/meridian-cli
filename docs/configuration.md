@@ -150,7 +150,9 @@ or 2-Step Verification is off.
 | Key | Default | Environment variable | Meaning |
 |---|---:|---|---|
 | `enabled` | `true` | `MERIDIAN_IDLE_ENABLED` | Enable automatic idle handling |
-| `push_seconds` | `60` | `MERIDIAN_IDLE_PUSH_SECONDS` | Seconds after a completed turn before the waiting push |
+| `push_seconds` | `60` | `MERIDIAN_IDLE_PUSH_SECONDS` | Seconds after a long turn before the waiting push |
+| `long_turn_seconds` | `120` | `MERIDIAN_IDLE_LONG_TURN_SECONDS` | Minimum turn length that uses `push_seconds` |
+| `quick_turn_push_seconds` | `600` | `MERIDIAN_IDLE_QUICK_TURN_PUSH_SECONDS` | Seconds after a quick or unknown-length turn before the waiting push |
 | `warn_minutes` | `15` | `MERIDIAN_IDLE_WARN_MINUTES` | Minutes before cache expiry to warn |
 | `warn_email` | `true` | `MERIDIAN_IDLE_WARN_EMAIL` | Include the configured email backend in the warning |
 | `compact_minutes` | `5` | `MERIDIAN_IDLE_COMPACT_MINUTES` | Minutes before cache expiry to try compaction |
@@ -158,9 +160,14 @@ or 2-Step Verification is off.
 | `min_compact_tokens` | `40000` | `MERIDIAN_IDLE_MIN_COMPACT_TOKENS` | Skip compaction when a known context size is smaller |
 | `late_fire_tolerance_seconds` | `120` | `MERIDIAN_IDLE_LATE_FIRE_TOLERANCE_SECONDS` | Skip a timer that fires more than this many seconds late |
 
-The push is scheduled from the last completed turn. The warning and compaction
-are scheduled relative to the cache TTL; a stage is omitted when it does not fit
-strictly after the previous stage. An unknown TTL therefore produces only the
+After a turn lasting at least two minutes, the waiting push follows 60 seconds
+later; after a quick or unknown-length turn, it waits 10 minutes. Set
+`long_turn_seconds = 0` to restore a push after every turn using `push_seconds`.
+Codex observes the user return only when that turn ends, so its turn length is
+unknown and uses the 10-minute delay. The warning and compaction are scheduled
+relative to the cache TTL; a push is omitted when it would not land strictly
+before a valid warning, and other stages are omitted when they do not fit
+strictly after their predecessor. An unknown TTL therefore produces only the
 push.
 
 ### `[harness.<harness>.idle]`
