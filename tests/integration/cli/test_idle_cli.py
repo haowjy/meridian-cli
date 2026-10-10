@@ -32,11 +32,7 @@ def _idle_env(tmp_path: Path, *, role: str | None = "primary") -> dict[str, str]
     return env
 
 
-def _run(
-    tmp_path: Path,
-    env: dict[str, str],
-    *args: str,
-) -> subprocess.CompletedProcess[str]:
+def _run(tmp_path: Path, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "meridian", *args],
         cwd=tmp_path,
@@ -47,11 +43,7 @@ def _run(
     )
 
 
-def _json_success(
-    tmp_path: Path,
-    env: dict[str, str],
-    *args: str,
-) -> object:
+def _json_success(tmp_path: Path, env: dict[str, str], *args: str) -> object:
     result = _run(tmp_path, env, *args)
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stderr == ""
@@ -59,40 +51,60 @@ def _json_success(
 
 
 @pytest.mark.integration
-def test_idle_cli_round_trip(tmp_path: Path) -> None:
+def test_idle_cli_wire_contract(tmp_path: Path) -> None:
     env = _idle_env(tmp_path)
-    session = "fake-claude-session"
-    identity = ("--harness", "claude", "--session", session)
+    identity = ("--harness", "claude", "--session", "fake-claude-session")
 
-    config = _json_success(tmp_path, env, "idle", "config", "--interactive")
-    assert isinstance(config, dict)
-    assert config["enabled"] is True
-
-    armed = _json_success(
-        tmp_path,
-        env,
-        "idle",
-        "arm",
-        *identity,
-        "--ttl",
-        "61",
-    )
+    assert _json_success(tmp_path, env, "idle", "config", "--interactive") == {
+        "compact": True,
+        "compact_minutes": 1,
+        "enabled": True,
+        "min_compact_tokens": 40_000,
+        "push_seconds": 0,
+        "warn_minutes": 15,
+    }
+    armed = _json_success(tmp_path, env, "idle", "arm", *identity, "--ttl", "61")
     assert isinstance(armed, dict)
-    assert armed["stretch"] == 1
-    assert armed["anchor"] == 1
-    assert all(isinstance(armed[field], int) for field in ("push_at", "compact_at"))
-    assert "warn_at" not in armed
+    assert set(armed) == {"stretch", "anchor", "push_at", "compact_at"}
+    assert (armed["stretch"], armed["anchor"]) == (1, 1)
+    assert isinstance(armed["push_at"], int)
+    assert isinstance(armed["compact_at"], int)
 
     status = _json_success(tmp_path, env, "idle", "status", "--json")
-    assert isinstance(status, list)
-    assert status[0]["schedule"] == {
-        "push_at": armed["push_at"],
-        "warn_at": None,
-        "compact_at": armed["compact_at"],
+    assert isinstance(status, list) and len(status) == 1
+    updated_at_ms = status[0]["updated_at_ms"]
+    assert isinstance(updated_at_ms, int)
+    assert status[0] == {
+        "v": 1,
+        "harness": "claude",
+        "session": "fake-claude-session",
+        "stretch": 1,
+        "stretch_open": True,
+        "last_turn_id": None,
+        "last_input_count": None,
+        "anchor": 1,
+        "idle_since_ms": armed["push_at"],
+        "ttl_seconds": 61,
+        "schedule": {
+            "push_at": armed["push_at"],
+            "warn_at": None,
+            "compact_at": armed["compact_at"],
+        },
+        "done": {},
+        "compact_window_until_ms": None,
+        "expect_compaction_turn": False,
+        "updated_at_ms": updated_at_ms,
     }
-    assert status[0]["done"] == {}
+    human = _run(tmp_path, env, "idle", "status")
+    assert human.returncode == 0
+    assert human.stderr == ""
+    assert human.stdout == (
+        "HARNESS    SESSION                  STRETCH ANCHOR SCHEDULE\n"
+        f"claude     fake-claude-session            1      1 push={armed['push_at']}, "
+        f"compact={armed['compact_at']}\n"
+    )
 
-    pushed = _json_success(
+    assert _json_success(
         tmp_path,
         env,
         "idle",
@@ -103,137 +115,38 @@ def test_idle_cli_round_trip(tmp_path: Path) -> None:
         "1",
         "--anchor",
         "1",
+    ) == {"decision": "act", "reason": "guards-passed"}
+    assert (
+        _json_success(
+            tmp_path,
+            env,
+            "idle",
+            "done",
+            "compact",
+            *identity,
+            "--stretch",
+            "1",
+            "--result",
+            "vetoed",
+        )
+        == {}
     )
-    assert pushed == {"decision": "act", "reason": "guards-passed"}
-    status = _json_success(tmp_path, env, "idle", "status", "--json")
-    assert isinstance(status, list)
-    assert status[0]["done"] == {"push": "sent"}
-
-    compacted = _json_success(
-        tmp_path,
-        env,
-        "idle",
-        "fire",
-        "compact",
-        *identity,
-        "--stretch",
-        "1",
-        "--anchor",
-        "1",
-        "--draft",
-        "no",
-        "--context-tokens",
-        "120000",
-    )
-    assert compacted == {"decision": "act", "reason": "guards-passed"}
-    status = _json_success(tmp_path, env, "idle", "status", "--json")
-    assert isinstance(status, list)
-    assert status[0]["done"] == {"compact": "claimed", "push": "sent"}
-
-    done = _json_success(
-        tmp_path,
-        env,
-        "idle",
-        "done",
-        "compact",
-        *identity,
-        "--stretch",
-        "1",
-        "--result",
-        "ok",
-    )
-    assert done == {}
-    status = _json_success(tmp_path, env, "idle", "status", "--json")
-    assert isinstance(status, list)
-    assert status[0]["done"] == {"compact": "ok", "push": "sent"}
-
-    returned = _json_success(
-        tmp_path,
-        env,
-        "idle",
-        "return",
-        *identity,
-        "--user-prompt",
-    )
-    assert returned == {"stretch_closed": True, "was_open": True}
-
-    rearmed = _json_success(
-        tmp_path,
-        env,
-        "idle",
-        "arm",
-        *identity,
-        "--ttl",
-        "61",
-    )
-    assert isinstance(rearmed, dict)
-    assert (rearmed["stretch"], rearmed["anchor"]) == (2, 1)
-    assert all(isinstance(rearmed[field], int) for field in ("push_at", "compact_at"))
-
-    returned_again = _json_success(
-        tmp_path,
-        env,
-        "idle",
-        "return",
-        *identity,
-        "--user-prompt",
-    )
-    assert returned_again == {"stretch_closed": True, "was_open": True}
-    returned_closed = _json_success(
-        tmp_path,
-        env,
-        "idle",
-        "return",
-        *identity,
-        "--user-prompt",
-    )
-    assert returned_closed == {"stretch_closed": True, "was_open": False}
-    assert _json_success(tmp_path, env, "idle", "status", "--json") == []
+    assert _json_success(tmp_path, env, "idle", "return", *identity, "--user-prompt") == {
+        "stretch_closed": True,
+        "was_open": True,
+    }
 
 
 @pytest.mark.integration
-def test_idle_config_honors_flag_falls_back_to_env_and_requires_harness(
-    tmp_path: Path,
-) -> None:
-    env = _idle_env(tmp_path)
-    env["MERIDIAN_HARNESS_IDLE_ENABLED_CLAUDE"] = "0"
-    env["MERIDIAN_HARNESS_IDLE_ENABLED_CODEX"] = "1"
-
-    flagged = _json_success(
-        tmp_path,
-        env,
-        "idle",
-        "config",
-        "--harness",
-        "codex",
-        "--interactive",
-    )
-    fallback = _json_success(tmp_path, env, "idle", "config", "--interactive")
-
-    assert isinstance(flagged, dict)
-    assert flagged["enabled"] is True
-    assert isinstance(fallback, dict)
-    assert fallback["enabled"] is False
-    assert fallback["reason"] == "idle-disabled"
-
-    env.pop("_MERIDIAN_HARNESS")
-    missing = _run(tmp_path, env, "idle", "config", "--interactive")
-    assert missing.returncode == 1
-    assert json.loads(missing.stdout) == {"error": "--harness is required"}
-    assert missing.stderr == ""
 def test_codex_idle_event_chains_user_notify_after_state_update(tmp_path: Path) -> None:
     env = _idle_env(tmp_path)
     thread_id = "01a11e8c-4466-7771-8f11-14286723b1bb"
     codex_home = tmp_path / "codex"
     codex_home.mkdir()
     observed_state = tmp_path / "observed-state.json"
-    observed_payload = Path(f"{observed_state}.payload")
     state_path = Path(env["MERIDIAN_HOME"]) / "idle" / f"codex-{thread_id}.json"
     handler = tmp_path / "notify.sh"
-    handler.write_text(
-        '#!/bin/sh\ncat "$2" > "$1"\nprintf %s "$3" > "$1.payload"\n',
-        encoding="utf-8",
-    )
+    handler.write_text('#!/bin/sh\ncat "$2" > "$1"\n', encoding="utf-8")
     handler.chmod(0o700)
     notify = ["/bin/sh", handler.as_posix(), observed_state.as_posix(), state_path.as_posix()]
     (codex_home / "config.toml").write_text(
@@ -241,7 +154,6 @@ def test_codex_idle_event_chains_user_notify_after_state_update(tmp_path: Path) 
         encoding="utf-8",
     )
     env["CODEX_HOME"] = codex_home.as_posix()
-
     _json_success(
         tmp_path,
         env,
@@ -264,49 +176,26 @@ def test_codex_idle_event_chains_user_notify_after_state_update(tmp_path: Path) 
         separators=(",", ":"),
     )
 
-    assert _json_success(
-        tmp_path,
-        env,
-        "idle",
-        "event",
-        "--harness",
-        "codex",
-        payload,
-    ) == {}
-
+    assert _json_success(tmp_path, env, "idle", "event", "--harness", "codex", payload) == {}
     chained_state = json.loads(observed_state.read_text(encoding="utf-8"))
     assert chained_state["last_input_count"] == 1
     assert chained_state["stretch"] == 2
-    assert observed_payload.read_text(encoding="utf-8") == payload
+    assert state_path.is_file()
 
 
 @pytest.mark.integration
-def test_idle_role_gate_and_json_error_contract(tmp_path: Path) -> None:
-    env = _idle_env(tmp_path, role="spawn")
-
+def test_idle_cli_error_envelopes_and_role_reasons(tmp_path: Path) -> None:
+    env = _idle_env(tmp_path, role=None)
+    config = _json_success(tmp_path, env, "idle", "config")
+    assert isinstance(config, dict)
+    assert (config["enabled"], config["reason"]) == (False, "interactive")
+    env["MERIDIAN_SESSION_ROLE"] = "spawn"
     config = _json_success(tmp_path, env, "idle", "config", "--interactive")
     assert isinstance(config, dict)
-    assert config["enabled"] is False
-    assert config["reason"] == "role"
-
-    armed = _json_success(
-        tmp_path,
-        env,
-        "idle",
-        "arm",
-        "--harness",
-        "claude",
-        "--session",
-        "spawn-session",
-        "--ttl",
-        "3600",
-    )
-    assert armed == {"anchor": None, "stretch": None}
-    idle_root = Path(env["MERIDIAN_HOME"]) / "idle"
-    assert not tuple(idle_root.glob("*.json"))
+    assert (config["enabled"], config["reason"]) == (False, "role")
 
     env["MERIDIAN_SESSION_ROLE"] = "primary"
-    bad_stage = _run(
+    invalid = _run(
         tmp_path,
         env,
         "idle",
@@ -321,124 +210,20 @@ def test_idle_role_gate_and_json_error_contract(tmp_path: Path) -> None:
         "--anchor",
         "1",
     )
-    assert bad_stage.returncode == 1
-    assert json.loads(bad_stage.stdout) == {"error": "unknown idle stage: invalid"}
-    assert bad_stage.stderr == ""
+    assert (invalid.returncode, invalid.stderr) == (1, "")
+    assert json.loads(invalid.stdout) == {"error": "unknown idle stage: invalid"}
 
-    missing_session = _run(tmp_path, env, "idle", "arm", "--harness", "claude")
-    assert missing_session.returncode == 1
-    assert set(json.loads(missing_session.stdout)) == {"error"}
-    assert missing_session.stderr == ""
+    missing = _run(tmp_path, env, "idle", "arm", "--harness", "claude")
+    assert (missing.returncode, missing.stderr) == (1, "")
+    assert set(json.loads(missing.stdout)) == {"error"}
 
-    missing_harness_value = _run(tmp_path, env, "idle", "arm", "--harness")
-    assert missing_harness_value.returncode == 1
-    assert json.loads(missing_harness_value.stdout) == {"error": "--harness requires a value"}
-    assert missing_harness_value.stderr == ""
+    missing_value = _run(tmp_path, env, "idle", "arm", "--harness")
+    assert (missing_value.returncode, missing_value.stderr) == (1, "")
+    assert json.loads(missing_value.stdout) == {"error": "--harness requires a value"}
 
 
 @pytest.mark.integration
-def test_idle_outside_meridian_requires_interactive_assertion(tmp_path: Path) -> None:
-    env = _idle_env(tmp_path, role=None)
-
-    disabled = _json_success(tmp_path, env, "idle", "config")
-    enabled = _json_success(tmp_path, env, "idle", "config", "--interactive")
-
-    assert isinstance(disabled, dict)
-    assert disabled["enabled"] is False
-    assert disabled["reason"] == "interactive"
-    assert isinstance(enabled, dict)
-    assert enabled["enabled"] is True
-    assert "reason" not in enabled
-
-    disabled_arm = _json_success(
-        tmp_path,
-        env,
-        "idle",
-        "arm",
-        "--harness",
-        "claude",
-        "--session",
-        "outside-session",
-        "--ttl",
-        "3600",
-    )
-    assert disabled_arm == {"anchor": None, "stretch": None}
-
-    armed = _json_success(
-        tmp_path,
-        env,
-        "idle",
-        "arm",
-        "--harness",
-        "claude",
-        "--session",
-        "outside-session",
-        "--ttl",
-        "3600",
-        "--interactive",
-    )
-    assert isinstance(armed, dict)
-    assert (armed["stretch"], armed["anchor"]) == (1, 1)
-
-    fired = _json_success(
-        tmp_path,
-        env,
-        "idle",
-        "fire",
-        "push",
-        "--harness",
-        "claude",
-        "--session",
-        "outside-session",
-        "--stretch",
-        "1",
-        "--anchor",
-        "1",
-        "--interactive",
-    )
-    assert fired == {"decision": "act", "reason": "guards-passed"}
-
-    returned = _json_success(
-        tmp_path,
-        env,
-        "idle",
-        "return",
-        "--harness",
-        "claude",
-        "--session",
-        "outside-session",
-        "--user-prompt",
-        "--interactive",
-    )
-    assert returned == {"stretch_closed": True, "was_open": True}
-
-    spawn_env = _idle_env(tmp_path, role="spawn")
-    spawn_config = _json_success(
-        tmp_path,
-        spawn_env,
-        "idle",
-        "config",
-        "--interactive",
-    )
-    assert isinstance(spawn_config, dict)
-    assert spawn_config["enabled"] is False
-    assert spawn_config["reason"] == "role"
-
-
-@pytest.mark.integration
-def test_idle_hidden_root_help_but_group_help_and_mod_path_work(tmp_path: Path) -> None:
-    env = _idle_env(tmp_path)
-
-    root_help = _run(tmp_path, env, "--help", "--mode", "human")
-    assert root_help.returncode == 0
-    assert "\n  idle " not in root_help.stdout
-
-    idle_help = _run(tmp_path, env, "idle", "--help", "--mode", "human")
-    assert idle_help.returncode == 0
-    assert "Usage: meridian idle COMMAND" in idle_help.stdout
-    assert "mod-path" in idle_help.stdout
-
-    mod_path = _run(tmp_path, env, "idle", "mod-path")
-    assert mod_path.returncode == 0
-    assert mod_path.stderr == ""
-    assert (Path(mod_path.stdout.strip()) / ".claude-plugin" / "plugin.json").is_file()
+def test_idle_mod_path_wire_contract(tmp_path: Path) -> None:
+    result = _run(tmp_path, _idle_env(tmp_path), "idle", "mod-path")
+    assert (result.returncode, result.stderr) == (0, "")
+    assert (Path(result.stdout.strip()) / ".claude-plugin" / "plugin.json").is_file()

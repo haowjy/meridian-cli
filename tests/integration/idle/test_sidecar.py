@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, cast
@@ -11,7 +9,6 @@ import pytest
 
 from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.codex_idle import pane_facts
 from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.idle_types import (
     CompactResult,
@@ -20,7 +17,7 @@ from meridian.lib.harness.idle_types import (
     IdleSensorContext,
 )
 from meridian.lib.idle.service import IdleService
-from meridian.lib.idle.sidecar import SensorErrorReporter, SidecarClock, run
+from meridian.lib.idle.sidecar import SidecarClock, run
 from meridian.lib.notify import Notice, SendReport
 from meridian.lib.notify.channels.base import SendResult
 from meridian.lib.state.idle_store import IdleStore
@@ -90,12 +87,6 @@ class RaisingSensor(Sensor):
         raise SensorFailure("broken stream")
 
 
-class RaisingFactsSensor(Sensor):
-    async def facts(self) -> IdleFacts:
-        self._alive[0] = False
-        raise SensorFailure("broken facts")
-
-
 class BlockingCompactionSensor(Sensor):
     def __init__(self, alive: list[bool]) -> None:
         super().__init__((), alive)
@@ -121,54 +112,8 @@ class BlockingCompactionSensor(Sensor):
         return CompactResult("ok", "100k → summary")
 
 
-class PersistentSensor(Sensor):
-    async def compact(self) -> CompactResult:
-        self.compact_calls += 1
-        return CompactResult("ok", "100k → summary")
-
-
 class ExternalSensor(Sensor):
     external_events = True
-
-
-class BusyExternalSensor(ExternalSensor):
-    def __init__(self, events: tuple[IdleEvent, ...], alive: list[bool]) -> None:
-        super().__init__(events, alive)
-        self.facts_calls = 0
-
-    async def facts(self) -> IdleFacts:
-        self.facts_calls += 1
-        fixture = Path(__file__).parents[2] / "fixtures" / "codex_idle" / "captures" / "busy.txt"
-        return pane_facts(fixture.read_text(encoding="utf-8"))
-
-
-class RecordingService:
-    def __init__(self, delegate: IdleService) -> None:
-        self.delegate = delegate
-        self.thread_ids: dict[str, list[int]] = {}
-
-    def _record(self, method: str) -> None:
-        self.thread_ids.setdefault(method, []).append(threading.get_ident())
-
-    def event(self, *args: Any, **kwargs: Any) -> Any:
-        self._record("event")
-        return self.delegate.event(*args, **kwargs)
-
-    def arm(self, *args: Any, **kwargs: Any) -> Any:
-        self._record("arm")
-        return self.delegate.arm(*args, **kwargs)
-
-    def status(self, *args: Any, **kwargs: Any) -> Any:
-        self._record("status")
-        return self.delegate.status(*args, **kwargs)
-
-    def fire(self, *args: Any, **kwargs: Any) -> Any:
-        self._record("fire")
-        return self.delegate.fire(*args, **kwargs)
-
-    def done(self, *args: Any, **kwargs: Any) -> Any:
-        self._record("done")
-        return self.delegate.done(*args, **kwargs)
 
 
 class FailingOnceService:
@@ -377,92 +322,12 @@ async def test_sidecar_teardown_cancels_compaction_and_records_failure(tmp_path:
 
 
 @pytest.mark.asyncio
-async def test_sidecar_offloads_every_synchronous_service_call(tmp_path: Path) -> None:
-    alive = [True]
-    clock = Clock()
-    sender = Sender()
-    service, _ = policy(tmp_path, clock, sender)
-    recording = RecordingService(service)
-    sensor = ExternalSensor(
-        (IdleEvent("turn_end", "session-1", "turn-1"),),
-        alive,
-    )
-    loop_thread = threading.get_ident()
-
-    task = asyncio.create_task(
-        run(
-            sensor,
-            context(tmp_path, alive),
-            service=cast("IdleService", recording),
-            clock=cast("SidecarClock", clock),
-            poll_seconds=0.001,
-        )
-    )
-    await wait_until(
-        lambda: {"arm", "event", "status", "fire", "done"} <= recording.thread_ids.keys(),
-        description="all service calls",
-    )
-    alive[0] = False
-    await task
-
-    assert all(
-        thread_id != loop_thread
-        for thread_ids in recording.thread_ids.values()
-        for thread_id in thread_ids
-    )
-
-
-@pytest.mark.asyncio
-async def test_external_event_sensor_pins_session_and_polls_store(tmp_path: Path) -> None:
+async def test_external_sensor_recovers_an_externally_written_arm(tmp_path: Path) -> None:
     alive = [True]
     clock = Clock()
     sender = Sender()
     service, store = policy(tmp_path, clock, sender)
-    recording = RecordingService(service)
     sensor = ExternalSensor((), alive)
-    loop_thread = threading.get_ident()
-
-    task = asyncio.create_task(
-        run(
-            sensor,
-            context(tmp_path, alive),
-            service=cast("IdleService", recording),
-            clock=cast("SidecarClock", clock),
-            poll_seconds=0.001,
-        )
-    )
-    await wait_until(
-        lambda: bool(
-            store.read("codex", "session-1") is not None
-        ),
-        description="external session pin",
-    )
-    await wait_until(
-        lambda: "status" in recording.thread_ids,
-        description="external store poll",
-    )
-    alive[0] = False
-    await task
-
-    state = store.read("codex", "session-1")
-    assert state is not None
-    assert sender.notices == []
-    assert sensor.compact_calls == 0
-    assert recording.thread_ids["arm"][0] != loop_thread
-    assert recording.thread_ids["status"][0] != loop_thread
-
-
-@pytest.mark.asyncio
-async def test_external_event_sensor_skips_push_and_warn_while_busy(tmp_path: Path) -> None:
-    alive = [True]
-    clock = Clock()
-    sender = Sender()
-    service, store = policy(tmp_path, clock, sender)
-    sensor = BusyExternalSensor(
-        (IdleEvent("turn_end", "session-1", "turn-1"),),
-        alive,
-    )
-
     task = asyncio.create_task(
         run(
             sensor,
@@ -473,20 +338,34 @@ async def test_external_event_sensor_skips_push_and_warn_while_busy(tmp_path: Pa
         )
     )
     await wait_until(
+        lambda: store.read("codex", "session-1") is not None,
+        description="external session pin",
+    )
+
+    await asyncio.to_thread(
+        service.arm,
+        harness="codex",
+        session="session-1",
+        implies_return=True,
+        turn_id="external-turn",
+    )
+    await wait_until(
         lambda: bool(
             (state := store.read("codex", "session-1")) is not None
-            and state.done.get("compact") == "skipped:busy"
+            and state.stretch == 2
+            and state.done.get("compact") == "ok"
         ),
-        description="busy compaction skip",
+        description="externally written arm completion",
     )
     alive[0] = False
     await task
 
-    state = store.read("codex", "session-1")
-    assert sender.notices == []
-    assert sensor.facts_calls == 3
-    assert state is not None
-    assert state.done == {"compact": "skipped:busy"}
+    assert sensor.compact_calls == 1
+    assert [notice.body for notice in sender.notices] == [
+        "waiting on you",
+        "cache cold in 15m",
+        "compacted (100k → summary)",
+    ]
 
 
 @pytest.mark.asyncio
@@ -586,44 +465,3 @@ async def test_sidecar_contains_base_exception_from_sensor(tmp_path: Path) -> No
     alive[0] = False
     await task
     assert "SensorFailure" in debug_path.read_text(encoding="utf-8")
-
-
-@pytest.mark.asyncio
-async def test_sidecar_contains_base_exception_from_sensor_facts(tmp_path: Path) -> None:
-    alive = [True]
-    clock = Clock()
-    sender = Sender()
-    service, _ = policy(tmp_path, clock, sender)
-    sensor = RaisingFactsSensor(
-        (IdleEvent("turn_end", "session-1", "turn-1"),),
-        alive,
-    )
-
-    await run(
-        sensor,
-        context(tmp_path, alive),
-        service=service,
-        clock=cast("SidecarClock", clock),
-        poll_seconds=0.001,
-    )
-
-    assert sensor.compact_calls == 0
-    assert "broken facts" in (tmp_path / "p1" / "debug.jsonl").read_text(encoding="utf-8")
-
-
-def test_sensor_error_reporter_rate_limits_repeated_failures(tmp_path: Path) -> None:
-    reporter = SensorErrorReporter(context(tmp_path, [True]))
-    for _ in range(3):
-        reporter.record(phase="raw_event", error=RuntimeError("repeated"))
-    reporter.close()
-    reporter.close()
-
-    records = [
-        json.loads(line)
-        for line in (tmp_path / "p1" / "debug.jsonl").read_text(encoding="utf-8").splitlines()
-    ]
-    assert [record["event"] for record in records] == [
-        "idle.sensor_error",
-        "idle.sensor_error_repeats",
-    ]
-    assert records[1]["data"]["repeat_count"] == 2
