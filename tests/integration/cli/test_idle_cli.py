@@ -143,6 +143,26 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
 
 
 @pytest.mark.integration
+def test_idle_status_never_exposes_excerpts_when_messages_are_disabled(tmp_path: Path) -> None:
+    env = _idle_env(tmp_path)
+    env["MERIDIAN_NOTIFY_INCLUDE_MESSAGES"] = "false"
+    _json_success(
+        tmp_path,
+        env,
+        "idle",
+        "arm",
+        *_IDENTITY,
+        "--user-text=private prompt",
+        "--assistant-text=- private answer",
+    )
+
+    status = _json_success(tmp_path, env, "idle", "status", "--json")
+    assert isinstance(status, list) and len(status) == 1
+    assert "last_user_text" not in status[0]
+    assert "last_assistant_text" not in status[0]
+
+
+@pytest.mark.integration
 def test_codex_idle_event_chains_user_notify_after_state_update(tmp_path: Path) -> None:
     env = _idle_env(tmp_path)
     thread_id = "01a11e8c-4466-7771-8f11-14286723b1bb"

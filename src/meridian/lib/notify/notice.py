@@ -19,12 +19,12 @@ class SessionLabel:
     def headline(self) -> str:
         """Describe who owns the conversation and which work it belongs to."""
 
-        actor = self.agent or self.harness
-        if actor and self.work_id:
+        actor = self.agent or self.harness or "Meridian"
+        if self.work_id:
             return f"{actor} on {self.work_id}"
-        if actor and self.project:
+        if self.project:
             return f"{actor} in {self.project}"
-        return actor or "Meridian"
+        return actor
 
     @property
     def footer(self) -> str | None:

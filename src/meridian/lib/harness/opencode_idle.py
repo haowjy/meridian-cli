@@ -123,6 +123,8 @@ def _text_content(value: object) -> str | None:
         part = _mapping(raw_part)
         if part is None or part.get("type") != "text":
             continue
+        if part.get("synthetic") or part.get("ignored"):
+            continue
         part_text = part.get("text")
         if isinstance(part_text, str) and part_text.strip():
             text.append(part_text)
@@ -321,7 +323,7 @@ class OpenCodeIdleSensor:
         session_id = quote(self._ctx.harness_session_id, safe="")
         try:
             status, body = await asyncio.wait_for(
-                self._request("GET", f"/session/{session_id}/message", None),
+                self._request("GET", f"/session/{session_id}/message?limit=20", None),
                 timeout=_GET_TIMEOUT_SECONDS,
             )
             if status != 200:

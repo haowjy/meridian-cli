@@ -25,7 +25,7 @@ class _FakeCommandTransport:
 
 
 _NOTICE = Notice(
-    title="[a2] meridian-cli · F1b",
+    title="coder on idle-cache-notify",
     body="$(touch x); rm -rf /",
     priority=4,
     email=True,

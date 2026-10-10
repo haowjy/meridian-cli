@@ -52,12 +52,10 @@ def stage_notice(
 def compaction_notice(
     result: CompactResultValue,
     detail: str | None,
-    state: IdleState,
     label: SessionLabel,
 ) -> Notice:
     """Build a compaction result notice without turn excerpts."""
 
-    _ = state
     event = {
         "ok": "Compacted",
         "failed": "Compaction failed",

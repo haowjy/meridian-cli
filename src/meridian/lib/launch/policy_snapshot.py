@@ -283,8 +283,6 @@ def _persisted_agent_profile(
     description = (metadata.get("session_agent_description") or "").strip()
     body = metadata.get("session_agent_profile_body") or ""
     path_str = (metadata.get("session_agent_path") or "").strip()
-    if not body.strip() and not path_str:
-        return None
     profile_path = (
         Path(path_str).expanduser().resolve()
         if path_str

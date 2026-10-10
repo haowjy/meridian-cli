@@ -13,6 +13,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
+from meridian.lib.harness.codex_bootstrap import is_bootstrap_turn_prompt
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.idle_types import (
     CompactResult,
@@ -182,6 +183,8 @@ def parse_idle_event(
     input_count = len(inputs)
     previous_count = pinned.last_input_count or 0
     last_input = inputs[-1] if inputs else None
+    if is_bootstrap_turn_prompt(last_input):
+        return None
     last_assistant = raw.get("last-assistant-message")
     return IdleEvent(
         kind="turn_end",

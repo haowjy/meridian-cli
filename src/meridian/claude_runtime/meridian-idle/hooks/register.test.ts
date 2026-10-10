@@ -123,7 +123,7 @@ test('a completed turn arms every returned deadline and reports a successful com
   expect(calls(h, 'arm')).toEqual([
     [
       'arm', '--harness', 'claude', '--session', 'sess-1', '--cwd', '/work/project',
-      '--assistant-text', 'done', '--interactive',
+      '--assistant-text=done', '--interactive',
     ],
   ])
   expect(calls(h, 'fire').map(args => args[1])).toEqual(['push', 'warn', 'compact'])
@@ -213,7 +213,7 @@ test('reload recovery skips completed stages and an absorbed arm keeps its timer
   expect(calls(h, 'status')).toEqual([['status', '--json', '--interactive']])
   expect(calls(h, 'arm')).toEqual([[
     'arm', '--harness', 'claude', '--session', 'sess-1', '--cwd', '/work/project',
-    '--assistant-text', 'done', '--interactive',
+    '--assistant-text=done', '--interactive',
   ]])
   expect(calls(h, 'fire').map(args => args[1])).toEqual(['warn'])
   expect(calls(h, 'fire')[0]).toEqual([
@@ -223,22 +223,24 @@ test('reload recovery skips completed stages and an absorbed arm keeps its timer
   expectCliContract(h)
 })
 
-test('arm excerpts use the human prompt and omit injected reminder and tool-result text', async ($, on) => {
+test('arm excerpts use equals-form argv and only apply a safety length cap', async ($, on) => {
   const h = host()
   const clock = install(on, h)
+  const answer = `- ${'answer '.repeat(700)}`
 
   await $.session.start(TUI)
   await clock.advance(2000)
   await $.prompt.submit({
-    text: '  can u test this?\n<system-reminder><tool_result>not human</tool_result></system-reminder>',
+    text: '  can u test this?\n',
     wait: false,
     origin: COMPOSER,
   })
-  await $.turn.complete({ ...MAIN_TURN, answer: 'assistant\n answer' })
+  await $.turn.complete({ ...MAIN_TURN, answer })
   await clock.advance(0)
 
   const arm = calls(h, 'arm')[0]
-  expect(flag(arm, '--user-text')).toBe('can u test this?')
-  expect(flag(arm, '--assistant-text')).toBe('assistant answer')
-  expect(arm.join(' ')).not.toContain('tool_result')
+  expect(arm).toContain('--user-text=  can u test this?\n')
+  const assistant = arm.find(arg => arg.startsWith('--assistant-text='))
+  expect(assistant?.slice('--assistant-text='.length)).toBe(answer.slice(0, 4000))
+  expect(assistant).toContain('--assistant-text=- ')
 })

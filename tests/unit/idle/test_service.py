@@ -258,7 +258,13 @@ def test_stale_anchor_fire_does_not_claim_the_new_anchor_stage() -> None:
 
 def test_compaction_claim_window_done_ok_and_compacted_state() -> None:
     idle, clock, store, sender = service()
-    armed = idle.arm(harness="example", session="s1", ttl_seconds=3600)
+    armed = idle.arm(
+        harness="example",
+        session="s1",
+        ttl_seconds=3600,
+        last_user_text="original prompt",
+        last_assistant_text="original answer",
+    )
     clock.value = armed.compact_at or 0
 
     claim = idle.fire(
@@ -269,7 +275,13 @@ def test_compaction_claim_window_done_ok_and_compacted_state() -> None:
         anchor=1,
         facts=SAFE_FACTS,
     )
-    ignored = idle.arm(harness="example", session="s1", ttl_seconds=3600)
+    ignored = idle.arm(
+        harness="example",
+        session="s1",
+        ttl_seconds=3600,
+        last_user_text="compaction prompt",
+        last_assistant_text="compaction answer",
+    )
     done = idle.done(
         "compact",
         harness="example",
@@ -279,7 +291,13 @@ def test_compaction_claim_window_done_ok_and_compacted_state() -> None:
         detail="100k → summary",
     )
     clock.value += 31_000
-    still_compacted = idle.arm(harness="example", session="s1", ttl_seconds=3600)
+    still_compacted = idle.arm(
+        harness="example",
+        session="s1",
+        ttl_seconds=3600,
+        last_user_text="late compaction prompt",
+        last_assistant_text="late compaction answer",
+    )
 
     current = store.read("example", "s1")
     assert claim.decision == "act"
@@ -288,6 +306,10 @@ def test_compaction_claim_window_done_ok_and_compacted_state() -> None:
     assert done.recorded is True
     assert still_compacted.reason == "already-compacted"
     assert current is not None and current.done["compact"] == "ok"
+    assert (current.last_user_text, current.last_assistant_text) == (
+        "original prompt",
+        "original answer",
+    )
     assert sender.notices[-1].body == "Compacted"
 
 
@@ -311,6 +333,24 @@ def test_arm_stores_trimmed_excerpts_and_the_next_arm_replaces_them() -> None:
     replaced = store.read("example", "s1")
     assert replaced is not None
     assert (replaced.last_user_text, replaced.last_assistant_text) == (None, None)
+
+
+def test_arm_does_not_store_excerpts_when_notifications_exclude_messages() -> None:
+    idle, _, store, _ = service(
+        config=MeridianConfig.model_validate({"notify": {"include_messages": False}})
+    )
+
+    idle.arm(
+        harness="example",
+        session="s1",
+        ttl_seconds=3600,
+        last_user_text="private prompt",
+        last_assistant_text="private answer",
+    )
+
+    state = store.read("example", "s1")
+    assert state is not None
+    assert (state.last_user_text, state.last_assistant_text) == (None, None)
 
 
 def test_closed_compacted_stretch_opens_a_new_stretch_on_arm() -> None:
@@ -364,6 +404,8 @@ def test_implies_return_opens_new_stretch_inside_claimed_window() -> None:
         ttl_seconds=3600,
         implies_return=True,
         turn_id="user-turn-2",
+        last_user_text="duplicate prompt",
+        last_assistant_text="duplicate answer",
     )
 
     assert (opened.stretch, opened.anchor, opened.reason) == (2, 1, None)
@@ -376,6 +418,7 @@ def test_implies_return_opens_new_stretch_inside_claimed_window() -> None:
     assert current is not None
     assert current.done == {}
     assert current.compact_window_until_ms is None
+    assert (current.last_user_text, current.last_assistant_text) == (None, None)
 
 
 def test_harness_autocompact_env_fact_is_merged_before_compaction_guard() -> None:
@@ -450,7 +493,13 @@ def test_return_always_closes_during_compaction_and_late_done_records_same_stret
 
 def test_expected_compaction_turn_is_absorbed_after_window() -> None:
     idle, clock, store, _ = service()
-    armed = idle.arm(harness="example", session="s1", ttl_seconds=3600)
+    armed = idle.arm(
+        harness="example",
+        session="s1",
+        ttl_seconds=3600,
+        last_user_text="original prompt",
+        last_assistant_text="original answer",
+    )
     clock.value = armed.compact_at or 0
     idle.fire(
         "compact",
@@ -462,10 +511,17 @@ def test_expected_compaction_turn_is_absorbed_after_window() -> None:
     )
     clock.value += 31_000
 
-    absorbed = idle.arm(harness="example", session="s1", ttl_seconds=3600)
+    absorbed = idle.arm(
+        harness="example",
+        session="s1",
+        ttl_seconds=3600,
+        last_user_text="compaction prompt",
+        last_assistant_text="compaction answer",
+    )
 
     assert absorbed.reason == "expected-compaction-turn"
     assert store.read("example", "s1").anchor == 1  # type: ignore[union-attr]
+    assert store.read("example", "s1").last_user_text == "original prompt"  # type: ignore[union-attr]
 
 
 def test_late_done_for_previous_stretch_never_touches_new_stretch() -> None:

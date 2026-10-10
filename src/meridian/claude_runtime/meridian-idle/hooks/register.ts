@@ -20,8 +20,7 @@ const HARNESS = 'claude'
 const COMMAND = 'meridian-idle'
 const CLI_TIMEOUT_MS = 20_000
 const LOG_LIMIT = 100
-const USER_EXCERPT_CHARS = 120
-const ASSISTANT_EXCERPT_CHARS = 280
+const EXCERPT_CHAR_CAP = 4_000
 
 type Json = Record<string, unknown>
 
@@ -88,19 +87,8 @@ function asNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
-function trimExcerpt(value: string | undefined, limit: number, user = false): string | undefined {
-  if (value === undefined) return undefined
-  const withoutReminders = user
-    ? value
-        .replace(/<system-reminder\b[^>]*>[\s\S]*?<\/system-reminder\s*>/gi, ' ')
-        .replace(/<system-reminder\b[^>]*>[\s\S]*$/gi, ' ')
-    : value
-  const normalized = withoutReminders.replace(/\s+/g, ' ').trim()
-  if (normalized === '') return undefined
-  if (normalized.length <= limit) return normalized
-  const candidate = normalized.slice(0, limit - 1)
-  const boundary = candidate.lastIndexOf(' ')
-  return `${(boundary > 0 ? candidate.slice(0, boundary) : candidate).trimEnd()}…`
+function capExcerpt(value: string | undefined): string | undefined {
+  return value?.slice(0, EXCERPT_CHAR_CAP)
 }
 
 /** A prompt or command the user themselves sent. Injected origins (task-notification, peer, plugin, sdk, ...) are not returns. */
@@ -275,10 +263,10 @@ async function armTask($: EngineInterface, s: State, epoch: number, assistantTex
     const session = await $.session.id()
     const cwd = await $.session.cwd()
     const args = ['arm', '--harness', HARNESS, '--session', session, '--cwd', cwd]
-    const userExcerpt = trimExcerpt(s.lastUserText, USER_EXCERPT_CHARS, true)
-    const assistantExcerpt = trimExcerpt(assistantText, ASSISTANT_EXCERPT_CHARS)
-    if (userExcerpt !== undefined) args.push('--user-text', userExcerpt)
-    if (assistantExcerpt !== undefined) args.push('--assistant-text', assistantExcerpt)
+    const userExcerpt = capExcerpt(s.lastUserText)
+    const assistantExcerpt = capExcerpt(assistantText)
+    if (userExcerpt !== undefined) args.push(`--user-text=${userExcerpt}`)
+    if (assistantExcerpt !== undefined) args.push(`--assistant-text=${assistantExcerpt}`)
     const reply = await cli($, s, args)
     const problem = failure(reply)
     if (problem !== undefined || !isRecord(reply)) {

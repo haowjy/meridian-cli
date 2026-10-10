@@ -33,16 +33,11 @@ type StatusRow = {
 
 const STAGES: readonly IdleStage[] = ["push", "warn", "compact"];
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
-const USER_EXCERPT_CHARS = 120;
-const ASSISTANT_EXCERPT_CHARS = 280;
+const EXCERPT_CHAR_CAP = 4_000;
 
-function trimExcerpt(value: string, limit: number): string | null {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  if (!normalized) return null;
-  if (normalized.length <= limit) return normalized;
-  const prefix = normalized.slice(0, limit - 1);
-  const boundary = prefix.lastIndexOf(" ");
-  return `${(boundary > 0 ? prefix.slice(0, boundary) : prefix).trimEnd()}…`;
+function capExcerpt(value: string): string | null {
+  const capped = value.slice(0, EXCERPT_CHAR_CAP);
+  return capped ? capped : null;
 }
 
 function messageText(content: unknown): string | null {
@@ -66,9 +61,9 @@ export function messageExcerpts(messages: unknown): {
     if (!isRecord(message)) continue;
     const text = messageText(message.content);
     if (text === null) continue;
-    if (message.role === "user") user = trimExcerpt(text, USER_EXCERPT_CHARS);
+    if (message.role === "user") user = capExcerpt(text);
     if (message.role === "assistant") {
-      assistant = trimExcerpt(text, ASSISTANT_EXCERPT_CHARS);
+      assistant = capExcerpt(text);
     }
   }
   return { user, assistant };
@@ -81,6 +76,7 @@ export class IdleRuntime {
   private readonly timers = new Map<IdleStage, NodeJS.Timeout>();
   private readonly deadlines = new Map<IdleStage, number>();
   private transitionQueue: Promise<void> = Promise.resolve();
+  private lastUserText: string | null = null;
 
   constructor(private readonly run: MeridianRunner = runMeridianCommand) {}
 
@@ -89,6 +85,7 @@ export class IdleRuntime {
     this.enabled = false;
     this.clearSchedule();
     this.active = null;
+    this.lastUserText = null;
 
     const config = await this.runJson(["idle", "config"]);
     if (revision !== this.revision || !isRecord(config) || config.enabled !== true) {
@@ -128,9 +125,12 @@ export class IdleRuntime {
       }
       args.push("--cwd", ctx.cwd);
       const excerpts = messageExcerpts(messages);
-      if (excerpts.user !== null) args.push("--user-text", excerpts.user);
+      if (excerpts.user !== null) this.lastUserText = excerpts.user;
+      if (this.lastUserText !== null) {
+        args.push(`--user-text=${this.lastUserText}`);
+      }
       if (excerpts.assistant !== null) {
-        args.push("--assistant-text", excerpts.assistant);
+        args.push(`--assistant-text=${excerpts.assistant}`);
       }
 
       const reply = await this.runJson(args);
@@ -167,6 +167,7 @@ export class IdleRuntime {
     this.enabled = false;
     this.clearSchedule();
     this.active = null;
+    this.lastUserText = null;
   }
 
   private restore(rows: unknown[], ctx: ExtensionContext): void {

@@ -91,10 +91,17 @@ async def test_turn_end_fetches_last_user_and_assistant_text_parts(tmp_path: Pat
         path: str,
         _payload: Mapping[str, object] | None,
     ) -> tuple[int, str]:
-        assert (method, path) == ("GET", f"/session/{SESSION_ID}/message")
+        assert (method, path) == ("GET", f"/session/{SESSION_ID}/message?limit=20")
         return 200, json.dumps(
             [
                 {"info": {"role": "user"}, "parts": [{"type": "text", "text": "old"}]},
+                {
+                    "info": {"role": "user"},
+                    "parts": [
+                        {"type": "text", "text": "attached file", "synthetic": True},
+                        {"type": "text", "text": "ignored prompt", "ignored": 1},
+                    ],
+                },
                 {
                     "info": {"role": "assistant"},
                     "parts": [
@@ -103,7 +110,14 @@ async def test_turn_end_fetches_last_user_and_assistant_text_parts(tmp_path: Pat
                         {"type": "text", "text": "answer two"},
                     ],
                 },
-                {"info": {"role": "user"}, "parts": [{"type": "text", "text": "latest"}]},
+                {
+                    "info": {"role": "user"},
+                    "parts": [
+                        {"type": "text", "text": "latest"},
+                        {"type": "text", "text": "mode reminder", "synthetic": True},
+                        {"type": "text", "text": "hidden", "ignored": True},
+                    ],
+                },
             ]
         )
 

@@ -150,7 +150,7 @@ describe("meridian idle event mapping", () => {
     expectCliContract(run.mock.calls.map(([args]) => args));
   });
 
-  it("extracts the last user and assistant text from agent_end messages", async () => {
+  it("extracts excerpts and passes dash-leading text in equals-form argv", async () => {
     const run = vi.fn<MeridianRunner>(async (args) => {
       if (args[1] === "config") return commandResult({ enabled: true });
       if (args[1] === "status") return commandResult([]);
@@ -170,7 +170,7 @@ describe("meridian idle event mapping", () => {
           role: "assistant",
           content: [
             { type: "thinking", thinking: "private" },
-            { type: "text", text: "latest answer" },
+            { type: "text", text: "- latest answer" },
           ],
         },
       ],
@@ -181,10 +181,42 @@ describe("meridian idle event mapping", () => {
     expect(arm).toEqual([
       "idle", "arm", "--harness", "pi", "--session", "pi-session",
       "--provider", "anthropic", "--cwd", "/work/project",
-      "--user-text", "latest prompt", "--assistant-text", "latest answer",
+      "--user-text=latest\n prompt", "--assistant-text=- latest answer",
       "--interactive",
     ]);
     expect(arm).not.toContain("tool output");
+  });
+
+  it("keeps the last user text when an injected run has no user message", async () => {
+    const run = vi.fn<MeridianRunner>(async (args) => {
+      if (args[1] === "config") return commandResult({ enabled: true });
+      if (args[1] === "status") return commandResult([]);
+      return commandResult({ stretch: 1, anchor: 1 });
+    });
+    const { ctx } = context();
+    const { handlers } = host(run);
+
+    await event(handlers, "session_start", {}, ctx);
+    await event(handlers, "agent_end", {
+      messages: [
+        { role: "user", content: [{ type: "text", text: "original prompt" }] },
+        { role: "assistant", content: [{ type: "text", text: "first answer" }] },
+      ],
+    }, ctx);
+    await event(handlers, "agent_end", {
+      messages: [
+        { role: "custom", content: [{ type: "text", text: "spawn finished" }] },
+        { role: "assistant", content: [{ type: "text", text: "follow-up answer" }] },
+      ],
+    }, ctx);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const arms = run.mock.calls
+      .map(([args]) => args)
+      .filter((args) => args[1] === "arm");
+    expect(arms).toHaveLength(2);
+    expect(arms[1]).toContain("--user-text=original prompt");
+    expect(arms[1]).toContain("--assistant-text=follow-up answer");
   });
 
   it("only interactive input returns and clears the pending timers", async () => {

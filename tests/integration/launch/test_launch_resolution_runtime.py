@@ -212,6 +212,17 @@ def test_launch_env_sets_resolved_agent_and_clears_inherited_agent(
         harness_registry=get_default_harness_registry(),
         dry_run=True,
     )
+    (tmp_path / "meridian.toml").write_text(
+        '[primary]\nagent = "ghost"\n',
+        encoding="utf-8",
+    )
+    with_missing_profile = build_launch_context(
+        spawn_id="dry-run-missing-profile",
+        request=build_primary_spawn_request(request=LaunchRequest(model=model)),
+        runtime=build_primary_launch_runtime(project_root=tmp_path),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
     without_agent = build_launch_context(
         spawn_id="dry-run-no-agent",
         request=build_primary_spawn_request(
@@ -223,6 +234,7 @@ def test_launch_env_sets_resolved_agent_and_clears_inherited_agent(
     )
 
     assert with_agent.binding.environment.final_env["MERIDIAN_SESSION_AGENT"] == "coder"
+    assert with_missing_profile.binding.environment.final_env["MERIDIAN_SESSION_AGENT"] == "ghost"
     assert "MERIDIAN_SESSION_AGENT" not in without_agent.binding.environment.final_env
 
 

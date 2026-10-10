@@ -333,14 +333,13 @@ class IdleService:
             raise ValueError("ttl_seconds must be greater than zero")
         if input_count is not None and input_count < 0:
             raise ValueError("input_count must be zero or greater")
-        user_excerpt, assistant_excerpt = trim_turn_excerpts(
-            last_user_text,
-            last_assistant_text,
-        )
-        excerpt_updates = {
-            "last_user_text": user_excerpt,
-            "last_assistant_text": assistant_excerpt,
-        }
+        if self._notify_config().include_messages:
+            user_excerpt, assistant_excerpt = trim_turn_excerpts(
+                last_user_text,
+                last_assistant_text,
+            )
+        else:
+            user_excerpt, assistant_excerpt = None, None
         now_ms = self._now_ms()
 
         def transition(current: IdleState | None) -> tuple[IdleState, ArmResult]:
@@ -352,7 +351,6 @@ class IdleService:
             ):
                 next_state = current.model_copy(
                     update={
-                        **excerpt_updates,
                         "last_input_count": (
                             input_count if input_count is not None else current.last_input_count
                         )
@@ -371,7 +369,6 @@ class IdleService:
                 if window_active:
                     next_state = current.model_copy(
                         update={
-                            **excerpt_updates,
                             "expect_compaction_turn": False,
                             "last_input_count": (
                                 input_count if input_count is not None else current.last_input_count
@@ -382,7 +379,6 @@ class IdleService:
                 if current.stretch_open and current.expect_compaction_turn:
                     next_state = current.model_copy(
                         update={
-                            **excerpt_updates,
                             "expect_compaction_turn": False,
                             "last_input_count": (
                                 input_count if input_count is not None else current.last_input_count
@@ -396,7 +392,6 @@ class IdleService:
                 if current.stretch_open and current.done.get("compact") == "ok":
                     next_state = current.model_copy(
                         update={
-                            **excerpt_updates,
                             "last_input_count": (
                                 input_count if input_count is not None else current.last_input_count
                             )
@@ -562,8 +557,10 @@ class IdleService:
             harness_autocompact_off=(observed.harness_autocompact_off or env_autocompact_off),
         )
         now_ms = self._now_ms()
+        claimed_state: IdleState | None = None
 
         def transition(current: IdleState | None) -> tuple[IdleState | None, FireResult]:
+            nonlocal claimed_state
             decision = decide(stage, guard_facts, current, policy, now_ms)
             result = FireResult(decision.decision, decision.reason)
             if decision.decision == "skip":
@@ -590,15 +587,18 @@ class IdleService:
                     compact_window_until_ms=now_ms + _COMPACT_GRACE_MS,
                     expect_compaction_turn=True,
                 )
-            return current.model_copy(update=updates), result
+            claimed_state = current.model_copy(update=updates)
+            return claimed_state, result
 
         result = self.store.mutate(harness, session, transition)
         if result.decision == "act" and (stage == "push" or stage == "warn"):
+            assert claimed_state is not None
             self._send_stage_notice(
                 stage,
                 harness=harness,
                 session=session,
                 stretch=stretch,
+                state=claimed_state,
                 policy=policy,
             )
         return result
@@ -610,13 +610,11 @@ class IdleService:
         harness: str,
         session: str,
         stretch: int,
+        state: IdleState,
         policy: IdlePolicyConfig,
     ) -> None:
         ok = False
         try:
-            state = self.store.read(harness, session)
-            if state is None or state.stretch != stretch:
-                raise RuntimeError("idle notification state is unavailable")
             label = build_session_label(environ=self.env)
             notice = stage_notice(
                 stage,
@@ -691,14 +689,10 @@ class IdleService:
         done_result = self.store.mutate(harness, session, transition)
         if done_result.recorded:
             with suppress(Exception):
-                state = self.store.read(harness, session)
-                if state is None:
-                    raise RuntimeError("idle compaction state is unavailable")
                 self._notify_sender(
                     compaction_notice(
                         result,
                         detail,
-                        state,
                         build_session_label(environ=self.env),
                     ),
                     self._notify_config(),

@@ -8,6 +8,7 @@ from typing import Any, cast
 import pytest
 
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.codex_bootstrap import bootstrap_turn_prompt
 from meridian.lib.harness.codex_idle import CodexIdleSensor, pane_facts, parse_idle_event
 from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.idle_types import IdleEvent, IdleSensorContext, PinnedIdleSession
@@ -72,15 +73,60 @@ def test_parse_idle_event_pins_main_thread_and_tracks_input_growth() -> None:
         if event is not None:
             counts[event.harness_session_id] = event.input_count
 
-    assert parsed[0] is None
-    pinned = [event for event in parsed[1:] if event is not None]
-    assert [event.harness_session_id for event in pinned] == [MAIN_THREAD] * 3
-    assert [event.input_count for event in pinned] == [1, 2, 3]
+    assert parsed[:2] == [None, None]
+    pinned = [event for event in parsed[2:] if event is not None]
+    assert [event.harness_session_id for event in pinned] == [MAIN_THREAD] * 2
+    assert [event.input_count for event in pinned] == [2, 3]
     assert all(event.implies_return for event in pinned)
     assert pinned[-1].last_user_text == "Run sleep 3 in shell, then reply done."
     assert pinned[-1].last_assistant_text == "done"
 
     repeated = parse_idle_event(_probe_payloads()[-1], session_reader=read_session)
+    assert repeated is not None
+    assert repeated.implies_return is False
+
+
+def test_parse_idle_event_skips_bootstrap_but_tracks_the_next_real_turn() -> None:
+    last_input_count: int | None = None
+    bootstrap_prompt = bootstrap_turn_prompt("coder")
+
+    def read_session(session: str) -> PinnedIdleSession | None:
+        if session != MAIN_THREAD:
+            return None
+        return PinnedIdleSession(last_input_count=last_input_count)
+
+    def payload(*, turn: str, inputs: list[str], answer: str) -> str:
+        return json.dumps(
+            {
+                "type": "agent-turn-complete",
+                "thread-id": MAIN_THREAD,
+                "turn-id": turn,
+                "input-messages": inputs,
+                "last-assistant-message": answer,
+            }
+        )
+
+    bootstrap = payload(
+        turn="bootstrap",
+        inputs=[bootstrap_prompt],
+        answer=bootstrap_prompt,
+    )
+    assert parse_idle_event(bootstrap, session_reader=read_session) is None
+    assert last_input_count is None
+
+    real_turn = payload(
+        turn="real",
+        inputs=[bootstrap_prompt, "actual user prompt"],
+        answer="actual answer",
+    )
+    event = parse_idle_event(real_turn, session_reader=read_session)
+    assert event is not None
+    assert event.implies_return is True
+    assert event.input_count == 2
+    assert event.last_user_text == "actual user prompt"
+
+    last_input_count = event.input_count
+    repeated = parse_idle_event(real_turn, session_reader=read_session)
     assert repeated is not None
     assert repeated.implies_return is False
 

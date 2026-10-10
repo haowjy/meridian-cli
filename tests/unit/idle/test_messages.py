@@ -91,7 +91,6 @@ def test_compaction_rendering(
     notice = compaction_notice(
         result,  # type: ignore[arg-type]
         detail,
-        _state(),
         SessionLabel(harness="claude", project="meridian-cli", tmux_session="dev"),
     )
 
@@ -105,11 +104,13 @@ def test_label_fallbacks_and_rendered_notices_have_no_separator_glyph() -> None:
     labels = (
         SessionLabel(agent="coder", project="meridian-cli"),
         SessionLabel(harness="pi", work_id="idle-cache-notify"),
+        SessionLabel(project="meridian-cli"),
         SessionLabel(),
     )
     assert [label.headline for label in labels] == [
         "coder in meridian-cli",
         "pi on idle-cache-notify",
+        "Meridian in meridian-cli",
         "Meridian",
     ]
 
