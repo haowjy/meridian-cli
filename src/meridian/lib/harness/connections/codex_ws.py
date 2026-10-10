@@ -93,6 +93,8 @@ _ADDRESS_IN_USE_MARKERS: Final[tuple[str, ...]] = (
     "address in use",
     "eaddrinuse",
 )
+
+
 def _load_websockets_module() -> Any | None:
     if importlib.util.find_spec("websockets") is None:
         return None

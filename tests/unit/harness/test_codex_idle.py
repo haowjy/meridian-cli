@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -19,9 +19,15 @@ PROMPT = "\u203a"
 
 
 class FakeTmux:
-    def __init__(self, captures: list[str]) -> None:
+    def __init__(
+        self,
+        captures: list[str],
+        *,
+        on_enter: Callable[[], None] | None = None,
+    ) -> None:
         self.captures = captures
         self.actions: list[tuple[str, object]] = []
+        self.on_enter = on_enter
 
     async def capture(self, pane: str) -> str | None:
         self.actions.append(("capture", pane))
@@ -35,18 +41,82 @@ class FakeTmux:
 
     async def send_keys(self, pane: str, *keys: str) -> bool:
         self.actions.append(("keys", keys))
+        if keys == ("Enter",) and self.on_enter is not None:
+            self.on_enter()
         return True
 
 
-def _context(*, alive: Callable[[], bool] = lambda: True) -> IdleSensorContext:
+class FakeClock:
+    def __init__(self, *, on_sleep: Callable[[], None] | None = None) -> None:
+        self.now = 0.0
+        self.sleeps: list[float] = []
+        self.on_sleep = on_sleep
+
+    def monotonic(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now += seconds
+        if self.on_sleep is not None:
+            self.on_sleep()
+
+
+def _context(
+    *,
+    alive: Callable[[], bool] = lambda: True,
+    env: Mapping[str, str] | None = None,
+) -> IdleSensorContext:
     return IdleSensorContext(
         connection=cast("HarnessConnection[Any]", object()),
         harness_id=HarnessId.CODEX,
         harness_session_id=MAIN_THREAD,
-        env={},
+        env=env or {},
         tmux_pane="%42",
         tui_alive=alive,
         spawn_dir=Path("/unused"),
+    )
+
+
+def _rollout_path(tmp_path: Path) -> Path:
+    return (
+        tmp_path
+        / "codex"
+        / "sessions"
+        / "2026"
+        / "10"
+        / "10"
+        / f"rollout-2026-10-10T00-00-00-{MAIN_THREAD}.jsonl"
+    )
+
+
+def _write_rollout(tmp_path: Path) -> Path:
+    path = _rollout_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps({"type": "session_meta", "payload": {"id": MAIN_THREAD}}) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _append(path: Path, data: bytes) -> None:
+    with path.open("ab") as handle:
+        handle.write(data)
+
+
+def _sensor(
+    tmp_path: Path,
+    tmux: FakeTmux,
+    clock: FakeClock,
+) -> CodexIdleSensor:
+    return CodexIdleSensor(
+        _context(env={"CODEX_HOME": str(tmp_path / "codex")}),
+        tmux=tmux,
+        compact_timeout_seconds=1,
+        compact_poll_seconds=0.5,
+        monotonic=clock.monotonic,
+        sleep=clock.sleep,
     )
 
 
@@ -152,18 +222,19 @@ def test_pane_facts_match_probe_captures(
 
 
 @pytest.mark.asyncio
-async def test_compact_types_verifies_and_waits_for_success_marker() -> None:
+async def test_compact_accepts_appended_rollout_compacted_record(tmp_path: Path) -> None:
+    rollout = _write_rollout(tmp_path)
+    compacted = (FIXTURES / "compacted-0.162.1.jsonl").read_bytes()
     idle = (FIXTURES / "captures" / "idle.txt").read_text(encoding="utf-8")
-    busy = (FIXTURES / "captures" / "busy.txt").read_text(encoding="utf-8")
     tmux = FakeTmux(
         [
             idle,
             idle.replace("Ask Codex to do anything", "/compact"),
-            busy,
-            f"{idle}\n• Context compacted · 1s\n",
-        ]
+        ],
+        on_enter=lambda: _append(rollout, compacted),
     )
-    sensor = CodexIdleSensor(_context(), tmux=tmux, compact_poll_seconds=0)
+    clock = FakeClock()
+    sensor = _sensor(tmp_path, tmux, clock)
 
     result = await sensor.compact()
 
@@ -178,14 +249,75 @@ async def test_compact_types_verifies_and_waits_for_success_marker() -> None:
 
 
 @pytest.mark.asyncio
-async def test_compact_vetoes_user_input_and_erases_only_its_typed_text() -> None:
+async def test_compact_times_out_when_rollout_does_not_grow(tmp_path: Path) -> None:
+    _write_rollout(tmp_path)
+    idle = (FIXTURES / "captures" / "idle.txt").read_text(encoding="utf-8")
+    tmux = FakeTmux([idle, idle.replace("Ask Codex to do anything", "/compact")])
+    clock = FakeClock()
+    sensor = _sensor(tmp_path, tmux, clock)
+
+    result = await sensor.compact()
+
+    assert (result.result, result.reason) == ("failed", "timeout")
+
+
+@pytest.mark.asyncio
+async def test_compact_ignores_partial_rollout_line_until_complete(
+    tmp_path: Path,
+) -> None:
+    rollout = _write_rollout(tmp_path)
+    compacted = (FIXTURES / "compacted-0.162.1.jsonl").read_bytes()
+    partial = compacted[: len(compacted) // 2]
+    remainder = compacted[len(partial) :]
+
+    def finish_line() -> None:
+        if rollout.read_bytes().endswith(partial):
+            with rollout.open("ab") as handle:
+                handle.write(remainder)
+
+    idle = (FIXTURES / "captures" / "idle.txt").read_text(encoding="utf-8")
+    tmux = FakeTmux(
+        [idle, idle.replace("Ask Codex to do anything", "/compact")],
+        on_enter=lambda: _append(rollout, partial),
+    )
+    clock = FakeClock(on_sleep=finish_line)
+    sensor = _sensor(tmp_path, tmux, clock)
+
+    result = await sensor.compact()
+
+    assert result.result == "ok"
+    assert 0.5 in clock.sleeps
+
+
+@pytest.mark.asyncio
+async def test_compact_vetoes_when_rollout_cannot_be_found_without_typing(
+    tmp_path: Path,
+) -> None:
+    idle = (FIXTURES / "captures" / "idle.txt").read_text(encoding="utf-8")
+    tmux = FakeTmux([idle])
+    clock = FakeClock()
+    sensor = _sensor(tmp_path, tmux, clock)
+
+    result = await sensor.compact()
+
+    assert (result.result, result.reason) == ("vetoed", "rollout-not-found")
+    assert all(action != "literal" for action, _ in tmux.actions)
+    assert all(action != "keys" for action, _ in tmux.actions)
+
+
+@pytest.mark.asyncio
+async def test_compact_vetoes_user_input_and_erases_only_its_typed_text(
+    tmp_path: Path,
+) -> None:
+    _write_rollout(tmp_path)
     tmux = FakeTmux(
         [
             f"{PROMPT} Ask Codex to do anything\n",
             f"{PROMPT} user text/compact\n",
         ]
     )
-    sensor = CodexIdleSensor(_context(), tmux=tmux, compact_poll_seconds=0)
+    clock = FakeClock()
+    sensor = _sensor(tmp_path, tmux, clock)
 
     result = await sensor.compact()
 
