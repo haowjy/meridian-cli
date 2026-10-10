@@ -281,7 +281,7 @@ class OpenCodeIdleSensor:
             busy=self._busy,
             agents_running=0,
             context_tokens=None,
-            harness_autocompact_off=autocompact_off(self._ctx.env),
+            harness_autocompact_off=False,
         )
 
     async def compact(self) -> CompactResult:

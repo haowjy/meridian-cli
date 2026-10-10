@@ -27,7 +27,8 @@ a harness adapter: **adapters report facts; core decides**.
 
 ## Boundaries
 
-- CLI translation belongs in `cli/`, not here.
+- CLI argument parsing and human rendering belong in `cli/`; adapter result shapes
+  and their wire serialization stay with the service result types.
 - Spawn-store reads for the child guard go through `children.py` and stay
   read-only.
 - Disk layout, locks, atomic writes, and garbage collection stay in

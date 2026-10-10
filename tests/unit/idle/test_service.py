@@ -5,9 +5,10 @@ from threading import Lock
 from typing import TypeVar
 
 from meridian.lib.config.settings import MeridianConfig
-from meridian.lib.harness.idle_types import IdleEvent, IdleFacts
+from meridian.lib.harness.idle_types import DetectIdleTtl, IdleEvent, IdleFacts
 from meridian.lib.idle.service import (
     ArmResult,
+    AutocompactOffReader,
     ConfigResult,
     IdleService,
     effective,
@@ -81,6 +82,8 @@ def service(
     config: MeridianConfig | None = None,
     env: dict[str, str] | None = None,
     interactive: bool = False,
+    autocompact_off: AutocompactOffReader | None = None,
+    detect_ttl: DetectIdleTtl | None = None,
 ) -> tuple[IdleService, Clock, MemoryStore, Sender]:
     resolved_clock = clock or Clock()
     resolved_store = store or MemoryStore()
@@ -95,6 +98,8 @@ def service(
             notify_sender=resolved_sender,
             spawn_reader=lambda: (),
             interactive=interactive,
+            autocompact_off=autocompact_off,
+            detect_ttl=detect_ttl,
         ),
         resolved_clock,
         resolved_store,
@@ -114,10 +119,8 @@ def test_interactive_role_resolution_only_promotes_an_unset_role() -> None:
         ).config_for("example")
 
     assert config(env={}, interactive=True).enabled is True
-    assert config(env={}, interactive=False).reason == "not-primary"
-    assert config(env={"MERIDIAN_SESSION_ROLE": "spawn"}, interactive=True).reason == (
-        "not-primary"
-    )
+    assert config(env={}, interactive=False).reason == "interactive"
+    assert config(env={"MERIDIAN_SESSION_ROLE": "spawn"}, interactive=True).reason == "role"
 
 
 def test_interactive_effective_role_reaches_fire_guard() -> None:
@@ -172,9 +175,34 @@ def test_config_role_and_enabled_gates_do_not_write() -> None:
     spawn, _, spawn_store, _ = service(env={"MERIDIAN_SESSION_ROLE": "spawn"})
 
     assert disabled.arm(harness="example", session="s1").reason == "idle-disabled"
-    assert spawn.arm(harness="example", session="s1").reason == "not-primary"
+    assert spawn.arm(harness="example", session="s1").reason == "role"
     assert disabled_store.states == {}
     assert spawn_store.states == {}
+
+
+def test_arm_resolves_explicit_configured_then_detected_ttl() -> None:
+    detected: list[str] = []
+
+    def detect_ttl(**kwargs: object) -> int:
+        detected.append(str(kwargs["session_id"]))
+        return 300
+
+    idle, _, store, _ = service(detect_ttl=detect_ttl)
+    idle.arm(harness="example", session="explicit", ttl_seconds=600)
+    idle.arm(harness="example", session="detected")
+
+    configured, _, configured_store, _ = service(
+        config=MeridianConfig.model_validate(
+            {"harness": {"codex": {"idle": {"ttl_seconds": 900}}}}
+        ),
+        detect_ttl=detect_ttl,
+    )
+    configured.arm(harness="codex", session="configured")
+
+    assert detected == ["detected"]
+    assert store.read("example", "explicit").ttl_seconds == 600  # type: ignore[union-attr]
+    assert store.read("example", "detected").ttl_seconds == 300  # type: ignore[union-attr]
+    assert configured_store.read("codex", "configured").ttl_seconds == 900  # type: ignore[union-attr]
 
 
 def test_arm_opens_reanchors_and_never_reenables_a_done_stage() -> None:
@@ -220,12 +248,9 @@ def test_warn_sends_push_and_email_notice() -> None:
 
     assert result.decision == "act"
     observed = [
-        (notice.body, notice.priority, notice.email, notice.kind)
-        for notice in sender.notices
+        (notice.body, notice.priority, notice.email, notice.kind) for notice in sender.notices
     ]
-    assert observed == [
-        ("cache cold in 15m", 4, True, "idle")
-    ]
+    assert observed == [("cache cold in 15m", 4, True, "idle")]
 
 
 def test_stale_anchor_fire_does_not_claim_the_new_anchor_stage() -> None:
@@ -373,8 +398,8 @@ def test_implies_return_opens_new_stretch_inside_claimed_window() -> None:
     assert current.compact_window_until_ms is None
 
 
-def test_skipped_compaction_is_final_for_the_stretch() -> None:
-    idle, clock, store, _ = service()
+def test_harness_autocompact_env_fact_is_merged_before_compaction_guard() -> None:
+    idle, clock, store, _ = service(autocompact_off=lambda env: True)
     armed = idle.arm(harness="example", session="s1", ttl_seconds=3600)
     clock.value = armed.compact_at or 0
 
@@ -384,12 +409,12 @@ def test_skipped_compaction_is_final_for_the_stretch() -> None:
         session="s1",
         stretch=1,
         anchor=1,
-        facts=IdleFacts("no", True, 0, 100_000, False),
+        facts=SAFE_FACTS,
     )
 
-    assert skipped.reason == "busy"
+    assert skipped.reason == "harness-autocompact-off"
     assert store.read("example", "s1").done == {  # type: ignore[union-attr]
-        "compact": "skipped:busy"
+        "compact": "skipped:harness-autocompact-off"
     }
 
 

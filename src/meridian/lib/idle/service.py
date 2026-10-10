@@ -14,7 +14,12 @@ from pydantic import BaseModel
 
 from meridian.lib.config.schema import parse_env_scalar
 from meridian.lib.config.settings import MeridianConfig, NotifyConfig, load_config
-from meridian.lib.harness.idle_types import IdleEvent, IdleFacts
+from meridian.lib.harness.idle_types import (
+    DetectIdleTtl,
+    IdleEvent,
+    IdleFacts,
+    PinnedIdleSession,
+)
 from meridian.lib.idle.children import (
     SpawnStoreReader,
     active_child_count,
@@ -42,6 +47,20 @@ class NotifySender(Protocol):
     def __call__(self, notice: Notice, cfg: NotifyConfig) -> SendReport: ...
 
 
+AutocompactOffReader = Callable[[Mapping[str, str]], bool | None]
+
+
+class NativeEventParser(Protocol):
+    """Translate a native callback without giving the harness direct store access."""
+
+    def __call__(
+        self,
+        payload: str,
+        *,
+        session_reader: Callable[[str], PinnedIdleSession | None],
+    ) -> IdleEvent | None: ...
+
+
 @dataclass(frozen=True)
 class IdlePolicyConfig:
     enabled: bool
@@ -61,6 +80,21 @@ class ConfigResult:
     reason: str | None
     policy: IdlePolicyConfig
 
+    def to_wire(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "enabled": self.enabled,
+            "push_seconds": self.policy.push_seconds,
+            "warn_minutes": self.policy.warn_minutes,
+            "compact_minutes": self.policy.compact_minutes,
+            "compact": self.policy.compact,
+            "min_compact_tokens": self.policy.min_compact_tokens,
+        }
+        if self.reason is not None:
+            payload["reason"] = self.reason
+        if self.policy.ttl_seconds is not None:
+            payload["ttl_seconds"] = self.policy.ttl_seconds
+        return payload
+
 
 @dataclass(frozen=True)
 class ArmResult:
@@ -71,11 +105,22 @@ class ArmResult:
     compact_at: int | None = None
     reason: str | None = None
 
+    def to_wire(self) -> dict[str, object]:
+        payload: dict[str, object] = {"stretch": self.stretch, "anchor": self.anchor}
+        for field in ("push_at", "warn_at", "compact_at"):
+            value = getattr(self, field)
+            if value is not None:
+                payload[field] = value
+        return payload
+
 
 @dataclass(frozen=True)
 class ReturnResult:
     stretch_closed: int | None
     was_open: bool
+
+    def to_wire(self) -> dict[str, object]:
+        return {"stretch_closed": self.stretch_closed is not None, "was_open": self.was_open}
 
 
 @dataclass(frozen=True)
@@ -83,10 +128,16 @@ class FireResult:
     decision: DecisionKind
     reason: str
 
+    def to_wire(self) -> dict[str, object]:
+        return {"decision": self.decision, "reason": self.reason}
+
 
 @dataclass(frozen=True)
 class DoneResult:
     recorded: bool
+
+    def to_wire(self) -> dict[str, object]:
+        return {}
 
 
 def _default_now_ms() -> int:
@@ -175,13 +226,9 @@ def resolve_policy(
         compact_minutes=int(cast("int", values["compact_minutes"])),
         compact=bool(values["compact"]),
         min_compact_tokens=int(cast("int", values["min_compact_tokens"])),
-        late_fire_tolerance_seconds=int(
-            cast("int", values["late_fire_tolerance_seconds"])
-        ),
+        late_fire_tolerance_seconds=int(cast("int", values["late_fire_tolerance_seconds"])),
         ttl_seconds=(
-            int(cast("int", values["ttl_seconds"]))
-            if values["ttl_seconds"] is not None
-            else None
+            int(cast("int", values["ttl_seconds"])) if values["ttl_seconds"] is not None else None
         ),
     )
 
@@ -206,6 +253,19 @@ def _persisted_schedule(value: Schedule) -> IdleSchedule:
     )
 
 
+def wire_payload(result: object) -> object:
+    """Serialize a service result for the adapter-facing CLI contract."""
+
+    if result is None:
+        return {}
+    if isinstance(result, (ConfigResult, ArmResult, ReturnResult, FireResult, DoneResult)):
+        return result.to_wire()
+    if isinstance(result, tuple):
+        states = cast("tuple[IdleState, ...]", result)
+        return [state.model_dump(mode="json") for state in states]
+    raise TypeError(f"unsupported idle result: {type(result).__name__}")
+
+
 class IdleService:
     """Synchronous policy API shared by the CLI and launcher sidecar."""
 
@@ -220,6 +280,10 @@ class IdleService:
         spawn_reader: SpawnStoreReader | None = None,
         project_root: Path | None = None,
         interactive: bool = False,
+        autocompact_off: AutocompactOffReader | None = None,
+        detect_ttl: DetectIdleTtl | None = None,
+        native_event_parser: NativeEventParser | None = None,
+        native_event_applied: Callable[[str, Mapping[str, str]], None] | None = None,
     ) -> None:
         self.env = dict(os.environ if env is None else env)
         configured_role = self.env.get("MERIDIAN_SESSION_ROLE")
@@ -230,11 +294,16 @@ class IdleService:
         self.store = store if store is not None else IdleStore(now_ms=now_ms)
         self._notify_sender = notify_sender if notify_sender is not None else send
         self._spawn_reader = spawn_reader or spawn_store_reader(self.env)
+        self._autocompact_off = autocompact_off
+        self._detect_ttl = detect_ttl
+        self._native_event_parser = native_event_parser
+        self._native_event_applied = native_event_applied
 
     def config_for(self, harness: str) -> ConfigResult:
         policy = resolve_policy(harness, self.config, self.env)
         if self.role != "primary":
-            return ConfigResult(enabled=False, reason="not-primary", policy=policy)
+            reason = "interactive" if self.role is None else "role"
+            return ConfigResult(enabled=False, reason=reason, policy=policy)
         if not policy.enabled:
             return ConfigResult(enabled=False, reason="idle-disabled", policy=policy)
         return ConfigResult(enabled=True, reason=None, policy=policy)
@@ -248,17 +317,27 @@ class IdleService:
         implies_return: bool = False,
         turn_id: str | None = None,
         input_count: int | None = None,
+        cwd: Path | None = None,
+        provider: str | None = None,
     ) -> ArmResult:
         config_result = self.config_for(harness)
         if not config_result.enabled:
             return ArmResult(None, None, reason=config_result.reason)
         policy = config_result.policy
         resolved_ttl = ttl_seconds if ttl_seconds is not None else policy.ttl_seconds
+        if resolved_ttl is None and self._detect_ttl is not None:
+            resolved_ttl = self._detect_ttl(
+                session_id=session,
+                cwd=cwd,
+                provider=provider,
+                env=self.env,
+            )
         if resolved_ttl is not None and resolved_ttl <= 0:
             raise ValueError("ttl_seconds must be greater than zero")
         if input_count is not None and input_count < 0:
             raise ValueError("input_count must be zero or greater")
         now_ms = self._now_ms()
+
         def transition(current: IdleState | None) -> tuple[IdleState, ArmResult]:
             if (
                 implies_return
@@ -269,9 +348,7 @@ class IdleService:
                 next_state = current.model_copy(
                     update={
                         "last_input_count": (
-                            input_count
-                            if input_count is not None
-                            else current.last_input_count
+                            input_count if input_count is not None else current.last_input_count
                         )
                     }
                 )
@@ -290,9 +367,7 @@ class IdleService:
                         update={
                             "expect_compaction_turn": False,
                             "last_input_count": (
-                                input_count
-                                if input_count is not None
-                                else current.last_input_count
+                                input_count if input_count is not None else current.last_input_count
                             ),
                         }
                     )
@@ -302,9 +377,7 @@ class IdleService:
                         update={
                             "expect_compaction_turn": False,
                             "last_input_count": (
-                                input_count
-                                if input_count is not None
-                                else current.last_input_count
+                                input_count if input_count is not None else current.last_input_count
                             ),
                         }
                     )
@@ -316,9 +389,7 @@ class IdleService:
                     next_state = current.model_copy(
                         update={
                             "last_input_count": (
-                                input_count
-                                if input_count is not None
-                                else current.last_input_count
+                                input_count if input_count is not None else current.last_input_count
                             )
                         }
                     )
@@ -372,7 +443,7 @@ class IdleService:
         user_prompt: bool,
     ) -> ReturnResult:
         if not user_prompt:
-            return ReturnResult(stretch_closed=None, was_open=False)
+            raise ValueError("--user-prompt is required")
 
         def transition(current: IdleState | None) -> tuple[IdleState | None, ReturnResult]:
             if current is None:
@@ -409,6 +480,12 @@ class IdleService:
         anchor: int,
         facts: IdleFacts | None = None,
     ) -> FireResult:
+        if stage not in {"push", "warn", "compact"}:
+            raise ValueError(f"unknown idle stage: {stage}")
+        if stretch < 1:
+            raise ValueError("--stretch must be greater than zero")
+        if anchor < 1:
+            raise ValueError("--anchor must be greater than zero")
         policy = resolve_policy(harness, self.config, self.env)
         observed = facts or IdleFacts(
             draft="unknown",
@@ -416,6 +493,17 @@ class IdleService:
             agents_running=0,
             context_tokens=None,
             harness_autocompact_off=False,
+        )
+        if observed.draft not in {"yes", "no", "unknown"}:
+            raise ValueError("--draft must be one of: yes, no, unknown")
+        if observed.agents_running < 0:
+            raise ValueError("--agents-running must not be negative")
+        if observed.context_tokens is not None and observed.context_tokens < 0:
+            raise ValueError("--context-tokens must not be negative")
+        env_autocompact_off = (
+            stage == "compact"
+            and self._autocompact_off is not None
+            and bool(self._autocompact_off(self.env))
         )
         guard_facts = GuardFacts(
             stretch=stretch,
@@ -427,7 +515,7 @@ class IdleService:
             agents_running=observed.agents_running,
             child_spawns_active=self._children_active() if stage == "compact" else False,
             context_tokens=observed.context_tokens,
-            harness_autocompact_off=observed.harness_autocompact_off,
+            harness_autocompact_off=(observed.harness_autocompact_off or env_autocompact_off),
         )
         now_ms = self._now_ms()
 
@@ -534,6 +622,12 @@ class IdleService:
         result: CompactResultValue,
         detail: str | None = None,
     ) -> DoneResult:
+        if stage != "compact":
+            raise ValueError(f"unknown idle completion stage: {stage}")
+        if stretch < 1:
+            raise ValueError("--stretch must be greater than zero")
+        if result not in {"ok", "failed", "vetoed"}:
+            raise ValueError("--result must be one of: ok, failed, vetoed")
         now_ms = self._now_ms()
 
         def transition(current: IdleState | None) -> tuple[IdleState | None, DoneResult]:
@@ -600,6 +694,32 @@ class IdleService:
             user_prompt=True,
         )
 
+    def apply_native_event(
+        self,
+        payload: str,
+        *,
+        harness: str,
+    ) -> None:
+        """Parse and apply one harness callback through the policy service."""
+
+        if not payload.strip():
+            raise ValueError("idle event requires a payload argument or stdin")
+        if self._native_event_parser is None:
+            raise ValueError(f"harness {harness} does not accept idle events")
+
+        def read_session(session: str) -> PinnedIdleSession | None:
+            states = self.status(harness=harness, session=session)
+            if not states:
+                return None
+            return PinnedIdleSession(last_input_count=states[0].last_input_count)
+
+        event = self._native_event_parser(payload, session_reader=read_session)
+        if event is None:
+            return
+        self.event(event, harness=harness)
+        if self._native_event_applied is not None:
+            self._native_event_applied(payload, self.env)
+
     def status(
         self,
         *,
@@ -618,13 +738,16 @@ class IdleService:
 
 __all__ = [
     "ArmResult",
+    "AutocompactOffReader",
     "ConfigResult",
     "DoneResult",
     "FireResult",
     "IdlePolicyConfig",
     "IdleService",
+    "NativeEventParser",
     "NotifySender",
     "ReturnResult",
     "effective",
     "resolve_policy",
+    "wire_payload",
 ]

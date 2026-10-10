@@ -8,8 +8,8 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import Protocol
 
-from meridian.lib.harness.idle_types import IdleEvent, IdleSensor, IdleSensorContext
-from meridian.lib.idle.service import ArmResult, IdleService
+from meridian.lib.harness.idle_types import DetectIdleTtl, IdleEvent, IdleSensor, IdleSensorContext
+from meridian.lib.idle.service import ArmResult, AutocompactOffReader, IdleService
 from meridian.lib.observability import DebugTracer
 from meridian.lib.state.idle_store import CompactResultValue, IdleState, Stage
 
@@ -305,6 +305,8 @@ async def run(
     clock: SidecarClock | None = None,
     poll_seconds: float = 5.0,
     error_reporter: SensorErrorReporter | None = None,
+    autocompact_off: AutocompactOffReader | None = None,
+    detect_ttl: DetectIdleTtl | None = None,
 ) -> None:
     """Drive idle policy until launcher teardown; contain every sensor failure."""
 
@@ -312,6 +314,8 @@ async def run(
     resolved_service = service or IdleService(
         env=ctx.env,
         now_ms=resolved_clock.now_ms,
+        autocompact_off=autocompact_off,
+        detect_ttl=detect_ttl,
     )
     resolved_error_reporter = error_reporter or SensorErrorReporter(ctx)
     coordinator = _Coordinator(

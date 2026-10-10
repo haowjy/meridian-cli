@@ -311,7 +311,13 @@ class PrimaryAttachLauncher:
 
         self._event_hooks += (_on_raw_event,)
         self._idle_task = asyncio.create_task(
-            idle_sidecar.run(sensor, ctx, error_reporter=error_reporter)
+            idle_sidecar.run(
+                sensor,
+                ctx,
+                error_reporter=error_reporter,
+                autocompact_off=self._harness_bundle.autocompact_off,
+                detect_ttl=self._harness_bundle.detect_ttl,
+            )
         )
 
     async def _stop_idle_task(self) -> None:
