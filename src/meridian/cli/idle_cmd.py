@@ -7,13 +7,13 @@ import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Literal, Never, cast
+from typing import Annotated, Literal, Never, Protocol, cast
 
 from cyclopts import Parameter
 
 from meridian.cli.app_tree import idle_app
 from meridian.lib.harness.idle_types import IdleFacts
-from meridian.lib.idle.service import IdleService, wire_payload
+from meridian.lib.idle.service import IdleService
 from meridian.lib.state.idle_store import CompactResultValue, Stage
 
 
@@ -49,6 +49,10 @@ JsonOption = Annotated[bool, _option("--json", "Print open stretches as JSON.")]
 InteractiveOption = Annotated[bool, _option("--interactive", "Assert adapter TUI ownership.")]
 
 
+class _WireResult(Protocol):
+    def to_wire(self) -> dict[str, object]: ...
+
+
 def _emit_json(payload: object) -> None:
     print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
 
@@ -62,24 +66,31 @@ def _fail(exc: Exception) -> Never:
     raise SystemExit(1)
 
 
-def _json_call(
-    method: str,
-    *args: object,
+def _json(
     harness: str | None,
     interactive: bool,
+    operation: Callable[[IdleService, str], _WireResult | None],
+    *,
     env_fallback: bool = False,
-    **kwargs: object,
+    checks: tuple[tuple[bool, str], ...] = (),
 ) -> None:
     try:
         normalized = _harness(harness, env_fallback=env_fallback)
-        operation = cast(
-            "Callable[..., object]",
-            getattr(_service(normalized, interactive=interactive), method),
-        )
-        result = operation(*args, harness=normalized, **kwargs)
+        service = _service(normalized, interactive=interactive)
+        for valid, error in checks:
+            if not valid:
+                raise ValueError(error)
+        result = operation(service, normalized)
     except Exception as exc:
         _fail(exc)
-    _emit_json(wire_payload(result))
+    _emit_json({} if result is None else result.to_wire())
+
+
+def _event_payload(payload: str | None) -> str:
+    resolved_payload = payload if payload is not None else sys.stdin.read()
+    if not resolved_payload.strip():
+        raise ValueError("idle event requires a payload argument or stdin")
+    return resolved_payload
 
 
 def _harness(value: str | None, *, env_fallback: bool = False) -> str:
@@ -119,7 +130,12 @@ def _service(harness: str | None = None, *, interactive: bool = False) -> IdleSe
 def cmd_idle_config(*, interactive: InteractiveOption = False) -> None:
     """Resolve idle policy and apply the adapter role gate."""
 
-    _json_call("config_for", harness=None, interactive=interactive, env_fallback=True)
+    _json(
+        None,
+        interactive,
+        lambda service, harness: service.config_for(harness),
+        env_fallback=True,
+    )
 
 
 @idle_app.command(name="arm")
@@ -136,16 +152,18 @@ def cmd_idle_arm(
 ) -> None:
     """Open or re-anchor; same stretch and anchor means keep your timers."""
 
-    _json_call(
-        "arm",
-        harness=harness,
-        interactive=interactive,
-        session=session,
-        ttl_seconds=ttl,
-        provider=provider,
-        cwd=cwd,
-        implies_return=implies_return,
-        turn_id=turn_id,
+    _json(
+        harness,
+        interactive,
+        lambda service, normalized: service.arm(
+            harness=normalized,
+            session=session,
+            ttl_seconds=ttl,
+            provider=provider,
+            cwd=cwd,
+            implies_return=implies_return,
+            turn_id=turn_id,
+        ),
     )
 
 
@@ -159,12 +177,11 @@ def cmd_idle_return(
 ) -> None:
     """Close an idle stretch after a positively identified user prompt."""
 
-    _json_call(
-        "return_",
-        harness=harness,
-        interactive=interactive,
-        session=session,
-        user_prompt=user_prompt,
+    _json(
+        harness,
+        interactive,
+        lambda service, normalized: service.return_(harness=normalized, session=session),
+        checks=((user_prompt, "--user-prompt is required"),),
     )
 
 
@@ -185,22 +202,39 @@ def cmd_idle_fire(
 ) -> None:
     """Evaluate guards and claim one due stage."""
 
+    normalized_draft = draft.strip().lower()
     facts = IdleFacts(
-        draft=cast("Literal['yes', 'no', 'unknown']", draft.strip().lower()),
+        draft=cast("Literal['yes', 'no', 'unknown']", normalized_draft),
         busy=busy,
         agents_running=agents_running,
         context_tokens=context_tokens,
         harness_autocompact_off=harness_autocompact_off,
     )
-    _json_call(
-        "fire",
-        cast("Stage", stage),
-        harness=harness,
-        interactive=interactive,
-        session=session,
-        stretch=stretch,
-        anchor=anchor,
-        facts=facts,
+    _json(
+        harness,
+        interactive,
+        lambda service, normalized: service.fire(
+            cast("Stage", stage),
+            harness=normalized,
+            session=session,
+            stretch=stretch,
+            anchor=anchor,
+            facts=facts,
+        ),
+        checks=(
+            (stage in {"push", "warn", "compact"}, f"unknown idle stage: {stage}"),
+            (stretch >= 1, "--stretch must be greater than zero"),
+            (anchor >= 1, "--anchor must be greater than zero"),
+            (
+                normalized_draft in {"yes", "no", "unknown"},
+                "--draft must be one of: yes, no, unknown",
+            ),
+            (agents_running >= 0, "--agents-running must not be negative"),
+            (
+                context_tokens is None or context_tokens >= 0,
+                "--context-tokens must not be negative",
+            ),
+        ),
     )
 
 
@@ -217,15 +251,25 @@ def cmd_idle_done(
 ) -> None:
     """Record the result of a compaction attempt."""
 
-    _json_call(
-        "done",
-        cast("Literal['compact']", stage),
-        harness=harness,
-        interactive=interactive,
-        session=session,
-        stretch=stretch,
-        result=cast("CompactResultValue", result),
-        detail=reason,
+    _json(
+        harness,
+        interactive,
+        lambda service, normalized: service.done(
+            cast("Literal['compact']", stage),
+            harness=normalized,
+            session=session,
+            stretch=stretch,
+            result=cast("CompactResultValue", result),
+            detail=reason,
+        ),
+        checks=(
+            (stage == "compact", f"unknown idle completion stage: {stage}"),
+            (stretch >= 1, "--stretch must be greater than zero"),
+            (
+                result in {"ok", "failed", "vetoed"},
+                "--result must be one of: ok, failed, vetoed",
+            ),
+        ),
     )
 
 
@@ -238,11 +282,13 @@ def cmd_idle_event(
 ) -> None:
     """Parse and apply one harness-native idle event."""
 
-    _json_call(
-        "apply_native_event",
-        payload if payload is not None else sys.stdin.read(),
-        harness=harness,
-        interactive=interactive,
+    _json(
+        harness,
+        interactive,
+        lambda service, normalized: service.apply_native_event(
+            _event_payload(payload),
+            harness=normalized,
+        ),
     )
 
 
@@ -274,9 +320,10 @@ def cmd_idle_status(
     """List open stretches with their stored schedules."""
 
     try:
-        rows = cast(
-            "list[dict[str, object]]", wire_payload(_service(interactive=interactive).status())
-        )
+        rows = [
+            cast("dict[str, object]", state.model_dump(mode="json"))
+            for state in _service(interactive=interactive).status()
+        ]
         from meridian.cli.main import get_global_options
 
         if json_mode or get_global_options().output.format == "json":

@@ -26,7 +26,7 @@ from meridian.lib.idle.children import (
     spawn_store_reader,
 )
 from meridian.lib.idle.guards import DecisionKind, GuardFacts, decide
-from meridian.lib.idle.timeline import Schedule, schedule
+from meridian.lib.idle.timeline import Schedule, schedule, select_push_delay
 from meridian.lib.notify import Notice, SendReport, send
 from meridian.lib.notify.label import build_session_label
 from meridian.lib.state.idle_store import (
@@ -259,19 +259,6 @@ def _persisted_schedule(value: Schedule) -> IdleSchedule:
     )
 
 
-def wire_payload(result: object) -> object:
-    """Serialize a service result for the adapter-facing CLI contract."""
-
-    if result is None:
-        return {}
-    if isinstance(result, (ConfigResult, ArmResult, ReturnResult, FireResult, DoneResult)):
-        return result.to_wire()
-    if isinstance(result, tuple):
-        states = cast("tuple[IdleState, ...]", result)
-        return [state.model_dump(mode="json") for state in states]
-    raise TypeError(f"unsupported idle result: {type(result).__name__}")
-
-
 class IdleService:
     """Synchronous policy API shared by the CLI and launcher sidecar."""
 
@@ -405,12 +392,10 @@ class IdleService:
                     )
 
             opens_new = current is None or not current.stretch_open or implies_return
-            never_armed = current is None or current.idle_since_ms is None
-            if never_armed:
+            if current is None or current.idle_since_ms is None:
                 stretch = 1
                 anchor = 1
             else:
-                assert current is not None
                 stretch = current.stretch + int(opens_new)
                 anchor = 1 if opens_new else current.anchor + 1
             done = {} if opens_new or current is None else dict(current.done)
@@ -420,23 +405,16 @@ class IdleService:
                 else (current.returned_at_ms if current is not None else None)
             )
             previous_anchor_ms = current.idle_since_ms if current is not None else None
-            fresh_return = returned_at_ms is not None and (
-                previous_anchor_ms is None or returned_at_ms > previous_anchor_ms
-            )
-            if policy.long_turn_seconds == 0:
-                long_turn = True
-            elif returned_at_ms is None or not fresh_return:
-                long_turn = False
-            else:
-                long_turn = now_ms - returned_at_ms >= policy.long_turn_seconds * 1000
-            push_delay_seconds = (
-                policy.push_seconds if long_turn else policy.quick_turn_push_seconds
-            )
             placed = schedule(
                 now_ms,
                 resolved_ttl,
                 policy,
-                push_delay_seconds=push_delay_seconds,
+                push_delay_seconds=select_push_delay(
+                    now_ms,
+                    returned_at_ms,
+                    previous_anchor_ms,
+                    policy,
+                ),
             )
             next_state = IdleState(
                 harness=harness,
@@ -472,10 +450,9 @@ class IdleService:
         *,
         harness: str,
         session: str,
-        user_prompt: bool,
     ) -> ReturnResult:
-        if not user_prompt:
-            raise ValueError("--user-prompt is required")
+        if not self.config_for(harness).enabled:
+            return ReturnResult(stretch_closed=None, was_open=False)
 
         now_ms = self._now_ms()
 
@@ -532,9 +509,9 @@ class IdleService:
         if stage not in {"push", "warn", "compact"}:
             raise ValueError(f"unknown idle stage: {stage}")
         if stretch < 1:
-            raise ValueError("--stretch must be greater than zero")
+            raise ValueError("stretch must be greater than zero")
         if anchor < 1:
-            raise ValueError("--anchor must be greater than zero")
+            raise ValueError("anchor must be greater than zero")
         policy = resolve_policy(harness, self.config, self.env)
         observed = facts or IdleFacts(
             draft="unknown",
@@ -544,11 +521,11 @@ class IdleService:
             harness_autocompact_off=False,
         )
         if observed.draft not in {"yes", "no", "unknown"}:
-            raise ValueError("--draft must be one of: yes, no, unknown")
+            raise ValueError("draft must be one of: yes, no, unknown")
         if observed.agents_running < 0:
-            raise ValueError("--agents-running must not be negative")
+            raise ValueError("agents_running must not be negative")
         if observed.context_tokens is not None and observed.context_tokens < 0:
-            raise ValueError("--context-tokens must not be negative")
+            raise ValueError("context_tokens must not be negative")
         env_autocompact_off = (
             stage == "compact"
             and self._autocompact_off is not None
@@ -674,9 +651,9 @@ class IdleService:
         if stage != "compact":
             raise ValueError(f"unknown idle completion stage: {stage}")
         if stretch < 1:
-            raise ValueError("--stretch must be greater than zero")
+            raise ValueError("stretch must be greater than zero")
         if result not in {"ok", "failed", "vetoed"}:
-            raise ValueError("--result must be one of: ok, failed, vetoed")
+            raise ValueError("result must be one of: ok, failed, vetoed")
         now_ms = self._now_ms()
 
         def transition(current: IdleState | None) -> tuple[IdleState | None, DoneResult]:
@@ -740,7 +717,6 @@ class IdleService:
         return self.return_(
             harness=harness,
             session=event.harness_session_id,
-            user_prompt=True,
         )
 
     def apply_native_event(
@@ -752,7 +728,7 @@ class IdleService:
         """Parse and apply one harness callback through the policy service."""
 
         if not payload.strip():
-            raise ValueError("idle event requires a payload argument or stdin")
+            raise ValueError("native event payload must not be empty")
         if self._native_event_parser is None:
             raise ValueError(f"harness {harness} does not accept idle events")
 
@@ -798,5 +774,4 @@ __all__ = [
     "ReturnResult",
     "effective",
     "resolve_policy",
-    "wire_payload",
 ]

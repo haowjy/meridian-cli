@@ -2,11 +2,14 @@ from dataclasses import dataclass
 
 import pytest
 
-from meridian.lib.idle.timeline import Schedule, schedule
+from meridian.lib.idle.timeline import Schedule, schedule, select_push_delay
 
 
 @dataclass(frozen=True)
 class Config:
+    push_seconds: int = 60
+    long_turn_seconds: int = 60
+    quick_turn_push_seconds: int = 600
     warn_minutes: int = 15
     compact_minutes: int = 5
 
@@ -43,3 +46,34 @@ def test_schedule_drops_push_that_would_not_precede_a_valid_warning() -> None:
         push_at=None,
         warn_at=183_000,
     )
+
+
+@pytest.mark.parametrize(
+    ("now_ms", "returned_at_ms", "previous_idle_since_ms", "expected"),
+    [
+        (120_000, 60_000, None, 60),
+        (119_999, 60_000, None, 600),
+        (120_000, None, None, 600),
+        (120_000, 60_000, 60_000, 600),
+    ],
+    ids=["long-turn", "quick-turn", "no-return", "stale-return"],
+)
+def test_select_push_delay_uses_only_a_fresh_return_for_turn_length(
+    now_ms: int,
+    returned_at_ms: int | None,
+    previous_idle_since_ms: int | None,
+    expected: int,
+) -> None:
+    assert (
+        select_push_delay(
+            now_ms,
+            returned_at_ms,
+            previous_idle_since_ms,
+            Config(),
+        )
+        == expected
+    )
+
+
+def test_select_push_delay_zero_threshold_always_uses_long_turn_delay() -> None:
+    assert select_push_delay(0, None, None, Config(long_turn_seconds=0)) == 60

@@ -149,6 +149,8 @@ def test_config_role_and_enabled_gates_do_not_write() -> None:
 
     assert disabled.arm(harness="example", session="s1").reason == "idle-disabled"
     assert spawn.arm(harness="example", session="s1").reason == "role"
+    assert disabled.return_(harness="example", session="s1").stretch_closed is None
+    assert spawn.return_(harness="example", session="s1").stretch_closed is None
     assert disabled_store.states == {}
     assert spawn_store.states == {}
 
@@ -181,7 +183,7 @@ def test_arm_resolves_explicit_configured_then_detected_ttl() -> None:
 def test_return_then_long_turn_uses_the_short_push_delay() -> None:
     idle, clock, store, _ = service()
     clock.value = 1_000
-    idle.return_(harness="example", session="s1", user_prompt=True)
+    idle.return_(harness="example", session="s1")
     clock.value += 120_000
 
     armed = idle.arm(harness="example", session="s1")
@@ -303,7 +305,7 @@ def test_closed_compacted_stretch_opens_a_new_stretch_on_arm() -> None:
     )
     idle.done("compact", harness="example", session="s1", stretch=1, result="ok")
 
-    closed = idle.return_(harness="example", session="s1", user_prompt=True)
+    closed = idle.return_(harness="example", session="s1")
     opened = idle.arm(harness="example", session="s1", ttl_seconds=3600)
 
     assert closed.stretch_closed == 1
@@ -411,7 +413,7 @@ def test_return_always_closes_during_compaction_and_late_done_records_same_stret
         facts=SAFE_FACTS,
     )
 
-    assert idle.return_(harness="example", session="s1", user_prompt=True).stretch_closed == 1
+    assert idle.return_(harness="example", session="s1").stretch_closed == 1
     assert idle.done(
         "compact",
         harness="example",
@@ -456,7 +458,7 @@ def test_late_done_for_previous_stretch_never_touches_new_stretch() -> None:
         anchor=1,
         facts=SAFE_FACTS,
     )
-    idle.return_(harness="example", session="s1", user_prompt=True)
+    idle.return_(harness="example", session="s1")
     clock.value += 1
     idle.arm(harness="example", session="s1", ttl_seconds=3600)
 

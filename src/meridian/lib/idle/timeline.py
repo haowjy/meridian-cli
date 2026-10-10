@@ -16,6 +16,19 @@ class TimelineConfig(Protocol):
     def compact_minutes(self) -> int: ...
 
 
+class PushDelayConfig(Protocol):
+    """Config fields needed to choose the push delay for a turn."""
+
+    @property
+    def push_seconds(self) -> int: ...
+
+    @property
+    def long_turn_seconds(self) -> int: ...
+
+    @property
+    def quick_turn_push_seconds(self) -> int: ...
+
+
 @dataclass(frozen=True)
 class Schedule:
     """Absolute epoch-millisecond deadlines for one idle anchor."""
@@ -23,6 +36,25 @@ class Schedule:
     push_at: int | None
     warn_at: int | None = None
     compact_at: int | None = None
+
+
+def select_push_delay(
+    now_ms: int,
+    returned_at_ms: int | None,
+    previous_idle_since_ms: int | None,
+    cfg: PushDelayConfig,
+) -> int:
+    """Choose the configured push delay from the preceding turn length."""
+
+    if cfg.long_turn_seconds == 0:
+        return cfg.push_seconds
+    if returned_at_ms is None:
+        return cfg.quick_turn_push_seconds
+    if previous_idle_since_ms is not None and returned_at_ms <= previous_idle_since_ms:
+        return cfg.quick_turn_push_seconds
+    if now_ms - returned_at_ms >= cfg.long_turn_seconds * 1000:
+        return cfg.push_seconds
+    return cfg.quick_turn_push_seconds
 
 
 def schedule(
@@ -51,4 +83,4 @@ def schedule(
     return Schedule(push_at=push_at, warn_at=warn_at, compact_at=compact_at)
 
 
-__all__ = ["Schedule", "TimelineConfig", "schedule"]
+__all__ = ["PushDelayConfig", "Schedule", "TimelineConfig", "schedule", "select_push_delay"]

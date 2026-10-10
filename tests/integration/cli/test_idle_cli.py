@@ -10,6 +10,9 @@ from pathlib import Path
 
 import pytest
 
+_IDENTITY = ("--harness", "claude", "--session", "s1")
+_FIRE = ("fire", "push", *_IDENTITY)
+
 
 def _idle_env(tmp_path: Path, *, role: str | None = "primary") -> dict[str, str]:
     env = os.environ.copy()
@@ -195,6 +198,18 @@ def test_idle_cli_error_envelopes_and_role_reasons(tmp_path: Path) -> None:
     config = _json_success(tmp_path, env, "idle", "config", "--interactive")
     assert isinstance(config, dict)
     assert (config["enabled"], config["reason"]) == (False, "role")
+    assert _json_success(
+        tmp_path,
+        env,
+        "idle",
+        "return",
+        "--harness",
+        "claude",
+        "--session",
+        "spawn-session",
+        "--user-prompt",
+    ) == {"stretch_closed": False, "was_open": False}
+    assert not (Path(env["MERIDIAN_HOME"]) / "idle").exists()
 
     env["MERIDIAN_SESSION_ROLE"] = "primary"
     invalid = _run(
@@ -222,6 +237,106 @@ def test_idle_cli_error_envelopes_and_role_reasons(tmp_path: Path) -> None:
     missing_value = _run(tmp_path, env, "idle", "arm", "--harness")
     assert (missing_value.returncode, missing_value.stderr) == (1, "")
     assert json.loads(missing_value.stdout) == {"error": "--harness requires a value"}
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (("return", *_IDENTITY), "--user-prompt is required"),
+        ((*_FIRE, "--stretch", "0", "--anchor", "1"), "--stretch must be greater than zero"),
+        ((*_FIRE, "--stretch", "1", "--anchor", "0"), "--anchor must be greater than zero"),
+        (
+            (*_FIRE, "--stretch", "1", "--anchor", "1", "--draft", "maybe"),
+            "--draft must be one of: yes, no, unknown",
+        ),
+        (
+            (*_FIRE, "--stretch", "1", "--anchor", "1", "--agents-running=-1"),
+            "--agents-running must not be negative",
+        ),
+        (
+            (*_FIRE, "--stretch", "1", "--anchor", "1", "--context-tokens=-1"),
+            "--context-tokens must not be negative",
+        ),
+        (
+            ("done", "compact", *_IDENTITY, "--stretch", "1", "--result", "maybe"),
+            "--result must be one of: ok, failed, vetoed",
+        ),
+        (
+            ("event", "", "--harness", "codex"),
+            "idle event requires a payload argument or stdin",
+        ),
+    ],
+)
+def test_idle_cli_keeps_flag_errors_at_the_cli_boundary(
+    tmp_path: Path,
+    args: tuple[str, ...],
+    message: str,
+) -> None:
+    result = _run(tmp_path, _idle_env(tmp_path), "idle", *args)
+
+    assert (result.returncode, result.stderr) == (1, "")
+    assert json.loads(result.stdout) == {"error": message}
+
+
+@pytest.mark.integration
+def test_idle_event_resolves_harness_before_reading_stdin(tmp_path: Path) -> None:
+    process = subprocess.Popen(
+        [sys.executable, "-m", "meridian", "idle", "event"],
+        cwd=tmp_path,
+        env=_idle_env(tmp_path),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert process.stdin is not None
+    try:
+        try:
+            returncode = process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            pytest.fail("idle event read stdin before rejecting the missing harness")
+    finally:
+        process.stdin.close()
+
+    assert process.stdout is not None
+    assert process.stderr is not None
+    assert (returncode, process.stderr.read()) == (1, "")
+    assert json.loads(process.stdout.read()) == {"error": "--harness is required"}
+
+
+@pytest.mark.integration
+def test_idle_event_stdin_read_error_uses_json_envelope(tmp_path: Path) -> None:
+    read_fd, write_fd = os.pipe()
+    try:
+        os.write(write_fd, b"\xff")
+        os.close(write_fd)
+        env = _idle_env(tmp_path)
+        env["PYTHONIOENCODING"] = "ascii:strict"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "meridian",
+                "idle",
+                "event",
+                "--harness",
+                "codex",
+            ],
+            cwd=tmp_path,
+            env=env,
+            stdin=read_fd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    finally:
+        os.close(read_fd)
+
+    assert (result.returncode, result.stderr) == (1, "")
+    assert set(json.loads(result.stdout)) == {"error"}
 
 
 @pytest.mark.integration
