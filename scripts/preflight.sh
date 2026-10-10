@@ -16,7 +16,7 @@ run_step() {
 case "$MODE" in
   fast)
     cd "$ROOT_DIR"
-    # The Python runner defaults to one monotonic 60-second budget across all steps.
+    # The Python runner defaults to a 60-second warning target across all steps.
     run_step uv run --extra dev python -m meridian.dev.preflight "$@"
     ;;
   extended|full)

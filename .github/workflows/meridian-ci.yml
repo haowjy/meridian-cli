@@ -53,6 +53,7 @@ jobs:
 
   fast-gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -73,7 +74,7 @@ jobs:
         run: uv sync --extra dev
 
       - name: Run fast gate
-        run: scripts/preflight.sh fast --budget 120
+        run: scripts/preflight.sh fast
 
   runtime-extensions:
     runs-on: ubuntu-latest

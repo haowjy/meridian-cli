@@ -1,4 +1,4 @@
-"""Run the prepared-environment fast developer gate with one wall-clock budget."""
+"""Run the prepared-environment fast developer gate with a wall-clock target."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from contextlib import suppress
 from pathlib import Path
 
 DEFAULT_BUDGET_SECONDS = 60.0
-EXIT_BUDGET_EXHAUSTED = 124
 
 
 def _stop_command(process: subprocess.Popen[bytes]) -> int:
@@ -24,30 +23,33 @@ def _stop_command(process: subprocess.Popen[bytes]) -> int:
     return process.wait()
 
 
+def _warn_if_over_budget(elapsed: float, budget_seconds: float) -> None:
+    if elapsed <= budget_seconds:
+        return
+    message = f"fast gate took {elapsed:.1f}s (target {budget_seconds:g}s)"
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        print(f"::warning title=Fast gate over budget::{message}", file=sys.stderr)
+    else:
+        print(f"preflight: warning: {message}", file=sys.stderr)
+
+
 def run_commands(
     commands: Sequence[Sequence[str]],
     *,
     cwd: Path,
     budget_seconds: float = DEFAULT_BUDGET_SECONDS,
 ) -> int:
-    """Run independent checks concurrently; stop every owned group on exit."""
+    """Run checks concurrently; fail fast and warn when they miss the target."""
     if not math.isfinite(budget_seconds) or budget_seconds <= 0:
         raise ValueError("budget_seconds must be finite and positive")
     started = time.monotonic()
-    deadline = started + budget_seconds
     active: set[subprocess.Popen[bytes]] = set()
     try:
         for command in commands:
-            if time.monotonic() >= deadline:
-                print(f"preflight: fast budget exhausted ({budget_seconds:g}s)", file=sys.stderr)
-                return EXIT_BUDGET_EXHAUSTED
             print(f"preflight: {' '.join(command)}", file=sys.stderr)
             active.add(subprocess.Popen(list(command), cwd=cwd, start_new_session=True))
 
         while active:
-            if time.monotonic() >= deadline:
-                print(f"preflight: fast budget exhausted ({budget_seconds:g}s)", file=sys.stderr)
-                return EXIT_BUDGET_EXHAUSTED
             for process in tuple(active):
                 # Peek without reaping: the leader reserves the numeric group
                 # id until cleanup, even if all other members already exited.
@@ -62,7 +64,7 @@ def run_commands(
                 if status != 0:
                     return status
             if active:
-                time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+                time.sleep(0.05)
         print(f"preflight: fast gate passed in {time.monotonic() - started:.2f}s", file=sys.stderr)
         return 0
     except KeyboardInterrupt:
@@ -72,9 +74,9 @@ def run_commands(
         return 127
     finally:
         # Also runs after a partial launch failure, failed check or interruption.
-        # No per-command grace can extend the shared deadline.
         for process in active:
             _stop_command(process)
+        _warn_if_over_budget(time.monotonic() - started, budget_seconds)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

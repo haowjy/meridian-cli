@@ -38,8 +38,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   user callback.
 
 ### Changed
-- Keep the fast gate's 60-second developer budget while giving the same gate a
-  120-second budget on slower hosted CI runners.
+- Make the fast gate's 60-second budget a warning target that no longer kills or
+  fails a run that goes over.
 - Default `PI_CACHE_RETENTION=long` for interactive Pi primaries when the variable
   is absent; spawns and explicit values are unchanged. `openai` is scheduled against
   30 minutes, because OpenAI's `24h` retention typically lasts about that long.

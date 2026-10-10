@@ -5,8 +5,8 @@ Developer-only utilities. Not user-facing. Not shipped as part of the CLI surfac
 ## What's Here
 
 - `pytests.py` — `pytest-llm` entry point: token-efficient pytest wrapper with `--tb=line`, `--maxfail=1`, `--lf` (last-failed)
-- `preflight.py` — prepared-environment fast gate runner with one monotonic
-  wall-clock budget and process-group cleanup on timeout/interruption.
+- `preflight.py` — prepared-environment concurrent fast gate runner with a
+  60-second warning target and process-group cleanup on failure/interruption.
 
 ## Usage
 
