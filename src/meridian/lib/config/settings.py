@@ -386,7 +386,7 @@ def _normalize_harness_table(
                         )
                     harness_values["wait_yield_seconds"] = float(harness_value)
                     continue
-                if key == "claude" and harness_key == "allow_builtin_agents":
+                if harness_key == "allow_builtin_agents":
                     if not isinstance(harness_value, bool):
                         raise ValueError(
                             f"Invalid value for '{source}.{key}.allow_builtin_agents': "
@@ -1439,6 +1439,9 @@ class HarnessProfileConfig(BaseModel):
 
     model: str = ""
     wait_yield_seconds: float | None = None
+    # Harness-native subagents (Claude built-in Agent types, Codex multi-agent)
+    # spawn work Meridian cannot see; Meridian is the orchestrator by default.
+    allow_builtin_agents: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -1535,7 +1538,6 @@ else:
 
 
 class ClaudeHarnessProfileConfig(HarnessProfileConfig):
-    allow_builtin_agents: bool = False
     idle: ClaudeHarnessIdleConfig = Field(default_factory=ClaudeHarnessIdleConfig)
     model: Annotated[
         str,
@@ -2086,21 +2088,24 @@ def resolve_pi_harness_profile_for_launch(
     )
 
 
-def resolve_claude_allow_builtin_agents_for_launch(
+def resolve_allow_builtin_agents_for_launch(
     *,
+    harness_id: str,
     config_snapshot: dict[str, object] | None,
     project_root: Path,
 ) -> bool:
-    """Resolve ``[harness.claude].allow_builtin_agents`` from a launch config snapshot."""
+    """Resolve ``[harness.<id>].allow_builtin_agents`` from a launch config snapshot."""
+
+    def _from(config: MeridianConfig) -> bool:
+        profile = getattr(config.harness, harness_id, None)
+        return isinstance(profile, HarnessProfileConfig) and profile.allow_builtin_agents
 
     if config_snapshot:
         try:
-            return bool(
-                MeridianConfig.model_validate(config_snapshot).harness.claude.allow_builtin_agents
-            )
+            return _from(MeridianConfig.model_validate(config_snapshot))
         except Exception:
             pass
-    return bool(load_config(project_root).harness.claude.allow_builtin_agents)
+    return _from(load_config(project_root))
 
 
 def resolve_opencode_version_for_launch(

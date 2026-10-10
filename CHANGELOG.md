@@ -53,6 +53,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pi spawn-watch checks idle before reading result eligibility, so a result waited on
   during the turn is no longer re-announced as a duplicate follow-up.
 
+## [0.9.2] - 2026-10-10
+
+### Changed
+- Codex spawns/primaries launch without Codex's own subagents (`-c features.multi_agent_v2=false -c agents.max_depth=0`). Lone spawn told it was `/root` of a team messaged itself, waited 25 min per call. Opt back in: `[harness.codex] allow_builtin_agents = true`. Setting now per harness, not Claude-only.
+
 ## [0.9.1] - 2026-10-09
 
 ### Fixed

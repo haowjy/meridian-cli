@@ -300,7 +300,7 @@ class SpawnParams(BaseModel):
     context_from_payload: tuple[str, ...] = ()
     reference_items: tuple[Any, ...] = ()
     pi_harness_profile: PiHarnessProfileConfig | None = None
-    claude_allow_builtin_agents: bool = False
+    allow_builtin_agents: bool = False
 
 
 class McpConfig(BaseModel):
