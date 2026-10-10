@@ -178,14 +178,21 @@ def parse_idle_event(
     pinned = session_reader(thread_id)
     if pinned is None:
         return None
-    input_count = len(cast("list[object]", input_messages))
+    inputs = cast("list[object]", input_messages)
+    input_count = len(inputs)
     previous_count = pinned.last_input_count or 0
+    last_input = inputs[-1] if inputs else None
+    last_assistant = raw.get("last-assistant-message")
     return IdleEvent(
         kind="turn_end",
         harness_session_id=thread_id,
         turn_id=turn_id,
         implies_return=input_count > previous_count,
         input_count=input_count,
+        last_user_text=last_input if isinstance(last_input, str) else None,
+        last_assistant_text=(
+            last_assistant if isinstance(last_assistant, str) else None
+        ),
     )
 
 

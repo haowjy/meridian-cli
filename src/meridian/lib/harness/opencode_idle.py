@@ -6,6 +6,7 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from dataclasses import replace
 from typing import Literal, cast
 from urllib.parse import quote
 
@@ -110,6 +111,45 @@ def _draft_from_pane(capture: str) -> Literal["yes", "no"] | None:
             continue
         return "yes" if any(row.strip() for row in prompt_rows) else "no"
     return None
+
+
+def _text_content(value: object) -> str | None:
+    if isinstance(value, str):
+        return value if value.strip() else None
+    if not isinstance(value, list):
+        return None
+    text: list[str] = []
+    for raw_part in cast("list[object]", value):
+        part = _mapping(raw_part)
+        if part is None or part.get("type") != "text":
+            continue
+        part_text = part.get("text")
+        if isinstance(part_text, str) and part_text.strip():
+            text.append(part_text)
+    return " ".join(text) or None
+
+
+def message_excerpts(payload: object) -> tuple[str | None, str | None]:
+    """Extract the last user and assistant text parts from a messages response."""
+
+    if not isinstance(payload, list):
+        return None, None
+    user: str | None = None
+    assistant: str | None = None
+    for raw_message in cast("list[object]", payload):
+        message = _mapping(raw_message)
+        if message is None:
+            continue
+        info = _mapping(message.get("info"))
+        role = info.get("role") if info is not None else message.get("role")
+        text = _text_content(message.get("parts")) or _text_content(message.get("content"))
+        if text is None:
+            continue
+        if role == "user":
+            user = text
+        elif role == "assistant":
+            assistant = text
+    return user, assistant
 
 
 async def _capture_tmux_pane(pane: str) -> str | None:
@@ -267,7 +307,28 @@ class OpenCodeIdleSensor:
 
     async def events(self) -> AsyncIterator[IdleEvent]:
         while True:
-            yield await self._events.get()
+            event = await self._events.get()
+            if event.kind == "turn_end":
+                user, assistant = await self._fetch_message_excerpts()
+                event = replace(
+                    event,
+                    last_user_text=user,
+                    last_assistant_text=assistant,
+                )
+            yield event
+
+    async def _fetch_message_excerpts(self) -> tuple[str | None, str | None]:
+        session_id = quote(self._ctx.harness_session_id, safe="")
+        try:
+            status, body = await asyncio.wait_for(
+                self._request("GET", f"/session/{session_id}/message", None),
+                timeout=_GET_TIMEOUT_SECONDS,
+            )
+            if status != 200:
+                return None, None
+            return message_excerpts(json.loads(body))
+        except (TimeoutError, OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError):
+            return None, None
 
     async def facts(self) -> IdleFacts:
         draft: Literal["yes", "no", "unknown"] = "unknown"
@@ -343,4 +404,9 @@ def autocompact_off(env: Mapping[str, str]) -> bool:
     return bool(env.get("OPENCODE_DISABLE_AUTOCOMPACT"))
 
 
-__all__ = ["OpenCodeIdleSensor", "autocompact_off", "primary_idle_sensor"]
+__all__ = [
+    "OpenCodeIdleSensor",
+    "autocompact_off",
+    "message_excerpts",
+    "primary_idle_sensor",
+]

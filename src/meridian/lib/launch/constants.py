@@ -37,6 +37,8 @@ BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
         # Child work scope must come from runtime overrides only.
         "MERIDIAN_ACTIVE_WORK_ID",
         "MERIDIAN_ACTIVE_WORK_DIR",
+        # Launch identity is resolved per child and must never leak from its parent.
+        "MERIDIAN_SESSION_AGENT",
         # Runtime root is resolved at launch/bind; do not inherit parent override.
         "_MERIDIAN_RUNTIME_DIR",
     }

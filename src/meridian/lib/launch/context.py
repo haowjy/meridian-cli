@@ -1548,8 +1548,10 @@ def prepare_launch_surface(
     else:
         resolved_agent_name = policies.routing.agent or request.agent
     session_agent_path = resolve_profile_path(profile)
-    if resolved_agent_name is not None:
+    if profile is not None and resolved_agent_name is not None:
         agent_metadata["session_agent"] = resolved_agent_name
+    else:
+        agent_metadata.pop("session_agent", None)
     if profile is not None and profile.description.strip():
         agent_metadata["session_agent_description"] = profile.description.strip()
     if profile is not None and profile.body.strip():
@@ -2078,6 +2080,11 @@ def bind_launch_context(
     # Not a policy override — from_env() does not read it back.
     child_context_env["_MERIDIAN_HARNESS"] = harness.id.value
     child_context_env["MERIDIAN_SESSION_ROLE"] = "primary" if is_primary_launch else "spawn"
+    resolved_agent = resolved_request.agent_metadata.get("session_agent", "").strip()
+    if resolved_agent:
+        child_context_env["MERIDIAN_SESSION_AGENT"] = resolved_agent
+    else:
+        child_context_env.pop("MERIDIAN_SESSION_AGENT", None)
     child_context_env["MERIDIAN_PROJECT_DIR"] = resolved_control_root.as_posix()
     # Override inherited task-dir with the child's resolved task-dir.
     # child_env_overrides() carries the parent's MERIDIAN_TASK_DIR;

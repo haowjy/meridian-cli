@@ -188,7 +188,7 @@ def test_load_config_reads_notify_table_with_env_precedence(
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / "meridian.toml").write_text(
-        '[notify]\nntfy_topic = "file-topic"\nsmtp_port = 2525\n',
+        '[notify]\nntfy_topic = "file-topic"\nsmtp_port = 2525\ninclude_messages = true\n',
         encoding="utf-8",
     )
 
@@ -198,9 +198,11 @@ def test_load_config_reads_notify_table_with_env_precedence(
 
     monkeypatch.setenv("MERIDIAN_NOTIFY_NTFY_TOPIC", "env-topic")
     monkeypatch.setenv("MERIDIAN_NOTIFY_SMTP_PORT", "465")
+    monkeypatch.setenv("MERIDIAN_NOTIFY_INCLUDE_MESSAGES", "false")
 
     env_config = load_config(project_root, resolve_models=False)
     assert env_config.notify.ntfy_topic == "env-topic"
+    assert env_config.notify.include_messages is False
     assert env_config.notify.smtp_port == 465
 
 

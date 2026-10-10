@@ -204,7 +204,7 @@ async def test_sidecar_drives_idle_push_warn_compact_and_done(tmp_path: Path) ->
         description="compaction completion",
     )
     await wait_until(
-        lambda: bool(sender.notices and sender.notices[-1].body.startswith("compacted")),
+        lambda: bool(sender.notices and sender.notices[-1].body.startswith("Compacted")),
         description="compaction report",
     )
     alive[0] = False
@@ -212,9 +212,9 @@ async def test_sidecar_drives_idle_push_warn_compact_and_done(tmp_path: Path) ->
 
     state = store.read("codex", "session-1")
     assert [notice.body for notice in sender.notices] == [
-        "waiting on you",
-        "cache cold in 15m",
-        "compacted (100k → summary)",
+        "Your turn",
+        "Cache goes cold in 15 min",
+        "Compacted",
     ]
     assert sensor.compact_calls == 1
     assert state is not None
@@ -292,7 +292,7 @@ async def test_sidecar_user_return_does_not_cancel_inflight_compaction(tmp_path:
         description="compaction completion",
     )
     await wait_until(
-        lambda: bool(sender.notices and sender.notices[-1].body.startswith("compacted")),
+        lambda: bool(sender.notices and sender.notices[-1].body.startswith("Compacted")),
         description="compaction report",
     )
     alive[0] = False
@@ -302,7 +302,7 @@ async def test_sidecar_user_return_does_not_cancel_inflight_compaction(tmp_path:
     assert state is not None
     assert state.stretch_open is False
     assert state.done["compact"] == "ok"
-    assert sender.notices[-1].body == "compacted (100k → summary)"
+    assert sender.notices[-1].body == "Compacted"
 
 
 @pytest.mark.asyncio
@@ -330,7 +330,7 @@ async def test_sidecar_teardown_cancels_compaction_and_records_failure(tmp_path:
     assert sensor.compact_cancelled is True
     assert state is not None
     assert state.done["compact"] == "failed"
-    assert sender.notices[-1].body == "compaction failed (teardown)"
+    assert sender.notices[-1].body == "Compaction failed: teardown"
 
 
 @pytest.mark.asyncio
@@ -374,9 +374,9 @@ async def test_external_sensor_recovers_an_externally_written_arm(tmp_path: Path
 
     assert sensor.compact_calls == 1
     assert [notice.body for notice in sender.notices] == [
-        "waiting on you",
-        "cache cold in 15m",
-        "compacted (100k → summary)",
+        "Your turn",
+        "Cache goes cold in 15 min",
+        "Compacted",
     ]
 
 

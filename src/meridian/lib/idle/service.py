@@ -25,7 +25,9 @@ from meridian.lib.idle.children import (
     active_child_count,
     spawn_store_reader,
 )
+from meridian.lib.idle.excerpts import trim_turn_excerpts
 from meridian.lib.idle.guards import DecisionKind, GuardFacts, decide
+from meridian.lib.idle.messages import compaction_notice, stage_notice
 from meridian.lib.idle.timeline import Schedule, schedule, select_push_delay
 from meridian.lib.notify import Notice, SendReport, send
 from meridian.lib.notify.label import build_session_label
@@ -310,6 +312,8 @@ class IdleService:
         implies_return: bool = False,
         turn_id: str | None = None,
         input_count: int | None = None,
+        last_user_text: str | None = None,
+        last_assistant_text: str | None = None,
         cwd: Path | None = None,
         provider: str | None = None,
     ) -> ArmResult:
@@ -329,6 +333,14 @@ class IdleService:
             raise ValueError("ttl_seconds must be greater than zero")
         if input_count is not None and input_count < 0:
             raise ValueError("input_count must be zero or greater")
+        user_excerpt, assistant_excerpt = trim_turn_excerpts(
+            last_user_text,
+            last_assistant_text,
+        )
+        excerpt_updates = {
+            "last_user_text": user_excerpt,
+            "last_assistant_text": assistant_excerpt,
+        }
         now_ms = self._now_ms()
 
         def transition(current: IdleState | None) -> tuple[IdleState, ArmResult]:
@@ -340,6 +352,7 @@ class IdleService:
             ):
                 next_state = current.model_copy(
                     update={
+                        **excerpt_updates,
                         "last_input_count": (
                             input_count if input_count is not None else current.last_input_count
                         )
@@ -358,6 +371,7 @@ class IdleService:
                 if window_active:
                     next_state = current.model_copy(
                         update={
+                            **excerpt_updates,
                             "expect_compaction_turn": False,
                             "last_input_count": (
                                 input_count if input_count is not None else current.last_input_count
@@ -368,6 +382,7 @@ class IdleService:
                 if current.stretch_open and current.expect_compaction_turn:
                     next_state = current.model_copy(
                         update={
+                            **excerpt_updates,
                             "expect_compaction_turn": False,
                             "last_input_count": (
                                 input_count if input_count is not None else current.last_input_count
@@ -381,6 +396,7 @@ class IdleService:
                 if current.stretch_open and current.done.get("compact") == "ok":
                     next_state = current.model_copy(
                         update={
+                            **excerpt_updates,
                             "last_input_count": (
                                 input_count if input_count is not None else current.last_input_count
                             )
@@ -431,6 +447,8 @@ class IdleService:
                     if input_count is not None
                     else (current.last_input_count if current is not None else None)
                 ),
+                last_user_text=user_excerpt,
+                last_assistant_text=assistant_excerpt,
                 anchor=anchor,
                 idle_since_ms=now_ms,
                 returned_at_ms=returned_at_ms,
@@ -596,23 +614,18 @@ class IdleService:
     ) -> None:
         ok = False
         try:
-            title = build_session_label().titled()
-            if stage == "push":
-                notice = Notice(
-                    title=title,
-                    body="waiting on you",
-                    priority=3,
-                    email=False,
-                    kind="idle",
-                )
-            else:
-                notice = Notice(
-                    title=title,
-                    body=f"cache cold in {policy.warn_minutes}m",
-                    priority=4,
-                    email=policy.warn_email,
-                    kind="idle",
-                )
+            state = self.store.read(harness, session)
+            if state is None or state.stretch != stretch:
+                raise RuntimeError("idle notification state is unavailable")
+            label = build_session_label(environ=self.env)
+            notice = stage_notice(
+                stage,
+                state,
+                label,
+                include_messages=self._notify_config().include_messages,
+                warn_minutes=policy.warn_minutes,
+                warn_email=policy.warn_email,
+            )
             ok = self._notify_sender(notice, self._notify_config()).ok
         except Exception:
             ok = False
@@ -677,21 +690,16 @@ class IdleService:
 
         done_result = self.store.mutate(harness, session, transition)
         if done_result.recorded:
-            body = {
-                "ok": "compacted",
-                "failed": "compaction failed",
-                "vetoed": "compaction vetoed",
-            }[result]
-            if detail:
-                body = f"{body} ({detail})"
             with suppress(Exception):
+                state = self.store.read(harness, session)
+                if state is None:
+                    raise RuntimeError("idle compaction state is unavailable")
                 self._notify_sender(
-                    Notice(
-                        title=build_session_label().titled(),
-                        body=body,
-                        priority=3 if result == "ok" else 4,
-                        email=False,
-                        kind="idle",
+                    compaction_notice(
+                        result,
+                        detail,
+                        state,
+                        build_session_label(environ=self.env),
                     ),
                     self._notify_config(),
                 )
@@ -713,6 +721,8 @@ class IdleService:
                 implies_return=event.implies_return,
                 turn_id=event.turn_id,
                 input_count=event.input_count,
+                last_user_text=event.last_user_text,
+                last_assistant_text=event.last_assistant_text,
             )
         return self.return_(
             harness=harness,

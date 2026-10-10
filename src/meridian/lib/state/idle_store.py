@@ -49,6 +49,8 @@ class IdleState(BaseModel):
     stretch_open: bool
     last_turn_id: str | None = None
     last_input_count: int | None = Field(default=None, ge=0)
+    last_user_text: str | None = None
+    last_assistant_text: str | None = None
     anchor: int = Field(ge=1)
     idle_since_ms: int | None
     returned_at_ms: int | None = None

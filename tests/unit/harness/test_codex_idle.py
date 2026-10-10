@@ -77,6 +77,8 @@ def test_parse_idle_event_pins_main_thread_and_tracks_input_growth() -> None:
     assert [event.harness_session_id for event in pinned] == [MAIN_THREAD] * 3
     assert [event.input_count for event in pinned] == [1, 2, 3]
     assert all(event.implies_return for event in pinned)
+    assert pinned[-1].last_user_text == "Run sleep 3 in shell, then reply done."
+    assert pinned[-1].last_assistant_text == "done"
 
     repeated = parse_idle_event(_probe_payloads()[-1], session_reader=read_session)
     assert repeated is not None

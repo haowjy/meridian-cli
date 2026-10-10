@@ -224,7 +224,7 @@ def test_arm_opens_reanchors_and_never_reenables_a_done_stage() -> None:
     second = idle.arm(harness="example", session="s1", ttl_seconds=3600)
 
     assert fired.decision == "act"
-    assert sender.notices[0].body == "waiting on you"
+    assert sender.notices[0].body == "Your turn"
     assert (second.stretch, second.anchor, second.push_at) == (1, 2, None)
     assert store.read("example", "s1").done == {"push": "sent"}  # type: ignore[union-attr]
 
@@ -288,7 +288,29 @@ def test_compaction_claim_window_done_ok_and_compacted_state() -> None:
     assert done.recorded is True
     assert still_compacted.reason == "already-compacted"
     assert current is not None and current.done["compact"] == "ok"
-    assert sender.notices[-1].body == "compacted (100k → summary)"
+    assert sender.notices[-1].body == "Compacted"
+
+
+def test_arm_stores_trimmed_excerpts_and_the_next_arm_replaces_them() -> None:
+    idle, _, store, _ = service()
+
+    idle.arm(
+        harness="example",
+        session="s1",
+        ttl_seconds=3600,
+        last_user_text="  hello\nworld  ",
+        last_assistant_text="reply " * 100,
+    )
+    first = store.read("example", "s1")
+    assert first is not None
+    assert first.last_user_text == "hello world"
+    assert first.last_assistant_text is not None
+    assert len(first.last_assistant_text) <= 280
+
+    idle.arm(harness="example", session="s1", ttl_seconds=3600)
+    replaced = store.read("example", "s1")
+    assert replaced is not None
+    assert (replaced.last_user_text, replaced.last_assistant_text) == (None, None)
 
 
 def test_closed_compacted_stretch_opens_a_new_stretch_on_arm() -> None:

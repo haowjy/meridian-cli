@@ -189,6 +189,43 @@ def test_primary_launch_injects_bundle_inventory(
     assert f"{skill_name}: {skill_description}" not in text
 
 
+def test_launch_env_sets_resolved_agent_and_clears_inherited_agent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = "claude-sonnet-4"
+    _write_minimal_mars_config(tmp_path)
+    write_agent(tmp_path, name="coder", model=model)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model=model,
+        harness=HarnessId.CLAUDE,
+    )
+    monkeypatch.setenv("MERIDIAN_SESSION_AGENT", "parent-agent")
+
+    with_agent = build_launch_context(
+        spawn_id="dry-run-agent",
+        request=build_primary_spawn_request(
+            request=LaunchRequest(model=model, agent="coder")
+        ),
+        runtime=build_primary_launch_runtime(project_root=tmp_path),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+    without_agent = build_launch_context(
+        spawn_id="dry-run-no-agent",
+        request=build_primary_spawn_request(
+            request=LaunchRequest(model=model, agent_opt_out=True)
+        ),
+        runtime=build_primary_launch_runtime(project_root=tmp_path),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert with_agent.binding.environment.final_env["MERIDIAN_SESSION_AGENT"] == "coder"
+    assert "MERIDIAN_SESSION_AGENT" not in without_agent.binding.environment.final_env
+
+
 def test_primary_projection_places_from_context_in_user_turn_not_system_prompt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

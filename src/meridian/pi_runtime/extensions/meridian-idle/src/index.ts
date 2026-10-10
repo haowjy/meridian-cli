@@ -33,6 +33,46 @@ type StatusRow = {
 
 const STAGES: readonly IdleStage[] = ["push", "warn", "compact"];
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
+const USER_EXCERPT_CHARS = 120;
+const ASSISTANT_EXCERPT_CHARS = 280;
+
+function trimExcerpt(value: string, limit: number): string | null {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return null;
+  if (normalized.length <= limit) return normalized;
+  const prefix = normalized.slice(0, limit - 1);
+  const boundary = prefix.lastIndexOf(" ");
+  return `${(boundary > 0 ? prefix.slice(0, boundary) : prefix).trimEnd()}…`;
+}
+
+function messageText(content: unknown): string | null {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return null;
+  const parts = content
+    .filter((part): part is Record<string, unknown> => isRecord(part))
+    .filter(part => part.type === "text" && typeof part.text === "string")
+    .map(part => String(part.text));
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
+export function messageExcerpts(messages: unknown): {
+  user: string | null;
+  assistant: string | null;
+} {
+  let user: string | null = null;
+  let assistant: string | null = null;
+  if (!Array.isArray(messages)) return { user, assistant };
+  for (const message of messages) {
+    if (!isRecord(message)) continue;
+    const text = messageText(message.content);
+    if (text === null) continue;
+    if (message.role === "user") user = trimExcerpt(text, USER_EXCERPT_CHARS);
+    if (message.role === "assistant") {
+      assistant = trimExcerpt(text, ASSISTANT_EXCERPT_CHARS);
+    }
+  }
+  return { user, assistant };
+}
 
 export class IdleRuntime {
   private enabled = false;
@@ -63,7 +103,7 @@ export class IdleRuntime {
     this.restore(rows, ctx);
   }
 
-  async agentEnd(ctx: ExtensionContext): Promise<void> {
+  async agentEnd(ctx: ExtensionContext, messages?: unknown): Promise<void> {
     if (!this.enabled || !safeIsIdle(ctx)) {
       return;
     }
@@ -87,6 +127,11 @@ export class IdleRuntime {
         args.push("--provider", provider);
       }
       args.push("--cwd", ctx.cwd);
+      const excerpts = messageExcerpts(messages);
+      if (excerpts.user !== null) args.push("--user-text", excerpts.user);
+      if (excerpts.assistant !== null) {
+        args.push("--assistant-text", excerpts.assistant);
+      }
 
       const reply = await this.runJson(args);
       if (revision !== this.revision) {
@@ -393,11 +438,11 @@ export function registerMeridianIdleExtension(
 ): IdleRuntime {
   const runtime = new IdleRuntime(run);
   pi.on("session_start", async (_event, ctx) => runtime.start(ctx));
-  pi.on("agent_end", (_event, ctx) => {
+  pi.on("agent_end", (event, ctx) => {
     // Pi still reports streaming while it awaits agent_end handlers. Check on
     // the next event-loop turn, when ctx.isIdle() reflects the completed turn.
     const timer = setTimeout(() => {
-      void runtime.agentEnd(ctx);
+      void runtime.agentEnd(ctx, event.messages);
     }, 0);
     timer.unref();
   });

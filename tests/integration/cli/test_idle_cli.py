@@ -176,7 +176,8 @@ def test_codex_idle_event_chains_user_notify_after_state_update(tmp_path: Path) 
             "type": "agent-turn-complete",
             "thread-id": thread_id,
             "turn-id": "turn-1",
-            "input-messages": ["hello"],
+            "input-messages": ["hello\nthere"],
+            "last-assistant-message": "reply\ttext",
         },
         separators=(",", ":"),
     )
@@ -185,6 +186,8 @@ def test_codex_idle_event_chains_user_notify_after_state_update(tmp_path: Path) 
     chained_state = json.loads(observed_state.read_text(encoding="utf-8"))
     assert chained_state["last_input_count"] == 1
     assert chained_state["stretch"] == 2
+    assert chained_state["last_user_text"] == "hello there"
+    assert chained_state["last_assistant_text"] == "reply text"
     assert state_path.is_file()
 
 

@@ -150,6 +150,43 @@ describe("meridian idle event mapping", () => {
     expectCliContract(run.mock.calls.map(([args]) => args));
   });
 
+  it("extracts the last user and assistant text from agent_end messages", async () => {
+    const run = vi.fn<MeridianRunner>(async (args) => {
+      if (args[1] === "config") return commandResult({ enabled: true });
+      if (args[1] === "status") return commandResult([]);
+      return commandResult({ stretch: 1, anchor: 1 });
+    });
+    const { ctx } = context();
+    const { handlers } = host(run);
+
+    await event(handlers, "session_start", {}, ctx);
+    await event(handlers, "agent_end", {
+      messages: [
+        { role: "user", content: [{ type: "text", text: "old prompt" }] },
+        { role: "assistant", content: [{ type: "text", text: "old answer" }] },
+        { role: "toolResult", content: [{ type: "text", text: "tool output" }] },
+        { role: "user", content: [{ type: "text", text: "latest\n prompt" }] },
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "private" },
+            { type: "text", text: "latest answer" },
+          ],
+        },
+      ],
+    }, ctx);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const arm = run.mock.calls.find(([args]) => args[1] === "arm")?.[0];
+    expect(arm).toEqual([
+      "idle", "arm", "--harness", "pi", "--session", "pi-session",
+      "--provider", "anthropic", "--cwd", "/work/project",
+      "--user-text", "latest prompt", "--assistant-text", "latest answer",
+      "--interactive",
+    ]);
+    expect(arm).not.toContain("tool output");
+  });
+
   it("only interactive input returns and clears the pending timers", async () => {
     const run = vi.fn<MeridianRunner>(async (args) => {
       if (args[1] === "config") return commandResult({ enabled: true });
