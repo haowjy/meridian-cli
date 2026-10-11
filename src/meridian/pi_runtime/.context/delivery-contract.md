@@ -43,21 +43,38 @@ supplies fresh discovery.
 Publication has two serialized paths: a successful tool-bearing `turn_end` awaits
 a fresh scan and queues native steer before the next inference, while genuinely
 late work retains the native-idle follow-up fallback. Both recheck consumption
-after bounded direct `report.md` reads. Automatic delivery reads at most 64 KiB per
-selected report, marks truncation with the full path, supplies status/transcript
-guidance for missing or empty reports, and fails closed when present evidence is
-unreadable. Explicit wait commands still use the CLI. A tracked background terminal
-result stays owed during active tool waits, so a terminal wait can persist
-consumption before the boundary runs. The idle path checks idleness before its
-final snapshot and again before queueing, in the same generation that is invalidated
-by `agent_start`, rebind and stop. The collector is finite: after report reads it
-rereads selected canonical child IDs independently of the hint cache, takes one
-final evidence snapshot and subtracts consumed, leased, claimed or changed initial
-members. Unrelated root churn cannot withhold an otherwise stable selected child. New
-arrivals and unstable work remain owed for a later boundary or idle tick. Delivery
-before the next inference is not guaranteed when an attempt cannot obtain stable,
-readable evidence. One message identity
-reserves the selected IDs through native admission. Its custom message contains
+after bounded direct `report.md` reads. Each collection can queue at most one
+automatic message. It considers no more than 32 members for that message, reads
+their reports sequentially, and stops before starting the next report if the
+request's abort/activity generation is no longer current. Each report read is
+capped at 64 KiB; the complete joined notification is independently capped at 64
+KiB of UTF-8 content, including status/error/command labels, separators, and
+truncation/transcript guidance. UTF-8 truncation stops at a code-point boundary.
+An oversized first member is truncated with its full report/transcript or Bash
+output command and is still published, so it cannot starve the backlog. A member
+that does not fit after earlier members remains owed and becomes first on a later
+opportunity. Missing or empty reports retain outcome and transcript guidance;
+present unreadable evidence fails closed. Explicit wait commands still use the
+CLI.
+
+A tracked background terminal result stays owed during active tool waits, so a
+terminal wait can persist consumption before the boundary runs. The idle path
+checks idleness before its final snapshot and again before queueing, in the same
+generation invalidated by `agent_start`, rebind, stop, and exact admission of a
+triggering delivery. Queueing the triggering message closes idle scheduling for
+that native opportunity; exact admission keeps it closed and invalidates stale
+work even if receipt persistence faults. This prevents a second backlog message
+from queueing before the inference starts. A later tool boundary or genuinely late
+idle transition provides the next opportunity; there is no drain-until-empty loop.
+
+The collector is finite: after reading only its bounded publication slice, it
+rereads those selected canonical child IDs independently of the hint cache, takes
+one final evidence snapshot, and subtracts consumed, leased, claimed, or changed
+initial members. It never substitutes new arrivals. Unrelated root churn cannot
+withhold an otherwise stable selected child. Excluded, new, and unstable work
+remain owed. Delivery before the next inference is not guaranteed when an attempt
+cannot obtain stable, readable evidence. One message identity reserves the exact
+published IDs through native admission. Its custom message contains
 `details.delivery_id` and `details.work_ids`; the native `message_start` hook
 persists precisely that membership before the public RPC event.
 

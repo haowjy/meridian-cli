@@ -110,45 +110,18 @@ waiters are released, and consumption is persisted before the terminal wait or
 output result returns. If consumption persistence fails, the marker is rolled back and
 the wait returns an error, leaving the completion eligible for notification.
 Spawn-watch serializes publication through one launch-scoped owner. A successful
-tool-bearing `turn_end` awaits fresh canonical child discovery and queues eligible
-results through native steer before the next inference. Timer and filesystem
-requests queue the same finite collector only while Pi is natively idle, so active
-runs do no polling I/O. The idle follow-up path remains for results that finish
-later.
+tool-bearing boundary and the genuinely late idle fallback use that owner rather
+than separate delivery machinery. Automatic child notices read `report.md`
+directly instead of invoking the general `spawn wait` CLI. Candidate IDs reduce
+ordinary idle work but never become authority; canonical state and parent-local
+evidence remain authoritative at publication. Two nonrecursive watchers and the
+existing timers wake the owner; active runs do no polling I/O.
 
-Automatic child notices read `report.md` directly instead of running the general
-`spawn wait` CLI. Reads are capped at 64 KiB and mark truncation with the full path;
-missing or empty reports retain status and transcript guidance, while present
-unreadable evidence fails closed. After report awaits both paths reread
-consumption, receipts and live wait reservations once, then publish only initially
-selected members whose eligibility and rendered metadata still match. New or
-changing work stays owed rather than extending the collector indefinitely. The
-native abort signal guards publication after awaits; it is not treated as a
-successful receipt.
-
-A disposable direct-child candidate set limits ordinary 500 ms idle reads to
-candidate state files plus parent-local Bash and delivery evidence. Every candidate
-is reparsed with exact canonical `parent_id`; directories without state wait for
-periodic discovery instead of adding endless missing-file polls. Cached absence
-also cannot authorize a bare Bash notice: a terminal launcher triggers fresh
-canonical discovery before final revalidation of its child correlation.
-Startup/rebind requests a full discovery once idle, and tool boundaries
-always do one. The nonrecursive root watcher requests discovery while idle, and a
-30-second full reconciliation covers missed events or delayed rows (normally about
-30.5 seconds while idle when an ordinary poll already owns the single flight, plus
-collector and filesystem time; not a hard deadline). The
-two nonrecursive watchers remain constant in count.
-
-The idle generation is invalidated by `agent_start`, rebind and stop, closing the
-idle→active→idle publication race without formatter preemption. The idle path also
-observes idleness immediately before and after its final evidence snapshot. One
-message identity reserves exact membership until native `message_start` admission.
-Reload preserves queued claims; cold restart retries unreceipted work and keeps
-admitted or consumed work. Scan, report and receipt failures are supervised in
-`delivery-fault.json`. Every shutdown stops publication before Pi invalidates the old context; reload
-retains the owner and claims, and fresh `session_start` restarts it.
-See [delivery-contract.md](delivery-contract.md) for schemas, public-event fencing
-and the bounded receipt-to-public-observation crash window.
+See the canonical [delivery contract](delivery-contract.md) for discovery and
+publication sequencing, fixed report/member/message bounds, subtract-only
+revalidation, cancellation generations, exact admission/public observation, and
+restart/crash behavior. Scan, report, and receipt failures remain supervised in
+`delivery-fault.json`.
 
 ### Build Pipeline
 

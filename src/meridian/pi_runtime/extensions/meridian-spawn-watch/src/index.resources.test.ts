@@ -1,0 +1,207 @@
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { writeJsonAtomic } from "../../shared/json_file";
+import type { BashRecord } from "../../shared/schemas";
+import { SpawnWatchRuntime } from "./index";
+
+type Notice = {
+  customType: string;
+  content: string;
+  details: { delivery_id: string; work_ids: string[] };
+};
+
+class DeliveryResourceFixture {
+  readonly notices: Notice[] = [];
+  readonly pi = {
+    sendMessage: (message: Notice) => { this.notices.push(message); },
+  } as unknown as ExtensionAPI;
+  readonly writers: ChildProcess[] = [];
+  root = "";
+  idle = false;
+  runtime: SpawnWatchRuntime | undefined;
+  private readonly savedStateDir = process.env._MERIDIAN_PI_STATE_DIR;
+  private readonly savedSpawnId = process.env.MERIDIAN_SPAWN_ID;
+
+  async start(): Promise<void> {
+    this.root = await mkdtemp(path.join(tmpdir(), "delivery-resources-"));
+    process.env._MERIDIAN_PI_STATE_DIR = this.root;
+    process.env.MERIDIAN_SPAWN_ID = "p-parent";
+    this.runtime = new SpawnWatchRuntime(this.pi, () => this.idle);
+    this.runtime.start();
+  }
+
+  async child(id: string, overrides: Record<string, unknown> = {}): Promise<void> {
+    const canonical = JSON.parse(await readFile(
+      new URL("../fixtures/canonical-child-state.json", import.meta.url), "utf8",
+    ));
+    const terminal = overrides.terminal && typeof overrides.terminal === "object"
+      ? { ...canonical.terminal, ...overrides.terminal }
+      : canonical.terminal;
+    await writeJsonAtomic(path.join(this.root, "spawns", id, "state.json"), {
+      ...canonical, id, parent_id: "p-parent", ...overrides, terminal,
+    });
+  }
+
+  async bash(record: BashRecord): Promise<void> {
+    await writeJsonAtomic(path.join(this.root, "pi-bash", "p-parent", "bash-records.json"), {
+      v: 1, spawn_id: "p-parent", updated_at_ms: Date.now(), records: { [record.bash_id]: record },
+    });
+  }
+
+  holdReport(id: string, text = `report for ${id}`): { entered: string; release: string } {
+    const report = path.join(this.root, "spawns", id, "report.md");
+    const entered = `${report}.entered`;
+    const release = `${report}.release`;
+    execFileSync("mkfifo", [report]);
+    this.writers.push(spawn("bash", ["-c", [
+      'exec 3>"$REPORT"', ': >"$ENTERED"',
+      'while [[ ! -e "$RELEASE" ]]; do sleep 0.01; done', 'printf %s "$TEXT" >&3',
+    ].join("; ")], {
+      env: { ...process.env, REPORT: report, ENTERED: entered, RELEASE: release, TEXT: text },
+      stdio: "ignore",
+    }));
+    return { entered, release };
+  }
+
+  async cleanup(): Promise<void> {
+    this.runtime?.stop();
+    for (const writer of this.writers) if (writer.exitCode === null) writer.kill("SIGKILL");
+    if (this.root) await rm(this.root, { recursive: true, force: true });
+    if (this.savedStateDir === undefined) delete process.env._MERIDIAN_PI_STATE_DIR;
+    else process.env._MERIDIAN_PI_STATE_DIR = this.savedStateDir;
+    if (this.savedSpawnId === undefined) delete process.env.MERIDIAN_SPAWN_ID;
+    else process.env.MERIDIAN_SPAWN_ID = this.savedSpawnId;
+  }
+}
+
+async function eventually(check: () => boolean | Promise<boolean>): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw Error("delivery resource contract did not settle");
+}
+
+async function exists(filePath: string): Promise<boolean> {
+  try { await readFile(filePath); return true; }
+  catch { return false; }
+}
+
+describe("bounded result delivery", () => {
+  let fixture: DeliveryResourceFixture;
+
+  beforeEach(async () => {
+    fixture = new DeliveryResourceFixture();
+    await fixture.start();
+  });
+
+  afterEach(async () => fixture.cleanup());
+
+  it("publishes a large backlog in exact member-bounded batches across opportunities", async () => {
+    for (let index = 0; index < 35; index++) {
+      const id = `p${String(index).padStart(3, "0")}`;
+      await fixture.child(id);
+      writeFileSync(path.join(fixture.root, "spawns", id, "report.md"), `result ${id}`);
+    }
+
+    await fixture.runtime!.deliverAtBoundary();
+    expect(fixture.notices).toHaveLength(1);
+    expect(fixture.notices[0]!.details.work_ids).toHaveLength(32);
+    await fixture.runtime!.admitMessage({ role: "custom", ...fixture.notices[0] });
+
+    await fixture.runtime!.deliverAtBoundary();
+    expect(fixture.notices).toHaveLength(2);
+    expect(fixture.notices[1]!.details.work_ids).toHaveLength(3);
+    await fixture.runtime!.admitMessage({ role: "custom", ...fixture.notices[1] });
+
+    const delivered = fixture.notices.flatMap((notice) => notice.details.work_ids);
+    expect(new Set(delivered).size).toBe(35);
+    expect(delivered).toEqual(Array.from({ length: 35 }, (_, index) => `p${String(index).padStart(3, "0")}`));
+    const receipts = JSON.parse(await readFile(
+      path.join(fixture.root, "pi-bash", "p-parent", "delivery-receipts.json"), "utf8",
+    ));
+    expect(receipts.messages).toEqual(Object.fromEntries(fixture.notices.map((notice) => [
+      notice.details.delivery_id, notice.details.work_ids,
+    ])));
+  });
+
+  it("queues at most one backlog batch before the next inference opportunity", async () => {
+    for (let index = 0; index < 34; index++) {
+      const id = `p${String(index).padStart(3, "0")}`;
+      await fixture.child(id);
+      writeFileSync(path.join(fixture.root, "spawns", id, "report.md"), `result ${id}`);
+    }
+
+    fixture.idle = true;
+    fixture.runtime!.observeIdle(() => fixture.idle);
+    await eventually(() => fixture.notices.length === 1);
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    expect(fixture.notices).toHaveLength(1);
+    await fixture.runtime!.admitMessage({ role: "custom", ...fixture.notices[0] });
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    expect(fixture.notices).toHaveLength(1);
+
+    fixture.runtime!.observeIdle(() => fixture.idle);
+    await eventually(() => fixture.notices.length === 2);
+    expect(fixture.notices[1]!.details.work_ids).toHaveLength(2);
+  });
+
+  it("bounds aggregate UTF-8 bytes and advances oversized metadata and reports", async () => {
+    await fixture.child("p001", {
+      agent: `agent-${"界".repeat(30_000)}`,
+      terminal: { error: `failure-${"🔥".repeat(20_000)}` },
+    });
+    const reportPath = path.join(fixture.root, "spawns", "p001", "report.md");
+    writeFileSync(reportPath, `report-${"🧪".repeat(30_000)}`);
+    await fixture.child("p002");
+    writeFileSync(path.join(fixture.root, "spawns", "p002", "report.md"), "second result");
+    await fixture.bash({
+      bash_id: "b001", command: `printf ${"命".repeat(30_000)}`, cwd: "/tmp", pid: null,
+      status: "exited", is_background: true, is_tracked: true, exit_code: 0,
+      started_at_ms: Date.now() - 1000, ended_at_ms: Date.now(), log_path: "/unused",
+      stdout_log_path: "/unused", stderr_log_path: "/unused", log_bytes: 0,
+      timeout_min: 1, originating_bash_id: null,
+    });
+
+    await fixture.runtime!.deliverAtBoundary();
+    expect(fixture.notices).toHaveLength(1);
+    expect(fixture.notices[0]!.details.work_ids).toEqual(["p001"]);
+    expect(Buffer.byteLength(fixture.notices[0]!.content, "utf8")).toBeLessThanOrEqual(64 * 1024);
+    expect(fixture.notices[0]!.content).toContain("Notification truncated");
+    expect(fixture.notices[0]!.content).toContain(`full report: ${reportPath}`);
+    expect(fixture.notices[0]!.content).not.toContain("�");
+
+    await fixture.runtime!.admitMessage({ role: "custom", ...fixture.notices[0] });
+    await fixture.runtime!.deliverAtBoundary();
+    expect(fixture.notices[1]!.details.work_ids).toEqual(["p002", "b001"]);
+    expect(Buffer.byteLength(fixture.notices[1]!.content, "utf8")).toBeLessThanOrEqual(64 * 1024);
+    expect(fixture.notices[1]!.content).toContain("Notification metadata truncated");
+    expect(fixture.notices[1]!.content).toContain("use bash_manage(action='output') with the exact work ID");
+    expect(fixture.notices[1]!.content).not.toContain("�");
+  });
+
+  it("does not start another report after a bounded read is cancelled", async () => {
+    await fixture.child("p001");
+    await fixture.child("p002");
+    const first = fixture.holdReport("p001");
+    const second = fixture.holdReport("p002");
+    const controller = new AbortController();
+
+    const delivery = fixture.runtime!.deliverAtBoundary(controller.signal);
+    await eventually(() => exists(first.entered));
+    expect(await exists(second.entered)).toBe(false);
+    controller.abort();
+    writeFileSync(first.release, "release");
+    await delivery;
+
+    expect(await exists(second.entered)).toBe(false);
+    expect(fixture.notices).toHaveLength(0);
+  });
+});

@@ -41,6 +41,9 @@ type ClearedSpawnsFile = { v: 1; spawn_id: string; updated_at_ms: number; cleare
 const POLL_MS = 500;
 const FULL_RECONCILE_MS = 30_000;
 const MAX_REPORT_BYTES = 64 * 1024;
+const MAX_NOTIFICATION_BYTES = 64 * 1024;
+const MAX_NOTIFICATION_MEMBERS = 32;
+const NOTIFICATION_SEPARATOR = "\n\n";
 
 /** Launch-scoped owner: durable rows are obligations; queue claims are only mechanics. */
 export class SpawnWatchRuntime {
@@ -168,13 +171,17 @@ export class SpawnWatchRuntime {
     if (typeof details?.delivery_id !== "string" || !Array.isArray(details.work_ids)) return;
     const workIds = this.queued.get(details.delivery_id);
     if (!workIds || JSON.stringify(workIds) !== JSON.stringify(details.work_ids)) return;
+    // Admission of a triggerTurn message closes this native opportunity even
+    // if persisting its receipt fails. Do not queue another backlog batch before
+    // the admitted message's inference starts.
+    this.hostGeneration++;
+    this.isIdle = () => false;
     try {
       await admitDelivery(details.delivery_id, workIds, this.currentSpawnId, this.receiptsPath);
       await this.clearFault("admission");
     }
     catch (error) { await this.recordFault("admission", error); return; }
     this.queued.delete(details.delivery_id);
-    this.requestIdleDelivery();
   }
 
   private enqueueCollector(
@@ -217,13 +224,12 @@ export class SpawnWatchRuntime {
     const eligible: NotificationItem[] = [];
     for (const row of states) {
       if (row.terminal !== null && !consumed.has(row.id) && !reserved.has(row.id) && !claimed.has(row.id)) {
-        const terminalError = (row.terminal as { error?: unknown }).error;
         eligible.push({
           id: row.id, kind: "spawn", status: row.status,
           label: `${row.agent ?? "spawn"}${row.model ? ` (${row.model})` : ""}`,
           duration: formatDurationSecs(row.terminal.duration_secs),
           exitCode: row.terminal.exit_code,
-          error: typeof terminalError === "string" ? terminalError : undefined,
+          error: row.terminal.error ?? undefined,
         });
       }
     }
@@ -253,19 +259,34 @@ export class SpawnWatchRuntime {
     if (!this.canContinue(deliverAs, generation, signal)) return false;
     if (!initial.length) return true;
 
-    const renderedSpawns = new Map<string, string>();
-    await Promise.all(initial.filter((item) => item.kind === "spawn").map(async (item) => {
-      renderedSpawns.set(item.id, await this.renderSpawnNotification(item));
-    }));
+    const selected: Array<{ item: NotificationItem; content: string }> = [];
+    let selectedBytes = 0;
+    for (const item of initial) {
+      if (selected.length >= MAX_NOTIFICATION_MEMBERS || !this.canContinue(deliverAs, generation, signal)) break;
+      const separatorBytes = selected.length ? Buffer.byteLength(NOTIFICATION_SEPARATOR) : 0;
+      const availableBytes = MAX_NOTIFICATION_BYTES - selectedBytes - separatorBytes;
+      const guidance = item.kind === "spawn"
+        ? spawnTruncationGuidance(item, this.spawnsDir)
+        : bashTruncationGuidance();
+      const minimumBytes = Buffer.byteLength(`${NOTIFICATION_SEPARATOR}${guidance}`);
+      if (selected.length && availableBytes < minimumBytes) break;
+      const content = item.kind === "spawn"
+        ? await this.renderSpawnNotification(item, availableBytes)
+        : formatBashNotification(item, availableBytes);
+      if (!content) break;
+      selected.push({ item, content });
+      selectedBytes += separatorBytes + Buffer.byteLength(content);
+    }
     if (!this.canContinue(deliverAs, generation, signal)) return false;
+    if (!selected.length) return true;
 
     // A cache miss cannot prove that a completed launcher has no child. Discover
     // after observing Bash terminal, so missed root events cannot split the
     // launcher's obligation from its already-published canonical child.
-    const correlation = initial.some((item) => item.kind === "bash")
+    const correlation = selected.some(({ item }) => item.kind === "bash")
       ? await this.discoverChildStates(mayRead) : undefined;
     const freshStates = correlation?.rows
-      ?? await this.readCandidateStates(initial.map((item) => item.id), mayRead);
+      ?? await this.readCandidateStates(selected.map(({ item }) => item.id), mayRead);
     if (!this.canContinue(deliverAs, generation, signal)) return false;
 
     // Revalidate the selected IDs, not a hint cache another discovery may have
@@ -281,27 +302,26 @@ export class SpawnWatchRuntime {
     const canPublishBash = correlation !== undefined
       && correlation.revision === this.discoveryRevision
       && correlation.revision === this.reconciledRevision;
-    const batch = initial.filter((item) => {
+    const batch = selected.filter(({ item }) => {
       const current = freshItems.get(notificationKey(item));
       return current !== undefined && sameNotification(item, current)
         && (item.kind !== "bash" || canPublishBash);
     });
     if (!batch.length) return true;
 
-    const spawnContent = batch.filter((item) => item.kind === "spawn")
-      .map((item) => renderedSpawns.get(item.id) ?? "").filter(Boolean).join("\n\n");
-    const bashItems = batch.filter((item) => item.kind === "bash");
-    const content = [spawnContent, bashItems.length ? formatBashNotification(bashItems) : ""]
-      .filter(Boolean).join("\n\n");
+    const content = batch.map(({ content: memberContent }) => memberContent).join(NOTIFICATION_SEPARATOR);
     if (!this.canContinue(deliverAs, generation, signal) || !content) return false;
 
     const deliveryId = randomUUID();
-    const workIds = batch.map((item) => item.id);
+    const workIds = batch.map(({ item }) => item.id);
     this.queued.set(deliveryId, workIds);
     try {
       this.pi.sendMessage({ customType: "meridian-spawn-watch", content, display: true,
         details: { delivery_id: deliveryId, work_ids: workIds } },
         { triggerTurn: true, deliverAs });
+      // The triggering message owns this native opportunity as soon as it is
+      // queued. Suppress idle wakeups until Pi reports the ensuing lifecycle.
+      this.isIdle = () => false;
     } catch (error) {
       this.queued.delete(deliveryId);
       throw error;
@@ -309,7 +329,7 @@ export class SpawnWatchRuntime {
     return true;
   }
 
-  private async renderSpawnNotification(item: NotificationItem): Promise<string> {
+  private async renderSpawnNotification(item: NotificationItem, maxBytes: number): Promise<string | undefined> {
     const reportPath = path.join(this.spawnsDir, item.id, "report.md");
     const report = await readBoundedReport(reportPath);
     const outcome = item.exitCode === undefined ? item.duration : `exit ${item.exitCode}, ${item.duration}`;
@@ -320,7 +340,10 @@ export class SpawnWatchRuntime {
     else lines.push("No durable report content was published.");
     if (report.truncated) lines.push("", `[Report truncated after ${MAX_REPORT_BYTES} bytes; full report: ${reportPath}]`);
     lines.push("", `Transcript: meridian session log ${item.id}`);
-    return lines.join("\n");
+    const guidance = report.truncated
+      ? `[Report truncated after ${MAX_REPORT_BYTES} bytes; full report: ${reportPath}]\n[Notification truncated to fit ${MAX_NOTIFICATION_BYTES} UTF-8 bytes; transcript: meridian session log ${item.id}]`
+      : spawnTruncationGuidance(item, this.spawnsDir);
+    return fitNotification(lines.join("\n"), maxBytes, guidance);
   }
 
   private async readBash(): Promise<BashRecordsFile> {
@@ -449,16 +472,34 @@ function sameNotification(left: NotificationItem, right: NotificationItem): bool
     && left.exitCode === right.exitCode && left.error === right.error;
 }
 
-function formatBashNotification(items: NotificationItem[]): string {
-  if (items.length === 1) {
-    const item = items[0]!;
-    return `Background bash ${item.id} completed (${item.label}, ${item.duration}): ${item.status}\nUse \`bash_manage({action: "output", bash_id: "${item.id}"})\` for details.`;
-  }
-  return [
-    "Background bash tasks completed:",
-    ...items.map((item) => `- ${item.id} (${item.label}, ${item.duration}) ${item.status}`),
-    "Use `bash_manage(action='output')` for details.",
-  ].join("\n");
+function formatBashNotification(item: NotificationItem, maxBytes: number): string | undefined {
+  const content = `Background bash ${item.id} completed (${item.label}, ${item.duration}): ${item.status}\nUse \`bash_manage({action: "output", bash_id: "${item.id}"})\` for details.`;
+  return fitNotification(content, maxBytes, bashTruncationGuidance());
+}
+
+function spawnTruncationGuidance(item: NotificationItem, spawnsDir: string): string {
+  const reportPath = path.join(spawnsDir, item.id, "report.md");
+  return `[Notification truncated to fit ${MAX_NOTIFICATION_BYTES} UTF-8 bytes; full report: ${reportPath}; transcript: meridian session log ${item.id}]`;
+}
+
+function bashTruncationGuidance(): string {
+  return `[Notification metadata truncated to fit ${MAX_NOTIFICATION_BYTES} UTF-8 bytes; use bash_manage(action='output') with the exact work ID from message details.]`;
+}
+
+function fitNotification(content: string, maxBytes: number, guidance: string): string | undefined {
+  if (Buffer.byteLength(content) <= maxBytes) return content;
+  const suffix = `\n\n${guidance}`;
+  const suffixBytes = Buffer.byteLength(suffix);
+  if (suffixBytes > maxBytes) return undefined;
+  return `${truncateUtf8(content, maxBytes - suffixBytes).trimEnd()}${suffix}`;
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  const encoded = Buffer.from(value);
+  if (encoded.length <= maxBytes) return value;
+  let end = maxBytes;
+  while (end > 0 && (encoded[end]! & 0xc0) === 0x80) end--;
+  return encoded.subarray(0, end).toString("utf8");
 }
 
 function formatSpawnStatus(row: SpawnStateFile, theme: Theme): string {

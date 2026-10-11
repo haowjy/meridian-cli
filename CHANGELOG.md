@@ -8,17 +8,21 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Deliver completed Pi child-spawn and managed-Bash results at the successful
   tool-batch boundary through native steering, before the next inference, while
   retaining the idle follow-up fallback for genuinely late or unsettled work.
-- Replace active polling and automatic CLI formatting with a finite collector and
-  bounded direct report reads. Preserve exit codes and short-read handling. Idle
-  polling skips unrelated history and stateless directories; full discovery runs
-  at tool boundaries and on a 30-second missed-event reconciliation cadence.
-  In-flight idle scans stop before their next row when the agent starts.
+- Replace active polling and automatic `spawn wait` subprocesses with a finite collector and
+  bounded direct report reads. Automatic messages now cap exact membership at 32
+  results and complete UTF-8 content at 64 KiB, read reports sequentially, and
+  leave the remaining backlog owed for later native opportunities. Oversized
+  members retain full-result guidance and cannot starve later batches. Preserve
+  exit codes and short-read handling. Idle polling skips unrelated history and
+  stateless directories; full discovery runs at tool boundaries and on a 30-second
+  missed-event reconciliation cadence. In-flight idle scans stop before their next
+  row when the agent starts.
 - Keep discovery hints out of notification authority. Stable selected children
   survive unrelated root churn; bare Bash notices require a current canonical
   child-correlation snapshot. Failed discovery stays unresolved until repaired.
 - Stop notification polling before reload invalidates Pi's old context; restart
   with fresh hooks while retaining exact queued claims. Agent starts and reloads
-  invalidate stale publication without formatter preemption.
+  invalidate stale publication between filesystem awaits.
 
 ## [0.9.3] - 2026-10-11
 

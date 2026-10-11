@@ -36,17 +36,11 @@ notification, persistence, and compaction decision.
 - Scope children by canonical `parent_id`; transfer launcher work through the
   row's `originating_bash_id`. Logs and origin sidecars are not authority.
 - `sendMessage()` returns void; receipt authority is exact native custom-message
-  admission. Publish through native steer only from an awaited successful
-  tool-bearing `turn_end`; use the idle follow-up fallback for late results. Both
-  paths recheck explicit consumption after bounded direct report reads and retain
-  queued ownership across reload. Idle timer and filesystem requests must check
-  native idleness before queueing or reading. Invalidate their generation on
-  `agent_start`, rebind and stop; observe the same idle generation immediately
-  before and after the final snapshot.
-- Candidate child IDs only scope frequent idle reads. Reparse every candidate's
-  canonical `parent_id`; refresh all-project discovery at tool boundaries, on root
-  events while idle, and on the 30-second reconciliation cadence. The candidate
-  set is never lifecycle authority.
+  admission. Keep automatic publication finite and bounded, preserve exact batch
+  membership, and leave excluded or changing work owed. Candidate IDs and queued
+  claims are mechanics, never lifecycle authority. See the canonical
+  [delivery contract](.context/delivery-contract.md) for sequencing, bounds,
+  revalidation, cadence, cancellation, and restart behavior.
 - Change extension source, never `dist/` output. Rebuild bundles before testing
   source changes; launch projection may otherwise use an installed bundle.
 - Import Pi packages only from their package roots; extension-loader subpath
