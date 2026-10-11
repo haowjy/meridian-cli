@@ -5,9 +5,3 @@
   `PI_CACHE_RETENTION`, so scheduling warning and compaction would target a cold
   cache. Revisit when Pi applies `PI_CACHE_RETENTION` in its `openai-codex`
   adapter; check `openai-codex-responses.js` in the installed package.
-- `opencode_idle.py`: Clear `_compacting` on the first `session.idle` after the
-  compaction part has been seen, even if `POST /summarize` has not returned.
-  On 1.18.32 the response beats `session.idle` by only 2–4 ms; if the order
-  flips, the user's next prompt is filed as a compaction and one whole idle
-  period gets no push, warn or compaction (G2-X N1). Add a test that delivers
-  `session.idle` before the POST is released.

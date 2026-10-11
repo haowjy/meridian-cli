@@ -198,12 +198,22 @@ def test_codex_idle_event_chains_user_notify_after_state_update(tmp_path: Path) 
     thread_id = "01a11e8c-4466-7771-8f11-14286723b1bb"
     codex_home = tmp_path / "codex"
     codex_home.mkdir()
+    notify_calls = tmp_path / "notify-calls.jsonl"
     observed_state = tmp_path / "observed-state.json"
     state_path = Path(env["MERIDIAN_HOME"]) / "idle" / f"codex-{thread_id}.json"
     handler = tmp_path / "notify.sh"
-    handler.write_text('#!/bin/sh\ncat "$2" > "$1"\n', encoding="utf-8")
+    handler.write_text(
+        '#!/bin/sh\nprintf \'%s\\n\' "$4" >> "$1"\ncat "$3" > "$2"\n',
+        encoding="utf-8",
+    )
     handler.chmod(0o700)
-    notify = ["/bin/sh", handler.as_posix(), observed_state.as_posix(), state_path.as_posix()]
+    notify = [
+        "/bin/sh",
+        handler.as_posix(),
+        notify_calls.as_posix(),
+        observed_state.as_posix(),
+        state_path.as_posix(),
+    ]
     (codex_home / "config.toml").write_text(
         f"notify = {json.dumps(notify)}\n",
         encoding="utf-8",
@@ -239,6 +249,12 @@ def test_codex_idle_event_chains_user_notify_after_state_update(tmp_path: Path) 
     assert chained_state["last_user_text"] == "hello there"
     assert chained_state["last_assistant_text"] == "reply text"
     assert state_path.is_file()
+
+    rejected = json.dumps({"type": "future-codex-event"}, separators=(",", ":"))
+    assert _json_success(
+        tmp_path, env, "idle", "event", "--harness", "codex", rejected
+    ) == {}
+    assert notify_calls.read_text(encoding="utf-8").splitlines() == [payload, rejected]
 
 
 @pytest.mark.integration

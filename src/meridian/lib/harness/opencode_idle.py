@@ -233,7 +233,6 @@ class OpenCodeIdleSensor:
         self._pending_user_messages: set[str] = set()
         self._compaction_messages: set[str] = set()
         self._compacting = False
-        self._compaction_request_returned = False
 
     def _emit(
         self,
@@ -297,9 +296,7 @@ class OpenCodeIdleSensor:
             return
         if event.event_type != "session.idle":
             return
-        if self._compacting and self._compaction_request_returned:
-            self._compacting = False
-            self._compaction_request_returned = False
+        self._compacting = False
         if not self._saw_busy or self._busy:
             return
 
@@ -373,7 +370,7 @@ class OpenCodeIdleSensor:
             if not self._ctx.tui_alive():
                 return CompactResult("vetoed", "tui-exited")
             self._compacting = True
-            self._compaction_request_returned = False
+            completed = False
             try:
                 status, body = await asyncio.wait_for(
                     self._request(
@@ -383,13 +380,15 @@ class OpenCodeIdleSensor:
                     ),
                     timeout=_SUMMARIZE_TIMEOUT_SECONDS,
                 )
+                completed = status == 200 and body.strip() == "true"
             finally:
-                self._compaction_request_returned = True
+                if not completed:
+                    self._compacting = False
         except TimeoutError:
             return CompactResult("failed", "timeout")
         except (OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError) as exc:
             return CompactResult("failed", str(exc))
-        if status == 200 and body.strip() == "true":
+        if completed:
             return CompactResult("ok")
         return CompactResult("failed", body)
 

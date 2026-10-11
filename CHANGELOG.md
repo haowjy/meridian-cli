@@ -62,6 +62,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Preserve absorbed idle-arm reasons in CLI wire responses so adapters retain their timers.
 - Keep stable idle session lock paths after garbage collection removes stale state.
+- Always delegate intercepted Codex `notify` payloads to the configured user callback,
+  including payloads Meridian rejects or fails to apply.
+- End OpenCode compaction-message classification on `session.idle` even when the
+  summarize request is still returning, so the next real user prompt is not suppressed.
 - Stop wheels from force-including generated Claude plugin type files.
 - Pi spawn-watch checks idle before reading result eligibility, so a result waited on
   during the turn is no longer re-announced as a duplicate follow-up.

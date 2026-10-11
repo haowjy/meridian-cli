@@ -40,8 +40,7 @@ from meridian.lib.harness.bundle import (
     register_harness_bundle,
 )
 from meridian.lib.harness.codex_idle import (
-    chain_user_notify,
-    parse_idle_event,
+    CODEX_NATIVE_IDLE_HOOK,
     primary_idle_sensor,
 )
 from meridian.lib.harness.codex_rollout import (
@@ -672,7 +671,6 @@ register_harness_bundle(
         ),
         semantics=CODEX_SEMANTICS,
         primary_idle_sensor=primary_idle_sensor,
-        parse_idle_event=parse_idle_event,
-        idle_event_applied=chain_user_notify,
+        native_idle_hook=CODEX_NATIVE_IDLE_HOOK,
     )
 )

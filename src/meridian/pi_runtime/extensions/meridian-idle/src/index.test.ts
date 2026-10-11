@@ -280,16 +280,7 @@ describe("meridian idle event mapping", () => {
     });
   });
 
-  it.each([
-    {
-      condition: "a draft appeared",
-      reason: "draft",
-      change: (_runtime: ReturnType<typeof host>["runtime"], _ctx: ExtensionContext, state: ReturnType<typeof context>["state"]) => {
-        state.editor = "new draft";
-      },
-    },
-  ])("vetoes compaction after act when $condition", async ({ reason, change }) => {
-    let runtime!: ReturnType<typeof host>["runtime"];
+  it("vetoes compaction after act when a draft appeared", async () => {
     const { ctx, state } = context();
     const run = vi.fn<MeridianRunner>(async (args) => {
       if (args[1] === "config") return commandResult({ enabled: true });
@@ -298,13 +289,12 @@ describe("meridian idle event mapping", () => {
         return commandResult({ stretch: 7, anchor: 8, compact_at: Date.now() + 100 });
       }
       if (args[1] === "fire") {
-        change(runtime, ctx, state);
+        state.editor = "new draft";
         return commandResult({ decision: "act" });
       }
       return commandResult({});
     });
     const installed = host(run);
-    runtime = installed.runtime;
 
     await event(installed.handlers, "session_start", {}, ctx);
     await event(installed.handlers, "agent_end", {}, ctx);
@@ -315,7 +305,7 @@ describe("meridian idle event mapping", () => {
     const done = run.mock.calls.find(([args]) => args[1] === "done")?.[0];
     expect(done).toEqual([
       "idle", "done", "compact", "--harness", "pi", "--session", "pi-session",
-      "--stretch", "7", "--result", "vetoed", "--reason", reason, "--interactive",
+      "--stretch", "7", "--result", "vetoed", "--reason", "draft", "--interactive",
     ]);
   });
 
