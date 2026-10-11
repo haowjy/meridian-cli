@@ -27,6 +27,7 @@ import {
 } from "../../shared/selectable_panel";
 import { formatDurationSecs, renderTable } from "../../shared/ui";
 
+type ChildDiscovery = { rows: SpawnStateFile[]; revision: number };
 type NotificationItem = {
   id: string;
   kind: "spawn" | "bash";
@@ -145,12 +146,12 @@ export class SpawnWatchRuntime {
 
   async rows(): Promise<SpawnStateFile[]> {
     const cleared = await this.readCleared();
-    return (await this.discoverChildStates()).filter((row) => row.terminal === null || !cleared.has(row.id));
+    return (await this.discoverChildStates()).rows.filter((row) => row.terminal === null || !cleared.has(row.id));
   }
 
   async clearFinished(): Promise<number> {
     const cleared = await this.readCleared();
-    const terminal = (await this.discoverChildStates()).filter((row) => row.terminal !== null && !cleared.has(row.id));
+    const terminal = (await this.discoverChildStates()).rows.filter((row) => row.terminal !== null && !cleared.has(row.id));
     for (const row of terminal) cleared.add(row.id);
     if (terminal.length) await writeJsonAtomic(this.clearedPath, {
       v: 1, spawn_id: this.currentSpawnId, updated_at_ms: Date.now(), cleared_spawn_ids: [...cleared].sort(),
@@ -246,7 +247,7 @@ export class SpawnWatchRuntime {
     if (!this.canContinue(deliverAs, generation, signal)) return false;
     const discovered = discover ? await this.discoverChildStates() : undefined;
     if (!this.canContinue(deliverAs, generation, signal)) return false;
-    const initial = await this.collectEligible(discovered);
+    const initial = await this.collectEligible(discovered?.rows);
     if (!this.canContinue(deliverAs, generation, signal)) return false;
     if (!initial.length) return true;
 
@@ -259,9 +260,10 @@ export class SpawnWatchRuntime {
     // A cache miss cannot prove that a completed launcher has no child. Discover
     // after observing Bash terminal, so missed root events cannot split the
     // launcher's obligation from its already-published canonical child.
-    const freshStates = initial.some((item) => item.kind === "bash")
-      ? await this.discoverChildStates()
-      : await this.readCandidateStates(initial.map((item) => item.id));
+    const correlation = initial.some((item) => item.kind === "bash")
+      ? await this.discoverChildStates() : undefined;
+    const freshStates = correlation?.rows
+      ?? await this.readCandidateStates(initial.map((item) => item.id));
     if (!this.canContinue(deliverAs, generation, signal)) return false;
 
     // Revalidate the selected IDs, not a hint cache another discovery may have
@@ -272,9 +274,15 @@ export class SpawnWatchRuntime {
     // This collector is deliberately finite. Work that arrived after the first
     // snapshot stays owed; initially selected work that changed is deferred.
     const freshItems = new Map(fresh.map((item) => [notificationKey(item), item]));
+    // Only this scan's current committed snapshot can prove no child exists.
+    // No await follows this check through claim/send; superseded Bash stays owed.
+    const canPublishBash = correlation !== undefined
+      && correlation.revision === this.discoveryRevision
+      && correlation.revision === this.reconciledRevision;
     const batch = initial.filter((item) => {
       const current = freshItems.get(notificationKey(item));
-      return current !== undefined && sameNotification(item, current);
+      return current !== undefined && sameNotification(item, current)
+        && (item.kind !== "bash" || canPublishBash);
     });
     if (!batch.length) return true;
 
@@ -331,7 +339,7 @@ export class SpawnWatchRuntime {
     return new Set(file.cleared_spawn_ids);
   }
 
-  private async discoverChildStates(): Promise<SpawnStateFile[]> {
+  private async discoverChildStates(): Promise<ChildDiscovery> {
     // Starting every attempt makes failure sticky even when a root event was
     // missed. Only the newest still-current attempt may publish its candidates;
     // events or overlapping discoveries leave another full scan owed.
@@ -352,7 +360,7 @@ export class SpawnWatchRuntime {
         this.candidateChildIds = candidates;
         this.reconciledRevision = revision;
       }
-      return rows;
+      return { rows, revision };
     } catch (error) {
       // A concurrent successful scan must not make a later observed failure look
       // clean merely because that failing attempt started first.
@@ -502,8 +510,8 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
   });
   pi.on?.("message_start", async (event) => runtime.admitMessage(event.message));
   pi.on?.("session_shutdown", (event) => {
-    if (event.reason === "reload") return;
-    runtime.stop(); owners.delete(ownerPath);
+    runtime.stop();
+    if (event.reason !== "reload") owners.delete(ownerPath);
   });
 
   pi.registerCommand("spawn", {

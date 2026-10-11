@@ -22,7 +22,9 @@ is reparsed and must still have the exact parent. Directories without state are
 not idle-poll candidates; periodic discovery covers their delayed publication.
 Before sending a bare Bash result, discovery runs after observing its terminal
 state: cached absence cannot prove there is no canonical child owning that
-launcher's obligation. Successful tool boundaries do a
+launcher's obligation. That specific scan's committed revision must remain current
+through synchronous claim/send; superseded Bash members stay owed without
+withholding independently revalidated spawn members. Successful tool boundaries do a
 fresh full discovery; startup/rebind requests the same discovery once idle. The
 nonrecursive root watcher accelerates idle discovery, and a 30-second full
 reconciliation recovers missed events or delayed state rows.
@@ -66,8 +68,9 @@ reproduced defect.
 
 The boundary path carries the native operation abort signal and publishes only for
 completed outcomes with actual tool results. Error, aborted and non-tool turns do
-not open a publication window or force continuation. Hot reload rebinds the
-launch-scoped owner, invalidates stale drains and preserves queued claims. A cold
+not open a publication window or force continuation. Every shutdown stops watcher
+timers before Pi invalidates the old context. Hot reload retains the launch-scoped
+owner and queued claims, then rebinds and restarts it at fresh session startup. A cold
 restart has no old native queue: unreceipted terminal results retry, receipts and
 explicit consumption stay consumed. A receipt without its Python public-event
 observation blocks completion and fails with a bounded diagnostic; never invent

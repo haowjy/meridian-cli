@@ -507,6 +507,39 @@ describe('durable result delivery', () => {
     expect(h.notices[0]!.content).toContain('stable selected child');
   });
 
+  it.each([false, true])('defers superseded Bash correlation while preserving stable spawn=%s', async (withStableSpawn) => {
+    const root = await setup();
+    const foreign = { id: 'p0', parent_id: 'p-other', status: 'running', terminal: null };
+    const statePath = path.join(root, 'spawns', 'p0', 'state.json');
+    await writeJsonAtomic(statePath, foreign);
+    if (withStableSpawn) await child(root, 'p2');
+    const h = host(false);
+    const runtime = owner(h);
+    expect((await runtime.rows()).map(row => row.id)).toEqual(withStableSpawn ? ['p2'] : []);
+    const held = holdReport(root, 'p0', JSON.stringify(foreign));
+    await rm(statePath);
+    await link(held.reportPath, statePath);
+    await bash(root, record('b1'));
+    h.idle = true;
+    runtime.observeIdle(() => h.idle);
+    await eventually(() => exists(held.enteredPath));
+
+    // The canonical child arrives after the correlation scan's directory listing.
+    await child(root, 'p1', 'b1', { status: 'running', terminal: null });
+    await rm(statePath);
+    await writeJsonAtomic(statePath, foreign);
+    await pause();
+    writeFileSync(held.releasePath, 'release');
+    await pause(800);
+    expect(h.notices.map(notice => notice.details.work_ids)).toEqual(withStableSpawn ? [['p2']] : []);
+
+    await child(root, 'p1', 'b1');
+    h.idle = true;
+    runtime.observeIdle(() => h.idle);
+    await eventually(() => h.notices.length === (withStableSpawn ? 2 : 1));
+    expect(h.notices.at(-1)!.details.work_ids).toEqual(['p1']);
+  });
+
   it('revalidates child correlation before sending a bare launcher result', async () => {
     const root = await setup();
     await child(root, 'p1', 'b1', { parent_id: 'p-other', status: 'running', terminal: null });
@@ -695,6 +728,23 @@ describe('durable result delivery', () => {
     await eventually(() => next.notices.length === 1);
     expect(next.notices[0]!.details.work_ids).toEqual(['b1']);
   });
+  it('stops using the old idle capability between reload shutdown and rebind', async () => {
+    await setup();
+    const h = host();
+    extension(h.pi);
+    const idle = vi.fn(() => true);
+    h.handlers.get('session_start')!({}, { isIdle: idle });
+    await pause(100);
+    h.handlers.get('session_shutdown')!({ reason: 'reload' });
+
+    // Native Pi invalidates this context before awaiting resource reload. Return
+    // false rather than throwing so the regression reports an assertion failure.
+    idle.mockClear();
+    idle.mockImplementation(() => false);
+    await pause(700);
+    expect(idle).not.toHaveBeenCalled();
+  });
+
   it('reload retains queued ownership until the retained native message is admitted', async () => {
     const root = await setup();
     await bash(root, record('b1'));
