@@ -26,6 +26,10 @@ type Notice = {
     work_ids: string[];
   };
 };
+type DeliveryOptions = {
+  triggerTurn?: boolean;
+  deliverAs?: 'steer' | 'followUp' | 'nextTurn';
+};
 async function pause(ms = 30) {
   await new Promise(r => setTimeout(r, ms));
 }
@@ -67,14 +71,15 @@ async function child(root: string, id: string, originating_bash_id: string | nul
 }
 function host(idle = true) {
   const h = {
-    idle, notices: [] as Notice[], handlers: new Map<string, Function>(),
+    idle, notices: [] as Notice[], deliveries: [] as DeliveryOptions[], handlers: new Map<string, Function>(),
     commands: new Map<string, {handler: Function}>(), pi: {} as ExtensionAPI
   };
   h.pi = {
     on: (name: string, callback: Function) => h.handlers.set(name, callback),
     registerCommand: (name: string, command: {handler: Function}) => h.commands.set(name, command),
-    sendMessage: (message: Notice) => {
+    sendMessage: (message: Notice, options?: DeliveryOptions) => {
       h.notices.push(message);
+      h.deliveries.push(options ?? {});
       h.idle = false;
     }
   } as unknown as ExtensionAPI;
@@ -110,6 +115,134 @@ afterEach(async () => {
   }));
 });
 describe('durable result delivery', () => {
+  it('steers unconsumed Bash results at a successful tool-bearing turn boundary', async () => {
+    const root = await setup();
+    await bash(root, record('b1', { notification_consumed_at_ms: Date.now() }), record('b2'));
+    const h = host(false);
+    extension(h.pi);
+    h.handlers.get('session_start')!({}, { isIdle: () => false });
+
+    await h.handlers.get('turn_end')!({ outcome: 'completed', toolResults: [{}] }, {
+      isIdle: () => false,
+      signal: new AbortController().signal,
+    });
+
+    expect(h.notices).toHaveLength(1);
+    expect(h.notices[0]!.details.work_ids).toEqual(['b2']);
+    expect(h.deliveries).toEqual([{ triggerTurn: true, deliverAs: 'steer' }]);
+  });
+
+  it('awaits a fresh boundary scan when an older idle formatter is running', async () => {
+    const root = await setup();
+    await child(root, 'p1');
+    let formatterEntered = false;
+    formatter.mockImplementationOnce(async (_args: string[], _timeoutMs: number, signal?: AbortSignal) => {
+      formatterEntered = true;
+      await new Promise<void>((resolve) => {
+        if (signal?.aborted) resolve();
+        else signal?.addEventListener('abort', () => resolve(), { once: true });
+      });
+      return { exitCode: null, stdout: '', stderr: '', error: 'aborted' };
+    });
+    const h = host(false);
+    extension(h.pi);
+    h.handlers.get('session_start')!({}, { isIdle: () => false });
+    await eventually(() => formatterEntered);
+
+    await child(root, 'p2');
+    await h.handlers.get('turn_end')!({ outcome: 'completed', toolResults: [{}, {}] }, {
+      isIdle: () => false,
+      signal: new AbortController().signal,
+    });
+
+    expect(formatter).toHaveBeenCalledTimes(2);
+    expect(h.notices).toHaveLength(1);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1', 'p2']);
+    expect(h.notices[0]!.content).toBe('p1 p2');
+    expect(h.deliveries[0]).toEqual({ triggerTurn: true, deliverAs: 'steer' });
+  });
+
+  it('does not publish at non-tool, error, aborted, or cancelled boundaries', async () => {
+    const root = await setup();
+    await bash(root, record('b1'));
+    const h = host(false);
+    extension(h.pi);
+    h.handlers.get('session_start')!({}, { isIdle: () => false });
+    const controller = new AbortController();
+    const ctx = { isIdle: () => false, signal: controller.signal };
+
+    await h.handlers.get('turn_end')!({ outcome: 'completed', toolResults: [] }, ctx);
+    await h.handlers.get('turn_end')!({ outcome: 'error', toolResults: [{}] }, ctx);
+    await h.handlers.get('turn_end')!({ outcome: 'aborted', toolResults: [{}] }, ctx);
+    controller.abort();
+    await h.handlers.get('turn_end')!({ outcome: 'completed', toolResults: [{}] }, ctx);
+
+    expect(h.notices).toHaveLength(0);
+  });
+
+  it('keeps a result owed when the boundary aborts during formatting', async () => {
+    const root = await setup();
+    await child(root, 'p1');
+    let formatterEntered = false;
+    formatter.mockImplementationOnce(async (_args: string[], _timeoutMs: number, signal?: AbortSignal) => {
+      formatterEntered = true;
+      await new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }));
+      return { exitCode: null, stdout: '', stderr: '', error: 'aborted' };
+    });
+    const h = host(false);
+    extension(h.pi);
+    h.handlers.get('session_start')!({}, { isIdle: () => false });
+    const controller = new AbortController();
+    const boundary = h.handlers.get('turn_end')!({ outcome: 'completed', toolResults: [{}] }, {
+      isIdle: () => false,
+      signal: controller.signal,
+    });
+    await eventually(() => formatterEntered);
+    controller.abort();
+    await boundary;
+    expect(h.notices).toHaveLength(0);
+
+    h.idle = true;
+    h.handlers.get('agent_end')!({}, { isIdle: () => h.idle });
+    await eventually(() => h.notices.length === 1);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
+    expect(h.deliveries[0]).toEqual({ triggerTurn: true, deliverAs: 'followUp' });
+  });
+
+  it('invalidates an old boundary drain when reload rebinds the owner', async () => {
+    const root = await setup();
+    await child(root, 'p1');
+    let formatterEntered = false;
+    formatter.mockImplementationOnce(async (_args: string[], _timeoutMs: number, signal?: AbortSignal) => {
+      formatterEntered = true;
+      await new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }));
+      return { exitCode: null, stdout: '', stderr: '', error: 'aborted' };
+    });
+    const first = host(false);
+    extension(first.pi);
+    first.handlers.get('session_start')!({}, { isIdle: () => false });
+    const oldBoundary = first.handlers.get('turn_end')!({ outcome: 'completed', toolResults: [{}] }, {
+      isIdle: () => false,
+      signal: new AbortController().signal,
+    });
+    await eventually(() => formatterEntered);
+
+    first.handlers.get('session_shutdown')!({ reason: 'reload' });
+    const next = host(false);
+    extension(next.pi);
+    next.handlers.get('session_start')!({}, { isIdle: () => false });
+    await oldBoundary;
+    expect(first.notices).toHaveLength(0);
+
+    await next.handlers.get('turn_end')!({ outcome: 'completed', toolResults: [{}] }, {
+      isIdle: () => false,
+      signal: new AbortController().signal,
+    });
+    expect(next.notices).toHaveLength(1);
+    expect(next.notices[0]!.details.work_ids).toEqual(['p1']);
+    expect(next.deliveries[0]).toEqual({ triggerTurn: true, deliverAs: 'steer' });
+  });
+
   it('scopes invalid terminal evidence to its canonical parent', async () => {
     const root = await setup();
     await child(root, 'p1');

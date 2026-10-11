@@ -46,19 +46,24 @@ export class SpawnWatchRuntime {
   private readonly clearedPath = resolveClearedSpawnsPath(this.currentSpawnId);
   private readonly receiptsPath = path.join(this.bashDir, "delivery-receipts.json");
   private readonly observationsPath = path.join(this.bashDir, "observed-spawns.json");
-  private readonly pending = new Map<string, NotificationItem>();
   private readonly queued = new Map<string, string[]>();
   private readonly inFlight = new Set<string>();
   private watchers: FSWatcher[] = [];
   private scanScheduled: NodeJS.Timeout | null = null;
   private polling: NodeJS.Timeout | null = null;
   private running = false;
-  private scanRunning = false;
+  private bindingEpoch = 0;
+  private drainTail: Promise<void> = Promise.resolve();
+  private activeDrain: { kind: "idle" | "boundary"; abort: AbortController } | null = null;
+  private idleDrainQueued = false;
   private scanAgain = false;
-  private flushing = false;
 
   constructor(private pi: ExtensionAPI, private isIdle: () => boolean = () => false) {}
-  rebind(pi: ExtensionAPI): void { this.pi = pi; }
+  rebind(pi: ExtensionAPI): void {
+    this.bindingEpoch++;
+    this.activeDrain?.abort.abort();
+    this.pi = pi;
+  }
   observeIdle(check: () => boolean): void { this.isIdle = check; this.requestScan(); }
 
   start(): void {
@@ -82,6 +87,8 @@ export class SpawnWatchRuntime {
 
   stop(): void {
     this.running = false;
+    this.bindingEpoch++;
+    this.activeDrain?.abort.abort();
     for (const watcher of this.watchers) watcher.close();
     this.watchers = [];
     if (this.scanScheduled) clearTimeout(this.scanScheduled);
@@ -90,12 +97,37 @@ export class SpawnWatchRuntime {
   }
 
   private requestScan(): void {
-    if (!this.running || this.scanScheduled) return;
+    if (!this.running) return;
+    if (this.idleDrainQueued) { this.scanAgain = true; return; }
+    if (this.scanScheduled) return;
     this.scanScheduled = setTimeout(() => {
       this.scanScheduled = null;
-      void this.scan().catch((error) => this.recordFault("scan", error));
+      this.idleDrainQueued = true;
+      const request = { kind: "idle" as const, bindingEpoch: this.bindingEpoch };
+      void this.enqueueDrain(request)
+        .catch((error) => this.recordFault("scan", error))
+        .finally(() => {
+          this.idleDrainQueued = false;
+          if (this.scanAgain) {
+            this.scanAgain = false;
+            this.requestScan();
+          }
+        });
     }, SCAN_DELAY_MS);
     this.scanScheduled.unref();
+  }
+
+  async deliverAtBoundary(signal?: AbortSignal): Promise<void> {
+    if (!this.running || signal?.aborted) return;
+    // An idle formatter may have started before the tool batch completed. Its
+    // snapshot cannot satisfy this boundary, so cancel it and serialize a fresh
+    // drain behind it.
+    if (this.activeDrain?.kind === "idle") this.activeDrain.abort.abort();
+    try {
+      await this.enqueueDrain({ kind: "boundary", bindingEpoch: this.bindingEpoch, signal });
+    } catch (error) {
+      await this.recordFault("scan", error);
+    }
   }
 
   async rows(_discover = false): Promise<SpawnStateFile[]> {
@@ -125,97 +157,111 @@ export class SpawnWatchRuntime {
     try { await admitDelivery(details.delivery_id, workIds, this.currentSpawnId, this.receiptsPath); await this.clearFault(); }
     catch (error) { await this.recordFault("admission", error); return; }
     this.queued.delete(details.delivery_id);
-    for (const id of workIds) { this.inFlight.delete(id); this.pending.delete(id); }
+    for (const id of workIds) this.inFlight.delete(id);
     this.requestScan();
   }
 
-  private async scan(): Promise<void> {
-    if (!this.running) return;
-    if (this.scanRunning) { this.scanAgain = true; return; }
-    this.scanRunning = true;
-    try {
-      do {
-        this.scanAgain = false;
-        const [states, bash, receipts, observed, cleared] = await Promise.all([
-          this.readChildStates(), this.readBash(), readDeliveryReceipts(this.currentSpawnId, this.receiptsPath),
-          readSpawnObservations(this.currentSpawnId, this.observationsPath), this.readCleared(),
-        ]);
-        const consumed = admittedWorkIds(receipts);
-        for (const id of [...observed.observed_spawn_ids, ...cleared]) consumed.add(id);
-        const reserved = await reservedSpawnIds(observed);
-        const correlated = new Set(states.map((row) => row.originating_bash_id).filter((id): id is string => !!id));
-        const eligible: NotificationItem[] = [];
-        for (const row of states) {
-          if (row.terminal !== null && !consumed.has(row.id) && !reserved.has(row.id)) eligible.push({
-            id: row.id, kind: "spawn", status: row.status,
-            label: `${row.agent ?? "spawn"}${row.model ? ` (${row.model})` : ""}`,
-            duration: formatDurationSecs(row.terminal.duration_secs),
-          });
-        }
-        for (const record of Object.values(bash.records)) {
-          if (record.is_tracked && record.is_background && isTerminalBashStatus(record.status)
-              && record.notification_consumed_at_ms == null && !correlated.has(record.bash_id)
-              && !consumed.has(record.bash_id)) eligible.push({
-            id: record.bash_id, kind: "bash", status: record.status, label: record.command,
-            duration: formatDurationSecs(((record.ended_at_ms ?? Date.now()) - record.started_at_ms) / 1000),
-          });
-        }
-        const ids = new Set(eligible.map((item) => item.id));
-        for (const id of this.pending.keys()) if (!ids.has(id)) this.pending.delete(id);
-        for (const item of eligible) if (!this.inFlight.has(item.id)) this.pending.set(item.id, item);
-        await this.flush();
-        await this.clearFault("scan");
-      } while (this.running && this.scanAgain);
-    } finally { this.scanRunning = false; }
+  private enqueueDrain(request: {
+    kind: "idle" | "boundary";
+    bindingEpoch: number;
+    signal?: AbortSignal;
+  }): Promise<void> {
+    const run = this.drainTail.then(async () => {
+      const abort = new AbortController();
+      const signal = request.signal ? AbortSignal.any([request.signal, abort.signal]) : abort.signal;
+      this.activeDrain = { kind: request.kind, abort };
+      try {
+        const completed = await this.drain(request.kind, request.bindingEpoch, signal);
+        if (completed) await this.clearFault("scan");
+      } finally {
+        if (this.activeDrain?.abort === abort) this.activeDrain = null;
+      }
+    });
+    this.drainTail = run.catch(() => undefined);
+    return run;
   }
 
-  private async flush(): Promise<void> {
-    if (!this.running || this.flushing || !this.pending.size) return;
-    this.flushing = true;
-    try {
-      const batch = [...this.pending.values()];
+  private requestIsCurrent(bindingEpoch: number, signal: AbortSignal): boolean {
+    return this.running && this.bindingEpoch === bindingEpoch && !signal.aborted;
+  }
+
+  private canPublish(kind: "idle" | "boundary", bindingEpoch: number, signal: AbortSignal): boolean {
+    return this.requestIsCurrent(bindingEpoch, signal) && (kind === "boundary" || this.isIdle());
+  }
+
+  private async collectEligible(): Promise<NotificationItem[]> {
+    const [states, bash, receipts, observed, cleared] = await Promise.all([
+      this.readChildStates(), this.readBash(), readDeliveryReceipts(this.currentSpawnId, this.receiptsPath),
+      readSpawnObservations(this.currentSpawnId, this.observationsPath), this.readCleared(),
+    ]);
+    const consumed = admittedWorkIds(receipts);
+    for (const id of [...observed.observed_spawn_ids, ...cleared]) consumed.add(id);
+    const reserved = await reservedSpawnIds(observed);
+    const correlated = new Set(states.map((row) => row.originating_bash_id).filter((id): id is string => !!id));
+    const eligible: NotificationItem[] = [];
+    for (const row of states) {
+      if (row.terminal !== null && !consumed.has(row.id) && !reserved.has(row.id) && !this.inFlight.has(row.id)) eligible.push({
+        id: row.id, kind: "spawn", status: row.status,
+        label: `${row.agent ?? "spawn"}${row.model ? ` (${row.model})` : ""}`,
+        duration: formatDurationSecs(row.terminal.duration_secs),
+      });
+    }
+    for (const record of Object.values(bash.records)) {
+      if (record.is_tracked && record.is_background && isTerminalBashStatus(record.status)
+          && record.notification_consumed_at_ms == null && !correlated.has(record.bash_id)
+          && !consumed.has(record.bash_id) && !this.inFlight.has(record.bash_id)) eligible.push({
+        id: record.bash_id, kind: "bash", status: record.status, label: record.command,
+        duration: formatDurationSecs(((record.ended_at_ms ?? Date.now()) - record.started_at_ms) / 1000),
+      });
+    }
+    return eligible;
+  }
+
+  private async drain(
+    kind: "idle" | "boundary",
+    bindingEpoch: number,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    if (!this.requestIsCurrent(bindingEpoch, signal)) return false;
+    let batch = await this.collectEligible();
+    if (!this.requestIsCurrent(bindingEpoch, signal)) return false;
+
+    while (batch.length) {
       const spawnItems = batch.filter((item) => item.kind === "spawn");
-      const spawnContent = spawnItems.length ? await formatSpawnWaitNotification(spawnItems.map((item) => item.id), spawnItems) : "";
-      // Do not take the final eligibility snapshot while a tool call can still
-      // consume a result. Consumption is persisted before the host becomes
-      // idle; reading first and observing idle afterward can queue stale work.
-      if (!this.running || !this.isIdle()) return;
-      // The formatter crosses a CLI await, so reservations and consumption are
-      // read only after formatting and observed idleness, immediately before
-      // queueing. Idleness is checked again after these asynchronous reads.
-      const [receipts, observed, bash, cleared] = await Promise.all([
-        readDeliveryReceipts(this.currentSpawnId, this.receiptsPath), readSpawnObservations(this.currentSpawnId, this.observationsPath), this.readBash(), this.readCleared(),
-      ]);
-      const consumed = admittedWorkIds(receipts);
-      for (const id of [...observed.observed_spawn_ids, ...cleared]) consumed.add(id);
-      const reserved = await reservedSpawnIds(observed);
-      const eligible = batch.filter((item) => !consumed.has(item.id) && !this.inFlight.has(item.id)
-        && (item.kind === "spawn" ? !reserved.has(item.id) : bash.records[item.id]?.notification_consumed_at_ms == null));
-      // If the child selection changed, formatting must follow that selection.
-      // Retry the fresh snapshot instead of sending stale consumed child output.
-      const selectedSpawns = eligible.filter((item) => item.kind === "spawn");
-      if (JSON.stringify(selectedSpawns.map((item) => item.id)) !== JSON.stringify(spawnItems.map((item) => item.id))) {
-        for (const item of batch) if (!eligible.some((row) => row.id === item.id)) this.pending.delete(item.id);
-        this.scanAgain = true; return;
+      const spawnContent = spawnItems.length
+        ? await formatSpawnWaitNotification(spawnItems.map((item) => item.id), spawnItems, signal)
+        : "";
+      if (!this.requestIsCurrent(bindingEpoch, signal)) return false;
+
+      // Formatting crosses a CLI await. Rebuild from a fresh canonical snapshot
+      // whenever consumption, leases, admission, or completion membership moved.
+      const fresh = await this.collectEligible();
+      if (!this.requestIsCurrent(bindingEpoch, signal)) return false;
+      if (!sameMembership(batch, fresh)) {
+        batch = fresh;
+        continue;
       }
-      const bashItems = eligible.filter((item) => item.kind === "bash");
+
+      const bashItems = batch.filter((item) => item.kind === "bash");
       const content = [spawnContent, bashItems.length ? formatBashNotification(bashItems) : ""].filter(Boolean).join("\n\n");
-      if (!this.running || !this.isIdle() || !content || !eligible.length) return;
+      if (!this.canPublish(kind, bindingEpoch, signal) || !content) return true;
+
       const deliveryId = randomUUID();
-      const workIds = eligible.map((item) => item.id);
+      const workIds = batch.map((item) => item.id);
       this.queued.set(deliveryId, workIds);
       for (const id of workIds) this.inFlight.add(id);
       try {
         this.pi.sendMessage({ customType: "meridian-spawn-watch", content, display: true,
           details: { delivery_id: deliveryId, work_ids: workIds, ids: workIds } },
-          { triggerTurn: true, deliverAs: "followUp" });
+          { triggerTurn: true, deliverAs: kind === "boundary" ? "steer" : "followUp" });
       } catch (error) {
         this.queued.delete(deliveryId);
         for (const id of workIds) this.inFlight.delete(id);
         throw error;
       }
-      for (const id of workIds) this.pending.delete(id);
-    } finally { this.flushing = false; }
+      return true;
+    }
+    return true;
   }
 
   private async readBash(): Promise<BashRecordsFile> {
@@ -277,8 +323,9 @@ export class SpawnWatchRuntime {
 async function formatSpawnWaitNotification(
   spawnIds: string[],
   fallbackItems: NotificationItem[],
+  signal?: AbortSignal,
 ): Promise<string> {
-  const result = await runMeridianCommand(["spawn", "wait", ...spawnIds, "--no-observe"], 30_000);
+  const result = await runMeridianCommand(["spawn", "wait", ...spawnIds, "--no-observe"], 30_000, signal);
   const output = (result.stdout || result.stderr).trimEnd();
   if (result.exitCode === 0 && output.length > 0) return output;
 
@@ -292,6 +339,12 @@ async function formatSpawnWaitNotification(
     ...fallbackSpawnItems.map((item) => `- ${item.id} (${item.label}, ${item.duration}) ${item.status}`),
     `Use \`meridian spawn wait ${spawnIds.join(" ")}\` for details.`,
   ].join("\n");
+}
+
+function sameMembership(left: NotificationItem[], right: NotificationItem[]): boolean {
+  if (left.length !== right.length) return false;
+  const rightIds = new Set(right.map((item) => `${item.kind}:${item.id}`));
+  return left.every((item) => rightIds.has(`${item.kind}:${item.id}`));
 }
 
 function formatBashNotification(items: NotificationItem[]): string {
@@ -353,6 +406,10 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
   pi.on?.("session_start", (_event, ctx) => { runtime.observeIdle(() => ctx.isIdle()); runtime.start(); });
   pi.on?.("agent_start", (_event, ctx) => runtime.observeIdle(() => ctx.isIdle()));
   pi.on?.("agent_end", (_event, ctx) => runtime.observeIdle(() => ctx.isIdle()));
+  pi.on?.("turn_end", async (event, ctx) => {
+    if (event.outcome !== "completed" || event.toolResults.length === 0 || ctx.signal?.aborted) return;
+    await runtime.deliverAtBoundary(ctx.signal);
+  });
   pi.on?.("message_start", async (event) => runtime.admitMessage(event.message));
   pi.on?.("session_shutdown", (event) => {
     if (event.reason === "reload") return;

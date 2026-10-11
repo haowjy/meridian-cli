@@ -17,7 +17,7 @@ persisted PID: prior running rows remain tracked with `ownership_lost` until
 explicit detach/manual recovery. Detach releases quiescence, not process
 ownership; normal shutdown still cleans up owned groups. Publish terminal only
 after group exit and queued output, and supervise every async task callback.
-`meridian-spawn-watch` owns child-spawn observation and follow-up notifications.
+`meridian-spawn-watch` owns child-spawn observation and result notifications.
 Keep that mechanism/policy boundary intact.
 `session-boundary` owns bounded native lifecycle observations; only a final
 shutdown/quit qualifies the run exit, never the entry or last-seen session.
@@ -36,8 +36,10 @@ notification, persistence, and compaction decision.
 - Scope children by canonical `parent_id`; transfer launcher work through the
   row's `originating_bash_id`. Logs and origin sidecars are not authority.
 - `sendMessage()` returns void; receipt authority is exact native custom-message
-  admission. Publish only while native `ctx.isIdle()`, recheck explicit consumption
-  after formatting, and retain queued ownership across reload.
+  admission. Publish through native steer only from an awaited successful
+  tool-bearing `turn_end`; use the idle follow-up fallback for late results. Both
+  paths recheck explicit consumption after formatting and retain queued ownership
+  across reload.
 - Change extension source, never `dist/` output. Rebuild bundles before testing
   source changes; launch projection may otherwise use an installed bundle.
 - Import Pi packages only from their package roots; extension-loader subpath

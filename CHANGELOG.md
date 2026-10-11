@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Deliver completed Pi child-spawn and managed-Bash results at the successful
+  tool-batch boundary through native steering, before the next inference, while
+  retaining the idle follow-up fallback for genuinely late work.
+
 ## [0.9.3] - 2026-10-11
 
 ### Upgrade notes

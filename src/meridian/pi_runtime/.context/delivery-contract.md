@@ -21,15 +21,20 @@ authority. Polling guarantees child-file changes are eventually read even when
 nonrecursive directory notifications miss them. Event bursts do not reset the
 first scheduled scan.
 
-Publication waits for native `ctx.isIdle()` and rechecks consumption after any
-formatter await. A tracked background terminal result stays owed during active
-tool waits, so a terminal wait can consume it before a follow-up enters the
-native queue. Partial consumption rebuilds the batch. One message identity
+Publication has two serialized paths: a successful tool-bearing `turn_end` awaits
+a fresh scan and queues native steer before the next inference, while genuinely
+late work retains the native-idle follow-up fallback. Both recheck consumption
+after any formatter await. A tracked background terminal result stays owed during
+active tool waits, so a terminal wait can persist consumption before the boundary
+runs. Changed membership rebuilds the batch. One message identity
 reserves the selected IDs through native admission. Its custom message contains
 `details.delivery_id` and `details.work_ids`; the native `message_start` hook
 persists precisely that membership before the public RPC event.
 
-Hot reload rebinds the launch-scoped owner and preserves queued claims. A cold
+The boundary path carries the native operation abort signal and publishes only for
+completed outcomes with actual tool results. Error, aborted and non-tool turns do
+not open a publication window or force continuation. Hot reload rebinds the
+launch-scoped owner, invalidates stale drains and preserves queued claims. A cold
 restart has no old native queue: unreceipted terminal results retry, receipts and
 explicit consumption stay consumed. A receipt without its Python public-event
 observation blocks completion and fails with a bounded diagnostic; never invent
