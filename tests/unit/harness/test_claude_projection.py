@@ -159,7 +159,7 @@ def test_interactive_prompt_is_unconsumable_after_passthrough(continuation: bool
 
 
 @pytest.mark.parametrize("interactive", [False, True])
-def test_claude_projection_loads_plugin_dirs_only_for_interactive_launches(
+def test_claude_projection_loads_selected_plugin_dirs(
     interactive: bool,
 ) -> None:
     plugin_dirs = ("/plugins/first", "/plugins/second")
@@ -177,4 +177,4 @@ def test_claude_projection_loads_plugin_dirs_only_for_interactive_launches(
         for index, token in enumerate(command)
         if token == "--plugin-dir"
     )
-    assert projected_dirs == (plugin_dirs if interactive else ())
+    assert projected_dirs == plugin_dirs

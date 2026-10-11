@@ -244,9 +244,8 @@ def project_claude_spec_to_cli_args(
 
     command.extend(_project_mcp_tools(spec.mcp_tools))
 
-    if spec.interactive:
-        for plugin_dir in spec.claude_plugin_dirs:
-            command.extend(("--plugin-dir", plugin_dir))
+    for plugin_dir in spec.claude_plugin_dirs:
+        command.extend(("--plugin-dir", plugin_dir))
 
     if spec.appended_system_prompt:
         if spec.prompt_file_path:

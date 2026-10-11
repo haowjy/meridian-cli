@@ -1,6 +1,8 @@
 """Claude CLI harness adapter."""
 
 import json
+import secrets
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import ClassVar
@@ -42,6 +44,7 @@ from meridian.lib.harness.bundle import (
     HarnessProjectionPorts,
     register_harness_bundle,
 )
+from meridian.lib.harness.claude_boundary import read_boundary
 from meridian.lib.harness.claude_idle import autocompact_off, detect_ttl
 from meridian.lib.harness.claude_preflight import (
     build_claude_preflight_result,
@@ -94,6 +97,9 @@ from meridian.lib.launch.launch_types import (
 )
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.permissions import PermissionConfig
+from meridian.lib.state.paths import spawn_log_subpath
+
+_BOUNDARY_PLUGIN = "meridian-session-boundary"
 
 
 def build_claude_adhoc_agent_json(
@@ -289,6 +295,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             disallowed_tools = (
                 "Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)",
             )
+        boundary_runtime = resolve_claude_runtime(plugin_name=_BOUNDARY_PLUGIN)
         claude_runtime = resolve_claude_runtime() if run.interactive else None
         return ResolvedLaunchSpec(
             harness=HarnessId.CLAUDE,
@@ -309,16 +316,20 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             user_turn_content=user_turn_content,
             disallowed_tools=disallowed_tools,
             claude_plugin_dirs=(
-                claude_runtime.plugin_dirs if claude_runtime is not None else ()
+                boundary_runtime.plugin_dirs
+                + (claude_runtime.plugin_dirs if claude_runtime is not None else ())
             ),
         )
 
     def launch_spec_warnings(
         self, spec: ResolvedLaunchSpec
     ) -> tuple[CompositionWarning, ...]:
-        if not spec.interactive or spec.claude_plugin_dirs:
-            return ()
-        return (missing_claude_runtime_warning(),)
+        expected = (_BOUNDARY_PLUGIN, "meridian-idle") if spec.interactive else (_BOUNDARY_PLUGIN,)
+        loaded = {Path(directory).name for directory in spec.claude_plugin_dirs}
+        return tuple(
+            missing_claude_runtime_warning(plugin_name=name)
+            for name in expected if name not in loaded
+        )
 
     def preflight(
         self,
@@ -358,8 +369,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         resolved_harness_session_id: str,
         record_effective_config_dir: RecordConfigDirFn | None = None,
     ) -> HarnessPrelaunchState:
-        _ = runtime_root, spawn_id
-
         effective_config_root = resolve_claude_config_root(child_env, child_cwd)
         if record_effective_config_dir is not None:
             record_effective_config_dir(str(effective_config_root))
@@ -376,7 +385,14 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 target_config_root=effective_config_root,
             )
 
-        return HarnessPrelaunchState()
+        return HarnessPrelaunchState(env_overrides={
+            "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PATH": str(
+                (runtime_root / spawn_log_subpath(spawn_id)
+                 / "claude-session-boundary.json").resolve()
+            ),
+            "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_NONCE": secrets.token_hex(32),
+            "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PYTHON": sys.executable,
+        })
 
     def cleanup_prelaunch(
         self,
@@ -447,6 +463,11 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         pid: int | None,
         started_at_epoch: float | None,
     ) -> PostExit:
+        path = child_env.get("_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PATH")
+        nonce = child_env.get("_MERIDIAN_CLAUDE_SESSION_BOUNDARY_NONCE")
+        observed = read_boundary(Path(path), nonce=nonce, pid=pid) if path and nonce else PostExit()
+        if observed.exit is not None:
+            return observed
         successor = reconcile_tui_trampoline_session_id(
             project_root=child_cwd,
             recorded_session_id=entry.session_id or "",
@@ -454,6 +475,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             native_store=Path(identity.native_store),
         )
         return PostExit(
+            entry_observed=observed.entry_observed,
             trampoline_successor_id=successor if successor != entry.session_id else None,
         )
 

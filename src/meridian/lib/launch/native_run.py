@@ -149,6 +149,12 @@ def conclude_native_run(
             error = post.entry_error
             if error is None and post.entry_observed is not None:
                 observed = post.entry_observed.fields()
+                if (run.entry.session_id is None
+                        and observed.harness == run.entry.harness
+                        and observed.native_store == run.entry.native_store):
+                    # A native fork may allocate its ID inside the harness. An owned
+                    # startup receipt can complete that entry, never change its namespace.
+                    run.observe(post.entry_observed.session_id)
                 if observed != run.entry:
                     error = NativeEntryMismatch(run.entry, observed)
         except NativeIdentityError as exc:

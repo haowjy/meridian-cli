@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -n \"$_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PYTHON\" ]; then exec \"$_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PYTHON\" \"${CLAUDE_PLUGIN_ROOT}/hooks/record.py\"; fi"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -n \"$_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PYTHON\" ]; then exec \"$_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PYTHON\" \"${CLAUDE_PLUGIN_ROOT}/hooks/record.py\"; fi"
+          }
+        ]
+      }
+    ]
+  }
+}

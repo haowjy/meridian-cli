@@ -543,6 +543,112 @@ def test_unrelated_claude_trampoline_candidate_is_diagnostic(
     assert "TRAMPOLINE-EXIT" not in logged.stdout
 
 
+@pytest.mark.parametrize(
+    "scenario",
+    ["same", "clear", "resume", "switch-only", "stale-nonce", "wrong-pid", "bad-header",
+     "missing-file", "wrong-entry", "no-start", "fork", "fork-reuses-source", "fork-wrong-store"],
+)
+def test_owned_claude_boundary_selects_only_validated_native_exit(tmp_path, monkeypatch, scenario):
+    import sys
+    from dataclasses import replace
+
+    from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+    from tests.support.executables import prepend_fake_executables
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "meridian-home"))
+    prepend_fake_executables(monkeypatch, tmp_path, "claude")
+    root = tmp_path / "repo"
+    root.mkdir()
+    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", str(root))
+    monkeypatch.setenv("MERIDIAN_TASK_DIR", str(root))
+    store = tmp_path / "home" / ".claude/projects" / project_slug(root)
+    session = None
+    if scenario.startswith("fork"):
+        store.mkdir(parents=True)
+        (store / "source-native.jsonl").write_text(
+            json.dumps({"sessionId": "source-native"}) + "\n"
+        )
+        session = SessionRequest(
+            requested_harness_session_id="source-native", continue_fork=True,
+            source_native_store=str(store), primary_session_mode=SessionMode.FORK.value,
+        )
+    context, registry = _build_primary_launch_context(
+        project_root=root, harness_id=HarnessId.CLAUDE, model="claude-sonnet-4-5", session=session,
+    )
+    context = replace(context, runtime_root=resolve_project_runtime_root_for_write(root))
+    successor = "9a4846b0-5380-461d-98cb-304e7cee6e64"
+    shim = tmp_path / "fake-bin/claude"
+    shim.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, subprocess, sys\nfrom pathlib import Path\n"
+        f"store = Path({str(store)!r}); store.mkdir(parents=True, exist_ok=True)\n"
+        f"scenario = {scenario!r}; successor = {successor!r}\n"
+        "entry = (sys.argv[sys.argv.index('--session-id') + 1] if '--session-id' in sys.argv\n"
+        "         else 'source-native' if scenario == 'fork-reuses-source' else 'fork-native')\n"
+        "def native(sid): return store / (sid + '.jsonl')\n"
+        "native(entry).write_text(json.dumps({'sessionId': entry}) + '\\n')\n"
+        "def hook(event, sid, reason):\n"
+        " if not os.environ.get('_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PYTHON'): return\n"
+        " plugins = [Path(sys.argv[i+1]) for i, a in enumerate(sys.argv) if a == '--plugin-dir']\n"
+        " plugin = next(p for p in plugins if p.name == 'meridian-session-boundary')\n"
+        " payload = {'hook_event_name': event, 'session_id': sid,\n"
+        "            'transcript_path': str(native(sid)), 'reason': reason, 'source': reason}\n"
+        " if scenario == 'fork-wrong-store':\n"
+        "  payload['transcript_path'] = str(store / 'foreign' / (sid + '.jsonl'))\n"
+        " subprocess.run([sys.executable, str(plugin / 'hooks/record.py')],\n"
+        "                input=json.dumps(payload), text=True, check=True)\n"
+        "if scenario != 'no-start':\n"
+        " hook('SessionStart', successor if scenario == 'wrong-entry' else entry, 'startup')\n"
+        "final = entry\n"
+        "if scenario in {'clear', 'resume', 'switch-only', 'bad-header', 'missing-file'}:\n"
+        " hook('SessionEnd', entry, 'resume' if scenario == 'resume' else 'clear')\n"
+        " final = successor\n"
+        " native(final).write_text(json.dumps({'sessionId': final}) + '\\n')\n"
+        " if scenario != 'switch-only': hook('SessionStart', final, 'clear')\n"
+        "if scenario != 'switch-only': hook('SessionEnd', final, 'prompt_input_exit')\n"
+        "if scenario == 'bad-header':\n"
+        " native(final).write_text(json.dumps({'sessionId': entry}) + '\\n')\n"
+        "if scenario == 'missing-file': native(final).unlink()\n"
+        "if scenario in {'stale-nonce', 'wrong-pid'}:\n"
+        " path = Path(os.environ['_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PATH'])\n"
+        " data = json.loads(path.read_text())\n"
+        " if scenario == 'stale-nonce': data['launch_nonce'] = 'old-attempt'\n"
+        " else: data['pid'] += 1\n"
+        " path.write_text(json.dumps(data))\n"
+    )
+    outcome = run_harness_process(context, registry)
+    row = list_spawns(context.runtime_root).records[0]
+    assert row.run_boundary is not None
+    entry = session_store.get_session_record(context.runtime_root, outcome.chat_id)
+    assert entry is not None
+    assert entry.harness_session_id == row.harness_session_id != successor
+    assert row.chat_id == entry.chat_id
+    if scenario in {"same", "clear", "resume", "fork"}:
+        assert row.run_boundary.status == "verified"
+        exit_chat = session_store.get_session_record(context.runtime_root, row.continue_chat_id)
+        assert exit_chat is not None
+        assert exit_chat.harness_session_id == (
+            successor if scenario in {"clear", "resume"} else entry.harness_session_id
+        )
+        assert (exit_chat.chat_id == entry.chat_id) == (scenario in {"same", "fork"})
+    else:
+        expected = (
+            "mismatch" if scenario in {"wrong-entry", "fork-reuses-source", "fork-wrong-store"}
+            else "unresolved"
+        )
+        assert row.run_boundary.status == expected
+        assert row.run_boundary.exit_chat_id is None
+        assert row.continue_chat_id == entry.chat_id
+    assert outcome.exit_code == (1 if row.run_boundary.status == "mismatch" else 0)
+    if scenario.startswith("fork"):
+        assert (store / "source-native.jsonl").read_text() == (
+            json.dumps({"sessionId": "source-native"}) + "\n"
+        )
+        if scenario != "fork":
+            assert entry.harness_session_id is None
+
+
 def test_identity_error_before_spawn_allocation_does_not_assert(tmp_path, monkeypatch):
     from meridian.lib.core.lifecycle import SpawnLifecycleService
     from meridian.lib.core.native_identity import NativeEntryMismatch, NativeKeyFields

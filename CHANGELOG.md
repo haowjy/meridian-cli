@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Upgrade notes
+- Restart Claude sessions through updated Meridian to load exit-session verification. Older runs stay unverified; no migration. See [Claude exit verification](docs/upgrading.md#claude-exit-session-verification).
 - Interactive Pi primaries now default to `PI_CACHE_RETENTION=long`. For recognized
   Anthropic and OpenAI providers this enables the full idle warning/compaction flow.
   `openai` is scheduled against 30 minutes, because OpenAI's `24h` retention typically
@@ -60,7 +61,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   CI job and in extended/full local preflight.
 
 ### Fixed
-- Stop presenting absent exit-session verification as `exit unresolved` at primary completion. Keep explicit diagnostics, identity warnings, and saved continue targets.
+- Verify Claude exit sessions using launch-owned lifecycle receipts and exact transcripts, including after `/clear` and `/resume`; preserve entry bindings and continue from the verified exit chat. Keep absent proof diagnostic-only, never guess an exit from transcript timestamps.
 - Preserve absorbed idle-arm reasons in CLI wire responses so adapters retain their timers.
 - Keep stable idle session lock paths after garbage collection removes stale state.
 - Always delegate intercepted Codex `notify` payloads to the configured user callback,

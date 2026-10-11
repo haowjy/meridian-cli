@@ -1,5 +1,26 @@
 # Upgrade notes
 
+## Claude exit-session verification
+
+New Claude launches include a separate session-boundary plugin. Its lifecycle
+hooks identify the final native session, including after `/clear` or in-process
+`/resume`. Meridian checks the launch nonce, Claude process ID, and exact native
+transcript before marking the exit verified. The original chat binding stays
+unchanged; the printed continue command and `--continue pN` select the verified
+exit chat.
+
+Restart Claude sessions through the updated Meridian to load this plugin.
+Existing runs keep their original boundary records; there is no migration or
+retroactive verification. If hooks are disabled, time out, or cannot report before
+a hard kill, the exit can still be unverified. An entry transcript alone is not
+proof of the final active session.
+
+Each new attempt may write `claude-session-boundary.json` beside its spawn record.
+This private, bounded receipt contains session IDs/paths, a launch nonce, a PID,
+and lifecycle metadata, not conversation text. Old releases ignore the file and
+can still read existing chat bindings; after rollback, new Claude runs again lack
+exit verification. The native transcripts and existing state schemas are unchanged.
+
 ## Upgrading to 0.9.3: idle notifications and compaction
 
 Interactive primaries launched by Meridian now watch for idle time: a phone
@@ -369,7 +390,7 @@ not touched.
   harnesses or starting fresh.
 - `--prompt-file` and `-p` now reach interactive Claude, Pi, and OpenCode
   sessions.
-- Pi runs report verified exit-session changes. Missing exit-identity evidence
+- Pi and Claude runs can report verified exit-session changes. Missing exit-identity evidence
   is not a process failure: primary completion output shows the process result
   and the continue command without an `exit unresolved` line. `spawn show`
   reports `Exit-session identity: unverified` when proof is absent; JSON keeps
@@ -390,8 +411,9 @@ not touched.
 
 ## Known limits
 
-- Claude `/clear` can change sessions without a verified exit; see
-  [#533](https://github.com/haowjy/meridian-cli/issues/533).
+- Claude session switches need a final launch-correlated hook receipt and a valid
+  transcript. If hooks are disabled or no final receipt is written, continuation
+  falls back to the entry chat; it cannot guess a post-`/clear` destination.
 - Codex rollouts that Codex moved to `archived_sessions/` are not read yet, so
   those chats stay unbound; see
   [#528](https://github.com/haowjy/meridian-cli/issues/528).

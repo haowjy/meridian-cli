@@ -1,4 +1,4 @@
-"""Resolve Meridian's optional bundled Claude runtime plugins."""
+"""Resolve individual bundled Claude runtime plugins without coupling their policies."""
 
 from __future__ import annotations
 
@@ -29,20 +29,21 @@ def _default_install_root() -> Path:
 
 def missing_claude_runtime_warning(
     *,
+    plugin_name: str = _IDLE_PLUGIN_NAME,
     package_runtime_root: Path | None = None,
     install_root: Path | None = None,
 ) -> CompositionWarning:
-    """Describe the optional runtime paths omitted from a Claude launch."""
+    """Describe runtime paths omitted from a Claude launch."""
 
     package_dir = (
-        (package_runtime_root or _default_package_runtime_root()) / _IDLE_PLUGIN_NAME
+        (package_runtime_root or _default_package_runtime_root()) / plugin_name
     ).resolve()
-    install_dir = ((install_root or _default_install_root()) / _IDLE_PLUGIN_NAME).resolve()
+    install_dir = ((install_root or _default_install_root()) / plugin_name).resolve()
     return CompositionWarning(
         code="claude_runtime_missing",
         message=(
-            "Meridian's optional Claude idle plugin was not found; "
-            "launching Claude without it."
+            f"Meridian's Claude plugin {plugin_name!r} was not found; "
+            "its observations and features will be unavailable for this launch."
         ),
         detail={
             "package_dir": str(package_dir),
@@ -53,15 +54,16 @@ def missing_claude_runtime_warning(
 
 def resolve_claude_runtime(
     *,
+    plugin_name: str = _IDLE_PLUGIN_NAME,
     package_runtime_root: Path | None = None,
     install_root: Path | None = None,
 ) -> ClaudeRuntimeResolution:
-    """Resolve the bundled idle plugin, preferring package data over install data."""
+    """Resolve one plugin, preferring package data over install data."""
 
     package_dir = (
-        (package_runtime_root or _default_package_runtime_root()) / _IDLE_PLUGIN_NAME
+        (package_runtime_root or _default_package_runtime_root()) / plugin_name
     ).resolve()
-    install_dir = ((install_root or _default_install_root()) / _IDLE_PLUGIN_NAME).resolve()
+    install_dir = ((install_root or _default_install_root()) / plugin_name).resolve()
 
     for candidate in (package_dir, install_dir):
         if (candidate / ".claude-plugin" / "plugin.json").is_file():
