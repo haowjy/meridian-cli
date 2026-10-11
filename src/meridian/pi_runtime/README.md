@@ -80,7 +80,8 @@ reread only candidate children and parent-local evidence; tool boundaries do a
 fresh canonical discovery, startup/rebind requests one once idle, root events
 accelerate discovery, and a 30-second full reconciliation covers missed events. A
 missed event can therefore add about 30.5
-seconds of idle-only discovery latency.
+seconds of idle-only discovery latency, plus collector and filesystem time; this is
+not a hard deadline.
 
 Automatic spawn notices read at most 64 KiB from each selected `report.md`
 directly; truncation names the full report path, missing or empty reports retain a

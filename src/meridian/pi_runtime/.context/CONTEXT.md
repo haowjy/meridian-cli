@@ -134,8 +134,9 @@ also cannot authorize a bare Bash notice: a terminal launcher triggers fresh
 canonical discovery before final revalidation of its child correlation.
 Startup/rebind requests a full discovery once idle, and tool boundaries
 always do one. The nonrecursive root watcher requests discovery while idle, and a
-30-second full reconciliation covers missed events or delayed rows (up to roughly
-30.5 seconds while idle when an ordinary poll already owns the single flight). The
+30-second full reconciliation covers missed events or delayed rows (normally about
+30.5 seconds while idle when an ordinary poll already owns the single flight, plus
+collector and filesystem time; not a hard deadline). The
 two nonrecursive watchers remain constant in count.
 
 The idle generation is invalidated by `agent_start`, rebind and stop, closing the
@@ -144,7 +145,8 @@ observes idleness immediately before and after its final evidence snapshot. One
 message identity reserves exact membership until native `message_start` admission.
 Reload preserves queued claims; cold restart retries unreceipted work and keeps
 admitted or consumed work. Scan, report and receipt failures are supervised in
-`delivery-fault.json`. Final shutdown stops publication; reload preserves the owner.
+`delivery-fault.json`. Every shutdown stops publication before Pi invalidates the old context; reload
+retains the owner and claims, and fresh `session_start` restarts it.
 See [delivery-contract.md](delivery-contract.md) for schemas, public-event fencing
 and the bounded receipt-to-public-observation crash window.
 
