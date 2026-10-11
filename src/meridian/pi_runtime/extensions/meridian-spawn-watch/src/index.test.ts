@@ -100,6 +100,25 @@ function holdReport(root: string, id: string, text = `report for ${id}`) {
   writers.push(writer);
   return { reportPath, enteredPath, releasePath };
 }
+function chunkedReport(root: string, id: string, first: string, second: string) {
+  const reportPath = path.join(root, 'spawns', id, 'report.md');
+  const firstWrittenPath = `${reportPath}.first-written`;
+  const releasePath = `${reportPath}.release`;
+  execFileSync('mkfifo', [reportPath]);
+  const writer = spawn('bash', ['-c', [
+    'exec 3>"$REPORT"',
+    'printf %s "$FIRST" >&3',
+    ': >"$FIRST_WRITTEN"',
+    'while [[ ! -e "$RELEASE" ]]; do sleep 0.01; done',
+    'printf %s "$SECOND" >&3',
+  ].join('; ')], {
+    env: { ...process.env, REPORT: reportPath, FIRST_WRITTEN: firstWrittenPath,
+      RELEASE: releasePath, FIRST: first, SECOND: second },
+    stdio: 'ignore',
+  });
+  writers.push(writer);
+  return { firstWrittenPath, releasePath };
+}
 function host(idle = true) {
   const h = {
     idle, notices: [] as Notice[], deliveries: [] as DeliveryOptions[], handlers: new Map<string, Function>(),
@@ -188,6 +207,7 @@ describe('durable result delivery', () => {
 
     expect(h.notices[0]!.details.work_ids).toEqual(['p1', 'p2']);
     expect(h.notices[0]!.content).toContain('p1 failed');
+    expect(h.notices[0]!.content).toContain('exit 1');
     expect(h.notices[0]!.content).toContain('Failure: worker failed');
     expect(h.notices[0]!.content.match(/No durable report content was published\./g)).toHaveLength(2);
     expect(h.notices[0]!.content).toContain('Transcript: meridian session log p1');
@@ -205,6 +225,21 @@ describe('durable result delivery', () => {
 
     expect(h.notices[0]!.content).toContain(`[Report truncated after 65536 bytes; full report: ${reportPath}]`);
     expect(h.notices[0]!.content).not.toContain('TAIL');
+  });
+
+  it('reads a report through short reads until EOF', async () => {
+    const root = await setup();
+    await child(root, 'p1');
+    const chunks = chunkedReport(root, 'p1', 'first chunk', ' and second chunk');
+    const h = host(false);
+    const runtime = owner(h);
+
+    const boundary = runtime.deliverAtBoundary(new AbortController().signal);
+    await eventually(() => exists(chunks.firstWrittenPath));
+    writeFileSync(chunks.releasePath, 'release');
+    await boundary;
+
+    expect(h.notices[0]!.content).toContain('first chunk and second chunk');
   });
 
   it('fails closed on an unreadable present report and recovers after repair', async () => {
@@ -446,6 +481,40 @@ describe('durable result delivery', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('keeps failed forced discovery dirty until a full discovery succeeds', async () => {
+    const root = await setup();
+    await child(root, 'p1', null, { status: 'running', terminal: null });
+    await child(root, 'p2', null, { parent_id: 'p-other' });
+    const h = host(false);
+    const runtime = owner(h);
+    expect((await runtime.rows()).map(row => row.id)).toEqual(['p1']);
+
+    // Rewrite inside an existing foreign directory, which the nonrecursive
+    // root watcher cannot observe. The boundary must make its failed forced
+    // discovery sticky instead of falling back to the old {p1} candidate set.
+    await writeJsonAtomic(path.join(root, 'spawns', 'p2', 'state.json'), {
+      id: 'p2', parent_id: 'p-parent', status: 'succeeded', terminal: 'malformed',
+    });
+    await runtime.deliverAtBoundary(new AbortController().signal);
+    let fault = JSON.parse(await readFile(path.join(root, 'pi-bash', 'p-parent', 'delivery-fault.json'), 'utf8'));
+    expect(fault.error).toContain('invalid spawn state: p2');
+
+    h.idle = true;
+    runtime.observeIdle(() => h.idle);
+    await pause(800);
+    fault = JSON.parse(await readFile(path.join(root, 'pi-bash', 'p-parent', 'delivery-fault.json'), 'utf8'));
+    expect(fault.error).toContain('invalid spawn state: p2');
+    expect(h.notices).toHaveLength(0);
+
+    await child(root, 'p2');
+    writeFileSync(path.join(root, 'spawns', 'p2', 'report.md'), 'repaired discovery report');
+    await eventually(() => h.notices.length === 1);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p2']);
+    await eventually(async () => JSON.parse(
+      await readFile(path.join(root, 'pi-bash', 'p-parent', 'delivery-fault.json'), 'utf8')
+    ).error === null);
   });
 
   it('scopes invalid terminal evidence to its canonical parent', async () => {

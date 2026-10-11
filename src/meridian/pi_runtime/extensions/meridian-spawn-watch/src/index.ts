@@ -33,6 +33,7 @@ type NotificationItem = {
   status: string;
   label: string;
   duration: string;
+  exitCode?: number;
   error?: string;
 };
 type ClearedSpawnsFile = { v: 1; spawn_id: string; updated_at_ms: number; cleared_spawn_ids: string[] };
@@ -142,7 +143,7 @@ export class SpawnWatchRuntime {
     }
   }
 
-  async rows(_discover = false): Promise<SpawnStateFile[]> {
+  async rows(): Promise<SpawnStateFile[]> {
     const cleared = await this.readCleared();
     return (await this.discoverChildStates()).filter((row) => row.terminal === null || !cleared.has(row.id));
   }
@@ -166,7 +167,10 @@ export class SpawnWatchRuntime {
     if (typeof details?.delivery_id !== "string" || !Array.isArray(details.work_ids)) return;
     const workIds = this.queued.get(details.delivery_id);
     if (!workIds || JSON.stringify(workIds) !== JSON.stringify(details.work_ids)) return;
-    try { await admitDelivery(details.delivery_id, workIds, this.currentSpawnId, this.receiptsPath); await this.clearFault(); }
+    try {
+      await admitDelivery(details.delivery_id, workIds, this.currentSpawnId, this.receiptsPath);
+      await this.clearFault("admission");
+    }
     catch (error) { await this.recordFault("admission", error); return; }
     this.queued.delete(details.delivery_id);
     this.requestIdleDelivery();
@@ -180,7 +184,8 @@ export class SpawnWatchRuntime {
   ): Promise<void> {
     const run = this.drainTail.then(async () => {
       const completed = await this.collectAndPublish(deliverAs, generation, signal, discover);
-      if (completed && this.requestIsCurrent(generation, signal)) await this.clearFault("scan");
+      if (completed && this.requestIsCurrent(generation, signal)
+          && this.discoveryRevision === this.reconciledRevision) await this.clearFault("scan");
     });
     this.drainTail = run.catch(() => undefined);
     return run;
@@ -216,6 +221,7 @@ export class SpawnWatchRuntime {
           id: row.id, kind: "spawn", status: row.status,
           label: `${row.agent ?? "spawn"}${row.model ? ` (${row.model})` : ""}`,
           duration: formatDurationSecs(row.terminal.duration_secs),
+          exitCode: row.terminal.exit_code,
           error: typeof terminalError === "string" ? terminalError : undefined,
         });
       }
@@ -250,9 +256,8 @@ export class SpawnWatchRuntime {
     }));
     if (!this.canContinue(deliverAs, generation, signal)) return false;
 
-    // A consuming tool persists before Pi becomes idle. Check the same idle
-    // generation immediately before and after the final evidence snapshot.
-    if (deliverAs === "followUp" && !this.isIdle()) return false;
+    // The canContinue checks observe the same idle generation immediately
+    // before and after the final evidence snapshot.
     const fresh = await this.collectEligible();
     if (!this.canContinue(deliverAs, generation, signal)) return false;
 
@@ -289,7 +294,8 @@ export class SpawnWatchRuntime {
   private async renderSpawnNotification(item: NotificationItem): Promise<string> {
     const reportPath = path.join(this.spawnsDir, item.id, "report.md");
     const report = await readBoundedReport(reportPath);
-    const lines = [`${item.id} ${item.status} (${item.duration}; ${item.label})`];
+    const outcome = item.exitCode === undefined ? item.duration : `exit ${item.exitCode}, ${item.duration}`;
+    const lines = [`${item.id} ${item.status} (${outcome}; ${item.label})`];
     if (item.error) lines.push(`Failure: ${item.error}`);
     lines.push("");
     if (report.text) lines.push(report.text);
@@ -318,20 +324,33 @@ export class SpawnWatchRuntime {
   }
 
   private async discoverChildStates(): Promise<SpawnStateFile[]> {
-    if (!existsSync(this.spawnsDir)) return [];
-    const revision = this.discoveryRevision;
-    const candidates = new Set<string>();
-    const rows: SpawnStateFile[] = [];
-    for (const name of (await readdir(this.spawnsDir)).sort()) {
-      if (!name.startsWith("p")) continue;
-      const value = await readPrivateJson(path.join(this.spawnsDir, name, "state.json"));
-      if (value === undefined) { candidates.add(name); continue; }
-      const state = this.parseOwnedChild(name, value);
-      if (state) { candidates.add(name); rows.push(state); }
+    // Starting every attempt makes failure sticky even when a root event was
+    // missed. Only the newest still-current attempt may publish its candidates;
+    // events or overlapping discoveries leave another full scan owed.
+    const revision = ++this.discoveryRevision;
+    try {
+      const candidates = new Set<string>();
+      const rows: SpawnStateFile[] = [];
+      if (existsSync(this.spawnsDir)) {
+        for (const name of (await readdir(this.spawnsDir)).sort()) {
+          if (!name.startsWith("p")) continue;
+          const value = await readPrivateJson(path.join(this.spawnsDir, name, "state.json"));
+          if (value === undefined) { candidates.add(name); continue; }
+          const state = this.parseOwnedChild(name, value);
+          if (state) { candidates.add(name); rows.push(state); }
+        }
+      }
+      if (this.discoveryRevision === revision) {
+        this.candidateChildIds = candidates;
+        this.reconciledRevision = revision;
+      }
+      return rows;
+    } catch (error) {
+      // A concurrent successful scan must not make a later observed failure look
+      // clean merely because that failing attempt started first.
+      this.discoveryRevision++;
+      throw error;
     }
-    this.candidateChildIds = candidates;
-    this.reconciledRevision = revision;
-    return rows;
   }
 
   private async readCandidateStates(): Promise<SpawnStateFile[]> {
@@ -368,10 +387,10 @@ export class SpawnWatchRuntime {
     }); } catch (writeError) { this.logWarning(writeError); }
   }
 
-  private async clearFault(operation?: "scan"): Promise<void> {
+  private async clearFault(operation: "scan" | "admission"): Promise<void> {
     const file = path.join(this.bashDir, "delivery-fault.json");
     const value = await readPrivateJson(file) as { operation?: unknown; error?: unknown } | undefined;
-    if (!value || !value.error || (operation && value.operation !== operation && this.queued.size)) return;
+    if (!value || !value.error || value.operation !== operation) return;
     await writeJsonAtomic(file, { v: 1, spawn_id: this.currentSpawnId, operation: null, error: null });
   }
 }
@@ -385,7 +404,12 @@ async function readBoundedReport(reportPath: string): Promise<{ text: string | n
   }
   try {
     const buffer = Buffer.alloc(MAX_REPORT_BYTES + 1);
-    const { bytesRead } = await report.read(buffer, 0, buffer.length, null);
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const chunk = await report.read(buffer, bytesRead, buffer.length - bytesRead, null);
+      if (chunk.bytesRead === 0) break;
+      bytesRead += chunk.bytesRead;
+    }
     return {
       text: buffer.subarray(0, Math.min(bytesRead, MAX_REPORT_BYTES)).toString("utf8").trim() || null,
       truncated: bytesRead > MAX_REPORT_BYTES,
@@ -401,7 +425,8 @@ function notificationKey(item: NotificationItem): string {
 
 function sameNotification(left: NotificationItem, right: NotificationItem): boolean {
   return left.kind === right.kind && left.id === right.id && left.status === right.status
-    && left.label === right.label && left.duration === right.duration && left.error === right.error;
+    && left.label === right.label && left.duration === right.duration
+    && left.exitCode === right.exitCode && left.error === right.error;
 }
 
 function formatBashNotification(items: NotificationItem[]): string {
@@ -476,7 +501,7 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
   pi.registerCommand("spawn", {
     description: "List Meridian spawns correlated to this Pi session.",
     handler: async (_args, ctx) => {
-      const loadRows = async (): Promise<SpawnStateFile[]> => runtime.rows(true);
+      const loadRows = async (): Promise<SpawnStateFile[]> => runtime.rows();
 
       if (!hasTaskPanelUI(ctx)) {
         const rows = await loadRows();

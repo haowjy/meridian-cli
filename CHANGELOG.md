@@ -12,7 +12,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   serialized collector: direct bounded report reads, finite eligibility
   revalidation, exact queue claims, fresh boundary discovery, scoped candidate
   polling and 30-second missed-event reconciliation. Agent starts and reloads
-  invalidate stale idle publication without formatter preemption.
+  invalidate stale idle publication without formatter preemption. Failed or
+  superseded full discoveries remain dirty until a successful replacement scan;
+  report reads handle short reads and direct notices retain terminal exit codes.
 
 ## [0.9.3] - 2026-10-11
 

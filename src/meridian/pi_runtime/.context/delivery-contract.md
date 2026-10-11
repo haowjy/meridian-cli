@@ -24,6 +24,10 @@ nonrecursive root watcher accelerates idle discovery, and a 30-second full
 reconciliation recovers missed events or delayed state rows.
 If an ordinary 500 ms idle poll already owns the single flight at reconciliation,
 the next tick discovers the row, for about 30.5 seconds maximum idle-only latency.
+Every full-discovery attempt marks discovery dirty. Failure, a concurrent newer
+attempt, or a root event during the scan leaves full discovery owed; only the newest
+still-current successful scan publishes candidates and clears that obligation.
+Candidate-only success cannot clear a fault from failed full discovery.
 While Pi is active, these timer and watcher requests perform no disk I/O; the next
 tool boundary supplies fresh discovery.
 
