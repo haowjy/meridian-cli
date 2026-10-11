@@ -213,7 +213,7 @@ async def test_sidecar_drives_idle_push_warn_compact_and_done(tmp_path: Path) ->
     state = store.read("codex", "session-1")
     assert [notice.body for notice in sender.notices] == [
         "Your turn",
-        "Cache goes cold in 15 min",
+        "est. 15 min until cold",
         "Compacted",
     ]
     assert sensor.compact_calls == 1
@@ -375,7 +375,7 @@ async def test_external_sensor_recovers_an_externally_written_arm(tmp_path: Path
     assert sensor.compact_calls == 1
     assert [notice.body for notice in sender.notices] == [
         "Your turn",
-        "Cache goes cold in 15 min",
+        "est. 15 min until cold",
         "Compacted",
     ]
 

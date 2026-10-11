@@ -21,7 +21,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `_MERIDIAN_PI_SESSION_ROLE` is gone. Read `MERIDIAN_SESSION_ROLE` (`primary` or
   `spawn`) instead; it is set for every harness.
 - New state directory `~/.meridian/idle/` (one JSON file per primary session,
-  garbage-collected after 7 days). Older builds ignore it. See
+  garbage-collected after 7 days). TTL confidence is saved with each stretch;
+  development-build records without it default to estimates until re-armed.
+  Older releases ignore the directory. See
   [docs/upgrading.md](docs/upgrading.md#upgrading-to-093-idle-notifications-and-compaction).
 
 ### Added
@@ -44,6 +46,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - Put idle notification reasons and tmux sessions in the title, with explicit
   work/project labels: `[idle] a2: pi on work: "idle-cache-notify"`.
+- Add send-time cache countdowns to idle/warning titles; label heuristic and
+  configured TTLs `est.` and omit countdowns when the TTL is unknown.
 - Make the fast gate's 60-second budget a warning target that no longer kills or
   fails a run that goes over.
 - Default `PI_CACHE_RETENTION=long` for interactive Pi primaries when the variable

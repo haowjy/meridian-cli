@@ -38,7 +38,7 @@ def test_push_warn_and_missing_message_rendering() -> None:
         _state(),
         label,
         include_messages=True,
-        warn_minutes=5,
+        now_ms=1,
         warn_email=True,
     )
     warn = stage_notice(
@@ -46,7 +46,7 @@ def test_push_warn_and_missing_message_rendering() -> None:
         _state(),
         label,
         include_messages=True,
-        warn_minutes=5,
+        now_ms=1,
         warn_email=True,
     )
     hidden = stage_notice(
@@ -54,7 +54,7 @@ def test_push_warn_and_missing_message_rendering() -> None:
         _state(),
         SessionLabel(agent="coder", project="meridian-cli"),
         include_messages=False,
-        warn_minutes=5,
+        now_ms=1,
         warn_email=False,
     )
 
@@ -64,7 +64,7 @@ def test_push_warn_and_missing_message_rendering() -> None:
         "Assistant: Your installed meridian is exactly the PR's latest code."
     )
     assert warn.title == '[cache warning] main: tech-lead on work: "idle-cache-notify"'
-    assert warn.body.startswith("Cache goes cold in 5 min\nYou: ")
+    assert warn.body.startswith("Cache expiry warning\nYou: ")
     assert hidden == push.__class__(
         title='[idle] coder in project: "meridian-cli"',
         body="Your turn",
@@ -120,7 +120,7 @@ def test_label_fallbacks_and_rendered_notices_have_no_separator_glyph() -> None:
             _state(last_user_text=None, last_assistant_text=None),
             label,
             include_messages=True,
-            warn_minutes=5,
+            now_ms=1,
             warn_email=False,
         )
         for stage in ("push", "warn")
@@ -131,6 +131,43 @@ def test_label_fallbacks_and_rendered_notices_have_no_separator_glyph() -> None:
     assert notices[3].title == "[idle] Meridian"
     assert notices[7].title == "[cache warning] Meridian"
     assert all("·" not in notice.title and "·" not in notice.body for notice in notices)
+
+
+@pytest.mark.parametrize(
+    ("ttl", "anchor", "now", "estimated", "suffix"),
+    [
+        (3600, 0, 720_000, False, "48 min until cold"),
+        (1800, 0, 720_000, True, "est. 18 min until cold"),
+        (300, 0, 210_000, False, "2 min until cold"),
+        (300, 0, 270_000, True, "est. <1 min until cold"),
+        (300, 0, 300_000, False, "cache cold"),
+        (300, 0, 360_000, True, "est. cache cold"),
+        (None, 0, 720_000, True, None),
+        (3600, None, 720_000, False, None),
+    ],
+)
+@pytest.mark.parametrize("stage", ["push", "warn"])
+def test_countdown_uses_current_time_and_persisted_ttl_confidence(
+    ttl: int | None,
+    anchor: int | None,
+    now: int,
+    estimated: bool,
+    suffix: str | None,
+    stage: str,
+) -> None:
+    notice = stage_notice(
+        stage,  # type: ignore[arg-type]
+        _state(ttl_seconds=ttl, ttl_estimated=estimated, idle_since_ms=anchor),
+        SessionLabel(harness="pi", work_id="idle-cache-notify", tmux_session="a2"),
+        include_messages=False,
+        now_ms=now,
+        warn_email=False,
+    )
+    reason = "idle" if stage == "push" else "cache warning"
+    expected = f'[{reason}] a2: pi on work: "idle-cache-notify"'
+    assert notice.title == expected + (f" — {suffix}" if suffix else "")
+    if stage == "warn":
+        assert notice.body == (suffix or "Cache expiry warning")
 
 
 def test_excerpt_trimming_collapses_whitespace_cuts_at_words_and_strips_reminders() -> None:

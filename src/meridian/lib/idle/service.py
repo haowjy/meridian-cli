@@ -322,13 +322,17 @@ class IdleService:
             return ArmResult(None, None, reason=config_result.reason)
         policy = config_result.policy
         resolved_ttl = ttl_seconds if ttl_seconds is not None else policy.ttl_seconds
+        ttl_estimated = True  # Configured/default TTLs have no provider guarantee.
         if resolved_ttl is None and self._detect_ttl is not None:
-            resolved_ttl = self._detect_ttl(
+            detected = self._detect_ttl(
                 session_id=session,
                 cwd=cwd,
                 provider=provider,
                 env=self.env,
             )
+            if detected is not None:
+                resolved_ttl = detected.seconds
+                ttl_estimated = detected.estimated
         if resolved_ttl is not None and resolved_ttl <= 0:
             raise ValueError("ttl_seconds must be greater than zero")
         if input_count is not None and input_count < 0:
@@ -448,6 +452,7 @@ class IdleService:
                 idle_since_ms=now_ms,
                 returned_at_ms=returned_at_ms,
                 ttl_seconds=resolved_ttl,
+                ttl_estimated=ttl_estimated,
                 schedule=_persisted_schedule(placed),
                 done=done,
                 compact_window_until_ms=None,
@@ -626,7 +631,7 @@ class IdleService:
                 state,
                 label,
                 include_messages=self._notify_config().include_messages,
-                warn_minutes=policy.warn_minutes,
+                now_ms=self._now_ms(),
                 warn_email=policy.warn_email,
             )
             ok = self._notify_sender(notice, self._notify_config()).ok

@@ -135,7 +135,15 @@ when available, the agent (or harness), and an explicitly labelled work item:
 `[idle] a2: pi on work: "idle-cache-notify"`. Other reasons are `[cache warning]`,
 `[compacted]`, `[compaction failed]`, and `[compaction skipped]`. Without a work
 item, the title uses `in project: "<project>"`; outside tmux, it omits the terminal
-prefix. Bodies retain the warning or result details and message excerpts labelled
+prefix. Idle and cache-warning titles also show the remaining cache lifetime,
+computed at send time: `— 48 min until cold` or `— est. 18 min until cold`.
+Claude's observed TTL and Pi's Anthropic retention use an unqualified countdown;
+OpenAI heuristics and configured/default TTLs use `est.`. An unknown TTL has no
+countdown. Under a minute reads `<1 min until cold`; an elapsed deadline reads
+`cache cold` (still qualified with `est.` for estimates). Compaction-result titles
+omit the old countdown, since that operation can refresh the cache.
+
+Bodies retain the warning or result details and message excerpts labelled
 `You` and `Assistant`, without repeating the tmux session.
 
 Excerpts are plain text, whitespace-collapsed, and shortened before storage.

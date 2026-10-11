@@ -5,7 +5,7 @@ from threading import Lock
 from typing import TypeVar
 
 from meridian.lib.config.settings import MeridianConfig
-from meridian.lib.harness.idle_types import DetectIdleTtl, IdleFacts
+from meridian.lib.harness.idle_types import CacheTtl, DetectIdleTtl, IdleFacts
 from meridian.lib.idle.service import (
     AutocompactOffReader,
     ConfigResult,
@@ -158,9 +158,9 @@ def test_config_role_and_enabled_gates_do_not_write() -> None:
 def test_arm_resolves_explicit_configured_then_detected_ttl() -> None:
     detected: list[str] = []
 
-    def detect_ttl(**kwargs: object) -> int:
+    def detect_ttl(**kwargs: object) -> CacheTtl:
         detected.append(str(kwargs["session_id"]))
-        return 300
+        return CacheTtl(300, estimated=False)
 
     idle, _, store, _ = service(detect_ttl=detect_ttl)
     idle.arm(harness="example", session="explicit", ttl_seconds=600)
@@ -178,6 +178,9 @@ def test_arm_resolves_explicit_configured_then_detected_ttl() -> None:
     assert store.read("example", "explicit").ttl_seconds == 600  # type: ignore[union-attr]
     assert store.read("example", "detected").ttl_seconds == 300  # type: ignore[union-attr]
     assert configured_store.read("codex", "configured").ttl_seconds == 900  # type: ignore[union-attr]
+    assert store.read("example", "explicit").ttl_estimated is True  # type: ignore[union-attr]
+    assert store.read("example", "detected").ttl_estimated is False  # type: ignore[union-attr]
+    assert configured_store.read("codex", "configured").ttl_estimated is True  # type: ignore[union-attr]
 
 
 def test_return_then_long_turn_uses_the_short_push_delay() -> None:

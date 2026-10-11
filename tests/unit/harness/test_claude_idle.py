@@ -8,6 +8,7 @@ import pytest
 
 from meridian.lib.harness import claude_idle
 from meridian.lib.harness.claude_sessions import project_slug
+from meridian.lib.harness.idle_types import CacheTtl
 
 
 def _assistant_row(*, one_hour: int = 0, five_minutes: int = 0) -> bytes:
@@ -56,7 +57,7 @@ def test_detect_ttl_from_transcript_fixtures(
             cwd,
             env={"HOME": str(tmp_path / "home")},
         )
-        == expected
+        == (CacheTtl(expected, estimated=False) if expected is not None else None)
     )
 
 
@@ -70,7 +71,7 @@ def test_detect_ttl_ignores_a_truncated_last_line(tmp_path: Path) -> None:
             cwd,
             env={"HOME": str(tmp_path / "home")},
         )
-        == 3600
+        == CacheTtl(3600, estimated=False)
     )
 
 

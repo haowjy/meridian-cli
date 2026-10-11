@@ -77,8 +77,16 @@ class IdleSensor(Protocol):
     async def compact(self) -> CompactResult: ...
 
 
+@dataclass(frozen=True)
+class CacheTtl:
+    """A cache lifetime and whether it is a heuristic rather than a known TTL."""
+
+    seconds: int
+    estimated: bool
+
+
 class DetectIdleTtl(Protocol):
-    """Resolve one harness session's prompt-cache lifetime, when observable."""
+    """Resolve one harness session's prompt-cache lifetime and confidence."""
 
     def __call__(
         self,
@@ -87,10 +95,11 @@ class DetectIdleTtl(Protocol):
         cwd: Path | None,
         provider: str | None,
         env: Mapping[str, str],
-    ) -> int | None: ...
+    ) -> CacheTtl | None: ...
 
 
 __all__ = [
+    "CacheTtl",
     "CompactResult",
     "DetectIdleTtl",
     "IdleEvent",

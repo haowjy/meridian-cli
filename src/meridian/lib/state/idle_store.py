@@ -55,6 +55,7 @@ class IdleState(BaseModel):
     idle_since_ms: int | None
     returned_at_ms: int | None = None
     ttl_seconds: int | None = Field(default=None, gt=0)
+    ttl_estimated: bool = True
     schedule: IdleSchedule
     done: dict[Stage, str] = Field(default_factory=_empty_done)
     compact_window_until_ms: int | None = None

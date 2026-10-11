@@ -63,6 +63,11 @@ One-hour Anthropic cache writes cost more than five-minute writes. Export
   Codex assumes 30 minutes (`[harness.codex.idle] ttl_seconds = 1800`); OpenCode
   is push-only (`ttl_seconds = 300`). Pi provider IDs other than `anthropic` and
   `openai` remain push-only.
+- Idle and cache-warning titles show time until the cache goes cold when a TTL
+  is known. Heuristic/configured TTLs are labelled `est.`. Idle state saves
+  `ttl_estimated` alongside the TTL; existing development-build records without
+  that field are treated as estimates until the next turn re-arms them. No
+  migration or repair command is needed.
 - Claude sessions you start yourself (not through `meridian claude`) can opt in:
   `CLAUDE_CODE_PLUGIN_DIRS="$(meridian idle mod-path)" claude`.
 

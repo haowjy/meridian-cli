@@ -15,18 +15,36 @@ def _body(lines: list[str | None], *, fallback: str | None = None) -> str:
     return fallback or ""
 
 
+def _cache_countdown(state: IdleState, now_ms: int) -> str | None:
+    if state.ttl_seconds is None or state.idle_since_ms is None:
+        return None
+    remaining_ms = state.idle_since_ms + state.ttl_seconds * 1000 - now_ms
+    if remaining_ms <= 0:
+        countdown = "cache cold"
+    elif remaining_ms < 60_000:
+        countdown = "<1 min until cold"
+    else:
+        minutes = (remaining_ms + 59_999) // 60_000
+        countdown = f"{minutes} min until cold"
+    return f"est. {countdown}" if state.ttl_estimated else countdown
+
+
 def stage_notice(
     stage: Literal["push", "warn"],
     state: IdleState,
     label: SessionLabel,
     *,
     include_messages: bool,
-    warn_minutes: int,
+    now_ms: int,
     warn_email: bool,
 ) -> Notice:
     """Build a waiting or cache-warning notice from persisted turn context."""
 
-    event = f"Cache goes cold in {warn_minutes} min" if stage == "warn" else None
+    countdown = _cache_countdown(state, now_ms)
+    title = f"[{'cache warning' if stage == 'warn' else 'idle'}] {label.headline}"
+    if countdown is not None:
+        title += f" — {countdown}"
+    event = (countdown or "Cache expiry warning") if stage == "warn" else None
     user = (
         f"You: {state.last_user_text}"
         if include_messages and state.last_user_text
@@ -38,7 +56,7 @@ def stage_notice(
         else None
     )
     return Notice(
-        title=f"[{'cache warning' if stage == 'warn' else 'idle'}] {label.headline}",
+        title=title,
         body=_body(
             [event, user, assistant],
             fallback="Your turn" if stage == "push" else None,

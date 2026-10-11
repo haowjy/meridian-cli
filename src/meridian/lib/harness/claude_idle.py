@@ -12,6 +12,7 @@ from meridian.lib.harness.claude_sessions import (
     candidate_claude_project_dirs,
     resolve_claude_config_root,
 )
+from meridian.lib.harness.idle_types import CacheTtl
 
 _TAIL_CHUNK_BYTES = 64 * 1024
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
@@ -84,8 +85,8 @@ def detect_ttl(
     *,
     provider: str | None = None,
     env: Mapping[str, str] | None = None,
-) -> int | None:
-    """Detect Claude's cache TTL from the latest cache-writing transcript row."""
+) -> CacheTtl | None:
+    """Detect Claude's known TTL from the latest cache-writing transcript row."""
 
     _ = provider
     normalized_session_id = session_id.strip()
@@ -109,7 +110,8 @@ def detect_ttl(
         return None
     try:
         with matches[0].open("rb") as handle:
-            return _ttl_from_stream(handle)
+            seconds = _ttl_from_stream(handle)
+            return CacheTtl(seconds, estimated=False) if seconds is not None else None
     except OSError:
         return None
 
