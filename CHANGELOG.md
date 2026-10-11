@@ -42,6 +42,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   user callback.
 
 ### Changed
+- Put idle notification reasons and tmux sessions in the title, with explicit
+  work/project labels: `[idle] a2: pi on work: "idle-cache-notify"`.
 - Make the fast gate's 60-second budget a warning target that no longer kills or
   fails a run that goes over.
 - Default `PI_CACHE_RETENTION=long` for interactive Pi primaries when the variable

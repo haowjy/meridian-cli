@@ -130,13 +130,19 @@ notice title and body as arguments, and pass the complete notice as JSON on
 stdin. Delivery is attempted once per selected backend; one backend failing does
 not prevent the other from running.
 
-Notification headlines identify the agent and work item (or project). Bodies put
-each fact on its own line: message excerpts are labelled `You` and `Assistant`,
-and `tmux: <session>` appears last when the process is inside tmux. Excerpts are
-plain text, whitespace-collapsed, and shortened before storage. Because they leave
-the machine through ntfy or email, set `include_messages = false` to omit both.
-For `meridian notify`, `--title` replaces the headline and moves the agent/work
-description into the body so the context remains visible.
+Idle notification titles put the reason first, followed by the tmux session
+when available, the agent (or harness), and an explicitly labelled work item:
+`[idle] a2: pi on work: "idle-cache-notify"`. Other reasons are `[cache warning]`,
+`[compacted]`, `[compaction failed]`, and `[compaction skipped]`. Without a work
+item, the title uses `in project: "<project>"`; outside tmux, it omits the terminal
+prefix. Bodies retain the warning or result details and message excerpts labelled
+`You` and `Assistant`, without repeating the tmux session.
+
+Excerpts are plain text, whitespace-collapsed, and shortened before storage.
+Because they leave the machine through ntfy or email, set
+`include_messages = false` to omit both. For `meridian notify`, `--title`
+replaces the headline and moves the terminal/agent/work description into the
+body so the context remains visible.
 
 Put SMTP credentials in `smtp_password_file` and set its mode to `0600`.
 Meridian refuses a password file readable by the group or other users. The

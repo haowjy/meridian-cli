@@ -58,16 +58,15 @@ def test_push_warn_and_missing_message_rendering() -> None:
         warn_email=False,
     )
 
-    assert push.title == "tech-lead on idle-cache-notify"
+    assert push.title == '[idle] main: tech-lead on work: "idle-cache-notify"'
     assert push.body == (
         "You: can u first test/install it locally?\n"
-        "Assistant: Your installed meridian is exactly the PR's latest code.\n"
-        "tmux: main"
+        "Assistant: Your installed meridian is exactly the PR's latest code."
     )
+    assert warn.title == '[cache warning] main: tech-lead on work: "idle-cache-notify"'
     assert warn.body.startswith("Cache goes cold in 5 min\nYou: ")
-    assert warn.body.endswith("\ntmux: main")
     assert hidden == push.__class__(
-        title="coder in meridian-cli",
+        title='[idle] coder in project: "meridian-cli"',
         body="Your turn",
         priority=3,
         email=False,
@@ -76,16 +75,17 @@ def test_push_warn_and_missing_message_rendering() -> None:
 
 
 @pytest.mark.parametrize(
-    ("result", "detail", "event"),
+    ("result", "detail", "reason", "event"),
     [
-        ("ok", "ignored detail", "Compacted"),
-        ("failed", "timeout", "Compaction failed: timeout"),
-        ("vetoed", "draft", "Compaction skipped: draft"),
+        ("ok", "ignored detail", "compacted", "Compacted"),
+        ("failed", "timeout", "compaction failed", "Compaction failed: timeout"),
+        ("vetoed", "draft", "compaction skipped", "Compaction skipped: draft"),
     ],
 )
 def test_compaction_rendering(
     result: str,
     detail: str | None,
+    reason: str,
     event: str,
 ) -> None:
     notice = compaction_notice(
@@ -94,8 +94,8 @@ def test_compaction_rendering(
         SessionLabel(harness="claude", project="meridian-cli", tmux_session="dev"),
     )
 
-    assert notice.title == "claude in meridian-cli"
-    assert notice.body == f"{event}\ntmux: dev"
+    assert notice.title == f'[{reason}] dev: claude in project: "meridian-cli"'
+    assert notice.body == event
     assert "You:" not in notice.body
     assert "Assistant:" not in notice.body
 
@@ -108,9 +108,9 @@ def test_label_fallbacks_and_rendered_notices_have_no_separator_glyph() -> None:
         SessionLabel(),
     )
     assert [label.headline for label in labels] == [
-        "coder in meridian-cli",
-        "pi on idle-cache-notify",
-        "Meridian in meridian-cli",
+        'coder in project: "meridian-cli"',
+        'pi on work: "idle-cache-notify"',
+        'Meridian in project: "meridian-cli"',
         "Meridian",
     ]
 
@@ -127,6 +127,9 @@ def test_label_fallbacks_and_rendered_notices_have_no_separator_glyph() -> None:
         for label in labels
     ]
     assert notices[0].body == "Your turn"
+    assert notices[1].title == '[idle] pi on work: "idle-cache-notify"'
+    assert notices[3].title == "[idle] Meridian"
+    assert notices[7].title == "[cache warning] Meridian"
     assert all("·" not in notice.title and "·" not in notice.body for notice in notices)
 
 

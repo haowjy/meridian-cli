@@ -17,20 +17,14 @@ class SessionLabel:
 
     @property
     def headline(self) -> str:
-        """Describe who owns the conversation and which work it belongs to."""
+        """Name the terminal, actor, and explicitly labelled work or project."""
 
-        actor = self.agent or self.harness or "Meridian"
+        description = self.agent or self.harness or "Meridian"
         if self.work_id:
-            return f"{actor} on {self.work_id}"
-        if self.project:
-            return f"{actor} in {self.project}"
-        return actor
-
-    @property
-    def footer(self) -> str | None:
-        """Render terminal context as its own final body line."""
-
-        return f"tmux: {self.tmux_session}" if self.tmux_session else None
+            description += f' on work: "{self.work_id}"'
+        elif self.project:
+            description += f' in project: "{self.project}"'
+        return f"{self.tmux_session}: {description}" if self.tmux_session else description
 
     def __str__(self) -> str:
         return self.headline
@@ -43,7 +37,6 @@ class SessionLabel:
             "agent": self.agent,
             "harness": self.harness,
             "headline": self.headline,
-            "footer": self.footer,
         }
 
 
@@ -76,8 +69,6 @@ def manual_notice(
     body_lines = [message]
     if normalized_title is not None:
         body_lines.append(label.headline)
-    if label.footer is not None:
-        body_lines.append(label.footer)
     return Notice(
         title=normalized_title or label.headline,
         body="\n".join(line for line in body_lines if line),

@@ -38,9 +38,9 @@ def stage_notice(
         else None
     )
     return Notice(
-        title=label.headline,
+        title=f"[{'cache warning' if stage == 'warn' else 'idle'}] {label.headline}",
         body=_body(
-            [event, user, assistant, label.footer],
+            [event, user, assistant],
             fallback="Your turn" if stage == "push" else None,
         ),
         priority=3 if stage == "push" else 4,
@@ -61,12 +61,13 @@ def compaction_notice(
         "failed": "Compaction failed",
         "vetoed": "Compaction skipped",
     }[result]
+    title = f"[{event.lower()}] {label.headline}"
     normalized_detail = detail.strip() if detail else ""
     if normalized_detail and result != "ok":
         event = f"{event}: {normalized_detail}"
     return Notice(
-        title=label.headline,
-        body=_body([event, label.footer]),
+        title=title,
+        body=event,
         priority=3 if result == "ok" else 4,
         email=False,
         kind="idle",
