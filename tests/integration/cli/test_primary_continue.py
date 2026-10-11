@@ -137,19 +137,7 @@ def _record_primary_launch(monkeypatch: pytest.MonkeyPatch) -> list[LaunchReques
     return requests
 
 
-@pytest.mark.parametrize(
-    ("boundary_status", "successor", "exit_code", "notice"),
-    [
-        ("unresolved", None, 0, None),
-        ("unresolved", None, 1, None),
-        ("mismatch", None, 1, "warning: Session identity mismatch"),
-        ("unresolved", "possible-successor", 0, "warning: Possible session change detected"),
-        ("verified", None, 0, "→ exit c-primary"),
-    ],
-)
-def test_primary_exit_reporting_preserves_saved_identity(
-    tmp_path, monkeypatch, boundary_status, successor, exit_code, notice,
-):
+def test_primary_exit_reporting_preserves_saved_identity(tmp_path, monkeypatch):
     from meridian.lib.ops.run_boundary import run_boundary_summary
     from meridian.lib.state.spawn.model import RunBoundaryOutcome
 
@@ -158,45 +146,38 @@ def test_primary_exit_reporting_preserves_saved_identity(
     spawn_store.update_spawn(
         runtime_root,
         "p41",
-        run_boundary=RunBoundaryOutcome(
-            status=boundary_status,
-            exit_chat_id="c-primary" if boundary_status == "verified" else None,
-            trampoline_successor_id=successor,
-        ),
+        run_boundary=RunBoundaryOutcome(status="unresolved"),
     )
     spawn_store.finalize_spawn(
-        runtime_root, "p41", "succeeded" if exit_code == 0 else "failed", exit_code,
-        origin="runner",
+        runtime_root, "p41", "succeeded", 0, origin="runner",
     )
     monkeypatch.setattr(
         primary_launch_module,
         "launch_primary",
         lambda **kwargs: LaunchResult(
-            command=(), exit_code=exit_code, primary_spawn_id="p41",
+            command=(), exit_code=0, primary_spawn_id="p41",
             continue_ref="session-41", continue_chat_id="c-primary",
         ),
     )
 
     output = _run_primary_continue(tmp_path, "")
     text = output.format_text()
-    assert ("Session finished." if exit_code == 0 else "Session failed.") in text
+    assert "Session finished." in text
     assert "meridian --continue c-primary" in text
     assert "exit unresolved" not in text
-    assert output.exit_code == exit_code
-    if notice:
-        assert notice in text
-    else:
-        assert output.boundary_summary is None
-        assert "unverified" not in text
+    assert output.exit_code == 0 and output.boundary_summary is None
     row = spawn_store.get_spawn(runtime_root, "p41")
     assert row is not None and row.run_boundary is not None
-    assert row.run_boundary.status == boundary_status
     assert row.harness_session_id == "session-41"
     assert row.continue_chat_id == "c-primary"
-    if boundary_status == "unresolved" and successor is None:
-        assert run_boundary_summary(row) == (
-            "Exit-session identity: unverified; recorded entry c-primary (session-41)."
-        )
+    assert "unverified" in (run_boundary_summary(row) or "")
+    # Suppressing absent proof must not suppress actual warnings; no extra CLI launches needed.
+    mismatch = row.model_copy(update={"run_boundary": RunBoundaryOutcome(status="mismatch")})
+    successor = row.model_copy(update={"run_boundary": RunBoundaryOutcome(
+        status="unresolved", trampoline_successor_id="possible-successor",
+    )})
+    assert (run_boundary_summary(mismatch, include_unverified=False) or "").startswith("warning:")
+    assert (run_boundary_summary(successor, include_unverified=False) or "").startswith("warning:")
 
 
 def test_primary_continue_maps_source_contract_to_launch_request(

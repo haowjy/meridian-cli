@@ -34,10 +34,7 @@ from meridian.lib.launch.request import (
 from meridian.lib.launch.types import SessionMode
 from meridian.lib.state import session_store
 from meridian.lib.state.spawn_store import list_spawns
-from tests.support.claude_boundary_process import (
-    ENTRY_SESSION_TOKEN,
-    NATIVE_STORE_TOKEN,
-)
+from tests.support.claude_boundary_process import ENTRY_SESSION_TOKEN
 from tests.support.launch import stub_bundle_request_and_resolve
 
 
@@ -548,186 +545,20 @@ def test_unrelated_claude_trampoline_candidate_is_diagnostic(
     assert "TRAMPOLINE-EXIT" not in logged.stdout
 
 
-_STORE = NATIVE_STORE_TOKEN
-_ENTRY = ENTRY_SESSION_TOKEN
-_SUCCESSOR = "9a4846b0-5380-461d-98cb-304e7cee6e64"
-_SOURCE = "source-native"
-_FORK = "fork-native"
-_SAME = (
-    {"hook_event_name": "SessionStart", "session_id": _ENTRY,
-     "transcript_path": f"{_STORE}/{_ENTRY}.jsonl", "source": "startup"},
-    {"hook_event_name": "SessionEnd", "session_id": _ENTRY,
-     "transcript_path": f"{_STORE}/{_ENTRY}.jsonl", "reason": "prompt_input_exit"},
-)
-_CLEAR = (
-    _SAME[0],
-    {"hook_event_name": "SessionEnd", "session_id": _ENTRY,
-     "transcript_path": f"{_STORE}/{_ENTRY}.jsonl", "reason": "clear"},
-    {"hook_event_name": "SessionStart", "session_id": _SUCCESSOR,
-     "transcript_path": f"{_STORE}/{_SUCCESSOR}.jsonl", "source": "clear"},
-    {"hook_event_name": "SessionEnd", "session_id": _SUCCESSOR,
-     "transcript_path": f"{_STORE}/{_SUCCESSOR}.jsonl", "reason": "prompt_input_exit"},
-)
-
-
-_OWNED_BOUNDARY_CASES = (
-    {
-        "name": "same", "fork": False, "events": _SAME,
-        "expected": {"status": "verified", "entry": _ENTRY, "exit": _ENTRY,
-                      "exit_chat_is_entry": True, "exit_code": 0},
-    },
-    {
-        "name": "clear", "fork": False, "events": _CLEAR,
-        "expected": {"status": "verified", "entry": _ENTRY, "exit": _SUCCESSOR,
-                      "exit_chat_is_entry": False, "exit_code": 0},
-    },
-    {
-        "name": "resume",
-        "fork": False,
-        "events": (
-            {"hook_event_name": "SessionStart", "session_id": _ENTRY,
-             "transcript_path": f"{_STORE}/{_ENTRY}.jsonl", "source": "startup"},
-            {"hook_event_name": "SessionEnd", "session_id": _ENTRY,
-             "transcript_path": f"{_STORE}/{_ENTRY}.jsonl", "reason": "resume"},
-            {"hook_event_name": "SessionStart", "session_id": _SUCCESSOR,
-             "transcript_path": f"{_STORE}/{_SUCCESSOR}.jsonl", "source": "resume"},
-            {"hook_event_name": "SessionEnd", "session_id": _SUCCESSOR,
-             "transcript_path": f"{_STORE}/{_SUCCESSOR}.jsonl", "reason": "prompt_input_exit"},
-        ),
-        "expected": {"status": "verified", "entry": _ENTRY, "exit": _SUCCESSOR,
-                      "exit_chat_is_entry": False, "exit_code": 0},
-    },
-    {
-        "name": "switch-only",
-        "fork": False,
-        "events": (
-            {"hook_event_name": "SessionStart", "session_id": _ENTRY,
-             "transcript_path": f"{_STORE}/{_ENTRY}.jsonl", "source": "startup"},
-            {"hook_event_name": "SessionEnd", "session_id": _ENTRY,
-             "transcript_path": f"{_STORE}/{_ENTRY}.jsonl", "reason": "clear"},
-        ),
-        "expected": {"status": "unresolved", "entry": _ENTRY, "exit": None,
-                      "exit_chat_is_entry": None, "exit_code": 0},
-    },
-    {
-        "name": "stale-nonce", "fork": False, "events": _SAME,
-        "expected": {"status": "unresolved", "entry": _ENTRY, "exit": None,
-                      "exit_chat_is_entry": None, "exit_code": 0},
-        "receipt_mutation": {"field": "launch_nonce"},
-    },
-    {
-        "name": "wrong-pid", "fork": False, "events": _SAME,
-        "expected": {"status": "unresolved", "entry": _ENTRY, "exit": None,
-                      "exit_chat_is_entry": None, "exit_code": 0},
-        "receipt_mutation": {"field": "pid"},
-    },
-    {
-        "name": "bad-header", "fork": False, "events": _CLEAR,
-        "expected": {"status": "unresolved", "entry": _ENTRY, "exit": None,
-                      "exit_chat_is_entry": None, "exit_code": 0},
-        "transcript_mutation": {
-            "action": "rewrite_header", "path": f"{_STORE}/{_SUCCESSOR}.jsonl",
-            "header_session_id": _ENTRY,
-        },
-    },
-    {
-        "name": "missing-file",
-        "fork": False,
-        "events": (
-            {"hook_event_name": "SessionStart", "session_id": _ENTRY,
-             "transcript_path": f"{_STORE}/{_ENTRY}.jsonl", "source": "startup"},
-            {"hook_event_name": "SessionEnd", "session_id": _ENTRY,
-             "transcript_path": f"{_STORE}/{_ENTRY}.jsonl", "reason": "clear"},
-            {"hook_event_name": "SessionStart", "session_id": _SUCCESSOR,
-             "transcript_path": f"{_STORE}/{_SUCCESSOR}.jsonl", "source": "clear"},
-            {"hook_event_name": "SessionEnd", "session_id": _SUCCESSOR,
-             "transcript_path": f"{_STORE}/{_SUCCESSOR}.jsonl", "reason": "prompt_input_exit"},
-        ),
-        "expected": {"status": "unresolved", "entry": _ENTRY, "exit": None,
-                      "exit_chat_is_entry": None, "exit_code": 0},
-        "transcript_mutation": {"action": "delete", "path": f"{_STORE}/{_SUCCESSOR}.jsonl"},
-    },
-    {
-        "name": "wrong-entry",
-        "fork": False,
-        "events": (
-            {"hook_event_name": "SessionStart", "session_id": _SUCCESSOR,
-             "transcript_path": f"{_STORE}/{_SUCCESSOR}.jsonl", "source": "startup"},
-            {"hook_event_name": "SessionEnd", "session_id": _SUCCESSOR,
-             "transcript_path": f"{_STORE}/{_SUCCESSOR}.jsonl", "reason": "prompt_input_exit"},
-        ),
-        "expected": {"status": "mismatch", "entry": _ENTRY, "exit": None,
-                      "exit_chat_is_entry": None, "exit_code": 1},
-    },
-    {
-        "name": "no-start", "fork": False, "events": (_SAME[1],),
-        "expected": {"status": "unresolved", "entry": _ENTRY, "exit": None,
-                      "exit_chat_is_entry": None, "exit_code": 0},
-    },
-    {
-        "name": "fork",
-        "fork": True,
-        "events": (
-            {"hook_event_name": "SessionStart", "session_id": _FORK,
-             "transcript_path": f"{_STORE}/{_FORK}.jsonl", "source": "fork"},
-            {"hook_event_name": "SessionEnd", "session_id": _FORK,
-             "transcript_path": f"{_STORE}/{_FORK}.jsonl", "reason": "prompt_input_exit"},
-        ),
-        "expected": {"status": "verified", "entry": _FORK, "exit": _FORK,
-                      "exit_chat_is_entry": True, "exit_code": 0},
-    },
-    {
-        "name": "fork-reuses-source",
-        "fork": True,
-        "events": (
-            {"hook_event_name": "SessionStart", "session_id": _SOURCE,
-             "transcript_path": f"{_STORE}/{_SOURCE}.jsonl", "source": "fork"},
-            {"hook_event_name": "SessionEnd", "session_id": _SOURCE,
-             "transcript_path": f"{_STORE}/{_SOURCE}.jsonl", "reason": "prompt_input_exit"},
-        ),
-        "expected": {"status": "mismatch", "entry": None, "exit": None,
-                      "exit_chat_is_entry": None, "exit_code": 1},
-    },
-    {
-        "name": "fork-wrong-store",
-        "fork": True,
-        "events": (
-            {"hook_event_name": "SessionStart", "session_id": _FORK,
-             "transcript_path": f"{_STORE}/foreign/{_FORK}.jsonl", "source": "fork"},
-            {"hook_event_name": "SessionEnd", "session_id": _FORK,
-             "transcript_path": f"{_STORE}/foreign/{_FORK}.jsonl", "reason": "prompt_input_exit"},
-        ),
-        "expected": {"status": "mismatch", "entry": None, "exit": None,
-                      "exit_chat_is_entry": None, "exit_code": 1},
-    },
-    {
-        "name": "bad-entry-file", "fork": False, "events": _SAME,
-        "expected": {"status": "unresolved", "entry": _ENTRY, "exit": None,
-                      "exit_chat_is_entry": None, "exit_code": 0},
-        "transcript_mutation": {
-            "action": "rewrite_header", "path": f"{_STORE}/{_ENTRY}.jsonl",
-            "header_session_id": _SUCCESSOR,
-        },
-    },
-    {
-        "name": "missing-entry-file", "fork": False, "events": _SAME,
-        "expected": {"status": "unresolved", "entry": _ENTRY, "exit": None,
-                      "exit_chat_is_entry": None, "exit_code": 0},
-        "transcript_mutation": {"action": "delete", "path": f"{_STORE}/{_ENTRY}.jsonl"},
-    },
-)
-
-
 @pytest.mark.parametrize(
-    "case",
-    _OWNED_BOUNDARY_CASES,
-    ids=lambda case: case["name"],
+    ("fork", "initial_id", "store_suffix", "status"),
+    [
+        pytest.param(False, ENTRY_SESSION_TOKEN, "", "verified", id="create-switches"),
+        pytest.param(True, "fork-native", "", "verified", id="fork-switches"),
+        pytest.param(True, "source-native", "", "mismatch", id="fork-reuses-source"),
+        pytest.param(True, "fork-native", "foreign", "mismatch", id="fork-wrong-store"),
+    ],
 )
 def test_owned_claude_boundary_selects_only_validated_native_exit(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    case: Any,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    fork: bool, initial_id: str, store_suffix: str, status: str,
 ) -> None:
+    """Keep expensive launches for wiring/switches and the two fork-binding guards."""
     from dataclasses import replace
 
     from meridian.lib.state.paths import resolve_project_runtime_root_for_write
@@ -748,7 +579,7 @@ def test_owned_claude_boundary_selects_only_validated_native_exit(
     store = tmp_path / "home" / ".claude/projects" / project_slug(root)
     session = None
     source_session_id = "source-native"
-    if case["fork"]:
+    if fork:
         store.mkdir(parents=True)
         (store / f"{source_session_id}.jsonl").write_text(
             json.dumps({"sessionId": source_session_id}) + "\n"
@@ -767,11 +598,21 @@ def test_owned_claude_boundary_selects_only_validated_native_exit(
     )
     context = replace(context, runtime_root=resolve_project_runtime_root_for_write(root))
     fixture_config = tmp_path / "claude-boundary-fixture.json"
-    fixture_config.write_text(json.dumps({
-        "events": case["events"], "native_store": str(store),
-        "transcript_mutation": case.get("transcript_mutation"),
-        "receipt_mutation": case.get("receipt_mutation"),
-    }))
+    steps = (
+        ("SessionStart", initial_id, "fork" if fork else "startup"),
+        ("SessionEnd", initial_id, "clear"),
+        ("SessionStart", "cleared", "clear"),
+        ("SessionEnd", "cleared", "resume"),
+        ("SessionStart", "resumed", "resume"),
+        ("SessionEnd", "resumed", "prompt_input_exit"),
+    )
+    events = [
+        {"hook_event_name": event, "session_id": sid,
+         "transcript_path": str(store / store_suffix / f"{sid}.jsonl"),
+         "source" if event == "SessionStart" else "reason": reason}
+        for event, sid, reason in steps
+    ]
+    fixture_config.write_text(json.dumps({"events": events}))
     monkeypatch.setenv("_MERIDIAN_CLAUDE_BOUNDARY_FIXTURE_CONFIG", str(fixture_config))
 
     outcome = run_harness_process(context, registry)
@@ -779,34 +620,23 @@ def test_owned_claude_boundary_selects_only_validated_native_exit(
     assert row.run_boundary is not None
     entry = session_store.get_session_record(context.runtime_root, outcome.chat_id)
     assert entry is not None
-    expectation = case["expected"]
-    if expectation["entry"] is None:
-        assert entry.harness_session_id is None
-    elif expectation["entry"] == _FORK:
-        assert entry.harness_session_id == _FORK
-    elif expectation["entry"] == _ENTRY:
-        assert entry.harness_session_id is not None
-        assert entry.harness_session_id not in {_SUCCESSOR, _SOURCE}
-    else:
-        raise AssertionError(f"unexpected entry expectation: {expectation['entry']}")
     assert row.harness_session_id == entry.harness_session_id
     assert row.chat_id == entry.chat_id
-    assert row.run_boundary.status == expectation["status"]
-    assert outcome.exit_code == expectation["exit_code"]
-    if expectation["status"] == "verified":
+    assert row.run_boundary.status == status
+    assert outcome.exit_code == (1 if status == "mismatch" else 0)
+    if status == "verified":
+        assert entry.harness_session_id is not None
+        assert entry.harness_session_id not in {"cleared", "resumed", source_session_id}
+        if fork:
+            assert entry.harness_session_id == initial_id
         exit_chat = session_store.get_session_record(context.runtime_root, row.continue_chat_id)
-        assert exit_chat is not None
-        expected_exit_session_id = (
-            entry.harness_session_id
-            if expectation["exit"] == _ENTRY
-            else expectation["exit"]
-        )
-        assert exit_chat.harness_session_id == expected_exit_session_id
-        assert (exit_chat.chat_id == entry.chat_id) is expectation["exit_chat_is_entry"]
+        assert exit_chat is not None and exit_chat.harness_session_id == "resumed"
+        assert exit_chat.chat_id != entry.chat_id
     else:
+        assert entry.harness_session_id is None
         assert row.run_boundary.exit_chat_id is None
         assert row.continue_chat_id == entry.chat_id
-    if case["fork"]:
+    if fork:
         assert (store / f"{source_session_id}.jsonl").read_text() == (
             json.dumps({"sessionId": source_session_id}) + "\n"
         )

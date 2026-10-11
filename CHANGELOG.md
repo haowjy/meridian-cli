@@ -7,6 +7,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Upgrade notes
 - Restart Claude sessions through updated Meridian to load exit-session verification. Older runs stay unverified; no migration. See [Claude exit verification](docs/upgrading.md#claude-exit-session-verification).
 
+### Changed
+- Trim duplicate Claude boundary tests and run recorder edge checks without subprocesses.
+
 ### Fixed
 - Require native transcript proof before reusing any exit chat, not just creating one.
 - Preserve Claude plugin-resolution warnings; valid symlinked plugins no longer appear missing.
