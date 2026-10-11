@@ -35,8 +35,10 @@ Every full-discovery attempt marks discovery dirty. Failure, a concurrent newer
 attempt, or a root event during the scan leaves full discovery owed; only the newest
 still-current successful scan publishes candidates and clears that obligation.
 Candidate-only success cannot clear a fault from failed full discovery.
-While Pi is active, these timer and watcher requests perform no disk I/O; the next
-tool boundary supplies fresh discovery.
+While Pi is active, these timer and watcher requests perform no disk I/O. An idle
+scan already in progress may finish its current filesystem await, but stops before
+reading another row and cannot commit its partial hints. The next tool boundary
+supplies fresh discovery.
 
 Publication has two serialized paths: a successful tool-bearing `turn_end` awaits
 a fresh scan and queues native steer before the next inference, while genuinely

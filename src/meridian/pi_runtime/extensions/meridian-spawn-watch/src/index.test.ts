@@ -180,6 +180,30 @@ describe('durable result delivery', () => {
     expect(h.notices).toHaveLength(0);
   });
 
+  it('stops an idle discovery before its next row when the agent starts', async () => {
+    const root = await setup();
+    const held = [];
+    for (const id of ['p0', 'p1']) {
+      await mkdir(path.join(root, 'spawns', id), { recursive: true });
+      const row = holdReport(root, id, JSON.stringify({
+        id, parent_id: 'p-other', status: 'running', terminal: null,
+      }));
+      await link(row.reportPath, path.join(root, 'spawns', id, 'state.json'));
+      held.push(row);
+    }
+    const h = host(true);
+    const runtime = owner(h);
+    await eventually(() => exists(held[0]!.enteredPath));
+    h.idle = false;
+    runtime.observeActive(() => h.idle);
+    writeFileSync(held[0]!.releasePath, 'release');
+    await pause(300);
+
+    // The first filesystem await may finish, but no next row may start reading.
+    expect(await exists(held[1]!.enteredPath)).toBe(false);
+    expect(h.notices).toHaveLength(0);
+  });
+
   it('renders automatic spawn delivery directly from the durable report', async () => {
     const root = await setup();
     await child(root, 'p1');

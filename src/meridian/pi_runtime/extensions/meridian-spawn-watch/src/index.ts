@@ -204,9 +204,9 @@ export class SpawnWatchRuntime {
     return new Set([...this.queued.values()].flat());
   }
 
-  private async collectEligible(knownStates?: SpawnStateFile[]): Promise<NotificationItem[]> {
-    const [states, bash, receipts, observed, cleared] = await Promise.all([
-      knownStates ?? this.readCandidateStates(), this.readBash(), readDeliveryReceipts(this.currentSpawnId, this.receiptsPath),
+  private async collectEligible(states: SpawnStateFile[]): Promise<NotificationItem[]> {
+    const [bash, receipts, observed, cleared] = await Promise.all([
+      this.readBash(), readDeliveryReceipts(this.currentSpawnId, this.receiptsPath),
       readSpawnObservations(this.currentSpawnId, this.observationsPath), this.readCleared(),
     ]);
     const consumed = admittedWorkIds(receipts);
@@ -245,9 +245,11 @@ export class SpawnWatchRuntime {
     discover: boolean,
   ): Promise<boolean> {
     if (!this.canContinue(deliverAs, generation, signal)) return false;
-    const discovered = discover ? await this.discoverChildStates() : undefined;
+    const mayRead = () => this.canContinue(deliverAs, generation, signal);
+    const discovered = discover ? await this.discoverChildStates(mayRead) : undefined;
+    const initialStates = discovered?.rows ?? await this.readCandidateStates(this.candidateChildIds, mayRead);
     if (!this.canContinue(deliverAs, generation, signal)) return false;
-    const initial = await this.collectEligible(discovered?.rows);
+    const initial = await this.collectEligible(initialStates);
     if (!this.canContinue(deliverAs, generation, signal)) return false;
     if (!initial.length) return true;
 
@@ -261,9 +263,9 @@ export class SpawnWatchRuntime {
     // after observing Bash terminal, so missed root events cannot split the
     // launcher's obligation from its already-published canonical child.
     const correlation = initial.some((item) => item.kind === "bash")
-      ? await this.discoverChildStates() : undefined;
+      ? await this.discoverChildStates(mayRead) : undefined;
     const freshStates = correlation?.rows
-      ?? await this.readCandidateStates(initial.map((item) => item.id));
+      ?? await this.readCandidateStates(initial.map((item) => item.id), mayRead);
     if (!this.canContinue(deliverAs, generation, signal)) return false;
 
     // Revalidate the selected IDs, not a hint cache another discovery may have
@@ -339,7 +341,7 @@ export class SpawnWatchRuntime {
     return new Set(file.cleared_spawn_ids);
   }
 
-  private async discoverChildStates(): Promise<ChildDiscovery> {
+  private async discoverChildStates(mayRead: () => boolean = () => true): Promise<ChildDiscovery> {
     // Starting every attempt makes failure sticky even when a root event was
     // missed. Only the newest still-current attempt may publish its candidates;
     // events or overlapping discoveries leave another full scan owed.
@@ -349,6 +351,7 @@ export class SpawnWatchRuntime {
       const rows: SpawnStateFile[] = [];
       if (existsSync(this.spawnsDir)) {
         for (const name of (await readdir(this.spawnsDir)).sort()) {
+          if (!mayRead()) break;
           if (!name.startsWith("p")) continue;
           const value = await readPrivateJson(path.join(this.spawnsDir, name, "state.json"));
           if (value === undefined) continue;
@@ -356,7 +359,7 @@ export class SpawnWatchRuntime {
           if (state) { candidates.add(name); rows.push(state); }
         }
       }
-      if (this.discoveryRevision === revision) {
+      if (mayRead() && this.discoveryRevision === revision) {
         this.candidateChildIds = candidates;
         this.reconciledRevision = revision;
       }
@@ -369,9 +372,10 @@ export class SpawnWatchRuntime {
     }
   }
 
-  private async readCandidateStates(ids: Iterable<string> = this.candidateChildIds): Promise<SpawnStateFile[]> {
+  private async readCandidateStates(ids: Iterable<string>, mayRead: () => boolean): Promise<SpawnStateFile[]> {
     const rows: SpawnStateFile[] = [];
     for (const name of [...ids].sort()) {
+      if (!mayRead()) break;
       const value = await readPrivateJson(path.join(this.spawnsDir, name, "state.json"));
       if (value === undefined) continue;
       const state = this.parseOwnedChild(name, value);

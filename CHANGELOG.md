@@ -12,6 +12,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   bounded direct report reads. Preserve exit codes and short-read handling. Idle
   polling skips unrelated history and stateless directories; full discovery runs
   at tool boundaries and on a 30-second missed-event reconciliation cadence.
+  In-flight idle scans stop before their next row when the agent starts.
 - Keep discovery hints out of notification authority. Stable selected children
   survive unrelated root churn; bare Bash notices require a current canonical
   child-correlation snapshot. Failed discovery stays unresolved until repaired.
