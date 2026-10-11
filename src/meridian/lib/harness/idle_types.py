@@ -33,6 +33,16 @@ class PinnedIdleSession:
 
 
 @dataclass(frozen=True)
+class NativeIdleHook:
+    """One intercepted native callback's observation and downstream delegation."""
+
+    observe: Callable[
+        [str, Callable[[str], PinnedIdleSession | None]], IdleEvent | None
+    ]
+    delegate: Callable[[str, Mapping[str, str]], None]
+
+
+@dataclass(frozen=True)
 class IdleFacts:
     """Live facts used to decide whether compaction is safe."""
 
@@ -106,5 +116,6 @@ __all__ = [
     "IdleFacts",
     "IdleSensor",
     "IdleSensorContext",
+    "NativeIdleHook",
     "PinnedIdleSession",
 ]

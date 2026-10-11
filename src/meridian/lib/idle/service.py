@@ -18,6 +18,7 @@ from meridian.lib.harness.idle_types import (
     DetectIdleTtl,
     IdleEvent,
     IdleFacts,
+    NativeIdleHook,
     PinnedIdleSession,
 )
 from meridian.lib.idle.children import (
@@ -50,17 +51,6 @@ class NotifySender(Protocol):
 
 
 AutocompactOffReader = Callable[[Mapping[str, str]], bool | None]
-
-
-class NativeEventParser(Protocol):
-    """Translate a native callback without giving the harness direct store access."""
-
-    def __call__(
-        self,
-        payload: str,
-        *,
-        session_reader: Callable[[str], PinnedIdleSession | None],
-    ) -> IdleEvent | None: ...
 
 
 @dataclass(frozen=True)
@@ -277,8 +267,7 @@ class IdleService:
         interactive: bool = False,
         autocompact_off: AutocompactOffReader | None = None,
         detect_ttl: DetectIdleTtl | None = None,
-        native_event_parser: NativeEventParser | None = None,
-        native_event_applied: Callable[[str, Mapping[str, str]], None] | None = None,
+        native_idle_hook: NativeIdleHook | None = None,
     ) -> None:
         self.env = dict(os.environ if env is None else env)
         configured_role = self.env.get("MERIDIAN_SESSION_ROLE")
@@ -291,8 +280,7 @@ class IdleService:
         self._spawn_reader = spawn_reader or spawn_store_reader(self.env)
         self._autocompact_off = autocompact_off
         self._detect_ttl = detect_ttl
-        self._native_event_parser = native_event_parser
-        self._native_event_applied = native_event_applied
+        self._native_idle_hook = native_idle_hook
 
     def config_for(self, harness: str) -> ConfigResult:
         policy = resolve_policy(harness, self.config, self.env)
@@ -739,11 +727,10 @@ class IdleService:
         *,
         harness: str,
     ) -> None:
-        """Parse and apply one harness callback through the policy service."""
+        """Observe one intercepted callback, then always delegate it downstream."""
 
-        if not payload.strip():
-            raise ValueError("native event payload must not be empty")
-        if self._native_event_parser is None:
+        hook = self._native_idle_hook
+        if hook is None:
             raise ValueError(f"harness {harness} does not accept idle events")
 
         def read_session(session: str) -> PinnedIdleSession | None:
@@ -752,12 +739,14 @@ class IdleService:
                 return None
             return PinnedIdleSession(last_input_count=states[0].last_input_count)
 
-        event = self._native_event_parser(payload, session_reader=read_session)
-        if event is None:
-            return
-        self.event(event, harness=harness)
-        if self._native_event_applied is not None:
-            self._native_event_applied(payload, self.env)
+        try:
+            if not payload.strip():
+                raise ValueError("idle event requires a payload argument or stdin")
+            event = hook.observe(payload, read_session)
+            if event is not None:
+                self.event(event, harness=harness)
+        finally:
+            hook.delegate(payload, self.env)
 
     def status(
         self,
@@ -783,7 +772,6 @@ __all__ = [
     "FireResult",
     "IdlePolicyConfig",
     "IdleService",
-    "NativeEventParser",
     "NotifySender",
     "ReturnResult",
     "effective",

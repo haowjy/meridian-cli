@@ -26,6 +26,7 @@ from meridian.lib.harness.idle_types import (
     IdleFacts,
     IdleSensor,
     IdleSensorContext,
+    NativeIdleHook,
     PinnedIdleSession,
 )
 from meridian.lib.platform import get_home_path
@@ -173,7 +174,7 @@ def _run_user_notify(command: tuple[str, ...], payload: str) -> None:
         )
 
 
-def chain_user_notify(payload: str, env: Mapping[str, str]) -> None:
+def _delegate_user_notify(payload: str, env: Mapping[str, str]) -> None:
     """Queue the user's Codex notify command to run after Meridian exits."""
 
     command = _read_user_notify(env)
@@ -185,7 +186,6 @@ def chain_user_notify(payload: str, env: Mapping[str, str]) -> None:
 
 def parse_idle_event(
     payload: str,
-    *,
     session_reader: Callable[[str], PinnedIdleSession | None],
 ) -> IdleEvent | None:
     """Parse one Codex ``notify`` argv payload pinned to an active primary."""
@@ -232,6 +232,12 @@ def parse_idle_event(
             last_assistant if isinstance(last_assistant, str) else None
         ),
     )
+
+
+CODEX_NATIVE_IDLE_HOOK = NativeIdleHook(
+    observe=parse_idle_event,
+    delegate=_delegate_user_notify,
+)
 
 
 class CodexIdleSensor:
@@ -329,9 +335,9 @@ def primary_idle_sensor(ctx: IdleSensorContext) -> IdleSensor:
 
 
 __all__ = [
+    "CODEX_NATIVE_IDLE_HOOK",
     "IDLE_NOTIFY_COMMAND",
     "CodexIdleSensor",
-    "chain_user_notify",
     "pane_facts",
     "parse_idle_event",
     "primary_idle_sensor",

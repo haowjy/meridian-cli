@@ -94,10 +94,7 @@ def _json(
 
 
 def _event_payload(payload: str | None) -> str:
-    resolved_payload = payload if payload is not None else sys.stdin.read()
-    if not resolved_payload.strip():
-        raise ValueError("idle event requires a payload argument or stdin")
-    return resolved_payload
+    return payload if payload is not None else sys.stdin.read()
 
 
 def _harness(value: str | None, *, env_fallback: bool = False) -> str:
@@ -128,8 +125,7 @@ def _service(harness: str | None = None, *, interactive: bool = False) -> IdleSe
         interactive=interactive,
         autocompact_off=bundle.autocompact_off,
         detect_ttl=bundle.detect_ttl,
-        native_event_parser=bundle.parse_idle_event,
-        native_event_applied=bundle.idle_event_applied,
+        native_idle_hook=bundle.native_idle_hook,
     )
 
 

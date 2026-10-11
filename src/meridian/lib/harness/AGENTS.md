@@ -41,11 +41,11 @@ declares `consumed_fields` (fields it uses) and `explicitly_ignored_fields`
 is uncovered. This is enforcement, not documentation.
 
 Idle integration uses optional `HarnessBundle` ports: `primary_idle_sensor` for
-launcher-hosted Codex/OpenCode sensing, `parse_idle_event` for native callbacks,
-`idle_event_applied` for post-parse native callback chaining, `autocompact_off` for
-the harness-owned compaction guard, and `detect_ttl` where the harness can observe
-cache retention. Keep all native parsing, facts, and actuators in `*_idle.py`;
-`lib/idle/` owns policy and state.
+launcher-hosted Codex/OpenCode sensing, `native_idle_hook` for native callback
+observation plus unconditional downstream delegation, `autocompact_off` for the
+harness-owned compaction guard, and `detect_ttl` where the harness can observe cache
+retention. Keep all native parsing, facts, and actuators in `*_idle.py`; `lib/idle/`
+owns policy and state.
 
 ## Two Launch Paths
 

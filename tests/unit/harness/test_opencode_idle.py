@@ -167,7 +167,7 @@ async def test_compact_suppresses_return_when_busy_precedes_compaction_part(
 
     sensor = opencode_idle.OpenCodeIdleSensor(
         _context(tmp_path),
-        now=FakeClock(1_791_502_786.0),
+        now=FakeClock(1_791_502_764.0),
         request=request,
     )
     iterator = sensor.events()
@@ -210,13 +210,21 @@ async def test_compact_suppresses_return_when_busy_precedes_compaction_part(
     await post_started.wait()
     for event in (user_message, first_busy, compaction_part):
         sensor.on_raw_event(event)
-    release_post.set()
-    assert (await compact).result == "ok"
     sensor.on_raw_event(final_idle)
     sensor.on_raw_event(session_idle)
+    release_post.set()
+    assert (await compact).result == "ok"
 
-    observed = await _take(iterator, 1)
-    assert [event.kind for event in observed] == ["turn_end"]
+    real_user = next(
+        event
+        for event in _recorded_events("events-normal.sse")
+        if event.event_type == "message.updated"
+    )
+    sensor.on_raw_event(real_user)
+    sensor.on_raw_event(first_busy)
+
+    observed = await asyncio.wait_for(_take(iterator, 2), timeout=0.1)
+    assert [event.kind for event in observed] == ["turn_end", "user_prompt"]
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(anext(iterator), timeout=0.01)
 
