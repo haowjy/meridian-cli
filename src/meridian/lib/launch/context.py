@@ -24,7 +24,7 @@ from meridian.lib.config.settings import (
     MeridianConfig,
     PiHarnessProfileConfig,
     load_config,
-    resolve_claude_allow_builtin_agents_for_launch,
+    resolve_allow_builtin_agents_for_launch,
     resolve_opencode_version_for_launch,
     resolve_pi_harness_profile_for_launch,
 )
@@ -311,6 +311,7 @@ class MaterializedLaunchArtifacts:
     permission_config: PermissionConfig
     perms: PermissionResolver
     spec: ResolvedLaunchSpec
+    warnings: tuple[CompositionWarning, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -550,7 +551,7 @@ def materialize_launch_artifacts(
     unsafe_no_permissions: bool = False,
     pi_harness_profile: PiHarnessProfileConfig | None = None,
     claude_native_agents_enabled: bool = False,
-    claude_allow_builtin_agents: bool = False,
+    allow_builtin_agents: bool = False,
     web_search_enabled: bool = False,
 ) -> MaterializedLaunchArtifacts:
     """Build shared run/spec/permission launch artifacts."""
@@ -599,7 +600,7 @@ def materialize_launch_artifacts(
         reference_items=reference_items,
         user_turn_content=prompt_payload.user_turn_content,
         pi_harness_profile=pi_harness_profile,
-        claude_allow_builtin_agents=claude_allow_builtin_agents,
+        allow_builtin_agents=allow_builtin_agents,
     )
     permission_config, perms = resolve_permission_pipeline(
         sandbox=sandbox,
@@ -619,6 +620,7 @@ def materialize_launch_artifacts(
         permission_config=permission_config,
         perms=perms,
         spec=spec,
+        warnings=harness.launch_spec_warnings(spec),
     )
 
 
@@ -1910,13 +1912,10 @@ def bind_launch_context(
     claude_native_agents_enabled = harness.id == HarnessId.CLAUDE and project_has_claude_agent_copy(
         project_paths.project_root
     )
-    claude_allow_builtin_agents = (
-        resolve_claude_allow_builtin_agents_for_launch(
-            config_snapshot=runtime.config_snapshot,
-            project_root=project_paths.project_root,
-        )
-        if harness.id == HarnessId.CLAUDE
-        else False
+    allow_builtin_agents = resolve_allow_builtin_agents_for_launch(
+        harness_id=harness.id.value,
+        config_snapshot=runtime.config_snapshot,
+        project_root=project_paths.project_root,
     )
     # resolved_request.tools carries the bundle's authoritative resolved grant, which
     # includes the codex `web_search` token when the agent grants `web`. Codex needs
@@ -2028,7 +2027,7 @@ def bind_launch_context(
         unsafe_no_permissions=runtime.unsafe_no_permissions,
         pi_harness_profile=pi_harness_profile,
         claude_native_agents_enabled=claude_native_agents_enabled,
-        claude_allow_builtin_agents=claude_allow_builtin_agents,
+        allow_builtin_agents=allow_builtin_agents,
         web_search_enabled=codex_web_search_enabled,
     )
     run_params = materialized.run_params
@@ -2036,6 +2035,7 @@ def bind_launch_context(
     permission_config = materialized.permission_config
     perms = materialized.perms
     spec = materialized.spec
+    composition_warnings = (*composition_warnings, *materialized.warnings)
     opencode_version: str | None = None
     if harness.id == HarnessId.OPENCODE:
         # Resolve once and carry the preference on the spec so the dry-run argv
@@ -2077,6 +2077,10 @@ def bind_launch_context(
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
     child_context_env["_MERIDIAN_HARNESS"] = harness.id.value
+    child_context_env["MERIDIAN_SESSION_ROLE"] = "primary" if is_primary_launch else "spawn"
+    resolved_agent = (resolved_request.agent or "").strip()
+    if resolved_agent:
+        child_context_env["MERIDIAN_SESSION_AGENT"] = resolved_agent
     child_context_env["MERIDIAN_PROJECT_DIR"] = resolved_control_root.as_posix()
     # Override inherited task-dir with the child's resolved task-dir.
     # child_env_overrides() carries the parent's MERIDIAN_TASK_DIR;

@@ -11,12 +11,13 @@ OpenCode is installed and disposable test state is acceptable.
 ## Setup
 
 ```bash
-export REPO_ROOT=/abs/path/to/meridian-cli
-export SMOKE_REPO="$(mktemp -d /tmp/meridian-opencode-orphan.XXXXXX)"
+. tests/smoke/scripts/setup.sh --git
+export REPO_ROOT="$SMOKE_ORIGINAL_CWD"
+export SMOKE_REPO="$SCRATCH/opencode-orphan"
+mkdir -p "$SMOKE_REPO"
 git -C "$SMOKE_REPO" init --quiet
-for var in $(env | awk -F= '/^MERIDIAN_/ {print $1}'); do unset "$var"; done
 export MERIDIAN_PROJECT_DIR="$SMOKE_REPO"
-cd "$REPO_ROOT"
+export MERIDIAN_TASK_DIR="$SMOKE_REPO"
 export RUNTIME_ROOT="$(uv run python tests/e2e/resolve-runtime-root.py)"
 mkdir -p "$RUNTIME_ROOT/spawns" "$SMOKE_REPO/.mars/agents"
 cat > "$SMOKE_REPO/.mars/agents/reviewer.md" <<'AGENT'

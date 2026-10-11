@@ -56,10 +56,23 @@ The implementation is split by responsibility:
 
 ### Drain Loop Ordering
 
-`SpawnManager._run_event_hooks` runs synchronous inline hooks (attempt facts and Pi
-lifecycle sidecar); the drain loop then fans the event out to subscribers and calls
-the coordinator's `note_event_delivered`. A hook error is logged and does not block
-delivery. Meridian persists no runner event stream.
+The drain normalizes each raw frame once, then the coordinator observation seam may
+refine or deduplicate that normalized event. Connection-local state receives the
+refined semantics. `SpawnManager._run_event_hooks` receives the original raw frame;
+for Pi, an `agent_end` frame remains visible there and in the subscriber's raw
+envelope. Only its decoded attempt terminal outcome is retained privately until
+`agent_settled`, whose refined descriptor carries that outcome. The ordering is:
+
+```text
+normalize → coordinator refinement/dedupe
+  → receiver semantics (refined)
+  → inline hooks (raw frame)
+  → subscriber fan-out (raw envelope + refined semantics)
+  → note_event_delivered(raw) → terminal handling
+```
+
+A hook error is logged and does not block delivery. Meridian persists no runner
+event stream.
 
 Terminal classification follows successful delivery. The loop passes the
 connection's `primary_event_scope` to the harness semantics: child Codex threads
@@ -110,12 +123,16 @@ projection contract.
 
 Every proposed success receives a request sequence and waits for a refresh that covers
 that request before policy is reevaluated. A cached `ready` assessment cannot publish
-success. Explicit `done` may override known `blocked` evidence under resident policy;
+success. The coordinator's `stabilizing` phase has its own policy timer; when it elapses,
+the coordinator disarms that timer and enters a distinct `validating` phase while it
+awaits the already-requested fresh read. Activity interrupts either phase and
+invalidates pending validation. Clearing the retained candidate is a separate
+operation. Explicit `done` may override known `blocked` evidence under resident policy;
 Pi additionally requires parent idle and no owed result/publication. Neither policy
 overrides `unknown`. Refresh completions and other auxiliary or lifecycle wakes
 only request reevaluation; they are not completion authority. After event EOF, the same
-waiter stops event reads but continues refresh, poll, stabilization, nudge, and deadline
-arbitration until the candidate is accepted or rejected.
+waiter stops event reads but continues refresh, poll, stabilization, validation, nudge,
+and deadline arbitration until the candidate is accepted or rejected.
 
 ### DrainOutcome Classification
 

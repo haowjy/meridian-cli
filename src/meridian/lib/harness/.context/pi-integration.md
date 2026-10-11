@@ -33,9 +33,13 @@ suppresses ambient extensions by default; `load_all_pi_extensions = true` retain
 native discovery and adds configured extra roots. Primary always retains native
 discovery. Both roles reject passthrough mode/extension selectors.
 
-The runtime itself is resolved by `pi_runtime_resolver.py` — it probes the installed `pi`
-binary for compatibility (required `--help` surface tokens differ between primary and
-spawned roles) and returns a `PiRuntimeResolution`.
+The runtime itself is resolved by `pi_runtime_resolver.py`. Both managed TUI primary
+and spawned RPC roles require a stable Pi `>=1.1.0 <2`; prerelease, ambiguous or
+unparseable output and newer majors fail closed before provider work. The resolver also
+probes the installed binary's role-specific `--help` surface (required tokens differ
+between primary and spawned roles) and returns a `PiRuntimeResolution`. The managed
+extension peer range matches that contract; its development SDK is pinned to the
+qualified Pi `1.1.0`.
 
 ## Native Identity
 

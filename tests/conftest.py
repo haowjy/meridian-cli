@@ -11,12 +11,10 @@ from tests.support.git import is_git_env_key
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
-windows_only = pytest.mark.skipif(sys.platform != "win32", reason="Windows-only test")
 
 
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "posix_only: test requires POSIX semantics")
-    config.addinivalue_line("markers", "windows_only: test requires Windows semantics")
     config.addinivalue_line("markers", "unit: pure logic tests, no IO")
     config.addinivalue_line("markers", "integration: one real boundary")
     config.addinivalue_line("markers", "e2e: full CLI invocation")

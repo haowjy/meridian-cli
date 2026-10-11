@@ -46,6 +46,10 @@ src/meridian/pi_runtime/bin/
 src/meridian/pi_runtime/dist/
 src/meridian/pi_runtime/.meridian/
 
+# Claude Code lays build-specific type files into any plugin dir it loads with --plugin-dir
+# (~800 KB, per Claude version); the mod's tsconfig.json beside them is committed.
+src/meridian/claude_runtime/*/.claude-plugin/types/
+
 # Agent coordination scratch
 plan/
 .work-artifacts/

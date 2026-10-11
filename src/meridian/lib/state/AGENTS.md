@@ -170,6 +170,7 @@ inverts accepted chat records without discarding aliases or doing I/O. Historica
 - `work_state.py` / `work_store.py` / `work_repository.py` — work-item models and
   codec, pure reads, and the single locked mutation repository, respectively.
 - `session_store.py` — Session event I/O and lease ownership.
+- `idle_store.py` — user-scoped idle stretch state, per-file locking, and seven-day lazy GC.
 - `session_fold.py` — Public event models, pure replay, and accepted-key inversion.
 - `atomic.py` — atomic write primitives. All state writes use these.
 - `reaper.py` — read-only `reconcile_spawns()` projection and root-only

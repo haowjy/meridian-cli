@@ -107,7 +107,6 @@ class PiCompletionProfile:
         self._clock = clock
         self.quiescence_enabled = False
         self.last_successful_terminal: TerminalEventOutcome | None = None
-        self.micro_drain_active = False
         self.micro_drain_event_count = 0
         self.waiting_child_count: int | None = None
         self.child_wave_deadline_monotonic: float | None = None
@@ -148,7 +147,7 @@ class PiCompletionProfile:
     ) -> CompletionDirectives:
         if (
             trigger in {"timeout", "evidence_due"}
-            and state.phase != "stabilizing"
+            and state.phase not in {"stabilizing", "validating"}
             and self.last_successful_terminal is not None
             and not self._done_requested
         ):
@@ -199,6 +198,8 @@ class PiCompletionProfile:
             return self._evaluate_terminal(context)
         if context.state.phase == "stabilizing":
             return self._evaluate_stabilizing(context)
+        if context.state.phase == "validating":
+            return self._evaluate_validating(context)
         if context.trigger == "timeout" or (
             context.trigger == "evidence_due"
             and (context.directives.done or context.deadline_expired or context.profile_timer_due)
@@ -246,7 +247,7 @@ class PiCompletionProfile:
         self, state: CompletionState, intentional_stop: bool
     ) -> TerminalEventOutcome | None:
         del intentional_stop
-        return state.candidate if self.micro_drain_active else None
+        return state.candidate if state.phase in {"stabilizing", "validating"} else None
 
     def next_nudge_at(self, state: CompletionState, assessment: WorkAssessment) -> float | None:
         del state, assessment
@@ -289,11 +290,12 @@ class PiCompletionProfile:
             ),
         )
 
-    def note_persisted_activity(self, event: RawHarnessEvent) -> EvidenceActivity | None:
-        if not self.quiescence_enabled or not self.micro_drain_active:
+    def note_persisted_activity(
+        self, event: RawHarnessEvent, state: CompletionState
+    ) -> EvidenceActivity | None:
+        if not self.quiescence_enabled or state.phase not in {"stabilizing", "validating"}:
             return None
         self.micro_drain_event_count += 1
-        self.micro_drain_active = False
         self._emit(
             "quiescence_micro_drain_extended",
             event_type=event.event_type,
@@ -306,7 +308,6 @@ class PiCompletionProfile:
         event: RawHarnessEvent,
         outcome: TerminalEventOutcome,
     ) -> None:
-        del event
         if outcome.status != "succeeded":
             return
         self.last_successful_terminal = outcome
@@ -318,6 +319,10 @@ class PiCompletionProfile:
     def after_observed_event(self, transition: str | None) -> None:
         if transition == "turn_active":
             self._clear_child_wave_timer()
+            # A delivery window belongs only to the idle period that armed it.
+            # Starting new native work invalidates that window; settlement will
+            # arm a fresh one if the result is still owed.
+            self._delivery_deadline_at = None
             self._done_nudge_eligible_since = None
         elif transition == "idle":
             if (
@@ -405,7 +410,6 @@ class PiCompletionProfile:
         if context.assessment.disposition == "ready":
             self._start_micro_drain()
             return ProfileDecision(action="stabilize")
-        self.micro_drain_active = False
         private_work = self.quiescence_tracker.private_work_snapshot()
         active_tracked_count = self.evidence.pending_child_count()
         self._emit(
@@ -424,7 +428,6 @@ class PiCompletionProfile:
             if context.assessment.disposition == "ready":
                 self._start_micro_drain()
                 return ProfileDecision(action="stabilize", restart_stabilization=True)
-            self.micro_drain_active = False
             self._update_idle_waiting_state()
             return ProfileDecision(action="wait", reset_deadline=True)
         if context.trigger == "aux_wake":
@@ -435,14 +438,38 @@ class PiCompletionProfile:
             context.trigger == "evidence_due" and context.stabilization_elapsed
         ):
             if context.assessment.disposition == "ready":
-                self.micro_drain_active = False
                 self._clear_done_nudge_timer()
                 return ProfileDecision(action="complete", outcome=candidate)
-            self.micro_drain_active = False
             self._emit("quiescence_micro_drain_cancelled", reason="disk_state_changed")
             self._update_idle_waiting_state()
             return ProfileDecision(action="abandon_candidate", reset_deadline=True)
         return ProfileDecision(action="stabilize")
+
+    def _evaluate_validating(self, context: CompletionEvaluation) -> ProfileDecision:
+        """Hold a successful candidate while the post-window read commits."""
+
+        candidate = context.candidate or self.last_successful_terminal
+        assert candidate is not None
+        if context.directives.done:
+            return self._evaluate_done(context, candidate)
+        if context.deadline_expired or context.profile_timer_due:
+            return self._evaluate_timeout(context)
+        if context.evidence_activity is not None:
+            if context.assessment.disposition == "ready":
+                self._start_micro_drain()
+                return ProfileDecision(action="stabilize", restart_stabilization=True)
+            self._update_idle_waiting_state()
+            return ProfileDecision(action="wait", reset_deadline=True)
+        if context.assessment.disposition == "ready":
+            # CompletionCoordinator gates this decision on the validation
+            # request, so a refresh wake can safely propose publication while
+            # its read is still in flight.
+            return ProfileDecision(action="complete", outcome=candidate)
+        if context.assessment.disposition == "unknown":
+            return ProfileDecision(action="wait", reset_deadline=True)
+        self._emit("quiescence_micro_drain_cancelled", reason="disk_state_changed")
+        self._update_idle_waiting_state()
+        return ProfileDecision(action="abandon_candidate", reset_deadline=True)
 
     def _evaluate_timeout(self, context: CompletionEvaluation) -> ProfileDecision:
         candidate = context.candidate or self.last_successful_terminal
@@ -474,7 +501,6 @@ class PiCompletionProfile:
         self._clear_done_nudge_timer()
         if (
             context.assessment.disposition == "unknown"
-            or context.active_turn
             or not self.quiescence_tracker.parent_idle
             or self.classify_outstanding_work().delivery_pending
         ):
@@ -499,14 +525,14 @@ class PiCompletionProfile:
             }
             for b in context.assessment.blockers
         )
-        if delivery_pending:
-            if self.quiescence_tracker.parent_idle and self._delivery_deadline_at is None:
-                self._delivery_deadline_at = context.now + timeout
-        else:
+        if not self.quiescence_tracker.parent_idle:
+            self._delivery_deadline_at = None
+        elif delivery_pending and self._delivery_deadline_at is None:
+            self._delivery_deadline_at = context.now + timeout
+        elif not delivery_pending:
             self._delivery_deadline_at = None
 
     def _start_micro_drain(self) -> None:
-        self.micro_drain_active = True
         self.micro_drain_event_count = 0
         self._clear_done_nudge_timer()
         self._emit("quiescence_micro_drain_started")
@@ -532,7 +558,6 @@ class PiCompletionProfile:
             or self._done_requested
             or self.last_successful_terminal is None
             or not self.quiescence_tracker.parent_idle
-            or self.micro_drain_active
         ):
             self._clear_done_nudge_timer()
             return

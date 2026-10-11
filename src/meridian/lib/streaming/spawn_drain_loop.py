@@ -147,14 +147,10 @@ class SpawnDrainLoop:
                     event,
                     primary_event_scope=receiver.primary_event_scope,
                 )
-                receiver.observe_event_semantics(normalized_event.semantics)
-                duplicate_canonical_event = await _observe_event(
-                    coordinator,
-                    event,
-                    normalized_event.semantics.activity,
-                )
-                if duplicate_canonical_event:
+                normalized_event = await _observe_event(coordinator, normalized_event)
+                if normalized_event is None:
                     continue
+                receiver.observe_event_semantics(normalized_event.semantics)
 
                 if tracer is not None:
                     tracer.emit(
@@ -309,12 +305,11 @@ def _next_timeout(coordinator: DrainCoordinator | None) -> float | None:
 
 async def _observe_event(
     coordinator: DrainCoordinator | None,
-    event: RawHarnessEvent,
-    transition: str | None,
-) -> bool:
+    event: NormalizedHarnessEvent,
+) -> NormalizedHarnessEvent | None:
     if coordinator is None:
-        return False
-    return await coordinator.observe_event(event, transition)
+        return event
+    return await coordinator.observe_event(event)
 
 
 def _note_event_delivered(

@@ -202,6 +202,9 @@ def parse_cli_scalar(*, canonical_key: str, value_kind: ValueKind, raw_value: st
 
 def parse_env_scalar(*, value_kind: ValueKind, raw_value: str, env_name: str) -> object:
     if value_kind == "bool":
+        normalized = raw_value.strip().lower()
+        if normalized in {"0", "1"}:
+            return normalized == "1"
         return parse_cli_scalar(canonical_key=env_name, value_kind=value_kind, raw_value=raw_value)
     if value_kind == "int":
         try:

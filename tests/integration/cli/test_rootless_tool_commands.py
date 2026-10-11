@@ -54,126 +54,38 @@ def meridian_home(tmp_path: Path) -> Path:
     return home
 
 
-@pytest.mark.integration
-def test_qi_root_without_project(
-    no_project_workspace: Path,
-    meridian_home: Path,
-) -> None:
-    result = _run_meridian(["qi"], cwd=no_project_workspace, meridian_home=meridian_home)
-    _assert_rootless_success(result)
+_ROOTLESS_COMMANDS = (
+    pytest.param(("qi",), None, id="qi"),
+    pytest.param(("kg", "check"), None, id="kg-check"),
+    pytest.param(("kg", "graph"), None, id="kg-graph"),
+    pytest.param(("qi", "check"), None, id="qi-check"),
+    pytest.param(("qi", "list"), "agents\tAGENTS.md", id="qi-list"),
+    pytest.param(
+        ("qi", "claude-md-fix", "--dry-run"),
+        "[DRY-RUN] would create CLAUDE.md",
+        id="qi-claude-md-fix-dry-run",
+    ),
+    pytest.param(("mermaid", "check"), None, id="mermaid-check"),
+    pytest.param(("config", "show"), "project_root:", id="config-show"),
+    pytest.param(
+        ("config", "get", "defaults.max_depth"),
+        "defaults.max_depth:",
+        id="config-get-max-depth",
+    ),
+    pytest.param(("ext", "list"), "meridian.config", id="ext-list"),
+    pytest.param(("ext", "commands"), "meridian.config.get:", id="ext-commands"),
+)
 
 
 @pytest.mark.integration
-def test_kg_check_without_project(
+@pytest.mark.parametrize(("args", "expected_output"), _ROOTLESS_COMMANDS)
+def test_rootless_tool_command_without_project(
     no_project_workspace: Path,
     meridian_home: Path,
+    args: tuple[str, ...],
+    expected_output: str | None,
 ) -> None:
-    result = _run_meridian(["kg", "check"], cwd=no_project_workspace, meridian_home=meridian_home)
+    result = _run_meridian(list(args), cwd=no_project_workspace, meridian_home=meridian_home)
     _assert_rootless_success(result)
-
-
-@pytest.mark.integration
-def test_kg_graph_without_project(
-    no_project_workspace: Path,
-    meridian_home: Path,
-) -> None:
-    result = _run_meridian(["kg", "graph"], cwd=no_project_workspace, meridian_home=meridian_home)
-    _assert_rootless_success(result)
-
-
-@pytest.mark.integration
-def test_qi_check_without_project(
-    no_project_workspace: Path,
-    meridian_home: Path,
-) -> None:
-    result = _run_meridian(["qi", "check"], cwd=no_project_workspace, meridian_home=meridian_home)
-    _assert_rootless_success(result)
-
-
-@pytest.mark.integration
-def test_qi_list_without_project(
-    no_project_workspace: Path,
-    meridian_home: Path,
-) -> None:
-    result = _run_meridian(["qi", "list"], cwd=no_project_workspace, meridian_home=meridian_home)
-    _assert_rootless_success(result)
-    assert "agents\tAGENTS.md" in result.stdout
-
-
-@pytest.mark.integration
-def test_qi_claude_md_fix_without_project(
-    no_project_workspace: Path,
-    meridian_home: Path,
-) -> None:
-    result = _run_meridian(
-        ["qi", "claude-md-fix", "--dry-run"],
-        cwd=no_project_workspace,
-        meridian_home=meridian_home,
-    )
-    _assert_rootless_success(result)
-    assert "[DRY-RUN] would create CLAUDE.md" in result.stdout
-
-
-@pytest.mark.integration
-def test_mermaid_check_without_project(
-    no_project_workspace: Path,
-    meridian_home: Path,
-) -> None:
-    result = _run_meridian(
-        ["mermaid", "check"],
-        cwd=no_project_workspace,
-        meridian_home=meridian_home,
-    )
-    _assert_rootless_success(result)
-
-
-@pytest.mark.integration
-def test_config_show_without_project(
-    no_project_workspace: Path,
-    meridian_home: Path,
-) -> None:
-    result = _run_meridian(
-        ["config", "show"],
-        cwd=no_project_workspace,
-        meridian_home=meridian_home,
-    )
-    _assert_rootless_success(result)
-    assert "project_root:" in result.stdout
-
-
-@pytest.mark.integration
-def test_config_get_without_project(
-    no_project_workspace: Path,
-    meridian_home: Path,
-) -> None:
-    result = _run_meridian(
-        ["config", "get", "defaults.max_depth"],
-        cwd=no_project_workspace,
-        meridian_home=meridian_home,
-    )
-    _assert_rootless_success(result)
-    assert "defaults.max_depth:" in result.stdout
-
-
-@pytest.mark.integration
-def test_ext_list_without_project(
-    no_project_workspace: Path,
-    meridian_home: Path,
-) -> None:
-    result = _run_meridian(["ext", "list"], cwd=no_project_workspace, meridian_home=meridian_home)
-    _assert_rootless_success(result)
-    assert "meridian.config" in result.stdout
-
-
-@pytest.mark.integration
-def test_ext_commands_without_project(
-    no_project_workspace: Path,
-    meridian_home: Path,
-) -> None:
-    result = _run_meridian(
-        ["ext", "commands"],
-        cwd=no_project_workspace,
-        meridian_home=meridian_home,
-    )
-    _assert_rootless_success(result)
-    assert "meridian.config.get:" in result.stdout
+    if expected_output is not None:
+        assert expected_output in result.stdout

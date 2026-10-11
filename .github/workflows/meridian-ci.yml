@@ -6,6 +6,9 @@ on:
     branches:
       - main
       - master
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
 
 jobs:
   pr-changelog-note:
@@ -48,35 +51,9 @@ jobs:
             echo "::notice::CHANGELOG.md is unchanged in this PR."
           fi
 
-  lint:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          version: "0.9.18"
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.14"
-
-      - name: Install dependencies
-        run: uv sync --extra dev
-
-      - name: Lint
-        run: uv run --extra dev ruff check .
-
-      - name: Typecheck
-        run: uv run --extra dev python -m pyright
-
   fast-gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -96,6 +73,17 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
+      - name: Run fast gate
+        run: scripts/preflight.sh fast
+
+  runtime-extensions:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -104,13 +92,16 @@ jobs:
       - name: Enable pnpm
         run: corepack enable
 
-      - name: Build Pi extensions
-        run: cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
+      - name: Install Pi extension dependencies
+        working-directory: src/meridian/pi_runtime
+        run: pnpm install --frozen-lockfile
 
-      - name: Run fast gate
-        run: uv run --extra dev pytest -n auto -m "not slow"
+      - name: Verify Pi extensions
+        working-directory: src/meridian/pi_runtime
+        run: pnpm run verify:extensions
 
   full-gate:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -138,14 +129,12 @@ jobs:
 
       - name: Enable pnpm
         run: corepack enable
-
-      - name: Build Pi extensions
-        run: cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
 
       - name: Run full gate
         run: scripts/preflight.sh full
 
   compat:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -178,4 +167,4 @@ jobs:
         run: cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
 
       - name: Run compatibility gate
-        run: uv run --extra dev pytest -n auto -m "not windows_only"
+        run: env -u PYTEST_ADDOPTS -u PYTESTS_LAST_FAILED uv run --extra dev pytest -n auto tests/

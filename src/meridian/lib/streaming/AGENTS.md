@@ -6,7 +6,8 @@ core mechanism that moves events from the harness outward to persistence, observ
 and the subscriber queue.
 
 Mostly mechanism. Generic terminal classification lives in `DrainPolicy`; shared
-candidate/deadline/stabilization mechanics live in `CompletionCoordinator`, behind
+candidate/deadline mechanics and the stabilization/validation phases live in
+`CompletionCoordinator`, behind
 the outer `DrainCoordinator` seam. Plain streaming harnesses intentionally run with
 `coordinator=None`; Pi and resident Codex/OpenCode paths get narrow coordinators only
 when their connection exposes the needed seam. Keep Pi child-wave,
@@ -43,17 +44,22 @@ defaults to `None`; resident rearms and Pi waves cannot reset it.
 ## Mental Model
 
 ```
-HarnessConnection  →  drain loop  →  1. inline hooks (facts, lifecycle)
-                                     2. fan-out (subscriber queue)
-                                     3. note_event_delivered
-                                     4. terminal handling
+HarnessConnection  →  drain loop  →  0. normalize + coordinator refinement/dedupe
+                                     1. connection semantics (refined)
+                                     2. inline hooks (raw event)
+                                     3. fan-out (raw envelope + refined semantics)
+                                     4. note_event_delivered (raw event)
+                                     5. terminal handling
 ```
 
-`SpawnManager._run_event_hooks` runs synchronous inline hooks (attempt facts and Pi
-lifecycle sidecar); the drain loop then fans the event out to subscribers and calls
-the coordinator's `note_event_delivered`. A hook error is logged and does not block
-delivery. Meridian persists no runner event stream. Terminal classification follows
-successful delivery. See the delivery contract in `.context/CONTEXT.md`.
+The drain normalizes each frame once; a coordinator may refine or deduplicate that
+normalized event before delivery. Connection-local state receives the refined
+semantics. `SpawnManager._run_event_hooks` then sees the original raw frame (including
+Pi `agent_end`), while subscribers receive its raw envelope carrying the refined
+semantics. The coordinator's `note_event_delivered` receives the raw frame. A hook
+error is logged and does not block delivery. Meridian persists no runner event
+stream. Terminal classification follows successful delivery. See the delivery
+contract in `.context/CONTEXT.md`.
 
 `SpawnManager` is the integration point for everything that touches a live spawn:
 starting, stopping, injecting messages, subscribing to events, and tracking heartbeats.
@@ -79,8 +85,10 @@ time, including after awaited dispatches. Never append directly after an async b
 classification, but `stop_spawn()` must still publish the finalized lifecycle row,
 resolve completion, and start that spawn's cleanup when a bounded drain is cancelled.
 
-**Drain loop ordering is not negotiable: inline hooks → fan-out → coordinator note.**
-Hooks (attempt fold, Pi lifecycle sink) see each event before any subscriber does.
+**Drain loop ordering is not negotiable:** coordinator refinement/deduplication →
+connection semantics → inline hooks (raw frame) → fan-out (raw envelope with refined
+semantics) → coordinator note (raw frame) → terminal handling. Hooks (attempt fold,
+Pi lifecycle sink) still see each delivered frame before any subscriber does.
 Meridian persists no runner event stream; do not reintroduce one.
 
 **Capture `subprocess_pid` and `scope_snapshot` before `connection.stop()`.** Both
@@ -128,7 +136,8 @@ orphaned; deletion, normal completion, cancellation, and shutdown stop it intent
 - `drain_teardown.py` — harness-neutral plan-owned connection-stop contract and default
 - `pi_drain_teardown.py` — Pi connection-stop cleanup-phase policy
 - `completion_contracts.py` — typed evidence, profile, and cleanup collaborator contracts
-- `completion_coordinator.py` — shared candidate/wait/deadline/stabilization state machine
+- `completion_coordinator.py` — shared candidate/wait/deadline state machine, with
+  distinct stabilization and fresh-evidence validation phases
 - `descendant_evidence.py` — shared reconciled, transitive persisted-descendant assessment
 - `spawn_session.py` — `SpawnSession`, `DrainOutcome`
 - `pi_completion_profile.py` — Pi precedence, phases, deadlines, nudges, and stream-exit

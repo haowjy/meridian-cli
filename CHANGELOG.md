@@ -4,9 +4,98 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Upgrade notes
+- Interactive Pi primaries now default to `PI_CACHE_RETENTION=long`. For recognized
+  Anthropic and OpenAI providers this enables the full idle warning/compaction flow.
+  `openai` is scheduled against 30 minutes, because OpenAI's `24h` retention typically
+  lasts about that long. One-hour Anthropic cache writes cost more than five-minute
+  writes. Set `PI_CACHE_RETENTION=short` to opt out.
+- Idle compaction is **on by default** for interactive primaries (5 min before the
+  prompt cache expires, guarded). Turn it off per tmux session with
+  `MERIDIAN_IDLE_COMPACT=0`, or in config with `[idle] compact = false`
+  (`[harness.<harness>.idle] compact = false` per harness).
+- Nothing is sent until `[notify]` has an `ntfy_topic` (push) or `email_to`,
+  `smtp_user` and `smtp_password_file` (email); unconfigured backends degrade to
+  `none` with a warning. Idle notices include short conversation excerpts by
+  default; set `[notify] include_messages = false` to omit message text.
+- `_MERIDIAN_PI_SESSION_ROLE` is gone. Read `MERIDIAN_SESSION_ROLE` (`primary` or
+  `spawn`) instead; it is set for every harness.
+- New state directory `~/.meridian/idle/` (one JSON file per primary session,
+  garbage-collected after 7 days). TTL confidence is saved with each stretch;
+  development-build records without it default to estimates until re-armed.
+  Older releases ignore the directory. See
+  [docs/upgrading.md](docs/upgrading.md#upgrading-to-093-idle-notifications-and-compaction).
+
+### Added
+- Add `meridian notify "<message>"` with ntfy push, SMTP/Gmail email, command
+  backends, and agent/work/tmux context in every notification.
+- Add idle push, cache-expiry warning, and guarded compaction for interactive Claude,
+  Pi, Codex, and OpenCode primaries. Claude and Pi sense cache lifetime; Pi primaries
+  default to long retention, OpenCode's 5-minute default is push-only, and Codex
+  defaults to 30 minutes. The waiting push follows a long turn (at least 2 minutes)
+  by 60 seconds and a quick or unknown-length turn by 10 minutes. Pushes and warnings
+  label short user and assistant excerpts and name the tmux session when present.
+- Add `[notify]`, `[idle]`, and `[harness.<harness>.idle]` config with
+  `MERIDIAN_NOTIFY_*`, `MERIDIAN_IDLE_*`, and `MERIDIAN_HARNESS_IDLE_*_<H>` overrides.
+- Add the bundled Claude `meridian-idle` mod, automatic for Meridian primaries and
+  opt-in elsewhere with `CLAUDE_CODE_PLUGIN_DIRS="$(meridian idle mod-path)"`.
+- Add the primary-only Pi `meridian-idle` bundle.
+- Inject Meridian's idle callback through Codex `notify` while preserving a configured
+  user callback.
+
+### Changed
+- Put idle notification reasons and tmux sessions in the title, with explicit
+  work/project labels: `[idle] a2: pi on work: "idle-cache-notify"`.
+- Add send-time cache countdowns to idle/warning titles; label heuristic and
+  configured TTLs `est.` and omit countdowns when the TTL is unknown.
+- Make the fast gate's 60-second budget a warning target that no longer kills or
+  fails a run that goes over.
+- Default `PI_CACHE_RETENTION=long` for interactive Pi primaries when the variable
+  is absent; spawns and explicit values are unchanged. `openai` is scheduled against
+  30 minutes, because OpenAI's `24h` retention typically lasts about that long.
+- Set `MERIDIAN_SESSION_ROLE=primary|spawn` and the resolved
+  `MERIDIAN_SESSION_AGENT` for every harness launch, and remove the Pi-only
+  `_MERIDIAN_PI_SESSION_ROLE` variable.
+- Run the Pi extension build and Vitest suites in a parallel `runtime-extensions`
+  CI job and in extended/full local preflight.
+
 ### Fixed
 - Stop presenting absent exit-session verification as `exit unresolved` at primary completion. Keep explicit diagnostics, identity warnings, and saved continue targets.
+- Preserve absorbed idle-arm reasons in CLI wire responses so adapters retain their timers.
+- Keep stable idle session lock paths after garbage collection removes stale state.
+- Always delegate intercepted Codex `notify` payloads to the configured user callback,
+  including payloads Meridian rejects or fails to apply.
+- End OpenCode compaction-message classification on `session.idle` even when the
+  summarize request is still returning, so the next real user prompt is not suppressed.
+- Stop wheels from force-including generated Claude plugin type files.
+- Pi spawn-watch checks idle before reading result eligibility, so a result waited on
+  during the turn is no longer re-announced as a duplicate follow-up.
+
+## [0.9.2] - 2026-10-10
+
+### Changed
+- Codex spawns/primaries launch without Codex's own subagents (`-c features.multi_agent_v2=false -c agents.max_depth=0`). Lone spawn told it was `/root` of a team messaged itself, waited 25 min per call. Opt back in: `[harness.codex] allow_builtin_agents = true`. Setting now per harness, not Claude-only.
+
+## [0.9.1] - 2026-10-09
+
+### Fixed
+- Surface non-zero managed Bash outcomes as model-visible tool errors, and classify managed child waits from the structured JSON result rather than the CLI process exit code.
+- Pi `bash_manage(wait)` drop model-chosen `timeout_min`; wait blocks up to 55 min (bash default). Short waits timed out, model read output around tracking, idle watcher re-announced known result.
+- Pi `bash_manage(output)` on finished task consume result like terminal wait; no later completion notice for output already read. Still-running wait message say wait again.
+- Stop fast-gate descendants on timeout, launch failure or leader exit.
+- Reserve fast-gate leader PIDs until process-group cleanup.
+- Ignore inherited pytest selection filters in full/extended gates.
+- Wait for complete JSONL fixture records in harness environment probes.
 - Reconcile Pi docs and smoke guides with current extension loading, native session boundaries, task ownership and causal result delivery; remove obsolete integration phases and status tables.
+- Separate Pi completion stabilization from its post-window validation read, remove unsupported queue/retry activity mappings, and reject unsupported runtimes before launch. Managed TUI and RPC now share the stable Pi >=1.1.0 <2 contract; build extensions against Pi 1.1.0. Drop duplicate test scaffolding, retain one outcome-based validation-interruption guard, and align fake runtimes with their emitted lifecycle and supported major version. Reconcile completion-phase and runtime guidance. Resolve SDK dependencies within CI's release-age safety policy.
+- Wait for Pi run settlement and compaction before accepting idle; retries no longer fail early, active work cannot spend delivery deadlines, and final errors retain their diagnostics. Reject stale/malformed success; preserve explicit drain policies. Spawned runs require the Pi 1.1 lifecycle contract.
+- Resolve Pi's private attempt only at native settlement before one policy/publication pass; completion stabilization now derives activity and validation from the shared coordinator state, and assistant outcomes are decoded once. Keep malformed-settlement failures and assistant-list boundaries type-safe. Clarify that raw attempt frames remain visible to hooks and subscribers.
+
+### Changed
+- Simplify duplicated CLI and platform test coverage while retaining recovery and integrity contracts; remove obsolete Windows compatibility-test selector.
+- Make the routine preflight a risk-based, single-budget fast gate; retain the complete automated suite as an explicit extended check and move three heavy state modules under `tests/extended/`.
+- Add isolated CLI smoke and explicit regression scripts; retire obsolete synthetic smoke guides.
+- Trim fork and dry-run manual matrices; keep real Mars, bootstrap ordering and native-session checks in private fixtures.
 
 ## [0.9.0] - 2026-10-02
 

@@ -39,7 +39,7 @@ def _require_observer_endpoint_url(
     return endpoint.url
 
 
-def _build_codex_attach_command(
+def build_codex_attach_command(
     session_id: str,
     ws_url: str,
     prompt: str | None,
@@ -82,11 +82,11 @@ class CodexPassthrough:
         spec: ResolvedLaunchSpec,
     ) -> TuiCommandBuilder:
 
-        return lambda session_id: _build_codex_attach_command(
+        return lambda session_id: build_codex_attach_command(
             session_id=session_id,
             ws_url=_require_observer_endpoint_url(connection, transport="ws"),
             prompt=spec.user_turn_content,
         )
 
 
-__all__ = ["CodexPassthrough"]
+__all__ = ["CodexPassthrough", "build_codex_attach_command"]

@@ -13,7 +13,7 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent
 from meridian.lib.harness.pi_lifecycle_events import PI_LIFECYCLE_EVENT_ALLOWLIST
-from meridian.lib.harness.semantics import TerminalEventOutcome
+from meridian.lib.harness.semantics import TerminalEventOutcome, normalize_event
 from meridian.lib.state import spawn_store
 from meridian.lib.state.spawn_signals import spawn_signal_path
 from meridian.lib.streaming import descendant_evidence as descendant_evidence_module
@@ -43,7 +43,7 @@ async def _after_refresh(started: PiDrainScenario):  # type: ignore[no-untyped-d
 _SPAWN_ID = SpawnId("p1")
 _SUCCESS = TerminalEventOutcome(status="succeeded", exit_code=0)
 _TERMINATE = DrainAction(terminate=True, emit_turn_boundary=False)
-_AGENT_END = pi_event("agent_end")
+_AGENT_END = pi_event("agent_settled")
 _start_coordinator = PiDrainScenario.start
 
 
@@ -94,7 +94,7 @@ async def test_real_pi_tracked_child_followup_has_no_canonical_lifecycle_depende
 
     async def observe(event: RawHarnessEvent, transition: str | None = None) -> None:
         observed_event_types.append(event.event_type)
-        await coordinator.observe_event(event, transition)
+        await coordinator.observe_event(normalize_event(event))
 
     try:
         await observe(_AGENT_END, "idle")
@@ -186,7 +186,7 @@ async def test_pi_eof_during_stabilization_cannot_bypass_child_validation(
     try:
         await coordinator.wait_for_aux_wake()
         await coordinator.handle_aux_wake()
-        await coordinator.observe_event(_AGENT_END, "idle")
+        await coordinator.observe_event(normalize_event(_AGENT_END))
         terminal = await coordinator.handle_terminal_event(
             _AGENT_END,
             _SUCCESS,
@@ -238,7 +238,7 @@ async def test_done_fails_closed_when_pi_descendant_evidence_stays_unreadable(
         _fail_list_spawns,
     )
     try:
-        await coordinator.observe_event(_AGENT_END, "idle")
+        await coordinator.observe_event(normalize_event(_AGENT_END))
         terminal = await coordinator.handle_terminal_event(
             _AGENT_END,
             _SUCCESS,
@@ -291,7 +291,7 @@ async def test_done_completes_when_pi_descendant_evidence_recovers(
         _sometimes_list_spawns,
     )
     try:
-        await coordinator.observe_event(_AGENT_END, "idle")
+        await coordinator.observe_event(normalize_event(_AGENT_END))
         await coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, _TERMINATE)
         _write_done_signal(tmp_path, "p1")
         waiting = await coordinator.handle_timeout()
@@ -321,7 +321,7 @@ async def test_done_fails_closed_on_pi_private_work_read_error(
     records_path = tmp_path / "pi-bash" / "p1" / "bash-records.json"
     records_path.write_text("{not json", encoding="utf-8")
     try:
-        await coordinator.observe_event(_AGENT_END, "idle")
+        await coordinator.observe_event(normalize_event(_AGENT_END))
         terminal = await coordinator.handle_terminal_event(
             _AGENT_END,
             _SUCCESS,
@@ -356,7 +356,7 @@ async def test_child_wave_timeout_without_cleanup_callback_preserves_outcome(
     coordinator = started.coordinator
     _start_row(tmp_path, "p-child-timeout", parent_id=str(_SPAWN_ID))
     try:
-        await coordinator.observe_event(_AGENT_END, "idle")
+        await coordinator.observe_event(normalize_event(_AGENT_END))
         started.clock.advance(5.0)
         decision = await coordinator.handle_timeout()
 
@@ -381,7 +381,7 @@ async def test_completion_nudge_due_is_advisory_and_continues(
     coordinator = started.coordinator
     _write_running_bash(tmp_path, SpawnId("p1"))
     try:
-        await coordinator.observe_event(_AGENT_END, "idle")
+        await coordinator.observe_event(normalize_event(_AGENT_END))
         action = PiRpcQuiescenceDrainPolicy(quiescence_check=coordinator.is_quiescent).classify(
             _SUCCESS
         )
@@ -427,7 +427,7 @@ async def test_initial_descendant_refresh_latency_does_not_shift_pi_nudge_anchor
     _write_running_bash(tmp_path, _SPAWN_ID)
     try:
         assert await asyncio.to_thread(entered.wait, 2)
-        await coordinator.observe_event(_AGENT_END, "idle")
+        await coordinator.observe_event(normalize_event(_AGENT_END))
         terminal_task = asyncio.create_task(
             coordinator.handle_terminal_event(_AGENT_END, _SUCCESS, _TERMINATE)
         )

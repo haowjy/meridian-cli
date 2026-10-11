@@ -15,6 +15,7 @@ import {
 import { isTerminalBashStatus, parseBashRecordsFile, type BashRecord, type BashRecordsFile, type BashStatus } from "../../shared/schemas";
 import { BashLogStore, type BashLogPaths } from "./bash_log_store";
 import { ShellTask } from "./shell_task";
+import { interruptedWait, waitForSpawn } from "./spawn_wait";
 
 export type BashParams = {
   command: string;
@@ -26,7 +27,6 @@ export type BashManageParams = {
   action: "list" | "output" | "kill" | "wait" | "detach";
   bash_id?: string;
   include_completed?: boolean;
-  timeout_min?: number;
 };
 
 export type UserBashExecOptions = {
@@ -35,6 +35,12 @@ export type UserBashExecOptions = {
   env?: NodeJS.ProcessEnv;
 };
 
+export type BashExecuteResult =
+  | { bash_id: string; status: "started" }
+  | { bash_id: string; status: "backgrounded"; message: string }
+  | { stdout: string; stderr: string; exit_code: number | null }
+  | { error: string };
+
 type RuntimeRecord = BashRecord & {
   task: ShellTask | null;
   outputQueue: Promise<void>;
@@ -42,7 +48,7 @@ type RuntimeRecord = BashRecord & {
   resolveFinished: () => void;
   rejectFinished: (error: Error) => void;
   terminationReason: BashStatus | null;
-  foregroundFinish: ((result: unknown) => void) | null;
+  foregroundFinish: ((result: BashExecuteResult) => void) | null;
   pingTimer: NodeJS.Timeout | null;
 };
 
@@ -61,6 +67,7 @@ export type BashOutputResult = {
   bash_id: string;
   output: string;
   truncated: boolean;
+  error?: string;
 };
 
 export type BashKillResult = {
@@ -76,6 +83,9 @@ export type BashWaitResult = {
   duration_secs?: number;
   output?: string;
   message?: string;
+  error?: string;
+  checkpoint?: boolean;
+  pending_ids?: string[];
 };
 
 export type BashDetachResult = {
@@ -99,7 +109,9 @@ type ExecResult = {
 };
 
 const DEFAULT_TIMEOUT_MIN = 55;
-const DEFAULT_WAIT_TIMEOUT_MIN = 10;
+// Wait as long as a foreground command may run; a short wait lets the model fetch
+// results around consumption, so the idle watcher announces them again.
+const WAIT_TIMEOUT_MIN = DEFAULT_TIMEOUT_MIN;
 const MAX_TIMEOUT_MIN = 59;
 const LOG_TAIL_BYTES = 4 * 1024;
 const DEFAULT_TASK_PING_INTERVAL_MS = 55 * 60_000;
@@ -135,7 +147,7 @@ export class BashRuntime {
     void this.ready.catch(() => undefined);
   }
 
-  async execute(params: BashParams, signal: AbortSignal | undefined): Promise<unknown> {
+  async execute(params: BashParams, signal: AbortSignal | undefined): Promise<BashExecuteResult> {
     const timeoutMin = normalizeTimeoutMin(params.timeout_min, DEFAULT_TIMEOUT_MIN);
     const record = await this.startRecord(params.command, timeoutMin);
 
@@ -147,9 +159,9 @@ export class BashRuntime {
     }
 
     this.hooks.onForegroundStart?.(record.bash_id);
-    return await new Promise<unknown>((resolve) => {
+    return await new Promise<BashExecuteResult>((resolve) => {
       let settled = false;
-      const finish = (result: unknown): void => {
+      const finish = (result: BashExecuteResult): void => {
         if (settled) return;
         settled = true;
         record.foregroundFinish = null;
@@ -301,7 +313,7 @@ export class BashRuntime {
     return finished.length;
   }
 
-  async manage(params: BashManageParams): Promise<BashManageResult> {
+  async manage(params: BashManageParams, signal?: AbortSignal): Promise<BashManageResult> {
     await this.prepare();
     const action = params.action;
     if (action === "list") {
@@ -315,7 +327,7 @@ export class BashRuntime {
 
     const kind = classifyWorkId(id);
     if (kind === "spawn") {
-      return await this.manageSpawn(id, params);
+      return await this.manageSpawn(id, params, signal);
     }
     if (kind !== "bash") {
       return { error: `unsupported id: ${id}` };
@@ -327,15 +339,20 @@ export class BashRuntime {
     }
 
     switch (action) {
-      case "output":
-        return { bash_id: id, output: await this.readLog(record, LOG_TAIL_BYTES), truncated: true };
+      case "output": {
+        // Terminal is published after queued output, so a read that starts after
+        // terminal is final; one that races completion has not seen the result.
+        const wasTerminal = isTerminalBashStatus(record.status);
+        const output = await this.readLog(record, LOG_TAIL_BYTES);
+        await this.consumeDeliveredResult(record, wasTerminal);
+        return { bash_id: id, output, truncated: true };
+      }
       case "kill":
         return await this.killBash(id, "killed");
       case "wait": {
-        const result = await this.waitBash(record, normalizeTimeoutMin(params.timeout_min, DEFAULT_WAIT_TIMEOUT_MIN));
-        if (isTerminalBashStatus(result.status)) {
-          await this.persistWaitConsumption(record);
-        }
+        const result = await this.waitBash(record, signal);
+        // Gate on what was returned: the record may turn terminal after a "running" result.
+        await this.consumeDeliveredResult(record, isTerminalBashStatus(result.status));
         return result;
       }
       case "detach":
@@ -479,23 +496,24 @@ export class BashRuntime {
     return { bash_id: bashId, killed: true, message: `${bashId} killed` };
   }
 
-  private async waitBash(record: RuntimeRecord, timeoutMin: number): Promise<BashWaitResult> {
+  private async waitBash(record: RuntimeRecord, signal?: AbortSignal): Promise<BashWaitResult> {
     if (record.status === "running" && !record.task) throw new Error(`${record.bash_id}: ownership_lost after restart; inspect manually or detach to release tracking`);
     if (record.status === "running") {
       await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, timeoutMin * 60_000);
-        void record.finished.then(() => {
-          clearTimeout(timer);
-          resolve();
-        }, () => { clearTimeout(timer); resolve(); });
+        const done = (): void => { clearTimeout(timer); signal?.removeEventListener("abort", done); resolve(); };
+        const timer = setTimeout(done, WAIT_TIMEOUT_MIN * 60_000);
+        if (signal?.aborted) done();
+        else signal?.addEventListener("abort", done, { once: true });
+        void record.finished.then(done, done);
       });
     }
     if (record.execution_error) throw new Error(record.execution_error);
     if (record.status === "running") {
+      if (signal?.aborted) return interruptedWait(record.bash_id);
       return {
         bash_id: record.bash_id,
         status: "running",
-        message: `Still running after timeout_min=${timeoutMin}. Use bash_manage(action='wait') again or bash_manage(action='kill') to terminate.`,
+        message: `Still running after ${WAIT_TIMEOUT_MIN} minutes. Call bash_manage(action='wait') again, or bash_manage(action='kill') to terminate. Reading its output any other way leaves the result unconsumed, and a completion notice will follow.`,
       };
     }
     return {
@@ -555,21 +573,20 @@ export class BashRuntime {
     }
   }
 
-  private async manageSpawn(spawnId: string, params: BashManageParams): Promise<BashManageResult> {
+  private async manageSpawn(spawnId: string, params: BashManageParams, signal?: AbortSignal): Promise<BashManageResult> {
     switch (params.action) {
       case "output": {
         const result = await runMeridianCommand(["session", "log", spawnId, "--tail", "20"], 15_000);
+        if (result.error) return { bash_id: spawnId, output: result.stderr || result.error, truncated: false, error: result.error };
         return { bash_id: spawnId, output: result.stdout || result.stderr, truncated: false };
       }
       case "kill": {
         const result = await runMeridianCommand(["spawn", "cancel", spawnId], 15_000);
+        if (result.error) return { bash_id: spawnId, killed: false, message: result.stderr || result.error };
         return { bash_id: spawnId, killed: result.exitCode === 0, message: result.stdout || result.stderr };
       }
-      case "wait": {
-        const timeout = String(normalizeTimeoutMin(params.timeout_min, DEFAULT_WAIT_TIMEOUT_MIN));
-        const result = await runMeridianCommand(["spawn", "wait", spawnId, "--timeout", timeout], (Number(timeout) * 60 + 5) * 1000);
-        return { bash_id: spawnId, status: result.exitCode === 0 ? "exited" : "running", output: result.stdout || result.stderr };
-      }
+      case "wait":
+        return waitForSpawn(spawnId, WAIT_TIMEOUT_MIN, signal);
       case "detach":
         return { bash_id: spawnId, detached: false, message: "detach only applies to b-* bash records" };
       default:
@@ -666,8 +683,11 @@ export class BashRuntime {
     record.rejectFinished(new Error(record.execution_error));
   }
 
-  private persistWaitConsumption(record: RuntimeRecord): Promise<void> {
-    return this.enqueuePersist(async () => {
+  /** When the model received a terminal result, its completion notice would repeat it.
+   * Execution failures stay owed: their notice carries the error the log lacks. */
+  private async consumeDeliveredResult(record: RuntimeRecord, deliveredTerminal: boolean): Promise<void> {
+    if (!deliveredTerminal || record.execution_error) return;
+    await this.enqueuePersist(async () => {
       const previous = record.notification_consumed_at_ms;
       record.notification_consumed_at_ms = Date.now();
       try {

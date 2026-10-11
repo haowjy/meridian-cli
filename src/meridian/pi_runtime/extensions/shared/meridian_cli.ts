@@ -4,15 +4,19 @@ export type CommandResult = {
   stdout: string;
   stderr: string;
   exitCode: number | null;
+  /** Process-launch or timeout failures; a non-zero exit alone is target data. */
+  error?: string;
 };
 
 export async function runMeridianCommand(
   args: string[],
   timeoutMs = 8_000,
+  signal?: AbortSignal,
 ): Promise<CommandResult> {
   return await new Promise<CommandResult>((resolve) => {
     let stdout = "";
     let stderr = "";
+    let errorMessage: string | undefined;
     let finished = false;
 
     const child = spawn("meridian", args, {
@@ -29,10 +33,12 @@ export async function runMeridianCommand(
         stdout,
         stderr,
         exitCode: child.exitCode,
+        ...(errorMessage ? { error: errorMessage } : {}),
       });
     };
 
     const timer = setTimeout(() => {
+      errorMessage = `meridian ${args.join(" ")} timed out after ${timeoutMs}ms`;
       try {
         child.kill("SIGTERM");
       } catch {
@@ -53,9 +59,19 @@ export async function runMeridianCommand(
       clearTimeout(timer);
       finalize();
     });
-    child.once("error", () => {
+    child.once("error", (error) => {
+      errorMessage = error.message;
       clearTimeout(timer);
       finalize();
     });
+    const abort = (): void => {
+      errorMessage = `meridian ${args.join(" ")} aborted`;
+      clearTimeout(timer);
+      child.kill("SIGTERM");
+      finalize();
+    };
+    if (signal?.aborted) abort();
+    else signal?.addEventListener("abort", abort, { once: true });
+    child.once("close", () => signal?.removeEventListener("abort", abort));
   });
 }

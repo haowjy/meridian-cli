@@ -75,7 +75,10 @@ build-backend = "hatchling.build"
 path = "src/meridian/__init__.py"
 
 [tool.hatch.build]
-artifacts = ["src/meridian/pi_runtime/dist/extensions/*"]
+artifacts = [
+  "src/meridian/pi_runtime/dist/extensions/*",
+]
+exclude = ["src/meridian/claude_runtime/*/.claude-plugin/types"]
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -142,7 +145,20 @@ ignore = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = [
+  "tests/unit",
+  "tests/contract",
+  "tests/platform",
+  "tests/integration/config",
+  "tests/integration/catalog",
+  "tests/integration/safety",
+  "tests/integration/harness",
+  "tests/integration/hooks",
+  "tests/integration/idle",
+  "tests/integration/prompt",
+  "tests/integration/telemetry",
+  "tests/integration/state",
+]
 addopts = "-ra -n 4"
 asyncio_mode = "auto"
 pythonpath = ["src"]

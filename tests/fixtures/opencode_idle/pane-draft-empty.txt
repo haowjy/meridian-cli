@@ -1,0 +1,20 @@
+
+     ▣  Compaction · Big Pickle · 2.4s
+                                  ┃                                                     ┃
+  ┃                               ┃  Model not found: opencode/definitely-not-a-model.  ┃
+  ┃  reply exactly P0C_AFTER_OK   ┃                                                     ┃
+  ┃
+
+     P0C_AFTER_OK
+
+     ▣  Build · Big Pickle · 1.2s
+
+  ───────────────────────────────────── Compaction ──────────────────────────────────────
+
+  ┃
+  ┃
+  ┃
+  ┃  Build · Big Pickle OpenCode Zen
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   /home/jimyao/gitrepos/meridian-cli.worktrees/idle-cache-    12.0K (6%) ctrl+p commands
+   notify

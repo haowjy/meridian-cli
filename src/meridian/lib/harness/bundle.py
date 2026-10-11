@@ -12,6 +12,12 @@ from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import BootstrapMode, HarnessAdapter, HarnessContract
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
 from meridian.lib.harness.extractors.base import HarnessExtractor
+from meridian.lib.harness.idle_types import (
+    DetectIdleTtl,
+    IdleSensor,
+    IdleSensorContext,
+    NativeIdleHook,
+)
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.semantics import HarnessSemantics
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, SpecT
@@ -66,6 +72,8 @@ class HarnessProjectionPorts(Generic[SpecT]):
 
 
 EventSinks = Callable[[Path, SpawnId], tuple[Callable[[RawHarnessEvent], None], ...]]
+PrimaryIdleSensor = Callable[[IdleSensorContext], IdleSensor | None]
+AutocompactOffReader = Callable[[Mapping[str, str]], bool | None]
 
 
 def _no_event_sinks(
@@ -86,6 +94,10 @@ class HarnessBundle(Generic[SpecT]):
     projections: HarnessProjectionPorts[SpecT]
     semantics: HarnessSemantics
     event_sinks: EventSinks = _no_event_sinks
+    primary_idle_sensor: PrimaryIdleSensor | None = None
+    native_idle_hook: NativeIdleHook | None = None
+    autocompact_off: AutocompactOffReader | None = None
+    detect_ttl: DetectIdleTtl | None = None
 
 
 _REGISTRY: dict[HarnessId, HarnessBundle[Any]] = {}
@@ -171,6 +183,10 @@ def register_harness_bundle(bundle: HarnessBundle[Any]) -> None:
         projections=bundle.projections,
         semantics=bundle.semantics,
         event_sinks=bundle.event_sinks,
+        primary_idle_sensor=bundle.primary_idle_sensor,
+        native_idle_hook=bundle.native_idle_hook,
+        autocompact_off=bundle.autocompact_off,
+        detect_ttl=bundle.detect_ttl,
     )
 
 

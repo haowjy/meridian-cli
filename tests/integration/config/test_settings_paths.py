@@ -158,6 +158,54 @@ def test_load_config_reads_harness_wait_yield_settings(tmp_path: Path) -> None:
     assert config.default_model_for_harness("codex") == "gpt-5.4"
 
 
+def test_load_config_reads_idle_tables_with_env_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "meridian.toml").write_text(
+        "[idle]\npush_seconds = 12\n[harness.codex.idle]\nttl_seconds = 900\n",
+        encoding="utf-8",
+    )
+
+    file_config = load_config(project_root, resolve_models=False)
+    assert file_config.idle.push_seconds == 12
+    assert file_config.harness.codex.idle.ttl_seconds == 900
+
+    monkeypatch.setenv("MERIDIAN_IDLE_PUSH_SECONDS", "90")
+    monkeypatch.setenv("MERIDIAN_HARNESS_IDLE_TTL_SECONDS_CODEX", "1800")
+
+    env_config = load_config(project_root, resolve_models=False)
+    assert env_config.idle.push_seconds == 90
+    assert env_config.harness.codex.idle.ttl_seconds == 1800
+
+
+def test_load_config_reads_notify_table_with_env_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "meridian.toml").write_text(
+        '[notify]\nntfy_topic = "file-topic"\nsmtp_port = 2525\ninclude_messages = true\n',
+        encoding="utf-8",
+    )
+
+    file_config = load_config(project_root, resolve_models=False)
+    assert file_config.notify.ntfy_topic == "file-topic"
+    assert file_config.notify.smtp_port == 2525
+
+    monkeypatch.setenv("MERIDIAN_NOTIFY_NTFY_TOPIC", "env-topic")
+    monkeypatch.setenv("MERIDIAN_NOTIFY_SMTP_PORT", "465")
+    monkeypatch.setenv("MERIDIAN_NOTIFY_INCLUDE_MESSAGES", "false")
+
+    env_config = load_config(project_root, resolve_models=False)
+    assert env_config.notify.ntfy_topic == "env-topic"
+    assert env_config.notify.include_messages is False
+    assert env_config.notify.smtp_port == 465
+
+
 def test_load_config_reads_spawn_deny_headless_harnesses(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()

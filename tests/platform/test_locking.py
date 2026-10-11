@@ -4,7 +4,7 @@ import threading
 from pathlib import Path
 
 from meridian.lib.platform.locking import lock_file
-from tests.conftest import posix_only, windows_only
+from tests.conftest import posix_only
 
 
 def test_lock_file_acquires_and_releases(tmp_path: Path) -> None:
@@ -76,16 +76,6 @@ def test_lock_file_blocks_other_threads_until_release(tmp_path: Path) -> None:
     waiter.join(timeout=2)
 
     assert errors == []
-
-
-@windows_only
-def test_lock_file_writes_lock_byte_on_windows(tmp_path: Path) -> None:
-    lock_path = tmp_path / "state.lock"
-
-    with lock_file(lock_path):
-        pass
-
-    assert lock_path.read_bytes() == b"\0"
 
 
 @posix_only

@@ -18,6 +18,7 @@ import pytest
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
+from meridian.lib.harness.semantics import NormalizedHarnessEvent
 from meridian.lib.streaming import descendant_evidence as descendant_evidence_module
 from meridian.lib.streaming.completion_contracts import (
     AssessmentTrigger,
@@ -181,10 +182,11 @@ class _Coordinator:
     def next_timeout(self) -> None:
         return None
 
-    async def observe_event(self, event: RawHarnessEvent, transition: str | None) -> bool:
-        _ = transition
-        self._calls.append(("pre_persist", event))
-        return False
+    async def observe_event(
+        self, event: NormalizedHarnessEvent
+    ) -> NormalizedHarnessEvent | None:
+        self._calls.append(("pre_persist", event.raw))
+        return event
 
     def note_event_delivered(self, event: RawHarnessEvent) -> DrainLoopDecision:
         self._calls.append(("noted", event))
@@ -246,13 +248,18 @@ class _StabilizingEvidence:
         del event, transition
         return EvidenceEventDecision()
 
-    def note_event_delivered(self, event: RawHarnessEvent) -> EvidenceEventDecision:
+    def note_event_delivered(
+        self, event: RawHarnessEvent, state: CompletionState
+    ) -> EvidenceEventDecision:
+        del state
         if event.event_type == "message":
             return EvidenceEventDecision(activity=EvidenceActivity(code="persisted_event"))
         return EvidenceEventDecision()
 
-    async def assess(self, trigger: AssessmentTrigger) -> WorkAssessment:
-        del trigger
+    async def assess(
+        self, trigger: AssessmentTrigger, state: CompletionState
+    ) -> WorkAssessment:
+        del trigger, state
         return WorkAssessment(disposition="ready", blockers=(), generation=1)
 
     def next_due_at(self) -> float | None:

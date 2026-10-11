@@ -24,4 +24,6 @@ uv run pytest tests/unit/ -v           # All
 uv run pytest tests/unit/ -k "mars"    # Pattern
 ```
 
-Should complete in <2 seconds total.
+The unit directory itself should complete in <2 seconds total on prepared
+developer environments. This is a unit-suite target, not a promise for the
+broader default gate or the complete `tests/` run.

@@ -23,6 +23,9 @@ This keeps spawn artifacts clean for downstream parsing.
 `echo_stderr=True` mirrors every trace event to stderr — useful for local
 debugging but never enabled in production spawns.
 
+`report_failures=False` is reserved for code running behind a harness TUI. It
+keeps best-effort trace write failures from reaching the terminal the TUI owns.
+
 ## Payload Truncation
 
 Data values are truncated at `max_payload_bytes` (default 4096 bytes).

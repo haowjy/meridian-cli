@@ -21,6 +21,7 @@ from meridian.lib.harness.semantics import (
     NormalizedHarnessEvent,
     PrimaryEventScope,
     TerminalEventOutcome,
+    normalize_event,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
@@ -203,7 +204,7 @@ async def awaiting_done_coordinator(
     )
     write_spawn_signal(tmp_path, "p1", "rearm")
     terminal_event = resident_event(connection.harness_id, "agent_end", {})
-    await coordinator.observe_event(terminal_event, "idle")
+    await coordinator.observe_event(normalize_event(terminal_event))
     await coordinator.handle_terminal_event(
         terminal_event,
         TerminalEventOutcome(status="succeeded", exit_code=0),
@@ -318,7 +319,7 @@ async def coordinator_with_clock(
     )
     write_spawn_signal(tmp_path, "p1", "rearm")
     terminal_event = resident_event(connection.harness_id, "agent_end", {})
-    await coordinator.observe_event(terminal_event, "idle")
+    await coordinator.observe_event(normalize_event(terminal_event))
     await coordinator.handle_terminal_event(
         terminal_event,
         TerminalEventOutcome(status="succeeded", exit_code=0),

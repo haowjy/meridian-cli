@@ -313,7 +313,7 @@ def test_pi_prepare_prelaunch_preserves_bound_agent_dir(
         return PiRuntimeResolution(
             binary_path="/bound/bin/pi",
             runtime_kind="override",
-            runtime_version="pi 3.0.0",
+            runtime_version="pi 1.1.0",
         )
 
     monkeypatch.setattr(
@@ -321,7 +321,7 @@ def test_pi_prepare_prelaunch_preserves_bound_agent_dir(
         resolve_runtime,
     )
     child_env = {
-        "_MERIDIAN_PI_SESSION_ROLE": "primary",
+        "MERIDIAN_SESSION_ROLE": "primary",
         "PI_CODING_AGENT_DIR": str(bound_agent_dir),
         "PI_CODING_AGENT_SESSION_DIR": str(tmp_path / "sessions"),
     }

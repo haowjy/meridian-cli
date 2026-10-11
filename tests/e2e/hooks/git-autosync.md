@@ -5,8 +5,10 @@ Validate the built-in `git-autosync` hook in an isolated git repository with a r
 ## Setup
 
 ```bash
-export REPO_ROOT=/abs/path/to/meridian-cli
-export E2E_REPO="$(mktemp -d /tmp/meridian-git-autosync.XXXXXX)"
+. tests/smoke/scripts/setup.sh --git
+export REPO_ROOT="$SMOKE_ORIGINAL_CWD"
+export E2E_REPO="$SCRATCH/git-autosync"
+mkdir -p "$E2E_REPO"
 export E2E_REMOTE="$E2E_REPO/remote.git"
 export E2E_SEED="$E2E_REPO/seed"
 export E2E_WORK="$E2E_REPO/work"

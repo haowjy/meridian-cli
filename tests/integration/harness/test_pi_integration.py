@@ -170,8 +170,17 @@ def test_pi_semantics_terminal_outcome_and_activity_mapping() -> None:
     agent_end = normalize_event(
         RawHarnessEvent(event_type="agent_end", harness_id="pi", payload={})
     ).semantics
-    assert agent_end.activity == "idle"
-    assert agent_end.clears_signal is True
+    assert agent_end.activity is None
+    assert agent_end.clears_signal is False
+    settled = normalize_event(
+        RawHarnessEvent(
+            event_type="agent_settled",
+            harness_id="pi",
+            payload={"aborted": False},
+        )
+    ).semantics
+    assert settled.activity == "idle"
+    assert settled.clears_signal is True
 
 
 @pytest.mark.asyncio
@@ -191,7 +200,7 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
         "import os\n"
         "import sys\n"
         "if len(sys.argv) > 1 and sys.argv[1] == '--version':\n"
-        "    print('pi 3.0.0')\n"
+        "    print('pi 1.1.0')\n"
         "    raise SystemExit(0)\n"
         "if len(sys.argv) > 1 and sys.argv[1] == '--help':\n"
         f"    print({json.dumps(_PI_HELP_SURFACE)})\n"
@@ -466,6 +475,7 @@ async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_withou
         "      printf '%s\\n' '{\"type\":\"agent_start\"}'\n"
         "      printf '%s\\n' "
         '\'{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop"}]}\'\n'
+        "      printf '%s\\n' '{\"type\":\"agent_settled\",\"aborted\":false}'\n"
         "      ;;\n"
         '    *\'"type":"abort"\'*)\n'
         "      exit 0\n"
@@ -577,6 +587,7 @@ async def test_pi_spawn_manager_startup_diagnostics_report_outcome_and_marker(
             "      printf '%s\n' '{\"type\":\"agent_start\"}'\n"
             "      printf '%s\n' "
             '\'{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop"}]}\'\n'
+            "      printf '%s\\n' '{\"type\":\"agent_settled\",\"aborted\":false}'\n"
         )
     else:
         prompt_handler = "      sleep 30\n"

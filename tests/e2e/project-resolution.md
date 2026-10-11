@@ -6,13 +6,10 @@ runtime-env cleanup.
 ## Setup
 
 ```bash
-export REPO_ROOT="$(pwd)"
-export SMOKE_A="$(mktemp -d /tmp/meridian-proj-a.XXXXXX)"
-export SMOKE_B="$(mktemp -d /tmp/meridian-proj-b.XXXXXX)"
-export MERIDIAN_HOME="$(mktemp -d /tmp/meridian-home.XXXXXX)"
-for var in $(env | awk -F= '/^MERIDIAN_/ {print $1}'); do
-  case "$var" in MERIDIAN_HOME) ;; *) unset "$var" ;; esac
-done
+export REPO_ROOT="${REPO_ROOT:-$PWD}"
+. tests/smoke/scripts/setup.sh --git
+export SMOKE_A="$SCRATCH/proj-a"
+export SMOKE_B="$SCRATCH/proj-b"
 mkdir -p "$SMOKE_A/.meridian" "$SMOKE_B/.meridian"
 printf 'proj-a\n' > "$SMOKE_A/.meridian/id"
 printf 'proj-b\n' > "$SMOKE_B/.meridian/id"

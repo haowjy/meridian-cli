@@ -29,6 +29,7 @@ from meridian.lib.harness.bundle import (
     project_managed_primary_backend_command,
     project_managed_primary_bootstrap,
 )
+from meridian.lib.harness.codex_bootstrap import bootstrap_turn_prompt
 from meridian.lib.harness.codex_rollout import (
     find_attachable_rollout_session_id,
     resolve_codex_home,
@@ -91,9 +92,6 @@ _ADDRESS_IN_USE_MARKERS: Final[tuple[str, ...]] = (
     "address already in use",
     "address in use",
     "eaddrinuse",
-)
-_BOOTSTRAP_TURN_PROMPT: Final[str] = (
-    "Meridian started"
 )
 
 
@@ -1356,10 +1354,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         turns fine.
         """
         thread_id = self._require_thread_id("bootstrap_turn")
-        normalized_agent = (agent_name or "").strip()
-        prompt = _BOOTSTRAP_TURN_PROMPT
-        if normalized_agent:
-            prompt = f"{prompt} (agent: {normalized_agent})"
+        prompt = bootstrap_turn_prompt(agent_name)
         await self._request(
             "turn/start",
             {

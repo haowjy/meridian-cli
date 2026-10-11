@@ -28,7 +28,7 @@ PI_INCOMPLETE_STOP_REASONS = PI_CANCELLED_STOP_REASONS | {"error", "length"}
 
 
 class TerminalOutcomeCause(StrEnum):
-    """Typed cause used only when completion policy may refine an outcome."""
+    """Typed cause used only when a transport outcome may be refined."""
 
     REPLACEABLE_TRANSPORT_CLOSE = "replaceable_transport_close"
 
@@ -138,13 +138,13 @@ class HarnessSemantics:
         descriptor = self.events.get(event.event_type)
         if descriptor is None or not self._matches_scope(event, primary_event_scope):
             return EventSemantics()
-        resolver = self.payload_resolvers.get(event.event_type)
-        if resolver is None:
+        payload_resolver = self.payload_resolvers.get(event.event_type)
+        if payload_resolver is None:
             return descriptor
         return EventSemantics(
             activity=descriptor.activity,
             clears_signal=descriptor.clears_signal,
-            terminal=resolver(event),
+            terminal=payload_resolver(event),
         )
 
     def _matches_scope(

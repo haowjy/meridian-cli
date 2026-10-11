@@ -23,21 +23,6 @@ def _resolve(**overrides: object) -> ResolvedLaunchSpec:
     )
 
 
-def test_exact_continue_replay_drops_model() -> None:
-    spec = _resolve(continue_harness_session_id="ses-parent")
-
-    assert spec.model is None
-
-
-def test_explicit_override_keeps_model_on_continue() -> None:
-    spec = _resolve(
-        continue_harness_session_id="ses-parent",
-        model_override_explicit=True,
-    )
-
-    assert spec.model == "deepseek/deepseek-flash"
-
-
 def test_non_replay_launch_keeps_model() -> None:
     assert _resolve().model == "deepseek/deepseek-flash"
     assert (

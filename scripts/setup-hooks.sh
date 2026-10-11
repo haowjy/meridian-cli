@@ -7,5 +7,6 @@ if [[ ! -d "$ROOT_DIR/.githooks" ]]; then
 fi
 git -C "$ROOT_DIR" config --local core.hooksPath .githooks
 printf 'Git hooks activated: core.hooksPath = .githooks\n'
-printf 'Active hook: pre-push (full preflight + tag policy)\n'
+printf 'Active hook: pre-push (fast preflight + tag policy)\n'
+printf 'Run scripts/preflight.sh extended explicitly for the full release gate.\n'
 printf 'Optional hook: pre-commit (fast ruff check) lives at .githooks/optional/pre-commit and is not active by default\n'

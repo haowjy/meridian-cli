@@ -39,8 +39,13 @@ from meridian.lib.harness.bundle import (
     ManagedPrimaryProjectionPorts,
     register_harness_bundle,
 )
+from meridian.lib.harness.codex_idle import (
+    CODEX_NATIVE_IDLE_HOOK,
+    primary_idle_sensor,
+)
 from meridian.lib.harness.codex_rollout import (
     CODEX_ROLLOUT_FILENAME_RE,
+    find_rollout,
     materialize_fork_rollout,
 )
 from meridian.lib.harness.common import extract_codex_thread_id
@@ -52,6 +57,8 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.connections.codex_ws import CodexConnection
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
+from meridian.lib.harness.launch_types import ManagedPrimaryPreview
+from meridian.lib.harness.passthrough.codex import build_codex_attach_command
 from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
@@ -159,6 +166,42 @@ def project_codex_spec_to_thread_request_for_project(
     return project_codex_spec_to_thread_request(spec, cwd=str(project_root))
 
 
+def project_codex_primary_preview(
+    spec: ResolvedLaunchSpec,
+    *,
+    project_root: Path,
+    env: Mapping[str, str] | None = None,
+) -> ManagedPrimaryPreview:
+    """Describe the managed Codex backend, JSON-RPC bootstrap, and TUI attach."""
+
+    _ = env
+    backend = project_codex_spec_to_appserver_command(spec, host="127.0.0.1", port=0)
+    listen_index = backend.index("--listen") + 1
+    backend[listen_index] = "ws://127.0.0.1:<port>"
+    method, payload = project_codex_spec_to_thread_request_for_project(
+        spec,
+        project_root=project_root,
+    )
+    session_id = spec.continue_session_id or "<session>"
+    return ManagedPrimaryPreview(
+        backend_command=tuple(backend),
+        bootstrap_method="POST",
+        bootstrap_path=method,
+        bootstrap_payload=payload,
+        attach_command=build_codex_attach_command(
+            session_id,
+            "ws://127.0.0.1:<port>",
+            spec.user_turn_content,
+        ),
+        steps=(
+            "Start the owned Codex app-server and wait for its WebSocket endpoint.",
+            "Bootstrap or resume the native thread over JSON-RPC.",
+            "Attach the Codex TUI to the managed thread; no black-box fallback.",
+        ),
+        model=spec.model,
+    )
+
+
 def _owns_session(project_root: Path, session_ref: str) -> bool:
     normalized = session_ref.strip()
     if not normalized:
@@ -206,6 +249,20 @@ def _owns_session(project_root: Path, session_ref: str) -> bool:
     return False
 
 
+# Codex's own multi-agent tools are invisible to Meridian, and v2 tells a lone
+# spawn it is `/root` of a team, so it can message itself and wait forever.
+# Codex 0.162: disabling v2 falls back to v1, whose tools survive
+# `--disable multi_agent`; only a zero spawn depth removes them. Config
+# overrides, not `--disable`: Codex rejects `--disable` for a feature it does
+# not know (older builds), but ignores an unknown `features.<name>=false`.
+_DISABLE_BUILTIN_AGENT_FLAGS: tuple[str, ...] = (
+    "-c",
+    "features.multi_agent_v2=false",
+    "-c",
+    "agents.max_depth=0",
+)
+
+
 class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """SubprocessHarness implementation for `codex`."""
 
@@ -231,6 +288,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "adhoc_agent_payload",
             "appended_system_prompt",
             "user_turn_content",
+            "allow_builtin_agents",
         }
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
@@ -240,7 +298,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "reference_items",
             "task_cwd",
             "pi_harness_profile",
-            "claude_allow_builtin_agents",
         }
     )
 
@@ -335,14 +392,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         child_env["CODEX_HOME"] = str(Path(store).parent)
 
     def resolve_native_session_file(self, *, session_id: str, native_store: Path) -> Path | None:
-        from meridian.lib.harness.codex_rollout import resolve_exact_rollout
-
-        matches = [
-            candidate
-            for candidate in native_store.rglob(f"rollout-*-{session_id}.jsonl")
-            if CODEX_ROLLOUT_FILENAME_RE.match(candidate.name) is not None
-        ]
-        return resolve_exact_rollout(session_id, matches)
+        return find_rollout(native_store, session_id)
 
     def native_store_for_launch(
         self,
@@ -378,7 +428,11 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             continue_session_id=continue_session_id,
             continue_fork=run.continue_fork and continue_session_id is not None,
             permission_resolver=perms,
-            extra_args=run.extra_args,
+            # Ahead of passthrough args so a later `-c` override still wins.
+            extra_args=(
+                *(() if run.allow_builtin_agents else _DISABLE_BUILTIN_AGENT_FLAGS),
+                *run.extra_args,
+            ),
             interactive=run.interactive,
             mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
@@ -612,8 +666,11 @@ register_harness_bundle(
             managed_primary=ManagedPrimaryProjectionPorts(
                 backend_command=project_codex_spec_to_appserver_command,
                 bootstrap_payload=project_codex_spec_to_thread_request_for_project,
+                preview=project_codex_primary_preview,
             ),
         ),
         semantics=CODEX_SEMANTICS,
+        primary_idle_sensor=primary_idle_sensor,
+        native_idle_hook=CODEX_NATIVE_IDLE_HOOK,
     )
 )
