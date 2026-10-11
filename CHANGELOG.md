@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-10-11
+
 ### Upgrade notes
 - Interactive Pi primaries now default to `PI_CACHE_RETENTION=long`. For recognized
   Anthropic and OpenAI providers this enables the full idle warning/compaction flow.
