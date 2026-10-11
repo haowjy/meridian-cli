@@ -50,12 +50,14 @@ request's abort/activity generation is no longer current. Each report read is
 capped at 64 KiB; the complete joined notification is independently capped at 64
 KiB of UTF-8 content, including status/error/command labels, separators, and
 truncation/transcript guidance. UTF-8 truncation stops at a code-point boundary.
-An oversized first member is truncated with its full report/transcript or Bash
-output command and is still published, so it cannot starve the backlog. A member
-that does not fit after earlier members remains owed and becomes first on a later
-opportunity. Missing or empty reports retain outcome and transcript guidance;
-present unreadable evidence fails closed. Explicit wait commands still use the
-CLI.
+Every included member retains a compact identity and terminal-outcome prefix plus
+a concrete full-report/transcript or exact-ID Bash output lookup; only worker,
+error, report-excerpt, and command details may be truncated. An oversized first
+canonical member therefore still publishes and cannot starve the backlog. A member
+whose mandatory representation does not fit after earlier members remains owed and
+becomes first on a later opportunity. Missing or empty reports retain outcome and
+transcript guidance; present unreadable evidence fails closed. Explicit wait
+commands still use the CLI.
 
 A tracked background terminal result stays owed during active tool waits, so a
 terminal wait can persist consumption before the boundary runs. The idle path

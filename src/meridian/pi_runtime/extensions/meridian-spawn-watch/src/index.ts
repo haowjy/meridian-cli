@@ -37,6 +37,12 @@ type NotificationItem = {
   exitCode?: number;
   error?: string;
 };
+type NotificationFrame = {
+  prefix: string;
+  detail: string;
+  truncationNotice: string;
+  lookup: string;
+};
 type ClearedSpawnsFile = { v: 1; spawn_id: string; updated_at_ms: number; cleared_spawn_ids: string[] };
 const POLL_MS = 500;
 const FULL_RECONCILE_MS = 30_000;
@@ -239,6 +245,7 @@ export class SpawnWatchRuntime {
           && !consumed.has(record.bash_id) && !claimed.has(record.bash_id)) eligible.push({
         id: record.bash_id, kind: "bash", status: record.status, label: record.command,
         duration: formatDurationSecs(((record.ended_at_ms ?? Date.now()) - record.started_at_ms) / 1000),
+        exitCode: record.exit_code ?? undefined,
       });
     }
     return eligible;
@@ -265,11 +272,7 @@ export class SpawnWatchRuntime {
       if (selected.length >= MAX_NOTIFICATION_MEMBERS || !this.canContinue(deliverAs, generation, signal)) break;
       const separatorBytes = selected.length ? Buffer.byteLength(NOTIFICATION_SEPARATOR) : 0;
       const availableBytes = MAX_NOTIFICATION_BYTES - selectedBytes - separatorBytes;
-      const guidance = item.kind === "spawn"
-        ? spawnTruncationGuidance(item, this.spawnsDir)
-        : bashTruncationGuidance();
-      const minimumBytes = Buffer.byteLength(`${NOTIFICATION_SEPARATOR}${guidance}`);
-      if (selected.length && availableBytes < minimumBytes) break;
+      if (item.kind === "spawn" && availableBytes < minimumSpawnNotificationBytes(item, this.spawnsDir)) break;
       const content = item.kind === "spawn"
         ? await this.renderSpawnNotification(item, availableBytes)
         : formatBashNotification(item, availableBytes);
@@ -332,18 +335,12 @@ export class SpawnWatchRuntime {
   private async renderSpawnNotification(item: NotificationItem, maxBytes: number): Promise<string | undefined> {
     const reportPath = path.join(this.spawnsDir, item.id, "report.md");
     const report = await readBoundedReport(reportPath);
-    const outcome = item.exitCode === undefined ? item.duration : `exit ${item.exitCode}, ${item.duration}`;
-    const lines = [`${item.id} ${item.status} (${outcome}; ${item.label})`];
-    if (item.error) lines.push(`Failure: ${item.error}`);
-    lines.push("");
-    if (report.text) lines.push(report.text);
-    else lines.push("No durable report content was published.");
-    if (report.truncated) lines.push("", `[Report truncated after ${MAX_REPORT_BYTES} bytes; full report: ${reportPath}]`);
-    lines.push("", `Transcript: meridian session log ${item.id}`);
-    const guidance = report.truncated
-      ? `[Report truncated after ${MAX_REPORT_BYTES} bytes; full report: ${reportPath}]\n[Notification truncated to fit ${MAX_NOTIFICATION_BYTES} UTF-8 bytes; transcript: meridian session log ${item.id}]`
-      : spawnTruncationGuidance(item, this.spawnsDir);
-    return fitNotification(lines.join("\n"), maxBytes, guidance);
+    const frame = spawnNotificationFrame(item, this.spawnsDir, report.text);
+    if (report.truncated) frame.truncationNotice = [
+      `[Report truncated after ${MAX_REPORT_BYTES} bytes; full report: ${reportPath}]`,
+      `[Optional spawn details truncated to fit ${MAX_NOTIFICATION_BYTES} UTF-8 bytes.]`,
+    ].join("\n");
+    return renderNotificationFrame(frame, maxBytes);
   }
 
   private async readBash(): Promise<BashRecordsFile> {
@@ -472,26 +469,44 @@ function sameNotification(left: NotificationItem, right: NotificationItem): bool
     && left.exitCode === right.exitCode && left.error === right.error;
 }
 
-function formatBashNotification(item: NotificationItem, maxBytes: number): string | undefined {
-  const content = `Background bash ${item.id} completed (${item.label}, ${item.duration}): ${item.status}\nUse \`bash_manage({action: "output", bash_id: "${item.id}"})\` for details.`;
-  return fitNotification(content, maxBytes, bashTruncationGuidance());
-}
-
-function spawnTruncationGuidance(item: NotificationItem, spawnsDir: string): string {
+function spawnNotificationFrame(item: NotificationItem, spawnsDir: string, report: string | null): NotificationFrame {
   const reportPath = path.join(spawnsDir, item.id, "report.md");
-  return `[Notification truncated to fit ${MAX_NOTIFICATION_BYTES} UTF-8 bytes; full report: ${reportPath}; transcript: meridian session log ${item.id}]`;
+  const outcome = item.exitCode === undefined ? item.duration : `exit ${item.exitCode}, ${item.duration}`;
+  const details = [`Worker: ${item.label}`];
+  if (item.error) details.push(`Failure: ${item.error}`);
+  details.push("", report || "No durable report content was published.");
+  return {
+    prefix: `${item.id} ${item.status} (${outcome})`,
+    detail: details.join("\n"),
+    truncationNotice: `[Optional spawn details truncated to fit ${MAX_NOTIFICATION_BYTES} UTF-8 bytes.]`,
+    lookup: `Full report: ${reportPath}\nTranscript: meridian session log ${item.id}`,
+  };
 }
 
-function bashTruncationGuidance(): string {
-  return `[Notification metadata truncated to fit ${MAX_NOTIFICATION_BYTES} UTF-8 bytes; use bash_manage(action='output') with the exact work ID from message details.]`;
+function minimumSpawnNotificationBytes(item: NotificationItem, spawnsDir: string): number {
+  const frame = spawnNotificationFrame(item, spawnsDir, null);
+  return Buffer.byteLength(`${frame.prefix}\n\n${frame.truncationNotice}\n${frame.lookup}`);
 }
 
-function fitNotification(content: string, maxBytes: number, guidance: string): string | undefined {
-  if (Buffer.byteLength(content) <= maxBytes) return content;
-  const suffix = `\n\n${guidance}`;
-  const suffixBytes = Buffer.byteLength(suffix);
-  if (suffixBytes > maxBytes) return undefined;
-  return `${truncateUtf8(content, maxBytes - suffixBytes).trimEnd()}${suffix}`;
+function formatBashNotification(item: NotificationItem, maxBytes: number): string | undefined {
+  const outcome = item.exitCode === undefined ? item.duration : `exit ${item.exitCode}, ${item.duration}`;
+  return renderNotificationFrame({
+    prefix: `Background bash ${item.id} ${item.status} (${outcome}).`,
+    detail: `Command: ${item.label}`,
+    truncationNotice: `[Command truncated to fit ${MAX_NOTIFICATION_BYTES} UTF-8 bytes.]`,
+    lookup: `Full output: bash_manage({action: "output", bash_id: "${item.id}"})`,
+  }, maxBytes);
+}
+
+function renderNotificationFrame(frame: NotificationFrame, maxBytes: number): string | undefined {
+  const full = `${frame.prefix}\n${frame.detail}\n${frame.lookup}`;
+  if (Buffer.byteLength(full) <= maxBytes) return full;
+  const detailPrefix = `${frame.prefix}\n`;
+  const suffix = `\n${frame.truncationNotice}\n${frame.lookup}`;
+  const fixedBytes = Buffer.byteLength(detailPrefix) + Buffer.byteLength(suffix);
+  if (fixedBytes > maxBytes) return undefined;
+  const detail = truncateUtf8(frame.detail, maxBytes - fixedBytes).trimEnd();
+  return `${detailPrefix}${detail}${suffix}`;
 }
 
 function truncateUtf8(value: string, maxBytes: number): string {

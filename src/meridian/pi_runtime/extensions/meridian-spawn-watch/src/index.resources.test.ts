@@ -94,6 +94,16 @@ async function exists(filePath: string): Promise<boolean> {
   catch { return false; }
 }
 
+function bashRecord(command: string): BashRecord {
+  return {
+    bash_id: "b-demo", command, cwd: "/tmp", pid: null, status: "exited",
+    is_background: true, is_tracked: true, exit_code: 7,
+    started_at_ms: Date.now() - 1000, ended_at_ms: Date.now(), log_path: "/unused",
+    stdout_log_path: "/unused", stderr_log_path: "/unused", log_bytes: 0,
+    timeout_min: 1, originating_bash_id: null,
+  };
+}
+
 describe("bounded result delivery", () => {
   let fixture: DeliveryResourceFixture;
 
@@ -162,19 +172,13 @@ describe("bounded result delivery", () => {
     writeFileSync(reportPath, `report-${"🧪".repeat(30_000)}`);
     await fixture.child("p002");
     writeFileSync(path.join(fixture.root, "spawns", "p002", "report.md"), "second result");
-    await fixture.bash({
-      bash_id: "b001", command: `printf ${"命".repeat(30_000)}`, cwd: "/tmp", pid: null,
-      status: "exited", is_background: true, is_tracked: true, exit_code: 0,
-      started_at_ms: Date.now() - 1000, ended_at_ms: Date.now(), log_path: "/unused",
-      stdout_log_path: "/unused", stderr_log_path: "/unused", log_bytes: 0,
-      timeout_min: 1, originating_bash_id: null,
-    });
+    await fixture.bash({ ...bashRecord(`printf ${"命".repeat(30_000)}`), bash_id: "b001" });
 
     await fixture.runtime!.deliverAtBoundary();
     expect(fixture.notices).toHaveLength(1);
     expect(fixture.notices[0]!.details.work_ids).toEqual(["p001"]);
     expect(Buffer.byteLength(fixture.notices[0]!.content, "utf8")).toBeLessThanOrEqual(64 * 1024);
-    expect(fixture.notices[0]!.content).toContain("Notification truncated");
+    expect(fixture.notices[0]!.content).toContain("Optional spawn details truncated");
     expect(fixture.notices[0]!.content).toContain(`full report: ${reportPath}`);
     expect(fixture.notices[0]!.content).not.toContain("�");
 
@@ -182,9 +186,45 @@ describe("bounded result delivery", () => {
     await fixture.runtime!.deliverAtBoundary();
     expect(fixture.notices[1]!.details.work_ids).toEqual(["p002", "b001"]);
     expect(Buffer.byteLength(fixture.notices[1]!.content, "utf8")).toBeLessThanOrEqual(64 * 1024);
-    expect(fixture.notices[1]!.content).toContain("Notification metadata truncated");
-    expect(fixture.notices[1]!.content).toContain("use bash_manage(action='output') with the exact work ID");
+    expect(fixture.notices[1]!.content).toContain("Command truncated");
+    expect(fixture.notices[1]!.content).toContain('bash_manage({action: "output", bash_id: "b001"})');
     expect(fixture.notices[1]!.content).not.toContain("�");
+  });
+
+  it("keeps a giant Bash result's identity, outcome, and concrete lookup visible", async () => {
+    await fixture.bash(bashRecord("命".repeat(30_000)));
+
+    await fixture.runtime!.deliverAtBoundary();
+
+    const notice = fixture.notices[0]!;
+    expect(notice.details.work_ids).toEqual(["b-demo"]);
+    expect(Buffer.byteLength(notice.content, "utf8")).toBeLessThanOrEqual(64 * 1024);
+    expect(notice.content).toContain("Background bash b-demo exited (exit 7");
+    expect(notice.content).toContain('bash_manage({action: "output", bash_id: "b-demo"})');
+  });
+
+  it("defers a Bash member when a near-full preceding spawn cannot fit its visible outcome", async () => {
+    await fixture.child("p000");
+    writeFileSync(path.join(fixture.root, "spawns", "p000", "report.md"), "x");
+    await fixture.runtime!.deliverAtBoundary();
+    const sampleBytes = Buffer.byteLength(fixture.notices[0]!.content, "utf8");
+    await fixture.runtime!.admitMessage({ role: "custom", ...fixture.notices[0] });
+
+    const oldGenericSuffix = "[Notification metadata truncated to fit 65536 UTF-8 bytes; use bash_manage(action='output') with the exact work ID from message details.]";
+    const remainingBytes = Buffer.byteLength(`\n\n${oldGenericSuffix}`, "utf8");
+    await fixture.child("p001");
+    writeFileSync(path.join(fixture.root, "spawns", "p001", "report.md"),
+      "x".repeat(64 * 1024 - 2 - remainingBytes - (sampleBytes - 1)));
+    await fixture.bash(bashRecord("命".repeat(30_000)));
+
+    await fixture.runtime!.deliverAtBoundary();
+    expect(fixture.notices[1]!.details.work_ids).toEqual(["p001"]);
+    expect(fixture.notices[1]!.content).not.toContain("b-demo");
+    await fixture.runtime!.admitMessage({ role: "custom", ...fixture.notices[1] });
+
+    await fixture.runtime!.deliverAtBoundary();
+    expect(fixture.notices[2]!.details.work_ids).toEqual(["b-demo"]);
+    expect(fixture.notices[2]!.content).toContain("Background bash b-demo exited (exit 7");
   });
 
   it("does not start another report after a bounded read is cancelled", async () => {
