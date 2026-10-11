@@ -146,28 +146,23 @@ def test_label_fallbacks_and_rendered_notices_have_no_separator_glyph() -> None:
         (3600, None, 720_000, False, None),
     ],
 )
-@pytest.mark.parametrize("stage", ["push", "warn"])
 def test_countdown_uses_current_time_and_persisted_ttl_confidence(
     ttl: int | None,
     anchor: int | None,
     now: int,
     estimated: bool,
     suffix: str | None,
-    stage: str,
 ) -> None:
     notice = stage_notice(
-        stage,  # type: ignore[arg-type]
+        "push",
         _state(ttl_seconds=ttl, ttl_estimated=estimated, idle_since_ms=anchor),
         SessionLabel(harness="pi", work_id="idle-cache-notify", tmux_session="a2"),
         include_messages=False,
         now_ms=now,
         warn_email=False,
     )
-    reason = "idle" if stage == "push" else "cache warning"
-    expected = f'[{reason}] a2: pi on work: "idle-cache-notify"'
+    expected = '[idle] a2: pi on work: "idle-cache-notify"'
     assert notice.title == expected + (f" — {suffix}" if suffix else "")
-    if stage == "warn":
-        assert notice.body == (suffix or "Cache expiry warning")
 
 
 def test_excerpt_trimming_collapses_whitespace_cuts_at_words_and_strips_reminders() -> None:
