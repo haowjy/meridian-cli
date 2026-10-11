@@ -36,6 +36,8 @@ type NotificationItem = {
 type ClearedSpawnsFile = { v: 1; spawn_id: string; updated_at_ms: number; cleared_spawn_ids: string[] };
 const SCAN_DELAY_MS = 200;
 const POLL_MS = 500;
+// Do not let unstable membership hold Pi's awaited turn boundary indefinitely.
+const BOUNDARY_DRAIN_BUDGET_MS = 30_000;
 
 /** Launch-scoped owner: durable rows are obligations; queue claims are only mechanics. */
 export class SpawnWatchRuntime {
@@ -123,10 +125,16 @@ export class SpawnWatchRuntime {
     // snapshot cannot satisfy this boundary, so cancel it and serialize a fresh
     // drain behind it.
     if (this.activeDrain?.kind === "idle") this.activeDrain.abort.abort();
+    const budgetAbort = new AbortController();
+    const budgetTimer = setTimeout(() => budgetAbort.abort(), BOUNDARY_DRAIN_BUDGET_MS);
+    budgetTimer.unref();
+    const boundedSignal = signal ? AbortSignal.any([signal, budgetAbort.signal]) : budgetAbort.signal;
     try {
-      await this.enqueueDrain({ kind: "boundary", bindingEpoch: this.bindingEpoch, signal });
+      await this.enqueueDrain({ kind: "boundary", bindingEpoch: this.bindingEpoch, signal: boundedSignal });
     } catch (error) {
       await this.recordFault("scan", error);
+    } finally {
+      clearTimeout(budgetTimer);
     }
   }
 
@@ -232,6 +240,11 @@ export class SpawnWatchRuntime {
         ? await formatSpawnWaitNotification(spawnItems.map((item) => item.id), spawnItems, signal)
         : "";
       if (!this.requestIsCurrent(bindingEpoch, signal)) return false;
+
+      // A consuming tool persists its marker before the host becomes idle.
+      // Observe that transition before taking the idle path's final snapshot,
+      // then require idleness again immediately before publication.
+      if (kind === "idle" && !this.isIdle()) return true;
 
       // Formatting crosses a CLI await. Rebuild from a fresh canonical snapshot
       // whenever consumption, leases, admission, or completion membership moved.

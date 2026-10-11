@@ -39,7 +39,8 @@ notification, persistence, and compaction decision.
   admission. Publish through native steer only from an awaited successful
   tool-bearing `turn_end`; use the idle follow-up fallback for late results. Both
   paths recheck explicit consumption after formatting and retain queued ownership
-  across reload.
+  across reload. The idle path observes idleness before and after its final
+  snapshot. Boundary drains are time-bounded and leave unsettled work owed.
 - Change extension source, never `dist/` output. Rebuild bundles before testing
   source changes; launch projection may otherwise use an installed bundle.
 - Import Pi packages only from their package roots; extension-loader subpath

@@ -7,7 +7,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Deliver completed Pi child-spawn and managed-Bash results at the successful
   tool-batch boundary through native steering, before the next inference, while
-  retaining the idle follow-up fallback for genuinely late work.
+  retaining the idle follow-up fallback for genuinely late or unsettled work.
+- Preserve the idle-before-final-snapshot ordering that prevents completed waits
+  from being re-announced, and bound boundary scan/format churn to 30 seconds.
 
 ## [0.9.3] - 2026-10-11
 

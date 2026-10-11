@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
+import { writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -243,6 +244,69 @@ describe('durable result delivery', () => {
     expect(next.deliveries[0]).toEqual({ triggerTurn: true, deliverAs: 'steer' });
   });
 
+  it('observes idle before the final snapshot when consumption finishes with the tool', async () => {
+    const root = await setup();
+    await child(root, 'p1');
+    const h = host(false);
+    let idleChecks = 0;
+    const runtime = new SpawnWatchRuntime(h.pi, () => {
+      idleChecks++;
+      if (idleChecks === 1) {
+        // Model a consuming tool persisting its marker immediately before the
+        // host reports idle. The final snapshot must happen after this effect.
+        writeFileSync(path.join(root, 'pi-bash', 'p-parent', 'observed-spawns.json'), JSON.stringify({
+          v: 1, spawn_id: 'p-parent', updated_at_ms: Date.now(),
+          observed_spawn_ids: ['p1'], waiting_spawn_ids: [], wait_reservations: {},
+        }));
+        h.idle = true;
+      }
+      return h.idle;
+    });
+    owners.push(runtime);
+    runtime.start();
+
+    await eventually(() => idleChecks > 0);
+    await pause(500);
+    expect(h.notices).toHaveLength(0);
+  });
+
+  it('bounds a slow boundary drain and leaves the result owed for idle fallback', async () => {
+    const root = await setup();
+    await child(root, 'p1');
+    let formatterEntered = false;
+    formatter.mockImplementationOnce(async (_args: string[], _timeoutMs: number, signal?: AbortSignal) => {
+      formatterEntered = true;
+      await new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }));
+      return { exitCode: null, stdout: '', stderr: '', error: 'aborted' };
+    });
+    const h = host(false);
+    const runtime = owner(h);
+    const safetyAbort = new AbortController();
+    let settled = false;
+
+    vi.useFakeTimers();
+    try {
+      const boundary = runtime.deliverAtBoundary(safetyAbort.signal).then(() => { settled = true; });
+      await vi.waitFor(() => expect(formatterEntered).toBe(true));
+      await vi.advanceTimersByTimeAsync(30_000);
+      const settledAtBudget = settled;
+      safetyAbort.abort();
+      await boundary;
+
+      expect(settledAtBudget).toBe(true);
+      expect(h.notices).toHaveLength(0);
+      await expect(readFile(path.join(root, 'pi-bash', 'p-parent', 'delivery-receipts.json'))).rejects.toThrow();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    h.idle = true;
+    runtime.observeIdle(() => h.idle);
+    await eventually(() => h.notices.length === 1);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
+    expect(h.deliveries[0]).toEqual({ triggerTurn: true, deliverAs: 'followUp' });
+  });
+
   it('scopes invalid terminal evidence to its canonical parent', async () => {
     const root = await setup();
     await child(root, 'p1');
@@ -429,7 +493,10 @@ describe('durable result delivery', () => {
     await eventually(() => h.notices.length === 1);
     expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
   });
-  it('rechecks observations after formatter await and preserves the rest of the batch', async () => {
+  it.each([
+    { path: 'idle', idle: true, deliverAs: 'followUp' },
+    { path: 'boundary', idle: false, deliverAs: 'steer' },
+  ])('rechecks observations after formatter await on the $path path', async ({ idle, deliverAs }) => {
     const root = await setup();
     await child(root, 'p1');
     await child(root, 'p2');
@@ -444,16 +511,19 @@ describe('durable result delivery', () => {
         exitCode: 0, stdout: 'p1 p2', stderr: ''
       };
     });
-    const h = host();
-    owner(h);
+    const h = host(idle);
+    const runtime = owner(h);
+    const delivery = idle ? undefined : runtime.deliverAtBoundary(new AbortController().signal);
     await eventually(() => entered);
     await file(root, 'observed-spawns.json', {
       v: 1, spawn_id: 'p-parent', updated_at_ms: Date.now(), observed_spawn_ids: ['p1'], wait_reservations: {}
     });
     release();
+    await delivery;
     await eventually(() => h.notices.length === 1);
     expect(h.notices[0]!.details.work_ids).toEqual(['p2']);
     expect(h.notices[0]!.content).toBe('p2');
+    expect(h.deliveries[0]).toEqual({ triggerTurn: true, deliverAs });
   });
   it('continuous writes cannot postpone a scan indefinitely', async () => {
     const root = await setup();

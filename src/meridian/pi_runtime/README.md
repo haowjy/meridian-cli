@@ -75,7 +75,9 @@ queued output to finish, escalating TERM-resistant groups to SIGKILL.
 Unattended tracked background results remain owed until explicit consumption or
 exact native custom-message admission. Successful tool-bearing turns steer a fresh,
 revalidated result batch into the next inference; results that finish later retain
-the native-idle follow-up fallback. Queueing is not proof of delivery. See the
+the native-idle follow-up fallback. Boundary scanning and formatting are bounded to
+30 seconds; slow or unstable evidence remains owed for that fallback. Queueing is
+not proof of delivery. See the
 [delivery contract](.context/delivery-contract.md) for restart/crash limits and the
 [extension architecture](.context/CONTEXT.md) for native boundary validation and its
 stale-context error-text dependency.

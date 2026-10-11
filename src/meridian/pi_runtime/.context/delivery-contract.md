@@ -26,7 +26,12 @@ a fresh scan and queues native steer before the next inference, while genuinely
 late work retains the native-idle follow-up fallback. Both recheck consumption
 after any formatter await. A tracked background terminal result stays owed during
 active tool waits, so a terminal wait can persist consumption before the boundary
-runs. Changed membership rebuilds the batch. One message identity
+runs. The idle path checks idleness before its final snapshot and again before
+queueing. Changed membership rebuilds the batch. The awaited boundary drain has a
+30-second overall budget; slow formatting or nonconverging membership cancels that
+attempt without admission, leaving its work owed for the idle fallback. Delivery
+before the next inference is therefore not guaranteed when this bounded attempt
+cannot obtain stable, readable evidence. One message identity
 reserves the selected IDs through native admission. Its custom message contains
 `details.delivery_id` and `details.work_ids`; the native `message_start` hook
 persists precisely that membership before the public RPC event.
