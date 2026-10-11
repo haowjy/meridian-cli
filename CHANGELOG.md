@@ -5,15 +5,16 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Upgrade notes
-- Restart Claude sessions through updated Meridian to load exit-session verification. Older runs stay unverified; no migration. See [Claude exit verification](docs/upgrading.md#claude-exit-session-verification).
+- Stop active launches and back up project runtime state before upgrading. New current-chat fields are incompatible with 0.9.3 readers; rollback requires pre-upgrade state. See [current-chat tracking](docs/upgrading.md#current-chat-tracking-unreleased).
 
 ### Changed
+- Persist a run's current chat separately from its immutable entry chat. Rebuild history projection in a new versioned namespace.
 - Trim duplicate Claude boundary tests and run recorder edge checks without subprocesses.
 
 ### Fixed
 - Require native transcript proof before reusing any exit chat, not just creating one.
 - Preserve Claude plugin-resolution warnings; valid symlinked plugins no longer appear missing.
-- Verify Claude exit sessions using launch-owned lifecycle receipts and exact transcripts, even for existing chats, native forks, and after `/clear` or `/resume`; preserve entry bindings and continue from the verified exit chat. Keep absent proof diagnostic-only, never guess an exit from transcript timestamps.
+- Create complete chats for newly observed sessions, carrying current settings/work without copying history, fork lineage or live leases. Reusing an existing chat preserves its settings and work.
 
 ## [0.9.3] - 2026-10-11
 

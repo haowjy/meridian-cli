@@ -52,6 +52,15 @@ from meridian.lib.state.session_fold import (
     SessionRecord as SessionRecord,
 )
 from meridian.lib.state.session_fold import (
+    SessionSettings,
+    fold_session_generations,
+    generation_matches,
+    parse_event,
+    session_instance_for_event,
+    validate_startup_identity,
+    with_key,
+)
+from meridian.lib.state.session_fold import (
     SessionStartEvent as SessionStartEvent,
 )
 from meridian.lib.state.session_fold import (
@@ -59,14 +68,6 @@ from meridian.lib.state.session_fold import (
 )
 from meridian.lib.state.session_fold import (
     SessionUpdateEvent as SessionUpdateEvent,
-)
-from meridian.lib.state.session_fold import (
-    fold_session_generations,
-    generation_matches,
-    parse_event,
-    session_instance_for_event,
-    validate_startup_identity,
-    with_key,
 )
 from meridian.lib.state.session_fold import (
     project_session_event as project_session_event,
@@ -372,6 +373,7 @@ def start_session(
         release_file_lock(project_lifetime_handle)
         raise
 
+    assert handle is not None
     _SESSION_LOCK_HANDLES[_session_lock_key(runtime_root, resolved_chat_id)] = _SessionLockHandles(
         session=handle,
         project_lifetime=project_lifetime_handle,
@@ -1006,6 +1008,33 @@ def append_historical_session(runtime_root: Path, record: SessionRecord) -> None
         )
 
 
+def get_or_create_observed_chat(
+    runtime_root: Path,
+    source_chat_id: str,
+    harness: str,
+    native_store: str,
+    session_id: str,
+    *,
+    spawn_id: str,
+) -> str:
+    """Reuse or materialize the complete chat for an observed native session."""
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    with (
+        lock_file(paths.project_lifetime_flock, mode="shared"),
+        lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
+        lock_file(paths.sessions_flock),
+    ):
+        return _get_or_create_observed_chat_locked(
+            runtime_root,
+            source_chat_id,
+            harness=harness,
+            native_store=native_store,
+            session_id=session_id,
+            spawn_id=spawn_id,
+        )
+
+
 def get_or_create_exit_chat(
     runtime_root: Path, entry_chat_id: str, harness: str, native_store: str, session_id: str,
     *, native_exists: Callable[[], bool],
@@ -1013,39 +1042,59 @@ def get_or_create_exit_chat(
     """Require native proof before reusing or creating an exit chat, under the locks."""
     paths = RuntimePaths.from_root_dir(runtime_root)
     with (
+        lock_file(paths.project_lifetime_flock, mode="shared"),
         lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
         lock_file(paths.sessions_flock),
     ):
         if not native_exists():
             return None
-        records = _records_by_session(runtime_root)
-        entry = records[entry_chat_id]
-        for record in (entry, *records.values()):
-            if (record.harness, record.native_store, record.harness_session_id) == (
-                harness, native_store, session_id,
-            ):
-                return record.chat_id
-        chat_id = reserve_chat_id(runtime_root)
-        generation = uuid.uuid4().hex
-        now = utc_now_iso()
-        start = SessionStartEvent(
-            chat_id=ChatId(chat_id), kind=entry.kind, harness=harness,
-            harness_session_id=HarnessSessionId(session_id), native_store=native_store,
-            model=entry.model, control_root=entry.control_root, task_cwd=entry.task_cwd,
-            execution_cwd=entry.execution_cwd, session_instance_id=generation, started_at=now,
+        return _get_or_create_observed_chat_locked(
+            runtime_root, entry_chat_id,
+            harness=harness, native_store=native_store, session_id=session_id,
         )
-        for event in (
-            start,
-            SessionUpdateEvent(
-                chat_id=ChatId(chat_id), harness_session_id=HarnessSessionId(session_id),
-                native_store=native_store, session_instance_id=generation, source="assigned",
-            ),
-            SessionStopEvent(
-                chat_id=ChatId(chat_id), session_instance_id=generation, stopped_at=now,
-            ),
-        ):
-            _append_session_event(paths.sessions_jsonl, paths.sessions_flock, event)
-        return chat_id
+
+
+def _get_or_create_observed_chat_locked(
+    runtime_root: Path,
+    source_chat_id: str,
+    *,
+    harness: str,
+    native_store: str,
+    session_id: str,
+    spawn_id: str | None = None,
+) -> str:
+    """Materialize context, not a second live execution or a copy of its lineage.
+
+    Both live starts and observations use SessionStartEvent/SessionSettings as
+    their schema. Work is part of the initial event, not a later repair/update.
+    The owning execution keeps its own entry chat and lifetime lease.
+    """
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    records = _records_by_session(runtime_root)
+    source = records.get(source_chat_id)
+    if source is None or source.record_mode != "live":
+        raise ValueError(f"Source chat is missing or historical: {source_chat_id}")
+    for record in (source, *records.values()):
+        if record.record_mode == "live" and (
+            record.harness, record.native_store, record.harness_session_id
+        ) == (harness, native_store, session_id):
+            return record.chat_id
+    chat_id = reserve_chat_id(runtime_root)
+    generation = uuid.uuid4().hex
+    now = utc_now_iso()
+    start = SessionStartEvent(
+        chat_id=ChatId(chat_id), history_id=uuid.uuid4(), kind=source.kind,
+        harness=harness, harness_session_id=HarnessSessionId(session_id),
+        native_store=native_store, session_instance_id=generation, started_at=now,
+        spawn_id=spawn_id if spawn_id is not None else source.spawn_id,
+        **source.model_dump(include=set(SessionSettings.model_fields)),
+    )
+    for event in (
+        start,
+        SessionStopEvent(chat_id=ChatId(chat_id), session_instance_id=generation, stopped_at=now),
+    ):
+        _append_session_event(paths.sessions_jsonl, paths.sessions_flock, event)
+    return chat_id
 
 
 def list_session_generations(runtime_root: Path) -> tuple[SessionRecord, ...]:

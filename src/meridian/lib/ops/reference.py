@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import UUID
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
@@ -216,6 +217,18 @@ def _resolve_spawn_reference(
         return _resolve_untracked_reference(project_root, ref)
     if row.record_mode == "historical":
         raise ValueError("Historical sessions are inert; read or export the transcript instead.")
+
+    if row.current_chat_id and row.continue_chat_id == row.current_chat_id:
+        current = session_store.get_session_record(runtime_root, row.current_chat_id)
+        if current is None:
+            raise NativeSessionUnavailable(ref, "unbound")
+        selected = _reference_from_session(
+            runtime_root, current, project_root, current.harness_session_id,
+        )
+        return replace(
+            selected, source_spawn_id=row.id,
+            source_launch_policy_snapshot=row.launch_policy_snapshot,
+        )
 
     harness_session_id = _normalize_optional(row.harness_session_id)
     stored_harness = _normalize_optional(row.harness)

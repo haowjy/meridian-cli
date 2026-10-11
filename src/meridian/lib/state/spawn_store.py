@@ -402,6 +402,7 @@ def update_spawn(
     spawn_id: SpawnId | str,
     *,
     chat_id: str | None = None,
+    current_chat_id: str | None = None,
     run_boundary: RunBoundaryOutcome | None = None,
     launch_mode: LaunchMode | None = None,
     worker_pid: int | None = None,
@@ -431,6 +432,8 @@ def update_spawn(
             updates["run_boundary"] = run_boundary
         if chat_id is not None:
             updates["chat_id"] = chat_id
+        if current_chat_id is not None:
+            updates["current_chat_id"] = current_chat_id.strip() or None
         if launch_mode is not None:
             updates["launch_mode"] = launch_mode
         if worker_pid is not None:

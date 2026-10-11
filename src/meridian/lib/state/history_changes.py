@@ -25,7 +25,8 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
 
-SCHEMA_VERSION = 6
+# Current-chat pointers and work carried by start events change projection semantics.
+SCHEMA_VERSION = 7
 
 
 def versioned(stem: str) -> str:

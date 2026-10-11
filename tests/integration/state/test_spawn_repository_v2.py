@@ -322,6 +322,7 @@ def test_mutating_legacy_row_rewrites_it_as_v3(tmp_path: Path) -> None:
         "forked_from_history_id",
         "retained_history_ids",
         "run_boundary",
+        "current_chat_id",
     ):
         legacy.pop(key)
     state_path.write_text(json.dumps(legacy), encoding="utf-8")

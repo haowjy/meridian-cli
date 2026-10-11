@@ -1,25 +1,33 @@
 # Upgrade notes
 
-## Claude exit-session verification
+## Current-chat tracking (unreleased)
 
-New Claude launches include a separate session-boundary plugin. Its lifecycle
-hooks identify the final native session, including after `/clear` or in-process
-`/resume`. Meridian checks the launch nonce, Claude process ID, and exact native
-transcript before marking the exit verified. The original chat binding stays
-unchanged; the printed continue command and `--continue pN` select the verified
-exit chat.
+Claude continuation follows the run's last observed native session, including
+in-process `/clear` or `/resume`, without requiring a final-exit callback. The
+original chat keeps its native identity. A separate `current_chat_id` selects the
+current conversation: reuse an existing chat unchanged, or create a fresh chat
+with the current chat's settings and work association. History, identities and
+live leases are not copied. A normal fresh launch still starts fresh; only
+continuation follows the previous run.
 
-Restart Claude sessions through the updated Meridian to load this plugin.
-Existing runs keep their original boundary records; there is no migration or
-retroactive verification. If hooks are disabled, time out, or cannot report before
-a hard kill, the exit can still be unverified. An entry transcript alone is not
-proof of the final active session.
+Observation does not prove that a transcript was saved. Actual resume and read
+operations still validate the exact native transcript and refuse missing or
+invalid sources rather than silently continuing an older conversation. Disabled
+or missing hooks cannot reveal an unobserved switch. Existing runs are not
+retroactively tracked; restart Claude through the updated Meridian.
 
-Each new attempt may write `claude-session-boundary.json` beside its spawn record.
-This private, bounded receipt contains session IDs/paths, a launch nonce, a PID,
-and lifecycle metadata, not conversation text. Old releases ignore the file and
-can still read existing chat bindings; after rollback, new Claude runs again lack
-exit verification. The native transcripts and existing state schemas are unchanged.
+**Before upgrading, stop active Meridian launches and back up the affected
+project runtime directories.** The new spawn field is incompatible with older
+strict readers, including released 0.9.3. Do not overlap old runners with new
+writers. History projection version 7 is rebuilt from authoritative files in its
+own namespace; it does not migrate the older SQLite file in place.
+
+**Rollback is not an in-place downgrade.** On a copied runtime, released 0.9.3
+rejects a spawn containing `current_chat_id`. Restore the pre-upgrade runtime
+backup before using the older release, then rebuild its metadata index with
+`meridian session index rebuild --metadata-only`. That backup does not contain
+Meridian records created after the upgrade. Provider-owned native transcripts
+are not rewritten by this feature; keep them when restoring Meridian state.
 
 ## Upgrading to 0.9.3: idle notifications and compaction
 

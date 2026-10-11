@@ -107,6 +107,7 @@ class SpawnStateFields(BaseModel):
     retained_history_ids: tuple[UUID, ...] = ()
     state_revision: int = Field(default=0, ge=0)
     chat_id: OptionalPersistedChatId = None
+    current_chat_id: OptionalPersistedChatId = None
     run_boundary: RunBoundaryOutcome | None = None
     owner_chat_id: OptionalPersistedChatId = None
     parent_id: str | None = None
@@ -149,7 +150,11 @@ class SpawnRecord(SpawnStateFields):
 
     @property
     def continue_chat_id(self) -> str | None:
-        """Verified terminal exit, otherwise the immutable entry chat."""
+        """Current observed chat, or the legacy verified terminal chat."""
+        if self.run_boundary is not None and self.run_boundary.status == "mismatch":
+            return self.chat_id
+        if self.current_chat_id is not None:
+            return self.current_chat_id
         if self.status in TERMINAL_SPAWN_STATUSES and (
             self.run_boundary is not None and self.run_boundary.status == "verified"
         ):

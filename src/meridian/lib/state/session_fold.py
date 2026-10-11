@@ -19,7 +19,23 @@ from meridian.lib.core.types import (
 from meridian.lib.state.native_binding import Conflict, bind
 
 
-class SessionRecord(BaseModel):
+class SessionSettings(BaseModel):
+    """Context inherited by a new conversation, never identity, lineage or a lease."""
+
+    model: str
+    agent: str
+    agent_path: str
+    skills: tuple[str, ...]
+    skill_paths: tuple[str, ...]
+    params: tuple[str, ...]
+    control_root: str | None = None
+    task_cwd: str | None = None
+    execution_cwd: str | None = None
+    claude_config_dir: str | None = None
+    active_work_id: str | None = None
+
+
+class SessionRecord(SessionSettings):
     model_config = ConfigDict(frozen=True)
 
     chat_id: PersistedChatId
@@ -28,21 +44,10 @@ class SessionRecord(BaseModel):
     kind: Literal["primary", "spawn"]
     harness: str
     harness_session_id: OptionalPersistedHarnessSessionId
-    control_root: str | None = None
-    task_cwd: str | None = None
-    execution_cwd: str | None = None
     native_store: str | None = None
-    claude_config_dir: str | None = None
-    model: str
-    agent: str
-    agent_path: str
-    skills: tuple[str, ...]
-    skill_paths: tuple[str, ...]
-    params: tuple[str, ...]
     started_at: str
     stopped_at: str | None
     session_instance_id: str = ""
-    active_work_id: str | None = None
     forked_from_chat_id: OptionalPersistedChatId = None
     forked_from_history_id: uuid.UUID | None = None
     spawn_id: str | None = None
@@ -54,7 +59,7 @@ class SessionRecord(BaseModel):
         return self.key_fields().complete()
 
 
-class SessionStartEvent(BaseModel):
+class SessionStartEvent(SessionSettings):
     model_config = ConfigDict(extra="ignore")
 
     history_id: uuid.UUID | None = None
@@ -64,12 +69,7 @@ class SessionStartEvent(BaseModel):
     kind: Literal["primary", "spawn"] = "spawn"
     harness: str
     harness_session_id: OptionalPersistedHarnessSessionId
-    control_root: str | None = None
-    task_cwd: str | None = None
-    execution_cwd: str | None = None
     native_store: str | None = None
-    claude_config_dir: str | None = None
-    model: str
     agent: str = ""
     agent_path: str = ""
     skills: tuple[str, ...] = ()
@@ -271,21 +271,11 @@ def _record_from_start_event(event: SessionStartEvent) -> SessionRecord:
         kind=event.kind,
         harness=event.harness,
         harness_session_id=event.harness_session_id,
-        control_root=event.control_root,
-        task_cwd=event.task_cwd,
-        execution_cwd=event.execution_cwd,
-        claude_config_dir=event.claude_config_dir,
         native_store=event.native_store,
-        model=event.model,
-        agent=event.agent,
-        agent_path=event.agent_path,
-        skills=event.skills,
-        skill_paths=event.skill_paths,
-        params=event.params,
+        **event.model_dump(include=set(SessionSettings.model_fields)),
         started_at=event.started_at,
         stopped_at=None,
         session_instance_id=event.session_instance_id,
-        active_work_id=None,
         forked_from_chat_id=event.forked_from_chat_id,
         forked_from_history_id=event.forked_from_history_id,
         spawn_id=event.spawn_id,
