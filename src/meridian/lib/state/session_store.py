@@ -1010,12 +1010,14 @@ def get_or_create_exit_chat(
     runtime_root: Path, entry_chat_id: str, harness: str, native_store: str, session_id: str,
     *, native_exists: Callable[[], bool],
 ) -> str | None:
-    """Resolve an exact exit key under the session lock, including stopped chats."""
+    """Require native proof before reusing or creating an exit chat, under the locks."""
     paths = RuntimePaths.from_root_dir(runtime_root)
     with (
         lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
         lock_file(paths.sessions_flock),
     ):
+        if not native_exists():
+            return None
         records = _records_by_session(runtime_root)
         entry = records[entry_chat_id]
         for record in (entry, *records.values()):
@@ -1023,8 +1025,6 @@ def get_or_create_exit_chat(
                 harness, native_store, session_id,
             ):
                 return record.chat_id
-        if not native_exists():
-            return None
         chat_id = reserve_chat_id(runtime_root)
         generation = uuid.uuid4().hex
         now = utc_now_iso()

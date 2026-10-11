@@ -39,7 +39,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "agent_name",
         "agents_payload",
         "claude_native_agents_enabled",
-        "claude_plugin_dirs",
+        "claude_runtime",
         "prompt",
         "prompt_file_path",
         "base_instructions",

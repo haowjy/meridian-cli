@@ -192,7 +192,7 @@ def conclude_native_run(
     boundary = RunBoundaryOutcome(
         status=status,
         exit_chat_id=ChatId(exit_chat_id) if exit_chat_id else None,
-        trampoline_successor_id=post.trampoline_successor_id,
+        trampoline_successor_id=post.trampoline_successor_id if exit_chat_id is None else None,
     )
     spawn_store.update_spawn(run.attempt.runtime_root, spawn_id, run_boundary=boundary)
     if error is not None:

@@ -37,9 +37,9 @@ class _Record(BaseModel):
 def read_boundary(path: Path, *, nonce: str, pid: int | None) -> PostExit:
     """Switches, missing startup, stale/non-final receipts cannot establish an exit.
 
-    The Claude adapter must validate the exact exit transcript before returning
-    this observation, including for an already-bound chat. Receipts alone do not
-    prove persistence; the allocator may reuse an existing chat without a file check.
+    Receipts establish owned identity, not persistence. The shared finalizer uses
+    the adapter's exact transcript resolver to gate every exit-chat allocation,
+    including reuse of an already-bound chat.
     """
     try:
         with path.open("rb") as handle:

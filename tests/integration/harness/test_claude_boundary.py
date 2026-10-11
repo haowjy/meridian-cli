@@ -75,7 +75,8 @@ def test_owned_final_receipt_reports_initial_and_final_keys(tmp_path):
     [("clear", None), ("compact", None), ("startup", "{"), ("resume", "[]"), ("fork", "{")],
 )
 def test_lost_start_or_corrupt_receipt_cannot_reseed_initial_identity(tmp_path, source, previous):
-    plugin = Path(resolve_claude_runtime(plugin_name="meridian-session-boundary").plugin_dirs[0])
+    runtime = resolve_claude_runtime(plugin_names=("meridian-session-boundary",))
+    plugin = Path(runtime.plugin_dirs[0])
     path = tmp_path / "receipt.json"
     if previous is not None:
         path.write_text(previous)
@@ -94,7 +95,8 @@ def test_lost_start_or_corrupt_receipt_cannot_reseed_initial_identity(tmp_path, 
 
 
 def test_hook_accepts_large_prompt_but_persists_only_identity(tmp_path):
-    plugin = Path(resolve_claude_runtime(plugin_name="meridian-session-boundary").plugin_dirs[0])
+    runtime = resolve_claude_runtime(plugin_names=("meridian-session-boundary",))
+    plugin = Path(runtime.plugin_dirs[0])
     path = tmp_path / "receipt.json"
     result = subprocess.run(
         [sys.executable, str(plugin / "hooks/record.py")],
@@ -114,7 +116,8 @@ def test_hook_accepts_large_prompt_but_persists_only_identity(tmp_path):
 
 @pytest.mark.parametrize("owner", ["foreign-pid", "deleted-directory"])
 def test_hook_cannot_replace_another_process_or_recreate_its_spawn(tmp_path, owner):
-    plugin = Path(resolve_claude_runtime(plugin_name="meridian-session-boundary").plugin_dirs[0])
+    runtime = resolve_claude_runtime(plugin_names=("meridian-session-boundary",))
+    plugin = Path(runtime.plugin_dirs[0])
     path = tmp_path / "receipt.json"
     previous = json.dumps({"launch_nonce": "nonce", "pid": os.getpid() + 1})
     if owner == "foreign-pid":

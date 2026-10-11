@@ -12,7 +12,6 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import (
     LaunchIntent,
     NativeIdentity,
-    NativeIdentityError,
     NativeKeyFields,
     NativeSessionUnavailable,
     Operation,
@@ -52,10 +51,7 @@ from meridian.lib.harness.claude_preflight import (
     ensure_claude_session_accessible,
     validate_claude_session_file,
 )
-from meridian.lib.harness.claude_runtime_resolver import (
-    missing_claude_runtime_warning,
-    resolve_claude_runtime,
-)
+from meridian.lib.harness.claude_runtime_resolver import resolve_claude_runtime
 from meridian.lib.harness.claude_sessions import (
     candidate_claude_project_dirs,
     reconcile_tui_trampoline_session_id,
@@ -296,8 +292,9 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             disallowed_tools = (
                 "Agent(Explore),Agent(Plan),Agent(General-purpose),Agent(general-purpose)",
             )
-        boundary_runtime = resolve_claude_runtime(plugin_name=_BOUNDARY_PLUGIN)
-        claude_runtime = resolve_claude_runtime() if run.interactive else None
+        plugin_names = (
+            (_BOUNDARY_PLUGIN, "meridian-idle") if run.interactive else (_BOUNDARY_PLUGIN,)
+        )
         return ResolvedLaunchSpec(
             harness=HarnessId.CLAUDE,
             model=str(run.model).strip() if run.model else None,
@@ -316,21 +313,13 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             prompt_file_path=prompt_file_path,
             user_turn_content=user_turn_content,
             disallowed_tools=disallowed_tools,
-            claude_plugin_dirs=(
-                boundary_runtime.plugin_dirs
-                + (claude_runtime.plugin_dirs if claude_runtime is not None else ())
-            ),
+            claude_runtime=resolve_claude_runtime(plugin_names=plugin_names),
         )
 
     def launch_spec_warnings(
         self, spec: ResolvedLaunchSpec
     ) -> tuple[CompositionWarning, ...]:
-        expected = (_BOUNDARY_PLUGIN, "meridian-idle") if spec.interactive else (_BOUNDARY_PLUGIN,)
-        loaded = {Path(directory).name for directory in spec.claude_plugin_dirs}
-        return tuple(
-            missing_claude_runtime_warning(plugin_name=name)
-            for name in expected if name not in loaded
-        )
+        return spec.claude_runtime.warnings
 
     def preflight(
         self,
@@ -467,18 +456,8 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         path = child_env.get("_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PATH")
         nonce = child_env.get("_MERIDIAN_CLAUDE_SESSION_BOUNDARY_NONCE")
         observed = read_boundary(Path(path), nonce=nonce, pid=pid) if path and nonce else PostExit()
-        if observed.exit is not None:
-            # Existing chat aliases can be reused without the allocator's existence
-            # callback. Validate here too, so even an unchanged exit has native proof.
-            try:
-                source = self.resolve_native_session_file(
-                    session_id=observed.exit.session_id,
-                    native_store=Path(observed.exit.native_store),
-                )
-            except (NativeIdentityError, OSError):
-                source = None
-            if source is not None:
-                return observed
+        # Diagnostics are independent of exit proof: the allocator may refuse a
+        # missing transcript even when the receipt names an owned final session.
         successor = reconcile_tui_trampoline_session_id(
             project_root=child_cwd,
             recorded_session_id=entry.session_id or "",
@@ -487,6 +466,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
         return PostExit(
             entry_observed=observed.entry_observed,
+            exit=observed.exit,
             trampoline_successor_id=successor if successor != entry.session_id else None,
         )
 
