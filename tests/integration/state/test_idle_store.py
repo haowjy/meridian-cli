@@ -65,5 +65,5 @@ def test_idle_store_lazy_gc_removes_state_older_than_seven_days(tmp_path: Path) 
     current_store.write(_state().model_copy(update={"session": "native-2", "done": {}}))
 
     assert not stale_path.exists()
-    assert not current_store._lock_path(stale_path).exists()
+    assert current_store._lock_path(stale_path).is_file()
     assert current_store.read("example", "native-2") is not None

@@ -60,6 +60,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   CI job and in extended/full local preflight.
 
 ### Fixed
+- Preserve absorbed idle-arm reasons in CLI wire responses so adapters retain their timers.
+- Keep stable idle session lock paths after garbage collection removes stale state.
 - Stop wheels from force-including generated Claude plugin type files.
 - Pi spawn-watch checks idle before reading result eligibility, so a result waited on
   during the turn is no longer re-announced as a duplicate follow-up.

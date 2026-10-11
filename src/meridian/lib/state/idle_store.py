@@ -212,8 +212,6 @@ class IdleStore:
                 if stale:
                     with suppress(FileNotFoundError):
                         path.unlink()
-                    with suppress(FileNotFoundError):
-                        lock_path.unlink()
 
 
 __all__ = [
