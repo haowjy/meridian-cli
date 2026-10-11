@@ -110,23 +110,38 @@ waiters are released, and consumption is persisted before the terminal wait or
 output result returns. If consumption persistence fails, the marker is rolled back and
 the wait returns an error, leaving the completion eligible for notification.
 Spawn-watch serializes publication through one launch-scoped owner. A successful
-tool-bearing `turn_end` awaits a fresh scan and queues eligible results through
-native steer before the next inference; the idle follow-up path remains for results
-that finish later. Both paths reread consumption and live wait reservations after
-formatting, and changed membership rebuilds the batch. Boundary formatting carries
-the operation abort signal. The whole boundary drain has a 30-second cancellation
-budget; slow formatting or membership that does not converge is cancelled and
-remains owed for the idle fallback. Cancellation is cooperative: pending filesystem
-reads finish before the next signal check. The idle path observes idleness before its final snapshot and
-again before publication. Stop and reload invalidate stale publication. One message
-identity reserves exact membership until native `message_start`
-admission. Reload preserves queued claims; cold restart retries unreceipted work
-and keeps admitted or consumed work.
-Scan, formatting and receipt failures are supervised in `delivery-fault.json`.
-Notification formatting uses `meridian spawn wait --no-observe`: fetching a
-result must not consume the parent's notification before delivery succeeds.
-Final shutdown stops publication; reload preserves the owner. Polling plus one
-non-resetting scheduled idle scan guarantees progress under continuous writes.
+tool-bearing `turn_end` awaits fresh canonical child discovery and queues eligible
+results through native steer before the next inference. Timer and filesystem
+requests queue the same finite collector only while Pi is natively idle, so active
+runs do no polling I/O. The idle follow-up path remains for results that finish
+later.
+
+Automatic child notices read `report.md` directly instead of running the general
+`spawn wait` CLI. Reads are capped at 64 KiB and mark truncation with the full path;
+missing or empty reports retain status and transcript guidance, while present
+unreadable evidence fails closed. After report awaits both paths reread
+consumption, receipts and live wait reservations once, then publish only initially
+selected members whose eligibility and rendered metadata still match. New or
+changing work stays owed rather than extending the collector indefinitely. The
+native abort signal guards publication after awaits; it is not treated as a
+successful receipt.
+
+A disposable direct-child candidate set limits ordinary 500 ms idle reads to
+candidate state files plus parent-local Bash and delivery evidence. Every candidate
+is reparsed with exact canonical `parent_id`; cached membership is never lifecycle
+authority. Startup/rebind requests a full discovery once idle, and tool boundaries
+always do one. The nonrecursive root watcher requests discovery while idle, and a
+30-second full reconciliation covers missed events or delayed rows (up to roughly
+30.5 seconds while idle when an ordinary poll already owns the single flight). The
+two nonrecursive watchers remain constant in count.
+
+The idle generation is invalidated by `agent_start`, rebind and stop, closing the
+idle→active→idle publication race without formatter preemption. The idle path also
+observes idleness immediately before and after its final evidence snapshot. One
+message identity reserves exact membership until native `message_start` admission.
+Reload preserves queued claims; cold restart retries unreceipted work and keeps
+admitted or consumed work. Scan, report and receipt failures are supervised in
+`delivery-fault.json`. Final shutdown stops publication; reload preserves the owner.
 See [delivery-contract.md](delivery-contract.md) for schemas, public-event fencing
 and the bounded receipt-to-public-observation crash window.
 

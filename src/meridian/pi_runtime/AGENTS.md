@@ -38,9 +38,15 @@ notification, persistence, and compaction decision.
 - `sendMessage()` returns void; receipt authority is exact native custom-message
   admission. Publish through native steer only from an awaited successful
   tool-bearing `turn_end`; use the idle follow-up fallback for late results. Both
-  paths recheck explicit consumption after formatting and retain queued ownership
-  across reload. The idle path observes idleness before and after its final
-  snapshot. Boundary drains are time-bounded and leave unsettled work owed.
+  paths recheck explicit consumption after bounded direct report reads and retain
+  queued ownership across reload. Idle timer and filesystem requests must check
+  native idleness before queueing or reading. Invalidate their generation on
+  `agent_start`, rebind and stop; observe the same idle generation immediately
+  before and after the final snapshot.
+- Candidate child IDs only scope frequent idle reads. Reparse every candidate's
+  canonical `parent_id`; refresh all-project discovery at tool boundaries, on root
+  events while idle, and on the 30-second reconciliation cadence. The candidate
+  set is never lifecycle authority.
 - Change extension source, never `dist/` output. Rebuild bundles before testing
   source changes; launch projection may otherwise use an installed bundle.
 - Import Pi packages only from their package roots; extension-loader subpath

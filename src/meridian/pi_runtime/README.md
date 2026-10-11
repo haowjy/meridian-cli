@@ -75,9 +75,19 @@ queued output to finish, escalating TERM-resistant groups to SIGKILL.
 Unattended tracked background results remain owed until explicit consumption or
 exact native custom-message admission. Successful tool-bearing turns steer a fresh,
 revalidated result batch into the next inference; results that finish later retain
-the native-idle follow-up fallback. Boundary scanning and formatting use a
-30-second cancellation budget; pending filesystem reads may finish afterward.
-Slow or unstable evidence remains owed for the fallback. Queueing is not proof of delivery. See the
+the native-idle follow-up fallback. Active timer ticks do no disk work. Idle ticks
+reread only candidate children and parent-local evidence; tool boundaries do a
+fresh canonical discovery, startup/rebind requests one once idle, root events
+accelerate discovery, and a 30-second full reconciliation covers missed events. A
+missed event can therefore add about 30.5
+seconds of idle-only discovery latency.
+
+Automatic spawn notices read at most 64 KiB from each selected `report.md`
+directly; truncation names the full report path, missing or empty reports retain a
+useful outcome, and unreadable evidence fails closed. After those reads the
+collector takes one final eligibility snapshot and publishes only unchanged,
+still-eligible members. New or unstable work remains owed for a later boundary or
+idle tick. Queueing is not proof of delivery. See the
 [delivery contract](.context/delivery-contract.md) for restart/crash limits and the
 [extension architecture](.context/CONTEXT.md) for native boundary validation and its
 stale-context error-text dependency.

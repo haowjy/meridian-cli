@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
 import { writeFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
@@ -19,6 +19,7 @@ const savedEnv = {
 };
 const roots: string[] = [];
 const owners: SpawnWatchRuntime[] = [];
+const writers: ChildProcess[] = [];
 type Notice = {
   customType: string;
   content: string;
@@ -42,6 +43,10 @@ async function eventually(check: () => boolean | Promise<boolean>) {
   }
   throw Error('delivery contract did not settle');
 }
+async function exists(filePath: string) {
+  try { await readFile(filePath); return true; }
+  catch { return false; }
+}
 function record(id: string, overrides: Partial<BashRecord> = {}): BashRecord {
   return {
     bash_id: id, command: `echo ${id}`, cwd: '/tmp', pid: null, status: 'exited', is_background: true, is_tracked: true, exit_code: 0, started_at_ms: Date.now() - 1000, ended_at_ms: Date.now(), log_path: '/unused', stdout_log_path: '/unused', stderr_log_path: '/unused', log_bytes: 0, timeout_min: 1, originating_bash_id: null, ...overrides
@@ -62,13 +67,38 @@ async function bash(root: string, ...records: BashRecord[]) {
     v: 1, spawn_id: 'p-parent', updated_at_ms: Date.now(), records: Object.fromEntries(records.map(r => [r.bash_id, r]))
   });
 }
-async function child(root: string, id: string, originating_bash_id: string | null = null) {
+async function child(
+  root: string,
+  id: string,
+  originating_bash_id: string | null = null,
+  overrides: Record<string, unknown> = {},
+) {
   // Captured from Python TerminalFacts.model_dump(); preserve canonical extras
   // so a handwritten projection cannot hide reader/writer incompatibility.
   const canonical = JSON.parse(await readFile(new URL('../fixtures/canonical-child-state.json', import.meta.url), 'utf8'));
+  const terminal = overrides.terminal && typeof overrides.terminal === 'object'
+    ? { ...canonical.terminal, ...overrides.terminal }
+    : overrides.terminal === null ? null : canonical.terminal;
   await writeJsonAtomic(path.join(root, 'spawns', id, 'state.json'), {
-    ...canonical, id, parent_id: 'p-parent', originating_bash_id,
+    ...canonical, id, parent_id: 'p-parent', originating_bash_id, ...overrides, terminal,
   });
+}
+function holdReport(root: string, id: string, text = `report for ${id}`) {
+  const reportPath = path.join(root, 'spawns', id, 'report.md');
+  const enteredPath = `${reportPath}.entered`;
+  const releasePath = `${reportPath}.release`;
+  execFileSync('mkfifo', [reportPath]);
+  const writer = spawn('bash', ['-c', [
+    'exec 3>"$REPORT"',
+    ': >"$ENTERED"',
+    'while [[ ! -e "$RELEASE" ]]; do sleep 0.01; done',
+    'printf %s "$TEXT" >&3',
+  ].join('; ')], {
+    env: { ...process.env, REPORT: reportPath, ENTERED: enteredPath, RELEASE: releasePath, TEXT: text },
+    stdio: 'ignore',
+  });
+  writers.push(writer);
+  return { reportPath, enteredPath, releasePath };
 }
 function host(idle = true) {
   const h = {
@@ -93,6 +123,9 @@ function owner(h: ReturnType<typeof host>) {
   return runtime;
 }
 afterEach(async () => {
+  for (const writer of writers.splice(0)) {
+    if (writer.exitCode === null) writer.kill('SIGKILL');
+  }
   for (const runtime of owners.splice(0))
     runtime.stop();
   const registry = globalThis as unknown as {
@@ -116,6 +149,82 @@ afterEach(async () => {
   }));
 });
 describe('durable result delivery', () => {
+  it('does not scan parent-local evidence on active timer ticks', async () => {
+    const root = await setup();
+    await file(root, 'bash-records.json', { records: [] });
+    const h = host(false);
+    owner(h);
+
+    await pause(800);
+
+    await expect(readFile(path.join(root, 'pi-bash', 'p-parent', 'delivery-fault.json'))).rejects.toThrow();
+    expect(h.notices).toHaveLength(0);
+  });
+
+  it('renders automatic spawn delivery directly from the durable report', async () => {
+    const root = await setup();
+    await child(root, 'p1');
+    writeFileSync(path.join(root, 'spawns', 'p1', 'report.md'), 'direct report text');
+    const h = host(false);
+    const runtime = owner(h);
+
+    await runtime.deliverAtBoundary(new AbortController().signal);
+
+    expect(formatter).not.toHaveBeenCalled();
+    expect(h.notices).toHaveLength(1);
+    expect(h.notices[0]!.content).toContain('direct report text');
+    expect(h.notices[0]!.details).not.toHaveProperty('ids');
+  });
+
+  it('renders failure and missing-report outcomes without hiding the result', async () => {
+    const root = await setup();
+    await child(root, 'p1', null, { status: 'failed', terminal: { exit_code: 1, error: 'worker failed' } });
+    await child(root, 'p2');
+    writeFileSync(path.join(root, 'spawns', 'p2', 'report.md'), '   ');
+    const h = host(false);
+    const runtime = owner(h);
+
+    await runtime.deliverAtBoundary(new AbortController().signal);
+
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1', 'p2']);
+    expect(h.notices[0]!.content).toContain('p1 failed');
+    expect(h.notices[0]!.content).toContain('Failure: worker failed');
+    expect(h.notices[0]!.content.match(/No durable report content was published\./g)).toHaveLength(2);
+    expect(h.notices[0]!.content).toContain('Transcript: meridian session log p1');
+  });
+
+  it('marks bounded report truncation with the full report path', async () => {
+    const root = await setup();
+    await child(root, 'p1');
+    const reportPath = path.join(root, 'spawns', 'p1', 'report.md');
+    writeFileSync(reportPath, `${'x'.repeat(70 * 1024)}TAIL`);
+    const h = host(false);
+    const runtime = owner(h);
+
+    await runtime.deliverAtBoundary(new AbortController().signal);
+
+    expect(h.notices[0]!.content).toContain(`[Report truncated after 65536 bytes; full report: ${reportPath}]`);
+    expect(h.notices[0]!.content).not.toContain('TAIL');
+  });
+
+  it('fails closed on an unreadable present report and recovers after repair', async () => {
+    const root = await setup();
+    await child(root, 'p1');
+    const reportPath = path.join(root, 'spawns', 'p1', 'report.md');
+    await mkdir(reportPath);
+    const h = host(false);
+    const runtime = owner(h);
+
+    await runtime.deliverAtBoundary(new AbortController().signal);
+    expect(h.notices).toHaveLength(0);
+    expect(JSON.parse(await readFile(path.join(root, 'pi-bash', 'p-parent', 'delivery-fault.json'), 'utf8')).operation).toBe('scan');
+
+    await rm(reportPath, { recursive: true });
+    writeFileSync(reportPath, 'repaired report');
+    await runtime.deliverAtBoundary(new AbortController().signal);
+    expect(h.notices[0]!.content).toContain('repaired report');
+  });
+
   it('steers unconsumed Bash results at a successful tool-bearing turn boundary', async () => {
     const root = await setup();
     await bash(root, record('b1', { notification_consumed_at_ms: Date.now() }), record('b2'));
@@ -133,33 +242,41 @@ describe('durable result delivery', () => {
     expect(h.deliveries).toEqual([{ triggerTurn: true, deliverAs: 'steer' }]);
   });
 
-  it('awaits a fresh boundary scan when an older idle formatter is running', async () => {
+  it('freshly discovers a child created during the tool turn at its boundary', async () => {
+    const root = await setup();
+    const h = host(false);
+    const runtime = owner(h);
+    await child(root, 'p1');
+    writeFileSync(path.join(root, 'spawns', 'p1', 'report.md'), 'new child report');
+
+    await runtime.deliverAtBoundary(new AbortController().signal);
+
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
+    expect(h.notices[0]!.content).toContain('new child report');
+  });
+
+  it('serializes a fresh boundary discovery behind an older idle report read', async () => {
     const root = await setup();
     await child(root, 'p1');
-    let formatterEntered = false;
-    formatter.mockImplementationOnce(async (_args: string[], _timeoutMs: number, signal?: AbortSignal) => {
-      formatterEntered = true;
-      await new Promise<void>((resolve) => {
-        if (signal?.aborted) resolve();
-        else signal?.addEventListener('abort', () => resolve(), { once: true });
-      });
-      return { exitCode: null, stdout: '', stderr: '', error: 'aborted' };
-    });
-    const h = host(false);
-    extension(h.pi);
-    h.handlers.get('session_start')!({}, { isIdle: () => false });
-    await eventually(() => formatterEntered);
+    const held = holdReport(root, 'p1', 'old idle report');
+    const h = host(true);
+    const runtime = owner(h);
+    await eventually(() => exists(held.enteredPath));
 
+    h.idle = false;
+    runtime.observeActive(() => h.idle);
     await child(root, 'p2');
-    await h.handlers.get('turn_end')!({ outcome: 'completed', toolResults: [{}, {}] }, {
-      isIdle: () => false,
-      signal: new AbortController().signal,
-    });
+    writeFileSync(path.join(root, 'spawns', 'p2', 'report.md'), 'second report');
+    const boundary = runtime.deliverAtBoundary(new AbortController().signal);
+    await rm(held.reportPath);
+    writeFileSync(held.reportPath, 'fresh first report');
+    writeFileSync(held.releasePath, 'release');
+    await boundary;
 
-    expect(formatter).toHaveBeenCalledTimes(2);
     expect(h.notices).toHaveLength(1);
     expect(h.notices[0]!.details.work_ids).toEqual(['p1', 'p2']);
-    expect(h.notices[0]!.content).toBe('p1 p2');
+    expect(h.notices[0]!.content).toContain('fresh first report');
+    expect(h.notices[0]!.content).toContain('second report');
     expect(h.deliveries[0]).toEqual({ triggerTurn: true, deliverAs: 'steer' });
   });
 
@@ -181,30 +298,24 @@ describe('durable result delivery', () => {
     expect(h.notices).toHaveLength(0);
   });
 
-  it('keeps a result owed when the boundary aborts during formatting', async () => {
+  it('keeps a result owed when the native boundary aborts during a report read', async () => {
     const root = await setup();
     await child(root, 'p1');
-    let formatterEntered = false;
-    formatter.mockImplementationOnce(async (_args: string[], _timeoutMs: number, signal?: AbortSignal) => {
-      formatterEntered = true;
-      await new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }));
-      return { exitCode: null, stdout: '', stderr: '', error: 'aborted' };
-    });
+    const held = holdReport(root, 'p1');
     const h = host(false);
-    extension(h.pi);
-    h.handlers.get('session_start')!({}, { isIdle: () => false });
+    const runtime = owner(h);
     const controller = new AbortController();
-    const boundary = h.handlers.get('turn_end')!({ outcome: 'completed', toolResults: [{}] }, {
-      isIdle: () => false,
-      signal: controller.signal,
-    });
-    await eventually(() => formatterEntered);
+    const boundary = runtime.deliverAtBoundary(controller.signal);
+    await eventually(() => exists(held.enteredPath));
     controller.abort();
+    await rm(held.reportPath);
+    writeFileSync(held.reportPath, 'report after abort');
+    writeFileSync(held.releasePath, 'release');
     await boundary;
     expect(h.notices).toHaveLength(0);
 
     h.idle = true;
-    h.handlers.get('agent_end')!({}, { isIdle: () => h.idle });
+    runtime.observeIdle(() => h.idle);
     await eventually(() => h.notices.length === 1);
     expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
     expect(h.deliveries[0]).toEqual({ triggerTurn: true, deliverAs: 'followUp' });
@@ -213,12 +324,7 @@ describe('durable result delivery', () => {
   it('invalidates an old boundary drain when reload rebinds the owner', async () => {
     const root = await setup();
     await child(root, 'p1');
-    let formatterEntered = false;
-    formatter.mockImplementationOnce(async (_args: string[], _timeoutMs: number, signal?: AbortSignal) => {
-      formatterEntered = true;
-      await new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }));
-      return { exitCode: null, stdout: '', stderr: '', error: 'aborted' };
-    });
+    const held = holdReport(root, 'p1');
     const first = host(false);
     extension(first.pi);
     first.handlers.get('session_start')!({}, { isIdle: () => false });
@@ -226,12 +332,15 @@ describe('durable result delivery', () => {
       isIdle: () => false,
       signal: new AbortController().signal,
     });
-    await eventually(() => formatterEntered);
+    await eventually(() => exists(held.enteredPath));
 
     first.handlers.get('session_shutdown')!({ reason: 'reload' });
     const next = host(false);
     extension(next.pi);
     next.handlers.get('session_start')!({}, { isIdle: () => false });
+    await rm(held.reportPath);
+    writeFileSync(held.reportPath, 'report after reload');
+    writeFileSync(held.releasePath, 'release');
     await oldBoundary;
     expect(first.notices).toHaveLength(0);
 
@@ -270,41 +379,73 @@ describe('durable result delivery', () => {
     expect(h.notices).toHaveLength(0);
   });
 
-  it('bounds a slow boundary drain and leaves the result owed for idle fallback', async () => {
+  it('invalidates an idle report read across an active-to-idle ABA transition', async () => {
     const root = await setup();
     await child(root, 'p1');
-    let formatterEntered = false;
-    formatter.mockImplementationOnce(async (_args: string[], _timeoutMs: number, signal?: AbortSignal) => {
-      formatterEntered = true;
-      await new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }));
-      return { exitCode: null, stdout: '', stderr: '', error: 'aborted' };
-    });
-    const h = host(false);
+    const held = holdReport(root, 'p1', 'stale idle report');
+    const h = host(true);
     const runtime = owner(h);
-    const safetyAbort = new AbortController();
-    let settled = false;
+    await eventually(() => exists(held.enteredPath));
 
-    vi.useFakeTimers();
+    h.idle = false;
+    runtime.observeActive(() => h.idle);
+    h.idle = true;
+    runtime.observeIdle(() => h.idle);
+    await rm(held.reportPath);
+    writeFileSync(held.reportPath, 'current idle report');
+    writeFileSync(held.releasePath, 'release');
+
+    await eventually(() => h.notices.length === 1);
+    expect(h.notices).toHaveLength(1);
+    expect(h.notices[0]!.content).toContain('current idle report');
+    expect(h.notices[0]!.content).not.toContain('stale idle report');
+    expect(h.deliveries[0]).toEqual({ triggerTurn: true, deliverAs: 'followUp' });
+  });
+
+  it('rereads a known candidate status on ordinary idle ticks', async () => {
+    const root = await setup();
+    await child(root, 'p1', null, { status: 'running', terminal: null });
+    const h = host(true);
+    owner(h);
+    await pause(200);
+    expect(h.notices).toHaveLength(0);
+
+    await child(root, 'p1');
+    writeFileSync(path.join(root, 'spawns', 'p1', 'report.md'), 'terminal after scoped poll');
+
+    await eventually(() => h.notices.length === 1);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
+    expect(h.notices[0]!.content).toContain('terminal after scoped poll');
+  });
+
+  it('periodically reconciles a child whose ownership change had no root event', async () => {
+    const root = await setup();
+    await child(root, 'p1', null, { parent_id: 'p-other' });
+    writeFileSync(path.join(root, 'spawns', 'p1', 'report.md'), 'late ownership report');
+    const h = host(false);
+
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
-      const boundary = runtime.deliverAtBoundary(safetyAbort.signal).then(() => { settled = true; });
-      await vi.waitFor(() => expect(formatterEntered).toBe(true));
-      await vi.advanceTimersByTimeAsync(30_000);
-      const settledAtBudget = settled;
-      safetyAbort.abort();
-      await boundary;
-
-      expect(settledAtBudget).toBe(true);
+      const runtime = owner(h);
+      expect(await runtime.rows()).toHaveLength(0);
+      await child(root, 'p1');
+      h.idle = true;
+      runtime.observeIdle(() => h.idle);
+      await pause(100);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await pause(100);
       expect(h.notices).toHaveLength(0);
-      await expect(readFile(path.join(root, 'pi-bash', 'p-parent', 'delivery-receipts.json'))).rejects.toThrow();
+
+      // At 30s the ordinary poll may already own the single flight. Let it
+      // settle, then the next 500ms tick observes the reconciliation request.
+      await vi.advanceTimersByTimeAsync(29_000);
+      await pause(100);
+      await vi.advanceTimersByTimeAsync(500);
+      await eventually(() => h.notices.length === 1);
+      expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
     } finally {
       vi.useRealTimers();
     }
-
-    h.idle = true;
-    runtime.observeIdle(() => h.idle);
-    await eventually(() => h.notices.length === 1);
-    expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
-    expect(h.deliveries[0]).toEqual({ triggerTurn: true, deliverAs: 'followUp' });
   });
 
   it('scopes invalid terminal evidence to its canonical parent', async () => {
@@ -496,54 +637,26 @@ describe('durable result delivery', () => {
   it.each([
     { path: 'idle', idle: true, deliverAs: 'followUp' },
     { path: 'boundary', idle: false, deliverAs: 'steer' },
-  ])('rechecks observations after formatter await on the $path path', async ({ idle, deliverAs }) => {
+  ])('rechecks observations after report reads on the $path path', async ({ idle, deliverAs }) => {
     const root = await setup();
     await child(root, 'p1');
     await child(root, 'p2');
-    let entered = false;
-    let release!: () => void;
-    formatter.mockImplementationOnce(async () => {
-      entered = true;
-      await new Promise<void>(r => {
-        release = r;
-      });
-      return {
-        exitCode: 0, stdout: 'p1 p2', stderr: ''
-      };
-    });
+    const held = holdReport(root, 'p1', 'consumed report');
+    writeFileSync(path.join(root, 'spawns', 'p2', 'report.md'), 'still owed report');
     const h = host(idle);
     const runtime = owner(h);
     const delivery = idle ? undefined : runtime.deliverAtBoundary(new AbortController().signal);
-    await eventually(() => entered);
+    await eventually(() => exists(held.enteredPath));
     await file(root, 'observed-spawns.json', {
       v: 1, spawn_id: 'p-parent', updated_at_ms: Date.now(), observed_spawn_ids: ['p1'], wait_reservations: {}
     });
-    release();
+    writeFileSync(held.releasePath, 'release');
     await delivery;
     await eventually(() => h.notices.length === 1);
     expect(h.notices[0]!.details.work_ids).toEqual(['p2']);
-    expect(h.notices[0]!.content).toBe('p2');
+    expect(h.notices[0]!.content).toContain('still owed report');
+    expect(h.notices[0]!.content).not.toContain('consumed report');
     expect(h.deliveries[0]).toEqual({ triggerTurn: true, deliverAs });
-  });
-  it('continuous writes cannot postpone a scan indefinitely', async () => {
-    const root = await setup();
-    const h = host();
-    owner(h);
-    let stopped = false;
-    const churn = (async () => {
-      while (!stopped) {
-        await bash(root, record('b1'));
-        await pause(20);
-      }
-    })();
-    try {
-      await eventually(() => h.notices.length === 1);
-    }
-    finally {
-      stopped = true;
-      await churn;
-    }
-    expect(h.notices).toHaveLength(1);
   });
   it('supervises malformed file failures and recovers after repair', async () => {
     const root = await setup();

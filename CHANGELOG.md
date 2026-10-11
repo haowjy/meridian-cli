@@ -8,8 +8,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Deliver completed Pi child-spawn and managed-Bash results at the successful
   tool-batch boundary through native steering, before the next inference, while
   retaining the idle follow-up fallback for genuinely late or unsettled work.
-- Preserve the idle-before-final-snapshot ordering that prevents completed waits
-  from being re-announced; give boundary scan/format churn a 30-second cancellation budget.
+- Replace active-run scans and automatic `spawn wait` formatting with an idle-gated,
+  serialized collector: direct bounded report reads, finite eligibility
+  revalidation, exact queue claims, fresh boundary discovery, scoped candidate
+  polling and 30-second missed-event reconciliation. Agent starts and reloads
+  invalidate stale idle publication without formatter preemption.
 
 ## [0.9.3] - 2026-10-11
 

@@ -17,22 +17,32 @@ one launch-scoped notification owner, and one Python public-event observer.
 The watcher derives children from canonical direct `parent_id` rows; an
 `originating_bash_id` on those rows transfers the launcher's obligation to its
 child. Logs, timers, origin sidecars, and remembered scans cannot supply child
-authority. Polling guarantees child-file changes are eventually read even when
-nonrecursive directory notifications miss them. Event bursts do not reset the
-first scheduled scan.
+authority. A disposable candidate-ID set scopes frequent idle reads, but each row
+is reparsed and must still have the exact parent. Successful tool boundaries do a
+fresh full discovery; startup/rebind requests the same discovery once idle. The
+nonrecursive root watcher accelerates idle discovery, and a 30-second full
+reconciliation recovers missed events or delayed state rows.
+If an ordinary 500 ms idle poll already owns the single flight at reconciliation,
+the next tick discovers the row, for about 30.5 seconds maximum idle-only latency.
+While Pi is active, these timer and watcher requests perform no disk I/O; the next
+tool boundary supplies fresh discovery.
 
 Publication has two serialized paths: a successful tool-bearing `turn_end` awaits
 a fresh scan and queues native steer before the next inference, while genuinely
 late work retains the native-idle follow-up fallback. Both recheck consumption
-after any formatter await. A tracked background terminal result stays owed during
-active tool waits, so a terminal wait can persist consumption before the boundary
-runs. The idle path checks idleness before its final snapshot and again before
-queueing. Changed membership rebuilds the batch. The awaited boundary drain has a
-30-second cancellation budget; slow formatting or nonconverging membership cancels
-that attempt without admission, leaving its work owed for the idle fallback.
-Cancellation aborts formatting but waits for any pending filesystem reads to finish
-before the next signal check. Delivery before the next inference is not guaranteed when the attempt
-cannot obtain stable, readable evidence. One message identity
+after bounded direct `report.md` reads. Automatic delivery reads at most 64 KiB per
+selected report, marks truncation with the full path, supplies status/transcript
+guidance for missing or empty reports, and fails closed when present evidence is
+unreadable. Explicit wait commands still use the CLI. A tracked background terminal
+result stays owed during active tool waits, so a terminal wait can persist
+consumption before the boundary runs. The idle path checks idleness before its
+final snapshot and again before queueing, in the same generation that is invalidated
+by `agent_start`, rebind and stop. The collector is finite: after report reads it
+takes one final evidence snapshot and subtracts consumed, leased, claimed or
+changed initial members. New
+arrivals and unstable work remain owed for a later boundary or idle tick. Delivery
+before the next inference is not guaranteed when an attempt cannot obtain stable,
+readable evidence. One message identity
 reserves the selected IDs through native admission. Its custom message contains
 `details.delivery_id` and `details.work_ids`; the native `message_start` hook
 persists precisely that membership before the public RPC event.

@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readdirSync, watch, type FSWatcher } from "node:fs";
+import { existsSync, mkdirSync, watch, type FSWatcher } from "node:fs";
+import { open, readdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
@@ -32,12 +33,12 @@ type NotificationItem = {
   status: string;
   label: string;
   duration: string;
+  error?: string;
 };
 type ClearedSpawnsFile = { v: 1; spawn_id: string; updated_at_ms: number; cleared_spawn_ids: string[] };
-const SCAN_DELAY_MS = 200;
 const POLL_MS = 500;
-// Do not let unstable membership hold Pi's awaited turn boundary indefinitely.
-const BOUNDARY_DRAIN_BUDGET_MS = 30_000;
+const FULL_RECONCILE_MS = 30_000;
+const MAX_REPORT_BYTES = 64 * 1024;
 
 /** Launch-scoped owner: durable rows are obligations; queue claims are only mechanics. */
 export class SpawnWatchRuntime {
@@ -49,108 +50,111 @@ export class SpawnWatchRuntime {
   private readonly receiptsPath = path.join(this.bashDir, "delivery-receipts.json");
   private readonly observationsPath = path.join(this.bashDir, "observed-spawns.json");
   private readonly queued = new Map<string, string[]>();
-  private readonly inFlight = new Set<string>();
+  private candidateChildIds = new Set<string>();
   private watchers: FSWatcher[] = [];
-  private scanScheduled: NodeJS.Timeout | null = null;
   private polling: NodeJS.Timeout | null = null;
+  private reconciliation: NodeJS.Timeout | null = null;
   private running = false;
-  private bindingEpoch = 0;
+  private hostGeneration = 0;
+  private discoveryRevision = 1;
+  private reconciledRevision = 0;
   private drainTail: Promise<void> = Promise.resolve();
-  private activeDrain: { kind: "idle" | "boundary"; abort: AbortController } | null = null;
-  private idleDrainQueued = false;
-  private scanAgain = false;
+  private idleRequest: Promise<void> | null = null;
 
   constructor(private pi: ExtensionAPI, private isIdle: () => boolean = () => false) {}
   rebind(pi: ExtensionAPI): void {
-    this.bindingEpoch++;
-    this.activeDrain?.abort.abort();
+    this.hostGeneration++;
+    this.discoveryRevision++;
     this.pi = pi;
+    this.isIdle = () => false;
   }
-  observeIdle(check: () => boolean): void { this.isIdle = check; this.requestScan(); }
+  observeActive(check: () => boolean): void {
+    this.hostGeneration++;
+    this.isIdle = check;
+  }
+  observeIdle(check: () => boolean): void {
+    this.isIdle = check;
+    this.requestIdleDelivery();
+  }
 
   start(): void {
     if (this.running) return;
     this.running = true;
     mkdirSync(this.spawnsDir, { recursive: true });
     mkdirSync(this.bashDir, { recursive: true });
-    for (const dir of [this.spawnsDir, this.bashDir]) {
+    const watched: Array<[string, () => void]> = [
+      [this.spawnsDir, () => { this.discoveryRevision++; this.requestIdleDelivery(); }],
+      [this.bashDir, () => this.requestIdleDelivery()],
+    ];
+    for (const [dir, onChange] of watched) {
       try {
-        const watcher = watch(dir, { recursive: false }, () => this.requestScan());
+        const watcher = watch(dir, { recursive: false }, onChange);
         watcher.on("error", (error) => { this.logWarning(error); watcher.close(); });
         watcher.unref(); this.watchers.push(watcher);
       } catch (error) { this.logWarning(error); }
     }
-    // Child state writes do not notify the nonrecursive parent watch. Polling
-    // guarantees progress; events merely accelerate this same snapshot read.
-    this.polling = setInterval(() => this.requestScan(), POLL_MS);
+    // Ordinary idle ticks reread only known candidates and parent-local files.
+    this.polling = setInterval(() => this.requestIdleDelivery(), POLL_MS);
     this.polling.unref();
-    this.requestScan();
+    // The root watcher can miss events, including state publication after a new
+    // directory event. A slow full reconciliation bounds that discovery delay.
+    this.reconciliation = setInterval(() => {
+      this.discoveryRevision++;
+      this.requestIdleDelivery();
+    }, FULL_RECONCILE_MS);
+    this.reconciliation.unref();
+    this.requestIdleDelivery();
   }
 
   stop(): void {
     this.running = false;
-    this.bindingEpoch++;
-    this.activeDrain?.abort.abort();
+    this.hostGeneration++;
+    this.isIdle = () => false;
     for (const watcher of this.watchers) watcher.close();
     this.watchers = [];
-    if (this.scanScheduled) clearTimeout(this.scanScheduled);
     if (this.polling) clearInterval(this.polling);
-    this.scanScheduled = null; this.polling = null;
+    if (this.reconciliation) clearInterval(this.reconciliation);
+    this.polling = null; this.reconciliation = null;
   }
 
-  private requestScan(): void {
-    if (!this.running) return;
-    if (this.idleDrainQueued) { this.scanAgain = true; return; }
-    if (this.scanScheduled) return;
-    this.scanScheduled = setTimeout(() => {
-      this.scanScheduled = null;
-      this.idleDrainQueued = true;
-      const request = { kind: "idle" as const, bindingEpoch: this.bindingEpoch };
-      void this.enqueueDrain(request)
-        .catch((error) => this.recordFault("scan", error))
-        .finally(() => {
-          this.idleDrainQueued = false;
-          if (this.scanAgain) {
-            this.scanAgain = false;
-            this.requestScan();
-          }
-        });
-    }, SCAN_DELAY_MS);
-    this.scanScheduled.unref();
+  private requestIdleDelivery(): void {
+    if (!this.running || this.idleRequest || !this.isIdle()) return;
+    const generation = this.hostGeneration;
+    const request = this.enqueueCollector("followUp", generation, undefined,
+      this.discoveryRevision !== this.reconciledRevision);
+    this.idleRequest = request;
+    void request.catch(async (error) => {
+      if (this.running && generation === this.hostGeneration) await this.recordFault("scan", error);
+    }).finally(() => {
+      if (this.idleRequest === request) this.idleRequest = null;
+    });
   }
 
   async deliverAtBoundary(signal?: AbortSignal): Promise<void> {
     if (!this.running || signal?.aborted) return;
-    // An idle formatter may have started before the tool batch completed. Its
-    // snapshot cannot satisfy this boundary, so cancel it and serialize a fresh
-    // drain behind it.
-    if (this.activeDrain?.kind === "idle") this.activeDrain.abort.abort();
-    const budgetAbort = new AbortController();
-    const budgetTimer = setTimeout(() => budgetAbort.abort(), BOUNDARY_DRAIN_BUDGET_MS);
-    budgetTimer.unref();
-    const boundedSignal = signal ? AbortSignal.any([signal, budgetAbort.signal]) : budgetAbort.signal;
+    const generation = this.hostGeneration;
     try {
-      await this.enqueueDrain({ kind: "boundary", bindingEpoch: this.bindingEpoch, signal: boundedSignal });
+      // Tool completion can create a child whose root event was missed. Always
+      // rebuild candidate discovery at this awaited native boundary.
+      await this.enqueueCollector("steer", generation, signal, true);
     } catch (error) {
-      await this.recordFault("scan", error);
-    } finally {
-      clearTimeout(budgetTimer);
+      if (this.running && generation === this.hostGeneration) await this.recordFault("scan", error);
     }
   }
 
   async rows(_discover = false): Promise<SpawnStateFile[]> {
     const cleared = await this.readCleared();
-    return (await this.readChildStates()).filter((row) => row.terminal === null || !cleared.has(row.id));
+    return (await this.discoverChildStates()).filter((row) => row.terminal === null || !cleared.has(row.id));
   }
 
   async clearFinished(): Promise<number> {
     const cleared = await this.readCleared();
-    const terminal = (await this.readChildStates()).filter((row) => row.terminal !== null && !cleared.has(row.id));
+    const terminal = (await this.discoverChildStates()).filter((row) => row.terminal !== null && !cleared.has(row.id));
     for (const row of terminal) cleared.add(row.id);
     if (terminal.length) await writeJsonAtomic(this.clearedPath, {
       v: 1, spawn_id: this.currentSpawnId, updated_at_ms: Date.now(), cleared_spawn_ids: [...cleared].sort(),
     });
-    this.requestScan();
+    this.requestIdleDelivery();
     return terminal.length;
   }
 
@@ -165,59 +169,61 @@ export class SpawnWatchRuntime {
     try { await admitDelivery(details.delivery_id, workIds, this.currentSpawnId, this.receiptsPath); await this.clearFault(); }
     catch (error) { await this.recordFault("admission", error); return; }
     this.queued.delete(details.delivery_id);
-    for (const id of workIds) this.inFlight.delete(id);
-    this.requestScan();
+    this.requestIdleDelivery();
   }
 
-  private enqueueDrain(request: {
-    kind: "idle" | "boundary";
-    bindingEpoch: number;
-    signal?: AbortSignal;
-  }): Promise<void> {
+  private enqueueCollector(
+    deliverAs: "steer" | "followUp",
+    generation: number,
+    signal: AbortSignal | undefined,
+    discover: boolean,
+  ): Promise<void> {
     const run = this.drainTail.then(async () => {
-      const abort = new AbortController();
-      const signal = request.signal ? AbortSignal.any([request.signal, abort.signal]) : abort.signal;
-      this.activeDrain = { kind: request.kind, abort };
-      try {
-        const completed = await this.drain(request.kind, request.bindingEpoch, signal);
-        if (completed) await this.clearFault("scan");
-      } finally {
-        if (this.activeDrain?.abort === abort) this.activeDrain = null;
-      }
+      const completed = await this.collectAndPublish(deliverAs, generation, signal, discover);
+      if (completed && this.requestIsCurrent(generation, signal)) await this.clearFault("scan");
     });
     this.drainTail = run.catch(() => undefined);
     return run;
   }
 
-  private requestIsCurrent(bindingEpoch: number, signal: AbortSignal): boolean {
-    return this.running && this.bindingEpoch === bindingEpoch && !signal.aborted;
+  private requestIsCurrent(generation: number, signal?: AbortSignal): boolean {
+    return this.running && this.hostGeneration === generation && !signal?.aborted;
   }
 
-  private canPublish(kind: "idle" | "boundary", bindingEpoch: number, signal: AbortSignal): boolean {
-    return this.requestIsCurrent(bindingEpoch, signal) && (kind === "boundary" || this.isIdle());
+  private canContinue(deliverAs: "steer" | "followUp", generation: number, signal?: AbortSignal): boolean {
+    return this.requestIsCurrent(generation, signal) && (deliverAs === "steer" || this.isIdle());
   }
 
-  private async collectEligible(): Promise<NotificationItem[]> {
+  private claimedWorkIds(): Set<string> {
+    return new Set([...this.queued.values()].flat());
+  }
+
+  private async collectEligible(knownStates?: SpawnStateFile[]): Promise<NotificationItem[]> {
     const [states, bash, receipts, observed, cleared] = await Promise.all([
-      this.readChildStates(), this.readBash(), readDeliveryReceipts(this.currentSpawnId, this.receiptsPath),
+      knownStates ?? this.readCandidateStates(), this.readBash(), readDeliveryReceipts(this.currentSpawnId, this.receiptsPath),
       readSpawnObservations(this.currentSpawnId, this.observationsPath), this.readCleared(),
     ]);
     const consumed = admittedWorkIds(receipts);
     for (const id of [...observed.observed_spawn_ids, ...cleared]) consumed.add(id);
     const reserved = await reservedSpawnIds(observed);
+    const claimed = this.claimedWorkIds();
     const correlated = new Set(states.map((row) => row.originating_bash_id).filter((id): id is string => !!id));
     const eligible: NotificationItem[] = [];
     for (const row of states) {
-      if (row.terminal !== null && !consumed.has(row.id) && !reserved.has(row.id) && !this.inFlight.has(row.id)) eligible.push({
-        id: row.id, kind: "spawn", status: row.status,
-        label: `${row.agent ?? "spawn"}${row.model ? ` (${row.model})` : ""}`,
-        duration: formatDurationSecs(row.terminal.duration_secs),
-      });
+      if (row.terminal !== null && !consumed.has(row.id) && !reserved.has(row.id) && !claimed.has(row.id)) {
+        const terminalError = (row.terminal as { error?: unknown }).error;
+        eligible.push({
+          id: row.id, kind: "spawn", status: row.status,
+          label: `${row.agent ?? "spawn"}${row.model ? ` (${row.model})` : ""}`,
+          duration: formatDurationSecs(row.terminal.duration_secs),
+          error: typeof terminalError === "string" ? terminalError : undefined,
+        });
+      }
     }
     for (const record of Object.values(bash.records)) {
       if (record.is_tracked && record.is_background && isTerminalBashStatus(record.status)
           && record.notification_consumed_at_ms == null && !correlated.has(record.bash_id)
-          && !consumed.has(record.bash_id) && !this.inFlight.has(record.bash_id)) eligible.push({
+          && !consumed.has(record.bash_id) && !claimed.has(record.bash_id)) eligible.push({
         id: record.bash_id, kind: "bash", status: record.status, label: record.command,
         duration: formatDurationSecs(((record.ended_at_ms ?? Date.now()) - record.started_at_ms) / 1000),
       });
@@ -225,56 +231,72 @@ export class SpawnWatchRuntime {
     return eligible;
   }
 
-  private async drain(
-    kind: "idle" | "boundary",
-    bindingEpoch: number,
-    signal: AbortSignal,
+  private async collectAndPublish(
+    deliverAs: "steer" | "followUp",
+    generation: number,
+    signal: AbortSignal | undefined,
+    discover: boolean,
   ): Promise<boolean> {
-    if (!this.requestIsCurrent(bindingEpoch, signal)) return false;
-    let batch = await this.collectEligible();
-    if (!this.requestIsCurrent(bindingEpoch, signal)) return false;
+    if (!this.canContinue(deliverAs, generation, signal)) return false;
+    const discovered = discover ? await this.discoverChildStates() : undefined;
+    if (!this.canContinue(deliverAs, generation, signal)) return false;
+    const initial = await this.collectEligible(discovered);
+    if (!this.canContinue(deliverAs, generation, signal)) return false;
+    if (!initial.length) return true;
 
-    while (batch.length) {
-      const spawnItems = batch.filter((item) => item.kind === "spawn");
-      const spawnContent = spawnItems.length
-        ? await formatSpawnWaitNotification(spawnItems.map((item) => item.id), spawnItems, signal)
-        : "";
-      if (!this.requestIsCurrent(bindingEpoch, signal)) return false;
+    const renderedSpawns = new Map<string, string>();
+    await Promise.all(initial.filter((item) => item.kind === "spawn").map(async (item) => {
+      renderedSpawns.set(item.id, await this.renderSpawnNotification(item));
+    }));
+    if (!this.canContinue(deliverAs, generation, signal)) return false;
 
-      // A consuming tool persists its marker before the host becomes idle.
-      // Observe that transition before taking the idle path's final snapshot,
-      // then require idleness again immediately before publication.
-      if (kind === "idle" && !this.isIdle()) return true;
+    // A consuming tool persists before Pi becomes idle. Check the same idle
+    // generation immediately before and after the final evidence snapshot.
+    if (deliverAs === "followUp" && !this.isIdle()) return false;
+    const fresh = await this.collectEligible();
+    if (!this.canContinue(deliverAs, generation, signal)) return false;
 
-      // Formatting crosses a CLI await. Rebuild from a fresh canonical snapshot
-      // whenever consumption, leases, admission, or completion membership moved.
-      const fresh = await this.collectEligible();
-      if (!this.requestIsCurrent(bindingEpoch, signal)) return false;
-      if (!sameMembership(batch, fresh)) {
-        batch = fresh;
-        continue;
-      }
+    // This collector is deliberately finite. Work that arrived after the first
+    // snapshot stays owed; initially selected work that changed is deferred.
+    const freshItems = new Map(fresh.map((item) => [notificationKey(item), item]));
+    const batch = initial.filter((item) => {
+      const current = freshItems.get(notificationKey(item));
+      return current !== undefined && sameNotification(item, current);
+    });
+    if (!batch.length) return true;
 
-      const bashItems = batch.filter((item) => item.kind === "bash");
-      const content = [spawnContent, bashItems.length ? formatBashNotification(bashItems) : ""].filter(Boolean).join("\n\n");
-      if (!this.canPublish(kind, bindingEpoch, signal) || !content) return true;
+    const spawnContent = batch.filter((item) => item.kind === "spawn")
+      .map((item) => renderedSpawns.get(item.id) ?? "").filter(Boolean).join("\n\n");
+    const bashItems = batch.filter((item) => item.kind === "bash");
+    const content = [spawnContent, bashItems.length ? formatBashNotification(bashItems) : ""]
+      .filter(Boolean).join("\n\n");
+    if (!this.canContinue(deliverAs, generation, signal) || !content) return false;
 
-      const deliveryId = randomUUID();
-      const workIds = batch.map((item) => item.id);
-      this.queued.set(deliveryId, workIds);
-      for (const id of workIds) this.inFlight.add(id);
-      try {
-        this.pi.sendMessage({ customType: "meridian-spawn-watch", content, display: true,
-          details: { delivery_id: deliveryId, work_ids: workIds, ids: workIds } },
-          { triggerTurn: true, deliverAs: kind === "boundary" ? "steer" : "followUp" });
-      } catch (error) {
-        this.queued.delete(deliveryId);
-        for (const id of workIds) this.inFlight.delete(id);
-        throw error;
-      }
-      return true;
+    const deliveryId = randomUUID();
+    const workIds = batch.map((item) => item.id);
+    this.queued.set(deliveryId, workIds);
+    try {
+      this.pi.sendMessage({ customType: "meridian-spawn-watch", content, display: true,
+        details: { delivery_id: deliveryId, work_ids: workIds } },
+        { triggerTurn: true, deliverAs });
+    } catch (error) {
+      this.queued.delete(deliveryId);
+      throw error;
     }
     return true;
+  }
+
+  private async renderSpawnNotification(item: NotificationItem): Promise<string> {
+    const reportPath = path.join(this.spawnsDir, item.id, "report.md");
+    const report = await readBoundedReport(reportPath);
+    const lines = [`${item.id} ${item.status} (${item.duration}; ${item.label})`];
+    if (item.error) lines.push(`Failure: ${item.error}`);
+    lines.push("");
+    if (report.text) lines.push(report.text);
+    else lines.push("No durable report content was published.");
+    if (report.truncated) lines.push("", `[Report truncated after ${MAX_REPORT_BYTES} bytes; full report: ${reportPath}]`);
+    lines.push("", `Transcript: meridian session log ${item.id}`);
+    return lines.join("\n");
   }
 
   private async readBash(): Promise<BashRecordsFile> {
@@ -295,23 +317,44 @@ export class SpawnWatchRuntime {
     return new Set(file.cleared_spawn_ids);
   }
 
-  private async readChildStates(): Promise<SpawnStateFile[]> {
+  private async discoverChildStates(): Promise<SpawnStateFile[]> {
     if (!existsSync(this.spawnsDir)) return [];
+    const revision = this.discoveryRevision;
+    const candidates = new Set<string>();
     const rows: SpawnStateFile[] = [];
-    for (const name of readdirSync(this.spawnsDir)) {
+    for (const name of (await readdir(this.spawnsDir)).sort()) {
       if (!name.startsWith("p")) continue;
       const value = await readPrivateJson(path.join(this.spawnsDir, name, "state.json"));
+      if (value === undefined) { candidates.add(name); continue; }
+      const state = this.parseOwnedChild(name, value);
+      if (state) { candidates.add(name); rows.push(state); }
+    }
+    this.candidateChildIds = candidates;
+    this.reconciledRevision = revision;
+    return rows;
+  }
+
+  private async readCandidateStates(): Promise<SpawnStateFile[]> {
+    const rows: SpawnStateFile[] = [];
+    for (const name of [...this.candidateChildIds].sort()) {
+      const value = await readPrivateJson(path.join(this.spawnsDir, name, "state.json"));
       if (value === undefined) continue;
-      // A definitively foreign row cannot affect this parent's obligations.
-      // Unknown membership and malformed own-child evidence still fail closed.
-      if (value && typeof value === "object" && "id" in value && value.id === name
-          && "parent_id" in value && (value.parent_id === null || typeof value.parent_id === "string")
-          && value.parent_id !== this.currentSpawnId) continue;
-      const state = parseSpawnStateFile(value);
-      if (!state || state.id !== name) throw Error(`invalid spawn state: ${name}`);
-      if (state.parent_id === this.currentSpawnId) rows.push(state);
+      const state = this.parseOwnedChild(name, value);
+      if (state) rows.push(state);
+      else this.candidateChildIds.delete(name);
     }
     return rows;
+  }
+
+  private parseOwnedChild(name: string, value: unknown): SpawnStateFile | undefined {
+    // A definitively foreign row cannot affect this parent's obligations.
+    // Unknown membership and malformed own-child evidence still fail closed.
+    if (value && typeof value === "object" && "id" in value && value.id === name
+        && "parent_id" in value && (value.parent_id === null || typeof value.parent_id === "string")
+        && value.parent_id !== this.currentSpawnId) return undefined;
+    const state = parseSpawnStateFile(value);
+    if (!state || state.id !== name) throw Error(`invalid spawn state: ${name}`);
+    return state.parent_id === this.currentSpawnId ? state : undefined;
   }
 
   private logWarning(error: unknown): void {
@@ -328,36 +371,37 @@ export class SpawnWatchRuntime {
   private async clearFault(operation?: "scan"): Promise<void> {
     const file = path.join(this.bashDir, "delivery-fault.json");
     const value = await readPrivateJson(file) as { operation?: unknown; error?: unknown } | undefined;
-    if (!value || !value.error || (operation && value.operation !== operation && this.inFlight.size)) return;
+    if (!value || !value.error || (operation && value.operation !== operation && this.queued.size)) return;
     await writeJsonAtomic(file, { v: 1, spawn_id: this.currentSpawnId, operation: null, error: null });
   }
 }
 
-async function formatSpawnWaitNotification(
-  spawnIds: string[],
-  fallbackItems: NotificationItem[],
-  signal?: AbortSignal,
-): Promise<string> {
-  const result = await runMeridianCommand(["spawn", "wait", ...spawnIds, "--no-observe"], 30_000, signal);
-  const output = (result.stdout || result.stderr).trimEnd();
-  if (result.exitCode === 0 && output.length > 0) return output;
-
-  const fallbackSpawnItems = fallbackItems.filter((item) => item.kind === "spawn");
-  if (fallbackSpawnItems.length === 1) {
-    const item = fallbackSpawnItems[0]!;
-    return `Spawn ${item.id} completed (${item.label}, ${item.duration}): ${item.status}\nUse \`meridian spawn wait ${item.id}\` for details.`;
+async function readBoundedReport(reportPath: string): Promise<{ text: string | null; truncated: boolean }> {
+  let report;
+  try { report = await open(reportPath, "r"); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { text: null, truncated: false };
+    throw error;
   }
-  return [
-    "Meridian spawns completed:",
-    ...fallbackSpawnItems.map((item) => `- ${item.id} (${item.label}, ${item.duration}) ${item.status}`),
-    `Use \`meridian spawn wait ${spawnIds.join(" ")}\` for details.`,
-  ].join("\n");
+  try {
+    const buffer = Buffer.alloc(MAX_REPORT_BYTES + 1);
+    const { bytesRead } = await report.read(buffer, 0, buffer.length, null);
+    return {
+      text: buffer.subarray(0, Math.min(bytesRead, MAX_REPORT_BYTES)).toString("utf8").trim() || null,
+      truncated: bytesRead > MAX_REPORT_BYTES,
+    };
+  } finally {
+    await report.close();
+  }
 }
 
-function sameMembership(left: NotificationItem[], right: NotificationItem[]): boolean {
-  if (left.length !== right.length) return false;
-  const rightIds = new Set(right.map((item) => `${item.kind}:${item.id}`));
-  return left.every((item) => rightIds.has(`${item.kind}:${item.id}`));
+function notificationKey(item: NotificationItem): string {
+  return `${item.kind}:${item.id}`;
+}
+
+function sameNotification(left: NotificationItem, right: NotificationItem): boolean {
+  return left.kind === right.kind && left.id === right.id && left.status === right.status
+    && left.label === right.label && left.duration === right.duration && left.error === right.error;
 }
 
 function formatBashNotification(items: NotificationItem[]): string {
@@ -417,7 +461,7 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
   owners.set(ownerPath, runtime);
   runtime.rebind(pi);
   pi.on?.("session_start", (_event, ctx) => { runtime.observeIdle(() => ctx.isIdle()); runtime.start(); });
-  pi.on?.("agent_start", (_event, ctx) => runtime.observeIdle(() => ctx.isIdle()));
+  pi.on?.("agent_start", (_event, ctx) => runtime.observeActive(() => ctx.isIdle()));
   pi.on?.("agent_end", (_event, ctx) => runtime.observeIdle(() => ctx.isIdle()));
   pi.on?.("turn_end", async (event, ctx) => {
     if (event.outcome !== "completed" || event.toolResults.length === 0 || ctx.signal?.aborted) return;
