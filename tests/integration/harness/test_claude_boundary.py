@@ -72,7 +72,7 @@ def test_owned_final_receipt_reports_initial_and_final_keys(tmp_path):
 
 @pytest.mark.parametrize(
     ("source", "previous"),
-    [("clear", None), ("compact", None), ("startup", "{"), ("resume", "[]")],
+    [("clear", None), ("compact", None), ("startup", "{"), ("resume", "[]"), ("fork", "{")],
 )
 def test_lost_start_or_corrupt_receipt_cannot_reseed_initial_identity(tmp_path, source, previous):
     plugin = Path(resolve_claude_runtime(plugin_name="meridian-session-boundary").plugin_dirs[0])

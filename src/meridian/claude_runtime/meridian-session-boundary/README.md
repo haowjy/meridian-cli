@@ -4,8 +4,9 @@ This classic command-hook plugin reports native session identity to Meridian.
 It is independent of idle notifications and loads for primary and spawned Claude
 launches. Outside a prepared Meridian launch, its hooks do nothing.
 
-`SessionStart` records the initial native key. Later start/end events replace the
-current key, while retaining the initial one. In particular, `/clear` and
+`SessionStart` with source `startup`, `resume`, or `fork` records the initial
+native key. Later start/end events replace the current key, while retaining the
+initial one. A first-seen clear/compact event cannot stand in for missing startup. In particular, `/clear` and
 in-process `/resume` end the old session and start another; neither switch is a
 process exit. Only a final `SessionEnd` with reason `prompt_input_exit`, `logout`,
 or `other` can supply an exit key.

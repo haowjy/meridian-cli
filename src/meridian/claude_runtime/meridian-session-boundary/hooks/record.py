@@ -45,7 +45,8 @@ def record() -> None:
     # A nested Claude inheriting these variables must not replace its parent's receipt.
     pid = os.getppid()
     initial: object = (
-        current if event == "SessionStart" and payload.get("source") in ("startup", "resume")
+        current
+        if event == "SessionStart" and payload.get("source") in ("startup", "resume", "fork")
         else None
     )
     try:
