@@ -12,6 +12,7 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import (
     LaunchIntent,
     NativeIdentity,
+    NativeIdentityError,
     NativeKeyFields,
     NativeSessionUnavailable,
     Operation,
@@ -467,7 +468,17 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         nonce = child_env.get("_MERIDIAN_CLAUDE_SESSION_BOUNDARY_NONCE")
         observed = read_boundary(Path(path), nonce=nonce, pid=pid) if path and nonce else PostExit()
         if observed.exit is not None:
-            return observed
+            # Existing chat aliases can be reused without the allocator's existence
+            # callback. Validate here too, so even an unchanged exit has native proof.
+            try:
+                source = self.resolve_native_session_file(
+                    session_id=observed.exit.session_id,
+                    native_store=Path(observed.exit.native_store),
+                )
+            except (NativeIdentityError, OSError):
+                source = None
+            if source is not None:
+                return observed
         successor = reconcile_tui_trampoline_session_id(
             project_root=child_cwd,
             recorded_session_id=entry.session_id or "",

@@ -546,7 +546,8 @@ def test_unrelated_claude_trampoline_candidate_is_diagnostic(
 @pytest.mark.parametrize(
     "scenario",
     ["same", "clear", "resume", "switch-only", "stale-nonce", "wrong-pid", "bad-header",
-     "missing-file", "wrong-entry", "no-start", "fork", "fork-reuses-source", "fork-wrong-store"],
+     "missing-file", "wrong-entry", "no-start", "fork", "fork-reuses-source", "fork-wrong-store",
+     "bad-entry-file", "missing-entry-file"],
 )
 def test_owned_claude_boundary_selects_only_validated_native_exit(tmp_path, monkeypatch, scenario):
     import sys
@@ -607,9 +608,10 @@ def test_owned_claude_boundary_selects_only_validated_native_exit(tmp_path, monk
         " native(final).write_text(json.dumps({'sessionId': final}) + '\\n')\n"
         " if scenario != 'switch-only': hook('SessionStart', final, 'clear')\n"
         "if scenario != 'switch-only': hook('SessionEnd', final, 'prompt_input_exit')\n"
-        "if scenario == 'bad-header':\n"
-        " native(final).write_text(json.dumps({'sessionId': entry}) + '\\n')\n"
-        "if scenario == 'missing-file': native(final).unlink()\n"
+        "if scenario in {'bad-header', 'bad-entry-file'}:\n"
+        " wrong = entry if scenario == 'bad-header' else successor\n"
+        " native(final).write_text(json.dumps({'sessionId': wrong}) + '\\n')\n"
+        "if scenario in {'missing-file', 'missing-entry-file'}: native(final).unlink()\n"
         "if scenario in {'stale-nonce', 'wrong-pid'}:\n"
         " path = Path(os.environ['_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PATH'])\n"
         " data = json.loads(path.read_text())\n"

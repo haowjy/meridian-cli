@@ -12,6 +12,11 @@ SOURCE_ROOT = Path(__file__).parents[2] / "src" / "meridian"
 # Values are required documentation, rather than data used by the assertion.
 ALLOWLIST: dict[tuple[str, str, str], str] = {
     (
+        "claude_runtime/meridian-session-boundary/hooks/record.py",
+        "record",
+        "json.dump",
+    ): "Native receipt: private temp + fsync + rename; never recreates a missing spawn.",
+    (
         "lib/telemetry/maintenance.py",
         "_update_marker",
         "write_text",

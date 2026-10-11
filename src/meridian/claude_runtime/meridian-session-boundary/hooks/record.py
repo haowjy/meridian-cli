@@ -8,8 +8,11 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from typing import cast
 
 _LIMIT = 16 * 1024
+# Native hook input may include a large user prompt; the receipt never retains it.
+_INPUT_LIMIT = 1024 * 1024
 
 
 def record() -> None:
@@ -20,14 +23,15 @@ def record() -> None:
     path = Path(destination)
     if not path.is_absolute():
         return
-    raw = sys.stdin.buffer.read(_LIMIT + 1)
-    if len(raw) > _LIMIT:
+    raw = sys.stdin.buffer.read(_INPUT_LIMIT + 1)
+    if len(raw) > _INPUT_LIMIT:
         return
-    payload = json.loads(raw)
-    if not isinstance(payload, dict):
+    decoded = json.loads(raw)
+    if not isinstance(decoded, dict):
         return
+    payload = cast("dict[str, object]", decoded)
     event = payload.get("hook_event_name")
-    if event not in {"SessionStart", "SessionEnd"}:
+    if event not in ("SessionStart", "SessionEnd"):
         return
     session_id = payload.get("session_id")
     transcript = payload.get("transcript_path")
@@ -40,8 +44,8 @@ def record() -> None:
     # The hook command execs this interpreter, so its parent is the Claude child.
     # A nested Claude inheriting these variables must not replace its parent's receipt.
     pid = os.getppid()
-    initial = (
-        current if event == "SessionStart" and payload.get("source") in {"startup", "resume"}
+    initial: object = (
+        current if event == "SessionStart" and payload.get("source") in ("startup", "resume")
         else None
     )
     try:
@@ -50,8 +54,12 @@ def record() -> None:
         if len(previous_raw) > _LIMIT:
             initial = None
         else:
-            previous = json.loads(previous_raw)
-            if not isinstance(previous, dict) or not previous.get("launch_nonce"):
+            previous_decoded = json.loads(previous_raw)
+            previous = (
+                cast("dict[str, object]", previous_decoded)
+                if isinstance(previous_decoded, dict) else {}
+            )
+            if not previous.get("launch_nonce"):
                 initial = None
             elif previous.get("launch_nonce") == nonce:
                 if previous.get("pid") != pid:

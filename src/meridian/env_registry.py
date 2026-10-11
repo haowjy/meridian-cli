@@ -257,6 +257,11 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _internal_handle(
         "_MERIDIAN_PRIMARY_STDERR_LOG_PATH", "Primary subprocess stderr path.", child=False
     ),
+    _internal_handle("_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PATH", "Claude boundary observation path."),
+    _internal_handle("_MERIDIAN_CLAUDE_SESSION_BOUNDARY_NONCE", "Claude boundary launch nonce."),
+    _internal_handle(
+        "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PYTHON", "Claude boundary hook interpreter."
+    ),
     _internal_handle("_MERIDIAN_PI_SESSION_BOUNDARY_PATH", "Pi boundary observation path."),
     _internal_handle("_MERIDIAN_PI_SESSION_BOUNDARY_NONCE", "Pi boundary launch nonce."),
     _internal_handle("_MERIDIAN_PI_STATE_DIR", "Pi extension runtime-state root."),

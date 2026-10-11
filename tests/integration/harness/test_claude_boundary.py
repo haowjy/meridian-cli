@@ -93,6 +93,25 @@ def test_lost_start_or_corrupt_receipt_cannot_reseed_initial_identity(tmp_path, 
     assert read_boundary(path, nonce="nonce", pid=os.getpid()) == PostExit()
 
 
+def test_hook_accepts_large_prompt_but_persists_only_identity(tmp_path):
+    plugin = Path(resolve_claude_runtime(plugin_name="meridian-session-boundary").plugin_dirs[0])
+    path = tmp_path / "receipt.json"
+    result = subprocess.run(
+        [sys.executable, str(plugin / "hooks/record.py")],
+        env={**os.environ, "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PATH": str(path),
+             "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_NONCE": "nonce"},
+        input=json.dumps({"hook_event_name": "SessionStart", "session_id": "native-id",
+                          "transcript_path": str(tmp_path / "native-id.jsonl"),
+                          "source": "startup", "prompt": "private prompt" * 4000}),
+        text=True, capture_output=True, check=True,
+    )
+    assert result.stdout == result.stderr == ""
+    saved = path.read_text()
+    assert "private prompt" not in saved and len(saved) < 16 * 1024
+    assert json.loads(saved)["initial"]["session_id"] == "native-id"
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
 @pytest.mark.parametrize("owner", ["foreign-pid", "deleted-directory"])
 def test_hook_cannot_replace_another_process_or_recreate_its_spawn(tmp_path, owner):
     plugin = Path(resolve_claude_runtime(plugin_name="meridian-session-boundary").plugin_dirs[0])

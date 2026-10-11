@@ -61,7 +61,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   CI job and in extended/full local preflight.
 
 ### Fixed
-- Verify Claude exit sessions using launch-owned lifecycle receipts and exact transcripts, including after `/clear` and `/resume`; preserve entry bindings and continue from the verified exit chat. Keep absent proof diagnostic-only, never guess an exit from transcript timestamps.
+- Verify Claude exit sessions using launch-owned lifecycle receipts and exact transcripts, even for existing chats and after `/clear` or `/resume`; preserve entry bindings and continue from the verified exit chat. Keep absent proof diagnostic-only, never guess an exit from transcript timestamps.
 - Preserve absorbed idle-arm reasons in CLI wire responses so adapters retain their timers.
 - Keep stable idle session lock paths after garbage collection removes stale state.
 - Always delegate intercepted Codex `notify` payloads to the configured user callback,
