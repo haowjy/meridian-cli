@@ -101,6 +101,30 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _public_config("MERIDIAN_EFFORT", "Harness reasoning effort override."),
     _public_config("MERIDIAN_FORMAT", "CLI output format override."),
     _public_config("MERIDIAN_GUARDRAIL_TIMEOUT_MINUTES", "Guardrail execution timeout."),
+    _public_config(
+        "MERIDIAN_HARNESS_IDLE_ENABLED_CLAUDE", "Claude idle behavior toggle."
+    ),
+    _public_config(
+        "MERIDIAN_HARNESS_IDLE_COMPACT_CLAUDE", "Claude idle compaction toggle."
+    ),
+    _public_config(
+        "MERIDIAN_HARNESS_IDLE_TTL_SECONDS_CLAUDE", "Claude idle cache TTL."
+    ),
+    _public_config("MERIDIAN_HARNESS_IDLE_COMPACT_CODEX", "Codex idle compaction toggle."),
+    _public_config("MERIDIAN_HARNESS_IDLE_ENABLED_CODEX", "Codex idle behavior toggle."),
+    _public_config("MERIDIAN_HARNESS_IDLE_TTL_SECONDS_CODEX", "Codex idle cache TTL."),
+    _public_config(
+        "MERIDIAN_HARNESS_IDLE_ENABLED_OPENCODE", "OpenCode idle behavior toggle."
+    ),
+    _public_config(
+        "MERIDIAN_HARNESS_IDLE_COMPACT_OPENCODE", "OpenCode idle compaction toggle."
+    ),
+    _public_config(
+        "MERIDIAN_HARNESS_IDLE_TTL_SECONDS_OPENCODE", "OpenCode idle cache TTL."
+    ),
+    _public_config("MERIDIAN_HARNESS_IDLE_COMPACT_PI", "Pi idle compaction toggle."),
+    _public_config("MERIDIAN_HARNESS_IDLE_ENABLED_PI", "Pi idle behavior toggle."),
+    _public_config("MERIDIAN_HARNESS_IDLE_TTL_SECONDS_PI", "Pi idle cache TTL."),
     _public_config("MERIDIAN_HARNESS_MODEL_CLAUDE", "Claude harness model mapping."),
     _public_config("MERIDIAN_HARNESS_MODEL_CODEX", "Codex harness model mapping."),
     _public_config("MERIDIAN_HARNESS_MODEL_OPENCODE", "OpenCode harness model mapping."),
@@ -126,6 +150,22 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _public_config("MERIDIAN_MAX_DEPTH", "Maximum delegated spawn depth."),
     _public_config("MERIDIAN_MIN_WAIT_YIELD_SECONDS", "Minimum wait yield interval."),
     _public_config("MERIDIAN_MODEL", "Default model selection."),
+    _public_config("MERIDIAN_NOTIFY_EMAIL_BACKEND", "Email notification backend."),
+    _public_config("MERIDIAN_NOTIFY_EMAIL_COMMAND", "Email notification command."),
+    _public_config("MERIDIAN_NOTIFY_EMAIL_FROM", "Notification sender address."),
+    _public_config("MERIDIAN_NOTIFY_EMAIL_TO", "Notification recipient address."),
+    _public_config(
+        "MERIDIAN_NOTIFY_INCLUDE_MESSAGES", "Include turn excerpts in notifications."
+    ),
+    _public_config("MERIDIAN_NOTIFY_NTFY_SERVER", "ntfy server URL."),
+    _public_config("MERIDIAN_NOTIFY_NTFY_TOPIC", "ntfy topic name."),
+    _public_config("MERIDIAN_NOTIFY_PUSH_BACKEND", "Push notification backend."),
+    _public_config("MERIDIAN_NOTIFY_PUSH_COMMAND", "Push notification command."),
+    _public_config("MERIDIAN_NOTIFY_SMTP_HOST", "SMTP server host."),
+    _public_config("MERIDIAN_NOTIFY_SMTP_PASSWORD", "SMTP password fallback."),
+    _public_config("MERIDIAN_NOTIFY_SMTP_PASSWORD_FILE", "SMTP password file."),
+    _public_config("MERIDIAN_NOTIFY_SMTP_PORT", "SMTP server port."),
+    _public_config("MERIDIAN_NOTIFY_SMTP_USER", "SMTP account user."),
     _public_config("MERIDIAN_PI_BINARY", "Pi executable override."),
     _public_config(
         "MERIDIAN_PI_CHILD_WAVE_TIMEOUT_SECONDS", "Pi child-wave timeout configuration."
@@ -150,6 +190,20 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _public_config("MERIDIAN_HISTORY_ARCHIVE_AUTOMATIC", "Enable opt-in history ZIP retention."),
     _public_config("MERIDIAN_HISTORY_ARCHIVE_AFTER_DAYS", "History inactivity threshold in days."),
     _public_config("MERIDIAN_HISTORY_ARCHIVE_DESTINATION", "History ZIP destination directory."),
+    _public_config("MERIDIAN_IDLE_ENABLED", "Cross-harness idle behavior toggle."),
+    _public_config("MERIDIAN_IDLE_COMPACT", "Cross-harness idle compaction toggle."),
+    _public_config("MERIDIAN_IDLE_COMPACT_MINUTES", "Idle compaction lead time."),
+    _public_config(
+        "MERIDIAN_IDLE_LATE_FIRE_TOLERANCE_SECONDS", "Idle timer late-fire tolerance."
+    ),
+    _public_config("MERIDIAN_IDLE_LONG_TURN_SECONDS", "Idle long-turn threshold."),
+    _public_config("MERIDIAN_IDLE_MIN_COMPACT_TOKENS", "Minimum idle compaction size."),
+    _public_config("MERIDIAN_IDLE_PUSH_SECONDS", "Idle push delay."),
+    _public_config(
+        "MERIDIAN_IDLE_QUICK_TURN_PUSH_SECONDS", "Idle quick-turn push delay."
+    ),
+    _public_config("MERIDIAN_IDLE_WARN_EMAIL", "Idle warning email toggle."),
+    _public_config("MERIDIAN_IDLE_WARN_MINUTES", "Idle cache warning lead time."),
     _public_config("MERIDIAN_STATE_RETENTION_DAYS", "Runtime-state retention period."),
     _public_config("MERIDIAN_TIMEOUT", "Spawn timeout override."),
     _public_config("MERIDIAN_WAIT_TIMEOUT_MINUTES", "Wait operation timeout."),
@@ -164,6 +218,8 @@ ENV_VARS: tuple[EnvVar, ...] = (
         "Current Meridian project directory.",
         hook_field="project_root",
     ),
+    _public_handle("MERIDIAN_SESSION_ROLE", "Meridian launch role: primary or spawn."),
+    _public_handle("MERIDIAN_SESSION_AGENT", "Resolved agent profile for this launch."),
     _public_handle("MERIDIAN_SPAWN_ID", "Current spawn identifier.", hook_field="spawn_id"),
     _public_handle("MERIDIAN_TASK_DIR", "Logical task checkout directory."),
     # Public hook payload fields.
@@ -204,7 +260,6 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _internal_handle("_MERIDIAN_PI_SESSION_BOUNDARY_PATH", "Pi boundary observation path."),
     _internal_handle("_MERIDIAN_PI_SESSION_BOUNDARY_NONCE", "Pi boundary launch nonce."),
     _internal_handle("_MERIDIAN_PI_STATE_DIR", "Pi extension runtime-state root."),
-    _internal_handle("_MERIDIAN_PI_SESSION_ROLE", "Pi primary or spawned session role."),
     _internal_handle("_MERIDIAN_PI_BASH_ID", "Originating managed-bash task identifier."),
     _internal_handle("_MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS", "Resolved Pi child-wave timeout."),
     _internal_handle("_MERIDIAN_PI_TASK_PING_INTERVAL_MS", "Resolved Pi task-ping interval."),

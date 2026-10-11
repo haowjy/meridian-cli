@@ -71,6 +71,8 @@ Expect:
 - Both commands include `managed-bash`, `meridian-spawn-watch`, and
   `session-boundary` with default config. Managed-bash and spawn-watch respect
   `[harness.pi]` toggles; session-boundary stays loaded.
+  The primary additionally includes `meridian-idle`; the spawned/RPC command
+  must not.
 - Spawned RPC includes `--no-extensions` unless `load_all_pi_extensions = true`;
   primary does not suppress native discovery. Both include `--session-dir` and
   an assigned `--session-id` for a fresh create.

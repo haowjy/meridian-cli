@@ -17,8 +17,8 @@ class DebugTracer:
     """Structured JSONL debug event writer for streaming pipeline observability.
 
     Contract: emit() is best-effort and never raises. If the underlying file
-    write or serialization fails, the tracer logs one warning and disables
-    itself for the remainder of the session.
+    write or serialization fails, the tracer disables itself for the remainder
+    of the session and, unless ``report_failures`` is false, logs one warning.
     """
 
     def __init__(
@@ -28,11 +28,13 @@ class DebugTracer:
         *,
         echo_stderr: bool = False,
         max_payload_bytes: int = 4096,
+        report_failures: bool = True,
     ) -> None:
         self._spawn_id = spawn_id
         self._debug_path = debug_path
         self._echo_stderr = echo_stderr
         self._max_payload_bytes = max_payload_bytes
+        self._report_failures = report_failures
         self._lock = threading.Lock()
         self._handle: IO[str] | None = None
         self._disabled = False
@@ -47,8 +49,8 @@ class DebugTracer:
     ) -> None:
         """Append one structured debug event. Never raises.
 
-        If the underlying write fails, logs a warning on the first failure,
-        sets self._disabled = True, and returns silently on all subsequent calls.
+        If the underlying write fails, optionally logs a warning on the first
+        failure, sets self._disabled = True, and returns silently thereafter.
         """
         if self._disabled:
             return
@@ -78,6 +80,8 @@ class DebugTracer:
                 sys.stderr.flush()
         except Exception as exc:
             self._disabled = True
+            if not self._report_failures:
+                return
             from meridian.lib.telemetry import emit_telemetry
             from meridian.lib.telemetry.events import make_error_data
 

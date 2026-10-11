@@ -49,6 +49,7 @@ from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.harness.extractors.pi import PI_EXTRACTOR
 from meridian.lib.harness.pi_boundary import read_boundary
 from meridian.lib.harness.pi_identity import mint_session_id, resolve_session_file, verify_identity
+from meridian.lib.harness.pi_idle import detect_ttl
 from meridian.lib.harness.pi_lifecycle_events import (
     PI_PHASE_EVENT_TYPE,
     redact_pi_command_for_history,
@@ -335,7 +336,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             resolved_harness_session_id,
             record_effective_config_dir,
         )
-        role = child_env.get("_MERIDIAN_PI_SESSION_ROLE", "").strip().lower()
+        role = child_env.get("MERIDIAN_SESSION_ROLE", "").strip().lower()
         launch_role = "primary" if role == "primary" else "spawned"
         try:
             resolved_runtime = resolve_pi_runtime(env=child_env, role=launch_role)
@@ -465,12 +466,17 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def env_overrides(self, config: PermissionConfig) -> dict[str, str]:
         return {}
 
-    def env_defaults(self, config: PermissionConfig) -> dict[str, str]:
+    def env_defaults(
+        self, config: PermissionConfig, *, run: SpawnParams
+    ) -> dict[str, str]:
         _ = config
-        return {
+        defaults = {
             **pi_agent_dir_env_override(),
             **pi_spawn_session_root_env_override(),
         }
+        if run.interactive:
+            defaults["PI_CACHE_RETENTION"] = "long"
+        return defaults
 
     def resolve_session_file(
         self,
@@ -637,5 +643,6 @@ register_harness_bundle(
         ),
         semantics=PI_SEMANTICS,
         event_sinks=_event_sinks,
+        detect_ttl=detect_ttl,
     )
 )

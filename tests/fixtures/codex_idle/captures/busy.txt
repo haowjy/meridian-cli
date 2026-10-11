@@ -1,0 +1,21 @@
+
+
+• OK
+
+  Worked for 1s • 6:39 PM
+
+• Context compacted · 2s
+
+  Worked for 2s • 6:40 PM
+
+
+› Run sleep 3 in shell, then reply done.
+
+
+• Working (0s • esc to interrupt)
+
+
+› Ask Codex to do anything
+
+  GPT-6-Luna low · ~/gitrepos/meridian-cli.worktrees/idle-cache-notify · Monitor Meridian …
+  ? for shortcuts

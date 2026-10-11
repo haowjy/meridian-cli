@@ -49,6 +49,7 @@ from meridian.lib.harness.connections.opencode_connection import OpenCodeConnect
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview, SessionSeed
 from meridian.lib.harness.opencode_backend import resolve_opencode_version
+from meridian.lib.harness.opencode_idle import autocompact_off, primary_idle_sensor
 from meridian.lib.harness.opencode_report import extract_opencode_session_id
 from meridian.lib.harness.opencode_storage import (
     resolve_opencode_home_dir,
@@ -671,5 +672,7 @@ register_harness_bundle(
             ),
         ),
         semantics=OPENCODE_SEMANTICS,
+        primary_idle_sensor=primary_idle_sensor,
+        autocompact_off=autocompact_off,
     )
 )

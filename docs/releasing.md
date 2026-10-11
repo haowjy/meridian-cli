@@ -8,10 +8,13 @@ has a `release:*` label.
 1. Create/select your code directory (for example `git worktree add ../meridian-cli.worktrees/my-feature -b my-feature`), then start the work item with `meridian work start "my-feature" --task-dir ../meridian-cli.worktrees/my-feature` (or run `meridian work task-dir ../meridian-cli.worktrees/my-feature` after `work start`)
 2. Add changelog entries under `CHANGELOG.md` `[Unreleased]` as you commit
 3. Open a PR using the PR template
-4. Set one release label:
+4. Set one release label. The bump tracks breakage, not size: a change that
+   does not break existing behaviour is a patch, however much it adds.
    - `release:rc` for the default safe prerelease path
-   - `release:patch` or `release:stable` for a stable patch release
-   - `release:minor` / `release:major` for a stable minor/major release
+   - `release:patch` or `release:stable` for a stable patch release (the
+     normal label for features and fixes that break nothing)
+   - `release:minor` / `release:major` for a release that breaks existing
+     behaviour, config, or on-disk state
    - `release:skip` for no release
 5. Merge the PR to `main`
 
@@ -24,8 +27,9 @@ when a release label is present.
 ### Changes to on-disk state
 
 A release that changes on-disk state (state or session file fields, index schema,
-archive format, a one-time import or repair) must ship upgrade guidance, usually
-with a `release:minor` label:
+archive format, a one-time import or repair) must ship upgrade guidance. New state
+that older builds ignore is still a patch; `release:minor` is for state changes an
+older build cannot read:
 
 - a `### Upgrade notes` block under `CHANGELOG.md` `[Unreleased]`: what users must
   do or will notice, one line each, linking the guide;

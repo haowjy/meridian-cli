@@ -272,6 +272,41 @@ Exit codes for `ext run`: `2` = app server unavailable, `7` = invalid `--args`.
 
 See [extensions.md](extensions.md) for HTTP API and MCP tool details.
 
+## Notifications & Idle Sessions
+
+### `meridian notify`
+
+```text
+meridian notify "<msg>" [--title T] [--no-email] [--priority 1..5] [--json]
+```
+
+Sends one manual notice through the configured push and email backends.
+`--no-email` limits the attempt to push. The command exits 0 when at least one
+backend succeeds, exits 1 when all selected backends fail, and exits 0 with a
+warning when every selected backend is `none`. It does not retry in-process.
+The generated title identifies the tmux session, project, and active work item
+when those values are available.
+
+### `meridian idle`
+
+`idle` is an adapter-facing command group. Harness mods and launcher tasks use
+it to report events, ask core whether compaction is safe, and record the result.
+Humans normally use only:
+
+| Command | Description |
+|---|---|
+| `meridian idle status [--json]` | List open idle stretches and their stored schedules |
+| `meridian idle mod-path` | Print the bundled Claude idle mod directory for an external-TUI opt-in |
+
+The adapter subcommands are `config`, `arm`, `return`, `fire`, `done`, and
+`event`; run `meridian idle --help` for their typed contract. Outside-Meridian
+adapters must pass `--interactive` on every call. An explicit spawn role stays
+disabled even with that flag.
+
+See [configuration.md](configuration.md#notifications-and-idle-sessions) for
+notification backends, idle timers, precedence, defaults, safety guards, and
+the Claude opt-in command.
+
 ## Configuration & Diagnostics
 
 | Command | Description |

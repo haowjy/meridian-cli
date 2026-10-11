@@ -86,6 +86,14 @@ class OptionCatalog:
     ) -> ConfigOptionDescriptor | None:
         return self._by_file_alias.get((table_path, key))
 
+    def has_file_alias_table_prefix(self, table_path: tuple[str, ...]) -> bool:
+        """Return whether any file alias lives at or below ``table_path``."""
+
+        return any(
+            alias_path[: len(table_path)] == table_path
+            for alias_path, _key in self._by_file_alias
+        )
+
     def option_for_field_path(self, field_path: tuple[str, ...]) -> ConfigOptionDescriptor | None:
         return self._by_field_path.get(field_path)
 

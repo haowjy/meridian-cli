@@ -41,9 +41,10 @@ instruction and user-turn channels. Declare every `SpawnParams` field in
 `consumed_fields` or `explicitly_ignored_fields`; import-time accounting rejects
 uncovered fields.
 
-Use `env_defaults()` for values that explicit child environment may override.
-Reserve `env_overrides()` for forced adapter policy. Agent/auth directories and
-native transcript stores need explicit contracts, not blanket config isolation.
+Use `env_defaults()` for launch-aware values that explicit child environment may
+override, and reserve `env_overrides()` for forced adapter policy; agent/auth
+directories and native transcript stores need explicit contracts, not blanket
+config isolation.
 
 ### Native identity
 
@@ -97,7 +98,7 @@ its recorded store. Stderr is diagnostic, not identity or completion authority.
 Bootstrap order is load-bearing: adapter bundle registration, projection drift
 guards, extractor wiring, then cross-adapter field accounting.
 
-## Pi: installed runtime and three extensions
+## Pi: installed runtime and four extensions
 
 Meridian resolves `MERIDIAN_PI_BINARY`, otherwise `pi` on `PATH`, and probes
 `--version`/`--help` before launch. It does not bundle Pi or provide a wrapper
@@ -118,7 +119,7 @@ remain validated fail-closed.
 | Primary | Native Pi TUI, no `--mode rpc`; native ambient discovery remains enabled |
 | Spawned | `pi --mode rpc`; suppress skills, context files, and prompt templates; suppress ambient extensions unless `load_all_pi_extensions = true` |
 
-Both roles load these stable `-e` bundles:
+Both roles load the stable bundles listed below where enabled; `meridian-idle` loads only for interactive primaries:
 
 - **managed-bash**, when `harness.pi.background_tasks.enabled` is true and
   `disable_managed_bash` is false: `bash`/`bash_manage`, `/ps*`, task records,
@@ -129,6 +130,9 @@ Both roles load these stable `-e` bundles:
   launch nonce and Pi PID. Only a final readable `session_shutdown(reason=quit)`
   verifies exit identity; a switch, reload, stale context, or corrupt record does
   not authorize a last-seen-session fallback.
+- **meridian-idle**, interactive primaries only: translates Pi idle/input events
+  and live context facts into core idle decisions. It never loads in spawned RPC
+  sessions.
 
 Primary child notifications do not auto-stop the TUI. Spawned completion uses
 quiescence: parent idle, reconciled transitive descendants finished, private work
@@ -142,10 +146,19 @@ primaries use the flat root, and resumes retain their recorded store. Identity
 projection passes `--session-dir` plus an assigned `--session-id` for create/fork,
 or the exact `--session <file>` for resume. Fork also passes `--fork <source-file>`.
 
+Interactive primaries also default `PI_CACHE_RETENTION=long` when the variable is
+absent; spawned RPC sessions are untouched and an inherited or configured value
+always wins. Set `PI_CACHE_RETENTION=short` to retain Pi's short-cache default.
+This launch default is independent of `[idle]`: the idle extension reads the
+effective variable and Pi's reported provider to schedule cache warning and
+compaction for `anthropic` and `openai`. `openai` is scheduled against 30
+minutes, because OpenAI's `24h` retention typically lasts about that long.
+Unknown provider IDs remain push-only.
+
 ### Build and package
 
 TypeScript sources live under `src/meridian/pi_runtime/extensions/`. Build all
-three bundles before launch:
+four bundles before launch:
 
 ```bash
 cd src/meridian/pi_runtime

@@ -1,0 +1,5 @@
+- `main.py` (`_main_impl`): two `== "idle"` literals switch the JSON error
+  envelope on for one command group. Key it on catalog metadata instead (the
+  startup catalog already marks every idle command `default_output_mode="json"`;
+  or add an `error_envelope="json"` flag) so the next adapter-facing group gets
+  the envelope without touching the dispatcher (thermo F7).

@@ -311,6 +311,7 @@ class MaterializedLaunchArtifacts:
     permission_config: PermissionConfig
     perms: PermissionResolver
     spec: ResolvedLaunchSpec
+    warnings: tuple[CompositionWarning, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -619,6 +620,7 @@ def materialize_launch_artifacts(
         permission_config=permission_config,
         perms=perms,
         spec=spec,
+        warnings=harness.launch_spec_warnings(spec),
     )
 
 
@@ -2033,6 +2035,7 @@ def bind_launch_context(
     permission_config = materialized.permission_config
     perms = materialized.perms
     spec = materialized.spec
+    composition_warnings = (*composition_warnings, *materialized.warnings)
     opencode_version: str | None = None
     if harness.id == HarnessId.OPENCODE:
         # Resolve once and carry the preference on the spec so the dry-run argv
@@ -2074,6 +2077,10 @@ def bind_launch_context(
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
     child_context_env["_MERIDIAN_HARNESS"] = harness.id.value
+    child_context_env["MERIDIAN_SESSION_ROLE"] = "primary" if is_primary_launch else "spawn"
+    resolved_agent = (resolved_request.agent or "").strip()
+    if resolved_agent:
+        child_context_env["MERIDIAN_SESSION_AGENT"] = resolved_agent
     child_context_env["MERIDIAN_PROJECT_DIR"] = resolved_control_root.as_posix()
     # Override inherited task-dir with the child's resolved task-dir.
     # child_env_overrides() carries the parent's MERIDIAN_TASK_DIR;

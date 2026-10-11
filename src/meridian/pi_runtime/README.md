@@ -1,19 +1,27 @@
 # Meridian Pi extensions
 
 Meridian-owned TypeScript extensions run inside the separately installed Pi
-runtime, in both spawned RPC and primary native TUI sessions. Meridian does not
-bundle or control Pi itself.
+runtime. The three coordination bundles load in both spawned RPC and primary
+native TUI sessions; `meridian-idle` loads only for interactive primaries.
+Meridian does not bundle or control Pi itself.
 
 | Bundle | Responsibility |
 |---|---|
 | `managed-bash` | `bash` / `bash_manage`, owned shell tasks, logs, `/ps*` |
 | `meridian-spawn-watch` | Canonical child-spawn observation, result notifications, `/spawn*` |
 | `session-boundary` | Bounded launch-correlated native entry/exit observations |
+| `meridian-idle` | Primary TUI idle sensing and core-directed compaction |
 
 Both launch roles load managed-bash and spawn-watch when enabled in `[harness.pi]`.
-Session-boundary is always loaded. Primary retains native ambient discovery;
-spawned RPC suppresses ambient extensions unless `load_all_pi_extensions = true`.
+Session-boundary is always loaded. Meridian-idle loads only for interactive primary
+launches. Primary retains native ambient discovery; spawned RPC suppresses ambient
+extensions unless `load_all_pi_extensions = true`.
 See the [integration contract](../lib/harness/.context/pi-integration.md).
+
+Meridian-idle marks every core call `--interactive`. User input cancels timers
+synchronously and queues its return behind any in-flight arm without awaiting the
+CLI. A compact claim is acted on only after a second check confirms that the user
+has not returned and Pi remains idle with no pending messages or draft.
 
 ## Build and verify
 
@@ -27,7 +35,7 @@ pnpm run verify:extensions:loop     # repeat locally
 ```
 
 `pnpm run build:extensions` builds without running tests. It writes stable bundles
-under `dist/extensions/<name>/index.js` for all three extensions. Change source,
+under `dist/extensions/<name>/index.js` for all four extensions. Change source,
 never generated output. Projection prefers the package's built bundles, then the
 stable install root `~/.meridian/pi/extensions/`; missing artifacts fail launch.
 

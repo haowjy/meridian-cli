@@ -10,7 +10,9 @@ The four helper functions (`trace_wire_recv`, `trace_wire_send`, `trace_state_ch
 
 ## Key Rules
 
-- **`emit()` never raises.** On first write failure: one WARNING, one telemetry event, then disabled permanently.
+- **`emit()` never raises.** On first write failure: one WARNING, one telemetry
+  event, then disabled permanently. TUI-owned-terminal tasks may opt out of the
+  warning with `report_failures=False`; the tracer still disables itself.
 - **`close()` is idempotent and thread-safe.** Call it when the drain loop ends.
 - **Trace output goes to the spawn artifact directory — not to `history.jsonl` or `output.jsonl`.** Keep spawn artifacts clean for downstream parsing.
 - **Separate from structlog.** `DebugTracer` is machine-readable JSONL to a spawn-scoped file. Structlog is the human/JSON log stream. Don't mix them.

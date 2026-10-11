@@ -108,16 +108,18 @@ Resolves Meridian-owned Pi extension entrypoints for each launch (see `pi_paths.
   override those roots respectively.
 - **Default RPC**: `--no-extensions` plus explicit `-e` for enabled Meridian bundles.
 - **Primary native TUI**: explicit `-e` for the same enabled bundles, without
-  suppressing native ambient discovery.
+  suppressing native ambient discovery; also adds the primary-only
+  `meridian-idle` bundle.
 - **`load_all_pi_extensions = true`**: RPC omits `--no-extensions`; both roles scan
   `extra_extension_paths` (default Pi agent extension dir) for additional `-e` paths.
 
 `resolve_pi_extension_entrypoints(PiExtensionLaunchProfile)` selects managed-bash
 when `background_tasks_enabled`, spawn-watch when `spawn_watch_enabled`, and
 session-boundary when `session_boundary_enabled`. The adapter always keeps the
-boundary enabled; it has no `[harness.pi]` toggle. `interactive` does not change
-bundle selection. `resolve_extra_pi_extension_entrypoints()` scans configured roots
-for `<directory>/index.js` when `load_all` is true.
+boundary enabled; it has no `[harness.pi]` toggle. `interactive` additionally
+selects `meridian-idle`; the other three bundles keep the same selection in both
+roles. `resolve_extra_pi_extension_entrypoints()` scans configured roots for
+`<directory>/index.js` when `load_all` is true.
 
 Launch wiring: `bind_launch_context()` sets `SpawnParams.pi_harness_profile` from
 `resolve_pi_harness_profile_for_launch(config_snapshot, project_root)`; `PiAdapter`

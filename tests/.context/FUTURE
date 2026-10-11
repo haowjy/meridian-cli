@@ -1,0 +1,3 @@
+- `.github/workflows/meridian-ci.yml`: Run `claude plugin test` for changes under
+  `src/meridian/claude_runtime/` when CI provides the Claude binary; until then,
+  keep it as the required local gate documented in `tests/AGENTS.md` (G2 X1).

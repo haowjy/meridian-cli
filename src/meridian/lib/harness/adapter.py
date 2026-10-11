@@ -45,6 +45,7 @@ from meridian.lib.launch.composition import (
     project_inline_content,
 )
 from meridian.lib.launch.launch_types import (
+    CompositionWarning,
     PermissionResolver,
     PreflightResult,
     ResolvedLaunchSpec,
@@ -436,6 +437,10 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
 
     def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> AdapterSpecT: ...
 
+    def launch_spec_warnings(
+        self, spec: ResolvedLaunchSpec
+    ) -> tuple[CompositionWarning, ...]: ...
+
     def preflight(
         self,
         *,
@@ -460,7 +465,9 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
 
     def env_overrides(self, config: PermissionConfig) -> dict[str, str]: ...
 
-    def env_defaults(self, config: PermissionConfig) -> dict[str, str]: ...
+    def env_defaults(
+        self, config: PermissionConfig, *, run: SpawnParams
+    ) -> dict[str, str]: ...
 
     def blocked_child_env_vars(self) -> frozenset[str]: ...
 
@@ -724,6 +731,14 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         """Resolve typed launch spec from generic spawn parameters."""
         ...
 
+    def launch_spec_warnings(
+        self, spec: ResolvedLaunchSpec
+    ) -> tuple[CompositionWarning, ...]:
+        """Return non-fatal diagnostics produced while resolving a launch spec."""
+
+        _ = spec
+        return ()
+
     def preflight(
         self,
         *,
@@ -754,8 +769,11 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     def blocked_child_env_vars(self) -> frozenset[str]:
         return frozenset()
 
-    def env_defaults(self, config: PermissionConfig) -> dict[str, str]:
+    def env_defaults(
+        self, config: PermissionConfig, *, run: SpawnParams
+    ) -> dict[str, str]:
         """Optional process defaults; explicit inherited or launch values win."""
+        _ = config, run
         return {}
 
     def prepare_prelaunch(
