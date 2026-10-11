@@ -15,6 +15,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   invalidate stale idle publication without formatter preemption. Failed or
   superseded full discoveries remain dirty until a successful replacement scan;
   report reads handle short reads and direct notices retain terminal exit codes.
+  Skip stateless history directories during idle polling; verify launcher-child
+  correlation from fresh canonical discovery before sending a bare Bash notice.
 
 ## [0.9.3] - 2026-10-11
 

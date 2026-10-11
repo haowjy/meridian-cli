@@ -483,6 +483,29 @@ describe('durable result delivery', () => {
     }
   });
 
+  it('revalidates child correlation before sending a bare launcher result', async () => {
+    const root = await setup();
+    await child(root, 'p1', 'b1', { parent_id: 'p-other', status: 'running', terminal: null });
+    const h = host(false);
+    const runtime = owner(h);
+    expect(await runtime.rows()).toEqual([]);
+
+    // Canonical ownership changes inside an existing directory: no root event.
+    // The candidate cache cannot prove that this launcher has no child.
+    await child(root, 'p1', 'b1', { status: 'running', terminal: null });
+    await bash(root, record('b1'));
+    h.idle = true;
+    runtime.observeIdle(() => h.idle);
+    await pause(800);
+    expect(h.notices).toHaveLength(0);
+
+    await child(root, 'p1', 'b1');
+    writeFileSync(path.join(root, 'spawns', 'p1', 'report.md'), 'child owns launcher outcome');
+    await eventually(() => h.notices.length === 1);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
+    expect(h.notices[0]!.content).toContain('child owns launcher outcome');
+  });
+
   it('keeps failed forced discovery dirty until a full discovery succeeds', async () => {
     const root = await setup();
     await child(root, 'p1', null, { status: 'running', terminal: null });

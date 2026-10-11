@@ -18,7 +18,11 @@ The watcher derives children from canonical direct `parent_id` rows; an
 `originating_bash_id` on those rows transfers the launcher's obligation to its
 child. Logs, timers, origin sidecars, and remembered scans cannot supply child
 authority. A disposable candidate-ID set scopes frequent idle reads, but each row
-is reparsed and must still have the exact parent. Successful tool boundaries do a
+is reparsed and must still have the exact parent. Directories without state are
+not idle-poll candidates; periodic discovery covers their delayed publication.
+Before sending a bare Bash result, discovery runs after observing its terminal
+state: cached absence cannot prove there is no canonical child owning that
+launcher's obligation. Successful tool boundaries do a
 fresh full discovery; startup/rebind requests the same discovery once idle. The
 nonrecursive root watcher accelerates idle discovery, and a 30-second full
 reconciliation recovers missed events or delayed state rows.

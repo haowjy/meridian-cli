@@ -128,8 +128,11 @@ successful receipt.
 
 A disposable direct-child candidate set limits ordinary 500 ms idle reads to
 candidate state files plus parent-local Bash and delivery evidence. Every candidate
-is reparsed with exact canonical `parent_id`; cached membership is never lifecycle
-authority. Startup/rebind requests a full discovery once idle, and tool boundaries
+is reparsed with exact canonical `parent_id`; directories without state wait for
+periodic discovery instead of adding endless missing-file polls. Cached absence
+also cannot authorize a bare Bash notice: a terminal launcher triggers fresh
+canonical discovery before final revalidation of its child correlation.
+Startup/rebind requests a full discovery once idle, and tool boundaries
 always do one. The nonrecursive root watcher requests discovery while idle, and a
 30-second full reconciliation covers missed events or delayed rows (up to roughly
 30.5 seconds while idle when an ordinary poll already owns the single flight). The
