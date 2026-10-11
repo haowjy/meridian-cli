@@ -27,7 +27,8 @@ fresh full discovery; startup/rebind requests the same discovery once idle. The
 nonrecursive root watcher accelerates idle discovery, and a 30-second full
 reconciliation recovers missed events or delayed state rows.
 If an ordinary 500 ms idle poll already owns the single flight at reconciliation,
-the next tick discovers the row, for about 30.5 seconds maximum idle-only latency.
+the next tick discovers the row, normally within about 30.5 seconds plus collector
+and filesystem time. This cadence is not a hard delivery deadline.
 Every full-discovery attempt marks discovery dirty. Failure, a concurrent newer
 attempt, or a root event during the scan leaves full discovery owed; only the newest
 still-current successful scan publishes candidates and clears that obligation.
@@ -46,8 +47,9 @@ result stays owed during active tool waits, so a terminal wait can persist
 consumption before the boundary runs. The idle path checks idleness before its
 final snapshot and again before queueing, in the same generation that is invalidated
 by `agent_start`, rebind and stop. The collector is finite: after report reads it
-takes one final evidence snapshot and subtracts consumed, leased, claimed or
-changed initial members. New
+rereads selected canonical child IDs independently of the hint cache, takes one
+final evidence snapshot and subtracts consumed, leased, claimed or changed initial
+members. Unrelated root churn cannot withhold an otherwise stable selected child. New
 arrivals and unstable work remain owed for a later boundary or idle tick. Delivery
 before the next inference is not guaranteed when an attempt cannot obtain stable,
 readable evidence. One message identity

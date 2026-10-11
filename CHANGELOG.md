@@ -17,6 +17,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   report reads handle short reads and direct notices retain terminal exit codes.
   Skip stateless history directories during idle polling; verify launcher-child
   correlation from fresh canonical discovery before sending a bare Bash notice.
+  Revalidate selected child IDs directly so unrelated root churn cannot defer a
+  stable result merely because its discovery hint was superseded.
 
 ## [0.9.3] - 2026-10-11
 

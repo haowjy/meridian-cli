@@ -259,12 +259,14 @@ export class SpawnWatchRuntime {
     // A cache miss cannot prove that a completed launcher has no child. Discover
     // after observing Bash terminal, so missed root events cannot split the
     // launcher's obligation from its already-published canonical child.
-    const correlationStates = initial.some((item) => item.kind === "bash")
-      ? await this.discoverChildStates() : undefined;
+    const freshStates = initial.some((item) => item.kind === "bash")
+      ? await this.discoverChildStates()
+      : await this.readCandidateStates(initial.map((item) => item.id));
     if (!this.canContinue(deliverAs, generation, signal)) return false;
 
-    // Observe the same idle generation before and after the final snapshot.
-    const fresh = await this.collectEligible(correlationStates);
+    // Revalidate the selected IDs, not a hint cache another discovery may have
+    // superseded. Observe the same idle generation around the final snapshot.
+    const fresh = await this.collectEligible(freshStates);
     if (!this.canContinue(deliverAs, generation, signal)) return false;
 
     // This collector is deliberately finite. Work that arrived after the first
@@ -359,9 +361,9 @@ export class SpawnWatchRuntime {
     }
   }
 
-  private async readCandidateStates(): Promise<SpawnStateFile[]> {
+  private async readCandidateStates(ids: Iterable<string> = this.candidateChildIds): Promise<SpawnStateFile[]> {
     const rows: SpawnStateFile[] = [];
-    for (const name of [...this.candidateChildIds].sort()) {
+    for (const name of [...ids].sort()) {
       const value = await readPrivateJson(path.join(this.spawnsDir, name, "state.json"));
       if (value === undefined) continue;
       const state = this.parseOwnedChild(name, value);

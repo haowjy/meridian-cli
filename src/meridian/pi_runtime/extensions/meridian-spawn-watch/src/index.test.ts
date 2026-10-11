@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, link } from 'node:fs/promises';
 import { writeFileSync } from 'node:fs';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -481,6 +481,30 @@ describe('durable result delivery', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('revalidates selected children despite unrelated root churn during discovery', async () => {
+    const root = await setup();
+    await mkdir(path.join(root, 'spawns', 'p0'), { recursive: true });
+    const held = holdReport(root, 'p0', JSON.stringify({
+      id: 'p0', parent_id: 'p-other', status: 'running', terminal: null,
+    }));
+    // A FIFO-backed foreign row holds discovery while a real root event fires.
+    await link(held.reportPath, path.join(root, 'spawns', 'p0', 'state.json'));
+    await child(root, 'p1');
+    writeFileSync(path.join(root, 'spawns', 'p1', 'report.md'), 'stable selected child');
+    const h = host(false);
+    const runtime = owner(h);
+    const boundary = runtime.deliverAtBoundary();
+    await eventually(() => exists(held.enteredPath));
+    await mkdir(path.join(root, 'spawns', 'p-unrelated'));
+    await pause();
+    writeFileSync(held.releasePath, 'release');
+    await boundary;
+
+    expect(h.notices).toHaveLength(1);
+    expect(h.notices[0]!.details.work_ids).toEqual(['p1']);
+    expect(h.notices[0]!.content).toContain('stable selected child');
   });
 
   it('revalidates child correlation before sending a bare launcher result', async () => {
