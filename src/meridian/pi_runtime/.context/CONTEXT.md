@@ -114,9 +114,10 @@ tool-bearing `turn_end` awaits a fresh scan and queues eligible results through
 native steer before the next inference; the idle follow-up path remains for results
 that finish later. Both paths reread consumption and live wait reservations after
 formatting, and changed membership rebuilds the batch. Boundary formatting carries
-the operation abort signal. The whole boundary drain has a 30-second budget; slow
-formatting or membership that does not converge is cancelled and remains owed for
-the idle fallback. The idle path observes idleness before its final snapshot and
+the operation abort signal. The whole boundary drain has a 30-second cancellation
+budget; slow formatting or membership that does not converge is cancelled and
+remains owed for the idle fallback. Cancellation is cooperative: pending filesystem
+reads finish before the next signal check. The idle path observes idleness before its final snapshot and
 again before publication. Stop and reload invalidate stale publication. One message
 identity reserves exact membership until native `message_start`
 admission. Reload preserves queued claims; cold restart retries unreceipted work

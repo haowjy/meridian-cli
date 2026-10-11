@@ -28,9 +28,10 @@ after any formatter await. A tracked background terminal result stays owed durin
 active tool waits, so a terminal wait can persist consumption before the boundary
 runs. The idle path checks idleness before its final snapshot and again before
 queueing. Changed membership rebuilds the batch. The awaited boundary drain has a
-30-second overall budget; slow formatting or nonconverging membership cancels that
-attempt without admission, leaving its work owed for the idle fallback. Delivery
-before the next inference is therefore not guaranteed when this bounded attempt
+30-second cancellation budget; slow formatting or nonconverging membership cancels
+that attempt without admission, leaving its work owed for the idle fallback.
+Cancellation aborts formatting but waits for any pending filesystem reads to finish
+before the next signal check. Delivery before the next inference is not guaranteed when the attempt
 cannot obtain stable, readable evidence. One message identity
 reserves the selected IDs through native admission. Its custom message contains
 `details.delivery_id` and `details.work_ids`; the native `message_start` hook

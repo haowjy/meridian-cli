@@ -9,7 +9,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   tool-batch boundary through native steering, before the next inference, while
   retaining the idle follow-up fallback for genuinely late or unsettled work.
 - Preserve the idle-before-final-snapshot ordering that prevents completed waits
-  from being re-announced, and bound boundary scan/format churn to 30 seconds.
+  from being re-announced; give boundary scan/format churn a 30-second cancellation budget.
 
 ## [0.9.3] - 2026-10-11
 
