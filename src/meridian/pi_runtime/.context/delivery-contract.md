@@ -36,6 +36,13 @@ reserves the selected IDs through native admission. Its custom message contains
 `details.delivery_id` and `details.work_ids`; the native `message_start` hook
 persists precisely that membership before the public RPC event.
 
+Steer joins Pi's native queue and is ordered by Pi with any other queued input; it
+is not a priority channel over user steering. Native admission means the message
+entered the context, not that the model acted on it. An enqueued message that Pi
+never admits (for example, the queue is cleared) keeps its IDs reserved until
+admission or restart; this limit predates boundary steer and is unconfirmed as a
+reproduced defect.
+
 The boundary path carries the native operation abort signal and publishes only for
 completed outcomes with actual tool results. Error, aborted and non-tool turns do
 not open a publication window or force continuation. Hot reload rebinds the
