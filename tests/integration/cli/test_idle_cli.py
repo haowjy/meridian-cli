@@ -67,28 +67,57 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
         "push_seconds": 0,
         "warn_minutes": 15,
     }
-    armed = _json_success(tmp_path, env, "idle", "arm", *identity, "--ttl", "61")
+    armed = _json_success(
+        tmp_path,
+        env,
+        "idle",
+        "arm",
+        *identity,
+        "--ttl",
+        "61",
+        "--implies-return",
+        "--turn-id",
+        "turn-1",
+    )
     assert isinstance(armed, dict)
     assert set(armed) == {"stretch", "anchor", "push_at", "compact_at"}
     assert (armed["stretch"], armed["anchor"]) == (1, 1)
     assert isinstance(armed["push_at"], int)
     assert isinstance(armed["compact_at"], int)
+    assert _json_success(
+        tmp_path,
+        env,
+        "idle",
+        "arm",
+        *identity,
+        "--ttl",
+        "61",
+        "--implies-return",
+        "--turn-id",
+        "turn-1",
+    ) == {
+        "stretch": 1,
+        "anchor": 1,
+        "reason": "duplicate-turn",
+    }
 
     status = _json_success(tmp_path, env, "idle", "status", "--json")
     assert isinstance(status, list) and len(status) == 1
     updated_at_ms = status[0]["updated_at_ms"]
     assert isinstance(updated_at_ms, int)
+    returned_at_ms = status[0]["returned_at_ms"]
+    assert isinstance(returned_at_ms, int)
     assert status[0] == {
         "v": 1,
         "harness": "claude",
         "session": "fake-claude-session",
         "stretch": 1,
         "stretch_open": True,
-        "last_turn_id": None,
+        "last_turn_id": "turn-1",
         "last_input_count": None,
         "anchor": 1,
         "idle_since_ms": armed["push_at"],
-        "returned_at_ms": None,
+        "returned_at_ms": returned_at_ms,
         "ttl_seconds": 61,
         "ttl_estimated": True,
         "schedule": {

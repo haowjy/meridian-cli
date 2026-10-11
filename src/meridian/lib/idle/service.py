@@ -115,6 +115,8 @@ class ArmResult:
             value = getattr(self, field)
             if value is not None:
                 payload[field] = value
+        if self.reason is not None:
+            payload["reason"] = self.reason
         return payload
 
 
