@@ -530,7 +530,9 @@ def test_unrelated_claude_trampoline_candidate_is_diagnostic(
     )
     assert shown.returncode == 0, shown.stderr
     assert f"entry {entry.chat_id} ({entry.harness_session_id})" in shown.stdout
-    assert "→ exit unresolved" in shown.stdout
+    assert "warning: Possible session change detected" in shown.stdout
+    assert successor in shown.stdout
+    assert "exit-session identity unverified" in shown.stdout
     logged = subprocess.run(
         [sys.executable, "-m", "meridian", "session", "log", row.id],
         cwd=root,

@@ -269,8 +269,13 @@ not touched.
   harnesses or starting fresh.
 - `--prompt-file` and `-p` now reach interactive Claude, Pi, and OpenCode
   sessions.
-- Pi runs report verified exit-session changes. Other harnesses report
-  `unresolved` when Meridian cannot prove the exit identity.
+- Pi runs report verified exit-session changes. Missing exit-identity evidence
+  is not a process failure: primary completion output shows the process result
+  and the continue command without an `exit unresolved` line. `spawn show`
+  reports `Exit-session identity: unverified` when proof is absent; JSON keeps
+  the `unresolved` status. Identity mismatches and possible session changes
+  still produce warnings. The recorded entry chat remains the continue target
+  unless Meridian verifies an exit chat.
 - `spawn show --json` includes `chat_id`, `continue_chat_id`, and `run_boundary`.
 - `meridian session log --file history.jsonl` is refused: runner history is not
   a native transcript.

@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Stop presenting absent exit-session verification as `exit unresolved` at primary completion. Keep explicit diagnostics, identity warnings, and saved continue targets.
 - Reconcile Pi docs and smoke guides with current extension loading, native session boundaries, task ownership and causal result delivery; remove obsolete integration phases and status tables.
 
 ## [0.9.0] - 2026-10-02

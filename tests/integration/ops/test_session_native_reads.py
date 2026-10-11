@@ -102,10 +102,10 @@ def test_shared_native_id_lists_other_chats(tmp_path: Path) -> None:
             "succeeded",
             "unresolved",
             None,
-            "p1 → c1 (entry chat; exit identity unresolved)",
+            "p1 → c1 (entry chat; exit-session identity unverified)",
             "entry",
         ),
-        ("succeeded", "mismatch", None, "p1 → c1 (entry chat; exit identity mismatch)", "entry"),
+        ("succeeded", "mismatch", None, "p1 → c1 (entry chat; session identity mismatch)", "entry"),
     ],
 )
 def test_spawn_view_matrix(tmp_path, status, boundary, exit_chat, label, selected):
