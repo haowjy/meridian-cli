@@ -177,7 +177,7 @@ describe("managed Bash execution ownership", () => {
       const listed = await runtime.manage({ action: "list", include_completed: true });
       expect(listed).toMatchObject({ rows: expect.arrayContaining([expect.objectContaining({ bash_id: base.bash_id, execution_error: expect.stringContaining("ownership_lost") }), expect.objectContaining({ bash_id: terminal.bash_id, status: "exited" })]) });
       expect(await runtime.manage({ action: "kill", bash_id: base.bash_id })).toMatchObject({ killed: false });
-      await expect(runtime.manage({ action: "wait", bash_id: base.bash_id })).rejects.toThrow("ownership_lost");
+      expect(await runtime.manage({ action: "wait", bash_id: base.bash_id })).toMatchObject({ kind: "wait", error: expect.stringContaining("ownership_lost") });
       expect(await runtime.manage({ action: "detach", bash_id: base.bash_id })).toMatchObject({ detached: true });
       await runtime.execute({ command: "printf fresh" }, undefined);
       const recovered = JSON.parse(await readFile(recordsPath, "utf8"));
@@ -207,7 +207,7 @@ describe("managed Bash execution ownership", () => {
       expect((await durable()).runtime_error).toBeUndefined();
       expect(afterFirst.notification_consumed_at_ms).toBeUndefined();
       expect(await first.manage({ action: "kill", bash_id: row.bash_id })).toMatchObject({ killed: false });
-      await expect(first.manage({ action: "wait", bash_id: row.bash_id })).rejects.toThrow("ownership_lost");
+      expect(await first.manage({ action: "wait", bash_id: row.bash_id })).toMatchObject({ kind: "wait", error: expect.stringContaining("ownership_lost") });
 
       // Repeated cold recoveries do not stack the annotation.
       const owners = (globalThis as Record<symbol, Map<string, BashRuntime>>)[Symbol.for("meridian.pi.managed-bash.owners.v2")]!;
@@ -232,7 +232,7 @@ describe("managed Bash execution ownership", () => {
       await pause(30);
       expect(unhandled).toEqual([]);
       expect(runtime.list(true).find((row) => row.bash_id === started.bash_id)?.execution_error).not.toContain("cleanup failed");
-      await expect(runtime.manage({ action: "wait", bash_id: started.bash_id })).rejects.toThrow("EISDIR");
+      expect(await runtime.manage({ action: "wait", bash_id: started.bash_id })).toMatchObject({ kind: "wait", error: expect.stringContaining("EISDIR") });
       expect(JSON.parse(await readFile(recordsPath, "utf8")).records[started.bash_id].notification_consumed_at_ms).toBeUndefined();
       const result = await runtime.execute({ command: "printf recovered" }, undefined);
       expect(result).toMatchObject({ stdout: "recovered", exit_code: 0 });

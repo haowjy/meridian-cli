@@ -5,47 +5,28 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
-- Include managed-Bash execution faults in automatic completion notices instead
-  of dropping the diagnosis when projecting the task's outcome.
-- Publish a managed-Bash exit before anyone can observe it (#562). A terminal status is
-  now committed in memory only once its records write lands, so `wait`, `output`,
-  `kill`, `/ps` and foreground results can no longer report or consume an exit whose
-  write failed, and an interrupted wait cannot report `exited`. A failed
-  terminal write still fails the record and leaves its completion notice owed.
-  `kill` reports a task that exited by itself as already exited, not killed.
-- Stop signalling a managed-Bash process group after it has been observed gone, so a
-  slow records write (or a failed one) can never send TERM/KILL to a reused group id.
-  Aborting a foreground command now returns once the process is stopped and its
-  output flushed instead of waiting for the records write, and a result consumption
-  queued behind a write that fails the record is no longer applied to it.
-- Make managed-Bash record changes queue-owned transitions: detach, background, ping
-  claims, consumption, clear, runtime-error repair and terminal exits are written as a
-  prospective snapshot in their own slot and applied to memory only after the write
-  lands. A failed write can no longer leave a detach, clear or background change in the
-  file via another task's terminal write, and a failure that claims a task first
-  prevents its clean exit from being written. A `ps` query already in flight no longer
-  fails a task whose group was observed gone.
-- Keep a managed-Bash row's durable execution fault when a restart recovers it as a
-  running row: lost ownership is added once to the original error instead of replacing it.
-- Fail a managed-Bash task at the moment its ping-claim or release write fails, ahead of the
-  next queued write, so a clean exit can no longer be published after a failed ping write.
+- Publish managed-Bash exits before reporting or consuming them (#562). Failed
+  writes leave no tentative metadata; task-fatal failures are claimed inside the
+  publication slot before the next change can stage, regardless of caller wrappers.
+- Keep physical stop/output drain independent of metadata repair, including output
+  failures during abort. Never signal a process group after observing it gone;
+  `kill` distinguishes a natural exit from a killed task.
+- Preserve exit status and execution faults in Bash tool results and notices.
+  Missing, unreadable and non-regular logs are not empty success and do not consume
+  results. Terminal waits with infrastructure faults return explicit error results.
+- Keep `/ps:logs` non-consuming even during cold recovery. Share recovery retries
+  across concurrent commands; preserve prior faults and never signal stored PIDs.
 
 ### Changed
-- Give serialized Bash publication its own immutable snapshot. Live handles,
-  output progress and fault evidence cannot be replaced by a metadata write;
-  task-fatal write failures are claimed inside their queue slot, independent
-  of callers' promise chains.
-- Load `/ps` metadata without opening task logs. The TUI reads only the selected
-  preview, one at a time; selection, refresh and disposal fence stale results.
-- Give bounded Bash log reads an explicit available/missing/unreadable result;
-  reject non-regular files without blocking on FIFOs. Keep benign missing-preview
-  handling in the non-consuming UI reader.
-- Stop rewriting the whole managed-Bash records file for every output chunk. The
-  file is written at lifecycle transitions only, cutting metadata writes in a 1 MiB
-  output with 128 retained tasks from ~2.2-2.6 MB (22-26 writes) to ~0.2 MB (2 writes).
-  `log_bytes` on disk is now the size at the last lifecycle write; logs are
-  unchanged. A records-store fault during output surfaces at the next lifecycle
-  write instead of the next chunk.
+- Separate published Bash snapshots from live handles, progress and fault evidence.
+  One stage/write/adopt owner replaces mixed mutable records and patch/commit copies.
+- Write Bash records at lifecycle transitions, not per output chunk. Persisted
+  `log_bytes` is the last lifecycle snapshot; logs remain authoritative. Records-store
+  faults during output surface at the next lifecycle write, not the next chunk.
+- Load `/ps` metadata without opening logs. Read only the selected TUI preview,
+  one at a time, discarding results after selection changes, refresh or disposal.
+- Use explicit result kinds and log availability for model-facing Bash retrieval;
+  retain separate, non-consuming UI preview semantics.
 
 ## [0.9.5] - 2026-10-12
 

@@ -103,26 +103,28 @@ Shell launch propagates its own Bash ID in `_MERIDIAN_PI_BASH_ID`, and its
 durable record retains the enclosing originating Bash ID. Canonical child
 spawn rows carry parent/origin membership; no origin sidecar is produced.
 Terminal tracked background Bash rows are durable result obligations. Their persisted
-`notification_consumed_at_ms` consumes a terminal wait or a terminal `output`
-read (execution failures excluded); exact custom-message admission consumes an
+`notification_consumed_at_ms` consumes a terminal wait or `output` result with
+available logs and its outcome included (execution failures excluded); exact custom-message admission consumes an
 unattended notice. Sending or queueing is not consumption. Wait blocks up to the
 55-minute bash timeout with no model-chosen limit: a short wait let the model
 read results around consumption and receive the same completion again. The
 tool abort signal (Esc) ends a wait early; an interrupted or timed-out wait
 returned no result, so it consumes nothing. Consumption is gated on the status
 the call returned, not the live record.
-Managed-bash splits a record into committed coordination metadata and private
-evidence. Committed metadata is `status`/exit fields of a published exit,
-`is_background`, `is_tracked`, ping claims and releases, `notification_consumed_at_ms`,
-row removal, and clearing `runtime_error`. Each changes through one queue-owned
-transition: it is staged when its serialized slot starts, written as a prospective
-snapshot (committed memory plus that one change), and applied to memory only if the
-write landed. A failed write leaves nothing to roll back, and no other slot can
-publish a change early. Private evidence is never retracted and may ride any
-snapshot: the live task handle, termination reason, in-memory `log_bytes`
-progress, creation of a row for a live group, and failure evidence (`execution_error`,
-the failure kill, `runtime_error`). So memory is not "all last published"; the coordination
-fields are.
+`BashPublication` owns the immutable published snapshot and its serialized
+stage → write → adopt path. Each slot stages against the previous adoption plus
+current evidence, writes one prospective value, and adopts that same value only
+on success. Failed writes leave no tentative metadata to undo. There is no second
+patch/commit description or serialization blacklist.
+
+Live `Execution` objects separately own handles, output queues, progress, creation
+proposals and first-fault evidence. A snapshot swap cannot replace them. Readers
+see published rows with live progress and negative fault evidence overlaid; those
+facts can also ride the next lifecycle snapshot. Positive terminal results,
+background/tracking changes, ping claims, consumption and removal still require
+publication. A missing, unreadable or non-regular log is unavailable evidence, not
+valid empty output. UI inspection stays non-consuming; `/ps` loads metadata only
+and owns one bounded selected-row preview read at a time.
 
 Terminal publication is such a transition. Until it lands the record stays
 `running` and owned, so list, wait, output, kill, and foreground results never
@@ -131,16 +133,20 @@ returns running. Its linearization point is staging: success is staged only if n
 failure has claimed the record, so an earlier failure prevents a clean terminal
 snapshot; one claimed afterwards is ordered after it and repaired by the failure's
 own write (a crash inside that rename window can still recover the success).
-A failed lifecycle write claims its record at the await that observes it, which runs before
-the next queued slot stages; supervision left to a later outer catch would lose that order. A failed terminal write
-fails the record (`killed` plus `execution_error`), rejects waiters, and leaves the
-notice owed. A consumption is staged in its own slot and is skipped if the record
+A task-fatal stage/write failure claims its record inside the failing publication
+slot, before any successor can stage. Caller promise depth cannot change that
+order. Claiming returns no completion promise: cleanup/repair run separately, so
+output drain and physical interruption cannot inherit a metadata wait. Detach,
+consumption and clear failures instead remain caller-recoverable errors. A failed terminal write
+fails the record (`killed` plus `execution_error`), returns a failed wait result,
+and leaves the notice owed. A consumption is staged in its own slot and is skipped if the record
 has failed meanwhile. `kill` reports the published outcome, so a task that exited by
 itself is not "killed". Group-signalling authority ends where physical ownership
 does: once `ShellTask` observes its group gone (including for ps queries already in
 flight) it never signals or probes it again, however long publication takes. Interrupting
 a foreground command returns after the physical stop and flushed output, not after
-publication: the row stays `running` until the write lands, then publishes as `killed`.
+publication. A clean interruption publishes as `killed`; a fault overlay may show
+negative evidence before its repair write lands.
 Consumption is persisted before the terminal wait or output result returns. If it
 fails the marker was never applied and the wait returns an error, leaving the
 completion eligible for notification.

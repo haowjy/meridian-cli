@@ -12,10 +12,11 @@ import {
   resolveDeliveryReceiptsPath,
 } from "../../shared/pi_state_paths";
 import { isTerminalBashStatus, parseBashRecordsFile, type BashRecord, type BashStatus } from "../../shared/schemas";
-import { BashLogStore, type BashLogPaths } from "./bash_log_store";
+import { bashOutcome, type BashOutcome, type TaskOutcome } from "../../shared/task_outcome";
+import { BashLogStore, type BashLogPaths, type LogReadResult } from "./bash_log_store";
 import { BashPublication, changeRow, withoutRows, withRow, withRuntimeError, type Published } from "./bash_publication";
 import { ShellTask } from "./shell_task";
-import { interruptedWait, waitForSpawn } from "./spawn_wait";
+import { waitForSpawn } from "./spawn_wait";
 
 export type BashParams = {
   command: string;
@@ -36,10 +37,10 @@ export type UserBashExecOptions = {
 };
 
 export type BashExecuteResult =
-  | { bash_id: string; status: "started" }
-  | { bash_id: string; status: "backgrounded"; message: string }
-  | { stdout: string; stderr: string; exit_code: number | null }
-  | { error: string };
+  | { kind: "start"; bash_id: string; status: "started" }
+  | { kind: "start"; bash_id: string; status: "backgrounded"; message: string }
+  | BashForegroundResult
+  | { kind: "error"; error: string };
 
 /** Live state of one task: handles, output progress and its first fault. Owned by execution, never
  * serialized and never replaced by a publication. The records file holds only `Published` rows. */
@@ -75,50 +76,64 @@ export type BashListRow = BashRecord & {
   duration_secs: number;
 };
 
-export type BashOutputResult = {
+type DeliveredLog =
+  | { log_state: "available"; output: string; truncated: boolean }
+  | { log_state: "missing" | "unreadable"; output: ""; truncated: false; log_error: string };
+
+type DeliveredStream =
+  | { state: "available"; text: string; truncated: boolean }
+  | { state: "missing" | "unreadable"; text: ""; truncated: false; error: string };
+
+export type BashForegroundResult = TaskOutcome & {
+  kind: "foreground";
+  exit_code: number | null;
+  stdout: string;
+  stderr: string;
+  stdout_log: DeliveredStream;
+  stderr_log: DeliveredStream;
+};
+
+export type BashOutputResult = BashOutcome & DeliveredLog & {
+  kind: "output";
   bash_id: string;
-  output: string;
-  truncated: boolean;
-  error?: string;
 };
 
 export type BashKillResult = {
+  kind: "kill";
   bash_id: string;
   killed: boolean;
   message: string;
 };
 
-export type BashWaitResult = {
+type WaitFields = TaskOutcome & {
+  kind: "wait";
   bash_id: string;
-  status: string;
-  exit_code?: number | null;
   duration_secs?: number;
-  output?: string;
   message?: string;
-  error?: string;
   checkpoint?: boolean;
   pending_ids?: string[];
 };
 
+export type BashWaitResult =
+  | (WaitFields & { source: "bash"; delivery: "pending"; status: "running"; exit_code: null })
+  | (WaitFields & { source: "bash"; delivery: "result" } & DeliveredLog)
+  | (WaitFields & { source: "spawn"; delivery: "result" | "pending"; output: string });
+
 export type BashDetachResult = {
+  kind: "detach";
   bash_id: string;
   detached: boolean;
   message: string;
 };
 
 export type BashManageResult =
-  | { rows: BashListRow[] }
+  | { kind: "list"; rows: BashListRow[] }
   | BashOutputResult
   | BashKillResult
   | BashWaitResult
   | BashDetachResult
-  | { error: string };
-
-type ExecResult = {
-  stdout: string;
-  stderr: string;
-  exit_code: number;
-};
+  | { kind: "inspection"; bash_id: string; output: string; truncated: boolean; error?: string }
+  | { kind: "error"; error: string };
 
 const DEFAULT_TIMEOUT_MIN = 55;
 // Wait as long as a foreground command may run; a short wait lets the model fetch
@@ -172,7 +187,7 @@ export class BashRuntime {
 
     if (params.background === true) {
       await this.publishBackground(exec);
-      return { bash_id: exec.id, status: "started" };
+      return { kind: "start", bash_id: exec.id, status: "started" };
     }
 
     this.hooks.onForegroundStart?.(exec.id);
@@ -189,16 +204,17 @@ export class BashRuntime {
       };
       exec.foregroundFinish = finish;
       const abort = (): void => {
-        void this.stopForeground(exec).then(async () =>
-          finish({ stdout: await this.readLog(exec, LOG_TAIL_BYTES), stderr: "[command aborted]", exit_code: -1 }))
-          .catch((error) => finish({ error: errorText(error) }));
+        void this.stopForeground(exec).then(async () => finish(await this.readSplitLog(exec, {
+          status: "aborted", exit_code: -1, error: "command aborted",
+        }))).catch((error) => finish({ kind: "error", error: errorText(error) }));
       };
       const timeout = setTimeout(() => {
         void this.publishBackground(exec).then(() => finish({
+          kind: "start",
           bash_id: exec.id,
           status: "backgrounded",
           message: `Command exceeded timeout_min=${timeoutMin} and was backgrounded as ${exec.id}. Use /ps to manage it.`,
-        }), (error) => finish({ error: errorText(error) }));
+        }), (error) => finish({ kind: "error", error: errorText(error) }));
       }, timeoutMin * 60_000);
 
       if (signal?.aborted) {
@@ -210,7 +226,11 @@ export class BashRuntime {
         if (settled) return;
         const output = await this.readSplitLog(exec);
         finish(output);
-      }).catch((error) => finish({ error: errorText(error) }));
+      }).catch(async (error) => {
+        if (settled) return;
+        const record = this.view(exec);
+        finish(await this.readSplitLog(exec, { ...bashOutcome(record), error: record.execution_error ?? errorText(error) }));
+      });
     });
   }
 
@@ -274,6 +294,7 @@ export class BashRuntime {
 
     await this.publishBackground(foreground);
     foreground.foregroundFinish?.({
+      kind: "start",
       bash_id: foreground.id,
       status: "backgrounded",
       message: USER_BASH_PANEL_BACKGROUND_MSG,
@@ -334,12 +355,12 @@ export class BashRuntime {
     await this.prepare();
     const action = params.action;
     if (action === "list") {
-      return { rows: this.list(params.include_completed === true) };
+      return { kind: "list", rows: this.list(params.include_completed === true) };
     }
 
     const id = params.bash_id?.trim();
     if (!id) {
-      return { error: `bash_id is required for action '${action}'` };
+      return { kind: "error", error: `bash_id is required for action '${action}'` };
     }
 
     const kind = classifyWorkId(id);
@@ -347,30 +368,25 @@ export class BashRuntime {
       return await this.manageSpawn(id, params, signal);
     }
     if (kind !== "bash") {
-      return { error: `unsupported id: ${id}` };
+      return { kind: "error", error: `unsupported id: ${id}` };
     }
 
     const exec = this.executions.get(id);
     if (!exec) {
-      return { error: `bash_id not found: ${id}` };
+      return { kind: "error", error: `bash_id not found: ${id}` };
     }
 
     switch (action) {
       case "output": {
         // A terminal status is published after queued output, so a read that starts
         // after it is final; one that races completion has not seen the result.
-        const wasTerminal = isTerminalBashStatus(this.view(exec).status);
-        const output = await this.readLog(exec, LOG_TAIL_BYTES);
-        await this.consumeDeliveredResult(exec, wasTerminal);
-        return { bash_id: id, output, truncated: true };
+        const { outcome, log } = await this.readOutcomeLog(exec, LOG_TAIL_BYTES, true);
+        return { kind: "output", bash_id: id, ...outcome, ...deliveredLog(log) };
       }
       case "kill":
         return await this.killBash(id, "killed");
       case "wait": {
-        const result = await this.waitBash(exec, signal);
-        // Gate on what was returned: the record may turn terminal after a "running" result.
-        await this.consumeDeliveredResult(exec, isTerminalBashStatus(result.status));
-        return result;
+        return await this.waitBash(exec, signal);
       }
       case "detach":
         // Not task-fatal: a failed release is the caller's error and leaves the task running.
@@ -378,9 +394,9 @@ export class BashRuntime {
           stage: changeRow(id, () => ({ is_tracked: false })),
           adopted: () => this.clearPing(exec),
         });
-        return { bash_id: id, detached: true, message: `${id} detached from quiescence tracking.` };
+        return { kind: "detach", bash_id: id, detached: true, message: `${id} detached from quiescence tracking.` };
       default:
-        return { error: `unsupported action: ${String(action)}` };
+        return { kind: "error", error: `unsupported action: ${String(action)}` };
     }
   }
 
@@ -446,12 +462,12 @@ export class BashRuntime {
     for (const stream of ["stdout", "stderr"] as const) {
       const output = child[stream];
       const decoder = new StringDecoder("utf-8");
-      output?.on("error", (error) => { void this.claim(exec, error); });
+      output?.on("error", (error) => this.claim(exec, error));
       output?.on("data", (chunk: string | Buffer) => {
         output.pause();
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf-8");
         try { onData?.(buffer); }
-        catch (error) { void this.claim(exec, error); }
+        catch (error) { this.claim(exec, error); }
         void this.queueOutput(exec, decoder.write(buffer), stream).then(() => output.resume());
       });
       output?.once("end", () => { const tail = decoder.end(); if (tail) void this.queueOutput(exec, tail, stream); });
@@ -498,28 +514,28 @@ export class BashRuntime {
   private async killBash(bashId: string, reason: "killed" | "aborted"): Promise<BashKillResult> {
     const exec = this.executions.get(bashId);
     if (!exec) {
-      return { bash_id: bashId, killed: false, message: `bash_id not found: ${bashId}` };
+      return { kind: "kill", bash_id: bashId, killed: false, message: `bash_id not found: ${bashId}` };
     }
     const before = this.view(exec).status;
     if (before !== "running") {
-      return { bash_id: bashId, killed: false, message: `${bashId} is already ${before}` };
+      return { kind: "kill", bash_id: bashId, killed: false, message: `${bashId} is already ${before}` };
     }
     if (!exec.task) {
-      return { bash_id: bashId, killed: false, message: `${bashId}: ownership lost after restart; no PID was signalled. Inspect the process manually or use bash_manage detach to release tracking.` };
+      return { kind: "kill", bash_id: bashId, killed: false, message: `${bashId}: ownership lost after restart; no PID was signalled. Inspect the process manually or use bash_manage detach to release tracking.` };
     }
     await this.stopTask(exec, exec.task);
     await exec.finished;
     // Report the published outcome: the task may have exited on its own just before the signal.
     const { status } = this.view(exec);
-    if (status !== "killed") return { bash_id: bashId, killed: false, message: `${bashId} is already ${status}` };
-    return { bash_id: bashId, killed: true, message: `${bashId} killed` };
+    if (status !== "killed") return { kind: "kill", bash_id: bashId, killed: false, message: `${bashId} is already ${status}` };
+    return { kind: "kill", bash_id: bashId, killed: true, message: `${bashId} killed` };
   }
 
   /** Stop the owned group. Resolves once it is physically gone, before any publication. */
   private async stopTask(exec: Execution, task: ShellTask): Promise<void> {
     exec.terminationReason = "killed";
     try { await task.terminate(); }
-    catch (error) { await this.claim(exec, error); throw error; }
+    catch (error) { this.claim(exec, error); throw error; }
   }
 
   /** Caller interruption of a foreground command: wait for the physical stop and its flushed
@@ -533,8 +549,8 @@ export class BashRuntime {
   }
 
   private async waitBash(exec: Execution, signal?: AbortSignal): Promise<BashWaitResult> {
-    if (this.view(exec).status === "running" && !exec.task) throw new Error(`${exec.id}: ownership_lost after restart; inspect manually or detach to release tracking`);
-    if (this.view(exec).status === "running") {
+    const before = this.view(exec);
+    if (before.status === "running" && exec.task && !before.execution_error) {
       await new Promise<void>((resolve) => {
         const done = (): void => { clearTimeout(timer); signal?.removeEventListener("abort", done); resolve(); };
         const timer = setTimeout(done, WAIT_TIMEOUT_MIN * 60_000);
@@ -544,21 +560,32 @@ export class BashRuntime {
       });
     }
     const record = this.view(exec);
-    if (record.execution_error) throw new Error(record.execution_error);
     if (record.status === "running") {
-      if (signal?.aborted) return interruptedWait(exec.id);
+      if (signal?.aborted && !record.execution_error) return interruptedBashWait(exec.id);
+      if (record.execution_error) {
+        const { outcome, log } = await this.readOutcomeLog(exec, 2 * 1024, false);
+        return { kind: "wait", source: "bash", delivery: "result", bash_id: exec.id,
+          duration_secs: durationSecs(record), ...outcome, ...deliveredLog(log) };
+      }
       return {
+        kind: "wait",
+        source: "bash",
+        delivery: "pending",
         bash_id: exec.id,
         status: "running",
+        exit_code: null,
         message: `Still running after ${WAIT_TIMEOUT_MIN} minutes. Call bash_manage(action='wait') again, or bash_manage(action='kill') to terminate. Reading its output any other way leaves the result unconsumed, and a completion notice will follow.`,
       };
     }
+    const { outcome, log } = await this.readOutcomeLog(exec, 2 * 1024, true);
     return {
+      kind: "wait",
+      source: "bash",
+      delivery: "result",
       bash_id: exec.id,
-      status: record.status,
-      exit_code: record.exit_code,
       duration_secs: durationSecs(record),
-      output: (await this.readLog(exec, 2 * 1024)) + (this.view(exec).execution_error ? `\n[execution failed: ${this.view(exec).execution_error}]` : ""),
+      ...outcome,
+      ...deliveredLog(log),
     };
   }
 
@@ -599,33 +626,62 @@ export class BashRuntime {
     switch (params.action) {
       case "output": {
         const result = await runMeridianCommand(["session", "log", spawnId, "--tail", "20"], 15_000);
-        if (result.error) return { bash_id: spawnId, output: result.stderr || result.error, truncated: false, error: result.error };
-        return { bash_id: spawnId, output: result.stdout || result.stderr, truncated: false };
+        if (result.error) return { kind: "inspection", bash_id: spawnId, output: result.stderr || result.error, truncated: false, error: result.error };
+        return { kind: "inspection", bash_id: spawnId, output: result.stdout || result.stderr, truncated: false };
       }
       case "kill": {
         const result = await runMeridianCommand(["spawn", "cancel", spawnId], 15_000);
-        if (result.error) return { bash_id: spawnId, killed: false, message: result.stderr || result.error };
-        return { bash_id: spawnId, killed: result.exitCode === 0, message: result.stdout || result.stderr };
+        if (result.error) return { kind: "kill", bash_id: spawnId, killed: false, message: result.stderr || result.error };
+        return { kind: "kill", bash_id: spawnId, killed: result.exitCode === 0, message: result.stdout || result.stderr };
       }
       case "wait":
         return waitForSpawn(spawnId, WAIT_TIMEOUT_MIN, signal);
       case "detach":
-        return { bash_id: spawnId, detached: false, message: "detach only applies to b-* bash records" };
+        return { kind: "detach", bash_id: spawnId, detached: false, message: "detach only applies to b-* bash records" };
       default:
-        return { error: `unsupported p-* action: ${params.action}` };
+        return { kind: "error", error: `unsupported p-* action: ${params.action}` };
     }
   }
 
-  private async readSplitLog(exec: Execution): Promise<ExecResult> {
+  private async readSplitLog(exec: Execution, supplied?: TaskOutcome): Promise<BashForegroundResult> {
+    const observed = supplied ?? bashOutcome(this.view(exec));
+    const [stdout, stderr] = await Promise.all([
+      this.readLog(exec, LOG_TAIL_BYTES, "stdout"),
+      this.readLog(exec, LOG_TAIL_BYTES, "stderr"),
+    ]);
+    const current = this.view(exec);
+    const outcome = current.execution_error ? bashOutcome(current) : observed;
     return {
-      stdout: await this.readLog(exec, LOG_TAIL_BYTES, "stdout"),
-      stderr: await this.readLog(exec, LOG_TAIL_BYTES, "stderr"),
-      exit_code: this.view(exec).exit_code ?? -1,
+      kind: "foreground",
+      ...outcome,
+      exit_code: outcome.exit_code ?? -1,
+      stdout: logText(stdout),
+      stderr: [logText(stderr), supplied?.status === "aborted" ? "[command aborted]" : ""].filter(Boolean).join("\n"),
+      stdout_log: deliveredStream(stdout),
+      stderr_log: deliveredStream(stderr),
     };
   }
 
-  private async readLog(exec: Execution, maxBytes: number, stream: "combined" | "stdout" | "stderr" = "combined"): Promise<string> {
-    return this.logStore.read(exec.logPaths, stream, maxBytes);
+  private async readLog(exec: Execution, maxBytes: number, stream: "combined" | "stdout" | "stderr" = "combined"): Promise<LogReadResult> {
+    return this.logStore.readResult(exec.logPaths, stream, maxBytes);
+  }
+
+  /** Capture the outcome before I/O. Ordinary completion that races the read is not delivered;
+   * negative fault evidence that appears during either the read or consumption is revalidated. */
+  private async readOutcomeLog(exec: Execution, maxBytes: number, consume: boolean): Promise<{ outcome: BashOutcome; log: LogReadResult }> {
+    const observed = bashOutcome(this.view(exec));
+    const log = await this.readLog(exec, maxBytes);
+    let outcome = this.outcomeWithNewFault(exec, observed);
+    if (consume && log.kind === "available" && isTerminalBashStatus(observed.status) && !outcome.error) {
+      await this.consumeDeliveredResult(exec, observed);
+      outcome = this.outcomeWithNewFault(exec, observed);
+    }
+    return { outcome, log };
+  }
+
+  private outcomeWithNewFault(exec: Execution, observed: BashOutcome): BashOutcome {
+    const current = this.view(exec);
+    return current.execution_error ? bashOutcome(current) : observed;
   }
 
   /** The row as readers see it: published (or proposed) metadata with live progress and the
@@ -637,12 +693,16 @@ export class BashRuntime {
   private project(row: Readonly<BashRecord>, exec: Execution | undefined = this.executions.get(row.bash_id)): BashRecord {
     if (!exec) return row;
     const { fault } = exec;
-    return {
+    const projected: BashRecord = {
       ...row,
       log_bytes: exec.logBytes,
       ...(fault ? { execution_error: fault.error } : {}),
       ...(fault?.endedAt != null ? { status: "killed" as const, exit_code: -1, ended_at_ms: fault.endedAt } : {}),
     };
+    // Infrastructure failure is a new owed result even if an ordinary terminal outcome was
+    // acknowledged immediately before the fault. Every repair publication carries that policy.
+    if (fault) delete projected.notification_consumed_at_ms;
+    return projected;
   }
 
   /** What every publication stages against: the published value with live evidence merged in.
@@ -660,7 +720,7 @@ export class BashRuntime {
     stage: (base: Published) => Published | null,
     adopted?: () => void,
   ): Promise<boolean> {
-    try { return await this.publication.publish({ stage, adopted, fatal: (error) => { void this.claim(exec, error); } }); }
+    try { return await this.publication.publish({ stage, adopted, fatal: (error) => this.claim(exec, error) }); }
     catch (error) { await exec.repair; throw error; }
   }
 
@@ -680,11 +740,14 @@ export class BashRuntime {
   }
 
   private async ensureReady(): Promise<void> {
-    try { await this.ready; }
+    const observed = this.ready;
+    try { await observed; }
     catch {
-      // An operator can repair unreadable cold-start evidence without needing
-      // to abandon the process. Never replace it with an empty map.
-      this.ready = this.recoverRecords();
+      // An operator can repair unreadable cold-start evidence without needing to abandon the
+      // process. Never replace it with an empty map. Recovery publishes the whole recovered value,
+      // so exactly one may be in flight: only the first caller to see this failure restarts it and
+      // later callers join that attempt; a stale second recovery could overwrite a newer publication.
+      if (this.ready === observed) this.ready = this.recoverRecords();
       await this.ready;
     }
   }
@@ -713,10 +776,10 @@ export class BashRuntime {
   }
 
   /** Claim a task-fatal fault, synchronously: the first fault owns the outcome and is visible at
-   * once. Cleanup and repair publication run outside whatever slot claimed it, and the returned
-   * promise is for callers that want to observe them, never for ordering. */
-  private claim(exec: Execution, error: unknown): Promise<void> {
-    if (exec.fault || this.view(exec).execution_error) return exec.repair ?? Promise.resolve();
+   * once. It returns no completion promise: output drain and physical stop must not inherit
+   * repair's metadata dependency. Publication observers use `finished` or `repair` explicitly. */
+  private claim(exec: Execution, error: unknown): void {
+    if (exec.fault || this.view(exec).execution_error) return;
     const fault = { error: errorText(error), endedAt: null as number | null };
     exec.fault = fault;
     exec.terminationReason = "killed";
@@ -726,7 +789,7 @@ export class BashRuntime {
     // cleanup to paused read buffers or a failed output queue.
     exec.task?.child.stdout?.destroy();
     exec.task?.child.stderr?.destroy();
-    return exec.repair = Promise.resolve().then(() => this.repair(exec, fault));
+    exec.repair = Promise.resolve().then(() => this.repair(exec, fault));
   }
 
   private async repair(exec: Execution, fault: { error: string; endedAt: number | null }): Promise<void> {
@@ -748,14 +811,38 @@ export class BashRuntime {
 
   /** When the model received a terminal result, its completion notice would repeat it.
    * Execution failures stay owed: their notice carries the error the log lacks. */
-  private async consumeDeliveredResult(exec: Execution, deliveredTerminal: boolean): Promise<void> {
-    if (!deliveredTerminal) return;
+  private async consumeDeliveredResult(exec: Execution, delivered: BashOutcome): Promise<void> {
     // Not task-fatal. Staged in the slot: a write queued ahead of this one can fail the record meanwhile.
     await this.publication.publish({
-      stage: changeRow(exec.id, (row) =>
-        row.execution_error || this.executions.get(exec.id) !== exec ? null : { notification_consumed_at_ms: Date.now() }),
+      stage: changeRow(exec.id, (row) => {
+        const current = bashOutcome(row);
+        return row.execution_error || this.executions.get(exec.id) !== exec
+          || current.status !== delivered.status || current.exit_code !== delivered.exit_code
+          ? null : { notification_consumed_at_ms: Date.now() };
+      }),
     });
   }
+}
+
+function interruptedBashWait(id: string): BashWaitResult {
+  return { kind: "wait", source: "bash", delivery: "pending", bash_id: id, status: "running", exit_code: null,
+    message: `Wait for ${id} interrupted while it was still running. Wait again to collect the result.` };
+}
+
+function deliveredLog(result: LogReadResult): DeliveredLog {
+  return result.kind === "available"
+    ? { log_state: "available", output: result.text, truncated: result.truncated }
+    : { log_state: result.kind, output: "", truncated: false, log_error: result.error };
+}
+
+function deliveredStream(result: LogReadResult): DeliveredStream {
+  return result.kind === "available"
+    ? { state: "available", text: result.text, truncated: result.truncated }
+    : { state: result.kind, text: "", truncated: false, error: result.error };
+}
+
+function logText(result: LogReadResult): string {
+  return result.kind === "available" ? result.text : "";
 }
 
 function taskPingIntervalMs(): number {

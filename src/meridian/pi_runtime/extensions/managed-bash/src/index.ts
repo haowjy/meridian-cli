@@ -12,6 +12,7 @@ import {
 } from "../../shared/selectable_panel";
 import { formatDurationSecs, renderTable } from "../../shared/ui";
 import type { BashRecord } from "../../shared/schemas";
+import { describeOutcome, outcomeIsError, type TaskOutcome } from "../../shared/task_outcome";
 import {
   BashRuntime,
   type BashExecuteResult,
@@ -26,34 +27,50 @@ const FOREGROUND_BASH_HINT_TEXT = "/ps to manage tasks · /ps:b to run in backgr
 
 type FormattedToolResult = { text: string; isError: boolean };
 type ManagedBashToolResult = BashExecuteResult | BashManageResult;
-const FAILED_STATUSES = new Set(["failed", "cancelled", "timed_out", "killed", "error"]);
 
 function formatToolResult(result: ManagedBashToolResult): FormattedToolResult {
-  if ("stdout" in result) {
-    const output = result.stdout + result.stderr;
-    if (result.exit_code === 0) return { text: output, isError: false };
-    const failure = `Command failed with exit code ${result.exit_code ?? "unknown"}.`;
-    return { text: [output, failure].filter(Boolean).join("\n"), isError: true };
+  switch (result.kind) {
+    case "foreground": {
+      const id = "command";
+      const logErrors = [result.stdout_log, result.stderr_log]
+        .flatMap((log) => log.state === "available" ? [] : [log.error]);
+      return formatOutcome(id, result, [result.stdout, result.stderr, ...logErrors], logErrors.length > 0);
+    }
+    case "start":
+      return { text: [`${result.bash_id}: ${result.status}`, result.status === "backgrounded" ? result.message : ""].filter(Boolean).join("\n"), isError: false };
+    case "list":
+      return { text: formatRows(result.rows), isError: result.rows.some((row) => Boolean(row.execution_error)) };
+    case "output":
+      return formatOutcome(result.bash_id, result, [result.output, result.log_state === "available" ? "" : result.log_error], result.log_state !== "available");
+    case "inspection":
+      return { text: [result.output, result.error ? `Error: ${result.error}` : ""].filter(Boolean).join("\n"), isError: Boolean(result.error) };
+    case "wait": {
+      const bashResult = result.source === "bash" && result.delivery === "result" ? result : undefined;
+      const output = result.source === "spawn" ? result.output : bashResult?.output ?? "";
+      return formatOutcome(result.bash_id, result, [output, result.message ?? "",
+        bashResult && bashResult.log_state !== "available" ? bashResult.log_error : ""],
+      bashResult?.log_state !== undefined && bashResult.log_state !== "available");
+    }
+    case "kill":
+      return { text: result.message, isError: !result.killed };
+    case "detach":
+      return { text: result.message, isError: !result.detached };
+    case "error":
+      return { text: `Error: ${result.error}`, isError: true };
+    default:
+      return assertNever(result);
   }
-  if ("rows" in result) {
-    return { text: formatRows(result.rows), isError: result.rows.some((row) => Boolean(row.execution_error)) };
-  }
-  if ("killed" in result) return { text: result.message, isError: !result.killed };
-  if ("detached" in result) return { text: result.message, isError: !result.detached };
+}
 
-  const error = "error" in result && result.error ? `Error: ${result.error}` : "";
-  if ("status" in result) {
-    const exitCode = "exit_code" in result ? result.exit_code : null;
-    const summary = `${result.bash_id}: ${result.status}${exitCode == null ? "" : ` (exit code ${exitCode})`}`;
-    return {
-      text: [summary, "output" in result ? result.output : "", "message" in result ? result.message : "", error]
-        .filter(Boolean).join("\n"),
-      isError: Boolean(error) || FAILED_STATUSES.has(result.status)
-        || (result.status === "exited" && exitCode != null && exitCode !== 0),
-    };
-  }
-  if ("output" in result) return { text: [result.output, error].filter(Boolean).join("\n"), isError: Boolean(error) };
-  return { text: error, isError: true };
+function formatOutcome(id: string, outcome: TaskOutcome, details: string[], forceError = false): FormattedToolResult {
+  return {
+    text: [describeOutcome(id, outcome), ...details, outcome.error ? `Error: ${outcome.error}` : ""].filter(Boolean).join("\n"),
+    isError: forceError || outcomeIsError(outcome),
+  };
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled managed Bash result: ${JSON.stringify(value)}`);
 }
 
 function formatRows(rows: BashListRow[]): string {
@@ -349,14 +366,14 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
     description: "Show a Meridian-managed bash task log tail.",
     handler: async (args, ctx) => {
       const bashId = args.trim();
+      // Recovery is asynchronous. Await metadata before resolving the row, and only use the
+      // non-consuming inspection reader: a slash command never acknowledges model delivery.
+      const row = (await runtime.rows()).find((candidate) => candidate.bash_id === bashId);
       const loadText = async (): Promise<string> => {
-        const row = runtime.list(true).find((candidate) => candidate.bash_id === bashId);
         if (row) return readInspectableLog(row);
-        const result = await runtime.manage({ action: "output", bash_id: bashId });
-        return "output" in result && typeof result.output === "string" ? result.output : formatToolResult(result).text;
+        return `Bash task not found: ${bashId}`;
       };
       if (hasTaskPanelUI(ctx)) {
-        const row = runtime.list(true).find((candidate) => candidate.bash_id === bashId);
         await openLogOverlay(ctx as PanelCommandContext, {
           title: `Bash log ${bashId}`,
           initialFollow: row?.status === "running",

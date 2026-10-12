@@ -46,12 +46,14 @@ export async function waitForSpawn(spawnId: string, timeoutMin: number, signal?:
 
 /** An interrupted wait delivered nothing, so the result stays owed to the watcher. */
 export function interruptedWait(id: string): BashWaitResult {
-  return { bash_id: id, status: "running", message: `Wait for ${id} interrupted while it was still running. Wait again to collect the result.` };
+  return { kind: "wait", source: "spawn", delivery: "pending", bash_id: id, status: "running", exit_code: null, output: "",
+    message: `Wait for ${id} interrupted while it was still running. Wait again to collect the result.` };
 }
 
 function parseSpawnWaitResult(spawnId: string, result: CommandResult): BashWaitResult {
   const fault = (reason: string): BashWaitResult => ({
-    bash_id: spawnId, status: "error", error: `spawn wait query failed for ${spawnId}: ${reason}`,
+    kind: "wait", source: "spawn", delivery: "result", bash_id: spawnId, status: "error", exit_code: null, output: "",
+    error: `spawn wait query failed for ${spawnId}: ${reason}`,
   });
   if (result.error) return fault(result.error);
   if (result.exitCode === null) return fault("CLI ended without an exit code");
@@ -76,6 +78,9 @@ function parseSpawnWaitResult(spawnId: string, result: CommandResult): BashWaitR
   }
 
   return {
+    kind: "wait",
+    source: "spawn",
+    delivery: pending ? "pending" : "result",
     bash_id: spawnId,
     status: target.status,
     exit_code: target.exit_code ?? null,

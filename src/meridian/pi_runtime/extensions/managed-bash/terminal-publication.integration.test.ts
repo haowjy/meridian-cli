@@ -13,13 +13,17 @@ type Held = { when: (file: BashRecordsFile) => boolean; hit: (file: BashRecordsF
 // Records-file renames are held at the durable boundary, in FIFO order, by predicate on the
 // payload about to be published: until a held rename runs, the file keeps its previous content.
 // Every attempted payload is logged.
-const gate = vi.hoisted(() => ({ holds: [] as Held[], failAlways: false, log: [] as BashRecordsFile[] }));
+const gate = vi.hoisted(() => ({ holds: [] as Held[], failAlways: false, failAppendPath: null as string | null, log: [] as BashRecordsFile[] }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs/promises")>();
   const eio = (): Error => Object.assign(new Error("EIO: injected records write failure"), { code: "EIO" });
   return {
     ...fs,
+    writeFile: async (...args: Parameters<typeof fs.writeFile>) => {
+      if (String(args[0]) === gate.failAppendPath) throw new Error("EIO: injected log append failure");
+      return fs.writeFile(...args);
+    },
     rename: async (from: string, to: string) => {
       if (String(to).endsWith("bash-records.json")) {
         const file = JSON.parse(await fs.readFile(from, "utf8")) as BashRecordsFile;
@@ -111,7 +115,7 @@ async function withRuntime(body: (h: Harness) => Promise<void>): Promise<void> {
   gate.log.length = 0;
   try { await body(harness(root, runtime)); }
   finally {
-    gate.holds.length = 0; gate.failAlways = false;
+    gate.holds.length = 0; gate.failAlways = false; gate.failAppendPath = null;
     for (const hold of outstanding.splice(0)) hold.settle("ok");
     await runtime.shutdown().catch(() => undefined);
     gate.log.length = 0; // shutdown publishes too
@@ -160,7 +164,7 @@ describe("managed Bash terminal publication", () => {
         expect(await h.disk(id)).toMatchObject({ status: "exited", notification_consumed_at_ms: expect.any(Number) });
         return;
       }
-      for (const wait of waits) await expect(wait).rejects.toThrow("EIO");
+      for (const wait of waits) expect(await wait).toMatchObject({ kind: "wait", error: expect.stringContaining("EIO") });
       expect(h.row(id)).toMatchObject({ status: "killed", execution_error: expect.stringContaining("EIO") });
       // A persistent fault publishes nothing: the durable row is still the running one.
       const record = await h.disk(id);
@@ -378,7 +382,7 @@ describe("managed Bash terminal publication", () => {
       expect(h.row(id).execution_error).toContain("late pipe error");
 
       h.settle("ok");
-      await expect(waiting).rejects.toThrow("late pipe error");
+      expect(await waiting).toMatchObject({ kind: "wait", error: expect.stringContaining("late pipe error") });
       await until(async () => (await h.disk(id)).status === "killed");
       expect(await h.disk(id)).toMatchObject({ status: "killed", execution_error: expect.stringContaining("late pipe error") });
       expect((await h.disk(id)).notification_consumed_at_ms).toBeUndefined();
@@ -452,6 +456,33 @@ describe("managed Bash terminal publication", () => {
     });
   });
 
+  it("foreground abort drains failed output without waiting for its metadata repair", async () => {
+    await withRuntime(async (h) => {
+      const a = (await h.runtime.execute({ command: "sleep 30", background: true }, undefined) as { bash_id: string }).bash_id;
+      const ready = path.join(h.root, "trap-ready");
+      const abort = new AbortController();
+      let returned = false;
+      const foreground = h.runtime.execute({ command: `trap 'printf final-output; exit 0' TERM; touch '${ready}'; while :; do sleep 0.01; done` }, abort.signal)
+        .then((result) => { returned = true; return result; });
+      await until(async () => readFile(ready).then(() => true, () => false));
+      const row = h.runtime.list(true).find((item) => item.bash_id !== a)!;
+      const blocked = h.arm((file) => file.records[a]?.is_tracked === false);
+      const detaching = h.runtime.manage({ action: "detach", bash_id: a });
+      await blocked.hit;
+      gate.failAppendPath = row.log_path;
+      abort.abort();
+      // The fault's physical cleanup completed, but its repair is behind the held detach.
+      await until(() => h.row(row.bash_id).status === "killed");
+      expect(h.row(row.bash_id).execution_error).toContain("log append failure");
+      await until(() => returned);
+      expect(await foreground).toMatchObject({ exit_code: -1 });
+      expect((await h.disk(row.bash_id)).status).toBe("running");
+      blocked.settle("ok");
+      await detaching;
+      await until(async () => (await h.disk(row.bash_id)).execution_error?.includes("log append failure") === true);
+    });
+  });
+
   it("recovery that cannot publish its diagnostic adopts nothing, then retries without signalling", async () => {
     await withRuntime(async (h) => {
       const bashId = "b-cafe0001";
@@ -503,7 +534,7 @@ describe("managed Bash terminal publication", () => {
       const id = await h.pending();
       const waiting = h.runtime.manage({ action: "wait", bash_id: id });
       h.settle("fail-always");
-      await expect(waiting).rejects.toThrow("EIO");
+      expect(await waiting).toMatchObject({ kind: "wait", error: expect.stringContaining("EIO") });
       gate.failAlways = false;
 
       const owners = (globalThis as Record<symbol, Map<string, BashRuntime>>)[Symbol.for("meridian.pi.managed-bash.owners.v2")]!;
@@ -512,7 +543,7 @@ describe("managed Bash terminal publication", () => {
       expect(await restarted.manage({ action: "list", include_completed: true })).toMatchObject({
         rows: [expect.objectContaining({ bash_id: id, status: "running", execution_error: expect.stringContaining("ownership_lost") })],
       });
-      await expect(restarted.manage({ action: "wait", bash_id: id })).rejects.toThrow("ownership_lost");
+      expect(await restarted.manage({ action: "wait", bash_id: id })).toMatchObject({ kind: "wait", error: expect.stringContaining("ownership_lost") });
       expect((await h.disk(id)).notification_consumed_at_ms).toBeUndefined();
     });
   });

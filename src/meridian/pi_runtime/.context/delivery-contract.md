@@ -1,7 +1,9 @@
 # Pi result delivery
 
-All files below live under `pi-bash/<parent>/`. Missing files mean empty;
-present malformed or wrong-parent authority means unknown, never successful empty.
+All coordination files in the table live under `pi-bash/<parent>/`. Missing
+coordination files mean empty; present malformed or wrong-parent authority means
+unknown, never successful empty. Task logs are different: missing, unreadable or
+non-regular logs are unavailable, not empty output.
 Atomic writes use the shared JSON helper. One parent has one execution writer,
 one launch-scoped notification owner, and one Python public-event observer.
 
@@ -63,6 +65,14 @@ whose mandatory representation does not fit after earlier members remains owed a
 becomes first on a later opportunity. Missing or empty reports retain outcome and
 transcript guidance; present unreadable evidence fails closed. Explicit wait
 commands still use the CLI.
+
+Bash tool results include outcome evidence independently of log contents. An
+available empty log can accompany success, nonzero exit or an execution fault;
+none may be inferred from the text alone. Terminal wait/output consumes only when
+available output and its outcome are returned, with consumption persisted first.
+Unavailable logs and execution faults remain owed. Artifact reads, `/ps` previews
+and `/pslogs` are inspection, never consumption. Automatic Bash notices retain
+execution-fault details under the same bounded-detail rules as spawn errors.
 
 A tracked background terminal result stays owed during active tool waits, so a
 terminal wait can persist consumption before the boundary runs. The idle path
