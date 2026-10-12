@@ -437,26 +437,12 @@ class PrimaryAttachLauncher:
             telemetry.clear()
 
             consumer_task = self._event_consumer_task
-            done, _pending = await asyncio.wait(
-                {launch_task, consumer_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if consumer_task in done and not launch_task.done():
+            # The TUI owns the primary. Observer silence is not a quit.
+            launched = await asyncio.shield(launch_task)
+            if consumer_task.done():
                 with suppress(asyncio.CancelledError, Exception):
                     consumer_task.result()
                 self._event_consumer_task = None
-                # The TUI owns a primary. Observer silence, including an idle
-                # stall, is not a quit. Wait for the user to leave.
-                launched = await asyncio.shield(launch_task)
-                tui_lifecycle_finished = True
-                return PrimaryAttachOutcome(
-                    facts=self._facts,
-                    exit_code=launched.exit_code,
-                    session_id=session_id,
-                    tui_pid=launched.pid,
-                )
-
-            launched = await asyncio.shield(launch_task)
             # Cancellation is only asserted when the relay was actually
             # interrupted by the signal: ``cancel_wait`` returns exit 130, while a
             # clean TUI exit returns its own code. This avoids turning a session

@@ -817,9 +817,7 @@ def test_primary_attach_cancellation_after_codex_observer_displacement_cleans_tu
             )
         )
         await stream_closed.wait()
-        async with asyncio.timeout(1.0):
-            while launcher._event_consumer_task is not None:
-                await asyncio.sleep(0)
+        await asyncio.sleep(0)
         run_task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await run_task
