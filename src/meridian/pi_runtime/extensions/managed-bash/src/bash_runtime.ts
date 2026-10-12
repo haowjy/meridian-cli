@@ -458,10 +458,10 @@ export class BashRuntime {
   }
 
   private async appendLog(record: RuntimeRecord, chunk: string, stream: "stdout" | "stderr"): Promise<void> {
-    const size = await this.logStore.append(logPathsFromRecord(record), stream, chunk);
-    record.log_bytes = size;
+    // Progress stays in memory: the records file keeps the size from the last
+    // lifecycle write, and the logs themselves are the output authority.
+    record.log_bytes = await this.logStore.append(logPathsFromRecord(record), stream, chunk);
     if (shouldResetPingOnActivity()) this.schedulePing(record);
-    await this.persist();
   }
 
   private async markTerminal(

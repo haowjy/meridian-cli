@@ -70,6 +70,11 @@ owns the POSIX group created for it, uses bounded TERM→KILL escalation, and
 publishes terminal after group exit and its queued log writes. Its output queue
 applies stream backpressure; failures close owned pipes before cleanup and
 release outstanding operations with an error instead of an unhandled rejection.
+Output progress is not persisted: `log_bytes` in the records file is the size at the
+last lifecycle write (start, background, ping, terminal, consumption), live panels
+read the in-memory size, and the logs are the output authority. A log write fault
+still fails the task at the chunk; a records-store fault surfaces at the next
+lifecycle write, at the latest terminal publication.
 Ping delivery is advisory: a stale notification callback releases its durable
 ping claim and warns, preserving the live shell owner. It does not retry the
 same broken capability in a timer loop; hook rebind or later task activity can

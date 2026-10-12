@@ -192,13 +192,13 @@ describe("managed Bash execution ownership", () => {
     process.on("unhandledRejection", listener);
     try {
       const started = await runtime.execute({ command: "sleep 0.1; head -c 8388608 /dev/zero; sleep 2", background: true }, undefined) as { bash_id: string };
-      await rm(recordsPath); await mkdir(recordsPath);
+      const { log_path } = runtime.list(true).find((row) => row.bash_id === started.bash_id)!;
+      await rm(log_path); await mkdir(log_path);
       await until(() => runtime.list(true).some((row) => row.bash_id === started.bash_id && row.execution_error != null));
       await until(() => runtime.list(true).some((row) => row.bash_id === started.bash_id && row.status === "killed"));
       await pause(30);
       expect(unhandled).toEqual([]);
       expect(runtime.list(true).find((row) => row.bash_id === started.bash_id)?.execution_error).not.toContain("cleanup failed");
-      await rm(recordsPath, { recursive: true });
       await expect(runtime.manage({ action: "wait", bash_id: started.bash_id })).rejects.toThrow("EISDIR");
       expect(JSON.parse(await readFile(recordsPath, "utf8")).records[started.bash_id].notification_consumed_at_ms).toBeUndefined();
       const result = await runtime.execute({ command: "printf recovered" }, undefined);
@@ -206,7 +206,6 @@ describe("managed Bash execution ownership", () => {
       expect(JSON.parse(await readFile(recordsPath, "utf8")).runtime_error).toBeUndefined();
     } finally {
       process.removeListener("unhandledRejection", listener);
-      await rm(recordsPath, { recursive: true, force: true });
       await runtime.shutdown(); await rm(root, { recursive: true, force: true });
     }
   });

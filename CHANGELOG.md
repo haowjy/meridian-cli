@@ -12,6 +12,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   terminal write still fails the record and leaves its completion notice owed.
   `kill` reports a task that exited by itself as already exited, not killed.
 
+### Changed
+- Stop rewriting the whole managed-Bash records file for every output chunk. The
+  file is written at lifecycle transitions only, cutting metadata writes in a 1 MiB
+  output with 128 retained tasks from ~2.2-2.6 MB (22-26 writes) to ~0.2 MB (2 writes).
+  `log_bytes` on disk is now the size at the last lifecycle write; logs are
+  unchanged. A records-store fault during output surfaces at the next lifecycle
+  write instead of the next chunk.
+
 ## [0.9.4] - 2026-10-12
 
 ### Fixed
