@@ -24,7 +24,7 @@ async function setup(): Promise<{ root: string; runtime: BashRuntime; recordsPat
   return { root, runtime, recordsPath: path.join(root, "pi-bash", "p900001", "bash-records.json") };
 }
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 describe("managed Bash execution ownership", () => {
   it("keeps escaped ampersands in foreground user Bash commands", async () => {
@@ -110,7 +110,8 @@ describe("managed Bash execution ownership", () => {
       await until(() => runtime.list(true).length === 1);
       controller.abort();
       expect(await result).toMatchObject({ exit_code: -1 });
-      expect(runtime.list(true)[0]?.status).toBe("killed");
+      // The abort returns at the physical stop; the record publishes on its own.
+      await until(() => runtime.list(true)[0]?.status === "killed");
     } finally { await runtime.shutdown(); await rm(root, { recursive: true, force: true }); }
   });
 
@@ -176,13 +177,45 @@ describe("managed Bash execution ownership", () => {
       const listed = await runtime.manage({ action: "list", include_completed: true });
       expect(listed).toMatchObject({ rows: expect.arrayContaining([expect.objectContaining({ bash_id: base.bash_id, execution_error: expect.stringContaining("ownership_lost") }), expect.objectContaining({ bash_id: terminal.bash_id, status: "exited" })]) });
       expect(await runtime.manage({ action: "kill", bash_id: base.bash_id })).toMatchObject({ killed: false });
-      await expect(runtime.manage({ action: "wait", bash_id: base.bash_id })).rejects.toThrow("ownership_lost");
+      expect(await runtime.manage({ action: "wait", bash_id: base.bash_id })).toMatchObject({ kind: "wait", error: expect.stringContaining("ownership_lost") });
       expect(await runtime.manage({ action: "detach", bash_id: base.bash_id })).toMatchObject({ detached: true });
       await runtime.execute({ command: "printf fresh" }, undefined);
       const recovered = JSON.parse(await readFile(recordsPath, "utf8"));
       expect(recovered.records[terminal.bash_id].notification_consumed_at_ms).toBe(1234);
       expect(recovered.records[base.bash_id].is_tracked).toBe(false);
     } finally { await runtime.shutdown(); await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("keeps a durable execution fault when a crash-prefix running row is recovered, idempotently and without signalling", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-execution-recovery-fault-"));
+    vi.stubEnv("_MERIDIAN_PI_STATE_DIR", root); vi.stubEnv("MERIDIAN_SPAWN_ID", "p900001");
+    const recordsPath = path.join(root, "pi-bash", "p900001", "bash-records.json");
+    const fault = "EIO: injected records write failure";
+    const row: BashRecord = { bash_id: "b-34567890", command: "crashed", cwd: root, pid: 4_194_000, status: "running", is_background: true, is_tracked: true, exit_code: null, started_at_ms: Date.now() - 1000, ended_at_ms: null, log_path: path.join(root, "c.log"), stdout_log_path: path.join(root, "c.out"), stderr_log_path: path.join(root, "c.err"), log_bytes: 0, timeout_min: 55, originating_bash_id: null, execution_error: fault };
+    await mkdir(path.dirname(recordsPath), { recursive: true });
+    await writeFile(recordsPath, JSON.stringify({ v: 1, spawn_id: "p900001", updated_at_ms: Date.now(), records: { [row.bash_id]: row }, runtime_error: fault }));
+    const signals = vi.spyOn(process, "kill").mockImplementation(() => {
+      throw new Error("Unexpected signal to a cold-recovery fixture");
+    });
+    const durable = async () => JSON.parse(await readFile(recordsPath, "utf8")) as { records: Record<string, BashRecord>; runtime_error?: string };
+    try {
+      const first = new BashRuntime();
+      // A later prepare() clears the file-level copy; the row must still carry the original fault.
+      await first.manage({ action: "list", include_completed: true });
+      const afterFirst = (await durable()).records[row.bash_id]!;
+      expect(afterFirst.execution_error).toMatch(new RegExp(`^${fault}; ownership_lost: `));
+      expect((await durable()).runtime_error).toBeUndefined();
+      expect(afterFirst.notification_consumed_at_ms).toBeUndefined();
+      expect(await first.manage({ action: "kill", bash_id: row.bash_id })).toMatchObject({ killed: false });
+      expect(await first.manage({ action: "wait", bash_id: row.bash_id })).toMatchObject({ kind: "wait", error: expect.stringContaining("ownership_lost") });
+
+      // Repeated cold recoveries do not stack the annotation.
+      const owners = (globalThis as Record<symbol, Map<string, BashRuntime>>)[Symbol.for("meridian.pi.managed-bash.owners.v2")]!;
+      owners.clear();
+      await new BashRuntime().manage({ action: "list", include_completed: true });
+      expect((await durable()).records[row.bash_id]!.execution_error).toBe(afterFirst.execution_error);
+      expect(signals).not.toHaveBeenCalled();
+    } finally { signals.mockRestore(); await rm(root, { recursive: true, force: true }); }
   });
 
   it("supervises output storage failure and cleans the task before returning an error", async () => {
@@ -192,21 +225,20 @@ describe("managed Bash execution ownership", () => {
     process.on("unhandledRejection", listener);
     try {
       const started = await runtime.execute({ command: "sleep 0.1; head -c 8388608 /dev/zero; sleep 2", background: true }, undefined) as { bash_id: string };
-      await rm(recordsPath); await mkdir(recordsPath);
+      const { log_path } = runtime.list(true).find((row) => row.bash_id === started.bash_id)!;
+      await rm(log_path); await mkdir(log_path);
       await until(() => runtime.list(true).some((row) => row.bash_id === started.bash_id && row.execution_error != null));
       await until(() => runtime.list(true).some((row) => row.bash_id === started.bash_id && row.status === "killed"));
       await pause(30);
       expect(unhandled).toEqual([]);
       expect(runtime.list(true).find((row) => row.bash_id === started.bash_id)?.execution_error).not.toContain("cleanup failed");
-      await rm(recordsPath, { recursive: true });
-      await expect(runtime.manage({ action: "wait", bash_id: started.bash_id })).rejects.toThrow("EISDIR");
+      expect(await runtime.manage({ action: "wait", bash_id: started.bash_id })).toMatchObject({ kind: "wait", error: expect.stringContaining("EISDIR") });
       expect(JSON.parse(await readFile(recordsPath, "utf8")).records[started.bash_id].notification_consumed_at_ms).toBeUndefined();
       const result = await runtime.execute({ command: "printf recovered" }, undefined);
-      expect(result).toMatchObject({ stdout: "recovered", exit_code: 0 });
+      expect(result).toMatchObject({ stdout: { kind: "available", text: "recovered" }, exit_code: 0 });
       expect(JSON.parse(await readFile(recordsPath, "utf8")).runtime_error).toBeUndefined();
     } finally {
       process.removeListener("unhandledRejection", listener);
-      await rm(recordsPath, { recursive: true, force: true });
       await runtime.shutdown(); await rm(root, { recursive: true, force: true });
     }
   });

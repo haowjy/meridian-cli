@@ -9,6 +9,87 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - OpenCode continue uses the latest assistant or model-switch message, not only the session row, so a mid-session model switch is kept.
 - An OpenCode primary stays open when its event stream goes quiet. Idle is not a quit; the TUI exit is.
 
+## [0.9.6] - 2026-10-12
+
+### Fixed
+- Publish managed-Bash exits before reporting or consuming them (#562). Failed
+  writes leave no tentative metadata; task-fatal failures are claimed inside the
+  publication slot before the next change can stage, regardless of caller wrappers.
+- Keep physical stop/output drain independent of metadata repair, including output
+  failures during abort. Never signal a process group after observing it gone;
+  `kill` distinguishes a natural exit from a killed task.
+- Attach foreground cancellation as soon as managed Bash owns the process, without
+  waiting for its creation row. Cancellation observed during preparation prevents
+  launch; starts and background handoffs still report success only after publication.
+- Preserve exit status and faults in Bash result retrieval and notices. Missing,
+  unreadable or non-regular logs, empty fault diagnostics and unavailable exit codes
+  cannot become empty success or consumed results. Keep known result errors in
+  mandatory notice headers even when diagnostic text is truncated.
+- Fence wait cancellation at acknowledgement: cancellation before staging leaves
+  work owed; an acknowledgement already staged returns its result when published.
+- Skip obsolete ping releases after completion/detach, and do not report a detach
+  whose publication declined. Foreground streams use one typed log carrier each.
+- Keep `/ps:logs` non-consuming even during cold recovery. Share recovery retries
+  across concurrent commands; preserve prior faults and never signal stored PIDs.
+
+### Changed
+- Separate published Bash snapshots from live handles, progress and fault evidence.
+  One stage/write/adopt owner replaces mixed mutable records and patch/commit copies.
+- Write Bash records at lifecycle transitions, not per output chunk. Persisted
+  `log_bytes` is the last lifecycle snapshot; logs remain authoritative. Records-store
+  faults during output surface at the next lifecycle write, not the next chunk.
+- Load `/ps` metadata without opening logs. Read only the selected TUI preview,
+  one at a time, discarding results after selection changes, refresh or disposal.
+- Use explicit result kinds and log availability for model-facing Bash retrieval;
+  retain separate, non-consuming UI preview semantics.
+
+## [0.9.5] - 2026-10-12
+
+### Upgrade notes
+- Stop active launches and back up project runtime state before upgrading. New current-chat fields are incompatible with 0.9.3 and 0.9.4 readers; rollback requires pre-upgrade state. See [current-chat tracking](docs/upgrading.md#current-chat-tracking-unreleased).
+
+### Changed
+- Persist a run's current chat separately from its immutable entry chat. Rebuild history projection in a new versioned namespace.
+- Trim duplicate Claude boundary tests and run recorder edge checks without subprocesses.
+- Scope native observation to a `with` block in the primary runner, streaming runner and streaming serve. The drainer always joins before conclusion, even on exceptions, with no separately stashed cleanup callback. Overlap-diagnostic failures no longer present as publication failures.
+- Store inherited launch settings in private session journals; failed starts leave no event, even if the empty journal was pre-created.
+- Record each launch's final policy snapshot on its own conversation generation at final binding, before the native process starts. Continuation and new observed chats inherit settings from the conversation. Older generations read only their exactly linked run; the newest-primary-owner lookup is gone.
+
+### Fixed
+- Continue Claude from its last observed chat, including live `/clear` and `/resume` switches, without requiring a final callback. Keep exact transcript checks at resume/read time.
+- Require native transcript proof before verified exit-chat reuse, not just creation.
+- Route verified post-exit sessions (Pi) through the same current-chat pointer as live observations; `run_boundary` is evidence only. Read 0.9.4 `run_boundary.exit_chat_id` as the current chat, so upgraded verified runs keep their continuation target.
+- Resolve `pN` continuation through the selected chat's current generation, settings and work, whether or not a startup hook was observed. A selected chat that is missing is unavailable rather than silently replaced by the older entry chat.
+- Reject malformed legacy exit evidence before upgrading its pointer, including dogfood repairs. Historical views retain recorded exit identity without enabling continuation.
+- Preserve Claude plugin-resolution warnings; valid symlinked plugins no longer appear missing.
+- Create complete chats for newly observed sessions, carrying current settings/work without copying history, fork lineage or live leases. Reusing an existing chat preserves its settings and work. Block concurrent Meridian-managed resume/capture; warn when a native switch overlaps another live owner.
+
+## [0.9.4] - 2026-10-12
+
+### Fixed
+- Deliver completed Pi child-spawn and managed-Bash results at the successful
+  tool-batch boundary through native steering, before the next inference, while
+  retaining the idle follow-up fallback for genuinely late or unsettled work.
+- Replace active polling and automatic `spawn wait` subprocesses with a finite collector and
+  bounded direct report reads. Automatic messages now cap exact membership at 32
+  results and complete UTF-8 content at 64 KiB, read reports sequentially, and
+  leave the remaining backlog owed for later native opportunities. Oversized
+  members retain a compact identity and terminal outcome plus a concrete
+  full-result lookup; members that cannot fit those mandatory fields are deferred
+  intact. The packet reserves all selected mandatory frames before report I/O and
+  shares optional-detail space fairly, carrying unused shares forward so one large
+  report cannot monopolize an otherwise 32-member packet. Preserve exit codes and
+  short-read handling. Idle polling skips unrelated history and stateless
+  directories; full discovery runs at tool boundaries and on a 30-second
+  missed-event reconciliation cadence. In-flight idle scans stop before their next
+  row when the agent starts.
+- Keep discovery hints out of notification authority. Stable selected children
+  survive unrelated root churn; bare Bash notices require a current canonical
+  child-correlation snapshot. Failed discovery stays unresolved until repaired.
+- Stop notification polling before reload invalidates Pi's old context; restart
+  with fresh hooks while retaining exact queued claims. Agent starts and reloads
+  invalidate stale publication between filesystem awaits.
+
 ## [0.9.3] - 2026-10-11
 
 ### Upgrade notes

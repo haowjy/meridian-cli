@@ -19,7 +19,7 @@ from meridian.lib.platform.locking import FileLockTimeout, lock_file
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.history_index import HistoryIndex
-from meridian.lib.state.spawn.model import RunBoundaryOutcome
+from meridian.lib.state.spawn.model import LegacyRunBoundaryOutcome, RunBoundaryOutcome
 from meridian.lib.state.spawn.repository import (
     DOGFOOD_BOUNDARY_FIELDS,
     StoredSpawnState,
@@ -38,8 +38,15 @@ def _translate(raw: dict[str, Any]) -> dict[str, Any]:
     trampoline = data.pop("trampoline_successor_id", None)
     if data.get("chat_id") is None and entry_chat_id is not None:
         data["chat_id"] = entry_chat_id
-    if data.get("run_boundary") is None and exit_identity is not None:
-        data["run_boundary"] = {"status": exit_identity, "exit_chat_id": exit_chat_id}
+    if exit_identity is not None or exit_chat_id is not None:
+        legacy = LegacyRunBoundaryOutcome.model_validate({
+            "status": exit_identity if exit_identity is not None else "unresolved",
+            "exit_chat_id": exit_chat_id,
+        })
+        if data.get("run_boundary") is None:
+            data["run_boundary"] = legacy.model_dump(exclude={"exit_chat_id"})
+        if legacy.exit_chat_id is not None and data.get("current_chat_id") is None:
+            data["current_chat_id"] = legacy.exit_chat_id
     if trampoline is not None:
         boundary = RunBoundaryOutcome.model_validate(
             data.get("run_boundary") or {"status": "unresolved"}

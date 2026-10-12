@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-from meridian.lib.core.types import normalize_optional_identity
+from meridian.lib.core.types import SpawnId, normalize_optional_identity
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.primary_meta import read_primary_harness_session_id
 from meridian.lib.state.session_store import SessionRecord
@@ -168,26 +168,71 @@ def native_identity_candidates(
     return harnesses, native_ids
 
 
+def live_observer_for_chat(
+    runtime_root: Path,
+    chat_id: str,
+    *,
+    records: Iterable[SpawnRecord] | None = None,
+    excluding_spawn_id: str | None = None,
+) -> str | None:
+    """Find an execution using this conversation without inventing a chat lease."""
+    from meridian.lib.state.process_scope_projection import read_scope_projection
+    from meridian.lib.state.reaper import scope_liveness
+
+    if records is None:
+        scan = spawn_store.list_spawns(runtime_root)
+        if scan.quarantines:
+            raise ValueError("Cannot establish current-chat ownership; run `meridian doctor`")
+        records = scan.records
+    for row in records:
+        if (
+            row.record_mode != "live" or row.current_chat_id != chat_id
+            or row.id == excluding_spawn_id
+        ):
+            continue
+        if row.chat_id and session_store.is_session_lease_owner_alive(
+            runtime_root, row.chat_id, session_instance_id=row.session_instance_id,
+        ):
+            return row.id
+        scopes = read_scope_projection(runtime_root, SpawnId(row.id))
+        if any(
+            scope_liveness(scope)["likely_serving"]
+            for scope in scopes.scopes if scope.release_id not in scopes.released_ids
+        ):
+            return row.id
+    return None
+
+
 def get_session_record_for_spawn(
     runtime_root: Path,
     spawn_id: str,
     *,
     require_harness_session_id: bool = False,
 ) -> SessionRecord | None:
-    """Return the session record linked to a spawn via ``spawn_id``."""
+    """Return the entry generation, not a later conversation observed by the run."""
 
     normalized_spawn_id = normalize_optional_identity(spawn_id)
     if normalized_spawn_id is None:
         return None
 
-    for record in reversed(session_store.list_session_generations(runtime_root)):
+    row = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
+    generations = session_store.list_session_generations(runtime_root)
+    if row is not None and row.session_instance_id:
+        return next((
+            record for record in reversed(generations)
+            if record.chat_id == row.chat_id
+            and record.session_instance_id == row.session_instance_id
+            and record.spawn_id in {None, normalized_spawn_id}
+            and (not require_harness_session_id or record.harness_session_id is not None)
+        ), None)
+
+    for record in reversed(generations):
         if record.spawn_id != normalized_spawn_id:
             continue
         if require_harness_session_id and record.harness_session_id is None:
             continue
         return record
 
-    row = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
     if row is None:
         return None
     exact_chat_id = spawn_exact_chat_id(row)
@@ -242,6 +287,7 @@ __all__ = [
     "is_tracked_chat_ref",
     "list_spawns_for_exact_session",
     "list_spawns_for_owner_chat",
+    "live_observer_for_chat",
     "native_identity_candidates",
     "session_exact_chat_id",
     "session_owner_chat_id",

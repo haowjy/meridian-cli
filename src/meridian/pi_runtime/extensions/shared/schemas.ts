@@ -102,6 +102,7 @@ export const SpawnStateFileSchema = Type.Object({
       published_at: Type.String(),
       duration_secs: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
       total_cost_usd: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+      error: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     }),
     Type.Null(),
   ]),

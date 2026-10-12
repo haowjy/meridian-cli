@@ -1,6 +1,7 @@
 """Harness-native ownership and exact source resolution."""
 
 import json
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 from uuid import uuid4
@@ -297,7 +298,12 @@ def test_claude_prepare_prelaunch_normalizes_config_dir_for_env_and_metadata(
     )
 
     expected = str((tmp_path / Path(*expected_suffix)).resolve())
-    assert state.env_overrides == {}
+    assert "CLAUDE_CONFIG_DIR" not in state.env_overrides
+    assert state.env_overrides["_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PATH"] == str(
+        tmp_path / "spawns/p-test/claude-session-boundary.jsonl"
+    )
+    assert len(state.env_overrides["_MERIDIAN_CLAUDE_SESSION_BOUNDARY_NONCE"]) == 64
+    assert state.env_overrides["_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PYTHON"] == sys.executable
     assert recorded_dirs == [expected]
 
 

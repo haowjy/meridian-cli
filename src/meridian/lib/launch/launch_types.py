@@ -52,6 +52,14 @@ class CompositionWarning(BaseModel):
         return payload
 
 
+@dataclass(frozen=True)
+class ClaudeRuntimeResolution:
+    """One resolution result drives both plugin projection and composition warnings."""
+
+    plugin_dirs: tuple[str, ...] = ()
+    warnings: tuple[CompositionWarning, ...] = ()
+
+
 @runtime_checkable
 class PermissionResolver(Protocol):
     """Transport-neutral permission intent resolver."""
@@ -110,7 +118,7 @@ class ResolvedLaunchSpec(BaseModel):
     prompt_file_path: str | None = None
     claude_native_agents_enabled: bool = False
     disallowed_tools: tuple[str, ...] = ()
-    claude_plugin_dirs: tuple[str, ...] = ()
+    claude_runtime: ClaudeRuntimeResolution = ClaudeRuntimeResolution()
 
     # Claude + Codex
     user_turn_content: str | None = None

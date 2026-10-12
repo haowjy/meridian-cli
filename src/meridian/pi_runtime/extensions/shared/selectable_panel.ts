@@ -18,12 +18,26 @@ export type SelectablePanelColumn<Row> = {
   render: (row: Row, theme?: Theme, selected?: boolean) => string;
 };
 
-export type SelectablePanelOptions<Row> = {
+/** State of the selected row's lazily loaded detail, as seen by `renderPreview`. */
+export type PanelDetail<Detail> =
+  | { status: "loading" }
+  | { status: "ready"; value: Detail }
+  | { status: "error"; message: string };
+
+export type SelectablePanelOptions<Row, Detail = never> = {
   title: string;
   columns: SelectablePanelColumn<Row>[];
+  /** Row metadata only: anything per-row and expensive belongs in `loadDetail`. */
   loadRows: () => Promise<Row[]>;
   getRowId: (row: Row) => string;
-  renderPreview: (row: Row, theme: Theme) => string[];
+  /**
+   * Optional bounded read for the selected row only. The panel owns when it
+   * runs: one read at a time, only for the latest selection, never after
+   * close, and again after every row refresh. Without it, `renderPreview` is
+   * synchronous in the row and `detail` is undefined.
+   */
+  loadDetail?: (row: Row) => Promise<Detail>;
+  renderPreview: (row: Row, theme: Theme, detail?: PanelDetail<Detail>) => string[];
   onEnter?: (row: Row) => void | Promise<void>;
   onClear?: () => void | Promise<void>;
   emptyMessage?: string;
@@ -167,20 +181,21 @@ function renderTableLine<Row>(
   return padLine(truncateToWidth(prefix + cells.join("  ") + suffix, innerWidth, "", true), width, theme);
 }
 
-export function renderSelectablePanel<Row>(
+export function renderSelectablePanel<Row, Detail = never>(
   width: number,
   terminalRows: number,
   theme: Theme,
-  options: SelectablePanelOptions<Row>,
+  options: SelectablePanelOptions<Row, Detail>,
   rows: Row[],
   selectedIndex: number,
   rowScrollOffset: number,
   errorMessage: string | null = null,
+  detail?: PanelDetail<Detail>,
 ): string[] {
   const footer = options.footer ?? "enter open · j/k select · r refresh · q close";
   const maxRows = Math.max(1, options.maxRows ?? 8);
   const selected = rows[selectedIndex] ?? null;
-  const previewRaw = selected ? options.renderPreview(selected, theme) : [theme.fg("dim", options.emptyMessage ?? "No rows")];
+  const previewRaw = selected ? options.renderPreview(selected, theme, detail) : [theme.fg("dim", options.emptyMessage ?? "No rows")];
   const previewLimit = Math.max(1, Math.min(5, terminalRows - maxRows - 7));
   const preview = previewRaw.slice(0, previewLimit);
   while (preview.length < previewLimit) preview.push("");
@@ -214,18 +229,22 @@ export function renderSelectablePanel<Row>(
   return [...topLines, ...spacerLines, ...tableLines, ...footerLines];
 }
 
-export class SelectablePanelComponent<Row> implements Component {
+export class SelectablePanelComponent<Row, Detail = never> implements Component {
   private rows: Row[] = [];
   private selectedIndex = 0;
   private rowScrollOffset = 0;
   private closed = false;
   private loading = false;
   private errorMessage: string | null = null;
+  /** Bumped by every applied row refresh: detail from an earlier epoch is out of date. */
+  private rowsEpoch = 0;
+  private detail: { id: string; epoch: number; state: PanelDetail<Detail> } | null = null;
+  private detailReadInFlight = false;
 
   constructor(
     private readonly tui: PanelTui,
     private readonly theme: Theme,
-    private readonly options: SelectablePanelOptions<Row>,
+    private readonly options: SelectablePanelOptions<Row, Detail>,
     private readonly done: () => void,
   ) {
     void this.refresh();
@@ -245,22 +264,19 @@ export class SelectablePanelComponent<Row> implements Component {
     if (isUp(data)) {
       this.selectedIndex = Math.max(0, this.selectedIndex - 1);
       this.ensureSelectedVisible();
-      this.tui.requestRender();
+      this.selectionChanged();
       return;
     }
     if (isDown(data)) {
       this.selectedIndex = Math.min(Math.max(0, this.rows.length - 1), this.selectedIndex + 1);
       this.ensureSelectedVisible();
-      this.tui.requestRender();
+      this.selectionChanged();
       return;
     }
     if (isClear(data) && this.options.onClear) {
       void Promise.resolve(this.options.onClear())
         .then(() => this.refresh())
-        .catch((error: unknown) => {
-          this.errorMessage = `Action failed: ${error instanceof Error ? error.message : String(error)}`;
-          this.tui.requestRender();
-        });
+        .catch((error: unknown) => this.showActionError(error));
       return;
     }
     if (isConfirm(data)) {
@@ -268,10 +284,7 @@ export class SelectablePanelComponent<Row> implements Component {
       if (row && this.options.onEnter) {
         void Promise.resolve(this.options.onEnter(row))
           .then(() => this.refresh())
-          .catch((error: unknown) => {
-            this.errorMessage = `Action failed: ${error instanceof Error ? error.message : String(error)}`;
-            this.tui.requestRender();
-          });
+          .catch((error: unknown) => this.showActionError(error));
       }
     }
   }
@@ -280,6 +293,11 @@ export class SelectablePanelComponent<Row> implements Component {
     // Pi calls invalidate to let a component drop cached render state.
     // Requesting another render from here creates a self-sustaining render loop
     // in full-screen custom views, visible as panel flicker.
+  }
+
+  /** Pi disposes the component when its overlay is dismissed by any path. */
+  dispose(): void {
+    this.closed = true;
   }
 
   render(width: number): string[] {
@@ -299,15 +317,25 @@ export class SelectablePanelComponent<Row> implements Component {
       this.selectedIndex,
       this.rowScrollOffset,
       this.errorMessage,
+      this.selectedDetail(),
     );
+  }
+
+  private showActionError(error: unknown): void {
+    if (this.closed) return;
+    this.errorMessage = `Action failed: ${error instanceof Error ? error.message : String(error)}`;
+    this.tui.requestRender();
   }
 
   private async refresh(): Promise<void> {
     if (this.closed || this.loading) return;
     this.loading = true;
-    const selectedId = this.rows[this.selectedIndex] ? this.options.getRowId(this.rows[this.selectedIndex]!) : null;
     try {
       const nextRows = await this.options.loadRows();
+      if (this.closed) return;
+      // Identity is read when the rows land, not when the load began: the user may have moved meanwhile.
+      const current = this.rows[this.selectedIndex];
+      const selectedId = current ? this.options.getRowId(current) : null;
       this.errorMessage = null;
       this.rows = nextRows;
       if (selectedId) {
@@ -317,13 +345,57 @@ export class SelectablePanelComponent<Row> implements Component {
         this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, nextRows.length - 1));
       }
       this.ensureSelectedVisible();
+      this.rowsEpoch += 1;
+      void this.readSelectedDetail();
     } catch (error) {
+      if (this.closed) return;
       this.rows = [];
       this.errorMessage = `Failed to load rows: ${error instanceof Error ? error.message : String(error)}`;
     } finally {
       this.loading = false;
       if (!this.closed) this.tui.requestRender();
     }
+  }
+
+  private selectedId(): string | null {
+    const row = this.rows[this.selectedIndex];
+    return row ? this.options.getRowId(row) : null;
+  }
+
+  /** Only the selected id may display detail. Its previous preview remains visible while
+   * refreshing that same id; epochs fence adoption, not this stale-while-refresh display. */
+  private selectedDetail(): PanelDetail<Detail> | undefined {
+    if (!this.options.loadDetail) return undefined;
+    const id = this.selectedId();
+    return id !== null && this.detail?.id === id ? this.detail.state : { status: "loading" };
+  }
+
+  private selectionChanged(): void {
+    void this.readSelectedDetail();
+    this.tui.requestRender();
+  }
+
+  /**
+   * Keeps at most one detail read in flight and aims it at the latest selection.
+   * Selection moves while a read is held coalesce: the held result is dropped
+   * when it no longer matches, and one read for the then-current row follows.
+   */
+  private async readSelectedDetail(): Promise<void> {
+    const loadDetail = this.options.loadDetail;
+    const row = this.rows[this.selectedIndex];
+    if (this.closed || !loadDetail || !row || this.detailReadInFlight) return;
+    const id = this.options.getRowId(row);
+    const epoch = this.rowsEpoch;
+    if (this.detail?.id === id && this.detail.epoch === epoch) return;
+    this.detailReadInFlight = true;
+    let state: PanelDetail<Detail>;
+    try { state = { status: "ready", value: await loadDetail(row) }; }
+    catch (error) { state = { status: "error", message: error instanceof Error ? error.message : String(error) }; }
+    this.detailReadInFlight = false;
+    if (this.closed) return;
+    if (this.selectedId() === id && this.rowsEpoch === epoch) this.detail = { id, epoch, state };
+    void this.readSelectedDetail();
+    this.tui.requestRender();
   }
 
   private ensureSelectedVisible(): void {
@@ -337,9 +409,9 @@ export class SelectablePanelComponent<Row> implements Component {
   }
 }
 
-export async function openSelectablePanel<Row>(
+export async function openSelectablePanel<Row, Detail = never>(
   ctx: PanelCommandContext,
-  options: SelectablePanelOptions<Row>,
+  options: SelectablePanelOptions<Row, Detail>,
   customOptions?: Record<string, unknown>,
 ): Promise<void> {
   if (!ctx.ui?.custom || ctx.hasUI === false) {
@@ -347,14 +419,14 @@ export async function openSelectablePanel<Row>(
   }
   await ctx.ui.custom<void>(
     (tui, theme, _keybindings, done) =>
-      new SelectablePanelComponent(tui, theme, options, () => done(undefined)),
+      new SelectablePanelComponent<Row, Detail>(tui, theme, options, () => done(undefined)),
     customOptions,
   );
 }
 
-export async function openTaskPanel<Row>(
+export async function openTaskPanel<Row, Detail = never>(
   ctx: PanelCommandContext,
-  options: SelectablePanelOptions<Row>,
+  options: SelectablePanelOptions<Row, Detail>,
 ): Promise<void> {
   await openSelectablePanel(ctx, options, TASK_PANEL_CUSTOM_OPTIONS);
 }

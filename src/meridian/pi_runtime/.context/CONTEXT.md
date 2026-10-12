@@ -55,7 +55,7 @@ upgrading Pi; never infer exit from current/target session or the last-seen ID.
 | Extension | Owns | Writes / observes |
 |---|---|---|
 | `managed-bash` | `bash` / `bash_manage`, tracked vs detached bash records, `/ps*` slash commands, `_MERIDIAN_PI_BASH_ID` injection into child processes | `runtime_root/pi-bash/<spawn-id>/bash-records.json` and bash logs; terminal waits and terminal output reads mark their record's notification as consumed |
-| `meridian-spawn-watch` | canonical direct-child discovery, `/spawn*` slash commands, idle-turn completion notifications | observes scoped child rows, task consumption and wait leases; writes exact admission receipts and delivery faults |
+| `meridian-spawn-watch` | canonical direct-child discovery, `/spawn*` slash commands, boundary/idle completion notifications | observes scoped child rows, task consumption and wait leases; writes exact admission receipts and delivery faults |
 | `meridian-idle` | native idle and interactive-return sensing in primary TUIs | shells out to the hidden `meridian idle` API; owns only in-memory timers and calls `ctx.compact` after an `act` decision |
 
 `managed-bash` is the mechanism extension. `meridian-spawn-watch` is the policy extension.
@@ -70,6 +70,11 @@ owns the POSIX group created for it, uses bounded TERM→KILL escalation, and
 publishes terminal after group exit and its queued log writes. Its output queue
 applies stream backpressure; failures close owned pipes before cleanup and
 release outstanding operations with an error instead of an unhandled rejection.
+Output progress is not persisted: `log_bytes` in the records file is the size at the
+last lifecycle write (start, background, ping, terminal, consumption), live panels
+read the in-memory size, and the logs are the output authority. A log write fault
+still fails the task at the chunk; a records-store fault surfaces at the next
+lifecycle write, at the latest terminal publication.
 Ping delivery is advisory: a stale notification callback releases its durable
 ping claim and warns, preserving the live shell owner. It does not retry the
 same broken capability in a timer loop; hook rebind or later task activity can
@@ -78,7 +83,8 @@ schedule another attempt. Publication failure remains a task/storage failure.
 Cold recovery validates and retains the complete record store before accepting
 commands. Historical terminal/wait-consumed rows remain intact. Running rows
 have no recoverable process handle and retain `status=running` plus
-`execution_error=ownership_lost`; a recorded PID never authorizes signalling.
+`ownership_lost` in `execution_error` (appended once after any durable fault, never
+replacing it); a recorded PID never authorizes signalling.
 `bash_manage(kill)` explains the lost ownership, `wait` reports it, and explicit
 `detach` durably releases tracking. `runtime_error` records failed publication
 when storage permits; a successful later command can repair publication. A
@@ -97,30 +103,77 @@ Shell launch propagates its own Bash ID in `_MERIDIAN_PI_BASH_ID`, and its
 durable record retains the enclosing originating Bash ID. Canonical child
 spawn rows carry parent/origin membership; no origin sidecar is produced.
 Terminal tracked background Bash rows are durable result obligations. Their persisted
-`notification_consumed_at_ms` consumes a terminal wait or a terminal `output`
-read (execution failures excluded); exact custom-message admission consumes an
+`notification_consumed_at_ms` consumes a terminal wait or `output` result with
+available logs and its outcome included (execution failures excluded); exact custom-message admission consumes an
 unattended notice. Sending or queueing is not consumption. Wait blocks up to the
 55-minute bash timeout with no model-chosen limit: a short wait let the model
 read results around consumption and receive the same completion again. The
-tool abort signal (Esc) ends a wait early; an interrupted or timed-out wait
-returned no result, so it consumes nothing. Consumption is gated on the status
-the call returned, not the live record.
-Managed-bash serializes record snapshots; terminal state is persisted before
-waiters are released, and consumption is persisted before the terminal wait or
-output result returns. If consumption persistence fails, the marker is rolled back and
-the wait returns an error, leaving the completion eligible for notification.
-Spawn-watch publishes only while native `ctx.isIdle()`, and rereads consumption
-and live wait reservations after formatting. A changed child selection rebuilds
-the batch. One launch-scoped owner reserves exact message membership until its
-native `message_start` admission; reload rebinds that owner and preserves its queue
-claims. Cold restart retries unreceipted work and keeps admitted/consumed work.
-Scan, formatting and receipt failures are supervised in `delivery-fault.json`.
-Notification formatting uses `meridian spawn wait --no-observe`: fetching a
-result must not consume the parent's notification before delivery succeeds.
-Final shutdown stops publication; reload preserves the owner. Polling plus one
-non-resetting scheduled scan guarantees progress under continuous writes.
-See [delivery-contract.md](delivery-contract.md) for schemas, public-event fencing
-and the bounded receipt-to-public-observation crash window.
+tool abort signal (Esc) ends a wait early. Cancellation before acknowledgement
+staging leaves the result owed, even if the pending reply includes a known terminal
+status. Once acknowledgement has staged, a successful write returns its result;
+a later abort cannot roll it back. Timed-out/pending replies do not consume.
+Eligibility uses the outcome observed before log I/O, revalidated for new faults,
+not a later ordinary completion. This is not atomic native model delivery.
+`BashPublication` owns the immutable published snapshot and its serialized
+stage → write → adopt path. Each slot stages against the previous adoption plus
+current evidence, writes one prospective value, and adopts that same value only
+on success. Failed writes leave no tentative metadata to undo. There is no second
+patch/commit description or serialization blacklist.
+
+Live `Execution` objects separately own handles, output queues, progress, creation
+proposals and first-fault evidence. A snapshot swap cannot replace them. Readers
+see published rows with live progress and negative fault evidence overlaid; those
+facts can also ride the next lifecycle snapshot. Positive terminal results,
+background/tracking changes, ping claims, consumption and removal still require
+publication. Launch returns the owned execution and its separately supervised
+creation observation: foreground abort attaches to the former immediately, while a
+positive start still awaits the latter. Cancellation noticed after preparation I/O
+but before spawn removes its empty logs and launches nothing. A missing, unreadable
+or non-regular log is unavailable evidence, not valid empty output. UI inspection
+stays non-consuming; `/ps` loads metadata only and owns one bounded selected-row
+preview read at a time.
+
+Terminal publication is such a transition. Until it lands the record stays
+`running` and owned, so list, wait, output, kill, and foreground results never
+present, wait on, or consume an unpublished clean exit; a wait interrupted before
+publication still reports running. Its linearization point is staging: success is staged only if no
+failure has claimed the record, so an earlier failure prevents a clean terminal
+snapshot; one claimed afterwards is ordered after it and repaired by the failure's
+own write (a crash inside that rename window can still recover the success).
+A task-fatal stage/write failure claims its record inside the failing publication
+slot, before any successor can stage. Caller promise depth cannot change that
+order. Claiming returns no completion promise: cleanup/repair run separately, so
+output drain and physical interruption cannot inherit a metadata wait. Detach,
+consumption and clear failures instead remain caller-recoverable errors. A failed terminal write
+fails the record (`killed` plus `execution_error`), returns a failed wait result,
+and leaves the notice owed. A consumption is staged in its own slot and is skipped if the record
+has failed meanwhile. `kill` reports the published outcome, so a task that exited by
+itself is not "killed". Group-signalling authority ends where physical ownership
+does: once `ShellTask` observes its group gone (including ESRCH from a signal and
+ps queries already in flight) it never signals or probes it again, however long
+publication takes. Interrupting
+a foreground command returns after the physical stop and flushed output, not after
+creation or terminal publication. A clean interruption publishes as `killed`; a
+fault overlay may show negative evidence before its repair write lands. Foreground
+hotkey/timeout handoff is positive only when its queued transition finds a published,
+still-running row; a creation failure or terminal publication ahead of it declines
+the handoff without resurrecting or backgrounding the row.
+Consumption is persisted before the terminal wait or output result returns. If it
+fails the marker was never applied and the wait returns an error, leaving the
+completion eligible for notification.
+Spawn-watch serializes publication through one launch-scoped owner. A successful
+tool-bearing boundary and the genuinely late idle fallback use that owner rather
+than separate delivery machinery. Automatic child notices read `report.md`
+directly instead of invoking the general `spawn wait` CLI. Candidate IDs reduce
+ordinary idle work but never become authority; canonical state and parent-local
+evidence remain authoritative at publication. Two nonrecursive watchers and the
+existing timers wake the owner; active runs do no polling I/O.
+
+See the canonical [delivery contract](delivery-contract.md) for discovery and
+publication sequencing, fixed report/member/message bounds, subtract-only
+revalidation, cancellation generations, exact admission/public observation, and
+restart/crash behavior. Scan, report, and receipt failures remain supervised in
+`delivery-fault.json`.
 
 ### Build Pipeline
 
@@ -192,7 +245,7 @@ Extensions import the native `ExtensionAPI` from the Pi package root:
 - `on(event, handler)` — register typed native lifecycle and session hooks
 - `sendMessage(message, options)` — void queue/prompt operation, never admission acknowledgement
 - native `message_start` — exact custom-message admission; receipt hook runs before public RPC event
-- `ctx.isIdle()` — publication capability; `ctx.ui.notify()` frames slash output through RPC
+- `ctx.isIdle()` — idle-fallback publication capability; `ctx.ui.notify()` frames slash output through RPC
 
 ### Spawn Correlation
 

@@ -127,9 +127,9 @@ def test_spawn_show_json_exposes_structured_entry_and_boundary_identity(tmp_path
         verified_id,
         run_boundary=RunBoundaryOutcome(
             status="verified",
-            exit_chat_id="c-pi-exit",
             trampoline_successor_id="succ-1",
         ),
+        current_chat_id="c-pi-exit",
     )
     unresolved_id = spawn_store.start_spawn(
         runtime_root,
@@ -159,7 +159,6 @@ def test_spawn_show_json_exposes_structured_entry_and_boundary_identity(tmp_path
     assert verified["continue_chat_id"] == "c-pi-exit"
     assert verified["run_boundary"] == {
         "status": "verified",
-        "exit_chat_id": "c-pi-exit",
         "trampoline_successor_id": "succ-1",
     }
     assert "harness_session_id" not in verified
@@ -167,7 +166,6 @@ def test_spawn_show_json_exposes_structured_entry_and_boundary_identity(tmp_path
     assert unresolved["continue_chat_id"] == "c-pi-unresolved"
     assert unresolved["run_boundary"] == {
         "status": "unresolved",
-        "exit_chat_id": None,
         "trampoline_successor_id": None,
     }
 
