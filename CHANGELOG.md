@@ -31,6 +31,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   next queued write, so a clean exit can no longer be published after a failed ping write.
 
 ### Changed
+- Load `/ps` metadata without opening task logs. The TUI reads only the selected
+  preview, one at a time; selection, refresh and disposal fence stale results.
 - Give bounded Bash log reads an explicit available/missing/unreadable result;
   keep benign missing-preview handling in the non-consuming UI reader.
 - Stop rewriting the whole managed-Bash records file for every output chunk. The

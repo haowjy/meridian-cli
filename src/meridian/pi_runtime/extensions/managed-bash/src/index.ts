@@ -7,6 +7,7 @@ import {
   hasTaskPanelUI,
   showTaskText,
   type PanelCommandContext,
+  type PanelDetail,
   type SelectablePanelColumn,
 } from "../../shared/selectable_panel";
 import { formatDurationSecs, renderTable } from "../../shared/ui";
@@ -71,11 +72,9 @@ function formatRows(rows: BashListRow[]): string {
   return [table, ...errors].join("\n");
 }
 
-type BashPanelRow = BashListRow & { preview?: string };
-
 type BashLogStream = "combined" | "stdout" | "stderr";
 
-async function readInspectableLog(row: BashPanelRow, stream: BashLogStream = "combined"): Promise<string> {
+async function readInspectableLog(row: BashListRow, stream: BashLogStream = "combined"): Promise<string> {
   const filePath = stream === "stdout" ? row.stdout_log_path : stream === "stderr" ? row.stderr_log_path : row.log_path;
   return (await readLogTail(filePath, 1024 * 1024)).trimEnd() || "(no output yet)";
 }
@@ -92,7 +91,7 @@ async function sendBackgroundPing(pi: ExtensionAPI, record: BashRecord): Promise
   );
 }
 
-function bashLogStreams(row: BashPanelRow): Array<{ id: BashLogStream; label: string; loadText: () => Promise<string> }> {
+function bashLogStreams(row: BashListRow): Array<{ id: BashLogStream; label: string; loadText: () => Promise<string> }> {
   return [
     { id: "combined", label: "combined", loadText: async () => readInspectableLog(row, "combined") },
     { id: "stdout", label: "stdout", loadText: async () => readInspectableLog(row, "stdout") },
@@ -100,7 +99,7 @@ function bashLogStreams(row: BashPanelRow): Array<{ id: BashLogStream; label: st
   ];
 }
 
-function formatBashStatus(row: BashPanelRow, theme: Theme): string {
+function formatBashStatus(row: BashListRow, theme: Theme): string {
   const dim = (value: string) => theme.fg("dim", value);
   const success = (value: string) => theme.fg("success", value);
   const error = (value: string) => theme.fg("error", value);
@@ -114,19 +113,28 @@ function formatBashStatus(row: BashPanelRow, theme: Theme): string {
   return error(`✗ ${row.status}`);
 }
 
-function renderBashPreview(row: BashPanelRow, theme: Theme): string[] {
+/** Bytes of the selected task's combined log read for the panel preview. */
+const PREVIEW_TAIL_BYTES = 2048;
+
+function bashPreviewOutput(detail: PanelDetail<string> | undefined, theme: Theme): string[] {
   const dim = (value: string) => theme.fg("dim", value);
-  const output = row.preview?.trimEnd() ?? "";
-  const lines = output ? output.split(/\r?\n/).slice(-3) : [dim("(no output yet)")];
+  if (!detail || detail.status === "loading") return [dim("(loading output…)")];
+  if (detail.status === "error") return [theme.fg("error", `Output unavailable: ${detail.message}`)];
+  const output = detail.value.trimEnd();
+  return output ? output.split(/\r?\n/).slice(-3) : [dim("(no output yet)")];
+}
+
+function renderBashPreview(row: BashListRow, theme: Theme, detail?: PanelDetail<string>): string[] {
+  const dim = (value: string) => theme.fg("dim", value);
   return [
     `${theme.fg("accent", row.bash_id)} ${formatBashStatus(row, theme)} ${dim(formatDurationSecs(row.duration_secs))}`,
     dim(row.command),
     ...(row.execution_error ? [theme.fg("error", row.execution_error)] : []),
-    ...lines,
+    ...bashPreviewOutput(detail, theme),
   ];
 }
 
-const BASH_PANEL_COLUMNS: SelectablePanelColumn<BashPanelRow>[] = [
+const BASH_PANEL_COLUMNS: SelectablePanelColumn<BashListRow>[] = [
   { header: "ID", width: 10, render: (row, theme, selected) => (theme ? (selected ? theme.fg("accent", row.bash_id) : theme.fg("dim", row.bash_id)) : row.bash_id) },
   { header: "STATE", width: 12, render: (row, theme) => (theme ? formatBashStatus(row, theme) : row.status === "running" && row.execution_error ? "unresolved" : row.status) },
   { header: "BG", width: 3, render: (row, theme) => (theme ? (row.is_background ? theme.fg("accent", "yes") : theme.fg("dim", "no")) : row.is_background ? "yes" : "no") },
@@ -289,10 +297,8 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
   pi.registerCommand("ps", {
     description: "List Meridian-managed bash tasks for this Pi session.",
     handler: async (_args, ctx) => {
-      const loadRows = async (): Promise<BashPanelRow[]> => {
-        const rows = await runtime.rows();
-        return Promise.all(rows.map(async (row) => ({ ...row, preview: await readLogTail(row.log_path, 2048) })));
-      };
+      // Task rows are metadata only: logs are read for the TUI's selected row by the panel, never here.
+      const loadRows = (): Promise<BashListRow[]> => runtime.rows();
 
       if (!hasTaskPanelUI(ctx)) {
         showTaskText(ctx, formatRows(await loadRows()));
@@ -304,6 +310,7 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
         columns: BASH_PANEL_COLUMNS,
         loadRows,
         getRowId: (row) => row.bash_id,
+        loadDetail: (row) => readLogTail(row.log_path, PREVIEW_TAIL_BYTES),
         renderPreview: renderBashPreview,
         emptyMessage: "No Meridian-managed bash tasks.",
         footer: "enter logs · c clear · j/k select · r refresh · q close",
