@@ -44,21 +44,38 @@ export class BashLogStore {
   }
 }
 
-/** Read at most the requested bytes; task logs may be much larger than RAM. */
-export async function readLogTail(filePath: string, maxBytes: number): Promise<string> {
+export type LogReadResult =
+  | { kind: "available"; text: string; truncated: boolean }
+  | { kind: "missing"; error: string }
+  | { kind: "unreadable"; error: string };
+
+/** Bounded result retrieval preserves availability: missing output is not empty output. */
+export async function readLogResult(filePath: string, maxBytes: number): Promise<LogReadResult> {
   let file;
   try {
     file = await open(filePath, "r");
     const size = (await file.stat()).size;
     const length = Math.max(0, Math.min(size, Math.floor(maxBytes)));
     const buffer = Buffer.alloc(length);
-    const { bytesRead } = await file.read(buffer, 0, length, Math.max(0, size - length));
+    let bytesRead = 0;
+    while (bytesRead < length) {
+      const read = await file.read(buffer, bytesRead, length - bytesRead, Math.max(0, size - length) + bytesRead);
+      if (read.bytesRead === 0) throw new Error(`Log changed while reading: ${filePath}`);
+      bytesRead += read.bytesRead;
+    }
     let start = 0;
     // A byte tail may begin inside a UTF-8 code point.
     if (size > length) while (start < bytesRead && (buffer[start]! & 0xc0) === 0x80) start += 1;
-    return buffer.subarray(start, bytesRead).toString("utf-8");
+    return { kind: "available", text: buffer.subarray(start, bytesRead).toString("utf-8"), truncated: size > length };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
-    throw error;
+    const kind = (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "unreadable";
+    return { kind, error: `Log ${kind}: ${filePath}: ${error instanceof Error ? error.message : String(error)}` };
   } finally { await file?.close(); }
+}
+
+/** Non-consuming UI inspection may treat an absent preview as empty. */
+export async function readLogTail(filePath: string, maxBytes: number): Promise<string> {
+  const result = await readLogResult(filePath, maxBytes);
+  if (result.kind === "unreadable") throw new Error(result.error);
+  return result.kind === "available" ? result.text : "";
 }

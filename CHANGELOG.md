@@ -29,6 +29,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   next queued write, so a clean exit can no longer be published after a failed ping write.
 
 ### Changed
+- Give bounded Bash log reads an explicit available/missing/unreadable result;
+  keep benign missing-preview handling in the non-consuming UI reader.
 - Stop rewriting the whole managed-Bash records file for every output chunk. The
   file is written at lifecycle transitions only, cutting metadata writes in a 1 MiB
   output with 128 retained tasks from ~2.2-2.6 MB (22-26 writes) to ~0.2 MB (2 writes).
