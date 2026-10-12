@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-10-12
+
 ### Upgrade notes
 - Stop active launches and back up project runtime state before upgrading. New current-chat fields are incompatible with 0.9.3 and 0.9.4 readers; rollback requires pre-upgrade state. See [current-chat tracking](docs/upgrading.md#current-chat-tracking-unreleased).
 
