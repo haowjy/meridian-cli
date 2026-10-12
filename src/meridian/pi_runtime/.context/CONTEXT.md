@@ -105,10 +105,18 @@ read results around consumption and receive the same completion again. The
 tool abort signal (Esc) ends a wait early; an interrupted or timed-out wait
 returned no result, so it consumes nothing. Consumption is gated on the status
 the call returned, not the live record.
-Managed-bash serializes record snapshots; terminal state is persisted before
-waiters are released, and consumption is persisted before the terminal wait or
-output result returns. If consumption persistence fails, the marker is rolled back and
-the wait returns an error, leaving the completion eligible for notification.
+Managed-bash serializes record snapshots. A record's in-memory state is its last
+published state: an exit becomes `exited`/`killed`, drops its task handle, and
+releases waiters inside the same serialized slot as the write that makes it
+durable. Until then the record stays `running` and owned, so list, wait, output,
+kill, and foreground results never present, wait on, or consume an unpublished
+exit, and an interrupted wait still returns running. A failed terminal write
+instead fails the record (`killed` plus `execution_error`), rejects waiters, and
+leaves the notice owed; a failure that already claimed the record wins. `kill`
+reports the published outcome, so a task that exited by itself is not "killed".
+Consumption is persisted before the terminal wait or output result returns. If
+consumption persistence fails, the marker is rolled back and the wait returns an
+error, leaving the completion eligible for notification.
 Spawn-watch serializes publication through one launch-scoped owner. A successful
 tool-bearing boundary and the genuinely late idle fallback use that owner rather
 than separate delivery machinery. Automatic child notices read `report.md`

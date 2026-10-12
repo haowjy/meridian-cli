@@ -4,6 +4,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Publish a managed-Bash exit before anyone can observe it (#562). A terminal status is
+  now committed in memory only once its records write lands, so `wait`, `output`,
+  `kill`, `/ps` and foreground results can no longer report or consume an exit whose
+  write failed, and an interrupted wait cannot report `exited`. A failed
+  terminal write still fails the record and leaves its completion notice owed.
+  `kill` reports a task that exited by itself as already exited, not killed.
+
 ## [0.9.4] - 2026-10-12
 
 ### Fixed

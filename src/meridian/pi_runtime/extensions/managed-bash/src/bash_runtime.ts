@@ -340,8 +340,8 @@ export class BashRuntime {
 
     switch (action) {
       case "output": {
-        // Terminal is published after queued output, so a read that starts after
-        // terminal is final; one that races completion has not seen the result.
+        // A terminal status is published after queued output, so a read that starts
+        // after it is final; one that races completion has not seen the result.
         const wasTerminal = isTerminalBashStatus(record.status);
         const output = await this.readLog(record, LOG_TAIL_BYTES);
         await this.consumeDeliveredResult(record, wasTerminal);
@@ -469,13 +469,18 @@ export class BashRuntime {
     status: BashStatus,
     exitCode: number | null,
   ): Promise<void> {
-    record.status = status;
-    record.exit_code = exitCode;
-    record.ended_at_ms = Date.now();
-    record.task = null;
     this.clearPing(record);
-    await this.persist();
-    record.resolveFinished();
+    const terminal = { status, exit_code: exitCode, ended_at_ms: Date.now() };
+    // The record keeps its running status and task until the terminal write lands,
+    // so no observer can see, wait on, or consume an unpublished result. Commit
+    // inside the write's queue slot: the next snapshot always includes it.
+    await this.enqueuePersist(async () => {
+      await this.writeCurrentRecords({ ...toPlainRecord(record), ...terminal });
+      if (record.execution_error) return; // failRecord owns the outcome
+      Object.assign(record, terminal);
+      record.task = null;
+      record.resolveFinished();
+    });
   }
 
   private async killBash(bashId: string, reason: "killed" | "aborted"): Promise<BashKillResult> {
@@ -493,6 +498,9 @@ export class BashRuntime {
     try { await record.task.terminate(); }
     catch (error) { await this.failRecord(record, error); throw error; }
     await record.finished;
+    // Report the published outcome: the task may have exited on its own just before the signal.
+    const { status } = record as BashRecord;
+    if (status !== "killed") return { bash_id: bashId, killed: false, message: `${bashId} is already ${status}` };
     return { bash_id: bashId, killed: true, message: `${bashId} killed` };
   }
 
@@ -705,10 +713,10 @@ export class BashRuntime {
     return write;
   }
 
-  private async writeCurrentRecords(): Promise<void> {
+  private async writeCurrentRecords(replacement?: BashRecord): Promise<void> {
     const records: Record<string, BashRecord> = {};
     for (const [id, record] of this.records.entries()) {
-      records[id] = toPlainRecord(record);
+      records[id] = replacement?.bash_id === id ? replacement : toPlainRecord(record);
     }
     const file: BashRecordsFile = {
       v: 1,
