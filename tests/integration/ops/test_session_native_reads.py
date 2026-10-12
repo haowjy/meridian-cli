@@ -91,10 +91,10 @@ def test_shared_native_id_lists_other_chats(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("status", "boundary", "exit_chat", "label", "selected"),
+    ("status", "boundary", "current", "label", "selected"),
     [
         ("running", None, None, "p1 → c1 (entry chat; run in progress)", "entry"),
-        ("running", "verified", "c2", "p1 → c1 (entry chat; run in progress)", "entry"),
+        ("running", None, "c2", "p1 → c2 (last observed chat; run in progress)", "exit"),
         ("succeeded", None, None, "p1 → c1 (entry chat; run predates exit tracking)", "entry"),
         ("succeeded", "verified", "c1", "p1 → c1 (verified exit chat)", "entry"),
         ("succeeded", "verified", "c2", "p1 → c2 (verified exit chat)", "exit"),
@@ -105,10 +105,10 @@ def test_shared_native_id_lists_other_chats(tmp_path: Path) -> None:
             "p1 → c1 (entry chat; exit-session identity unverified)",
             "entry",
         ),
-        ("succeeded", "mismatch", None, "p1 → c1 (entry chat; session identity mismatch)", "entry"),
+        ("succeeded", "mismatch", "c2", "p1 → c1 (entry chat; session identity mismatch)", "entry"),
     ],
 )
-def test_spawn_view_matrix(tmp_path, status, boundary, exit_chat, label, selected):
+def test_spawn_view_matrix(tmp_path, status, boundary, current, label, selected):
     from meridian.lib.state.spawn.model import RunBoundaryOutcome
 
     root, native, _ = seed(tmp_path)
@@ -124,14 +124,9 @@ def test_spawn_view_matrix(tmp_path, status, boundary, exit_chat, label, selecte
         chat_id="c2",
     )
     if boundary:
-        spawn_store.update_spawn(
-            root,
-            "p1",
-            run_boundary=RunBoundaryOutcome(
-                status=boundary,
-                exit_chat_id=exit_chat,
-            ),
-        )
+        spawn_store.update_spawn(root, "p1", run_boundary=RunBoundaryOutcome(status=boundary))
+    if current:
+        spawn_store.update_spawn(root, "p1", current_chat_id=current)
     if status == "succeeded":
         spawn_store.finalize_spawn(root, "p1", "succeeded", 0, origin="runner")
     target = resolve_transcript_source(ref="p1", project_root=tmp_path, runtime_root=root)

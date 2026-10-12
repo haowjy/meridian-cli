@@ -10,6 +10,12 @@ with the current chat's settings and work association. History, identities and
 live leases are not copied. A normal fresh launch still starts fresh; only
 continuation follows the previous run.
 
+The same pointer carries a verified post-exit session (Pi): Meridian proves the
+native transcript before reusing or creating that chat, then publishes it as
+current. A 0.9.4 spawn whose `run_boundary` names a verified `exit_chat_id` is
+read as that run's current chat and rewritten without the old field on its next
+update; its continuation target does not change.
+
 Observation does not prove that a transcript was saved. Actual resume and read
 operations still validate the exact native transcript and refuse missing or
 invalid sources rather than silently continuing an older conversation. Disabled

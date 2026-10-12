@@ -39,7 +39,9 @@ def _translate(raw: dict[str, Any]) -> dict[str, Any]:
     if data.get("chat_id") is None and entry_chat_id is not None:
         data["chat_id"] = entry_chat_id
     if data.get("run_boundary") is None and exit_identity is not None:
-        data["run_boundary"] = {"status": exit_identity, "exit_chat_id": exit_chat_id}
+        data["run_boundary"] = {"status": exit_identity}
+    if exit_chat_id is not None and data.get("current_chat_id") is None:
+        data["current_chat_id"] = exit_chat_id
     if trampoline is not None:
         boundary = RunBoundaryOutcome.model_validate(
             data.get("run_boundary") or {"status": "unresolved"}

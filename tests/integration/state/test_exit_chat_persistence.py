@@ -11,35 +11,40 @@ from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.spawn.model import RunBoundaryOutcome, SpawnRecord
 
 
-def test_exit_chat_requires_persistence_on_creation_and_reuse(tmp_path: Path):
+def test_verified_exit_publishes_only_with_native_proof_on_creation_and_reuse(tmp_path: Path):
     runtime = tmp_path / ".meridian"
     store = str(tmp_path / "native")
     entry = session_store.start_session(
         runtime, harness="claude", harness_session_id="entry", model="", native_store=store,
     )
     session_store.stop_session(runtime, entry)
-    transcript = tmp_path / "native/exit.jsonl"
-    allocate = partial(
-        session_store.get_or_create_exit_chat, runtime, entry, "claude", store, "exit",
-        native_exists=transcript.is_file,
+    spawn_store.start_spawn(
+        runtime, spawn_id="p1", chat_id=entry, harness="claude", kind="primary",
+        harness_session_id="entry", model="", agent="", prompt="",
     )
-    assert allocate() is None
-    assert len(session_store.list_all_session_records(runtime)) == 1
+    transcript = tmp_path / "native/exit.jsonl"
+    publish = partial(
+        session_store.get_or_create_observed_chat, runtime, entry, "claude", store,
+        spawn_id="p1", native_exists=transcript.is_file,
+    )
+
+    def current() -> str | None:
+        row = spawn_store.get_spawn(runtime, "p1")
+        return row.current_chat_id if row is not None else None
+
+    assert publish("exit") is None
+    assert len(session_store.list_all_session_records(runtime)) == 1 and current() is None
     transcript.parent.mkdir()
     transcript.write_text('{"sessionId":"exit"}\n')
-    exit_chat = allocate()
-    assert exit_chat is not None and exit_chat != entry
+    exit_chat = publish("exit")
+    assert exit_chat is not None and exit_chat != entry and current() == exit_chat
     record = session_store.get_session_record(runtime, exit_chat)
     assert record is not None and record.stopped_at is not None
-    assert allocate() == exit_chat
-    assert session_store.get_or_create_exit_chat(
-        runtime, exit_chat, "claude", store, "exit", native_exists=transcript.is_file,
-    ) == exit_chat
+    assert publish("exit") == exit_chat
     transcript.unlink()
-    assert allocate() is None  # Existing *other* chat must not bypass proof.
-    assert session_store.get_or_create_exit_chat(
-        runtime, exit_chat, "claude", store, "exit", native_exists=transcript.is_file,
-    ) is None  # Nor may the entry chat itself.
+    assert publish("exit") is None  # Existing *other* chat must not bypass proof.
+    assert publish("entry") is None  # Nor may the entry chat itself.
+    assert current() == exit_chat
     assert len(session_store.list_all_session_records(runtime)) == 2
 
 

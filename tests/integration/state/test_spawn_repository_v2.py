@@ -142,8 +142,8 @@ def test_dogfood_boundary_rows_quarantine_until_migrated_once(tmp_path: Path) ->
     assert loaded is not None
     assert loaded.chat_id == "c1"
     assert loaded.run_boundary == RunBoundaryOutcome(
-        status="verified", exit_chat_id="c-exit", trampoline_successor_id="diagnostic-only")
-    assert loaded.continue_chat_id == "c-exit"
+        status="verified", trampoline_successor_id="diagnostic-only")
+    assert loaded.current_chat_id == loaded.continue_chat_id == "c-exit"
     assert "exit_identity" not in state_path.read_text(encoding="utf-8")
 
 
@@ -245,9 +245,24 @@ def test_dogfood_migration_reports_index_rearm_timeout(tmp_path: Path, monkeypat
     assert "timed out" in result.index_rearm_warning
 
 
-def test_run_boundary_rejects_exit_without_verified_status() -> None:
-    with pytest.raises(ValueError, match="set exactly when status is verified"):
-        RunBoundaryOutcome(status="unresolved", exit_chat_id="c-exit")
+def test_released_verified_exit_reads_as_the_one_current_pointer(tmp_path: Path) -> None:
+    spawns_dir = tmp_path / "spawns"
+    _seed_state(spawns_dir, _record(status="succeeded"))
+    state_path = spawns_dir / "p1" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.pop("current_chat_id", None)
+    state["run_boundary"] = {"status": "verified", "exit_chat_id": "c-exit"}
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    loaded = read_state(spawns_dir, "p1", include_prompt=False)
+    assert loaded is not None
+    assert loaded.run_boundary == RunBoundaryOutcome(status="verified")
+    assert loaded.current_chat_id == loaded.continue_chat_id == "c-exit"
+
+    write_state_locked(spawns_dir, "p1", lambda row: row, allow_terminal_overwrite=True)
+    rewritten = json.loads(state_path.read_text(encoding="utf-8"))
+    assert rewritten["current_chat_id"] == "c-exit"
+    assert rewritten["run_boundary"] == {"status": "verified", "trampoline_successor_id": None}
 
 
 def test_v3_state_round_trips_without_prompt_body(tmp_path: Path) -> None:

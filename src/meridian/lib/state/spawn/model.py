@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Literal, Self
+from typing import Any, Literal, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES, SpawnStatus, TerminalSpawnStatus
+from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import OptionalPersistedChatId, OptionalPersistedHarnessSessionId
 
@@ -77,19 +77,16 @@ class TerminalFacts(BaseModel):
 
 
 class RunBoundaryOutcome(BaseModel):
-    """Identity verification at the boundary between an entry and exit chat."""
+    """Post-exit identity evidence; ``current_chat_id`` alone routes continuation.
+
+    ``verified`` means a post-exit key was proven natively and published as the
+    current chat. Trampoline successors stay diagnostic.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     status: Literal["verified", "unresolved", "mismatch"]
-    exit_chat_id: OptionalPersistedChatId = None
     trampoline_successor_id: str | None = None
-
-    @model_validator(mode="after")
-    def _verified_has_exit_chat(self) -> Self:
-        if (self.status == "verified") != (self.exit_chat_id is not None):
-            raise ValueError("exit_chat_id must be set exactly when status is verified")
-        return self
 
 
 class SpawnStateFields(BaseModel):
@@ -142,6 +139,24 @@ class SpawnStateFields(BaseModel):
     terminal: TerminalFacts | None = None
     launch_policy_snapshot: LaunchPolicySnapshot | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _read_legacy_exit_pointer(cls, data: object) -> object:
+        """0.9.4 kept a verified exit chat in ``run_boundary``; read it as current."""
+        if not isinstance(data, dict):
+            return data
+        raw = cast("dict[str, Any]", data)
+        boundary = raw.get("run_boundary")
+        if not isinstance(boundary, dict) or "exit_chat_id" not in boundary:
+            return raw
+        normalized = dict(raw)
+        legacy = dict(cast("dict[str, Any]", boundary))
+        exit_chat_id = legacy.pop("exit_chat_id")
+        normalized["run_boundary"] = legacy
+        if exit_chat_id and not normalized.get("current_chat_id"):
+            normalized["current_chat_id"] = exit_chat_id
+        return normalized
+
 
 class SpawnRecord(SpawnStateFields):
     """Prompt-bearing state projection assembled from persisted spawn state."""
@@ -150,18 +165,12 @@ class SpawnRecord(SpawnStateFields):
 
     @property
     def continue_chat_id(self) -> str | None:
-        """Current observed chat, or the legacy verified terminal chat."""
+        """Last published current chat, otherwise the immutable entry chat."""
         if self.record_mode == "historical":
             return None
         if self.run_boundary is not None and self.run_boundary.status == "mismatch":
             return self.chat_id
-        if self.current_chat_id is not None:
-            return self.current_chat_id
-        if self.status in TERMINAL_SPAWN_STATUSES and (
-            self.run_boundary is not None and self.run_boundary.status == "verified"
-        ):
-            return self.run_boundary.exit_chat_id
-        return self.chat_id
+        return self.current_chat_id or self.chat_id
 
 
 __all__ = [

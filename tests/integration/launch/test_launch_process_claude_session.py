@@ -392,7 +392,7 @@ def test_primary_claude_exec_receives_prebound_identity(
         row = list_spawns(context.runtime_root).records[0]
         assert row.status == "failed" and row.terminal is not None
         assert row.terminal.error == "entry_mismatch"
-        assert row.run_boundary is not None and row.run_boundary.exit_chat_id is None
+        assert row.run_boundary is not None and row.current_chat_id is None
         session_events = [
             json.loads(line)
             for line in (context.runtime_root / "sessions.jsonl").read_text().splitlines()
@@ -517,7 +517,7 @@ def test_unrelated_claude_trampoline_candidate_is_diagnostic(
     assert row.run_boundary.trampoline_successor_id == successor
     assert row.chat_id == entry.chat_id
     assert (row.run_boundary.status if row.run_boundary else None) == "unresolved"
-    assert (row.run_boundary.exit_chat_id if row.run_boundary else None) is None
+    assert row.current_chat_id is None
     with pytest.raises(NativeSessionUnavailable, match="native_transcript_missing"):
         resolve_transcript_source(
             ref=row.id,
@@ -729,7 +729,6 @@ def test_owned_claude_observations_publish_current_chat_while_running(
         assert len(observed) == 1
     else:
         assert entry.harness_session_id is None
-        assert row.run_boundary.exit_chat_id is None
         assert row.continue_chat_id == entry.chat_id
     if fork:
         assert (store / f"{source_session_id}.jsonl").read_text() == (

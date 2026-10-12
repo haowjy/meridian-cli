@@ -7,17 +7,18 @@ from meridian.lib.state.spawn.model import SpawnRecord
 def run_boundary_summary(
     row: SpawnRecord, *, include_unverified: bool = True,
 ) -> str | None:
-    """Keep absent exit evidence diagnostic; always surface identity conflicts or changes."""
+    """Name the continue target; boundary status only chooses the wording."""
     boundary = row.run_boundary
     if boundary is None:
         return None
     entry = f"{row.chat_id or '?'} ({row.harness_session_id or '?'})"
-    if boundary.status == "verified":
-        return f"entry {entry} → exit {boundary.exit_chat_id}"
     if boundary.status == "mismatch":
         return f"warning: Session identity mismatch; recorded entry {entry}."
-    if row.current_chat_id and row.current_chat_id != row.chat_id:
-        return f"entry {entry} → last observed chat {row.current_chat_id}"
+    target = row.continue_chat_id
+    if boundary.status == "verified":
+        return f"entry {entry} → exit {target}"
+    if target != row.chat_id:
+        return f"entry {entry} → last observed chat {target}"
     if boundary.trampoline_successor_id:
         return (
             "warning: Possible session change detected "
@@ -31,18 +32,17 @@ def run_boundary_summary(
 
 def spawn_view_label(row: SpawnRecord) -> str | None:
     entry_chat = row.chat_id or "?"
-    current_chat = row.current_chat_id or entry_chat
-    if row.status not in TERMINAL_SPAWN_STATUSES:
-        if current_chat != entry_chat:
-            return f"{row.id} → {current_chat} (last observed chat; run in progress)"
-        return f"{row.id} → {entry_chat} (entry chat; run in progress)"
-    boundary = row.run_boundary
-    if boundary is None:
-        return f"{row.id} → {entry_chat} (entry chat; run predates exit tracking)"
-    if boundary.status == "mismatch":
+    target = row.continue_chat_id or entry_chat
+    status = row.run_boundary.status if row.run_boundary is not None else None
+    running = "; run in progress" if row.status not in TERMINAL_SPAWN_STATUSES else ""
+    if status == "mismatch":
         return f"{row.id} → {entry_chat} (entry chat; session identity mismatch)"
-    if current_chat != entry_chat:
-        return f"{row.id} → {current_chat} (last observed chat)"
-    if boundary.status == "unresolved":
-        return f"{row.id} → {entry_chat} (entry chat; exit-session identity unverified)"
-    return f"{row.id} → {row.continue_chat_id} (verified exit chat)"
+    if status == "verified":
+        return f"{row.id} → {target} (verified exit chat)"
+    if target != entry_chat:
+        return f"{row.id} → {target} (last observed chat{running})"
+    if running:
+        return f"{row.id} → {entry_chat} (entry chat{running})"
+    if status is None:
+        return f"{row.id} → {entry_chat} (entry chat; run predates exit tracking)"
+    return f"{row.id} → {entry_chat} (entry chat; exit-session identity unverified)"

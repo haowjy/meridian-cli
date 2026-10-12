@@ -1048,15 +1048,25 @@ def get_or_create_observed_chat(
     session_id: str,
     *,
     spawn_id: str,
-) -> str:
+    native_exists: Callable[[], bool] | None = None,
+) -> str | None:
     """Materialize and publish the current chat in one source-lock epoch.
 
-    The caller admits native evidence; this seam owns context inheritance and
-    publication. A missing/deleted run cannot create an orphan chat. Settings
-    come from the current pointer read under the lock, not a stale caller read.
+    The single continuation writer for owned live observations and verified
+    post-exit keys. The caller admits native evidence; this seam owns context
+    inheritance and publication. ``native_exists`` is the post-exit proof: it
+    runs under the locks before any alias is reused or created, and a refusal
+    publishes nothing (``None``). A missing/deleted run cannot create an orphan
+    chat. Settings come from the current pointer read under the lock, not a
+    stale caller read. Session events and spawn state remain separate files.
     """
     from meridian.lib.state.spawn.model import SpawnRecord
-    from meridian.lib.state.spawn.repository import Applied, write_state_locked
+    from meridian.lib.state.spawn.repository import (
+        Applied,
+        Decline,
+        Declined,
+        write_state_locked,
+    )
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     with (
@@ -1064,7 +1074,9 @@ def get_or_create_observed_chat(
         lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
         lock_file(paths.sessions_flock),
     ):
-        def observe(row: SpawnRecord) -> SpawnRecord:
+        def observe(row: SpawnRecord) -> SpawnRecord | Decline:
+            if native_exists is not None and not native_exists():
+                return Decline("native session unproven")
             chat_id = _get_or_create_observed_chat_locked(
                 runtime_root, row.current_chat_id or source_chat_id,
                 harness=harness, native_store=native_store, session_id=session_id,
@@ -1074,29 +1086,12 @@ def get_or_create_observed_chat(
         result = write_state_locked(
             paths.spawns_dir, spawn_id, observe, allow_terminal_overwrite=True,
         )
-        if not isinstance(result, Applied):
-            raise ValueError(f"Observed session has no live spawn record: {spawn_id}")
-        assert result.after.current_chat_id is not None
-        return result.after.current_chat_id
-
-
-def get_or_create_exit_chat(
-    runtime_root: Path, entry_chat_id: str, harness: str, native_store: str, session_id: str,
-    *, native_exists: Callable[[], bool],
-) -> str | None:
-    """Require native proof before reusing or creating an exit chat, under the locks."""
-    paths = RuntimePaths.from_root_dir(runtime_root)
-    with (
-        lock_file(paths.project_lifetime_flock, mode="shared"),
-        lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
-        lock_file(paths.sessions_flock),
-    ):
-        if not native_exists():
+        if isinstance(result, Applied):
+            assert result.after.current_chat_id is not None
+            return result.after.current_chat_id
+        if isinstance(result, Declined):
             return None
-        return _get_or_create_observed_chat_locked(
-            runtime_root, entry_chat_id,
-            harness=harness, native_store=native_store, session_id=session_id,
-        )
+        raise ValueError(f"Observed session has no live spawn record: {spawn_id}")
 
 
 def _get_or_create_observed_chat_locked(

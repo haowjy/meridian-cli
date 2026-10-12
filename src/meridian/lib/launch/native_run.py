@@ -20,7 +20,7 @@ from meridian.lib.core.native_identity import (
     NativeObservationBatch,
     PostExit,
 )
-from meridian.lib.core.types import ChatId, SpawnId
+from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
 from meridian.lib.launch.session_scope import SessionAttempt
@@ -139,6 +139,7 @@ class NativeRun:
                 key.session_id,
                 spawn_id=str(self.attempt.spawn_id),
             )
+            assert observed_chat_id is not None  # Only post-exit proof can refuse.
             # The state seam materializes and publishes atomically under its
             # source locks. Only then may memory and the journal cursor advance.
             self._current_chat_id = observed_chat_id
@@ -343,15 +344,18 @@ def conclude_native_run(
                 )
                 return source is not None and source.is_file()
             except (NativeIdentityError, OSError):
-                logger.info("Skipping exit chat allocation: exact native resolution failed")
+                logger.info("Skipping exit chat publication: exact native resolution failed")
                 return False
 
-        exit_chat_id = session_store.get_or_create_exit_chat(
+        # A verified exit is one more owned observation: same publication seam,
+        # with native proof required under its locks before alias reuse.
+        exit_chat_id = session_store.get_or_create_observed_chat(
             run.attempt.runtime_root,
             run.attempt.chat_id,
             exit_key.harness,
             exit_key.native_store,
             exit_key.session_id,
+            spawn_id=str(spawn_id),
             native_exists=native_exists,
         )
     if isinstance(error, NativeEntryMismatch):
@@ -362,7 +366,6 @@ def conclude_native_run(
         status = "unresolved"
     boundary = RunBoundaryOutcome(
         status=status,
-        exit_chat_id=ChatId(exit_chat_id) if exit_chat_id else None,
         trampoline_successor_id=post.trampoline_successor_id if exit_chat_id is None else None,
     )
     spawn_store.update_spawn(run.attempt.runtime_root, spawn_id, run_boundary=boundary)
