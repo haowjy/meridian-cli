@@ -1,10 +1,10 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { BashRecord, BashRecordsFile } from "../shared/schemas";
-import { BashRuntime } from "./src/bash_runtime";
+import { BashRuntime, type BashListRow } from "./src/bash_runtime";
 
 type Verdict = "ok" | "fail" | "fail-always";
 
@@ -65,7 +65,7 @@ function harness(root: string, runtime: BashRuntime) {
   const command = `until [ -e '${exitFlag}' ]; do sleep 0.01; done; printf done`;
   let latest: Hold = { hit: Promise.resolve({} as BashRecordsFile), settle: () => {} };
   return {
-    runtime, command,
+    runtime, command, root,
     /** Hold the next records write matching `when` (default: one publishing a terminal record). */
     arm(when: Held["when"] = holdsTerminal): Hold {
       const hold = {} as Hold;
@@ -90,6 +90,11 @@ function harness(root: string, runtime: BashRuntime) {
       await this.exitAndHold();
       return started.bash_id;
     },
+    /** A pipe failure on a live task: the very listener a real stdout error reaches, outside any publication slot. */
+    fault(id: string, message: string): void {
+      const live = (runtime as unknown as { executions: Map<string, { task: { child: { stdout: NodeJS.EventEmitter } } | null }> }).executions.get(id);
+      live!.task!.child.stdout.emit("error", new Error(message));
+    },
     row: (id: string) => runtime.list(true).find((row) => row.bash_id === id)!,
     disk: async (id: string): Promise<BashRecord & { runtime_error?: string }> =>
       (JSON.parse(await readFile(recordsPath, "utf8")) as BashRecordsFile).records[id]!,
@@ -103,11 +108,13 @@ async function withRuntime(body: (h: Harness) => Promise<void>): Promise<void> {
   vi.stubEnv("_MERIDIAN_PI_STATE_DIR", root);
   vi.stubEnv("MERIDIAN_SPAWN_ID", "p-publication");
   const runtime = new BashRuntime();
+  gate.log.length = 0;
   try { await body(harness(root, runtime)); }
   finally {
-    gate.holds.length = 0; gate.failAlways = false; gate.log.length = 0;
+    gate.holds.length = 0; gate.failAlways = false;
     for (const hold of outstanding.splice(0)) hold.settle("ok");
     await runtime.shutdown().catch(() => undefined);
+    gate.log.length = 0; // shutdown publishes too
     await rm(root, { recursive: true, force: true });
   }
 }
@@ -324,6 +331,156 @@ describe("managed Bash terminal publication", () => {
       await until(() => h.row(id).status === "killed");
       expect(gate.log.filter((file) => file.records[id]?.status === "exited")).toEqual([]);
       expect((await h.disk(id)).status).toBe("running");
+    });
+  });
+
+  it("a fault and a creation arriving during another record's write survive its adoption", async () => {
+    await withRuntime(async (h) => {
+      const start = async (command: string) => (await h.runtime.execute({ command, background: true }, undefined) as { bash_id: string }).bash_id;
+      const a = await start("sleep 30");
+      const b = await start("sleep 30");
+      const write = h.arm((file) => file.records[a]?.is_tracked === false);
+      const detaching = h.runtime.manage({ action: "detach", bash_id: a });
+      const staged = await write.hit;
+
+      // While A's snapshot is in flight: a new task is created and B faults outside the queue.
+      const creating = h.runtime.startDetachedUserBash("sleep 30", process.cwd());
+      await until(() => h.runtime.list(true).length === 3);
+      h.fault(b, "EIO: pipe broke");
+      expect(h.row(b).execution_error).toContain("pipe broke");
+      // Failure precedence is by staging time: the write in flight never saw the fault.
+      expect(staged.records[b]!.execution_error).toBeUndefined();
+
+      write.settle("ok");
+      await detaching;
+      const c = (await creating).bash_id;
+      // Adopting A's snapshot lost neither the new row nor the live fault.
+      expect(h.row(b).execution_error).toContain("pipe broke");
+      expect(h.row(c)).toMatchObject({ status: "running", is_background: true });
+      await until(() => h.row(b).status === "killed");
+      await until(async () => (await h.disk(b)).status === "killed");
+      expect(await h.disk(a)).toMatchObject({ is_tracked: false, status: "running" });
+      expect(await h.disk(b)).toMatchObject({ status: "killed", execution_error: expect.stringContaining("pipe broke") });
+      expect(await h.disk(c)).toMatchObject({ status: "running", is_background: true });
+      // Only published metadata reaches the file: no live handle, progress or fault latch is serialized.
+      const live = ["task", "outputQueue", "finished", "fault", "repair", "proposal", "logPaths", "logBytes", "pingTimer", "foregroundFinish", "terminationReason"];
+      for (const file of gate.log) for (const record of Object.values(file.records)) expect(Object.keys(record).filter((key) => live.includes(key))).toEqual([]);
+    });
+  });
+
+  it("a fault claimed while the staged success is being written still owns the outcome", async () => {
+    await withRuntime(async (h) => {
+      const id = await h.pending(); // the exit is observed and its terminal write is in flight
+      const waiting = h.runtime.manage({ action: "wait", bash_id: id });
+      expect(await stillPending(waiting)).toBe(true);
+      h.fault(id, "EIO: late pipe error");
+      await until(() => h.row(id).status === "killed");
+      expect(h.row(id).execution_error).toContain("late pipe error");
+
+      h.settle("ok");
+      await expect(waiting).rejects.toThrow("late pipe error");
+      await until(async () => (await h.disk(id)).status === "killed");
+      expect(await h.disk(id)).toMatchObject({ status: "killed", execution_error: expect.stringContaining("late pipe error") });
+      expect((await h.disk(id)).notification_consumed_at_ms).toBeUndefined();
+      // The window is not closed by construction: the staged success did land first, then was repaired.
+      const attempted = gate.log.filter((file) => file.records[id]?.status !== "running").map((file) => file.records[id]!.status);
+      expect(attempted).toEqual(["exited", "killed"]);
+    });
+  });
+
+  it("a failed detach or consume is the caller's error and never faults the task", async () => {
+    await withRuntime(async (h) => {
+      const started = async (command: string) => (await h.runtime.execute({ command, background: true }, undefined) as { bash_id: string }).bash_id;
+      const a = await started("sleep 30");
+      const detach = h.arm((file) => file.records[a]?.is_tracked === false);
+      const detaching = h.runtime.manage({ action: "detach", bash_id: a });
+      await detach.hit;
+      detach.settle("fail");
+      await expect(detaching).rejects.toThrow("EIO");
+      expect(h.row(a)).toMatchObject({ status: "running", is_tracked: true });
+      expect(h.row(a).execution_error).toBeUndefined();
+      expect(() => process.kill(-h.row(a).pid!, 0)).not.toThrow();
+      expect(await h.runtime.manage({ action: "detach", bash_id: a })).toMatchObject({ detached: true });
+      expect(await h.disk(a)).toMatchObject({ is_tracked: false, status: "running" });
+
+      const b = await started("printf x");
+      await until(() => h.row(b).status === "exited");
+      const consume = h.arm((file) => file.records[b]?.notification_consumed_at_ms != null);
+      const reading = h.runtime.manage({ action: "output", bash_id: b });
+      await consume.hit;
+      consume.settle("fail");
+      await expect(reading).rejects.toThrow("EIO");
+      expect(h.row(b).status).toBe("exited");
+      expect(h.row(b).execution_error).toBeUndefined();
+      expect((await h.disk(b)).notification_consumed_at_ms).toBeUndefined();
+      expect(await h.runtime.manage({ action: "output", bash_id: b })).toMatchObject({ output: "x" });
+      expect((await h.disk(b)).notification_consumed_at_ms).toEqual(expect.any(Number));
+      // Nothing was claimed: no failure notice was ever carried to the file.
+      expect(gate.log.every((file) => file.runtime_error === undefined)).toBe(true);
+    });
+  });
+
+  it("a creation write that fails claims the record in its slot and publishes the failure evidence", async () => {
+    await withRuntime(async (h) => {
+      const creation = h.arm((file) => Object.keys(file.records).length > 0);
+      const starting = h.runtime.execute({ command: "sleep 30" }, undefined);
+      await creation.hit;
+      const { bash_id: id, pid } = h.runtime.list(true)[0]!;
+      creation.settle("fail");
+      await expect(starting).rejects.toThrow("EIO");
+      // The unpublished proposal gets its repair row, and the task it started is gone.
+      expect(await h.disk(id)).toMatchObject({ status: "killed", execution_error: expect.stringContaining("EIO") });
+      expect(() => process.kill(-pid!, 0)).toThrow();
+    });
+  });
+
+  it("foreground abort returns while an unrelated lifecycle write is blocked", async () => {
+    await withRuntime(async (h) => {
+      const a = (await h.runtime.execute({ command: "sleep 30", background: true }, undefined) as { bash_id: string }).bash_id;
+      const abort = new AbortController();
+      const foreground = h.runtime.execute({ command: "sleep 30" }, abort.signal);
+      await until(() => h.runtime.list(true).length === 2);
+      const blocked = h.arm((file) => file.records[a]?.is_tracked === false);
+      const detaching = h.runtime.manage({ action: "detach", bash_id: a });
+      await blocked.hit;
+      abort.abort();
+      expect(await foreground).toMatchObject({ stderr: "[command aborted]", exit_code: -1 });
+      blocked.settle("ok");
+      await detaching;
+      const id = h.runtime.list(true).find((row) => row.bash_id !== a)!.bash_id;
+      await until(async () => (await h.disk(id)).status === "killed");
+    });
+  });
+
+  it("recovery that cannot publish its diagnostic adopts nothing, then retries without signalling", async () => {
+    await withRuntime(async (h) => {
+      const bashId = "b-cafe0001";
+      const dir = path.join(h.root, "pi-bash", "p-publication");
+      await mkdir(dir, { recursive: true });
+      const stored: BashRecord = {
+        bash_id: bashId, command: "sleep 30", cwd: "/", pid: null, status: "running", is_background: true, is_tracked: true,
+        exit_code: null, started_at_ms: 1, ended_at_ms: null, log_path: "l", stdout_log_path: "o", stderr_log_path: "e",
+        log_bytes: 3, timeout_min: 1, originating_bash_id: null, execution_error: "earlier fault",
+      };
+      await writeFile(path.join(dir, "bash-records.json"), JSON.stringify({ v: 1, spawn_id: "p-publication", updated_at_ms: 1, runtime_error: "earlier runtime error", records: { [bashId]: stored } }));
+      const signals = vi.spyOn(process, "kill");
+
+      const owners = (globalThis as Record<symbol, Map<string, BashRuntime>>)[Symbol.for("meridian.pi.managed-bash.owners.v2")]!;
+      owners.clear();
+      gate.failAlways = true;
+      const restarted = new BashRuntime();
+      await expect(restarted.manage({ action: "list", include_completed: true })).rejects.toThrow("EIO");
+      expect(restarted.list(true)).toEqual([]); // the failed publication adopted nothing
+      expect(gate.log[0]).toMatchObject({ runtime_error: "earlier runtime error" });
+
+      gate.failAlways = false;
+      const listed = await restarted.manage({ action: "list", include_completed: true }) as { rows: BashListRow[] };
+      expect(listed.rows).toHaveLength(1);
+      expect(listed.rows[0]).toMatchObject({ bash_id: bashId, status: "running", log_bytes: 3 });
+      expect(listed.rows[0]!.execution_error).toMatch(/^earlier fault; ownership_lost/);
+      expect(await restarted.manage({ action: "kill", bash_id: bashId })).toMatchObject({ killed: false, message: expect.stringContaining("no PID was signalled") });
+      expect(signals).not.toHaveBeenCalled();
+      expect((await h.disk(bashId)).execution_error?.match(/ownership_lost/g)).toHaveLength(1);
     });
   });
 

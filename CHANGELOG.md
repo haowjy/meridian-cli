@@ -31,6 +31,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   next queued write, so a clean exit can no longer be published after a failed ping write.
 
 ### Changed
+- Give serialized Bash publication its own immutable snapshot. Live handles,
+  output progress and fault evidence cannot be replaced by a metadata write;
+  task-fatal write failures are claimed inside their queue slot, independent
+  of callers' promise chains.
 - Load `/ps` metadata without opening task logs. The TUI reads only the selected
   preview, one at a time; selection, refresh and disposal fence stale results.
 - Give bounded Bash log reads an explicit available/missing/unreadable result;

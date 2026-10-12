@@ -3,7 +3,6 @@ import { randomBytes } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
 
 import { classifyWorkId } from "../../shared/ids";
-import { writeJsonAtomic } from "../../shared/json_file";
 import { runMeridianCommand } from "../../shared/meridian_cli";
 import { admittedWorkIds, readDeliveryReceipts } from "../../shared/delivery_receipts";
 import {
@@ -12,8 +11,9 @@ import {
   resolveBashRecordsPath,
   resolveDeliveryReceiptsPath,
 } from "../../shared/pi_state_paths";
-import { isTerminalBashStatus, parseBashRecordsFile, type BashRecord, type BashRecordsFile, type BashStatus } from "../../shared/schemas";
+import { isTerminalBashStatus, parseBashRecordsFile, type BashRecord, type BashStatus } from "../../shared/schemas";
 import { BashLogStore, type BashLogPaths } from "./bash_log_store";
+import { BashPublication, changeRow, withoutRows, withRow, withRuntimeError, type Published } from "./bash_publication";
 import { ShellTask } from "./shell_task";
 import { interruptedWait, waitForSpawn } from "./spawn_wait";
 
@@ -41,25 +41,27 @@ export type BashExecuteResult =
   | { stdout: string; stderr: string; exit_code: number | null }
   | { error: string };
 
-type RuntimeRecord = BashRecord & {
+/** Live state of one task: handles, output progress and its first fault. Owned by execution, never
+ * serialized and never replaced by a publication. The records file holds only `Published` rows. */
+type Execution = {
+  readonly id: string;
+  /** The row proposed at creation; the published row supersedes it once its write lands. */
+  readonly proposal: BashRecord;
+  readonly logPaths: BashLogPaths;
   task: ShellTask | null;
   outputQueue: Promise<void>;
-  finished: Promise<void>;
-  resolveFinished: () => void;
-  rejectFinished: (error: Error) => void;
+  readonly finished: Promise<void>;
+  readonly resolveFinished: () => void;
+  readonly rejectFinished: (error: Error) => void;
   terminationReason: BashStatus | null;
   foregroundFinish: ((result: BashExecuteResult) => void) | null;
   pingTimer: NodeJS.Timeout | null;
-};
-
-/** One coordination-metadata change. It is staged when its queue slot starts, written as a
- * prospective snapshot, and applied to live memory (`commit`) only if that write landed. */
-type Transition = {
-  patches?: Array<[RuntimeRecord, Partial<BashRecord>]>;
-  removed?: RuntimeRecord[];
-  /** `null` clears the file-level runtime_error. */
-  runtimeError?: string | null;
-  commit: () => void;
+  /** Progress stays in memory; each lifecycle write stamps it into the file. */
+  logBytes: number;
+  /** First task-fatal fault. Claimed synchronously and shown at once; published when storage
+   * permits. `endedAt` is set once the owned group is confirmed gone. */
+  fault: { error: string; endedAt: number | null } | null;
+  repair: Promise<void> | null;
 };
 
 export type BashRuntimeHooks = {
@@ -140,17 +142,22 @@ export class BashRuntime {
   private readonly recordsPath = resolveBashRecordsPath(this.spawnId);
   private readonly receiptsPath = resolveDeliveryReceiptsPath(this.spawnId);
   private readonly logStore = new BashLogStore(resolveBashLogsDir(this.spawnId));
-  private readonly records = new Map<string, RuntimeRecord>();
-  private persistQueue: Promise<void> = Promise.resolve();
+  private readonly publication = new BashPublication({
+    path: this.recordsPath,
+    spawnId: this.spawnId,
+    evidence: (published) => this.withEvidence(published),
+  });
+  private readonly executions = new Map<string, Execution>();
   private ready: Promise<void> = Promise.resolve();
-  private runtimeError: string | undefined;
+  /** The latest fault text, claimed in memory before any write can carry it to the file. */
+  private notice: string | undefined;
 
   constructor(private hooks: BashRuntimeHooks = {}) {
     const key = this.recordsPath;
     const prior = owners.get(key);
     if (prior) {
       prior.hooks = hooks;
-      for (const record of prior.records.values()) prior.schedulePing(record);
+      for (const exec of prior.executions.values()) prior.schedulePing(exec);
       return prior;
     }
     owners.set(key, this);
@@ -161,40 +168,37 @@ export class BashRuntime {
 
   async execute(params: BashParams, signal: AbortSignal | undefined): Promise<BashExecuteResult> {
     const timeoutMin = normalizeTimeoutMin(params.timeout_min, DEFAULT_TIMEOUT_MIN);
-    const record = await this.startRecord(params.command, timeoutMin);
+    const exec = await this.startRecord(params.command, timeoutMin);
 
     if (params.background === true) {
-      await this.publishBackground(record);
-      return { bash_id: record.bash_id, status: "started" };
+      await this.publishBackground(exec);
+      return { bash_id: exec.id, status: "started" };
     }
 
-    this.hooks.onForegroundStart?.(record.bash_id);
+    this.hooks.onForegroundStart?.(exec.id);
     return await new Promise<BashExecuteResult>((resolve) => {
       let settled = false;
       const finish = (result: BashExecuteResult): void => {
         if (settled) return;
         settled = true;
-        record.foregroundFinish = null;
+        exec.foregroundFinish = null;
         clearTimeout(timeout);
         signal?.removeEventListener("abort", abort);
-        this.hooks.onForegroundStop?.(record.bash_id);
+        this.hooks.onForegroundStop?.(exec.id);
         resolve(result);
       };
-      record.foregroundFinish = finish;
+      exec.foregroundFinish = finish;
       const abort = (): void => {
-        void this.stopForeground(record).then(async () =>
-          finish({ stdout: await this.readLog(record, LOG_TAIL_BYTES), stderr: "[command aborted]", exit_code: -1 }))
+        void this.stopForeground(exec).then(async () =>
+          finish({ stdout: await this.readLog(exec, LOG_TAIL_BYTES), stderr: "[command aborted]", exit_code: -1 }))
           .catch((error) => finish({ error: errorText(error) }));
       };
       const timeout = setTimeout(() => {
-        void this.transact(() => this.fields(record, { is_background: true })).then(() => {
-          this.schedulePing(record);
-          finish({
-          bash_id: record.bash_id,
+        void this.publishBackground(exec).then(() => finish({
+          bash_id: exec.id,
           status: "backgrounded",
-          message: `Command exceeded timeout_min=${timeoutMin} and was backgrounded as ${record.bash_id}. Use /ps to manage it.`,
-          });
-        }, async (error) => { await this.failRecord(record, error); finish({ error: errorText(error) }); });
+          message: `Command exceeded timeout_min=${timeoutMin} and was backgrounded as ${exec.id}. Use /ps to manage it.`,
+        }), (error) => finish({ error: errorText(error) }));
       }, timeoutMin * 60_000);
 
       if (signal?.aborted) {
@@ -202,9 +206,9 @@ export class BashRuntime {
         return;
       }
       signal?.addEventListener("abort", abort, { once: true });
-      void record.finished.then(async () => {
+      void exec.finished.then(async () => {
         if (settled) return;
-        const output = await this.readSplitLog(record);
+        const output = await this.readSplitLog(exec);
         finish(output);
       }).catch((error) => finish({ error: errorText(error) }));
     });
@@ -219,8 +223,8 @@ export class BashRuntime {
     const forwardOutput = (data: Buffer): void => {
       if (forwardForegroundOutput) safeOnData(options.onData, data);
     };
-    const record = await this.startRecord(command, DEFAULT_TIMEOUT_MIN, cwd, { ...process.env, ...(options.env ?? {}) }, forwardOutput);
-    this.hooks.onForegroundStart?.(record.bash_id);
+    const exec = await this.startRecord(command, DEFAULT_TIMEOUT_MIN, cwd, { ...process.env, ...(options.env ?? {}) }, forwardOutput);
+    this.hooks.onForegroundStart?.(exec.id);
 
     return await new Promise<{ exitCode: number | null }>((resolve) => {
       let settled = false;
@@ -228,16 +232,16 @@ export class BashRuntime {
         if (settled) return;
         settled = true;
         forwardForegroundOutput = false;
-        record.foregroundFinish = null;
+        exec.foregroundFinish = null;
         options.signal?.removeEventListener("abort", abort);
-        this.hooks.onForegroundStop?.(record.bash_id);
+        this.hooks.onForegroundStop?.(exec.id);
         resolve({ exitCode });
       };
       const abort = (): void => {
         forwardForegroundOutput = false;
-        void this.stopForeground(record).then(() => finish(-1), () => finish(-1));
+        void this.stopForeground(exec).then(() => finish(-1), () => finish(-1));
       };
-      record.foregroundFinish = () => {
+      exec.foregroundFinish = () => {
         safeOnData(options.onData, Buffer.from(`${USER_BASH_PANEL_BACKGROUND_MSG}\n`, "utf-8"));
         finish(0);
       };
@@ -247,35 +251,39 @@ export class BashRuntime {
         return;
       }
       options.signal?.addEventListener("abort", abort, { once: true });
-      void record.finished.then(() => finish(record.exit_code), () => finish(-1));
+      void exec.finished.then(() => finish(this.view(exec).exit_code), () => finish(-1));
     });
   }
 
   async startDetachedUserBash(command: string, cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<{ bash_id: string }> {
-    const record = await this.startRecord(command, DEFAULT_TIMEOUT_MIN, cwd, env);
-    await this.publishBackground(record);
-    return { bash_id: record.bash_id };
+    const exec = await this.startRecord(command, DEFAULT_TIMEOUT_MIN, cwd, env);
+    await this.publishBackground(exec);
+    return { bash_id: exec.id };
   }
 
   async backgroundForeground(): Promise<{ ok: boolean; reason?: string; bash_id?: string }> {
-    const foreground = [...this.records.values()]
-      .filter((record) => record.status === "running" && !record.is_background && record.foregroundFinish != null)
-      .sort((a, b) => b.started_at_ms - a.started_at_ms)[0];
+    const foreground = [...this.executions.values()]
+      .filter((exec) => {
+        const row = this.view(exec);
+        return row.status === "running" && !row.is_background && exec.foregroundFinish != null;
+      })
+      .sort((a, b) => b.proposal.started_at_ms - a.proposal.started_at_ms)[0];
     if (!foreground) {
       return { ok: false, reason: "no_foreground" };
     }
 
     await this.publishBackground(foreground);
     foreground.foregroundFinish?.({
-      bash_id: foreground.bash_id,
+      bash_id: foreground.id,
       status: "backgrounded",
       message: USER_BASH_PANEL_BACKGROUND_MSG,
     });
-    return { ok: true, bash_id: foreground.bash_id };
+    return { ok: true, bash_id: foreground.id };
   }
 
   list(includeCompleted: boolean): BashListRow[] {
-    return [...this.records.values()]
+    return [...this.executions.values()]
+      .map((exec) => this.view(exec))
       .filter((record) => includeCompleted || record.status === "running")
       .sort(compareBashRecordsForPanel)
       .map((record) => ({
@@ -309,13 +317,17 @@ export class BashRuntime {
   async clearFinished(): Promise<number> {
     await this.prepare();
     const admitted = admittedWorkIds(await readDeliveryReceipts(this.spawnId, this.receiptsPath));
-    let cleared = 0;
-    await this.transact(() => {
-      const finished = [...this.records.values()].filter((record) => record.status !== "running" && (!record.is_background || !record.is_tracked || record.notification_consumed_at_ms != null || admitted.has(record.bash_id)));
-      cleared = finished.length;
-      return finished.length === 0 ? null : { removed: finished, commit: () => { for (const record of finished) this.records.delete(record.bash_id); } };
+    let cleared: string[] = [];
+    await this.publication.publish({
+      stage: (base) => {
+        cleared = [...base.rows.values()]
+          .filter((row) => row.status !== "running" && (!row.is_background || !row.is_tracked || row.notification_consumed_at_ms != null || admitted.has(row.bash_id)))
+          .map((row) => row.bash_id);
+        return cleared.length === 0 ? null : withoutRows(base, cleared);
+      },
+      adopted: () => { for (const id of cleared) this.executions.delete(id); },
     });
-    return cleared;
+    return cleared.length;
   }
 
   async manage(params: BashManageParams, signal?: AbortSignal): Promise<BashManageResult> {
@@ -338,8 +350,8 @@ export class BashRuntime {
       return { error: `unsupported id: ${id}` };
     }
 
-    const record = this.records.get(id);
-    if (!record) {
+    const exec = this.executions.get(id);
+    if (!exec) {
       return { error: `bash_id not found: ${id}` };
     }
 
@@ -347,21 +359,25 @@ export class BashRuntime {
       case "output": {
         // A terminal status is published after queued output, so a read that starts
         // after it is final; one that races completion has not seen the result.
-        const wasTerminal = isTerminalBashStatus(record.status);
-        const output = await this.readLog(record, LOG_TAIL_BYTES);
-        await this.consumeDeliveredResult(record, wasTerminal);
+        const wasTerminal = isTerminalBashStatus(this.view(exec).status);
+        const output = await this.readLog(exec, LOG_TAIL_BYTES);
+        await this.consumeDeliveredResult(exec, wasTerminal);
         return { bash_id: id, output, truncated: true };
       }
       case "kill":
         return await this.killBash(id, "killed");
       case "wait": {
-        const result = await this.waitBash(record, signal);
+        const result = await this.waitBash(exec, signal);
         // Gate on what was returned: the record may turn terminal after a "running" result.
-        await this.consumeDeliveredResult(record, isTerminalBashStatus(result.status));
+        await this.consumeDeliveredResult(exec, isTerminalBashStatus(result.status));
         return result;
       }
       case "detach":
-        await this.transact(() => this.fields(record, { is_tracked: false }, () => this.clearPing(record)));
+        // Not task-fatal: a failed release is the caller's error and leaves the task running.
+        await this.publication.publish({
+          stage: changeRow(id, () => ({ is_tracked: false })),
+          adopted: () => this.clearPing(exec),
+        });
         return { bash_id: id, detached: true, message: `${id} detached from quiescence tracking.` };
       default:
         return { error: `unsupported action: ${String(action)}` };
@@ -370,11 +386,11 @@ export class BashRuntime {
 
   async shutdown(): Promise<void> {
     await this.ensureReady();
-    const results = await Promise.allSettled([...this.records.values()].map(async (record) => {
-      this.clearPing(record);
-      if (record.task && record.status === "running") await this.killBash(record.bash_id, "killed");
+    const results = await Promise.allSettled([...this.executions.values()].map(async (exec) => {
+      this.clearPing(exec);
+      if (exec.task && this.view(exec).status === "running") await this.killBash(exec.id, "killed");
     }));
-    await this.persist();
+    await this.publication.publish({ stage: (base) => base });
     const failure = results.find((result) => result.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;
   }
@@ -385,16 +401,18 @@ export class BashRuntime {
     cwd = process.cwd(),
     env: NodeJS.ProcessEnv = process.env,
     onData?: (data: Buffer) => void,
-  ): Promise<RuntimeRecord> {
+  ): Promise<Execution> {
     await this.prepare();
     const bashId = makeBashId();
     const logPaths = await this.logStore.create(bashId);
 
-    const record = runtimeRecord({
+    const task = new ShellTask(command, cwd, { ...env, _MERIDIAN_PI_BASH_ID: bashId });
+    const child = task.child;
+    const exec = makeExecution({
       bash_id: bashId,
       command,
       cwd,
-      pid: null,
+      pid: child.pid ?? null,
       status: "running",
       is_background: false,
       is_tracked: true,
@@ -408,185 +426,172 @@ export class BashRuntime {
       timeout_min: timeoutMin,
       originating_bash_id: process.env._MERIDIAN_PI_BASH_ID || null,
       ping_sent_at_ms: null,
-    });
-    this.records.set(bashId, record);
-
-    let task: ShellTask;
-    try { task = new ShellTask(command, cwd, { ...env, _MERIDIAN_PI_BASH_ID: bashId }); }
-    catch (error) { this.records.delete(bashId); throw error; }
-    const child = task.child;
-    record.task = task;
-    record.pid = child.pid ?? null;
-    this.attachOutput(record, task, onData);
-    child.once("error", (error) => this.queueOutput(record, `\n[failed to start command: ${error.message}]\n`, "stderr"));
+    }, task);
+    this.executions.set(bashId, exec);
+    this.attachOutput(exec, task, onData);
+    child.once("error", (error) => this.queueOutput(exec, `\n[failed to start command: ${error.message}]\n`, "stderr"));
     // Exit observation waits for the owned group and every preceding log write.
     void task.waitForExit().then(async (code) => {
-      await record.outputQueue;
-      if (record.status === "running") await this.markTerminal(record, record.terminationReason ?? "exited", code);
-    }).catch((error) => this.failRecord(record, error));
+      await exec.outputQueue;
+      if (this.view(exec).status === "running") await this.markTerminal(exec, exec.terminationReason ?? "exited", code);
+    }).catch((error) => this.claim(exec, error));
 
-    try {
-      await this.persist();
-    } catch (error) {
-      await this.failRecord(record, error);
-      throw error;
-    }
-    return record;
+    // Creation is published as proposed: live progress and faults are stamped in by the publisher.
+    await this.publishRecord(exec, (base) => withRow(base, this.project(exec.proposal, exec)));
+    return exec;
   }
 
-  private attachOutput(record: RuntimeRecord, task: ShellTask, onData?: (data: Buffer) => void): void {
+  private attachOutput(exec: Execution, task: ShellTask, onData?: (data: Buffer) => void): void {
     const child = task.child;
     for (const stream of ["stdout", "stderr"] as const) {
       const output = child[stream];
       const decoder = new StringDecoder("utf-8");
-      output?.on("error", (error) => { void this.failRecord(record, error); });
+      output?.on("error", (error) => { void this.claim(exec, error); });
       output?.on("data", (chunk: string | Buffer) => {
         output.pause();
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf-8");
         try { onData?.(buffer); }
-        catch (error) { void this.failRecord(record, error); }
-        void this.queueOutput(record, decoder.write(buffer), stream).then(() => output.resume());
+        catch (error) { void this.claim(exec, error); }
+        void this.queueOutput(exec, decoder.write(buffer), stream).then(() => output.resume());
       });
-      output?.once("end", () => { const tail = decoder.end(); if (tail) void this.queueOutput(record, tail, stream); });
+      output?.once("end", () => { const tail = decoder.end(); if (tail) void this.queueOutput(exec, tail, stream); });
     }
   }
 
-  private queueOutput(record: RuntimeRecord, chunk: string, stream: "stdout" | "stderr"): Promise<void> {
-    record.outputQueue = record.outputQueue.then(async () => {
-      if (!record.execution_error) await this.appendLog(record, chunk, stream);
-    }).catch((error) => this.failRecord(record, error));
-    return record.outputQueue;
+  private queueOutput(exec: Execution, chunk: string, stream: "stdout" | "stderr"): Promise<void> {
+    exec.outputQueue = exec.outputQueue.then(async () => {
+      if (!exec.fault) await this.appendLog(exec, chunk, stream);
+    }).catch((error) => this.claim(exec, error));
+    return exec.outputQueue;
   }
 
-  private async appendLog(record: RuntimeRecord, chunk: string, stream: "stdout" | "stderr"): Promise<void> {
+  private async appendLog(exec: Execution, chunk: string, stream: "stdout" | "stderr"): Promise<void> {
     // Progress stays in memory: the records file keeps the size from the last
     // lifecycle write, and the logs themselves are the output authority.
-    record.log_bytes = await this.logStore.append(logPathsFromRecord(record), stream, chunk);
-    if (shouldResetPingOnActivity()) this.schedulePing(record);
+    exec.logBytes = await this.logStore.append(exec.logPaths, stream, chunk);
+    if (shouldResetPingOnActivity()) this.schedulePing(exec);
   }
 
   private async markTerminal(
-    record: RuntimeRecord,
+    exec: Execution,
     status: BashStatus,
     exitCode: number | null,
   ): Promise<void> {
-    this.clearPing(record);
-    const terminal = { status, exit_code: exitCode, ended_at_ms: Date.now() };
-    // The record keeps its running status and task until this transition's write lands,
-    // so no observer can see, wait on, or consume an unpublished result.
-    await this.transact(() => {
-      // Linearization point: success is staged only while no failure has claimed the record.
-      // A failure arriving after this is ordered after it, and failRecord's own write repairs
-      // the file; between the rename and that repair a crash can still recover the success.
-      if (record.execution_error || record.status !== "running") return null;
-      return { patches: [[record, terminal]], commit: () => {
-        if (record.execution_error) return; // failRecord owns the outcome
-        Object.assign(record, terminal);
-        record.task = null;
-        record.resolveFinished();
-      } };
-    });
+    this.clearPing(exec);
+    const endedAt = Date.now();
+    // The row keeps its running status and the task its handle until this write lands, so no
+    // observer can see, wait on, or consume an unpublished result.
+    await this.publishRecord(
+      exec,
+      // Linearization point: success is staged only while no failure has claimed the record. A
+      // failure claimed during the write is ordered after it: its repair overwrites the file, and
+      // between the rename and that repair a crash can still recover the success.
+      changeRow(exec.id, (row) => exec.fault || row.status !== "running" ? null : { status, exit_code: exitCode, ended_at_ms: endedAt }),
+      () => {
+        if (exec.fault) return; // the claimed failure owns the outcome
+        exec.task = null;
+        exec.resolveFinished();
+      },
+    );
   }
 
   private async killBash(bashId: string, reason: "killed" | "aborted"): Promise<BashKillResult> {
-    const record = this.records.get(bashId);
-    if (!record) {
+    const exec = this.executions.get(bashId);
+    if (!exec) {
       return { bash_id: bashId, killed: false, message: `bash_id not found: ${bashId}` };
     }
-    if (record.status !== "running") {
-      return { bash_id: bashId, killed: false, message: `${bashId} is already ${record.status}` };
+    const before = this.view(exec).status;
+    if (before !== "running") {
+      return { bash_id: bashId, killed: false, message: `${bashId} is already ${before}` };
     }
-    if (!record.task) {
+    if (!exec.task) {
       return { bash_id: bashId, killed: false, message: `${bashId}: ownership lost after restart; no PID was signalled. Inspect the process manually or use bash_manage detach to release tracking.` };
     }
-    await this.stopTask(record, record.task);
-    await record.finished;
+    await this.stopTask(exec, exec.task);
+    await exec.finished;
     // Report the published outcome: the task may have exited on its own just before the signal.
-    const { status } = record as BashRecord;
+    const { status } = this.view(exec);
     if (status !== "killed") return { bash_id: bashId, killed: false, message: `${bashId} is already ${status}` };
     return { bash_id: bashId, killed: true, message: `${bashId} killed` };
   }
 
   /** Stop the owned group. Resolves once it is physically gone, before any publication. */
-  private async stopTask(record: RuntimeRecord, task: ShellTask): Promise<void> {
-    record.terminationReason = "killed";
+  private async stopTask(exec: Execution, task: ShellTask): Promise<void> {
+    exec.terminationReason = "killed";
     try { await task.terminate(); }
-    catch (error) { await this.failRecord(record, error); throw error; }
+    catch (error) { await this.claim(exec, error); throw error; }
   }
 
   /** Caller interruption of a foreground command: wait for the physical stop and its flushed
    * output, never for metadata publication. The record publishes on its own and claims nothing here. */
-  private async stopForeground(record: RuntimeRecord): Promise<void> {
-    const task = record.task;
-    if (record.status !== "running" || !task) return;
-    await this.stopTask(record, task);
+  private async stopForeground(exec: Execution): Promise<void> {
+    const task = exec.task;
+    if (this.view(exec).status !== "running" || !task) return;
+    await this.stopTask(exec, task);
     await task.closed;
-    await record.outputQueue;
+    await exec.outputQueue;
   }
 
-  private async waitBash(record: RuntimeRecord, signal?: AbortSignal): Promise<BashWaitResult> {
-    if (record.status === "running" && !record.task) throw new Error(`${record.bash_id}: ownership_lost after restart; inspect manually or detach to release tracking`);
-    if (record.status === "running") {
+  private async waitBash(exec: Execution, signal?: AbortSignal): Promise<BashWaitResult> {
+    if (this.view(exec).status === "running" && !exec.task) throw new Error(`${exec.id}: ownership_lost after restart; inspect manually or detach to release tracking`);
+    if (this.view(exec).status === "running") {
       await new Promise<void>((resolve) => {
         const done = (): void => { clearTimeout(timer); signal?.removeEventListener("abort", done); resolve(); };
         const timer = setTimeout(done, WAIT_TIMEOUT_MIN * 60_000);
         if (signal?.aborted) done();
         else signal?.addEventListener("abort", done, { once: true });
-        void record.finished.then(done, done);
+        void exec.finished.then(done, done);
       });
     }
+    const record = this.view(exec);
     if (record.execution_error) throw new Error(record.execution_error);
     if (record.status === "running") {
-      if (signal?.aborted) return interruptedWait(record.bash_id);
+      if (signal?.aborted) return interruptedWait(exec.id);
       return {
-        bash_id: record.bash_id,
+        bash_id: exec.id,
         status: "running",
         message: `Still running after ${WAIT_TIMEOUT_MIN} minutes. Call bash_manage(action='wait') again, or bash_manage(action='kill') to terminate. Reading its output any other way leaves the result unconsumed, and a completion notice will follow.`,
       };
     }
     return {
-      bash_id: record.bash_id,
+      bash_id: exec.id,
       status: record.status,
       exit_code: record.exit_code,
       duration_secs: durationSecs(record),
-      output: (await this.readLog(record, 2 * 1024)) + (record.execution_error ? `\n[execution failed: ${record.execution_error}]` : ""),
+      output: (await this.readLog(exec, 2 * 1024)) + (this.view(exec).execution_error ? `\n[execution failed: ${this.view(exec).execution_error}]` : ""),
     };
   }
 
-  private schedulePing(record: RuntimeRecord): void {
-    this.clearPing(record);
-    if (!record.task || !isPingable(record)) return;
-    const timer = setTimeout(() => { void this.firePing(record).catch((error) => this.failRecord(record, error)); }, taskPingIntervalMs());
+  private schedulePing(exec: Execution): void {
+    this.clearPing(exec);
+    if (!exec.task || !isPingable(this.view(exec))) return;
+    const timer = setTimeout(() => { void this.firePing(exec).catch((error) => this.claim(exec, error)); }, taskPingIntervalMs());
     timer.unref();
-    record.pingTimer = timer;
+    exec.pingTimer = timer;
   }
 
-  private clearPing(record: RuntimeRecord): void {
-    if (record.pingTimer) clearTimeout(record.pingTimer);
-    record.pingTimer = null;
+  private clearPing(exec: Execution): void {
+    if (exec.pingTimer) clearTimeout(exec.pingTimer);
+    exec.pingTimer = null;
   }
 
-  private async firePing(record: RuntimeRecord): Promise<void> {
-    record.pingTimer = null;
+  private async firePing(exec: Execution): Promise<void> {
+    exec.pingTimer = null;
     const notify = this.hooks.onBackgroundPing;
     if (!notify) return;
-    // A metadata write failure claims the record here, at the await that observes it. Left to the
-    // timer's outer catch it would claim only after the next queued slot had already staged.
-    const publish = async (patch: Partial<BashRecord>, claim: boolean): Promise<boolean> => {
-      try { return await this.transact(() => !claim || isPingable(record) ? this.fields(record, patch) : null); }
-      catch (error) { await this.failRecord(record, error); return false; }
-    };
-    // The claim is staged against committed state, so it cannot race a detach or terminal write.
-    if (!await publish({ ping_sent_at_ms: Date.now() }, true)) return;
-    try { await notify(toPlainRecord(record)); }
+    // The claim is staged against published state, so it cannot race a detach or terminal write.
+    const claimed = await this.publishRecord(exec, changeRow(exec.id, (row) =>
+      !exec.fault && isPingable(row) ? { ping_sent_at_ms: Date.now() } : null));
+    if (!claimed) return;
+    try { await notify(this.view(exec)); }
     catch (error) {
       // Notification capability can become stale during reload. It owns no
       // shell lifecycle: release its claim without turning it into task failure.
-      await publish({ ping_sent_at_ms: null }, false);
-      process.stderr.write(`[managed-bash] ping ${record.bash_id}: ${errorText(error)}\n`);
+      process.stderr.write(`[managed-bash] ping ${exec.id}: ${errorText(error)}\n`);
+      await this.publishRecord(exec, changeRow(exec.id, () => ({ ping_sent_at_ms: null })));
       // Do not spin on a broken capability. A new hook (including one rebound
       // while this attempt was in flight) can retry the released claim.
-      if (this.hooks.onBackgroundPing !== notify) this.schedulePing(record);
+      if (this.hooks.onBackgroundPing !== notify) this.schedulePing(exec);
     }
   }
 
@@ -611,54 +616,66 @@ export class BashRuntime {
     }
   }
 
-  private async readSplitLog(record: RuntimeRecord): Promise<ExecResult> {
+  private async readSplitLog(exec: Execution): Promise<ExecResult> {
     return {
-      stdout: await this.readLog(record, LOG_TAIL_BYTES, "stdout"),
-      stderr: await this.readLog(record, LOG_TAIL_BYTES, "stderr"),
-      exit_code: record.exit_code ?? -1,
+      stdout: await this.readLog(exec, LOG_TAIL_BYTES, "stdout"),
+      stderr: await this.readLog(exec, LOG_TAIL_BYTES, "stderr"),
+      exit_code: this.view(exec).exit_code ?? -1,
     };
   }
 
-  private async readLog(record: RuntimeRecord, maxBytes: number, stream: "combined" | "stdout" | "stderr" = "combined"): Promise<string> {
-    return this.logStore.read(logPathsFromRecord(record), stream, maxBytes);
+  private async readLog(exec: Execution, maxBytes: number, stream: "combined" | "stdout" | "stderr" = "combined"): Promise<string> {
+    return this.logStore.read(exec.logPaths, stream, maxBytes);
   }
 
-  /** Publish current memory as is. Only for facts that cannot be retracted: creation, live
-   * progress, and failure evidence. Retractable changes go through `transact`. */
-  private persist(): Promise<void> {
-    return this.enqueue(() => this.writeRecords());
+  /** The row as readers see it: published (or proposed) metadata with live progress and the
+   * negative fault overlay applied. */
+  private view(exec: Execution): BashRecord {
+    return this.project(this.publication.current.rows.get(exec.id) ?? exec.proposal, exec);
   }
 
-  /** Stage, write and commit one transition inside its own queue slot, so memory never holds
-   * a change whose write has not landed and no other slot can publish it early. Resolves
-   * `false` when staging declined. Never call from inside a queue slot. */
-  private transact(stage: () => Transition | null): Promise<boolean> {
-    return this.enqueue(async () => {
-      const transition = stage();
-      if (!transition) return false;
-      await this.writeRecords(transition);
-      transition.commit();
-      return true;
-    });
+  private project(row: Readonly<BashRecord>, exec: Execution | undefined = this.executions.get(row.bash_id)): BashRecord {
+    if (!exec) return row;
+    const { fault } = exec;
+    return {
+      ...row,
+      log_bytes: exec.logBytes,
+      ...(fault ? { execution_error: fault.error } : {}),
+      ...(fault?.endedAt != null ? { status: "killed" as const, exit_code: -1, ended_at_ms: fault.endedAt } : {}),
+    };
   }
 
-  private fields(record: RuntimeRecord, patch: Partial<BashRecord>, after?: () => void): Transition {
-    return { patches: [[record, patch]], commit: () => { Object.assign(record, patch); after?.(); } };
+  /** What every publication stages against: the published value with live evidence merged in.
+   * Faults and progress are never retracted by a write, so any slot may carry them to the file. */
+  private withEvidence(published: Published): Published {
+    const rows = new Map<string, Readonly<BashRecord>>();
+    for (const [id, row] of published.rows) rows.set(id, this.project(row));
+    return withRuntimeError({ rows }, this.notice ?? published.runtimeError);
   }
 
-  private async publishBackground(record: RuntimeRecord): Promise<void> {
-    try { await this.transact(() => this.fields(record, { is_background: true })); }
-    catch (error) { await this.failRecord(record, error); throw error; }
-    this.schedulePing(record);
+  /** A task-fatal publication. A failed stage or write claims `exec` inside its own queue slot (see
+   * `BashPublication`); callers see the original error once its cleanup has run. */
+  private async publishRecord(
+    exec: Execution,
+    stage: (base: Published) => Published | null,
+    adopted?: () => void,
+  ): Promise<boolean> {
+    try { return await this.publication.publish({ stage, adopted, fatal: (error) => { void this.claim(exec, error); } }); }
+    catch (error) { await exec.repair; throw error; }
+  }
+
+  private async publishBackground(exec: Execution): Promise<void> {
+    await this.publishRecord(exec, changeRow(exec.id, () => ({ is_background: true })));
+    this.schedulePing(exec);
   }
 
   private async prepare(): Promise<void> {
     await this.ensureReady();
-    const stale = this.runtimeError;
+    const stale = this.notice ?? this.publication.current.runtimeError;
     if (stale === undefined) return;
-    await this.transact(() => this.runtimeError !== stale ? null : {
-      runtimeError: null,
-      commit: () => { if (this.runtimeError === stale) this.runtimeError = undefined; },
+    await this.publication.publish({
+      stage: (base) => base.runtimeError !== stale ? null : withRuntimeError(base, undefined),
+      adopted: () => { if (this.notice === stale) this.notice = undefined; },
     });
   }
 
@@ -681,81 +698,63 @@ export class BashRuntime {
     }
     const file = parseBashRecordsFile(JSON.parse(text));
     if (!file || file.spawn_id !== this.spawnId) throw new Error("Invalid managed Bash record store; refusing to replace recovery evidence");
-    this.runtimeError = file.runtime_error;
-    for (const plain of Object.values(file.records)) {
-      const record = runtimeRecord(plain);
-      if (record.status === "running" && !record.execution_error?.includes(OWNERSHIP_LOST)) {
-        // Durable fault evidence is never replaced; ownership loss is added once.
-        record.execution_error = record.execution_error ? `${record.execution_error}; ${OWNERSHIP_LOST}` : OWNERSHIP_LOST;
-      }
-      this.records.set(record.bash_id, record);
+    const rows = new Map<string, BashRecord>();
+    for (const row of Object.values(file.records)) {
+      // Durable fault evidence is never replaced; ownership loss is added once.
+      const lost = row.status === "running" && !row.execution_error?.includes(OWNERSHIP_LOST);
+      rows.set(row.bash_id, lost ? { ...row, execution_error: row.execution_error ? `${row.execution_error}; ${OWNERSHIP_LOST}` : OWNERSHIP_LOST } : row);
     }
-    // A recovered running row is unresolved work, not permission to signal a
-    // possibly reused PID. Publish its diagnostic before accepting commands.
-    await this.persist();
+    // A recovered running row is unresolved work, not permission to signal a possibly reused PID.
+    // Publish its diagnostic before accepting commands; only then does it become live.
+    await this.publication.publish({
+      stage: () => withRuntimeError({ rows }, file.runtime_error),
+      adopted: () => { for (const row of rows.values()) this.executions.set(row.bash_id, makeExecution(row, null)); },
+    });
   }
 
-  private async failRecord(record: RuntimeRecord, error: unknown): Promise<void> {
-    if (record.execution_error) return;
-    record.execution_error = errorText(error);
-    record.terminationReason = "killed";
-    this.runtimeError = record.execution_error;
-    this.clearPing(record);
+  /** Claim a task-fatal fault, synchronously: the first fault owns the outcome and is visible at
+   * once. Cleanup and repair publication run outside whatever slot claimed it, and the returned
+   * promise is for callers that want to observe them, never for ordering. */
+  private claim(exec: Execution, error: unknown): Promise<void> {
+    if (exec.fault || this.view(exec).execution_error) return exec.repair ?? Promise.resolve();
+    const fault = { error: errorText(error), endedAt: null as number | null };
+    exec.fault = fault;
+    exec.terminationReason = "killed";
+    this.notice = fault.error;
+    this.clearPing(exec);
     // No further output can be published. Closing owned pipes avoids tying
     // cleanup to paused read buffers or a failed output queue.
-    record.task?.child.stdout?.destroy();
-    record.task?.child.stderr?.destroy();
+    exec.task?.child.stdout?.destroy();
+    exec.task?.child.stderr?.destroy();
+    return exec.repair = Promise.resolve().then(() => this.repair(exec, fault));
+  }
+
+  private async repair(exec: Execution, fault: { error: string; endedAt: number | null }): Promise<void> {
     try {
-      if (record.task) await record.task.terminate();
-      record.task = null;
-      record.status = "killed";
-      record.exit_code = -1;
-      record.ended_at_ms = Date.now();
+      if (exec.task) await exec.task.terminate();
+      exec.task = null;
+      fault.endedAt = Date.now();
     } catch (cleanupError) {
-      record.execution_error += `; cleanup failed: ${errorText(cleanupError)}`;
+      fault.error += `; cleanup failed: ${errorText(cleanupError)}`;
     }
-    try { await this.persist(); }
-    catch (publishError) {
-      process.stderr.write(`[managed-bash] task ${record.bash_id}: ${errorText(publishError)}\n`);
+    try {
+      // Failure evidence publishes as it stands, even when the creation write never landed.
+      await this.publication.publish({ stage: (base) => withRow(base, this.project(base.rows.get(exec.id) ?? exec.proposal, exec)) });
+    } catch (publishError) {
+      process.stderr.write(`[managed-bash] task ${exec.id}: ${errorText(publishError)}\n`);
     }
-    record.rejectFinished(new Error(record.execution_error));
+    exec.rejectFinished(new Error(fault.error));
   }
 
   /** When the model received a terminal result, its completion notice would repeat it.
    * Execution failures stay owed: their notice carries the error the log lacks. */
-  private async consumeDeliveredResult(record: RuntimeRecord, deliveredTerminal: boolean): Promise<void> {
+  private async consumeDeliveredResult(exec: Execution, deliveredTerminal: boolean): Promise<void> {
     if (!deliveredTerminal) return;
-    // Staged in the slot: a write queued ahead of this one can fail the record meanwhile.
-    await this.transact(() => record.execution_error || this.records.get(record.bash_id) !== record
-      ? null : this.fields(record, { notification_consumed_at_ms: Date.now() }));
-  }
-
-  private enqueue<T>(run: () => Promise<T>): Promise<T> {
-    const write = this.persistQueue.then(run);
-    this.persistQueue = write.then(() => undefined, () => undefined);
-    return write;
-  }
-
-  /** The file is the committed records plus, at most, the one staged transition. */
-  private async writeRecords(transition?: Transition): Promise<void> {
-    const removed = new Set((transition?.removed ?? []).map((record) => record.bash_id));
-    const records: Record<string, BashRecord> = {};
-    for (const [id, record] of this.records.entries()) {
-      if (!removed.has(id)) records[id] = toPlainRecord(record);
-    }
-    for (const [record, patch] of transition?.patches ?? []) {
-      const plain = records[record.bash_id];
-      if (plain) Object.assign(plain, patch);
-    }
-    const runtimeError = transition?.runtimeError === undefined ? this.runtimeError : transition.runtimeError ?? undefined;
-    const file: BashRecordsFile = {
-      v: 1,
-      spawn_id: this.spawnId,
-      updated_at_ms: Date.now(),
-      records,
-      ...(runtimeError ? { runtime_error: runtimeError } : {}),
-    };
-    await writeJsonAtomic(this.recordsPath, file);
+    // Not task-fatal. Staged in the slot: a write queued ahead of this one can fail the record meanwhile.
+    await this.publication.publish({
+      stage: changeRow(exec.id, (row) =>
+        row.execution_error || this.executions.get(exec.id) !== exec ? null : { notification_consumed_at_ms: Date.now() }),
+    });
   }
 }
 
@@ -773,22 +772,15 @@ function isPingable(record: BashRecord): boolean {
   return record.status === "running" && record.is_background && record.is_tracked && record.ping_sent_at_ms == null;
 }
 
-function toPlainRecord(record: RuntimeRecord): BashRecord {
-  const { task: _task, outputQueue: _outputQueue, finished: _finished, resolveFinished: _resolve,
-    rejectFinished: _reject, terminationReason: _reason,
-    foregroundFinish: _foregroundFinish, pingTimer: _pingTimer, ...plain } = record;
-  return plain;
-}
-
-function runtimeRecord(plain: BashRecord): RuntimeRecord {
+function makeExecution(proposal: BashRecord, task: ShellTask | null): Execution {
   let resolveFinished!: () => void;
   let rejectFinished!: (error: Error) => void;
   const finished = new Promise<void>((resolve, reject) => { resolveFinished = resolve; rejectFinished = reject; });
   void finished.catch(() => undefined);
-  if (plain.status !== "running") resolveFinished();
-  return { ...plain, task: null, outputQueue: Promise.resolve(), finished,
-    resolveFinished, rejectFinished, terminationReason: null,
-    foregroundFinish: null, pingTimer: null };
+  if (proposal.status !== "running") resolveFinished();
+  return { id: proposal.bash_id, proposal, logPaths: logPathsFromRecord(proposal), task, outputQueue: Promise.resolve(),
+    finished, resolveFinished, rejectFinished, terminationReason: null, foregroundFinish: null, pingTimer: null,
+    logBytes: proposal.log_bytes, fault: null, repair: null };
 }
 
 function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error); }
