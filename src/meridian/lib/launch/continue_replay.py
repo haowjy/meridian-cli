@@ -282,10 +282,7 @@ def _observed_launch_model(
     """Find ``token`` in the pinned harness catalog. Never asks Mars to pick a harness."""
 
     root = Path(project_root) if project_root else None
-    try:
-        rows = run_mars_models_for_harness(harness, root)
-    except Exception:
-        return None
+    rows = run_mars_models_for_harness(harness, root)
     if not rows:
         return None
     return launch_model_on_harness(token, rows)

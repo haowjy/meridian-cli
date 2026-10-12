@@ -566,7 +566,7 @@ def test_primary_attach_scope_snapshot_records_unknown_birth_sentinel_when_creat
 
 
 @pytest.mark.asyncio
-async def test_primary_attach_event_writer_failure_stops_connection_and_tui(
+async def test_primary_attach_observer_end_waits_for_tui(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -608,9 +608,9 @@ async def test_primary_attach_event_writer_failure_stops_connection_and_tui(
         env={},
     )
 
-    assert outcome.exit_code == 1
-    assert connection.stop_reasons == ["event_stream_closed", None]
-    assert terminated_scopes == ["tui:event_stream_closed"]
+    assert outcome.exit_code == 143
+    assert connection.stop_reasons == [None]
+    assert terminated_scopes == []
     assert _read_metadata(spawn_dir)["tui_pid"] == 5252
 
 
@@ -817,9 +817,7 @@ def test_primary_attach_cancellation_after_codex_observer_displacement_cleans_tu
             )
         )
         await stream_closed.wait()
-        async with asyncio.timeout(1.0):
-            while launcher._event_consumer_task is not None:
-                await asyncio.sleep(0)
+        await asyncio.sleep(0)
         run_task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await run_task
@@ -893,13 +891,10 @@ async def test_primary_attach_cancellation_during_opencode_drain_retries_cleanup
     with pytest.raises(asyncio.CancelledError):
         await run_task
 
-    assert terminated_scopes == [
-        "tui:event_stream_closed",
-        "tui:primary_attach_shutdown",
-    ]
+    assert terminated_scopes == ["tui:primary_attach_shutdown"]
     assert process_launcher.release.is_set()
     assert process_launcher.cancel_wait_calls == 1
-    assert connection.stop_reasons == ["event_stream_closed", None]
+    assert connection.stop_reasons == [None]
 
 
 @pytest.mark.asyncio
