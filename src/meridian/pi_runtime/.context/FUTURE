@@ -7,7 +7,9 @@
   changing this lifetime again, consider one attachment owner only if it deletes
   that bookkeeping. Preserve distinct model-result and human streaming APIs,
   physical stop/drain versus publication, and reload/background handoff. This was
-  an optional follow-on to PR #563, not an established new correctness defect.
+  not required for the creation-publication cancellation repair: startup now exposes
+  owned execution separately from its creation observation, but the two public
+  foreground APIs intentionally retain their distinct result and streaming shapes.
 
 - **Post-shell polling cost** — `extensions/managed-bash/src/shell_task.ts` polls
   groups whose descendants outlive the shell. #561 has exploratory 250 ms/backoff

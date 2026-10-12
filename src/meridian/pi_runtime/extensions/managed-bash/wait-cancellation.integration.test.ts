@@ -104,8 +104,19 @@ it("checks cancellation when acknowledgement is queued behind an earlier publica
   const { runtime, recordsPath, bashId, publisher } = await terminalFixture();
   const writeStarted = deferred();
   const releaseWrite = deferred();
+  const acknowledgementQueued = deferred();
+  const originalPublish = publisher.publish.bind(publisher);
   const originalWrite = publisher.write.bind(publisher);
   let hold = true;
+  let observeAcknowledgement = false;
+  publisher.publish = (publication) => {
+    const queued = originalPublish(publication);
+    if (observeAcknowledgement) {
+      observeAcknowledgement = false;
+      acknowledgementQueued.resolve();
+    }
+    return queued;
+  };
   publisher.write = async (next) => {
     if (hold) {
       hold = false;
@@ -118,7 +129,9 @@ it("checks cancellation when acknowledgement is queued behind an earlier publica
   await writeStarted.promise;
   const abort = new AbortController();
   try {
+    observeAcknowledgement = true;
     const waiting = runtime.manage({ action: "wait", bash_id: bashId }, abort.signal);
+    await acknowledgementQueued.promise;
     abort.abort();
     releaseWrite.resolve();
     await blocker;

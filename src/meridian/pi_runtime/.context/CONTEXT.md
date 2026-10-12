@@ -125,9 +125,13 @@ proposals and first-fault evidence. A snapshot swap cannot replace them. Readers
 see published rows with live progress and negative fault evidence overlaid; those
 facts can also ride the next lifecycle snapshot. Positive terminal results,
 background/tracking changes, ping claims, consumption and removal still require
-publication. A missing, unreadable or non-regular log is unavailable evidence, not
-valid empty output. UI inspection stays non-consuming; `/ps` loads metadata only
-and owns one bounded selected-row preview read at a time.
+publication. Launch returns the owned execution and its separately supervised
+creation observation: foreground abort attaches to the former immediately, while a
+positive start still awaits the latter. Cancellation noticed after preparation I/O
+but before spawn removes its empty logs and launches nothing. A missing, unreadable
+or non-regular log is unavailable evidence, not valid empty output. UI inspection
+stays non-consuming; `/ps` loads metadata only and owns one bounded selected-row
+preview read at a time.
 
 Terminal publication is such a transition. Until it lands the record stays
 `running` and owned, so list, wait, output, kill, and foreground results never
@@ -149,8 +153,11 @@ does: once `ShellTask` observes its group gone (including ESRCH from a signal an
 ps queries already in flight) it never signals or probes it again, however long
 publication takes. Interrupting
 a foreground command returns after the physical stop and flushed output, not after
-publication. A clean interruption publishes as `killed`; a fault overlay may show
-negative evidence before its repair write lands.
+creation or terminal publication. A clean interruption publishes as `killed`; a
+fault overlay may show negative evidence before its repair write lands. Foreground
+hotkey/timeout handoff is positive only when its queued transition finds a published,
+still-running row; a creation failure or terminal publication ahead of it declines
+the handoff without resurrecting or backgrounding the row.
 Consumption is persisted before the terminal wait or output result returns. If it
 fails the marker was never applied and the wait returns an error, leaving the
 completion eligible for notification.

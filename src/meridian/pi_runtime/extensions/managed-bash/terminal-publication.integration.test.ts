@@ -236,7 +236,7 @@ describe("managed Bash terminal publication", () => {
     });
   });
 
-  it("does not consume a result whose record fails in a lifecycle write queued ahead of the consumer", async () => {
+  it("declines a background handoff queued behind terminal publication", async () => {
     await withRuntime(async (h) => {
       const terminal = h.arm();
       const foreground = h.runtime.execute({ command: h.command }, undefined);
@@ -245,20 +245,11 @@ describe("managed Bash terminal publication", () => {
       await h.exitAndHold();
       // Backgrounding publishes is_background behind the held terminal write.
       const backgrounding = h.runtime.backgroundForeground();
-      const lifecycle = h.arm();
       terminal.settle("ok");
-      await lifecycle.hit;
-      // The terminal result is published; a waiter checks the record and queues its consumption
-      // behind the held backgrounding write, which then fails and fails the record.
-      const waiting = h.runtime.manage({ action: "wait", bash_id: id });
-      await pause(60);
-      lifecycle.settle("fail");
-      await expect(backgrounding).rejects.toThrow("EIO");
-      await waiting;
-      await foreground;
-      await until(async () => (await h.disk(id)).execution_error != null);
-      // The error notice is still owed: a failed record is never marked consumed.
-      expect((await h.disk(id)).notification_consumed_at_ms).toBeUndefined();
+      expect(await backgrounding).toMatchObject({ ok: false, reason: "foreground_not_published" });
+      expect(await foreground).toMatchObject({ kind: "foreground", status: "exited", exit_code: 0 });
+      expect(await h.disk(id)).toMatchObject({ status: "exited", is_background: false });
+      expect(gate.log.filter((file) => file.records[id]?.is_background === true)).toEqual([]);
     });
   });
 

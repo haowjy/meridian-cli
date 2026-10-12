@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
 
@@ -63,6 +63,12 @@ type Execution = {
    * permits. `endedAt` is set once the owned group is confirmed gone. */
   fault: { error: string; endedAt: number | null } | null;
   repair: Promise<void> | null;
+};
+
+/** A process owned by this runtime plus the independent observation that its creation row landed. */
+type OwnedLaunch = {
+  execution: Execution;
+  creation: Promise<void>;
 };
 
 export type BashRuntimeHooks = {
@@ -177,25 +183,32 @@ export class BashRuntime {
 
   async execute(params: BashParams, signal: AbortSignal | undefined): Promise<BashExecuteResult> {
     const timeoutMin = normalizeTimeoutMin(params.timeout_min, DEFAULT_TIMEOUT_MIN);
-    const exec = await this.startRecord(params.command, timeoutMin);
+    const launch = await this.launchRecord(params.command, timeoutMin, process.cwd(), process.env, undefined, signal);
+    if (!launch) return abortedBeforeLaunch();
+    const { execution: exec, creation } = launch;
 
     if (params.background === true) {
-      await this.publishBackground(exec);
+      await creation;
+      if (!await this.publishBackground(exec, "launch")) throw new Error(`Background publication declined for ${exec.id}`);
       return { kind: "start", bash_id: exec.id, status: "started" };
     }
 
     this.hooks.onForegroundStart?.(exec.id);
-    return await new Promise<BashExecuteResult>((resolve) => {
+    return await new Promise<BashExecuteResult>((resolve, reject) => {
       let settled = false;
-      const finish = (result: BashExecuteResult): void => {
-        if (settled) return;
+      const close = (): boolean => {
+        if (settled) return false;
         settled = true;
         exec.foregroundFinish = null;
         clearTimeout(timeout);
         signal?.removeEventListener("abort", abort);
         this.hooks.onForegroundStop?.(exec.id);
-        resolve(result);
+        return true;
       };
+      const finish = (result: BashExecuteResult): void => {
+        if (close()) resolve(result);
+      };
+      const fail = (error: unknown): void => { if (close()) reject(error); };
       exec.foregroundFinish = finish;
       const abort = (): void => {
         void this.stopForeground(exec).then(async () => finish(await this.readSplitLog(exec, {
@@ -203,12 +216,14 @@ export class BashRuntime {
         }))).catch((error) => finish({ kind: "error", error: errorText(error) }));
       };
       const timeout = setTimeout(() => {
-        void this.publishBackground(exec).then(() => finish({
-          kind: "start",
-          bash_id: exec.id,
-          status: "backgrounded",
-          message: `Command exceeded timeout_min=${timeoutMin} and was backgrounded as ${exec.id}. Use /ps to manage it.`,
-        }), (error) => finish({ kind: "error", error: errorText(error) }));
+        void this.publishBackground(exec).then((published) => {
+          if (published) finish({
+            kind: "start",
+            bash_id: exec.id,
+            status: "backgrounded",
+            message: `Command exceeded timeout_min=${timeoutMin} and was backgrounded as ${exec.id}. Use /ps to manage it.`,
+          });
+        }, (error) => finish({ kind: "error", error: errorText(error) }));
       }, timeoutMin * 60_000);
 
       if (signal?.aborted) {
@@ -216,11 +231,17 @@ export class BashRuntime {
         return;
       }
       signal?.addEventListener("abort", abort, { once: true });
+      void creation.catch(fail);
       void exec.finished.then(async () => {
+        if (settled) return;
+        await creation;
         if (settled) return;
         const output = await this.readSplitLog(exec);
         finish(output);
       }).catch(async (error) => {
+        if (settled) return;
+        try { await creation; }
+        catch (creationError) { fail(creationError); return; }
         if (settled) return;
         const record = this.view(exec);
         finish(await this.readSplitLog(exec, { ...bashOutcome(record), error: record.execution_error ?? errorText(error) }));
@@ -237,20 +258,26 @@ export class BashRuntime {
     const forwardOutput = (data: Buffer): void => {
       if (forwardForegroundOutput) safeOnData(options.onData, data);
     };
-    const exec = await this.startRecord(command, DEFAULT_TIMEOUT_MIN, cwd, { ...process.env, ...(options.env ?? {}) }, forwardOutput);
+    const launch = await this.launchRecord(command, DEFAULT_TIMEOUT_MIN, cwd, { ...process.env, ...(options.env ?? {}) }, forwardOutput, options.signal);
+    if (!launch) return { exitCode: -1 };
+    const { execution: exec, creation } = launch;
     this.hooks.onForegroundStart?.(exec.id);
 
-    return await new Promise<{ exitCode: number | null }>((resolve) => {
+    return await new Promise<{ exitCode: number | null }>((resolve, reject) => {
       let settled = false;
-      const finish = (exitCode: number | null): void => {
-        if (settled) return;
+      const close = (): boolean => {
+        if (settled) return false;
         settled = true;
         forwardForegroundOutput = false;
         exec.foregroundFinish = null;
         options.signal?.removeEventListener("abort", abort);
         this.hooks.onForegroundStop?.(exec.id);
-        resolve({ exitCode });
+        return true;
       };
+      const finish = (exitCode: number | null): void => {
+        if (close()) resolve({ exitCode });
+      };
+      const fail = (error: unknown): void => { if (close()) reject(error); };
       const abort = (): void => {
         forwardForegroundOutput = false;
         void this.stopForeground(exec).then(() => finish(-1), () => finish(-1));
@@ -265,13 +292,24 @@ export class BashRuntime {
         return;
       }
       options.signal?.addEventListener("abort", abort, { once: true });
-      void exec.finished.then(() => finish(this.view(exec).exit_code), () => finish(-1));
+      void creation.catch(fail);
+      void exec.finished.then(async () => {
+        await creation;
+        finish(this.view(exec).exit_code);
+      }, async () => {
+        try { await creation; }
+        catch (creationError) { fail(creationError); return; }
+        finish(-1);
+      });
     });
   }
 
   async startDetachedUserBash(command: string, cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<{ bash_id: string }> {
-    const exec = await this.startRecord(command, DEFAULT_TIMEOUT_MIN, cwd, env);
-    await this.publishBackground(exec);
+    const launch = await this.launchRecord(command, DEFAULT_TIMEOUT_MIN, cwd, env);
+    if (!launch) throw new Error("Detached Bash launch was cancelled before start");
+    const { execution: exec, creation } = launch;
+    await creation;
+    if (!await this.publishBackground(exec, "launch")) throw new Error(`Background publication declined for ${exec.id}`);
     return { bash_id: exec.id };
   }
 
@@ -286,7 +324,9 @@ export class BashRuntime {
       return { ok: false, reason: "no_foreground" };
     }
 
-    await this.publishBackground(foreground);
+    if (!await this.publishBackground(foreground)) {
+      return { ok: false, reason: "foreground_not_published" };
+    }
     foreground.foregroundFinish?.({
       kind: "start",
       bash_id: foreground.id,
@@ -408,16 +448,24 @@ export class BashRuntime {
     if (failure?.status === "rejected") throw failure.reason;
   }
 
-  private async startRecord(
+  private async launchRecord(
     command: string,
     timeoutMin: number,
     cwd = process.cwd(),
     env: NodeJS.ProcessEnv = process.env,
     onData?: (data: Buffer) => void,
-  ): Promise<Execution> {
+    signal?: AbortSignal,
+  ): Promise<OwnedLaunch | null> {
     await this.prepare();
+    if (signal?.aborted) return null;
     const bashId = makeBashId();
     const logPaths = await this.logStore.create(bashId);
+    // No await exists between this check and spawn, so an abort observed during preparation can
+    // never turn into a subsequently launched process.
+    if (signal?.aborted) {
+      await Promise.all(Object.values(logPaths).map((logPath) => rm(logPath, { force: true })));
+      return null;
+    }
 
     const task = new ShellTask(command, cwd, { ...env, _MERIDIAN_PI_BASH_ID: bashId });
     const child = task.child;
@@ -450,8 +498,13 @@ export class BashRuntime {
     }).catch((error) => this.claim(exec, error));
 
     // Creation is published as proposed: live progress and faults are stamped in by the publisher.
-    await this.publishRecord(exec, (base) => withRow(base, this.project(exec.proposal, exec)));
-    return exec;
+    const creation = this.publishRecord(exec, (base) => withRow(base, this.project(exec.proposal, exec))).then((published) => {
+      if (!published) throw new Error(`Creation publication declined for ${exec.id}`);
+    });
+    // Foreground abort may return before observing creation. Keep its later failure supervised;
+    // positive callers still await this same promise explicitly.
+    void creation.catch(() => undefined);
+    return { execution: exec, creation };
   }
 
   private attachOutput(exec: Execution, task: ShellTask, onData?: (data: Buffer) => void): void {
@@ -732,9 +785,11 @@ export class BashRuntime {
     catch (error) { await exec.repair; throw error; }
   }
 
-  private async publishBackground(exec: Execution): Promise<void> {
-    await this.publishRecord(exec, changeRow(exec.id, () => ({ is_background: true })));
-    this.schedulePing(exec);
+  private async publishBackground(exec: Execution, phase: "launch" | "handoff" = "handoff"): Promise<boolean> {
+    const published = await this.publishRecord(exec, changeRow(exec.id, (row) =>
+      !exec.fault && (phase === "launch" || row.status === "running") && !row.is_background ? { is_background: true } : null));
+    if (published) this.schedulePing(exec);
+    return published;
   }
 
   private async prepare(): Promise<void> {
@@ -836,6 +891,16 @@ function interruptedBashWait(id: string, outcome: BashOutcome): BashWaitResult {
   const state = outcome.status === "running" ? "while it was still running" : `before its ${outcome.status} result was acknowledged`;
   return { kind: "wait", source: "bash", delivery: "pending", bash_id: id, ...outcome,
     message: `Wait for ${id} interrupted ${state}. The result remains owed; wait again to collect it.` };
+}
+
+function abortedBeforeLaunch(): BashForegroundResult {
+  return {
+    kind: "foreground",
+    status: "aborted",
+    exit_code: -1,
+    stdout: { kind: "available", text: "", truncated: false },
+    stderr: { kind: "available", text: "", truncated: false },
+  };
 }
 
 function deliveredLog(result: LogReadResult): DeliveredLog {

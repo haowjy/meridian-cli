@@ -58,9 +58,10 @@ still to render. Short details leave their unused share available to later membe
 a sole member can use nearly the whole packet. UTF-8 truncation stops at a
 code-point boundary.
 Every included member retains a compact identity and terminal-outcome prefix plus
-a concrete full-report/transcript or exact-ID Bash output lookup; only worker,
-error, report-excerpt, and command details may be truncated. An oversized first
-canonical member therefore still publishes and cannot starve the backlog. A member
+a concrete full-report/transcript or exact-ID Bash output lookup. The presence of
+a result error belongs in that mandatory prefix; its diagnostic text is optional.
+Only worker, diagnostic, report-excerpt, and command details may be truncated. A
+large optional body on the first canonical member cannot starve the backlog. A member
 whose mandatory representation does not fit after earlier members remains owed and
 becomes first on a later opportunity. Missing or empty reports retain outcome and
 transcript guidance; present unreadable evidence fails closed. Explicit wait

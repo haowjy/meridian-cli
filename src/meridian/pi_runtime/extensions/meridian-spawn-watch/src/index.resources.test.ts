@@ -221,6 +221,20 @@ describe("bounded result delivery", () => {
     expect(fixture.notices[0]!.content).not.toContain("�");
   });
 
+  it("does not admit a clean-looking outcome when a recorded fault's optional detail cannot fit", async () => {
+    const oldMinimum = 'Background bash  exited (exit 0, 0m01s).\n\n[Optional Bash details truncated to fit 65536 UTF-8 bytes.]\nFull output: bash_manage({action: "output", bash_id: ""})';
+    const idBytes = Math.floor((64 * 1024 - Buffer.byteLength(oldMinimum)) / 2);
+    const id = `b-${"a".repeat(idBytes - 2)}`;
+    await fixture.bash({ ...bashRecord("true"), bash_id: id, exit_code: 0,
+      started_at_ms: 1000, ended_at_ms: 2000, execution_error: "EIO: required failure evidence" });
+    await fixture.runtime!.deliverAtBoundary();
+    // Either the full mandatory outcome fits, or the item must stay owed. Optional text is insufficient.
+    for (const notice of fixture.notices) {
+      expect(Buffer.byteLength(notice.content)).toBeLessThanOrEqual(64 * 1024);
+      expect(notice.content.includes("result error")).toBe(true);
+    }
+  });
+
   it("keeps a giant Bash result's identity, outcome, and concrete lookup visible", async () => {
     await fixture.bash(bashRecord("命".repeat(30_000)));
 

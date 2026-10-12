@@ -11,9 +11,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Keep physical stop/output drain independent of metadata repair, including output
   failures during abort. Never signal a process group after observing it gone;
   `kill` distinguishes a natural exit from a killed task.
+- Attach foreground cancellation as soon as managed Bash owns the process, without
+  waiting for its creation row. Cancellation observed during preparation prevents
+  launch; starts and background handoffs still report success only after publication.
 - Preserve exit status and faults in Bash result retrieval and notices. Missing,
   unreadable or non-regular logs, empty fault diagnostics and unavailable exit codes
-  cannot become empty success or consumed results.
+  cannot become empty success or consumed results. Keep known result errors in
+  mandatory notice headers even when diagnostic text is truncated.
 - Fence wait cancellation at acknowledgement: cancellation before staging leaves
   work owed; an acknowledgement already staged returns its result when published.
 - Skip obsolete ping releases after completion/detach, and do not report a detach
