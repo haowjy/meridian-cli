@@ -198,6 +198,25 @@ def test_provider_selection_is_schema_aware(tmp_path: Path) -> None:
     assert provider.supports(v1_file) is False
 
 
+def test_read_last_model_follows_mid_session_switch(tmp_path: Path) -> None:
+    path = _write_v2(
+        tmp_path,
+        model={"id": "mimo-v2.5-free", "providerID": "opencode"},
+        messages=[
+            (
+                "assistant",
+                {"model": {"id": "mimo-v2.5-free", "providerID": "opencode"}},
+            ),
+            (
+                "model-switched",
+                {"model": {"id": "deepseek-v4.1-flash", "providerID": "opencode-go"}},
+            ),
+        ],
+    )
+
+    assert read_last_model(_SESSION, db_path=path) == "opencode-go/deepseek-v4.1-flash"
+
+
 def test_read_last_model_v2_and_v1_fallback(tmp_path: Path) -> None:
     v2 = _write_v2(tmp_path)
     assert read_last_model(_SESSION, db_path=v2) == "opencode/mimo-v2.5-free"

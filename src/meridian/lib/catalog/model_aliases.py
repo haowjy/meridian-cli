@@ -265,107 +265,70 @@ def _resolve_mars_binary() -> str | None:
     return shutil.which("mars")
 
 
+def _run_mars_model_inventory(
+    arguments: list[str],
+    *,
+    result_key: str,
+    project_root: Path | None,
+) -> list[dict[str, object]] | None:
+    """Read a Mars inventory array; expected command/format failures are a miss.
+
+    Resolution deliberately does not use this helper: its failures must raise.
+    """
+    mars_bin = _resolve_mars_binary()
+    if mars_bin is None:
+        return None
+    cmd = [mars_bin, "models", *arguments]
+    if project_root is not None:
+        cmd.extend(["--root", str(project_root)])
+    try:
+        # Cold models.dev refresh can take ~45s; leave headroom, as resolve does.
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        logger.debug("mars inventory unavailable: %s", arguments, exc_info=True)
+        return None
+    if result.returncode != 0:
+        logger.debug(
+            "mars inventory %s failed (rc=%d): %s",
+            arguments,
+            result.returncode,
+            result.stderr,
+        )
+        return None
+    try:
+        payload = json.loads(result.stdout)
+    except ValueError:
+        logger.debug("mars inventory %s returned invalid JSON", arguments)
+        return None
+    if not isinstance(payload, dict):
+        return None
+    rows = cast("dict[str, object]", payload).get(result_key)
+    if not isinstance(rows, list) or not all(
+        isinstance(item, dict) for item in cast("list[object]", rows)
+    ):
+        return None
+    return cast("list[dict[str, object]]", rows)
+
+
 def run_mars_models_aliases(
     project_root: Path | None = None,
     *,
     no_refresh_models: bool = False,
 ) -> list[dict[str, object]] | None:
-    """Call ``mars models aliases --json`` and return the alias entries.
-
-    Returns *None* when the mars binary is unavailable or the command fails,
-    so the caller can fall back to reading the cached merged file.
-    """
-    mars_bin = _resolve_mars_binary()
-    if mars_bin is None:
-        return None
-
-    cmd = [mars_bin, "models", "aliases", "--json"]
+    """Read aliases, returning None on failure so callers can use the merged file."""
+    arguments = ["aliases", "--json"]
     if no_refresh_models:
-        cmd.append("--no-refresh-models")
-    if project_root is not None:
-        cmd.extend(["--root", str(project_root)])
-
-    try:
-        # mars may do a cold models.dev fetch in ensure_fresh(Auto); mars caps each HTTP
-        # phase at 15s (connect + recv-response + recv-body), so worst-case cold fetch is
-        # ~45s. 60s leaves a small headroom for first-boot DNS, slow disks, and startup.
-        # Use the same timeout as run_mars_models_resolve since both paths can refresh.
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        logger.debug("mars binary not available or timed out", exc_info=True)
-        return None
-
-    if result.returncode != 0:
-        logger.debug("mars models aliases failed (rc=%d): %s", result.returncode, result.stderr)
-        return None
-
-    try:
-        payload = json.loads(result.stdout)
-    except (json.JSONDecodeError, ValueError):
-        logger.debug("mars models aliases returned invalid JSON")
-        return None
-
-    if not isinstance(payload, dict):
-        return None
-    aliases = cast("dict[str, object]", payload).get("aliases")
-    if not isinstance(aliases, list) or not all(
-        isinstance(item, dict) for item in cast("list[object]", aliases)
-    ):
-        return None
-    return cast("list[dict[str, object]]", aliases)
+        arguments.append("--no-refresh-models")
+    return _run_mars_model_inventory(
+        arguments, result_key="aliases", project_root=project_root
+    )
 
 
 def run_mars_models_catalog(project_root: Path | None = None) -> list[dict[str, object]] | None:
-    """Call ``mars models catalog --json`` and return the catalog entries.
-
-    Returns *None* when the mars binary is unavailable or the command fails.
-    """
-    mars_bin = _resolve_mars_binary()
-    if mars_bin is None:
-        return None
-
-    cmd = [mars_bin, "models", "catalog", "--json"]
-    if project_root is not None:
-        cmd.extend(["--root", str(project_root)])
-
-    try:
-        # mars may do a cold models.dev fetch in ensure_fresh(Auto); mars caps each HTTP
-        # phase at 15s (connect + recv-response + recv-body), so worst-case cold fetch is
-        # ~45s. 60s leaves a small headroom for first-boot DNS, slow disks, and startup.
-        # Keep timeout aligned with other mars model aliases/resolve paths.
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        logger.debug("mars binary not available or timed out", exc_info=True)
-        return None
-
-    if result.returncode != 0:
-        logger.debug("mars models catalog failed (rc=%d): %s", result.returncode, result.stderr)
-        return None
-
-    try:
-        payload = json.loads(result.stdout)
-    except (json.JSONDecodeError, ValueError):
-        logger.debug("mars models catalog returned invalid JSON")
-        return None
-
-    if not isinstance(payload, dict):
-        return None
-    catalog = cast("dict[str, object]", payload).get("catalog")
-    if not isinstance(catalog, list) or not all(
-        isinstance(item, dict) for item in cast("list[object]", catalog)
-    ):
-        return None
-    return cast("list[dict[str, object]]", catalog)
+    """Read the raw catalog, returning None on command or format failure."""
+    return _run_mars_model_inventory(
+        ["catalog", "--json"], result_key="catalog", project_root=project_root
+    )
 
 
 def _extract_mars_error_message(raw_output: str) -> str | None:
@@ -395,6 +358,27 @@ def _is_unknown_alias_error(message: str | None) -> bool:
     if message is None:
         return False
     return "unknown alias" in message.lower()
+
+
+def run_mars_models_for_harness(
+    harness: str,
+    project_root: Path | None = None,
+) -> list[dict[str, object]] | None:
+    """List models for one harness, including rows hidden from the default catalog.
+
+    Returns ``None`` when mars cannot be run. An empty list means the harness
+    listed nothing. ``--all`` is required: user curation can hide a provider the
+    session already ran, and that must not look like "this harness has no model".
+    """
+
+    normalized = harness.strip()
+    if not normalized:
+        return None
+    return _run_mars_model_inventory(
+        ["list", "--harness", normalized, "--all", "--json", "--no-refresh-models"],
+        result_key="models",
+        project_root=project_root,
+    )
 
 
 def run_mars_models_resolve(

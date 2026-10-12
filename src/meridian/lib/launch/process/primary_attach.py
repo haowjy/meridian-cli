@@ -436,42 +436,7 @@ class PrimaryAttachLauncher:
             )
             telemetry.clear()
 
-            consumer_task = self._event_consumer_task
-            done, _pending = await asyncio.wait(
-                {launch_task, consumer_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if consumer_task in done and not launch_task.done():
-                with suppress(asyncio.CancelledError, Exception):
-                    consumer_task.result()
-                self._event_consumer_task = None
-                if self._connection.harness_id is HarnessId.CODEX:
-                    # Codex TUI takes over the observer endpoint after attach;
-                    # the displaced observer stream closing is normal.
-                    launched = await asyncio.shield(launch_task)
-                    tui_lifecycle_finished = True
-                    return PrimaryAttachOutcome(
-                        facts=self._facts,
-                        exit_code=launched.exit_code,
-                        session_id=session_id,
-                        tui_pid=launched.pid,
-                    )
-                await self._stop_idle_task()
-                await self._connection.stop(reason="event_stream_closed")
-                await self._stop_idle_task()
-                await self._stop_tui_launch_task(
-                    running_process,
-                    launch_task,
-                    reason="event_stream_closed",
-                )
-                tui_lifecycle_finished = True
-                return PrimaryAttachOutcome(
-                    facts=self._facts,
-                    exit_code=1,
-                    session_id=session_id,
-                    tui_pid=running_process.pid,
-                )
-
+            # The TUI owns the primary. Observer silence is not a quit.
             launched = await asyncio.shield(launch_task)
             # Cancellation is only asserted when the relay was actually
             # interrupted by the signal: ``cancel_wait`` returns exit 130, while a
@@ -521,8 +486,19 @@ class PrimaryAttachLauncher:
             consumer_task = self._event_consumer_task
             if consumer_task is not None:
                 consumer_task.cancel()
-                with suppress(asyncio.CancelledError):
+                try:
                     await consumer_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    # An observer failure must not mask cancellation or skip
+                    # TUI/backend teardown.
+                    logger.warning(
+                        "primary_attach.observer_failed",
+                        spawn_id=str(self._spawn_id),
+                        exc_info=True,
+                    )
+                self._event_consumer_task = None
             await self._stop_idle_task()
             heartbeat_task = self._heartbeat_task
             if heartbeat_task is not None:
