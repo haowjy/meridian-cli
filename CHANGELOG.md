@@ -11,6 +11,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   write failed, and an interrupted wait cannot report `exited`. A failed
   terminal write still fails the record and leaves its completion notice owed.
   `kill` reports a task that exited by itself as already exited, not killed.
+- Stop signalling a managed-Bash process group after it has been observed gone, so a
+  slow records write (or a failed one) can never send TERM/KILL to a reused group id.
+  Aborting a foreground command now returns once the process is stopped and its
+  output flushed instead of waiting for the records write, and a result consumption
+  queued behind a write that fails the record is no longer applied to it.
 
 ### Changed
 - Stop rewriting the whole managed-Bash records file for every output chunk. The

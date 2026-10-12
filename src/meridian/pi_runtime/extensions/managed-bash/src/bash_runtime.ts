@@ -172,7 +172,7 @@ export class BashRuntime {
       };
       record.foregroundFinish = finish;
       const abort = (): void => {
-        void this.killBash(record.bash_id, "aborted").then(async () =>
+        void this.stopForeground(record).then(async () =>
           finish({ stdout: await this.readLog(record, LOG_TAIL_BYTES), stderr: "[command aborted]", exit_code: -1 }))
           .catch((error) => finish({ error: errorText(error) }));
       };
@@ -226,7 +226,7 @@ export class BashRuntime {
       };
       const abort = (): void => {
         forwardForegroundOutput = false;
-        void this.killBash(record.bash_id, "aborted").then(() => finish(-1), () => finish(-1));
+        void this.stopForeground(record).then(() => finish(-1), () => finish(-1));
       };
       record.foregroundFinish = () => {
         safeOnData(options.onData, Buffer.from(`${USER_BASH_PANEL_BACKGROUND_MSG}\n`, "utf-8"));
@@ -494,14 +494,29 @@ export class BashRuntime {
     if (!record.task) {
       return { bash_id: bashId, killed: false, message: `${bashId}: ownership lost after restart; no PID was signalled. Inspect the process manually or use bash_manage detach to release tracking.` };
     }
-    record.terminationReason = "killed";
-    try { await record.task.terminate(); }
-    catch (error) { await this.failRecord(record, error); throw error; }
+    await this.stopTask(record, record.task);
     await record.finished;
     // Report the published outcome: the task may have exited on its own just before the signal.
     const { status } = record as BashRecord;
     if (status !== "killed") return { bash_id: bashId, killed: false, message: `${bashId} is already ${status}` };
     return { bash_id: bashId, killed: true, message: `${bashId} killed` };
+  }
+
+  /** Stop the owned group. Resolves once it is physically gone, before any publication. */
+  private async stopTask(record: RuntimeRecord, task: ShellTask): Promise<void> {
+    record.terminationReason = "killed";
+    try { await task.terminate(); }
+    catch (error) { await this.failRecord(record, error); throw error; }
+  }
+
+  /** Caller interruption of a foreground command: wait for the physical stop and its flushed
+   * output, never for metadata publication. The record publishes on its own and claims nothing here. */
+  private async stopForeground(record: RuntimeRecord): Promise<void> {
+    const task = record.task;
+    if (record.status !== "running" || !task) return;
+    await this.stopTask(record, task);
+    await task.closed;
+    await record.outputQueue;
   }
 
   private async waitBash(record: RuntimeRecord, signal?: AbortSignal): Promise<BashWaitResult> {
@@ -694,8 +709,10 @@ export class BashRuntime {
   /** When the model received a terminal result, its completion notice would repeat it.
    * Execution failures stay owed: their notice carries the error the log lacks. */
   private async consumeDeliveredResult(record: RuntimeRecord, deliveredTerminal: boolean): Promise<void> {
-    if (!deliveredTerminal || record.execution_error) return;
+    if (!deliveredTerminal) return;
     await this.enqueuePersist(async () => {
+      // Check inside the slot: a write queued ahead of this one can fail the record meanwhile.
+      if (record.execution_error) return;
       const previous = record.notification_consumed_at_ms;
       record.notification_consumed_at_ms = Date.now();
       try {

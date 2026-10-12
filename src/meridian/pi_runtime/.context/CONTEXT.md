@@ -117,8 +117,14 @@ durable. Until then the record stays `running` and owned, so list, wait, output,
 kill, and foreground results never present, wait on, or consume an unpublished
 exit, and an interrupted wait still returns running. A failed terminal write
 instead fails the record (`killed` plus `execution_error`), rejects waiters, and
-leaves the notice owed; a failure that already claimed the record wins. `kill`
-reports the published outcome, so a task that exited by itself is not "killed".
+leaves the notice owed; a failure that already claimed the record wins, and a
+consumption queued behind a write that fails the record is skipped, never applied
+to the errored row. `kill` reports the published outcome, so a task that exited by
+itself is not "killed". Group-signalling authority ends where physical ownership
+does: once `ShellTask` observes its group gone it never signals it again, however
+long publication takes (the id may be reused). Interrupting a foreground command
+returns after the physical stop and flushed output, not after publication: the row
+stays `running` until the write lands, then publishes as `killed`.
 Consumption is persisted before the terminal wait or output result returns. If
 consumption persistence fails, the marker is rolled back and the wait returns an
 error, leaving the completion eligible for notification.

@@ -12,6 +12,8 @@ export class ShellTask {
   readonly closed: Promise<number>;
   private exitCode: number | null = null;
   private terminating: Promise<void> | null = null;
+  // Once the group is observed gone it never signals again: its id may be reused.
+  private groupGone = false;
 
   constructor(command: string, cwd: string, env: NodeJS.ProcessEnv) {
     this.child = spawn(command, { cwd, env, shell: true, detached: true, stdio: ["ignore", "pipe", "pipe"] });
@@ -44,7 +46,7 @@ export class ShellTask {
 
   private signal(signal: NodeJS.Signals): void {
     const pid = this.child.pid;
-    if (pid == null) return;
+    if (pid == null || this.groupGone) return;
     try { process.kill(-pid, signal); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
   }
@@ -60,18 +62,25 @@ export class ShellTask {
 
   private async hasLiveGroup(): Promise<boolean> {
     const pid = this.child.pid;
-    if (pid == null) return false;
+    if (pid == null || this.groupGone) return false;
     try { process.kill(-pid, 0); }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") return this.retire();
       throw error;
     }
     // POSIX ps works on both supported platforms; never infer identity from a
     // persisted PID. This is only the group created by this live ShellTask.
     const { stdout } = await exec("ps", ["-A", "-o", "pgid=", "-o", "stat="], { timeout: 1000, maxBuffer: 4 * 1024 * 1024 });
-    return stdout.split("\n").some((line) => {
+    const live = stdout.split("\n").some((line) => {
       const [group, state] = line.trim().split(/\s+/);
       return Number(group) === pid && state != null && !state.startsWith("Z");
     });
+    return live || this.retire();
+  }
+
+  /** Zombies run nothing and an empty group cannot refill, so this observation is final. */
+  private retire(): false {
+    this.groupGone = true;
+    return false;
   }
 }

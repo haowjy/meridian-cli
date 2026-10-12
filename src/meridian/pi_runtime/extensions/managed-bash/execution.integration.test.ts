@@ -110,7 +110,8 @@ describe("managed Bash execution ownership", () => {
       await until(() => runtime.list(true).length === 1);
       controller.abort();
       expect(await result).toMatchObject({ exit_code: -1 });
-      expect(runtime.list(true)[0]?.status).toBe("killed");
+      // The abort returns at the physical stop; the record publishes on its own.
+      await until(() => runtime.list(true)[0]?.status === "killed");
     } finally { await runtime.shutdown(); await rm(root, { recursive: true, force: true }); }
   });
 
