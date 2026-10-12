@@ -194,7 +194,9 @@ describe("managed Bash execution ownership", () => {
     const row: BashRecord = { bash_id: "b-34567890", command: "crashed", cwd: root, pid: 4_194_000, status: "running", is_background: true, is_tracked: true, exit_code: null, started_at_ms: Date.now() - 1000, ended_at_ms: null, log_path: path.join(root, "c.log"), stdout_log_path: path.join(root, "c.out"), stderr_log_path: path.join(root, "c.err"), log_bytes: 0, timeout_min: 55, originating_bash_id: null, execution_error: fault };
     await mkdir(path.dirname(recordsPath), { recursive: true });
     await writeFile(recordsPath, JSON.stringify({ v: 1, spawn_id: "p900001", updated_at_ms: Date.now(), records: { [row.bash_id]: row }, runtime_error: fault }));
-    const signals = vi.spyOn(process, "kill");
+    const signals = vi.spyOn(process, "kill").mockImplementation(() => {
+      throw new Error("Unexpected signal to a cold-recovery fixture");
+    });
     const durable = async () => JSON.parse(await readFile(recordsPath, "utf8")) as { records: Record<string, BashRecord>; runtime_error?: string };
     try {
       const first = new BashRuntime();
