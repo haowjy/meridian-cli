@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.7] - 2026-10-12
+
 ### Fixed
 - Continue keeps the source harness and looks up the last-executed model in that harness's catalog. It no longer asks Mars which harness the model token would prefer, so an OpenCode Go model is not discarded because an unconstrained resolve would pick Pi.
 - OpenCode continue uses the latest assistant or model-switch message, not only the session row, so a mid-session model switch is kept.
