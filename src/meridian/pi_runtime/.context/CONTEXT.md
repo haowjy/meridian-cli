@@ -110,24 +110,38 @@ read results around consumption and receive the same completion again. The
 tool abort signal (Esc) ends a wait early; an interrupted or timed-out wait
 returned no result, so it consumes nothing. Consumption is gated on the status
 the call returned, not the live record.
-Managed-bash serializes record snapshots. A record's in-memory state is its last
-published state: an exit becomes `exited`/`killed`, drops its task handle, and
-releases waiters inside the same serialized slot as the write that makes it
-durable. Until then the record stays `running` and owned, so list, wait, output,
-kill, and foreground results never present, wait on, or consume an unpublished
-exit, and an interrupted wait still returns running. A failed terminal write
-instead fails the record (`killed` plus `execution_error`), rejects waiters, and
-leaves the notice owed; a failure that already claimed the record wins, and a
-consumption queued behind a write that fails the record is skipped, never applied
-to the errored row. `kill` reports the published outcome, so a task that exited by
+Managed-bash splits a record into committed coordination metadata and private
+evidence. Committed metadata is `status`/exit fields of a published exit,
+`is_background`, `is_tracked`, ping claims and releases, `notification_consumed_at_ms`,
+row removal, and clearing `runtime_error`. Each changes through one queue-owned
+transition: it is staged when its serialized slot starts, written as a prospective
+snapshot (committed memory plus that one change), and applied to memory only if the
+write landed. A failed write leaves nothing to roll back, and no other slot can
+publish a change early. Private evidence is never retracted and may ride any
+snapshot: the live task handle, termination reason, in-memory `log_bytes`
+progress, creation of a row for a live group, and failure evidence (`execution_error`,
+the failure kill, `runtime_error`). So memory is not "all last published"; the coordination
+fields are.
+
+Terminal publication is such a transition. Until it lands the record stays
+`running` and owned, so list, wait, output, kill, and foreground results never
+present, wait on, or consume an unpublished exit, and an interrupted wait still
+returns running. Its linearization point is staging: success is staged only if no
+failure has claimed the record, so an earlier failure prevents a clean terminal
+snapshot; one claimed afterwards is ordered after it and repaired by the failure's
+own write (a crash inside that rename window can still recover the success;
+the only failure sources outside the queue exist before the exit is observed). A failed terminal write
+fails the record (`killed` plus `execution_error`), rejects waiters, and leaves the
+notice owed. A consumption is staged in its own slot and is skipped if the record
+has failed meanwhile. `kill` reports the published outcome, so a task that exited by
 itself is not "killed". Group-signalling authority ends where physical ownership
-does: once `ShellTask` observes its group gone it never signals it again, however
-long publication takes (the id may be reused). Interrupting a foreground command
-returns after the physical stop and flushed output, not after publication: the row
-stays `running` until the write lands, then publishes as `killed`.
-Consumption is persisted before the terminal wait or output result returns. If
-consumption persistence fails, the marker is rolled back and the wait returns an
-error, leaving the completion eligible for notification.
+does: once `ShellTask` observes its group gone (including for ps queries already in
+flight) it never signals or probes it again, however long publication takes. Interrupting
+a foreground command returns after the physical stop and flushed output, not after
+publication: the row stays `running` until the write lands, then publishes as `killed`.
+Consumption is persisted before the terminal wait or output result returns. If it
+fails the marker was never applied and the wait returns an error, leaving the
+completion eligible for notification.
 Spawn-watch serializes publication through one launch-scoped owner. A successful
 tool-bearing boundary and the genuinely late idle fallback use that owner rather
 than separate delivery machinery. Automatic child notices read `report.md`

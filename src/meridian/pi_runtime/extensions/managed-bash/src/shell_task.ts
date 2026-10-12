@@ -70,7 +70,14 @@ export class ShellTask {
     }
     // POSIX ps works on both supported platforms; never infer identity from a
     // persisted PID. This is only the group created by this live ShellTask.
-    const { stdout } = await exec("ps", ["-A", "-o", "pgid=", "-o", "stat="], { timeout: 1000, maxBuffer: 4 * 1024 * 1024 });
+    let stdout: string;
+    try { ({ stdout } = await exec("ps", ["-A", "-o", "pgid=", "-o", "stat="], { timeout: 1000, maxBuffer: 4 * 1024 * 1024 })); }
+    catch (error) {
+      // Another probe may have retired the group while this query was in flight.
+      if (this.groupGone) return false;
+      throw error;
+    }
+    if (this.groupGone) return false;
     const live = stdout.split("\n").some((line) => {
       const [group, state] = line.trim().split(/\s+/);
       return Number(group) === pid && state != null && !state.startsWith("Z");

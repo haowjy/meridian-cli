@@ -8,14 +8,12 @@ import { BashRuntime } from "./src/bash_runtime";
 
 type Verdict = "ok" | "fail" | "fail-always";
 
-// The first records-file rename that would publish a terminal record is held at the
-// durable boundary: until it runs, the file still says "running".
-const gate = vi.hoisted(() => ({
-  armed: false,
-  failAlways: false,
-  hit: () => {},
-  verdict: Promise.resolve("ok") as Promise<Verdict>,
-}));
+type Held = { when: (file: BashRecordsFile) => boolean; hit: (file: BashRecordsFile) => void; verdict: Promise<Verdict> };
+
+// Records-file renames are held at the durable boundary, in FIFO order, by predicate on the
+// payload about to be published: until a held rename runs, the file keeps its previous content.
+// Every attempted payload is logged.
+const gate = vi.hoisted(() => ({ holds: [] as Held[], failAlways: false, log: [] as BashRecordsFile[] }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs/promises")>();
@@ -24,22 +22,23 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     ...fs,
     rename: async (from: string, to: string) => {
       if (String(to).endsWith("bash-records.json")) {
+        const file = JSON.parse(await fs.readFile(from, "utf8")) as BashRecordsFile;
+        gate.log.push(file);
         if (gate.failAlways) throw eio();
-        if (gate.armed) {
-          const file = JSON.parse(await fs.readFile(from, "utf8")) as BashRecordsFile;
-          if (Object.values(file.records).some((record) => record.status !== "running")) {
-            gate.armed = false;
-            gate.hit();
-            const verdict = await gate.verdict;
-            gate.failAlways = verdict === "fail-always";
-            if (verdict !== "ok") throw eio();
-          }
+        if (gate.holds[0]?.when(file)) {
+          const held = gate.holds.shift()!;
+          held.hit(file);
+          const verdict = await held.verdict;
+          gate.failAlways = verdict === "fail-always";
+          if (verdict !== "ok") throw eio();
         }
       }
       return fs.rename(from, to);
     },
   };
 });
+
+const holdsTerminal = (file: BashRecordsFile): boolean => Object.values(file.records).some((record) => record.status !== "running");
 
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 const outcomes = ["ok", "fail", "fail-always"] as const;
@@ -56,7 +55,7 @@ async function stillPending(promise: Promise<unknown>): Promise<boolean> {
   return (await Promise.race([promise.then(() => "settled", () => "settled"), pause(40).then(() => marker)])) === marker;
 }
 
-type Hold = { hit: Promise<void>; settle: (verdict: Verdict) => void };
+type Hold = { hit: Promise<BashRecordsFile>; settle: (verdict: Verdict) => void };
 type Harness = ReturnType<typeof harness>;
 
 function harness(root: string, runtime: BashRuntime) {
@@ -64,18 +63,26 @@ function harness(root: string, runtime: BashRuntime) {
   const exitFlag = path.join(root, "exit");
   // The task exits only when the test lets it, after the gate is armed.
   const command = `until [ -e '${exitFlag}' ]; do sleep 0.01; done; printf done`;
-  let latest: Hold = { hit: Promise.resolve(), settle: () => {} };
+  let latest: Hold = { hit: Promise.resolve({} as BashRecordsFile), settle: () => {} };
   return {
     runtime, command,
-    /** Hold the next records write that publishes a terminal record at the durable boundary. */
-    arm(): Hold {
-      const hold: Hold = { hit: Promise.resolve(), settle: () => {} };
-      gate.armed = true;
-      gate.verdict = new Promise<Verdict>((resolve) => { hold.settle = resolve; });
-      hold.hit = new Promise<void>((resolve) => { gate.hit = resolve; });
+    /** Hold the next records write matching `when` (default: one publishing a terminal record). */
+    arm(when: Held["when"] = holdsTerminal): Hold {
+      const hold = {} as Hold;
+      hold.hit = new Promise<BashRecordsFile>((hit) => {
+        const verdict = new Promise<Verdict>((resolve) => { hold.settle = resolve; });
+        gate.holds.push({ when, hit, verdict });
+      });
+      outstanding.push(hold);
       return latest = hold;
     },
-    async exitAndHold(): Promise<void> { await writeFile(exitFlag, ""); await latest.hit; },
+    exit: (): Promise<void> => writeFile(exitFlag, ""),
+    async exitAndHold(): Promise<void> { await this.exit(); await latest.hit; },
+    /** Resolves once the task's process group is gone (its terminal write is then about to queue). */
+    async gone(pid: number): Promise<void> {
+      await until(() => { try { process.kill(-pid, 0); return false; } catch { return true; } });
+      await pause(50);
+    },
     settle: (verdict: Verdict): void => latest.settle(verdict),
     async pending(): Promise<string> {
       this.arm();
@@ -89,6 +96,8 @@ function harness(root: string, runtime: BashRuntime) {
   };
 }
 
+const outstanding: Hold[] = [];
+
 async function withRuntime(body: (h: Harness) => Promise<void>): Promise<void> {
   const root = await mkdtemp(path.join(tmpdir(), "pi-publication-"));
   vi.stubEnv("_MERIDIAN_PI_STATE_DIR", root);
@@ -96,7 +105,8 @@ async function withRuntime(body: (h: Harness) => Promise<void>): Promise<void> {
   const runtime = new BashRuntime();
   try { await body(harness(root, runtime)); }
   finally {
-    gate.armed = false; gate.failAlways = false; gate.hit(); gate.hit = () => {};
+    gate.holds.length = 0; gate.failAlways = false; gate.log.length = 0;
+    for (const hold of outstanding.splice(0)) hold.settle("ok");
     await runtime.shutdown().catch(() => undefined);
     await rm(root, { recursive: true, force: true });
   }
@@ -119,7 +129,8 @@ describe("managed Bash terminal publication", () => {
       expect(await waiting).toMatchObject({ status: "running", message: expect.stringContaining("interrupted") });
 
       h.settle(verdict);
-      await until(() => h.row(id).status !== "running");
+      // Failure evidence reaches memory before its repair write; wait for what the file says.
+      await until(async () => (await h.disk(id)).status !== "running");
       const record = await h.disk(id);
       // The completion notice stays owed in both outcomes.
       expect(record.notification_consumed_at_ms).toBeUndefined();
@@ -233,6 +244,77 @@ describe("managed Bash terminal publication", () => {
       await until(async () => (await h.disk(id)).execution_error != null);
       // The error notice is still owed: a failed record is never marked consumed.
       expect((await h.disk(id)).notification_consumed_at_ms).toBeUndefined();
+    });
+  });
+
+  it("a failed lifecycle write never leaves its change in a snapshot published by another record's slot", async () => {
+    await withRuntime(async (h) => {
+      const start = async (command: string) => (await h.runtime.execute({ command, background: true }, undefined) as { bash_id: string }).bash_id;
+      const a = await start("sleep 30");
+      const b = await start(h.command);
+      // W0 (a creation write) is blocked while B exits and queues its terminal write W1, then A is detached (W2).
+      const w0 = h.arm(() => true);
+      const third = h.runtime.startDetachedUserBash("sleep 30", process.cwd());
+      await w0.hit;
+      const w1 = h.arm(holdsTerminal);
+      const w2 = h.arm((file) => file.records[a]?.is_tracked === false);
+      await h.exit();
+      await h.gone(h.row(b).pid!);
+      const detaching = h.runtime.manage({ action: "detach", bash_id: a });
+      w0.settle("ok");
+
+      // B's slot publishes B's exit and nothing speculative about A.
+      const published = await w1.hit;
+      expect(published.records[b]).toMatchObject({ status: "exited" });
+      expect(published.records[a]!.is_tracked).toBe(true);
+      w1.settle("ok");
+      await w2.hit;
+      w2.settle("fail");
+      await expect(detaching).rejects.toThrow("EIO");
+      expect(h.row(a).is_tracked).toBe(true);
+      expect((await h.disk(a)).is_tracked).toBe(true);
+      expect(await h.disk(b)).toMatchObject({ status: "exited" });
+      await third; // its own backgrounding write queued behind the others
+    });
+  });
+
+  it("a failure that claims the record before its terminal slot stages prevents a clean terminal snapshot", async () => {
+    await withRuntime(async (h) => {
+      const a = (await h.runtime.execute({ command: "sleep 30", background: true }, undefined) as { bash_id: string }).bash_id;
+      // Public path: the background publication of a task that is exiting fails, ahead of its terminal write.
+      const backgrounding = h.arm((file) => Object.values(file.records).some((r) => r.command === h.command && r.is_background));
+      const started = h.runtime.execute({ command: h.command, background: true }, undefined).then(() => "started", (error: Error) => error.message);
+      await backgrounding.hit;
+      const b = h.runtime.list(true).find((row) => row.command === h.command)!;
+      const between = h.arm((file) => file.records[a]?.is_tracked === false);
+      const detaching = h.runtime.manage({ action: "detach", bash_id: a });
+      await h.exit();
+      await h.gone(b.pid!);
+
+      backgrounding.settle("fail");
+      await until(() => h.row(b.bash_id).execution_error != null);
+      between.settle("ok");
+      expect(await started).toContain("EIO");
+      await detaching;
+      await until(async () => (await h.disk(b.bash_id)).status === "killed");
+      // The exit was never staged: no attempted snapshot published it, and the error stays owed.
+      expect(gate.log.filter((file) => file.records[b.bash_id]?.status === "exited")).toEqual([]);
+      expect(await h.disk(b.bash_id)).toMatchObject({ status: "killed", execution_error: expect.stringContaining("EIO") });
+      expect((await h.disk(b.bash_id)).notification_consumed_at_ms).toBeUndefined();
+    });
+  });
+
+  it("a failed clear leaves the finished rows in memory and on disk", async () => {
+    await withRuntime(async (h) => {
+      await h.runtime.execute({ command: "printf x" }, undefined);
+      const id = h.runtime.list(true)[0]!.bash_id;
+      const clearing = h.runtime.clearFinished();
+      const hold = h.arm((file) => Object.keys(file.records).length === 0);
+      await hold.hit;
+      hold.settle("fail");
+      await expect(clearing).rejects.toThrow("EIO");
+      expect(h.runtime.list(true)).toHaveLength(1);
+      expect(await h.disk(id)).toMatchObject({ status: "exited" });
     });
   });
 

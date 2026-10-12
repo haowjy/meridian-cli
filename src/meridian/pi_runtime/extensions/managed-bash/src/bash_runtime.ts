@@ -52,6 +52,16 @@ type RuntimeRecord = BashRecord & {
   pingTimer: NodeJS.Timeout | null;
 };
 
+/** One coordination-metadata change. It is staged when its queue slot starts, written as a
+ * prospective snapshot, and applied to live memory (`commit`) only if that write landed. */
+type Transition = {
+  patches?: Array<[RuntimeRecord, Partial<BashRecord>]>;
+  removed?: RuntimeRecord[];
+  /** `null` clears the file-level runtime_error. */
+  runtimeError?: string | null;
+  commit: () => void;
+};
+
 export type BashRuntimeHooks = {
   onForegroundStart?: (bashId: string) => void;
   onForegroundStop?: (bashId: string) => void;
@@ -152,9 +162,7 @@ export class BashRuntime {
     const record = await this.startRecord(params.command, timeoutMin);
 
     if (params.background === true) {
-      record.is_background = true;
-      await this.publishRecord(record);
-      this.schedulePing(record);
+      await this.publishBackground(record);
       return { bash_id: record.bash_id, status: "started" };
     }
 
@@ -177,8 +185,7 @@ export class BashRuntime {
           .catch((error) => finish({ error: errorText(error) }));
       };
       const timeout = setTimeout(() => {
-        record.is_background = true;
-        void this.persist().then(() => {
+        void this.transact(() => this.fields(record, { is_background: true })).then(() => {
           this.schedulePing(record);
           finish({
           bash_id: record.bash_id,
@@ -244,9 +251,7 @@ export class BashRuntime {
 
   async startDetachedUserBash(command: string, cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<{ bash_id: string }> {
     const record = await this.startRecord(command, DEFAULT_TIMEOUT_MIN, cwd, env);
-    record.is_background = true;
-    await this.publishRecord(record);
-    this.schedulePing(record);
+    await this.publishBackground(record);
     return { bash_id: record.bash_id };
   }
 
@@ -258,9 +263,7 @@ export class BashRuntime {
       return { ok: false, reason: "no_foreground" };
     }
 
-    foreground.is_background = true;
-    await this.publishRecord(foreground);
-    this.schedulePing(foreground);
+    await this.publishBackground(foreground);
     foreground.foregroundFinish?.({
       bash_id: foreground.bash_id,
       status: "backgrounded",
@@ -304,13 +307,13 @@ export class BashRuntime {
   async clearFinished(): Promise<number> {
     await this.prepare();
     const admitted = admittedWorkIds(await readDeliveryReceipts(this.spawnId, this.receiptsPath));
-    const finished = [...this.records.values()].filter((record) => record.status !== "running" && (!record.is_background || !record.is_tracked || record.notification_consumed_at_ms != null || admitted.has(record.bash_id)));
-    for (const record of finished) this.records.delete(record.bash_id);
-    if (finished.length > 0) {
-      try { await this.persist(); }
-      catch (error) { for (const record of finished) this.records.set(record.bash_id, record); throw error; }
-    }
-    return finished.length;
+    let cleared = 0;
+    await this.transact(() => {
+      const finished = [...this.records.values()].filter((record) => record.status !== "running" && (!record.is_background || !record.is_tracked || record.notification_consumed_at_ms != null || admitted.has(record.bash_id)));
+      cleared = finished.length;
+      return finished.length === 0 ? null : { removed: finished, commit: () => { for (const record of finished) this.records.delete(record.bash_id); } };
+    });
+    return cleared;
   }
 
   async manage(params: BashManageParams, signal?: AbortSignal): Promise<BashManageResult> {
@@ -356,11 +359,7 @@ export class BashRuntime {
         return result;
       }
       case "detach":
-        const wasTracked = record.is_tracked;
-        record.is_tracked = false;
-        this.clearPing(record);
-        try { await this.persist(); }
-        catch (error) { record.is_tracked = wasTracked; this.schedulePing(record); throw error; }
+        await this.transact(() => this.fields(record, { is_tracked: false }, () => this.clearPing(record)));
         return { bash_id: id, detached: true, message: `${id} detached from quiescence tracking.` };
       default:
         return { error: `unsupported action: ${String(action)}` };
@@ -471,15 +470,19 @@ export class BashRuntime {
   ): Promise<void> {
     this.clearPing(record);
     const terminal = { status, exit_code: exitCode, ended_at_ms: Date.now() };
-    // The record keeps its running status and task until the terminal write lands,
-    // so no observer can see, wait on, or consume an unpublished result. Commit
-    // inside the write's queue slot: the next snapshot always includes it.
-    await this.enqueuePersist(async () => {
-      await this.writeCurrentRecords({ ...toPlainRecord(record), ...terminal });
-      if (record.execution_error) return; // failRecord owns the outcome
-      Object.assign(record, terminal);
-      record.task = null;
-      record.resolveFinished();
+    // The record keeps its running status and task until this transition's write lands,
+    // so no observer can see, wait on, or consume an unpublished result.
+    await this.transact(() => {
+      // Linearization point: success is staged only while no failure has claimed the record.
+      // A failure arriving after this is ordered after it, and failRecord's own write repairs
+      // the file; between the rename and that repair a crash can still recover the success.
+      if (record.execution_error || record.status !== "running") return null;
+      return { patches: [[record, terminal]], commit: () => {
+        if (record.execution_error) return; // failRecord owns the outcome
+        Object.assign(record, terminal);
+        record.task = null;
+        record.resolveFinished();
+      } };
     });
   }
 
@@ -550,15 +553,7 @@ export class BashRuntime {
 
   private schedulePing(record: RuntimeRecord): void {
     this.clearPing(record);
-    if (
-      record.status !== "running" ||
-      !record.task ||
-      !record.is_background ||
-      !record.is_tracked ||
-      record.ping_sent_at_ms != null
-    ) {
-      return;
-    }
+    if (!record.task || !isPingable(record)) return;
     const timer = setTimeout(() => { void this.firePing(record).catch((error) => this.failRecord(record, error)); }, taskPingIntervalMs());
     timer.unref();
     record.pingTimer = timer;
@@ -571,24 +566,17 @@ export class BashRuntime {
 
   private async firePing(record: RuntimeRecord): Promise<void> {
     record.pingTimer = null;
-    if (
-      record.status !== "running" ||
-      !record.is_background ||
-      !record.is_tracked ||
-      record.ping_sent_at_ms != null
-    ) {
-      return;
-    }
     const notify = this.hooks.onBackgroundPing;
     if (!notify) return;
-    record.ping_sent_at_ms = Date.now();
-    await this.persist();
+    // The claim is staged against committed state, so it cannot race a detach or terminal write.
+    const claimed = await this.transact(() =>
+      isPingable(record) ? this.fields(record, { ping_sent_at_ms: Date.now() }) : null);
+    if (!claimed) return;
     try { await notify(toPlainRecord(record)); }
     catch (error) {
       // Notification capability can become stale during reload. It owns no
       // shell lifecycle: release its claim without turning it into task failure.
-      record.ping_sent_at_ms = null;
-      await this.persist();
+      await this.transact(() => this.fields(record, { ping_sent_at_ms: null }));
       process.stderr.write(`[managed-bash] ping ${record.bash_id}: ${errorText(error)}\n`);
       // Do not spin on a broken capability. A new hook (including one rebound
       // while this attempt was in flight) can retry the released claim.
@@ -629,23 +617,43 @@ export class BashRuntime {
     return this.logStore.read(logPathsFromRecord(record), stream, maxBytes);
   }
 
+  /** Publish current memory as is. Only for facts that cannot be retracted: creation, live
+   * progress, and failure evidence. Retractable changes go through `transact`. */
   private persist(): Promise<void> {
-    return this.enqueuePersist(() => this.writeCurrentRecords());
+    return this.enqueue(() => this.writeRecords());
   }
 
-  private async publishRecord(record: RuntimeRecord): Promise<void> {
-    try { await this.persist(); }
+  /** Stage, write and commit one transition inside its own queue slot, so memory never holds
+   * a change whose write has not landed and no other slot can publish it early. Resolves
+   * `false` when staging declined. Never call from inside a queue slot. */
+  private transact(stage: () => Transition | null): Promise<boolean> {
+    return this.enqueue(async () => {
+      const transition = stage();
+      if (!transition) return false;
+      await this.writeRecords(transition);
+      transition.commit();
+      return true;
+    });
+  }
+
+  private fields(record: RuntimeRecord, patch: Partial<BashRecord>, after?: () => void): Transition {
+    return { patches: [[record, patch]], commit: () => { Object.assign(record, patch); after?.(); } };
+  }
+
+  private async publishBackground(record: RuntimeRecord): Promise<void> {
+    try { await this.transact(() => this.fields(record, { is_background: true })); }
     catch (error) { await this.failRecord(record, error); throw error; }
+    this.schedulePing(record);
   }
 
   private async prepare(): Promise<void> {
     await this.ensureReady();
-    if (this.runtimeError) {
-      const previous = this.runtimeError;
-      this.runtimeError = undefined;
-      try { await this.persist(); }
-      catch (error) { this.runtimeError = previous; throw error; }
-    }
+    const stale = this.runtimeError;
+    if (stale === undefined) return;
+    await this.transact(() => this.runtimeError !== stale ? null : {
+      runtimeError: null,
+      commit: () => { if (this.runtimeError === stale) this.runtimeError = undefined; },
+    });
   }
 
   private async ensureReady(): Promise<void> {
@@ -710,37 +718,35 @@ export class BashRuntime {
    * Execution failures stay owed: their notice carries the error the log lacks. */
   private async consumeDeliveredResult(record: RuntimeRecord, deliveredTerminal: boolean): Promise<void> {
     if (!deliveredTerminal) return;
-    await this.enqueuePersist(async () => {
-      // Check inside the slot: a write queued ahead of this one can fail the record meanwhile.
-      if (record.execution_error) return;
-      const previous = record.notification_consumed_at_ms;
-      record.notification_consumed_at_ms = Date.now();
-      try {
-        await this.writeCurrentRecords();
-      } catch (error) {
-        record.notification_consumed_at_ms = previous;
-        throw error;
-      }
-    });
+    // Staged in the slot: a write queued ahead of this one can fail the record meanwhile.
+    await this.transact(() => record.execution_error || this.records.get(record.bash_id) !== record
+      ? null : this.fields(record, { notification_consumed_at_ms: Date.now() }));
   }
 
-  private enqueuePersist(writeCurrentRecords: () => Promise<void>): Promise<void> {
-    const write = this.persistQueue.catch(() => undefined).then(writeCurrentRecords);
-    this.persistQueue = write;
+  private enqueue<T>(run: () => Promise<T>): Promise<T> {
+    const write = this.persistQueue.then(run);
+    this.persistQueue = write.then(() => undefined, () => undefined);
     return write;
   }
 
-  private async writeCurrentRecords(replacement?: BashRecord): Promise<void> {
+  /** The file is the committed records plus, at most, the one staged transition. */
+  private async writeRecords(transition?: Transition): Promise<void> {
+    const removed = new Set((transition?.removed ?? []).map((record) => record.bash_id));
     const records: Record<string, BashRecord> = {};
     for (const [id, record] of this.records.entries()) {
-      records[id] = replacement?.bash_id === id ? replacement : toPlainRecord(record);
+      if (!removed.has(id)) records[id] = toPlainRecord(record);
     }
+    for (const [record, patch] of transition?.patches ?? []) {
+      const plain = records[record.bash_id];
+      if (plain) Object.assign(plain, patch);
+    }
+    const runtimeError = transition?.runtimeError === undefined ? this.runtimeError : transition.runtimeError ?? undefined;
     const file: BashRecordsFile = {
       v: 1,
       spawn_id: this.spawnId,
       updated_at_ms: Date.now(),
       records,
-      ...(this.runtimeError ? { runtime_error: this.runtimeError } : {}),
+      ...(runtimeError ? { runtime_error: runtimeError } : {}),
     };
     await writeJsonAtomic(this.recordsPath, file);
   }
@@ -753,6 +759,11 @@ function taskPingIntervalMs(): number {
 
 function shouldResetPingOnActivity(): boolean {
   return (process.env[TASK_PING_RESET_ON_ACTIVITY_ENV] ?? "true").toLowerCase() !== "false";
+}
+
+/** A tracked, background, still-running task whose one-shot ping has not been claimed. */
+function isPingable(record: BashRecord): boolean {
+  return record.status === "running" && record.is_background && record.is_tracked && record.ping_sent_at_ms == null;
 }
 
 function toPlainRecord(record: RuntimeRecord): BashRecord {

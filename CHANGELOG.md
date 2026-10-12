@@ -16,6 +16,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Aborting a foreground command now returns once the process is stopped and its
   output flushed instead of waiting for the records write, and a result consumption
   queued behind a write that fails the record is no longer applied to it.
+- Make managed-Bash record changes queue-owned transitions: detach, background, ping
+  claims, consumption, clear, runtime-error repair and terminal exits are written as a
+  prospective snapshot in their own slot and applied to memory only after the write
+  lands. A failed write can no longer leave a detach, clear or background change in the
+  file via another task's terminal write, and a failure that claims a task first
+  prevents its clean exit from being written. A `ps` query already in flight no longer
+  fails a task whose group was observed gone.
 
 ### Changed
 - Stop rewriting the whole managed-Bash records file for every output chunk. The
