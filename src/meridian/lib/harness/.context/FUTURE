@@ -1,7 +1,7 @@
 - `opencode_idle.py`: During a live OpenCode smoke, switch models and verify
   that `session.model` follows the active model before summarize; if it lags,
   source the compaction model from the newest user event's `info.model` (G2 O3).
-- `projections/*`: `ResolvedLaunchSpec.claude_plugin_dirs` is Claude-only but
+- `projections/*`: `ResolvedLaunchSpec.claude_runtime` (formerly `claude_plugin_dirs`) is Claude-only but
   forced a `_DELEGATED_FIELDS` edit in six non-Claude projections, following the
   `disallowed_tools` / `pi_extension_entrypoints` / `opencode_version`
   precedent. That is the 10-file-edit smell from `AGENTS.md`; the next

@@ -39,6 +39,7 @@ from meridian.lib.state.retention_archive import (
     verify_archive,
 )
 from meridian.lib.state.session_identity import (
+    live_observer_for_chat,
     native_identity_candidates,
     session_records_for_spawns,
 )
@@ -654,6 +655,7 @@ def _require_inactive_native_session(root: Path, harness: str | None, session_id
                 or session_store.is_session_lease_owner_alive(
                     root, session.chat_id, session_instance_id=session.session_instance_id
                 )
+                or live_observer_for_chat(root, session.chat_id, records=scan.records) is not None
             )
         ):
             raise ValueError(f"Cannot capture an active native owner: {session.chat_id}")

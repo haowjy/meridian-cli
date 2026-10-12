@@ -892,7 +892,12 @@ def run_harness_process(
                 lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
                 launch_spec = runtime_context.binding.spec
                 managed = replace(managed, spawn_id=primary_spawn_id)
-                native_run = bind_entry(managed, launch_spec, harness=str(harness_adapter.id))
+                native_run = bind_entry(
+                    managed,
+                    launch_spec,
+                    harness=str(harness_adapter.id),
+                    policy=persisted_launch_policy_snapshot,
+                )
                 resolved_harness_session_id = native_run.entry.session_id or ""
                 lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
 
@@ -950,53 +955,59 @@ def run_harness_process(
                         runtime_metadata=native_primary_runtime_metadata,
                     )
 
-                def _record_primary_started(child_pid: int) -> None:
-                    nonlocal native_primary_tui_pid
-                    native_primary_tui_pid = child_pid
-                    lifecycle_service.mark_running(
-                        primary_spawn_id,
-                        launch_mode=FOREGROUND_LAUNCH_MODE,
-                        worker_pid=child_pid,
-                    )
-                    if write_native_primary_metadata:
-                        _write_native_primary_metadata(
-                            runtime_root=runtime_root,
-                            spawn_id=primary_spawn_id,
-                            spawn_dir=log_dir,
-                            command=native_primary_metadata_command,
-                            launch_cwd=launch_child_cwd,
-                            launcher_pid=os.getpid(),
-                            tui_pid=child_pid,
-                            activity="idle",
-                            started_at_epoch=primary_started_epoch,
-                            ended_at_epoch=None,
-                            exit_code=None,
-                            harness_session_id=resolved_harness_session_id,
-                            runtime_metadata=native_primary_runtime_metadata,
-                        )
+                # The observer's lifetime is this block, including exceptions.
+                with native_run.observing(
+                    harness_adapter, child_env=child_env,
+                ) as observe_child:
 
-                identity_error_phase = "running"
-                (
-                    exit_code,
-                    managed_session_id,
-                    managed_cancelled,
-                    facts,
-                ) = _execute_primary_process(
-                    harness_id=harness_id,
-                    primary_spawn_id=primary_spawn_id,
-                    log_dir=log_dir,
-                    control_root=control_root,
-                    launch_cwd=launch_child_cwd,
-                    task_cwd=task_cwd,
-                    child_env=child_env,
-                    launch_spec=launch_spec,
-                    command=command,
-                    harness_contract=harness_adapter.contract,
-                    native_run=native_run,
-                    run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
-                    run_primary_attach_fn=run_primary_attach_fn,
-                    on_running=_record_primary_started,
-                )
+                    def _record_primary_started(child_pid: int) -> None:
+                        nonlocal native_primary_tui_pid
+                        native_primary_tui_pid = child_pid
+                        observe_child(child_pid)
+                        lifecycle_service.mark_running(
+                            primary_spawn_id,
+                            launch_mode=FOREGROUND_LAUNCH_MODE,
+                            worker_pid=child_pid,
+                        )
+                        if write_native_primary_metadata:
+                            _write_native_primary_metadata(
+                                runtime_root=runtime_root,
+                                spawn_id=primary_spawn_id,
+                                spawn_dir=log_dir,
+                                command=native_primary_metadata_command,
+                                launch_cwd=launch_child_cwd,
+                                launcher_pid=os.getpid(),
+                                tui_pid=child_pid,
+                                activity="idle",
+                                started_at_epoch=primary_started_epoch,
+                                ended_at_epoch=None,
+                                exit_code=None,
+                                harness_session_id=resolved_harness_session_id,
+                                runtime_metadata=native_primary_runtime_metadata,
+                            )
+
+                    identity_error_phase = "running"
+                    (
+                        exit_code,
+                        managed_session_id,
+                        managed_cancelled,
+                        facts,
+                    ) = _execute_primary_process(
+                        harness_id=harness_id,
+                        primary_spawn_id=primary_spawn_id,
+                        log_dir=log_dir,
+                        control_root=control_root,
+                        launch_cwd=launch_child_cwd,
+                        task_cwd=task_cwd,
+                        child_env=child_env,
+                        launch_spec=launch_spec,
+                        command=command,
+                        harness_contract=harness_adapter.contract,
+                        native_run=native_run,
+                        run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
+                        run_primary_attach_fn=run_primary_attach_fn,
+                        on_running=_record_primary_started,
+                    )
                 if managed_session_id is not None:
                     resolved_harness_session_id = managed_session_id
                 with suppress(Exception):

@@ -75,7 +75,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "agent_name",
         "agents_payload",
         "claude_native_agents_enabled",
-        "claude_plugin_dirs",
+        "claude_runtime",
         "appended_system_prompt",
         "harness",
         "pi_extension_entrypoints",

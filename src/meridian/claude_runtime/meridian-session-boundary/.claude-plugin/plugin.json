@@ -1,0 +1,5 @@
+{
+  "name": "meridian-session-boundary",
+  "version": "0.1.0",
+  "description": "Reports launch-correlated Claude SessionStart identity observations to Meridian."
+}

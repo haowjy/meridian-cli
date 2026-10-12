@@ -354,7 +354,7 @@ def cmd_idle_mod_path() -> None:
     try:
         from meridian.lib.harness.claude_runtime_resolver import resolve_claude_runtime
 
-        resolution = resolve_claude_runtime()
+        resolution = resolve_claude_runtime(plugin_names=("meridian-idle",))
         if not resolution.plugin_dirs:
             raise FileNotFoundError("bundled Claude idle mod was not found")
         print(resolution.plugin_dirs[0])

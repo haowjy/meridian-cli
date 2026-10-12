@@ -139,7 +139,12 @@ same exact adapter resolver, with no ambient-store fallback. OpenCode's
 newly recorded store is its resolved database path, including `OPENCODE_DB`.
 Claude trampoline successors travel in `PostExit` and persist in `run_boundary`,
 never through the entry-ID return, chat binding, or exit
-allocator. Claude exit identity stays unresolved without launch-correlated evidence.
+allocator. Claude's separate session-boundary plugin appends launch-correlated
+SessionStart facts. A launcher-owned, PID-authorized drainer feeds them through
+`NativeRun` in order, advancing the current-chat pointer without treating
+observations as transcript or final-exit proof. Exact reads and resumes still
+validate the native file. See
+[`meridian-session-boundary`](../../claude_runtime/meridian-session-boundary/README.md).
 
 **Terminal event classification is harness- and parent-scope-aware.** `event_type`
 is NOT globally unique — always check `event.harness_id`. `turn/completed` is Codex;

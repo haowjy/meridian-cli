@@ -1,5 +1,47 @@
 # Upgrade notes
 
+## Current-chat tracking (unreleased)
+
+Claude continuation follows the run's last observed native session, including
+in-process `/clear` or `/resume`, without requiring a final-exit callback. The
+original chat keeps its native identity. A separate `current_chat_id` selects the
+current conversation: reuse an existing chat unchanged, or create a fresh chat
+with the current chat's settings and work association. History, identities and
+live leases are not copied. A normal fresh launch still starts fresh; only
+continuation follows the previous run.
+
+The same pointer carries a verified post-exit session (Pi): Meridian proves the
+native transcript before reusing or creating that chat, then publishes it as
+current. A 0.9.4 spawn whose `run_boundary` names a verified `exit_chat_id` is
+read as that run's current chat and rewritten without the old field on its next
+update; its continuation target does not change. The retired exit field is
+validated before removal; invalid evidence is not promoted to a current pointer.
+
+`pN` inherits settings and work from the selected chat's current generation,
+just like an explicit `cN`, even when no startup hook ran. It is not a frozen
+snapshot of the original run's policy or fork source generation. New launches
+record their final policy on the conversation before native execution; older
+generations use their recorded run link, never a newest-owner guess.
+
+Observation does not prove that a transcript was saved. Actual resume and read
+operations still validate the exact native transcript and refuse missing or
+invalid sources rather than silently continuing an older conversation. Disabled
+or missing hooks cannot reveal an unobserved switch. Existing runs are not
+retroactively tracked; restart Claude through the updated Meridian.
+
+**Before upgrading, stop active Meridian launches and back up the affected
+project runtime directories.** The new spawn field is incompatible with older
+strict readers, including released 0.9.3 and 0.9.4. Do not overlap old runners with new
+writers. History projection version 7 is rebuilt from authoritative files in its
+own namespace; it does not migrate the older SQLite file in place.
+
+**Rollback is not an in-place downgrade.** On copied runtimes, released 0.9.3 and
+0.9.4 both reject a spawn containing `current_chat_id`. Restore the pre-upgrade runtime
+backup before using the older release, then rebuild its metadata index with
+`meridian session index rebuild --metadata-only`. That backup does not contain
+Meridian records created after the upgrade. Provider-owned native transcripts
+are not rewritten by this feature; keep them when restoring Meridian state.
+
 ## Upgrading to 0.9.3: idle notifications and compaction
 
 Interactive primaries launched by Meridian now watch for idle time: a phone
@@ -369,8 +411,13 @@ not touched.
   harnesses or starting fresh.
 - `--prompt-file` and `-p` now reach interactive Claude, Pi, and OpenCode
   sessions.
-- Pi runs report verified exit-session changes. Other harnesses report
-  `unresolved` when Meridian cannot prove the exit identity.
+- Pi and Claude runs can report verified exit-session changes. Missing exit-identity evidence
+  is not a process failure: primary completion output shows the process result
+  and the continue command without an `exit unresolved` line. `spawn show`
+  reports `Exit-session identity: unverified` when proof is absent; JSON keeps
+  the `unresolved` status. Identity mismatches and possible session changes
+  still produce warnings. The recorded entry chat remains the continue target
+  unless Meridian verifies an exit chat.
 - `spawn show --json` includes `chat_id`, `continue_chat_id`, and `run_boundary`.
 - `meridian session log --file history.jsonl` is refused: runner history is not
   a native transcript.
@@ -385,8 +432,9 @@ not touched.
 
 ## Known limits
 
-- Claude `/clear` can change sessions without a verified exit; see
-  [#533](https://github.com/haowjy/meridian-cli/issues/533).
+- Claude session switches need a final launch-correlated hook receipt and a valid
+  transcript. If hooks are disabled or no final receipt is written, continuation
+  falls back to the entry chat; it cannot guess a post-`/clear` destination.
 - Codex rollouts that Codex moved to `archived_sessions/` are not read yet, so
   those chats stay unbound; see
   [#528](https://github.com/haowjy/meridian-cli/issues/528).

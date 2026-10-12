@@ -23,6 +23,23 @@ class NativeKey:
 
 
 @dataclass(frozen=True)
+class NativeObservation:
+    """One launch-owned native identity fact, in harness emission order."""
+
+    key: NativeKey
+    entry_operation: Operation | None
+    next_cursor: int
+
+
+@dataclass(frozen=True)
+class NativeObservationBatch:
+    """Ordered facts with per-fact acknowledgements and a final consumed cursor."""
+
+    observations: tuple[NativeObservation, ...] = ()
+    next_cursor: int = 0
+
+
+@dataclass(frozen=True)
 class NativeKeyFields:
     """A partial binding, including legacy and pre-observation records."""
 

@@ -13,6 +13,7 @@ from cyclopts import App, Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.utils import cli_project_root_posix
+from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import is_managed_meridian_session
 from meridian.lib.core.util import FormatContext
 from meridian.lib.extensions.registry import get_first_party_registry
@@ -131,7 +132,7 @@ def _session_browse(
         stdout_tty=sys.stdout.isatty(),
         term=os.environ.get("TERM"),
         managed=is_managed_meridian_session(),
-        ambient_chat=os.environ.get("MERIDIAN_CHAT_ID"),
+        ambient_chat=RuntimeContext.from_environment().chat_id or None,
     )
     project_root = cli_project_root_posix()
     if isinstance(presentation, Refused):

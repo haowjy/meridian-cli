@@ -36,6 +36,27 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   unchanged. A records-store fault during output surfaces at the next lifecycle
   write instead of the next chunk.
 
+## [0.9.5] - 2026-10-12
+
+### Upgrade notes
+- Stop active launches and back up project runtime state before upgrading. New current-chat fields are incompatible with 0.9.3 and 0.9.4 readers; rollback requires pre-upgrade state. See [current-chat tracking](docs/upgrading.md#current-chat-tracking-unreleased).
+
+### Changed
+- Persist a run's current chat separately from its immutable entry chat. Rebuild history projection in a new versioned namespace.
+- Trim duplicate Claude boundary tests and run recorder edge checks without subprocesses.
+- Scope native observation to a `with` block in the primary runner, streaming runner and streaming serve. The drainer always joins before conclusion, even on exceptions, with no separately stashed cleanup callback. Overlap-diagnostic failures no longer present as publication failures.
+- Store inherited launch settings in private session journals; failed starts leave no event, even if the empty journal was pre-created.
+- Record each launch's final policy snapshot on its own conversation generation at final binding, before the native process starts. Continuation and new observed chats inherit settings from the conversation. Older generations read only their exactly linked run; the newest-primary-owner lookup is gone.
+
+### Fixed
+- Continue Claude from its last observed chat, including live `/clear` and `/resume` switches, without requiring a final callback. Keep exact transcript checks at resume/read time.
+- Require native transcript proof before verified exit-chat reuse, not just creation.
+- Route verified post-exit sessions (Pi) through the same current-chat pointer as live observations; `run_boundary` is evidence only. Read 0.9.4 `run_boundary.exit_chat_id` as the current chat, so upgraded verified runs keep their continuation target.
+- Resolve `pN` continuation through the selected chat's current generation, settings and work, whether or not a startup hook was observed. A selected chat that is missing is unavailable rather than silently replaced by the older entry chat.
+- Reject malformed legacy exit evidence before upgrading its pointer, including dogfood repairs. Historical views retain recorded exit identity without enabling continuation.
+- Preserve Claude plugin-resolution warnings; valid symlinked plugins no longer appear missing.
+- Create complete chats for newly observed sessions, carrying current settings/work without copying history, fork lineage or live leases. Reusing an existing chat preserves its settings and work. Block concurrent Meridian-managed resume/capture; warn when a native switch overlaps another live owner.
+
 ## [0.9.4] - 2026-10-12
 
 ### Fixed

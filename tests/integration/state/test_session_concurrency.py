@@ -153,7 +153,9 @@ def test_start_session_rolls_back_lock_and_event_on_append_failure(
             chat_id=chat_id,
         )
 
-    assert not (runtime_root / "sessions.jsonl").exists()
+    # Privacy setup may create an empty journal before the first append.
+    journal = runtime_root / "sessions.jsonl"
+    assert not journal.exists() or journal.stat().st_size == 0
     assert not (runtime_root / "sessions" / f"{chat_id}.lease.json").exists()
     assert (
         session_store._session_lock_key(runtime_root, chat_id)

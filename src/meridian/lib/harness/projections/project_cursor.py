@@ -36,7 +36,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "appended_system_prompt",
         "agents_payload",
         "claude_native_agents_enabled",
-        "claude_plugin_dirs",
+        "claude_runtime",
         "prompt_file_path",
         "user_turn_content",
         "report_output_path",
