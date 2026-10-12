@@ -45,11 +45,16 @@ a fresh scan and queues native steer before the next inference, while genuinely
 late work retains the native-idle follow-up fallback. Both recheck consumption
 after bounded direct `report.md` reads. Each collection can queue at most one
 automatic message. It considers no more than 32 members for that message, reads
-their reports sequentially, and stops before starting the next report if the
-request's abort/activity generation is no longer current. Each report read is
-capped at 64 KiB; the complete joined notification is independently capped at 64
-KiB of UTF-8 content, including status/error/command labels, separators, and
-truncation/transcript guidance. UTF-8 truncation stops at a code-point boundary.
+the largest deterministic prefix whose worst-case mandatory frames and separators
+fit, then reads only those reports sequentially. Before starting each report it
+stops if the request's abort/activity generation is no longer current. Each report
+read is capped at 64 KiB; the complete joined notification is independently capped
+at 64 KiB of UTF-8 content, including status/error/command labels, separators, and
+truncation/transcript guidance. After reserving every selected member's mandatory
+frame, the collector divides the remaining optional-detail bytes among the members
+still to render. Short details leave their unused share available to later members;
+a sole member can use nearly the whole packet. UTF-8 truncation stops at a
+code-point boundary.
 Every included member retains a compact identity and terminal-outcome prefix plus
 a concrete full-report/transcript or exact-ID Bash output lookup; only worker,
 error, report-excerpt, and command details may be truncated. An oversized first
@@ -82,10 +87,12 @@ persists precisely that membership before the public RPC event.
 
 Steer joins Pi's native queue and is ordered by Pi with any other queued input; it
 is not a priority channel over user steering. Native admission means the message
-entered the context, not that the model acted on it. An enqueued message that Pi
-never admits (for example, the queue is cleared) keeps its IDs reserved until
-admission or restart; this limit predates boundary steer and is unconfirmed as a
-reproduced defect.
+entered the context, not that the model acted on it. Queueing closes automatic
+publication for that native opportunity. If Pi never admits the message (for
+example, the queue is cleared), its IDs remain reserved and unrelated automatic
+publication can also pause until a later real native lifecycle callback, reload,
+or restart reopens collection; timer and watcher wakeups alone do not. This limit
+predates boundary steer and is unconfirmed as a reproduced defect.
 
 The boundary path carries the native operation abort signal and publishes only for
 completed outcomes with actual tool results. Error, aborted and non-tool turns do

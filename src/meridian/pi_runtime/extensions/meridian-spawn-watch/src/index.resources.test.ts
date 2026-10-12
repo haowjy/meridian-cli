@@ -142,6 +142,41 @@ describe("bounded result delivery", () => {
     ])));
   });
 
+  it("shares one packet across 32 large reports and leaves the 33rd owed", async () => {
+    const ids = Array.from({ length: 33 }, (_, index) => `p${String(index).padStart(3, "0")}`);
+    for (const id of ids) {
+      await fixture.child(id);
+      writeFileSync(path.join(fixture.root, "spawns", id, "report.md"), "x".repeat(64 * 1024));
+    }
+
+    await fixture.runtime!.deliverAtBoundary();
+    const first = fixture.notices[0]!;
+    expect(first.details.work_ids).toEqual(ids.slice(0, 32));
+    expect(Buffer.byteLength(first.content, "utf8")).toBeLessThanOrEqual(64 * 1024);
+    for (const id of first.details.work_ids) {
+      expect(first.content).toContain(`${id} succeeded (exit 0`);
+      expect(first.content).toContain(`/spawns/${id}/report.md`);
+      expect(first.content).toContain(`meridian session log ${id}`);
+    }
+    expect(first.content.match(/Optional spawn details truncated/g)).toHaveLength(32);
+    await fixture.runtime!.admitMessage({ role: "custom", ...first });
+
+    await fixture.runtime!.deliverAtBoundary();
+    const second = fixture.notices[1]!;
+    expect(second.details.work_ids).toEqual([ids[32]]);
+    await fixture.runtime!.admitMessage({ role: "custom", ...second });
+
+    const delivered = fixture.notices.flatMap((notice) => notice.details.work_ids);
+    expect(delivered).toEqual(ids);
+    expect(new Set(delivered).size).toBe(33);
+    const receipts = JSON.parse(await readFile(
+      path.join(fixture.root, "pi-bash", "p-parent", "delivery-receipts.json"), "utf8",
+    ));
+    expect(Object.values(receipts.messages)).toEqual([
+      ids.slice(0, 32), [ids[32]],
+    ]);
+  });
+
   it("queues at most one backlog batch before the next inference opportunity", async () => {
     for (let index = 0; index < 34; index++) {
       const id = `p${String(index).padStart(3, "0")}`;
@@ -176,19 +211,14 @@ describe("bounded result delivery", () => {
 
     await fixture.runtime!.deliverAtBoundary();
     expect(fixture.notices).toHaveLength(1);
-    expect(fixture.notices[0]!.details.work_ids).toEqual(["p001"]);
+    expect(fixture.notices[0]!.details.work_ids).toEqual(["p001", "p002", "b001"]);
     expect(Buffer.byteLength(fixture.notices[0]!.content, "utf8")).toBeLessThanOrEqual(64 * 1024);
-    expect(fixture.notices[0]!.content).toContain("Optional spawn details truncated");
-    expect(fixture.notices[0]!.content).toContain(`full report: ${reportPath}`);
+    expect(fixture.notices[0]!.content).toContain("p001 succeeded (exit 0");
+    expect(fixture.notices[0]!.content).toContain(`Full report: ${reportPath}`);
+    expect(fixture.notices[0]!.content).toContain("p002 succeeded (exit 0");
+    expect(fixture.notices[0]!.content).toContain("Background bash b001 exited (exit 7");
+    expect(fixture.notices[0]!.content).toContain('bash_manage({action: "output", bash_id: "b001"})');
     expect(fixture.notices[0]!.content).not.toContain("�");
-
-    await fixture.runtime!.admitMessage({ role: "custom", ...fixture.notices[0] });
-    await fixture.runtime!.deliverAtBoundary();
-    expect(fixture.notices[1]!.details.work_ids).toEqual(["p002", "b001"]);
-    expect(Buffer.byteLength(fixture.notices[1]!.content, "utf8")).toBeLessThanOrEqual(64 * 1024);
-    expect(fixture.notices[1]!.content).toContain("Command truncated");
-    expect(fixture.notices[1]!.content).toContain('bash_manage({action: "output", bash_id: "b001"})');
-    expect(fixture.notices[1]!.content).not.toContain("�");
   });
 
   it("keeps a giant Bash result's identity, outcome, and concrete lookup visible", async () => {
@@ -203,7 +233,7 @@ describe("bounded result delivery", () => {
     expect(notice.content).toContain('bash_manage({action: "output", bash_id: "b-demo"})');
   });
 
-  it("defers a Bash member when a near-full preceding spawn cannot fit its visible outcome", async () => {
+  it("reserves a visible Bash outcome inside a packet constrained by a preceding spawn", async () => {
     await fixture.child("p000");
     writeFileSync(path.join(fixture.root, "spawns", "p000", "report.md"), "x");
     await fixture.runtime!.deliverAtBoundary();
@@ -218,13 +248,11 @@ describe("bounded result delivery", () => {
     await fixture.bash(bashRecord("命".repeat(30_000)));
 
     await fixture.runtime!.deliverAtBoundary();
-    expect(fixture.notices[1]!.details.work_ids).toEqual(["p001"]);
-    expect(fixture.notices[1]!.content).not.toContain("b-demo");
-    await fixture.runtime!.admitMessage({ role: "custom", ...fixture.notices[1] });
-
-    await fixture.runtime!.deliverAtBoundary();
-    expect(fixture.notices[2]!.details.work_ids).toEqual(["b-demo"]);
-    expect(fixture.notices[2]!.content).toContain("Background bash b-demo exited (exit 7");
+    expect(fixture.notices[1]!.details.work_ids).toEqual(["p001", "b-demo"]);
+    expect(Buffer.byteLength(fixture.notices[1]!.content, "utf8")).toBeLessThanOrEqual(64 * 1024);
+    expect(fixture.notices[1]!.content).toContain("p001 succeeded (exit 0");
+    expect(fixture.notices[1]!.content).toContain("Background bash b-demo exited (exit 7");
+    expect(fixture.notices[1]!.content).toContain('bash_manage({action: "output", bash_id: "b-demo"})');
   });
 
   it("does not start another report after a bounded read is cancelled", async () => {

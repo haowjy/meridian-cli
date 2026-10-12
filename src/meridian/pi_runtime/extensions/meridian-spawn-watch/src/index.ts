@@ -43,6 +43,7 @@ type NotificationFrame = {
   truncationNotice: string;
   lookup: string;
 };
+type NotificationCandidate = { item: NotificationItem; mandatoryBytes: number };
 type ClearedSpawnsFile = { v: 1; spawn_id: string; updated_at_ms: number; cleared_spawn_ids: string[] };
 const POLL_MS = 500;
 const FULL_RECONCILE_MS = 30_000;
@@ -266,19 +267,42 @@ export class SpawnWatchRuntime {
     if (!this.canContinue(deliverAs, generation, signal)) return false;
     if (!initial.length) return true;
 
-    const selected: Array<{ item: NotificationItem; content: string }> = [];
-    let selectedBytes = 0;
+    // Fix membership before report I/O. The worst-case fixed frames reserve every
+    // selected outcome and lookup even when an earlier optional detail is huge.
+    const candidates: NotificationCandidate[] = [];
+    let mandatoryBytes = 0;
     for (const item of initial) {
-      if (selected.length >= MAX_NOTIFICATION_MEMBERS || !this.canContinue(deliverAs, generation, signal)) break;
-      const separatorBytes = selected.length ? Buffer.byteLength(NOTIFICATION_SEPARATOR) : 0;
-      const availableBytes = MAX_NOTIFICATION_BYTES - selectedBytes - separatorBytes;
-      if (item.kind === "spawn" && availableBytes < minimumSpawnNotificationBytes(item, this.spawnsDir)) break;
+      if (candidates.length >= MAX_NOTIFICATION_MEMBERS) break;
+      const separatorBytes = candidates.length ? Buffer.byteLength(NOTIFICATION_SEPARATOR) : 0;
+      const itemMandatoryBytes = mandatoryNotificationBytes(item, this.spawnsDir);
+      if (mandatoryBytes + separatorBytes + itemMandatoryBytes > MAX_NOTIFICATION_BYTES) break;
+      candidates.push({ item, mandatoryBytes: itemMandatoryBytes });
+      mandatoryBytes += separatorBytes + itemMandatoryBytes;
+    }
+    if (!candidates.length) return true;
+
+    const selected: Array<{ item: NotificationItem; content: string }> = [];
+    const separatorBytes = Buffer.byteLength(NOTIFICATION_SEPARATOR);
+    let renderedBytes = 0;
+    let remainingMandatoryBytes = candidates.reduce((total, candidate) => total + candidate.mandatoryBytes, 0);
+    for (const [index, candidate] of candidates.entries()) {
+      if (!this.canContinue(deliverAs, generation, signal)) break;
+      const leadingSeparatorBytes = index ? separatorBytes : 0;
+      remainingMandatoryBytes -= candidate.mandatoryBytes;
+      const remainingCandidates = candidates.length - index;
+      const remainingSeparatorBytes = (remainingCandidates - 1) * separatorBytes;
+      const optionalBytes = MAX_NOTIFICATION_BYTES - renderedBytes - leadingSeparatorBytes
+        - candidate.mandatoryBytes - remainingMandatoryBytes - remainingSeparatorBytes;
+      // Split currently available detail space fairly. If this member is short,
+      // renderedBytes carries the unused share forward to the remaining members.
+      const maxBytes = candidate.mandatoryBytes + Math.floor(optionalBytes / remainingCandidates);
+      const { item } = candidate;
       const content = item.kind === "spawn"
-        ? await this.renderSpawnNotification(item, availableBytes)
-        : formatBashNotification(item, availableBytes);
-      if (!content) break;
+        ? await this.renderSpawnNotification(item, maxBytes)
+        : formatBashNotification(item, maxBytes);
+      if (!content) throw Error(`notification mandatory frame exceeded reservation: ${item.id}`);
       selected.push({ item, content });
-      selectedBytes += separatorBytes + Buffer.byteLength(content);
+      renderedBytes += leadingSeparatorBytes + Buffer.byteLength(content);
     }
     if (!this.canContinue(deliverAs, generation, signal)) return false;
     if (!selected.length) return true;
@@ -336,10 +360,7 @@ export class SpawnWatchRuntime {
     const reportPath = path.join(this.spawnsDir, item.id, "report.md");
     const report = await readBoundedReport(reportPath);
     const frame = spawnNotificationFrame(item, this.spawnsDir, report.text);
-    if (report.truncated) frame.truncationNotice = [
-      `[Report truncated after ${MAX_REPORT_BYTES} bytes; full report: ${reportPath}]`,
-      `[Optional spawn details truncated to fit ${MAX_NOTIFICATION_BYTES} UTF-8 bytes.]`,
-    ].join("\n");
+    if (report.truncated) frame.truncationNotice = spawnReportTruncationNotice(reportPath);
     return renderNotificationFrame(frame, maxBytes);
   }
 
@@ -483,19 +504,36 @@ function spawnNotificationFrame(item: NotificationItem, spawnsDir: string, repor
   };
 }
 
-function minimumSpawnNotificationBytes(item: NotificationItem, spawnsDir: string): number {
-  const frame = spawnNotificationFrame(item, spawnsDir, null);
-  return Buffer.byteLength(`${frame.prefix}\n\n${frame.truncationNotice}\n${frame.lookup}`);
+function spawnReportTruncationNotice(reportPath: string): string {
+  return [
+    `[Report truncated after ${MAX_REPORT_BYTES} bytes; full report: ${reportPath}]`,
+    `[Optional spawn details truncated to fit ${MAX_NOTIFICATION_BYTES} UTF-8 bytes.]`,
+  ].join("\n");
 }
 
-function formatBashNotification(item: NotificationItem, maxBytes: number): string | undefined {
+function bashNotificationFrame(item: NotificationItem): NotificationFrame {
   const outcome = item.exitCode === undefined ? item.duration : `exit ${item.exitCode}, ${item.duration}`;
-  return renderNotificationFrame({
+  return {
     prefix: `Background bash ${item.id} ${item.status} (${outcome}).`,
     detail: `Command: ${item.label}`,
     truncationNotice: `[Command truncated to fit ${MAX_NOTIFICATION_BYTES} UTF-8 bytes.]`,
     lookup: `Full output: bash_manage({action: "output", bash_id: "${item.id}"})`,
-  }, maxBytes);
+  };
+}
+
+function formatBashNotification(item: NotificationItem, maxBytes: number): string | undefined {
+  return renderNotificationFrame(bashNotificationFrame(item), maxBytes);
+}
+
+function mandatoryNotificationBytes(item: NotificationItem, spawnsDir: string): number {
+  const frame = item.kind === "spawn"
+    ? spawnNotificationFrame(item, spawnsDir, null)
+    : bashNotificationFrame(item);
+  if (item.kind === "spawn") {
+    const reportPath = path.join(spawnsDir, item.id, "report.md");
+    frame.truncationNotice = spawnReportTruncationNotice(reportPath);
+  }
+  return Buffer.byteLength(`${frame.prefix}\n\n${frame.truncationNotice}\n${frame.lookup}`);
 }
 
 function renderNotificationFrame(frame: NotificationFrame, maxBytes: number): string | undefined {

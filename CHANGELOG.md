@@ -14,10 +14,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   leave the remaining backlog owed for later native opportunities. Oversized
   members retain a compact identity and terminal outcome plus a concrete
   full-result lookup; members that cannot fit those mandatory fields are deferred
-  intact. Preserve exit codes and short-read handling. Idle polling skips unrelated
-  history and stateless directories; full discovery runs at tool boundaries and on
-  a 30-second missed-event reconciliation cadence. In-flight idle scans stop before
-  their next row when the agent starts.
+  intact. The packet reserves all selected mandatory frames before report I/O and
+  shares optional-detail space fairly, carrying unused shares forward so one large
+  report cannot monopolize an otherwise 32-member packet. Preserve exit codes and
+  short-read handling. Idle polling skips unrelated history and stateless
+  directories; full discovery runs at tool boundaries and on a 30-second
+  missed-event reconciliation cadence. In-flight idle scans stop before their next
+  row when the agent starts.
 - Keep discovery hints out of notification authority. Stable selected children
   survive unrelated root churn; bare Bash notices require a current canonical
   child-correlation snapshot. Failed discovery stays unresolved until repaired.
