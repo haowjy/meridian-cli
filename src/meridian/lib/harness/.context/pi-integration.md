@@ -9,7 +9,7 @@ remain in [CONTEXT.md](CONTEXT.md).
 Meridian loads three TypeScript extensions inside Pi:
 
 - **managed-bash** — shell execution, `bash` / `bash_manage`, `/ps*` UI, and durable task records.
-- **meridian-spawn-watch** — canonical direct-child observation, `/spawn*` UI, and idle-turn result delivery.
+- **meridian-spawn-watch** — canonical direct-child observation, `/spawn*` UI, and tool-boundary or idle result delivery.
 - **session-boundary** — bounded native lifecycle observations for post-exit identity verification.
 
 Both primary and spawned launches load managed-bash and spawn-watch when their

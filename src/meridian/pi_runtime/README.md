@@ -73,8 +73,12 @@ terminates detached groups on normal shutdown. Kill/abort wait for owned work an
 queued output to finish, escalating TERM-resistant groups to SIGKILL.
 
 Unattended tracked background results remain owed until explicit consumption or
-exact native custom-message admission. Follow-ups wait for native idle and recheck
-consumption before publication; queueing is not proof of delivery. See the
-[delivery contract](.context/delivery-contract.md) for restart/crash limits and the
-[extension architecture](.context/CONTEXT.md) for native boundary validation and its
-stale-context error-text dependency.
+exact native custom-message admission. Successful tool-bearing turns steer a fresh,
+revalidated bounded batch into the next inference; results that finish later retain
+the native-idle follow-up fallback. One automatic message contains at most 32
+members and 64 KiB of UTF-8 content; selected reports are read sequentially and at
+most 64 KiB each. Larger backlogs remain owed for later native opportunities.
+Queueing is not proof of delivery. See the canonical
+[delivery contract](.context/delivery-contract.md) for discovery cadence,
+sequencing, revalidation, truncation guidance, and restart/crash limits, and the
+[extension architecture](.context/CONTEXT.md) for ownership and build rationale.
