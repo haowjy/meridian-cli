@@ -1,3 +1,4 @@
+import { constants } from "node:fs";
 import { mkdir, open, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -31,8 +32,8 @@ export class BashLogStore {
     return (await stat(paths.combined)).size;
   }
 
-  async read(paths: BashLogPaths, stream: BashLogStream, maxBytes: number): Promise<string> {
-    return readLogTail(paths[stream], maxBytes);
+  async readResult(paths: BashLogPaths, stream: BashLogStream, maxBytes: number): Promise<LogReadResult> {
+    return readLogResult(paths[stream], maxBytes);
   }
 
   private pathsFor(bashId: string): BashLogPaths {
@@ -53,8 +54,11 @@ export type LogReadResult =
 export async function readLogResult(filePath: string, maxBytes: number): Promise<LogReadResult> {
   let file;
   try {
-    file = await open(filePath, "r");
-    const size = (await file.stat()).size;
+    // Logs are regular files. Nonblocking open lets us reject a FIFO without waiting for a writer.
+    file = await open(filePath, constants.O_RDONLY | constants.O_NONBLOCK);
+    const info = await file.stat();
+    if (!info.isFile()) throw new Error(`Not a regular log file: ${filePath}`);
+    const size = info.size;
     const length = Math.max(0, Math.min(size, Math.floor(maxBytes)));
     const buffer = Buffer.alloc(length);
     let bytesRead = 0;

@@ -38,7 +38,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Load `/ps` metadata without opening task logs. The TUI reads only the selected
   preview, one at a time; selection, refresh and disposal fence stale results.
 - Give bounded Bash log reads an explicit available/missing/unreadable result;
-  keep benign missing-preview handling in the non-consuming UI reader.
+  reject non-regular files without blocking on FIFOs. Keep benign missing-preview
+  handling in the non-consuming UI reader.
 - Stop rewriting the whole managed-Bash records file for every output chunk. The
   file is written at lifecycle transitions only, cutting metadata writes in a 1 MiB
   output with 128 retained tasks from ~2.2-2.6 MB (22-26 writes) to ~0.2 MB (2 writes).
