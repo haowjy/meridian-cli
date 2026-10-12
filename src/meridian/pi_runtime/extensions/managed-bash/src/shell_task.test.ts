@@ -41,3 +41,17 @@ it("treats a retirement observed by another probe as final for an outstanding ps
   psQueries[0]!(new Error("ps timed out")); // the stale query now fails
   await expect(exiting).resolves.toBe(0);
 });
+
+it("retires on ESRCH from a signal, without probing a potentially reused group afterwards", async () => {
+  const task = new ShellTask("true", process.cwd(), process.env);
+  await task.closed;
+  const kill = vi.spyOn(process, "kill").mockImplementation((_pid, signal) => {
+    if (signal === "SIGTERM") throw Object.assign(new Error("gone"), { code: "ESRCH" });
+    return true; // a subsequent probe would see an unrelated reused group
+  });
+  const terminating = task.terminate();
+  // Release any erroneous probe too, so the negative control cannot hang its fixture.
+  for (const query of psQueries.splice(0)) query(null, { stdout: "", stderr: "" });
+  await terminating;
+  expect(kill.mock.calls).toEqual([[-task.child.pid!, "SIGTERM"]]);
+});

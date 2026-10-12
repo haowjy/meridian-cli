@@ -362,7 +362,8 @@ export class SelectablePanelComponent<Row, Detail = never> implements Component 
     return row ? this.options.getRowId(row) : null;
   }
 
-  /** Detail is shown only for the row that is selected now; anything else reads as loading. */
+  /** Only the selected id may display detail. Its previous preview remains visible while
+   * refreshing that same id; epochs fence adoption, not this stale-while-refresh display. */
   private selectedDetail(): PanelDetail<Detail> | undefined {
     if (!this.options.loadDetail) return undefined;
     const id = this.selectedId();

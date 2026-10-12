@@ -48,7 +48,10 @@ export class ShellTask {
     const pid = this.child.pid;
     if (pid == null || this.groupGone) return;
     try { process.kill(-pid, signal); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      this.retire();
+    }
   }
 
   private async waitUntilGone(timeoutMs: number): Promise<boolean> {

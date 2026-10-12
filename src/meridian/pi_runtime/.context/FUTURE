@@ -1,0 +1,23 @@
+# Deferred runtime work
+
+- **Foreground attachment ownership** — `extensions/managed-bash/src/bash_runtime.ts`
+  (`execute`, `executeUserBash`, `backgroundForeground`) and
+  `extensions/managed-bash/src/index.ts` still
+  duplicate settlement, abort/start-stop hooks and foreground UI counting. When
+  changing this lifetime again, consider one attachment owner only if it deletes
+  that bookkeeping. Preserve distinct model-result and human streaming APIs,
+  physical stop/drain versus publication, and reload/background handoff. This was
+  an optional follow-on to PR #563, not an established new correctness defect.
+
+- **Post-shell polling cost** — `extensions/managed-bash/src/shell_task.ts` polls
+  groups whose descendants outlive the shell. #561 has exploratory 250 ms/backoff
+  measurements, not full-runtime or macOS qualification. Before changing cadence,
+  exercise output drain, cancellation, ps failure, publication delays and ownership
+  retirement. Do not turn shared-host observed lag into a hard delivery bound.
+
+- **Queued but unadmitted notices** — `extensions/meridian-spawn-watch/src/index.ts`:
+  investigate whether native queue clearing can leave automatic publication closed
+  until another lifecycle callback/reload. This is a documented, unconfirmed limit
+  in `delivery-contract.md`, not evidence of a reproduced regression. Reproduce in
+  real Pi before changing claim release; never manufacture admission or add a timer
+  that treats queueing as consumption.

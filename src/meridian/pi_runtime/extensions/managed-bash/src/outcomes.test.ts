@@ -163,7 +163,7 @@ describe("managed Bash tool outcomes", () => {
 });
 
 describe("managed Bash native error semantics", () => {
-  it("marks an empty non-zero foreground Bash result as a model-visible error", async () => {
+  it("renders uniform exact foreground outcomes for successful and failed empty output", async () => {
     const { runtime } = await runtimeFor("p-parent-native-error");
     const tools = new Map<string, RegisteredTool>();
     const host = {
@@ -173,9 +173,18 @@ describe("managed Bash native error semantics", () => {
     };
     managedBashExtension(host as unknown as ExtensionAPI);
 
+    const normal = await tools.get("bash")!.execute("call", { command: "printf hi" }, undefined);
+    expect(normal.isError).not.toBe(true);
+    expect(normal.content[0]?.text).toBe("command: exited (exit code 0)\nhi");
+    expect(normal.details).toEqual({
+      kind: "foreground", status: "exited", exit_code: 0,
+      stdout: { kind: "available", text: "hi", truncated: false },
+      stderr: { kind: "available", text: "", truncated: false },
+    });
+
     const result = await tools.get("bash")!.execute("call", { command: "exit 17" }, undefined);
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain("exit code 17");
+    expect(result.content[0]?.text).toBe("command: exited (exit code 17)");
 
     runMeridianCommand.mockResolvedValueOnce(jsonResult({
       any_failed: true,

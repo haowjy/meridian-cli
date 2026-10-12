@@ -88,7 +88,7 @@ export class BashPublication {
       spawn_id: this.options.spawnId,
       updated_at_ms: Date.now(),
       records: Object.fromEntries(next.rows),
-      ...(next.runtimeError ? { runtime_error: next.runtimeError } : {}),
+      ...(next.runtimeError !== undefined ? { runtime_error: next.runtimeError } : {}),
     };
     await writeJsonAtomic(this.options.path, file);
   }

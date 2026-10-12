@@ -235,7 +235,7 @@ describe("managed Bash execution ownership", () => {
       expect(await runtime.manage({ action: "wait", bash_id: started.bash_id })).toMatchObject({ kind: "wait", error: expect.stringContaining("EISDIR") });
       expect(JSON.parse(await readFile(recordsPath, "utf8")).records[started.bash_id].notification_consumed_at_ms).toBeUndefined();
       const result = await runtime.execute({ command: "printf recovered" }, undefined);
-      expect(result).toMatchObject({ stdout: "recovered", exit_code: 0 });
+      expect(result).toMatchObject({ stdout: { kind: "available", text: "recovered" }, exit_code: 0 });
       expect(JSON.parse(await readFile(recordsPath, "utf8")).runtime_error).toBeUndefined();
     } finally {
       process.removeListener("unhandledRejection", listener);

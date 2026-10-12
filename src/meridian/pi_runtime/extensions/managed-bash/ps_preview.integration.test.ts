@@ -113,7 +113,7 @@ describe("/ps task preview I/O", () => {
     const { root, runtime, ps, rows } = await setup();
     try {
       await rm(rows[0]!.log_path);
-      await mkdir(rows[0]!.log_path); // open succeeds; reading a directory fails with EISDIR
+      await mkdir(rows[0]!.log_path); // a non-regular path is unavailable, not empty output
       const panel = openPanel(ps);
       await panel.mounted;
       await vi.waitFor(() => expect(panel.text()).toContain("Output unavailable"));

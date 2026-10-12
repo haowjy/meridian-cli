@@ -12,7 +12,7 @@ import {
 } from "../../shared/selectable_panel";
 import { formatDurationSecs, renderTable } from "../../shared/ui";
 import type { BashRecord } from "../../shared/schemas";
-import { describeOutcome, outcomeIsError, type TaskOutcome } from "../../shared/task_outcome";
+import { bashOutcome, describeOutcome, outcomeErrorText, outcomeIsError, type TaskOutcome } from "../../shared/task_outcome";
 import {
   BashRuntime,
   type BashExecuteResult,
@@ -31,15 +31,15 @@ type ManagedBashToolResult = BashExecuteResult | BashManageResult;
 function formatToolResult(result: ManagedBashToolResult): FormattedToolResult {
   switch (result.kind) {
     case "foreground": {
-      const id = "command";
-      const logErrors = [result.stdout_log, result.stderr_log]
-        .flatMap((log) => log.state === "available" ? [] : [log.error]);
-      return formatOutcome(id, result, [result.stdout, result.stderr, ...logErrors], logErrors.length > 0);
+      const logs = [result.stdout, result.stderr];
+      return formatOutcome("command", result,
+        logs.map((log) => log.kind === "available" ? log.text : log.error),
+        logs.some((log) => log.kind !== "available"));
     }
     case "start":
       return { text: [`${result.bash_id}: ${result.status}`, result.status === "backgrounded" ? result.message : ""].filter(Boolean).join("\n"), isError: false };
     case "list":
-      return { text: formatRows(result.rows), isError: result.rows.some((row) => Boolean(row.execution_error)) };
+      return { text: formatRows(result.rows), isError: result.rows.some((row) => bashOutcome(row).error !== undefined) };
     case "output":
       return formatOutcome(result.bash_id, result, [result.output, result.log_state === "available" ? "" : result.log_error], result.log_state !== "available");
     case "inspection":
@@ -63,8 +63,9 @@ function formatToolResult(result: ManagedBashToolResult): FormattedToolResult {
 }
 
 function formatOutcome(id: string, outcome: TaskOutcome, details: string[], forceError = false): FormattedToolResult {
+  const error = outcomeErrorText(outcome);
   return {
-    text: [describeOutcome(id, outcome), ...details, outcome.error ? `Error: ${outcome.error}` : ""].filter(Boolean).join("\n"),
+    text: [describeOutcome(id, outcome), ...details, error === undefined ? "" : `Error: ${error}`].filter(Boolean).join("\n"),
     isError: forceError || outcomeIsError(outcome),
   };
 }
@@ -78,14 +79,17 @@ function formatRows(rows: BashListRow[]): string {
   const table = renderTable(
     [
       { header: "ID", width: 10, render: (row: BashListRow) => row.bash_id },
-      { header: "STATE", width: 12, render: (row: BashListRow) => row.status === "running" && row.execution_error ? "unresolved" : row.status === "exited" && row.exit_code !== 0 ? `exited(${row.exit_code ?? "?"})` : row.status },
+      { header: "STATE", width: 12, render: (row: BashListRow) => row.status === "running" && bashOutcome(row).error !== undefined ? "unresolved" : row.status === "exited" && row.exit_code !== 0 ? `exited(${row.exit_code ?? "?"})` : row.status },
       { header: "DUR", width: 8, render: (row: BashListRow) => formatDurationSecs(row.duration_secs) },
       { header: "COMMAND", width: 60, render: (row: BashListRow) => row.command },
     ],
     rows,
     100,
   ).join("\n");
-  const errors = rows.flatMap((row) => row.execution_error ? [`${row.bash_id}: ${row.execution_error}`] : []);
+  const errors = rows.flatMap((row) => {
+    const error = bashOutcome(row).error;
+    return error === undefined ? [] : [`${row.bash_id}: ${error}`];
+  });
   return [table, ...errors].join("\n");
 }
 
@@ -122,7 +126,9 @@ function formatBashStatus(row: BashListRow, theme: Theme): string {
   const error = (value: string) => theme.fg("error", value);
   const warning = (value: string) => theme.fg("warning", value);
 
-  if (row.status === "running") return row.execution_error ? warning("! unresolved") : success("● running");
+  const fault = bashOutcome(row).error;
+  if (row.status === "running") return fault !== undefined ? warning("! unresolved") : success("● running");
+  if (fault !== undefined) return error(`✗ ${row.status}`);
   if (row.status === "exited") {
     return row.exit_code === 0 ? dim("✓ exit(0)") : error(`✗ exit(${row.exit_code ?? "?"})`);
   }
@@ -143,17 +149,18 @@ function bashPreviewOutput(detail: PanelDetail<string> | undefined, theme: Theme
 
 function renderBashPreview(row: BashListRow, theme: Theme, detail?: PanelDetail<string>): string[] {
   const dim = (value: string) => theme.fg("dim", value);
+  const fault = bashOutcome(row).error;
   return [
     `${theme.fg("accent", row.bash_id)} ${formatBashStatus(row, theme)} ${dim(formatDurationSecs(row.duration_secs))}`,
     dim(row.command),
-    ...(row.execution_error ? [theme.fg("error", row.execution_error)] : []),
+    ...(fault !== undefined ? [theme.fg("error", fault)] : []),
     ...bashPreviewOutput(detail, theme),
   ];
 }
 
 const BASH_PANEL_COLUMNS: SelectablePanelColumn<BashListRow>[] = [
   { header: "ID", width: 10, render: (row, theme, selected) => (theme ? (selected ? theme.fg("accent", row.bash_id) : theme.fg("dim", row.bash_id)) : row.bash_id) },
-  { header: "STATE", width: 12, render: (row, theme) => (theme ? formatBashStatus(row, theme) : row.status === "running" && row.execution_error ? "unresolved" : row.status) },
+  { header: "STATE", width: 12, render: (row, theme) => (theme ? formatBashStatus(row, theme) : row.status === "running" && bashOutcome(row).error !== undefined ? "unresolved" : row.status) },
   { header: "BG", width: 3, render: (row, theme) => (theme ? (row.is_background ? theme.fg("accent", "yes") : theme.fg("dim", "no")) : row.is_background ? "yes" : "no") },
   { header: "DUR", width: 8, render: (row, theme) => (theme ? theme.fg("dim", formatDurationSecs(row.duration_secs)) : formatDurationSecs(row.duration_secs)), align: "right" },
   { header: "SIZE", width: 8, render: (row, theme) => (theme ? theme.fg("dim", `${row.log_bytes}B`) : `${row.log_bytes}B`), align: "right" },

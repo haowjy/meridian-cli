@@ -108,9 +108,12 @@ available logs and its outcome included (execution failures excluded); exact cus
 unattended notice. Sending or queueing is not consumption. Wait blocks up to the
 55-minute bash timeout with no model-chosen limit: a short wait let the model
 read results around consumption and receive the same completion again. The
-tool abort signal (Esc) ends a wait early; an interrupted or timed-out wait
-returned no result, so it consumes nothing. Consumption is gated on the status
-the call returned, not the live record.
+tool abort signal (Esc) ends a wait early. Cancellation before acknowledgement
+staging leaves the result owed, even if the pending reply includes a known terminal
+status. Once acknowledgement has staged, a successful write returns its result;
+a later abort cannot roll it back. Timed-out/pending replies do not consume.
+Eligibility uses the outcome observed before log I/O, revalidated for new faults,
+not a later ordinary completion. This is not atomic native model delivery.
 `BashPublication` owns the immutable published snapshot and its serialized
 stage → write → adopt path. Each slot stages against the previous adoption plus
 current evidence, writes one prospective value, and adopts that same value only
@@ -128,8 +131,8 @@ and owns one bounded selected-row preview read at a time.
 
 Terminal publication is such a transition. Until it lands the record stays
 `running` and owned, so list, wait, output, kill, and foreground results never
-present, wait on, or consume an unpublished exit, and an interrupted wait still
-returns running. Its linearization point is staging: success is staged only if no
+present, wait on, or consume an unpublished clean exit; a wait interrupted before
+publication still reports running. Its linearization point is staging: success is staged only if no
 failure has claimed the record, so an earlier failure prevents a clean terminal
 snapshot; one claimed afterwards is ordered after it and repaired by the failure's
 own write (a crash inside that rename window can still recover the success).
@@ -142,8 +145,9 @@ fails the record (`killed` plus `execution_error`), returns a failed wait result
 and leaves the notice owed. A consumption is staged in its own slot and is skipped if the record
 has failed meanwhile. `kill` reports the published outcome, so a task that exited by
 itself is not "killed". Group-signalling authority ends where physical ownership
-does: once `ShellTask` observes its group gone (including for ps queries already in
-flight) it never signals or probes it again, however long publication takes. Interrupting
+does: once `ShellTask` observes its group gone (including ESRCH from a signal and
+ps queries already in flight) it never signals or probes it again, however long
+publication takes. Interrupting
 a foreground command returns after the physical stop and flushed output, not after
 publication. A clean interruption publishes as `killed`; a fault overlay may show
 negative evidence before its repair write lands.

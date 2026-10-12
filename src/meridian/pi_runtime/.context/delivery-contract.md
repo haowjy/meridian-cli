@@ -70,7 +70,11 @@ Bash tool results include outcome evidence independently of log contents. An
 available empty log can accompany success, nonzero exit or an execution fault;
 none may be inferred from the text alone. Terminal wait/output consumes only when
 available output and its outcome are returned, with consumption persisted first.
-Unavailable logs and execution faults remain owed. Artifact reads, `/ps` previews
+Unavailable logs, incomplete exit evidence and execution faults remain owed;
+an empty fault diagnostic is still a fault. Wait cancellation is checked inside
+the acknowledgement slot. Cancellation before staging leaves work owed; an already
+staged acknowledgement may land and returns its result rather than pretending to
+roll back. Artifact reads, `/ps` previews
 and `/pslogs` are inspection, never consumption. Automatic Bash notices retain
 execution-fault details under the same bounded-detail rules as spawn errors.
 

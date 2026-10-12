@@ -10,7 +10,8 @@ type ToolResult = { content: Array<{ text?: string }>; details: unknown; isError
 type Tool = { execute: (id: string, params: unknown) => Promise<ToolResult> };
 
 it.each((["output", "wait"] as const).flatMap((action) =>
-  (["empty", "missing", "unreadable", "nonzero", "fault"] as const).map((variant) => ({ action, variant }))))(
+  (["empty", "missing", "unreadable", "nonzero", "fault", "empty_fault", "unknown_exit"] as const)
+    .map((variant) => ({ action, variant }))))(
   "returns the observed outcome and log availability before acknowledging $variant $action",
   async ({ action, variant }) => {
   const root = await mkdtemp(path.join(tmpdir(), "bash-result-read-"));
@@ -20,12 +21,16 @@ it.each((["output", "wait"] as const).flatMap((action) =>
   await mkdir(dir, { recursive: true });
   const log = variant === "unreadable" ? root : path.join(root, "output.log");
   if (variant !== "missing" && variant !== "unreadable") await writeFile(log, "");
+  const hasFault = variant === "fault" || variant === "empty_fault";
   const record: BashRecord = {
     bash_id: "b-00000001", command: "synthetic terminal fixture; not executed", cwd: root, pid: null,
-    status: variant === "fault" ? "killed" : "exited", exit_code: variant === "nonzero" ? 2 : variant === "fault" ? -1 : 0,
+    status: hasFault ? "killed" : "exited",
+    exit_code: variant === "nonzero" ? 2 : hasFault ? -1 : variant === "unknown_exit" ? null : 0,
     is_background: true, is_tracked: true, started_at_ms: 1, ended_at_ms: 2,
     log_path: log, stdout_log_path: log, stderr_log_path: log, log_bytes: 0, timeout_min: 55,
-    originating_bash_id: null, ...(variant === "fault" ? { execution_error: "EIO: failed publication" } : {}),
+    originating_bash_id: null,
+    ...(variant === "fault" ? { execution_error: "EIO: failed publication" } : {}),
+    ...(variant === "empty_fault" ? { execution_error: "" } : {}),
   };
   const recordsPath = path.join(dir, "bash-records.json");
   await writeFile(recordsPath, JSON.stringify({ v: 1, spawn_id: "p9000", updated_at_ms: 1, records: { [record.bash_id]: record } }));
@@ -42,6 +47,14 @@ it.each((["output", "wait"] as const).flatMap((action) =>
     expect(Boolean(result.isError)).toBe(variant !== "empty");
     if (variant === "nonzero") expect(result.content[0]!.text).toContain("exit code 2");
     if (variant === "fault") expect(result.content[0]!.text).toContain(record.execution_error);
+    if (variant === "empty_fault") {
+      expect(result.details).toMatchObject({ error: "unspecified execution failure" });
+      expect(result.content[0]!.text).toContain("unspecified execution failure");
+    }
+    if (variant === "unknown_exit") {
+      expect(result.details).toMatchObject({ error: "exit code unavailable" });
+      expect(result.content[0]!.text).toContain("exit code unavailable");
+    }
     if (variant === "missing" || variant === "unreadable") expect(result.content[0]!.text).toContain(`Log ${variant}`);
     const file = JSON.parse(await readFile(recordsPath, "utf8")) as BashRecordsFile;
     expect(file.records[record.bash_id]!.notification_consumed_at_ms != null).toBe(variant === "empty" || variant === "nonzero");

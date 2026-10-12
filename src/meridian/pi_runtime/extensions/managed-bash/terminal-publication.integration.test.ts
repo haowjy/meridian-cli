@@ -191,7 +191,7 @@ describe("managed Bash terminal publication", () => {
   });
 
   it.each([
-    ["execute", (h: Harness) => h.runtime.execute({ command: h.command }, undefined), { stdout: "done", exit_code: 0 }, { error: expect.stringContaining("EIO") }],
+    ["execute", (h: Harness) => h.runtime.execute({ command: h.command }, undefined), { stdout: { kind: "available", text: "done" }, exit_code: 0 }, { error: expect.stringContaining("EIO") }],
     ["executeUserBash", (h: Harness) => h.runtime.executeUserBash(h.command, process.cwd()), { exitCode: 0 }, { exitCode: -1 }],
   ] as const)("foreground %s returns only after its terminal write (%s)", async (_name, run, success, failure) => {
     for (const verdict of ["ok", "fail"] as const) {
@@ -208,7 +208,11 @@ describe("managed Bash terminal publication", () => {
   });
 
   it.each([
-    ["execute", (h: Harness, signal: AbortSignal) => h.runtime.execute({ command: "sleep 30" }, signal), { stderr: "[command aborted]", exit_code: -1 }],
+    ["execute", (h: Harness, signal: AbortSignal) => h.runtime.execute({ command: "sleep 30" }, signal), {
+      kind: "foreground", status: "aborted", exit_code: -1,
+      stdout: { kind: "available", text: "", truncated: false },
+      stderr: { kind: "available", text: "", truncated: false },
+    }],
     ["executeUserBash", (h: Harness, signal: AbortSignal) => h.runtime.executeUserBash("sleep 30", process.cwd(), { signal }), { exitCode: -1 }],
   ] as const)("foreground %s abort returns after the physical stop while its terminal write is held", async (_name, run, aborted) => {
     await withRuntime(async (h) => {
@@ -448,11 +452,26 @@ describe("managed Bash terminal publication", () => {
       const detaching = h.runtime.manage({ action: "detach", bash_id: a });
       await blocked.hit;
       abort.abort();
-      expect(await foreground).toMatchObject({ stderr: "[command aborted]", exit_code: -1 });
+      expect(await foreground).toEqual({
+        kind: "foreground", status: "aborted", exit_code: -1,
+        stdout: { kind: "available", text: "", truncated: false },
+        stderr: { kind: "available", text: "", truncated: false },
+      });
       blocked.settle("ok");
       await detaching;
       const id = h.runtime.list(true).find((row) => row.bash_id !== a)!.bash_id;
       await until(async () => (await h.disk(id)).status === "killed");
+    });
+  });
+
+  it("claims an unprintable callback failure instead of losing the fault during formatting", async () => {
+    await withRuntime(async (h) => {
+      const result = h.runtime.executeUserBash(h.command, process.cwd(), { onData: () => { throw Object.create(null); } });
+      await until(() => h.runtime.list(true).length === 1);
+      await h.exit();
+      expect(await result).toEqual({ exitCode: -1 });
+      const id = h.runtime.list(true)[0]!.bash_id;
+      expect(await h.disk(id)).toMatchObject({ status: "killed", execution_error: "unprintable failure" });
     });
   });
 

@@ -75,6 +75,13 @@ describe("BashPublication ordering contract", () => {
 });
 
 describe("BashPublication adoption", () => {
+  it("preserves a present empty runtime diagnostic instead of writing a different snapshot", async () => {
+    const publication = open();
+    await publication.publish({ stage: (base) => ({ ...base, runtimeError: "" }) });
+    expect((await disk()).runtime_error).toBe("");
+    expect(publication.current.runtimeError).toBe("");
+  });
+
   it("adopts exactly what was written, only after the write, and runs effects in the same slot", async () => {
     const events: string[] = [];
     const publication = open();
