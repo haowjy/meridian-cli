@@ -97,8 +97,13 @@ def test_observed_chat_inherits_metadata_without_transcript_or_live_lease(tmp_pa
         kind="primary",
     )
     session_store.update_session_work_id(runtime, source, "work-a")
-    session_store.stop_session(runtime, source)
     snapshot = LaunchPolicySnapshot(model="model-a", harness="claude", agent="builder")
+    generation = session_store.get_session_record(runtime, source)
+    assert generation is not None  # Final binding gives the entry its own policy.
+    session_store.update_session_launch_policy(
+        runtime, source, generation.session_instance_id, snapshot,
+    )
+    session_store.stop_session(runtime, source)
     spawn_store.start_spawn(
         runtime, spawn_id="p1", chat_id=source, harness="claude", work_id="work-a",
         model="model-a", agent="builder", prompt="task", kind="primary",

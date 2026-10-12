@@ -113,6 +113,7 @@ class SessionUpdateEvent(BaseModel):
     history_id: uuid.UUID | None = None
     startup_attempt_id: str | None = None
     source: BindSource | None = None
+    launch_policy_snapshot: LaunchPolicySnapshot | None = None
 
     def key_fields(self) -> NativeKeyFields:
         return NativeKeyFields(native_store=self.native_store, session_id=self.harness_session_id)
@@ -371,6 +372,8 @@ def project_session_event(records: dict[str, SessionRecord], event: SessionEvent
             "claude_config_dir": claude_config_dir,
             "spawn_id": spawn_id,
             "history_id": event.history_id or existing.history_id,
+            "launch_policy_snapshot": event.launch_policy_snapshot
+            or existing.launch_policy_snapshot,
         }
     )
     return True

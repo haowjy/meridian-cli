@@ -29,6 +29,7 @@ from meridian.lib.state.native_binding import Conflict
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
 
 if TYPE_CHECKING:
+    from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
     from meridian.lib.harness.adapter import SubprocessHarness
     from meridian.lib.launch.context import LaunchContext
     from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -244,8 +245,12 @@ def bind_entry(
     spec: ResolvedLaunchSpec,
     *,
     harness: str,
+    policy: LaunchPolicySnapshot | None,
     on_accepted: Callable[[str], None] | None = None,
 ) -> NativeRun:
+    """Final binding: the generation owns its policy and entry before native exec."""
+    if policy is not None:
+        attempt.own_policy(policy)
     identity = spec.native_identity
     if identity is None:
         assigned = spec.continue_session_id if not spec.continue_fork else None

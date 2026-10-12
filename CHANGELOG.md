@@ -11,6 +11,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Persist a run's current chat separately from its immutable entry chat. Rebuild history projection in a new versioned namespace.
 - Trim duplicate Claude boundary tests and run recorder edge checks without subprocesses.
 - Store inherited launch settings in private session journals; failed starts leave no event, even if the empty journal was pre-created.
+- Record each launch's final policy snapshot on its own conversation generation at final binding, before the native process starts. Continuation and new observed chats inherit settings from the conversation. Older generations read only their exactly linked run; the newest-primary-owner lookup is gone.
 
 ### Fixed
 - Continue Claude from its last observed chat, including live `/clear` and `/resume` switches, without requiring a final callback. Keep exact transcript checks at resume/read time.

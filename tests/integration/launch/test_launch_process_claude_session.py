@@ -380,9 +380,13 @@ def test_primary_claude_exec_receives_prebound_identity(
     native_id = argv[argv.index("--session-id") + 1]
     events = [json.loads(line) for line in binding_log.read_text().splitlines()]
     assert any(row.get("harness_session_id") == native_id for row in events)
+    # The entry generation owns its final policy before native execution.
+    assert any(row.get("launch_policy_snapshot") for row in events)
     assert outcome.chat_id is not None
     record = session_store.get_session_record(context.runtime_root, outcome.chat_id)
     assert record is not None
+    spawn_row = list_spawns(context.runtime_root).records[0]
+    assert record.launch_policy_snapshot == spawn_row.launch_policy_snapshot is not None
     assert record.harness_session_id == native_id == outcome.resolved_harness_session_id
     assert record.native_store == str(
         tmp_path / "home" / ".claude" / "projects" / project_slug(root)

@@ -149,7 +149,10 @@ async def streaming_serve(
             lifecycle = LifecycleLog.for_spawn(runtime_root, project_root, spawn_id)
             try:
                 native_run = bind_entry(
-                    managed, launch_ctx.binding.spec, harness=str(launch_ctx.harness.id)
+                    managed,
+                    launch_ctx.binding.spec,
+                    harness=str(launch_ctx.harness.id),
+                    policy=launch_ctx.resolved_request.launch_policy_snapshot,
                 )
             except NativeIdentityError as exc:
                 record_identity_failure(exc, lifecycle=lifecycle, phase="pre_exec")

@@ -975,6 +975,7 @@ async def execute_with_streaming(
             session_attempt,
             spec,
             harness=str(resolved_harness_id),
+            policy=launch_context.resolved_request.launch_policy_snapshot,
             on_accepted=harness_session_id_observer,
         )
         stop_native_observations = native_run.stop_observing

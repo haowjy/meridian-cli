@@ -478,6 +478,21 @@ def update_session_spawn_id(runtime_root: Path, chat_id: str, spawn_id: str) -> 
     )
 
 
+def update_session_launch_policy(
+    runtime_root: Path, chat_id: str, session_instance_id: str, snapshot: LaunchPolicySnapshot,
+) -> None:
+    """Make the final launch policy owned by this exact conversation generation."""
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    event = SessionUpdateEvent(
+        chat_id=ChatId(chat_id),
+        harness_session_id=None,
+        session_instance_id=session_instance_id,
+        launch_policy_snapshot=snapshot,
+    )
+    _append_session_event(paths.sessions_jsonl, paths.sessions_flock, event, exclude_none=True)
+
+
 def update_session_claude_config_dir(
     runtime_root: Path,
     chat_id: str,
@@ -596,8 +611,6 @@ def get_initial_model_selection(
     *, source_chat_id: str | None = None,
 ) -> SessionModelSelectionEvent | None:
     """Read a legacy conversation's original value without seeding or replaying attempts."""
-    from meridian.lib.state.spawn_store import get_spawn
-
     paths = RuntimePaths.from_root_dir(runtime_root)
     events = read_events(paths.sessions_jsonl, parse_event)
     updates: dict[tuple[str, str], list[SessionUpdateEvent]] = {}
@@ -624,10 +637,7 @@ def get_initial_model_selection(
     spawn_id = start.spawn_id or next(
         (update.spawn_id for update in generation_updates if update.spawn_id), None,
     )
-    spawn = get_spawn(runtime_root, spawn_id) if spawn_id else None
-    snapshot = start.launch_policy_snapshot or (
-        spawn.launch_policy_snapshot if spawn is not None else None
-    )
+    snapshot = start.launch_policy_snapshot or _linked_spawn_policy(runtime_root, spawn_id)
     selection = ConversationModelSelection(
         requested_token=start.model or None,
         selected_token=start.model or None,
@@ -1025,18 +1035,15 @@ def append_historical_session(runtime_root: Path, record: SessionRecord) -> None
 def get_session_launch_policy_snapshot(
     runtime_root: Path, record: SessionRecord,
 ) -> LaunchPolicySnapshot | None:
-    """Read settings provenance independently of an observing run's ownership."""
+    """The generation's own policy; pre-snapshot generations read their exact run."""
+    return record.launch_policy_snapshot or _linked_spawn_policy(runtime_root, record.spawn_id)
+
+
+def _linked_spawn_policy(runtime_root: Path, spawn_id: str | None) -> LaunchPolicySnapshot | None:
+    """Bounded legacy read: an exact recorded link, never a newest-owner guess."""
     from meridian.lib.state import spawn_store
 
-    if record.launch_policy_snapshot is not None:
-        return record.launch_policy_snapshot
-    if record.spawn_id:
-        row = spawn_store.get_spawn(runtime_root, record.spawn_id)
-    elif record.kind == "primary":
-        rows = spawn_store.list_spawns(runtime_root, owner_chat_id=record.chat_id).records
-        row = next((row for row in reversed(rows) if row.kind == "primary"), None)
-    else:
-        row = None
+    row = spawn_store.get_spawn(runtime_root, spawn_id) if spawn_id else None
     return row.launch_policy_snapshot if row is not None else None
 
 

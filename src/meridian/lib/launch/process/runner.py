@@ -892,7 +892,12 @@ def run_harness_process(
                 lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
                 launch_spec = runtime_context.binding.spec
                 managed = replace(managed, spawn_id=primary_spawn_id)
-                native_run = bind_entry(managed, launch_spec, harness=str(harness_adapter.id))
+                native_run = bind_entry(
+                    managed,
+                    launch_spec,
+                    harness=str(harness_adapter.id),
+                    policy=persisted_launch_policy_snapshot,
+                )
                 resolved_harness_session_id = native_run.entry.session_id or ""
                 lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
 
