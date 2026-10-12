@@ -299,13 +299,7 @@ def reconcile_tui_trampoline_session_id(
         native_store=native_store,
     )
     if trampoline_successor_id and trampoline_successor_id != normalized_session_id:
-        logger.warning(
-            "claude_trampoline_successor",
-            extra={
-                "kept": normalized_session_id,
-                "attempted": trampoline_successor_id,
-                "source": "trampoline",
-            },
-        )
+        # The final boundary owns warning presentation: a verified exit can
+        # supersede this hint, so do not warn while merely collecting it.
         return trampoline_successor_id
     return normalized_session_id

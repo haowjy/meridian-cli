@@ -108,12 +108,21 @@ startup failure.
 
 `observe_after_exit(identity, entry, ...) -> PostExit` is pure observation.
 Pi validates the exact assigned source/header and reads the launch-correlated
-boundary sidecar. Claude reads trampoline-successor evidence for diagnostics
-only; that successor never binds a chat or allocates a verified exit.
+boundary sidecar. Claude reads a bounded classic-hook receipt correlated by a
+fresh launch nonce and the actual Claude child PID. Its initial key must match
+the planned entry; only final `SessionEnd` reasons can supply an exit key, and
+the exact native transcript must validate before allocation. `clear` and
+`resume` are switches, not final exits. The separate boundary plugin loads for
+primary and spawned launches; the idle plugin remains interactive-only.
+Claude's trampoline-successor evidence remains diagnostic-only and never
+allocates a verified exit. Missing receipts never fall back to transcript scans.
 
 `launch/native_run.conclude_native_run` owns ordering: attempt-facts first ID,
 connection-current ID (diagnostic), adapter observation, entry verification,
-exact exit allocation, boundary persistence, then invocation attribution.
+exact exit publication, boundary persistence, then invocation attribution. A
+verified exit is published through the same current-chat seam as live
+observations, with native proof checked under its locks; `run_boundary` is
+evidence only.
 The facts hook observes owned live session IDs. There is no artifact-identity or
 filesystem-discovery fallback.
 

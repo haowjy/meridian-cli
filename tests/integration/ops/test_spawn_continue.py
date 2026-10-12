@@ -70,7 +70,11 @@ def _seed_spawn(
         harness_session_id=harness_session_id or "",
         native_store=str(native_store) if harness_session_id else None,
         model=snapshot.model if snapshot is not None else "gpt-5.3-codex",
+        agent=(snapshot.agent or "coder") if snapshot is not None else "coder",
+        skills=snapshot.skills if snapshot is not None else ("skill-c",),
+        task_cwd=task_cwd,
     )
+    session_store.update_session_work_id(runtime_root, chat_id, work_id)
     session_store.stop_session(runtime_root, chat_id)
     spawn_store.start_spawn(
         runtime_root,

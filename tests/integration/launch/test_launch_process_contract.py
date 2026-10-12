@@ -12,7 +12,7 @@ import os
 import sys
 import threading
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -245,3 +245,80 @@ def _native_run(root: Path) -> NativeRun:
     assert record is not None
     attempt = SessionAttempt(root, chat_id, record.session_instance_id, None)
     return NativeRun(attempt, None, NativeKeyFields("codex"), None, None)
+
+
+def test_native_observer_acks_each_publication_and_dies_with_its_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from meridian.lib.core.native_identity import (
+        NativeKey,
+        NativeObservation,
+        NativeObservationBatch,
+    )
+    from meridian.lib.state import spawn_store
+
+    def observers() -> list[threading.Thread]:
+        return [t for t in threading.enumerate() if t.name.startswith("meridian-native-observer")]
+
+    chat = session_store.start_session(tmp_path, "claude", "entry", "", native_store="/s")
+    spawn_store.start_spawn(
+        tmp_path, spawn_id="p1", chat_id=chat, harness="claude", kind="primary",
+        harness_session_id="entry", model="", agent="", prompt="",
+    )
+    record = session_store.get_session_record(tmp_path, chat)
+    assert record is not None
+    attempt = SessionAttempt(tmp_path, chat, record.session_instance_id, None, SpawnId("p1"))
+    run = NativeRun(attempt, None, NativeKeyFields("claude", "/s", "entry"), None, None)
+    with run.observing(
+        cast("Any", SimpleNamespace(native_observation_reader=lambda **_: None)), child_env={},
+    ) as start:
+        start(1)
+        assert observers() == []  # Unsupported adapters never idle a thread.
+
+    publish = session_store.get_or_create_observed_chat
+    published: list[str] = []
+
+    def flaky_publish(*args: Any, **kwargs: Any) -> str | None:
+        published.append(args[4])
+        if published == ["a", "b"]:
+            raise OSError("journal busy")
+        return publish(*args, **kwargs)
+
+    def failing_diagnostic(self: NativeRun, chat_id: str) -> None:
+        raise RuntimeError("diagnostics unavailable")
+
+    monkeypatch.setattr(session_store, "get_or_create_observed_chat", flaky_publish)
+    monkeypatch.setattr(NativeRun, "_warn_overlap", failing_diagnostic)
+    facts = tuple(
+        NativeObservation(NativeKey("claude", "/s", sid), None, cursor)
+        for cursor, sid in enumerate(("a", "b"), start=1)
+    )
+    reads: list[int] = []
+
+    def reader(cursor: int) -> NativeObservationBatch:
+        reads.append(cursor)
+        pending = tuple(fact for fact in facts if fact.next_cursor > cursor)
+        return NativeObservationBatch(pending, pending[-1].next_cursor if pending else cursor)
+
+    with pytest.raises(RuntimeError, match="caller failed"), run.observing(
+        cast("Any", SimpleNamespace(native_observation_reader=lambda **_: reader)),
+        child_env={},
+    ) as start:
+        start(123)
+        for _ in range(200):
+            if len(published) == 3:
+                break
+            threading.Event().wait(0.025)
+        raise RuntimeError("caller failed")
+
+    assert observers() == []
+    assert published == ["a", "b", "b"]  # "a" was acknowledged, never replayed.
+    assert reads[:2] == [0, 1]
+    row = spawn_store.get_spawn(tmp_path, "p1")
+    assert row is not None and row.current_chat_id is not None
+    current = session_store.get_session_record(tmp_path, row.current_chat_id)
+    assert current is not None and current.harness_session_id == "b"
+    assert run.observation_error is None
+    session_store.stop_session(tmp_path, chat)

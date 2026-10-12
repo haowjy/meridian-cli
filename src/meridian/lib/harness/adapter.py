@@ -27,6 +27,7 @@ from meridian.lib.core.native_identity import (
     NativeIdentity,
     NativeKey,
     NativeKeyFields,
+    NativeObservationBatch,
     NativeSessionUnavailable,
     Operation,
     PostExit,
@@ -435,6 +436,13 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
         started_at_epoch: float | None,
     ) -> PostExit: ...
 
+    def native_observation_reader(
+        self,
+        *,
+        child_env: Mapping[str, str],
+        pid: int,
+    ) -> Callable[[int], NativeObservationBatch] | None: ...
+
     def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> AdapterSpecT: ...
 
     def launch_spec_warnings(
@@ -725,6 +733,15 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         started_at_epoch: float | None,
     ) -> PostExit:
         return PostExit()
+
+    def native_observation_reader(
+        self,
+        *,
+        child_env: Mapping[str, str],
+        pid: int,
+    ) -> Callable[[int], NativeObservationBatch] | None:
+        """Capture a launch-owned reader, or opt out without starting a drainer."""
+        return None
 
     @abstractmethod
     def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> SpecT:

@@ -9,6 +9,9 @@ never change the conversation, and that resume launches do not inject seed args.
 from __future__ import annotations
 
 import json
+import shutil
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +36,7 @@ from meridian.lib.launch.request import (
 from meridian.lib.launch.types import SessionMode
 from meridian.lib.state import session_store
 from meridian.lib.state.spawn_store import list_spawns
+from tests.support.claude_boundary_process import ENTRY_SESSION_TOKEN
 from tests.support.launch import stub_bundle_request_and_resolve
 
 
@@ -376,9 +380,13 @@ def test_primary_claude_exec_receives_prebound_identity(
     native_id = argv[argv.index("--session-id") + 1]
     events = [json.loads(line) for line in binding_log.read_text().splitlines()]
     assert any(row.get("harness_session_id") == native_id for row in events)
+    # The entry generation owns its final policy before native execution.
+    assert any(row.get("launch_policy_snapshot") for row in events)
     assert outcome.chat_id is not None
     record = session_store.get_session_record(context.runtime_root, outcome.chat_id)
     assert record is not None
+    spawn_row = list_spawns(context.runtime_root).records[0]
+    assert record.launch_policy_snapshot == spawn_row.launch_policy_snapshot is not None
     assert record.harness_session_id == native_id == outcome.resolved_harness_session_id
     assert record.native_store == str(
         tmp_path / "home" / ".claude" / "projects" / project_slug(root)
@@ -388,7 +396,7 @@ def test_primary_claude_exec_receives_prebound_identity(
         row = list_spawns(context.runtime_root).records[0]
         assert row.status == "failed" and row.terminal is not None
         assert row.terminal.error == "entry_mismatch"
-        assert row.run_boundary is not None and row.run_boundary.exit_chat_id is None
+        assert row.run_boundary is not None and row.current_chat_id is None
         session_events = [
             json.loads(line)
             for line in (context.runtime_root / "sessions.jsonl").read_text().splitlines()
@@ -513,7 +521,7 @@ def test_unrelated_claude_trampoline_candidate_is_diagnostic(
     assert row.run_boundary.trampoline_successor_id == successor
     assert row.chat_id == entry.chat_id
     assert (row.run_boundary.status if row.run_boundary else None) == "unresolved"
-    assert (row.run_boundary.exit_chat_id if row.run_boundary else None) is None
+    assert row.current_chat_id is None
     with pytest.raises(NativeSessionUnavailable, match="native_transcript_missing"):
         resolve_transcript_source(
             ref=row.id,
@@ -530,7 +538,9 @@ def test_unrelated_claude_trampoline_candidate_is_diagnostic(
     )
     assert shown.returncode == 0, shown.stderr
     assert f"entry {entry.chat_id} ({entry.harness_session_id})" in shown.stdout
-    assert "→ exit unresolved" in shown.stdout
+    assert "warning: Possible session change detected" in shown.stdout
+    assert successor in shown.stdout
+    assert "exit-session identity unverified" in shown.stdout
     logged = subprocess.run(
         [sys.executable, "-m", "meridian", "session", "log", row.id],
         cwd=root,
@@ -539,6 +549,195 @@ def test_unrelated_claude_trampoline_candidate_is_diagnostic(
         timeout=15,
     )
     assert "TRAMPOLINE-EXIT" not in logged.stdout
+
+
+@pytest.mark.parametrize(
+    ("fork", "initial_id", "store_suffix", "status"),
+    [
+        pytest.param(False, ENTRY_SESSION_TOKEN, "", "unresolved", id="create-switches"),
+        pytest.param(True, "fork-native", "", "unresolved", id="fork-switches"),
+        pytest.param(True, "source-native", "", "mismatch", id="fork-reuses-source"),
+        pytest.param(True, "fork-native", "foreign", "mismatch", id="fork-wrong-store"),
+    ],
+)
+def test_owned_claude_observations_publish_current_chat_while_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    fork: bool, initial_id: str, store_suffix: str, status: str,
+) -> None:
+    """Keep expensive launches for wiring/switches and the two fork-binding guards."""
+    from dataclasses import replace
+
+    from meridian.lib.ops.session_target import resolve_transcript_source
+    from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+    from tests.support.executables import prepend_fake_executables
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "meridian-home"))
+    prepend_fake_executables(monkeypatch, tmp_path, "claude")
+    fixture_source = Path(__file__).parents[2] / "support" / "claude_boundary_process.py"
+    fixture_executable = tmp_path / "fake-bin" / "claude"
+    shutil.copyfile(fixture_source, fixture_executable)
+    fixture_executable.chmod(0o755)
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", str(root))
+    monkeypatch.setenv("MERIDIAN_TASK_DIR", str(root))
+    store = tmp_path / "home" / ".claude/projects" / project_slug(root)
+    session = None
+    source_session_id = "source-native"
+    if fork:
+        store.mkdir(parents=True)
+        (store / f"{source_session_id}.jsonl").write_text(
+            json.dumps({"sessionId": source_session_id}) + "\n"
+        )
+        session = SessionRequest(
+            requested_harness_session_id=source_session_id,
+            continue_fork=True,
+            source_native_store=str(store),
+            primary_session_mode=SessionMode.FORK.value,
+        )
+    context, registry = _build_primary_launch_context(
+        project_root=root,
+        harness_id=HarnessId.CLAUDE,
+        model="claude-sonnet-4-5",
+        session=session,
+    )
+    context = replace(context, runtime_root=resolve_project_runtime_root_for_write(root))
+    fixture_config = tmp_path / "claude-boundary-fixture.json"
+    final_id = initial_id if fork or status == "mismatch" else "unpersisted"
+    steps = (
+        # Missing startup must not turn a later /resume into an entry mismatch.
+        ("SessionStart", initial_id if fork else "resumed", "fork" if fork else "resume"),
+        ("SessionStart", "cleared", "clear"),
+        ("SessionStart", final_id, "resume" if fork else "clear"),
+    )
+    events = [
+        {"hook_event_name": event, "session_id": sid,
+         "transcript_path": str(store / store_suffix / f"{sid}.jsonl"),
+         "source" if event == "SessionStart" else "reason": reason,
+         "write_transcript": sid != "unpersisted"}
+        for event, sid, reason in steps
+    ]
+    release_file = tmp_path / "release-child"
+    fixture_config.write_text(json.dumps({"events": events, "wait_file": str(release_file)}))
+    monkeypatch.setenv("_MERIDIAN_CLAUDE_BOUNDARY_FIXTURE_CONFIG", str(fixture_config))
+
+    publication_failures = 0
+    committed_switches = []
+    if not fork and status == "unresolved":
+        from meridian.lib.state.spawn import repository
+
+        original_write = repository.atomic_write_text
+
+        def fail_final_pointer(path, text):
+            nonlocal publication_failures
+            current_id = json.loads(text).get("current_chat_id")
+            current = (
+                session_store.get_session_record(context.runtime_root, current_id)
+                if current_id else None
+            )
+            sid = current.harness_session_id if current is not None else None
+            if sid == "unpersisted" and publication_failures == 0:
+                publication_failures += 1
+                raise OSError("injected pointer publication interruption")
+            original_write(path, text)
+            if sid and (not committed_switches or committed_switches[-1] != sid):
+                committed_switches.append(sid)
+
+        monkeypatch.setattr(repository, "atomic_write_text", fail_final_pointer)
+
+    outcomes = []
+    launch = threading.Thread(
+        target=lambda: outcomes.append(run_harness_process(context, registry))
+    )
+    launch.start()
+    deadline = time.monotonic() + 8
+    row = None
+    while time.monotonic() < deadline:
+        rows = list_spawns(context.runtime_root).records
+        row = rows[0] if rows else None
+        cleared_live = any(
+            record.harness_session_id == "cleared"
+            for record in session_store.list_all_session_records(context.runtime_root)
+        )
+        current = (
+            session_store.get_session_record(context.runtime_root, row.current_chat_id)
+            if row is not None and row.current_chat_id is not None
+            else None
+        )
+        if row is not None and (
+            status == "mismatch"
+            or (
+                cleared_live
+                and current is not None
+                and current.harness_session_id == final_id.replace(
+                    ENTRY_SESSION_TOKEN, row.harness_session_id or ""
+                )
+            )
+        ):
+            break
+        time.sleep(0.02)
+    try:
+        assert row is not None
+        if status == "unresolved":
+            # Fork returns A -> B -> A; create switches without a startup hook.
+            # Both publish while the native process remains alive.
+            current = session_store.get_session_record(context.runtime_root, row.current_chat_id)
+            assert current is not None and current.harness_session_id == final_id.replace(
+                ENTRY_SESSION_TOKEN, row.harness_session_id or ""
+            )
+            if not fork:
+                assert publication_failures == 1
+    finally:
+        release_file.touch()
+        launch.join(timeout=10)
+    assert not launch.is_alive()
+    assert not any(
+        thread.name.startswith("meridian-native-observer-")
+        for thread in threading.enumerate()
+    )
+    outcome = outcomes[0]
+    row = list_spawns(context.runtime_root).records[0]
+    if not fork and status == "unresolved":
+        assert committed_switches == ["resumed", "cleared", "unpersisted"]
+    assert row.run_boundary is not None
+    entry = session_store.get_session_record(context.runtime_root, outcome.chat_id)
+    assert entry is not None
+    assert row.harness_session_id == entry.harness_session_id
+    assert row.chat_id == entry.chat_id
+    assert row.run_boundary.status == status
+    assert outcome.exit_code == (1 if status == "mismatch" else 0)
+    if status == "unresolved":
+        assert entry.harness_session_id is not None
+        assert entry.harness_session_id not in {"cleared", "resumed", source_session_id}
+        if fork:
+            assert entry.harness_session_id == initial_id
+        current = session_store.get_session_record(context.runtime_root, row.continue_chat_id)
+        assert current is not None
+        if not fork:
+            assert current.harness_session_id == "unpersisted"
+            with pytest.raises(NativeSessionUnavailable, match="native_transcript_missing"):
+                resolve_transcript_source(
+                    ref=row.id,
+                    file_path=None,
+                    project_root=root,
+                    runtime_root=context.runtime_root,
+                )
+        else:
+            assert row.continue_chat_id == entry.chat_id
+        observed = [
+            record for record in session_store.list_all_session_records(context.runtime_root)
+            if record.harness_session_id == "cleared"
+        ]
+        assert len(observed) == 1
+    else:
+        assert entry.harness_session_id is None
+        assert row.continue_chat_id == entry.chat_id
+    if fork:
+        assert (store / f"{source_session_id}.jsonl").read_text() == (
+            json.dumps({"sessionId": source_session_id}) + "\n"
+        )
 
 
 def test_identity_error_before_spawn_allocation_does_not_assert(tmp_path, monkeypatch):

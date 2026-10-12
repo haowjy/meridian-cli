@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import UUID
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
@@ -19,7 +20,6 @@ from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.paths import resolve_spawn_log_dir
-from meridian.lib.state.spawn.model import SpawnRecord
 
 _SPAWN_REF_RE = re.compile(r"^p\d+$")
 _CHAT_REF_RE = re.compile(r"^c\d+$")
@@ -96,60 +96,6 @@ def resolve_spawn_ref(runtime_root: Path, ref: str) -> SpawnId | None:
     return None
 
 
-def _latest_primary_spawn_id_for_chat(runtime_root: Path, chat_id: str) -> str | None:
-    rows = session_identity.list_spawns_for_owner_chat(runtime_root, chat_id)
-    primary_rows = [row for row in rows.records if row.kind == "primary"]
-    if not primary_rows:
-        return None
-    return primary_rows[-1].id
-
-
-def _primary_launch_policy_snapshot(
-    runtime_root: Path,
-    *,
-    spawn_row: SpawnRecord | None = None,
-    chat_id: str | None = None,
-) -> LaunchPolicySnapshot | None:
-    """Load a persisted launch-policy snapshot for a primary session source."""
-
-    if spawn_row is not None:
-        return spawn_row.launch_policy_snapshot
-
-    normalized_chat_id = (chat_id or "").strip()
-    if not normalized_chat_id:
-        return None
-
-    primary_spawn_id = _latest_primary_spawn_id_for_chat(runtime_root, normalized_chat_id)
-    if primary_spawn_id is None:
-        return None
-
-    primary_row = spawn_store.get_spawn(runtime_root, primary_spawn_id)
-    if primary_row is None:
-        return None
-    return primary_row.launch_policy_snapshot
-
-
-def _launch_policy_snapshot_for_session(
-    runtime_root: Path,
-    session: session_store.SessionRecord,
-) -> LaunchPolicySnapshot | None:
-    """Load a persisted launch-policy snapshot for a tracked session reference."""
-
-    normalized_spawn_id = (session.spawn_id or "").strip()
-    if session.kind == "spawn" or normalized_spawn_id:
-        if not normalized_spawn_id:
-            return None
-        spawn_row = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
-        if spawn_row is None:
-            return None
-        return spawn_row.launch_policy_snapshot
-
-    return _primary_launch_policy_snapshot(
-        runtime_root,
-        chat_id=session.chat_id,
-    )
-
-
 def _resolve_untracked_reference(
     project_root: Path, ref: str, harness_hint: str | None = None,
 ) -> ResolvedSessionReference:
@@ -217,8 +163,23 @@ def _resolve_spawn_reference(
     if row.record_mode == "historical":
         raise ValueError("Historical sessions are inert; read or export the transcript instead.")
 
+    # One selection, one resolution path: the continue target's session record
+    # owns settings/work whether a hook, a verified exit or the entry chose it.
+    target_chat_id = row.continue_chat_id
+    target = session_store.get_session_record(runtime_root, target_chat_id) if (
+        target_chat_id
+    ) else None
+    if target is not None:
+        selected = _reference_from_session(
+            runtime_root, target, project_root, target.harness_session_id,
+        )
+        return replace(selected, source_spawn_id=row.id)
+    if target_chat_id != row.chat_id:
+        # A missing selected chat never falls back to an older conversation.
+        raise NativeSessionUnavailable(ref, "unbound")
+
+    # Legacy rows with no authoritative session record resolve from the row.
     harness_session_id = _normalize_optional(row.harness_session_id)
-    stored_harness = _normalize_optional(row.harness)
     source_execution_cwd = _normalize_optional(getattr(row, "task_cwd", None)) or row.execution_cwd
     source_control_root = (
         _normalize_optional(getattr(row, "control_root", None)) or project_root.as_posix()
@@ -230,23 +191,11 @@ def _resolve_spawn_reference(
         ).as_posix()
     elif source_execution_cwd is None:
         source_execution_cwd = project_root.as_posix()
-    bound_session = session_identity.get_session_record_for_spawn(
-        runtime_root, row.id, require_harness_session_id=False,
-    )
-    target_chat_id = row.continue_chat_id
-    target_session = (
-        session_store.get_session_record(runtime_root, target_chat_id)
-        if target_chat_id and target_chat_id != row.chat_id
-        else None
-    )
+    bound_session = session_identity.get_session_record_for_spawn(runtime_root, row.id)
     return _build_tracked_reference(
-        harness_session_id=(
-            target_session.harness_session_id if target_session else harness_session_id
-        ),
-        stored_harness=(target_session.harness if target_session else stored_harness),
-        source_chat_id=(
-            target_session.chat_id if target_session else _normalize_optional(row.chat_id)
-        ),
+        harness_session_id=harness_session_id,
+        stored_harness=_normalize_optional(row.harness),
+        source_chat_id=_normalize_optional(row.chat_id),
         source_model=_normalize_optional(row.model),
         source_agent=_normalize_optional(row.agent),
         source_skills=row.skills,
@@ -255,8 +204,7 @@ def _resolve_spawn_reference(
         source_spawn_id=row.id,
         source_control_root=source_control_root,
         source_execution_cwd=source_execution_cwd,
-        source_native_store=(target_session.native_store if target_session else
-                             bound_session.native_store if bound_session else None),
+        source_native_store=bound_session.native_store if bound_session else None,
         source_launch_policy_snapshot=row.launch_policy_snapshot,
     )
 
@@ -298,7 +246,7 @@ def _reference_from_session(
             or project_root.as_posix()
         ),
         source_native_store=session.native_store,
-        source_launch_policy_snapshot=_launch_policy_snapshot_for_session(
+        source_launch_policy_snapshot=session_store.get_session_launch_policy_snapshot(
             runtime_root,
             session,
         ),

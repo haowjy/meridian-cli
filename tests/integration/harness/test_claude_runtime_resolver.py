@@ -1,8 +1,11 @@
-from __future__ import annotations
+"""One resolution preserves package precedence, fallback and symlink-safe warnings."""
 
 from pathlib import Path
 
+from meridian.lib.harness.claude import ClaudeAdapter
 from meridian.lib.harness.claude_runtime_resolver import resolve_claude_runtime
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.safety.permissions import PermissionConfig, TieredPermissionResolver
 
 
 def _write_manifest(plugin_dir: Path) -> None:
@@ -11,29 +14,31 @@ def _write_manifest(plugin_dir: Path) -> None:
     manifest.write_text("{}", encoding="utf-8")
 
 
-def test_claude_runtime_resolver_prefers_packaged_plugin(tmp_path: Path) -> None:
-    package_root = tmp_path / "package"
-    install_root = tmp_path / "install"
-    package_plugin = package_root / "meridian-idle"
-    install_plugin = install_root / "meridian-idle"
-    _write_manifest(package_plugin)
-    _write_manifest(install_plugin)
-
+def test_resolution_preserves_plugin_selection_and_warnings(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    package.mkdir()
+    installed = tmp_path / "install"
+    cached = tmp_path / "cache/version-123"
+    boundary = "meridian-session-boundary"
+    _write_manifest(cached)
+    (package / boundary).symlink_to(cached, target_is_directory=True)
+    _write_manifest(installed / boundary)
+    _write_manifest(installed / "meridian-idle")
     resolution = resolve_claude_runtime(
-        package_runtime_root=package_root,
-        install_root=install_root,
+        plugin_names=(boundary, "meridian-idle", "not-installed"),
+        package_runtime_root=package, install_root=installed,
     )
-
-    assert resolution.plugin_dirs == (str(package_plugin.resolve()),)
-
-
-def test_claude_runtime_resolver_returns_no_dirs_when_plugin_is_missing(tmp_path: Path) -> None:
-    package_root = tmp_path / "package"
-    install_root = tmp_path / "install"
-
-    resolution = resolve_claude_runtime(
-        package_runtime_root=package_root,
-        install_root=install_root,
+    assert resolution.plugin_dirs == (str(cached), str(installed / "meridian-idle"))
+    assert len(resolution.warnings) == 1
+    warning = resolution.warnings[0]
+    assert "'not-installed'" in warning.message
+    assert warning.detail == {
+        "package_dir": str(package / "not-installed"),
+        "install_dir": str(installed / "not-installed"),
+    }
+    spec = ResolvedLaunchSpec(
+        claude_runtime=resolution,
+        permission_resolver=TieredPermissionResolver(config=PermissionConfig()),
     )
-
-    assert resolution.plugin_dirs == ()
+    (cached / ".claude-plugin/plugin.json").unlink()
+    assert ClaudeAdapter().launch_spec_warnings(spec) == resolution.warnings

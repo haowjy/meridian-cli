@@ -182,11 +182,10 @@ def test_primary_post_exit_boundary(pi_runtime: Path, shape: str) -> None:  # no
     if shape == "mismatch":
         assert_entry_mismatch(runtime, row.id, entry)
     if shape == "same":
-        assert (row.run_boundary.exit_chat_id if row.run_boundary else None) == row.chat_id
+        assert row.current_chat_id == row.chat_id
     if shape == "switch":
-        assert (row.run_boundary.exit_chat_id if row.run_boundary else None) != row.chat_id
-        exit_chat_id = row.run_boundary.exit_chat_id if row.run_boundary else None
-        exit_chat = session_store.get_session_record(runtime, exit_chat_id)
+        assert row.current_chat_id != row.chat_id
+        exit_chat = session_store.get_session_record(runtime, row.current_chat_id or "")
         assert exit_chat is not None and exit_chat.harness_session_id == "switched-id"
         spawn_reference = resolve_session_reference(
             root,
@@ -201,7 +200,7 @@ def test_primary_post_exit_boundary(pi_runtime: Path, shape: str) -> None:  # no
         assert spawn_reference.authoritative_harness_session_id == "switched-id"
         assert chat_reference.authoritative_harness_session_id == entry.harness_session_id
     if shape == "switch-missing":
-        assert row.run_boundary is not None and row.run_boundary.exit_chat_id is None
+        assert row.run_boundary is not None and row.current_chat_id is None
         assert row.chat_id == outcome.chat_id
         assert row.status == "succeeded"
         assert all(
@@ -268,9 +267,7 @@ def test_primary_cli_resume_hint_uses_verified_exit_or_entry_fallback(
     runtime = resolve_project_runtime_root_for_write(root)
     row = spawn_store.list_spawns(runtime).records[0]
     target_chat = (
-        row.run_boundary.exit_chat_id
-        if expected_chat == "exit" and row.run_boundary is not None
-        else row.chat_id
+        row.current_chat_id if expected_chat == "exit" else row.chat_id
     )
     assert target_chat is not None
     assert output.resume_command == f"meridian --continue {target_chat}"
@@ -301,9 +298,7 @@ def test_primary_cli_spawn_refs_project_exit_or_entry_native_key(
     chat_continued = _primary_cli(root, continue_ref=row.chat_id, dry_run=True)
 
     target_chat_id = (
-        row.run_boundary.exit_chat_id
-        if shape == "switch" and row.run_boundary is not None
-        else row.chat_id
+        row.current_chat_id if shape == "switch" else row.chat_id
     )
     target_record = session_store.get_session_record(runtime, target_chat_id or "")
     entry_record = session_store.get_session_record(runtime, row.chat_id)
@@ -329,7 +324,7 @@ def assert_entry_mismatch(runtime: Path, spawn_id: str, entry: session_store.Ses
     assert row is not None and row.status == "failed"
     assert row.terminal is not None and row.terminal.error == "entry_mismatch"
     assert (row.run_boundary.status if row.run_boundary else None) == "mismatch"
-    assert (row.run_boundary.exit_chat_id if row.run_boundary else None) is None
+    assert row.current_chat_id is None
     facts = [
         json.loads(line)
         for line in (runtime / "spawns" / spawn_id / "runner-lifecycle.jsonl")
@@ -358,8 +353,11 @@ def test_concurrent_exits_converge_on_one_stopped_chat(pi_runtime: Path) -> None
     root = pi_runtime
     install_shim(root)
     outcome = run_harness_process(context(root), HarnessRegistry.with_defaults())
-    assert outcome.chat_id is not None
-    args = (root / ".meridian", outcome.chat_id, "pi", "/exit-store", "exit-id")
+    assert outcome.chat_id is not None and outcome.primary_spawn_id is not None
+    args = (
+        root / ".meridian", outcome.chat_id, "pi", "/exit-store", "exit-id",
+        str(outcome.primary_spawn_id),
+    )
     ids = run_spawn_race_or_skip(_allocate_test_exit_chat, [args, args])
     assert ids[0] == ids[1] != outcome.chat_id
     record = session_store.get_session_record(root / ".meridian", ids[0])
@@ -372,13 +370,15 @@ def _allocate_test_exit_chat(
     harness: str,
     native_store: str,
     session_id: str,
+    spawn_id: str,
 ) -> str | None:
-    return session_store.get_or_create_exit_chat(
+    return session_store.get_or_create_observed_chat(
         runtime,
         entry,
         harness,
         native_store,
         session_id,
+        spawn_id=spawn_id,
         native_exists=lambda: True,
     )
 
@@ -505,7 +505,7 @@ async def test_rpc_post_attempt_boundary(
             assert row is not None and row.terminal is not None
             assert row.terminal.error == "entry_mismatch"
             assert row.run_boundary is not None
-            assert row.run_boundary.exit_chat_id is None
+            assert row.current_chat_id is None
             assert row.run_boundary.status == "mismatch"
             events = [
                 json.loads(line)
@@ -517,7 +517,7 @@ async def test_rpc_post_attempt_boundary(
         assert row is not None and row.run_boundary is not None
         assert row.run_boundary.status == "verified"
         assert row.chat_id == managed.chat_id
-        assert row.run_boundary.exit_chat_id != managed.chat_id
+        assert row.current_chat_id not in {None, managed.chat_id}
 
 
 @pytest.mark.parametrize("boundary", ["missing", "poisoned", "valid"])
@@ -541,7 +541,7 @@ def test_primary_header_mismatch_prevents_exit_attribution(
     row = spawn_store.get_spawn(runtime, outcome.primary_spawn_id)
     assert row is not None and row.terminal is not None
     assert row.terminal.error == "entry_mismatch"
-    assert (row.run_boundary.exit_chat_id if row.run_boundary else None) is None
+    assert row.current_chat_id is None
     facts = [
         json.loads(line)
         for line in (runtime / "spawns" / row.id / "runner-lifecycle.jsonl")

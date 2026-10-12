@@ -142,8 +142,8 @@ def test_dogfood_boundary_rows_quarantine_until_migrated_once(tmp_path: Path) ->
     assert loaded is not None
     assert loaded.chat_id == "c1"
     assert loaded.run_boundary == RunBoundaryOutcome(
-        status="verified", exit_chat_id="c-exit", trampoline_successor_id="diagnostic-only")
-    assert loaded.continue_chat_id == "c-exit"
+        status="verified", trampoline_successor_id="diagnostic-only")
+    assert loaded.current_chat_id == loaded.continue_chat_id == "c-exit"
     assert "exit_identity" not in state_path.read_text(encoding="utf-8")
 
 
@@ -245,9 +245,61 @@ def test_dogfood_migration_reports_index_rearm_timeout(tmp_path: Path, monkeypat
     assert "timed out" in result.index_rearm_warning
 
 
-def test_run_boundary_rejects_exit_without_verified_status() -> None:
-    with pytest.raises(ValueError, match="set exactly when status is verified"):
-        RunBoundaryOutcome(status="unresolved", exit_chat_id="c-exit")
+def test_released_verified_exit_reads_as_the_one_current_pointer(tmp_path: Path) -> None:
+    spawns_dir = tmp_path / "spawns"
+    _seed_state(spawns_dir, _record(status="succeeded"))
+    state_path = spawns_dir / "p1" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.pop("current_chat_id", None)
+    state["run_boundary"] = {"status": "verified", "exit_chat_id": "c-exit"}
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    loaded = read_state(spawns_dir, "p1", include_prompt=False)
+    assert loaded is not None
+    assert loaded.run_boundary == RunBoundaryOutcome(status="verified")
+    assert loaded.current_chat_id == loaded.continue_chat_id == "c-exit"
+    newer = SpawnRecord.model_validate({
+        **loaded.model_dump(), "current_chat_id": "c-newer",
+        "run_boundary": state["run_boundary"],
+    })
+    assert newer.continue_chat_id == "c-newer"  # Valid newer observation still wins.
+
+    write_state_locked(spawns_dir, "p1", lambda row: row, allow_terminal_overwrite=True)
+    rewritten = json.loads(state_path.read_text(encoding="utf-8"))
+    assert rewritten["current_chat_id"] == "c-exit"
+    assert rewritten["run_boundary"] == {"status": "verified", "trampoline_successor_id": None}
+
+
+@pytest.mark.parametrize(("status", "exit_id", "current_id"), [
+    ("unresolved", "c2", None),
+    ("verified", None, None),
+    ("verified", 42, "c3"),
+    ("verified", "c2", 42),
+])
+def test_legacy_exit_normalization_rejects_invalid_evidence(
+    tmp_path: Path, status: str, exit_id: object, current_id: object,
+) -> None:
+    for flat in (False, True):
+        runtime = tmp_path / ("dogfood" if flat else "released")
+        spawns_dir = runtime / "spawns"
+        _seed_state(spawns_dir, _record(status="succeeded"))
+        path = spawns_dir / "p1/state.json"
+        state = json.loads(path.read_text())
+        state["current_chat_id"] = current_id
+        if flat:
+            state.update(exit_identity=status, exit_chat_id=exit_id)
+        else:
+            state["run_boundary"] = {"status": status, "exit_chat_id": exit_id}
+        path.write_text(json.dumps(state))
+        before = path.read_bytes()
+        if flat:
+            result = migrate_dogfood_spawn_rows(runtime)
+            assert result.migrated == ()
+            assert [spawn_id for spawn_id, _ in result.failed] == ["p1"]
+        else:
+            with pytest.raises(SpawnStateQuarantined):
+                read_state(spawns_dir, "p1", include_prompt=False)
+        assert path.read_bytes() == before
 
 
 def test_v3_state_round_trips_without_prompt_body(tmp_path: Path) -> None:
@@ -322,6 +374,7 @@ def test_mutating_legacy_row_rewrites_it_as_v3(tmp_path: Path) -> None:
         "forked_from_history_id",
         "retained_history_ids",
         "run_boundary",
+        "current_chat_id",
     ):
         legacy.pop(key)
     state_path.write_text(json.dumps(legacy), encoding="utf-8")

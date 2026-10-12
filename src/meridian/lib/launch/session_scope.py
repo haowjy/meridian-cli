@@ -24,9 +24,11 @@ from meridian.lib.state.session_store import (
     start_session,
     stop_session,
     update_session_harness_id,
+    update_session_launch_policy,
 )
 
 if TYPE_CHECKING:
+    from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
     from meridian.lib.launch.context import LaunchContext
 
 
@@ -60,6 +62,12 @@ class SessionAttempt:
                 harness_session_id=outcome.key.session_id,
             )
         return outcome
+
+    def own_policy(self, snapshot: LaunchPolicySnapshot) -> None:
+        """Persist the final launch policy on this generation before native execution."""
+        update_session_launch_policy(
+            self.runtime_root, self.chat_id, self.session_instance_id, snapshot,
+        )
 
     def record_started(
         self,

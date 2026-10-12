@@ -44,6 +44,8 @@ arrive through `SubprocessHarness` hooks — never `HarnessId` branches:
   which runtime fields populate `primary_meta.json`.
 - `observe_after_exit` — exact entry validation, launch-correlated exit evidence,
   and diagnostic observations; the shared pipeline decides and persists.
+- `native_observation_reader` — cursor-based harness decoding for the bounded
+  per-run drainer; `NativeRun` owns ordering and state publication.
 - `build_primary_runtime_request_handler` — managed-primary runtime request handler
   (Codex/OpenCode permission broker).
 - `capabilities.captures_blackbox_output` and `bootstrap.primary_stderr_log` drive
@@ -64,6 +66,11 @@ fork target), the runner binds it as `source="assigned"` before starting the chi
 a conflict refuses the launch. Only `NativeIdentity` values without an ID
 (e.g. Claude fork) wait for the first owned observation. Observations bind once and never replace the key.
 Adapter cleanup still runs on binding errors.
+
+**Live observation is launcher-owned and lexical.** Each driver runs its child
+inside `with native_run.observing(...)`; once `on_running` supplies the concrete
+child PID, one bounded drainer starts. Leaving the block, normally or by
+exception, final-drains and joins it before conclusion and session scope close.
 
 **Session scope wraps everything.** `session_scope()` opens before the spawn row is
 created and closes in the finally block. If `lifecycle_service.start()` fails, the

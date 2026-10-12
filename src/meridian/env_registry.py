@@ -212,7 +212,10 @@ ENV_VARS: tuple[EnvVar, ...] = (
         "MERIDIAN_ACTIVE_WORK_DIR", "Active work artifact directory.", hook_field="work_dir"
     ),
     _public_handle("MERIDIAN_ACTIVE_WORK_ID", "Active work identifier.", hook_field="work_id"),
-    _public_handle("MERIDIAN_CHAT_ID", "Current Meridian chat identifier."),
+    _public_handle(
+        "MERIDIAN_CHAT_ID",
+        "Launch-time chat identifier; ambient commands resolve the run's current chat.",
+    ),
     _public_handle(
         "MERIDIAN_PROJECT_DIR",
         "Current Meridian project directory.",
@@ -256,6 +259,11 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _internal_handle("_MERIDIAN_GUARDRAIL_REPORT", "Guardrail report path."),
     _internal_handle(
         "_MERIDIAN_PRIMARY_STDERR_LOG_PATH", "Primary subprocess stderr path.", child=False
+    ),
+    _internal_handle("_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PATH", "Claude boundary observation path."),
+    _internal_handle("_MERIDIAN_CLAUDE_SESSION_BOUNDARY_NONCE", "Claude boundary launch nonce."),
+    _internal_handle(
+        "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PYTHON", "Claude boundary hook interpreter."
     ),
     _internal_handle("_MERIDIAN_PI_SESSION_BOUNDARY_PATH", "Pi boundary observation path."),
     _internal_handle("_MERIDIAN_PI_SESSION_BOUNDARY_NONCE", "Pi boundary launch nonce."),
