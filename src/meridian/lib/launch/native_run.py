@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Generator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -49,15 +50,16 @@ class NativeRun:
     _noted: dict[str, Conflict | None] = field(
         default_factory=lambda: dict[str, Conflict | None](),
     )
-    _current_chat_id: str = ""
+    # Last published key: deduplicates repeats. The durable pointer is reread
+    # under the publication locks, so no current chat is cached here.
     _current_key: NativeKey | None = None
-    _hook_started: bool = False
-    _observation_cursor: int = 0
-    _observation_reader: Callable[[int], NativeObservationBatch] | None = None
-    _observation_thread: threading.Thread | None = None
-    _observation_stop: threading.Event = field(default_factory=threading.Event)
-    _observation_identity_error: NativeIdentityError | None = None
+    _observation_error: NativeIdentityError | None = None
     _lock: threading.RLock = field(default_factory=threading.RLock)
+
+    @property
+    def observation_error(self) -> NativeIdentityError | None:
+        """Identity failure from the joined observer, if any."""
+        return self._observation_error
 
     def observe(self, session_id: str) -> None:
         """Only first owned signals can contradict pre-exec facts."""
@@ -119,7 +121,7 @@ class NativeRun:
                 and observation.entry_operation == planned_operation
                 and self.assigned_session_id in {None, key.session_id}
             )
-            if not self._hook_started and establishes_entry:
+            if self._current_key is None and establishes_entry:
                 if key.native_store != self.entry.native_store:
                     raise NativeEntryMismatch(self.entry, key.fields())
                 conflict = self._observe_locked(key.session_id)
@@ -127,117 +129,128 @@ class NativeRun:
                     raise NativeEntryMismatch(conflict.kept, conflict.attempted)
             # An owned later-session fact can select a chat even if startup was
             # not observed. It cannot fill an unknown original entry in that case.
-            if key == self._current_key:
+            if key == self._current_key or self.attempt.spawn_id is None:
                 return
-            if self.attempt.spawn_id is None:
-                return
-            source_chat_id = self._current_chat_id or self.attempt.chat_id
             observed_chat_id = session_store.get_or_create_observed_chat(
                 self.attempt.runtime_root,
-                source_chat_id,
+                self.attempt.chat_id,
                 key.harness,
                 key.native_store,
                 key.session_id,
                 spawn_id=str(self.attempt.spawn_id),
             )
             assert observed_chat_id is not None  # Only post-exit proof can refuse.
-            # The state seam materializes and publishes atomically under its
-            # source locks. Only then may memory and the journal cursor advance.
-            self._current_chat_id = observed_chat_id
+            # The state seam materialized and published under its source locks.
             self._current_key = key
-            self._hook_started = True
-            if observed_chat_id != self.attempt.chat_id:
-                # Native /resume already happened; record it rather than deny
-                # reality. Warn about known overlap without claiming exclusivity.
-                root = self.attempt.runtime_root
-                target = session_store.get_session_record(root, observed_chat_id)
-                held = target is not None and session_store.is_session_lease_owner_alive(
-                    root, observed_chat_id, session_instance_id=target.session_instance_id,
-                )
-                other = session_identity.live_observer_for_chat(
-                    root, observed_chat_id, records=spawn_store.list_spawns(root).records,
-                    excluding_spawn_id=str(self.attempt.spawn_id),
-                )
-                if held or other is not None:
-                    logger.warning(
-                        "Observed current chat overlaps live ownership",
-                        chat_id=observed_chat_id, spawn_id=str(self.attempt.spawn_id),
-                        other_spawn_id=other or (target.spawn_id if target is not None else None),
-                    )
-
-    def drain_observations(self) -> bool:
-        """Drain one replayable batch. Return whether the cursor advanced."""
-
-        reader = self._observation_reader
-        if reader is None:
-            return False
-        cursor = self._observation_cursor
-        batch = reader(cursor)
-        for observation in batch.observations:
-            self.apply_observation(observation)
-            # A later failure must never replay already-published earlier
-            # switches and briefly rewind the current-chat pointer.
-            self._observation_cursor = observation.next_cursor
-        self._observation_cursor = batch.next_cursor
-        return batch.next_cursor != cursor
-
-    def start_observing(
-        self,
-        adapter: SubprocessHarness,
-        *,
-        child_env: Mapping[str, str],
-        pid: int,
-    ) -> None:
-        """Start one bounded-lifetime journal drainer for this native run."""
-
-        if self._observation_thread is not None:
-            return
-        self._observation_reader = adapter.native_observation_reader(child_env=child_env, pid=pid)
-        if self._observation_reader is None:
-            return
-        self._observation_stop.clear()
-
-        def _drain() -> None:
-            publication_failed = False
-            while not self._observation_stop.wait(0.05):
-                try:
-                    self.drain_observations()
-                except NativeIdentityError as exc:
-                    self._observation_identity_error = exc
-                    return
-                except Exception:
-                    # Leave the cursor unacknowledged and retry. A final failure
-                    # remains in the spawn journal for diagnostics/replay.
-                    if not publication_failed:
-                        logger.warning("Native observation publication failed", exc_info=True)
-                    publication_failed = True
-                else:
-                    publication_failed = False
+        if observed_chat_id != self.attempt.chat_id:
             try:
-                while self.drain_observations():
-                    pass
-            except NativeIdentityError as exc:
-                self._observation_identity_error = exc
+                self._warn_overlap(observed_chat_id)
             except Exception:
-                logger.warning("Final native observation publication failed", exc_info=True)
+                # Diagnostics are not publication: the fact stays acknowledged.
+                logger.warning("Current-chat overlap diagnostic failed", exc_info=True)
 
-        self._observation_thread = threading.Thread(
-            target=_drain,
-            name=f"meridian-native-observer-{self.attempt.spawn_id or self.attempt.chat_id}",
+    def _warn_overlap(self, chat_id: str) -> None:
+        """Native /resume already happened; record it rather than deny reality."""
+        root = self.attempt.runtime_root
+        target = session_store.get_session_record(root, chat_id)
+        held = target is not None and session_store.is_session_lease_owner_alive(
+            root, chat_id, session_instance_id=target.session_instance_id,
+        )
+        other = session_identity.live_observer_for_chat(
+            root, chat_id, records=spawn_store.list_spawns(root).records,
+            excluding_spawn_id=str(self.attempt.spawn_id),
+        )
+        if held or other is not None:
+            logger.warning(
+                "Observed current chat overlaps live ownership",
+                chat_id=chat_id, spawn_id=str(self.attempt.spawn_id),
+                other_spawn_id=other or (target.spawn_id if target is not None else None),
+            )
+
+    @contextmanager
+    def observing(
+        self, adapter: SubprocessHarness, *, child_env: Mapping[str, str],
+    ) -> Generator[Callable[[int], None], None, None]:
+        """Own native observation lexically; yield ``start(pid)`` for on-running.
+
+        No drainer outlives this block, including on exceptions or cancellation,
+        and adapters without a reader never start a thread.
+        """
+        pump: _ObservationPump | None = None
+
+        def start(pid: int) -> None:
+            nonlocal pump
+            if pump is not None:
+                return
+            reader = adapter.native_observation_reader(child_env=child_env, pid=pid)
+            if reader is not None:
+                pump = _ObservationPump(self, reader)
+
+        try:
+            yield start
+        finally:
+            if pump is not None:
+                error = pump.close()
+                self._observation_error = self._observation_error or error
+
+
+class _ObservationPump:
+    """One run's bounded journal drainer: started when constructed, joined by close."""
+
+    def __init__(self, run: NativeRun, reader: Callable[[int], NativeObservationBatch]) -> None:
+        self._run = run
+        self._reader = reader
+        self._cursor = 0
+        self._stop = threading.Event()
+        self._error: NativeIdentityError | None = None
+        self._thread = threading.Thread(
+            target=self._loop,
+            name=f"meridian-native-observer-{run.attempt.spawn_id or run.attempt.chat_id}",
             daemon=True,
         )
-        self._observation_thread.start()
+        self._thread.start()
 
-    def stop_observing(self) -> NativeIdentityError | None:
-        """Stop and join the per-run drainer; no state writes occur after return."""
+    def _drain(self) -> bool:
+        """Drain one replayable batch. Return whether the cursor advanced."""
+        cursor = self._cursor
+        batch = self._reader(cursor)
+        for observation in batch.observations:
+            self._run.apply_observation(observation)
+            # Acknowledge each fact after its publication: a later failure must
+            # never replay an accepted prefix and briefly rewind the pointer.
+            self._cursor = observation.next_cursor
+        self._cursor = batch.next_cursor
+        return batch.next_cursor != cursor
 
-        thread = self._observation_thread
-        if thread is None:
-            return self._observation_identity_error
-        self._observation_stop.set()
-        thread.join()
-        self._observation_thread = None
-        return self._observation_identity_error
+    def _loop(self) -> None:
+        failing = False
+        while not self._stop.wait(0.05):
+            try:
+                self._drain()
+            except NativeIdentityError as exc:
+                self._error = exc
+                return
+            except Exception:
+                # Leave the cursor unacknowledged and retry. A final failure
+                # remains in the spawn journal for diagnostics/replay.
+                if not failing:
+                    logger.warning("Native observation publication failed", exc_info=True)
+                failing = True
+            else:
+                failing = False
+        try:
+            while self._drain():
+                pass
+        except NativeIdentityError as exc:
+            self._error = exc
+        except Exception:
+            logger.warning("Final native observation publication failed", exc_info=True)
+
+    def close(self) -> NativeIdentityError | None:
+        """Stop, final-drain and join; no state writes occur after return."""
+        self._stop.set()
+        self._thread.join()
+        return self._error
 
 
 def bind_entry(
@@ -276,7 +289,6 @@ def bind_entry(
         assigned,
         fork_source,
         on_accepted,
-        _current_chat_id=attempt.chat_id,
     )
 
 
@@ -304,9 +316,8 @@ def conclude_native_run(
     lifecycle: LifecycleLog,
     prior_error_phase: str = "post_exit",
 ) -> NativeRunOutcome:
-    """Conclude once per turn, after its child exited and teardown joined."""
-    observation_error = run.stop_observing()
-    error = prior_error or observation_error
+    """Conclude once per turn, after its child, teardown and observer joined."""
+    error = prior_error or run.observation_error
     post = PostExit()
     if error is None:
         try:

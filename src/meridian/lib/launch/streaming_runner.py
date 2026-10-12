@@ -876,7 +876,6 @@ async def execute_with_streaming(
     lifecycle: LifecycleLog | None = None
     lifecycle_active = [False]
     atexit_callback: Callable[[], None] | None = None
-    stop_native_observations: Callable[[], object] | None = None
 
     try:
         log_dir = resolve_spawn_log_dir(project_root, run.spawn_id, runtime_root=runtime_root)
@@ -978,7 +977,6 @@ async def execute_with_streaming(
             policy=launch_context.resolved_request.launch_policy_snapshot,
             on_accepted=harness_session_id_observer,
         )
-        stop_native_observations = native_run.stop_observing
         config = ConnectionConfig(
             spawn_id=run.spawn_id,
             harness_id=resolved_harness_id,
@@ -1068,45 +1066,45 @@ async def execute_with_streaming(
                 else:
                     attempt_pid: int | None = None
 
-                    def record_started(
-                        connection: HarnessConnection[Any],
-                        captured_observer: Callable[[str], None] = native_run.observe,
-                        attempt_fold: AttemptFold = fold,
-                    ) -> None:
-                        nonlocal attempt_pid
-                        attempt_pid = connection.subprocess_pid
-                        if attempt_pid is not None:
-                            native_run.start_observing(
-                                harness,
-                                child_env=child_env,
-                                pid=attempt_pid,
-                            )
-                        attempt_fold.bind_scope(connection.session_id)
-                        native_id = connection.session_id
-                        if native_id:
-                            captured_observer(native_id)
+                    # The observer's lifetime is this block: exceptional and
+                    # cancelled attempts join it before leaving session scope.
+                    with native_run.observing(harness, child_env=child_env) as observe_child:
 
-                    attempt = await _run_streaming_attempt(
-                        run=run,
-                        runtime_root=runtime_root,
-                        launch_mode=resolved_launch_mode,
-                        log_dir=log_dir,
-                        manager=manager,
-                        config=config,
-                        run_spec=spec,
-                        budget_tracker=budget_tracker,
-                        signal_event=shutdown_event,
-                        received_signal=received_signal,
-                        timeout_seconds=timeout_seconds,
-                        startup_timeout_seconds=startup_timeout_seconds,
-                        event_observer=event_observer,
-                        stream_stdout_to_terminal=stream_stdout_to_terminal,
-                        lifecycle_service=lifecycle_service,
-                        runner_phase=runner_phase,
-                        on_running=record_started,
-                        event_hook=fold,
-                        attempt_facts=facts,
-                    )
+                        def record_started(
+                            connection: HarnessConnection[Any],
+                            captured_observer: Callable[[str], None] = native_run.observe,
+                            attempt_fold: AttemptFold = fold,
+                        ) -> None:
+                            nonlocal attempt_pid
+                            attempt_pid = connection.subprocess_pid
+                            if attempt_pid is not None:
+                                observe_child(attempt_pid)
+                            attempt_fold.bind_scope(connection.session_id)
+                            native_id = connection.session_id
+                            if native_id:
+                                captured_observer(native_id)
+
+                        attempt = await _run_streaming_attempt(
+                            run=run,
+                            runtime_root=runtime_root,
+                            launch_mode=resolved_launch_mode,
+                            log_dir=log_dir,
+                            manager=manager,
+                            config=config,
+                            run_spec=spec,
+                            budget_tracker=budget_tracker,
+                            signal_event=shutdown_event,
+                            received_signal=received_signal,
+                            timeout_seconds=timeout_seconds,
+                            startup_timeout_seconds=startup_timeout_seconds,
+                            event_observer=event_observer,
+                            stream_stdout_to_terminal=stream_stdout_to_terminal,
+                            lifecycle_service=lifecycle_service,
+                            runner_phase=runner_phase,
+                            on_running=record_started,
+                            event_hook=fold,
+                            attempt_facts=facts,
+                        )
                     runner_phase[0] = "processing_attempt"
                     conclusion.failure_reason = None
                     conclusion.exit_code = attempt.drain_exit_code
@@ -1294,10 +1292,6 @@ async def execute_with_streaming(
             harness_id=str(launch_context.harness.id),
         )
     finally:
-        # Exceptional/cancelled attempts may bypass conclude_native_run. Never
-        # let their drainer outlive the caller-owned session scope.
-        if stop_native_observations is not None:
-            stop_native_observations()
         runner_phase[0] = "finalizing"
         if lifecycle_path is not None:
             _append_runner_lifecycle_event(

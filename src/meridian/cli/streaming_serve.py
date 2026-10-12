@@ -162,20 +162,6 @@ async def streaming_serve(
             started_pid: int | None = None
             started_at_epoch = time.time()
 
-            def record_started(started_connection: HarnessConnection[Any]) -> None:
-                nonlocal connection, started_pid
-                connection = started_connection
-                started_pid = connection.subprocess_pid
-                if started_pid is not None:
-                    native_run.start_observing(
-                        launch_ctx.harness,
-                        child_env=connection_config.child_env,
-                        pid=started_pid,
-                    )
-                fold.bind_scope(connection.session_id)
-                if connection.session_id:
-                    native_run.observe(connection.session_id)
-
             connection_config = replace(
                 connection_config,
                 session_id_observer=native_run.observe,
@@ -194,20 +180,33 @@ async def streaming_serve(
             connection_config = replace(connection_config, child_env=child_env)
             run_error: BaseException | None = None
             try:
-                outcome = await run_streaming_spawn(
-                    config=connection_config,
-                    spec=launch_ctx.binding.spec,
-                    runtime_root=runtime_root,
-                    project_root=project_root,
-                    spawn_id=spawn_id,
-                    startup_timeout_seconds=resolve_startup_timeout_seconds(
-                        config_snapshot=launch_ctx.runtime.config_snapshot,
-                    ),
-                    lifecycle_service=lifecycle_service,
-                    on_control_endpoint_ready=_report_control_endpoint,
-                    on_running=record_started,
-                    event_hook=fold,
-                )
+                # The observer's lifetime is this block, including exceptions.
+                with native_run.observing(launch_ctx.harness, child_env=child_env) as observe_child:
+
+                    def record_started(started_connection: HarnessConnection[Any]) -> None:
+                        nonlocal connection, started_pid
+                        connection = started_connection
+                        started_pid = connection.subprocess_pid
+                        if started_pid is not None:
+                            observe_child(started_pid)
+                        fold.bind_scope(connection.session_id)
+                        if connection.session_id:
+                            native_run.observe(connection.session_id)
+
+                    outcome = await run_streaming_spawn(
+                        config=connection_config,
+                        spec=launch_ctx.binding.spec,
+                        runtime_root=runtime_root,
+                        project_root=project_root,
+                        spawn_id=spawn_id,
+                        startup_timeout_seconds=resolve_startup_timeout_seconds(
+                            config_snapshot=launch_ctx.runtime.config_snapshot,
+                        ),
+                        lifecycle_service=lifecycle_service,
+                        on_control_endpoint_ready=_report_control_endpoint,
+                        on_running=record_started,
+                        event_hook=fold,
+                    )
                 outcome_status = TypeAdapter(TerminalSpawnStatus).validate_python(outcome.status)
                 outcome_exit_code = outcome.exit_code
                 if outcome_status == "failed":

@@ -119,7 +119,10 @@ allocates a verified exit. Missing receipts never fall back to transcript scans.
 
 `launch/native_run.conclude_native_run` owns ordering: attempt-facts first ID,
 connection-current ID (diagnostic), adapter observation, entry verification,
-exact exit allocation, boundary persistence, then invocation attribution.
+exact exit publication, boundary persistence, then invocation attribution. A
+verified exit is published through the same current-chat seam as live
+observations, with native proof checked under its locks; `run_boundary` is
+evidence only.
 The facts hook observes owned live session IDs. There is no artifact-identity or
 filesystem-discovery fallback.
 

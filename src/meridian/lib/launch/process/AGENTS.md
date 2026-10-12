@@ -67,9 +67,10 @@ a conflict refuses the launch. Only `NativeIdentity` values without an ID
 (e.g. Claude fork) wait for the first owned observation. Observations bind once and never replace the key.
 Adapter cleanup still runs on binding errors.
 
-**Live observation is launcher-owned.** Once `on_running` supplies the concrete
-child PID, `NativeRun` starts one bounded-lifetime drainer. Finalization stops and
-joins it before session scope or lifecycle ownership closes.
+**Live observation is launcher-owned and lexical.** Each driver runs its child
+inside `with native_run.observing(...)`; once `on_running` supplies the concrete
+child PID, one bounded drainer starts. Leaving the block, normally or by
+exception, final-drains and joins it before conclusion and session scope close.
 
 **Session scope wraps everything.** `session_scope()` opens before the spawn row is
 created and closes in the finally block. If `lifecycle_service.start()` fails, the
