@@ -1,13 +1,15 @@
 # Pi result delivery
 
-All files below live under `pi-bash/<parent>/`. Missing files mean empty;
-present malformed or wrong-parent authority means unknown, never successful empty.
+All coordination files in the table live under `pi-bash/<parent>/`. Missing
+coordination files mean empty; present malformed or wrong-parent authority means
+unknown, never successful empty. Task logs are different: missing, unreadable or
+non-regular logs are unavailable, not empty output.
 Atomic writes use the shared JSON helper. One parent has one execution writer,
 one launch-scoped notification owner, and one Python public-event observer.
 
 | File | Writer | Shape and purpose |
 |---|---|---|
-| `bash-records.json` | managed Bash | v1 task records; tracked terminal background rows stay owed until wait/output consumption or admission. `execution_error` on a row and file-level `runtime_error` preserve unresolved execution/storage evidence. |
+| `bash-records.json` | managed Bash | v1 task records, written at lifecycle transitions only (`log_bytes` is the size at the last one); a terminal status is present only once published; tracked terminal background rows stay owed until wait/output consumption or admission. `execution_error` on a row and file-level `runtime_error` preserve unresolved execution/storage evidence. |
 | `delivery-receipts.json` | spawn watcher | `{v:1,spawn_id,messages:{delivery_id:work_ids[]}}`; exact native custom-message admission, never `sendMessage()` return. |
 | `delivery-observations.json` | Python | `{v:1,spawn_id,observed_message_ids:[]}`; exact public admission event observed after marking the parent active. |
 | `observed-spawns.json` | CLI wait | v1 parent, durable `observed_spawn_ids`, diagnostic `waiting_spawn_ids`, `wait_reservations` keyed by caller with `owner_pid`, `owner_birth_epoch`, `expires_at_epoch`, `spawn_ids`. Only live matching process leases suppress temporarily. |
@@ -56,13 +58,26 @@ still to render. Short details leave their unused share available to later membe
 a sole member can use nearly the whole packet. UTF-8 truncation stops at a
 code-point boundary.
 Every included member retains a compact identity and terminal-outcome prefix plus
-a concrete full-report/transcript or exact-ID Bash output lookup; only worker,
-error, report-excerpt, and command details may be truncated. An oversized first
-canonical member therefore still publishes and cannot starve the backlog. A member
+a concrete full-report/transcript or exact-ID Bash output lookup. The presence of
+a result error belongs in that mandatory prefix; its diagnostic text is optional.
+Only worker, diagnostic, report-excerpt, and command details may be truncated. A
+large optional body on the first canonical member cannot starve the backlog. A member
 whose mandatory representation does not fit after earlier members remains owed and
 becomes first on a later opportunity. Missing or empty reports retain outcome and
 transcript guidance; present unreadable evidence fails closed. Explicit wait
 commands still use the CLI.
+
+Bash tool results include outcome evidence independently of log contents. An
+available empty log can accompany success, nonzero exit or an execution fault;
+none may be inferred from the text alone. Terminal wait/output consumes only when
+available output and its outcome are returned, with consumption persisted first.
+Unavailable logs, incomplete exit evidence and execution faults remain owed;
+an empty fault diagnostic is still a fault. Wait cancellation is checked inside
+the acknowledgement slot. Cancellation before staging leaves work owed; an already
+staged acknowledgement may land and returns its result rather than pretending to
+roll back. Artifact reads, `/ps` previews
+and `/pslogs` are inspection, never consumption. Automatic Bash notices retain
+execution-fault details under the same bounded-detail rules as spawn errors.
 
 A tracked background terminal result stays owed during active tool waits, so a
 terminal wait can persist consumption before the boundary runs. The idle path

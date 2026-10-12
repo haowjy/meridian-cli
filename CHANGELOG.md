@@ -4,6 +4,38 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Publish managed-Bash exits before reporting or consuming them (#562). Failed
+  writes leave no tentative metadata; task-fatal failures are claimed inside the
+  publication slot before the next change can stage, regardless of caller wrappers.
+- Keep physical stop/output drain independent of metadata repair, including output
+  failures during abort. Never signal a process group after observing it gone;
+  `kill` distinguishes a natural exit from a killed task.
+- Attach foreground cancellation as soon as managed Bash owns the process, without
+  waiting for its creation row. Cancellation observed during preparation prevents
+  launch; starts and background handoffs still report success only after publication.
+- Preserve exit status and faults in Bash result retrieval and notices. Missing,
+  unreadable or non-regular logs, empty fault diagnostics and unavailable exit codes
+  cannot become empty success or consumed results. Keep known result errors in
+  mandatory notice headers even when diagnostic text is truncated.
+- Fence wait cancellation at acknowledgement: cancellation before staging leaves
+  work owed; an acknowledgement already staged returns its result when published.
+- Skip obsolete ping releases after completion/detach, and do not report a detach
+  whose publication declined. Foreground streams use one typed log carrier each.
+- Keep `/ps:logs` non-consuming even during cold recovery. Share recovery retries
+  across concurrent commands; preserve prior faults and never signal stored PIDs.
+
+### Changed
+- Separate published Bash snapshots from live handles, progress and fault evidence.
+  One stage/write/adopt owner replaces mixed mutable records and patch/commit copies.
+- Write Bash records at lifecycle transitions, not per output chunk. Persisted
+  `log_bytes` is the last lifecycle snapshot; logs remain authoritative. Records-store
+  faults during output surface at the next lifecycle write, not the next chunk.
+- Load `/ps` metadata without opening logs. Read only the selected TUI preview,
+  one at a time, discarding results after selection changes, refresh or disposal.
+- Use explicit result kinds and log availability for model-facing Bash retrieval;
+  retain separate, non-consuming UI preview semantics.
+
 ## [0.9.5] - 2026-10-12
 
 ### Upgrade notes

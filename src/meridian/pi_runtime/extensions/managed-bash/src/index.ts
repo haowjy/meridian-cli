@@ -7,10 +7,12 @@ import {
   hasTaskPanelUI,
   showTaskText,
   type PanelCommandContext,
+  type PanelDetail,
   type SelectablePanelColumn,
 } from "../../shared/selectable_panel";
 import { formatDurationSecs, renderTable } from "../../shared/ui";
 import type { BashRecord } from "../../shared/schemas";
+import { bashOutcome, describeOutcome, outcomeErrorText, outcomeIsError, type TaskOutcome } from "../../shared/task_outcome";
 import {
   BashRuntime,
   type BashExecuteResult,
@@ -25,34 +27,51 @@ const FOREGROUND_BASH_HINT_TEXT = "/ps to manage tasks · /ps:b to run in backgr
 
 type FormattedToolResult = { text: string; isError: boolean };
 type ManagedBashToolResult = BashExecuteResult | BashManageResult;
-const FAILED_STATUSES = new Set(["failed", "cancelled", "timed_out", "killed", "error"]);
 
 function formatToolResult(result: ManagedBashToolResult): FormattedToolResult {
-  if ("stdout" in result) {
-    const output = result.stdout + result.stderr;
-    if (result.exit_code === 0) return { text: output, isError: false };
-    const failure = `Command failed with exit code ${result.exit_code ?? "unknown"}.`;
-    return { text: [output, failure].filter(Boolean).join("\n"), isError: true };
+  switch (result.kind) {
+    case "foreground": {
+      const logs = [result.stdout, result.stderr];
+      return formatOutcome("command", result,
+        logs.map((log) => log.kind === "available" ? log.text : log.error),
+        logs.some((log) => log.kind !== "available"));
+    }
+    case "start":
+      return { text: [`${result.bash_id}: ${result.status}`, result.status === "backgrounded" ? result.message : ""].filter(Boolean).join("\n"), isError: false };
+    case "list":
+      return { text: formatRows(result.rows), isError: result.rows.some((row) => bashOutcome(row).error !== undefined) };
+    case "output":
+      return formatOutcome(result.bash_id, result, [result.output, result.log_state === "available" ? "" : result.log_error], result.log_state !== "available");
+    case "inspection":
+      return { text: [result.output, result.error ? `Error: ${result.error}` : ""].filter(Boolean).join("\n"), isError: Boolean(result.error) };
+    case "wait": {
+      const bashResult = result.source === "bash" && result.delivery === "result" ? result : undefined;
+      const output = result.source === "spawn" ? result.output : bashResult?.output ?? "";
+      return formatOutcome(result.bash_id, result, [output, result.message ?? "",
+        bashResult && bashResult.log_state !== "available" ? bashResult.log_error : ""],
+      bashResult?.log_state !== undefined && bashResult.log_state !== "available");
+    }
+    case "kill":
+      return { text: result.message, isError: !result.killed };
+    case "detach":
+      return { text: result.message, isError: !result.detached };
+    case "error":
+      return { text: `Error: ${result.error}`, isError: true };
+    default:
+      return assertNever(result);
   }
-  if ("rows" in result) {
-    return { text: formatRows(result.rows), isError: result.rows.some((row) => Boolean(row.execution_error)) };
-  }
-  if ("killed" in result) return { text: result.message, isError: !result.killed };
-  if ("detached" in result) return { text: result.message, isError: !result.detached };
+}
 
-  const error = "error" in result && result.error ? `Error: ${result.error}` : "";
-  if ("status" in result) {
-    const exitCode = "exit_code" in result ? result.exit_code : null;
-    const summary = `${result.bash_id}: ${result.status}${exitCode == null ? "" : ` (exit code ${exitCode})`}`;
-    return {
-      text: [summary, "output" in result ? result.output : "", "message" in result ? result.message : "", error]
-        .filter(Boolean).join("\n"),
-      isError: Boolean(error) || FAILED_STATUSES.has(result.status)
-        || (result.status === "exited" && exitCode != null && exitCode !== 0),
-    };
-  }
-  if ("output" in result) return { text: [result.output, error].filter(Boolean).join("\n"), isError: Boolean(error) };
-  return { text: error, isError: true };
+function formatOutcome(id: string, outcome: TaskOutcome, details: string[], forceError = false): FormattedToolResult {
+  const error = outcomeErrorText(outcome);
+  return {
+    text: [describeOutcome(id, outcome), ...details, error === undefined ? "" : `Error: ${error}`].filter(Boolean).join("\n"),
+    isError: forceError || outcomeIsError(outcome),
+  };
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled managed Bash result: ${JSON.stringify(value)}`);
 }
 
 function formatRows(rows: BashListRow[]): string {
@@ -60,22 +79,23 @@ function formatRows(rows: BashListRow[]): string {
   const table = renderTable(
     [
       { header: "ID", width: 10, render: (row: BashListRow) => row.bash_id },
-      { header: "STATE", width: 12, render: (row: BashListRow) => row.status === "running" && row.execution_error ? "unresolved" : row.status === "exited" && row.exit_code !== 0 ? `exited(${row.exit_code ?? "?"})` : row.status },
+      { header: "STATE", width: 12, render: (row: BashListRow) => row.status === "running" && bashOutcome(row).error !== undefined ? "unresolved" : row.status === "exited" && row.exit_code !== 0 ? `exited(${row.exit_code ?? "?"})` : row.status },
       { header: "DUR", width: 8, render: (row: BashListRow) => formatDurationSecs(row.duration_secs) },
       { header: "COMMAND", width: 60, render: (row: BashListRow) => row.command },
     ],
     rows,
     100,
   ).join("\n");
-  const errors = rows.flatMap((row) => row.execution_error ? [`${row.bash_id}: ${row.execution_error}`] : []);
+  const errors = rows.flatMap((row) => {
+    const error = bashOutcome(row).error;
+    return error === undefined ? [] : [`${row.bash_id}: ${error}`];
+  });
   return [table, ...errors].join("\n");
 }
 
-type BashPanelRow = BashListRow & { preview?: string };
-
 type BashLogStream = "combined" | "stdout" | "stderr";
 
-async function readInspectableLog(row: BashPanelRow, stream: BashLogStream = "combined"): Promise<string> {
+async function readInspectableLog(row: BashListRow, stream: BashLogStream = "combined"): Promise<string> {
   const filePath = stream === "stdout" ? row.stdout_log_path : stream === "stderr" ? row.stderr_log_path : row.log_path;
   return (await readLogTail(filePath, 1024 * 1024)).trimEnd() || "(no output yet)";
 }
@@ -92,7 +112,7 @@ async function sendBackgroundPing(pi: ExtensionAPI, record: BashRecord): Promise
   );
 }
 
-function bashLogStreams(row: BashPanelRow): Array<{ id: BashLogStream; label: string; loadText: () => Promise<string> }> {
+function bashLogStreams(row: BashListRow): Array<{ id: BashLogStream; label: string; loadText: () => Promise<string> }> {
   return [
     { id: "combined", label: "combined", loadText: async () => readInspectableLog(row, "combined") },
     { id: "stdout", label: "stdout", loadText: async () => readInspectableLog(row, "stdout") },
@@ -100,13 +120,15 @@ function bashLogStreams(row: BashPanelRow): Array<{ id: BashLogStream; label: st
   ];
 }
 
-function formatBashStatus(row: BashPanelRow, theme: Theme): string {
+function formatBashStatus(row: BashListRow, theme: Theme): string {
   const dim = (value: string) => theme.fg("dim", value);
   const success = (value: string) => theme.fg("success", value);
   const error = (value: string) => theme.fg("error", value);
   const warning = (value: string) => theme.fg("warning", value);
 
-  if (row.status === "running") return row.execution_error ? warning("! unresolved") : success("● running");
+  const fault = bashOutcome(row).error;
+  if (row.status === "running") return fault !== undefined ? warning("! unresolved") : success("● running");
+  if (fault !== undefined) return error(`✗ ${row.status}`);
   if (row.status === "exited") {
     return row.exit_code === 0 ? dim("✓ exit(0)") : error(`✗ exit(${row.exit_code ?? "?"})`);
   }
@@ -114,21 +136,31 @@ function formatBashStatus(row: BashPanelRow, theme: Theme): string {
   return error(`✗ ${row.status}`);
 }
 
-function renderBashPreview(row: BashPanelRow, theme: Theme): string[] {
+/** Bytes of the selected task's combined log read for the panel preview. */
+const PREVIEW_TAIL_BYTES = 2048;
+
+function bashPreviewOutput(detail: PanelDetail<string> | undefined, theme: Theme): string[] {
   const dim = (value: string) => theme.fg("dim", value);
-  const output = row.preview?.trimEnd() ?? "";
-  const lines = output ? output.split(/\r?\n/).slice(-3) : [dim("(no output yet)")];
+  if (!detail || detail.status === "loading") return [dim("(loading output…)")];
+  if (detail.status === "error") return [theme.fg("error", `Output unavailable: ${detail.message}`)];
+  const output = detail.value.trimEnd();
+  return output ? output.split(/\r?\n/).slice(-3) : [dim("(no output yet)")];
+}
+
+function renderBashPreview(row: BashListRow, theme: Theme, detail?: PanelDetail<string>): string[] {
+  const dim = (value: string) => theme.fg("dim", value);
+  const fault = bashOutcome(row).error;
   return [
     `${theme.fg("accent", row.bash_id)} ${formatBashStatus(row, theme)} ${dim(formatDurationSecs(row.duration_secs))}`,
     dim(row.command),
-    ...(row.execution_error ? [theme.fg("error", row.execution_error)] : []),
-    ...lines,
+    ...(fault !== undefined ? [theme.fg("error", fault)] : []),
+    ...bashPreviewOutput(detail, theme),
   ];
 }
 
-const BASH_PANEL_COLUMNS: SelectablePanelColumn<BashPanelRow>[] = [
+const BASH_PANEL_COLUMNS: SelectablePanelColumn<BashListRow>[] = [
   { header: "ID", width: 10, render: (row, theme, selected) => (theme ? (selected ? theme.fg("accent", row.bash_id) : theme.fg("dim", row.bash_id)) : row.bash_id) },
-  { header: "STATE", width: 12, render: (row, theme) => (theme ? formatBashStatus(row, theme) : row.status === "running" && row.execution_error ? "unresolved" : row.status) },
+  { header: "STATE", width: 12, render: (row, theme) => (theme ? formatBashStatus(row, theme) : row.status === "running" && bashOutcome(row).error !== undefined ? "unresolved" : row.status) },
   { header: "BG", width: 3, render: (row, theme) => (theme ? (row.is_background ? theme.fg("accent", "yes") : theme.fg("dim", "no")) : row.is_background ? "yes" : "no") },
   { header: "DUR", width: 8, render: (row, theme) => (theme ? theme.fg("dim", formatDurationSecs(row.duration_secs)) : formatDurationSecs(row.duration_secs)), align: "right" },
   { header: "SIZE", width: 8, render: (row, theme) => (theme ? theme.fg("dim", `${row.log_bytes}B`) : `${row.log_bytes}B`), align: "right" },
@@ -289,10 +321,8 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
   pi.registerCommand("ps", {
     description: "List Meridian-managed bash tasks for this Pi session.",
     handler: async (_args, ctx) => {
-      const loadRows = async (): Promise<BashPanelRow[]> => {
-        const rows = await runtime.rows();
-        return Promise.all(rows.map(async (row) => ({ ...row, preview: await readLogTail(row.log_path, 2048) })));
-      };
+      // Task rows are metadata only: logs are read for the TUI's selected row by the panel, never here.
+      const loadRows = (): Promise<BashListRow[]> => runtime.rows();
 
       if (!hasTaskPanelUI(ctx)) {
         showTaskText(ctx, formatRows(await loadRows()));
@@ -304,6 +334,7 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
         columns: BASH_PANEL_COLUMNS,
         loadRows,
         getRowId: (row) => row.bash_id,
+        loadDetail: (row) => readLogTail(row.log_path, PREVIEW_TAIL_BYTES),
         renderPreview: renderBashPreview,
         emptyMessage: "No Meridian-managed bash tasks.",
         footer: "enter logs · c clear · j/k select · r refresh · q close",
@@ -342,14 +373,14 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
     description: "Show a Meridian-managed bash task log tail.",
     handler: async (args, ctx) => {
       const bashId = args.trim();
+      // Recovery is asynchronous. Await metadata before resolving the row, and only use the
+      // non-consuming inspection reader: a slash command never acknowledges model delivery.
+      const row = (await runtime.rows()).find((candidate) => candidate.bash_id === bashId);
       const loadText = async (): Promise<string> => {
-        const row = runtime.list(true).find((candidate) => candidate.bash_id === bashId);
         if (row) return readInspectableLog(row);
-        const result = await runtime.manage({ action: "output", bash_id: bashId });
-        return "output" in result && typeof result.output === "string" ? result.output : formatToolResult(result).text;
+        return `Bash task not found: ${bashId}`;
       };
       if (hasTaskPanelUI(ctx)) {
-        const row = runtime.list(true).find((candidate) => candidate.bash_id === bashId);
         await openLogOverlay(ctx as PanelCommandContext, {
           title: `Bash log ${bashId}`,
           initialFollow: row?.status === "running",
