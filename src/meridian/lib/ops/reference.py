@@ -163,17 +163,23 @@ def _resolve_spawn_reference(
     if row.record_mode == "historical":
         raise ValueError("Historical sessions are inert; read or export the transcript instead.")
 
-    if row.current_chat_id and row.continue_chat_id == row.current_chat_id:
-        current = session_store.get_session_record(runtime_root, row.current_chat_id)
-        if current is None:
-            raise NativeSessionUnavailable(ref, "unbound")
+    # One selection, one resolution path: the continue target's session record
+    # owns settings/work whether a hook, a verified exit or the entry chose it.
+    target_chat_id = row.continue_chat_id
+    target = session_store.get_session_record(runtime_root, target_chat_id) if (
+        target_chat_id
+    ) else None
+    if target is not None:
         selected = _reference_from_session(
-            runtime_root, current, project_root, current.harness_session_id,
+            runtime_root, target, project_root, target.harness_session_id,
         )
         return replace(selected, source_spawn_id=row.id)
+    if target_chat_id != row.chat_id:
+        # A missing selected chat never falls back to an older conversation.
+        raise NativeSessionUnavailable(ref, "unbound")
 
+    # Legacy rows with no authoritative session record resolve from the row.
     harness_session_id = _normalize_optional(row.harness_session_id)
-    stored_harness = _normalize_optional(row.harness)
     source_execution_cwd = _normalize_optional(getattr(row, "task_cwd", None)) or row.execution_cwd
     source_control_root = (
         _normalize_optional(getattr(row, "control_root", None)) or project_root.as_posix()
@@ -185,23 +191,11 @@ def _resolve_spawn_reference(
         ).as_posix()
     elif source_execution_cwd is None:
         source_execution_cwd = project_root.as_posix()
-    bound_session = session_identity.get_session_record_for_spawn(
-        runtime_root, row.id, require_harness_session_id=False,
-    )
-    target_chat_id = row.continue_chat_id
-    target_session = (
-        session_store.get_session_record(runtime_root, target_chat_id)
-        if target_chat_id and target_chat_id != row.chat_id
-        else None
-    )
+    bound_session = session_identity.get_session_record_for_spawn(runtime_root, row.id)
     return _build_tracked_reference(
-        harness_session_id=(
-            target_session.harness_session_id if target_session else harness_session_id
-        ),
-        stored_harness=(target_session.harness if target_session else stored_harness),
-        source_chat_id=(
-            target_session.chat_id if target_session else _normalize_optional(row.chat_id)
-        ),
+        harness_session_id=harness_session_id,
+        stored_harness=_normalize_optional(row.harness),
+        source_chat_id=_normalize_optional(row.chat_id),
         source_model=_normalize_optional(row.model),
         source_agent=_normalize_optional(row.agent),
         source_skills=row.skills,
@@ -210,8 +204,7 @@ def _resolve_spawn_reference(
         source_spawn_id=row.id,
         source_control_root=source_control_root,
         source_execution_cwd=source_execution_cwd,
-        source_native_store=(target_session.native_store if target_session else
-                             bound_session.native_store if bound_session else None),
+        source_native_store=bound_session.native_store if bound_session else None,
         source_launch_policy_snapshot=row.launch_policy_snapshot,
     )
 

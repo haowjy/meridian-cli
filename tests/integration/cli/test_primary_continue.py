@@ -67,7 +67,12 @@ def _seed_primary_spawn(
         harness_session_id=harness_session_id or "",
         native_store=str(store),
         model=snapshot.model if snapshot is not None else "gpt-5.3-codex",
+        agent=(snapshot.agent or "agent-a") if snapshot is not None else "agent-a",
+        skills=snapshot.skills if snapshot is not None else ("skill-a",),
+        task_cwd=task_cwd,
+        kind="primary",
     )
+    session_store.update_session_work_id(runtime_root, "c-primary", work_id)
     session_store.stop_session(runtime_root, "c-primary")
     spawn_store.start_spawn(
         runtime_root,

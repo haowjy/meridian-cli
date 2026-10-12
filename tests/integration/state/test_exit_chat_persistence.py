@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.ops.reference import resolve_session_reference
 from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.spawn.model import RunBoundaryOutcome, SpawnRecord
@@ -46,6 +47,34 @@ def test_verified_exit_publishes_only_with_native_proof_on_creation_and_reuse(tm
     assert publish("entry") is None  # Nor may the entry chat itself.
     assert current() == exit_chat
     assert len(session_store.list_all_session_records(runtime)) == 2
+
+
+def test_spawn_ref_settings_follow_selected_chat_whether_or_not_observed(tmp_path: Path):
+    runtime = tmp_path / "runtime"
+    store = str(tmp_path / "native")
+    chat = session_store.start_session(
+        runtime, harness="claude", harness_session_id="entry", model="",
+        native_store=store, kind="primary",
+    )
+    session_store.update_session_work_id(runtime, chat, "original-work")
+    session_store.stop_session(runtime, chat)
+    spawn_store.start_spawn(
+        runtime, spawn_id="p1", chat_id=chat, harness="claude", kind="primary",
+        harness_session_id="entry", work_id="original-work", model="", agent="", prompt="",
+    )
+    session_store.update_session_work_id(runtime, chat, "selected-chat-work")
+
+    def work(ref: str) -> str | None:
+        return resolve_session_reference(tmp_path, ref, runtime_root=runtime).source_work_id
+
+    assert work("p1") == work(chat) == "selected-chat-work"
+    assert session_store.get_or_create_observed_chat(
+        runtime, chat, "claude", store, "entry", spawn_id="p1",
+    ) == chat  # Observing the same conversation changes nothing.
+    assert work("p1") == work(chat) == "selected-chat-work"
+    spawn_store.update_spawn(runtime, "p1", current_chat_id="c999")
+    with pytest.raises(NativeSessionUnavailable):  # Never fall back to the older entry.
+        resolve_session_reference(tmp_path, "p1", runtime_root=runtime)
 
 
 def test_observed_chat_inherits_metadata_without_transcript_or_live_lease(tmp_path: Path):
