@@ -304,6 +304,29 @@ describe("managed Bash terminal publication", () => {
     });
   });
 
+  it("a failed ping claim claims its record before the terminal slot queued behind it stages", async () => {
+    await withRuntime(async (h) => {
+      vi.stubEnv("_MERIDIAN_PI_TASK_PING_INTERVAL_MS", "20");
+      new BashRuntime({ onBackgroundPing: () => {} }); // the owner is shared: this only binds the ping hook
+      const claim = h.arm((file) => Object.values(file.records).some((r) => r.command === h.command && r.ping_sent_at_ms != null));
+      const started = await h.runtime.execute({ command: h.command, background: true }, undefined) as { bash_id: string };
+      const id = started.bash_id;
+      await claim.hit; // the claim write is held while the task still runs
+      await h.exit();
+      await h.gone(h.row(id).pid!); // the exit is observed and its terminal write queued behind the claim
+
+      // The first non-running payload attempted from here is either the terminal success or the failure repair.
+      const next = h.arm(holdsTerminal);
+      claim.settle("fail");
+      const attempted = await next.hit;
+      expect(attempted.records[id]).toMatchObject({ status: "killed", execution_error: expect.stringContaining("EIO") });
+      next.settle("fail"); // and the repair write fails too: the file must not keep a clean success
+      await until(() => h.row(id).status === "killed");
+      expect(gate.log.filter((file) => file.records[id]?.status === "exited")).toEqual([]);
+      expect((await h.disk(id)).status).toBe("running");
+    });
+  });
+
   it("a failed clear leaves the finished rows in memory and on disk", async () => {
     await withRuntime(async (h) => {
       await h.runtime.execute({ command: "printf x" }, undefined);

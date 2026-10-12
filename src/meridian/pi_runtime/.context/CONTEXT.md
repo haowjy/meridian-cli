@@ -130,8 +130,9 @@ present, wait on, or consume an unpublished exit, and an interrupted wait still
 returns running. Its linearization point is staging: success is staged only if no
 failure has claimed the record, so an earlier failure prevents a clean terminal
 snapshot; one claimed afterwards is ordered after it and repaired by the failure's
-own write (a crash inside that rename window can still recover the success;
-the only failure sources outside the queue exist before the exit is observed). A failed terminal write
+own write (a crash inside that rename window can still recover the success).
+A failed lifecycle write claims its record at the await that observes it, which runs before
+the next queued slot stages; supervision left to a later outer catch would lose that order. A failed terminal write
 fails the record (`killed` plus `execution_error`), rejects waiters, and leaves the
 notice owed. A consumption is staged in its own slot and is skipped if the record
 has failed meanwhile. `kill` reports the published outcome, so a task that exited by

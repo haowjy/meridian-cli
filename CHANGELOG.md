@@ -25,6 +25,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   fails a task whose group was observed gone.
 - Keep a managed-Bash row's durable execution fault when a restart recovers it as a
   running row: lost ownership is added once to the original error instead of replacing it.
+- Fail a managed-Bash task at the moment its ping-claim or release write fails, ahead of the
+  next queued write, so a clean exit can no longer be published after a failed ping write.
 
 ### Changed
 - Stop rewriting the whole managed-Bash records file for every output chunk. The

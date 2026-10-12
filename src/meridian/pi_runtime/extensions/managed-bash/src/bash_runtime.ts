@@ -570,15 +570,19 @@ export class BashRuntime {
     record.pingTimer = null;
     const notify = this.hooks.onBackgroundPing;
     if (!notify) return;
+    // A metadata write failure claims the record here, at the await that observes it. Left to the
+    // timer's outer catch it would claim only after the next queued slot had already staged.
+    const publish = async (patch: Partial<BashRecord>, claim: boolean): Promise<boolean> => {
+      try { return await this.transact(() => !claim || isPingable(record) ? this.fields(record, patch) : null); }
+      catch (error) { await this.failRecord(record, error); return false; }
+    };
     // The claim is staged against committed state, so it cannot race a detach or terminal write.
-    const claimed = await this.transact(() =>
-      isPingable(record) ? this.fields(record, { ping_sent_at_ms: Date.now() }) : null);
-    if (!claimed) return;
+    if (!await publish({ ping_sent_at_ms: Date.now() }, true)) return;
     try { await notify(toPlainRecord(record)); }
     catch (error) {
       // Notification capability can become stale during reload. It owns no
       // shell lifecycle: release its claim without turning it into task failure.
-      await this.transact(() => this.fields(record, { ping_sent_at_ms: null }));
+      await publish({ ping_sent_at_ms: null }, false);
       process.stderr.write(`[managed-bash] ping ${record.bash_id}: ${errorText(error)}\n`);
       // Do not spin on a broken capability. A new hook (including one rebound
       // while this attempt was in flight) can retry the released claim.
