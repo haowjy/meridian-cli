@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.6] - 2026-10-12
+
 ### Fixed
 - Publish managed-Bash exits before reporting or consuming them (#562). Failed
   writes leave no tentative metadata; task-fatal failures are claimed inside the
