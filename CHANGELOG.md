@@ -17,6 +17,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Require native transcript proof before verified exit-chat reuse, not just creation.
 - Preserve Claude plugin-resolution warnings; valid symlinked plugins no longer appear missing.
 - Create complete chats for newly observed sessions, carrying current settings/work without copying history, fork lineage or live leases. Reusing an existing chat preserves its settings and work. Block concurrent Meridian-managed resume/capture; warn when a native switch overlaps another live owner.
+
+## [0.9.4] - 2026-10-12
+
+### Fixed
 - Deliver completed Pi child-spawn and managed-Bash results at the successful
   tool-batch boundary through native steering, before the next inference, while
   retaining the idle follow-up fallback for genuinely late or unsettled work.
