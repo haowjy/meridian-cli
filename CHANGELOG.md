@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Upgrade notes
-- Stop active launches and back up project runtime state before upgrading. New current-chat fields are incompatible with 0.9.3 readers; rollback requires pre-upgrade state. See [current-chat tracking](docs/upgrading.md#current-chat-tracking-unreleased).
+- Stop active launches and back up project runtime state before upgrading. New current-chat fields are incompatible with 0.9.3 and 0.9.4 readers; rollback requires pre-upgrade state. See [current-chat tracking](docs/upgrading.md#current-chat-tracking-unreleased).
 
 ### Changed
 - Persist a run's current chat separately from its immutable entry chat. Rebuild history projection in a new versioned namespace.
@@ -17,6 +17,28 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Require native transcript proof before verified exit-chat reuse, not just creation.
 - Preserve Claude plugin-resolution warnings; valid symlinked plugins no longer appear missing.
 - Create complete chats for newly observed sessions, carrying current settings/work without copying history, fork lineage or live leases. Reusing an existing chat preserves its settings and work. Block concurrent Meridian-managed resume/capture; warn when a native switch overlaps another live owner.
+- Deliver completed Pi child-spawn and managed-Bash results at the successful
+  tool-batch boundary through native steering, before the next inference, while
+  retaining the idle follow-up fallback for genuinely late or unsettled work.
+- Replace active polling and automatic `spawn wait` subprocesses with a finite collector and
+  bounded direct report reads. Automatic messages now cap exact membership at 32
+  results and complete UTF-8 content at 64 KiB, read reports sequentially, and
+  leave the remaining backlog owed for later native opportunities. Oversized
+  members retain a compact identity and terminal outcome plus a concrete
+  full-result lookup; members that cannot fit those mandatory fields are deferred
+  intact. The packet reserves all selected mandatory frames before report I/O and
+  shares optional-detail space fairly, carrying unused shares forward so one large
+  report cannot monopolize an otherwise 32-member packet. Preserve exit codes and
+  short-read handling. Idle polling skips unrelated history and stateless
+  directories; full discovery runs at tool boundaries and on a 30-second
+  missed-event reconciliation cadence. In-flight idle scans stop before their next
+  row when the agent starts.
+- Keep discovery hints out of notification authority. Stable selected children
+  survive unrelated root churn; bare Bash notices require a current canonical
+  child-correlation snapshot. Failed discovery stays unresolved until repaired.
+- Stop notification polling before reload invalidates Pi's old context; restart
+  with fresh hooks while retaining exact queued claims. Agent starts and reloads
+  invalidate stale publication between filesystem awaits.
 
 ## [0.9.3] - 2026-10-11
 

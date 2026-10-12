@@ -55,7 +55,7 @@ upgrading Pi; never infer exit from current/target session or the last-seen ID.
 | Extension | Owns | Writes / observes |
 |---|---|---|
 | `managed-bash` | `bash` / `bash_manage`, tracked vs detached bash records, `/ps*` slash commands, `_MERIDIAN_PI_BASH_ID` injection into child processes | `runtime_root/pi-bash/<spawn-id>/bash-records.json` and bash logs; terminal waits and terminal output reads mark their record's notification as consumed |
-| `meridian-spawn-watch` | canonical direct-child discovery, `/spawn*` slash commands, idle-turn completion notifications | observes scoped child rows, task consumption and wait leases; writes exact admission receipts and delivery faults |
+| `meridian-spawn-watch` | canonical direct-child discovery, `/spawn*` slash commands, boundary/idle completion notifications | observes scoped child rows, task consumption and wait leases; writes exact admission receipts and delivery faults |
 | `meridian-idle` | native idle and interactive-return sensing in primary TUIs | shells out to the hidden `meridian idle` API; owns only in-memory timers and calls `ctx.compact` after an `act` decision |
 
 `managed-bash` is the mechanism extension. `meridian-spawn-watch` is the policy extension.
@@ -109,18 +109,19 @@ Managed-bash serializes record snapshots; terminal state is persisted before
 waiters are released, and consumption is persisted before the terminal wait or
 output result returns. If consumption persistence fails, the marker is rolled back and
 the wait returns an error, leaving the completion eligible for notification.
-Spawn-watch publishes only while native `ctx.isIdle()`, and rereads consumption
-and live wait reservations after formatting. A changed child selection rebuilds
-the batch. One launch-scoped owner reserves exact message membership until its
-native `message_start` admission; reload rebinds that owner and preserves its queue
-claims. Cold restart retries unreceipted work and keeps admitted/consumed work.
-Scan, formatting and receipt failures are supervised in `delivery-fault.json`.
-Notification formatting uses `meridian spawn wait --no-observe`: fetching a
-result must not consume the parent's notification before delivery succeeds.
-Final shutdown stops publication; reload preserves the owner. Polling plus one
-non-resetting scheduled scan guarantees progress under continuous writes.
-See [delivery-contract.md](delivery-contract.md) for schemas, public-event fencing
-and the bounded receipt-to-public-observation crash window.
+Spawn-watch serializes publication through one launch-scoped owner. A successful
+tool-bearing boundary and the genuinely late idle fallback use that owner rather
+than separate delivery machinery. Automatic child notices read `report.md`
+directly instead of invoking the general `spawn wait` CLI. Candidate IDs reduce
+ordinary idle work but never become authority; canonical state and parent-local
+evidence remain authoritative at publication. Two nonrecursive watchers and the
+existing timers wake the owner; active runs do no polling I/O.
+
+See the canonical [delivery contract](delivery-contract.md) for discovery and
+publication sequencing, fixed report/member/message bounds, subtract-only
+revalidation, cancellation generations, exact admission/public observation, and
+restart/crash behavior. Scan, report, and receipt failures remain supervised in
+`delivery-fault.json`.
 
 ### Build Pipeline
 
@@ -192,7 +193,7 @@ Extensions import the native `ExtensionAPI` from the Pi package root:
 - `on(event, handler)` — register typed native lifecycle and session hooks
 - `sendMessage(message, options)` — void queue/prompt operation, never admission acknowledgement
 - native `message_start` — exact custom-message admission; receipt hook runs before public RPC event
-- `ctx.isIdle()` — publication capability; `ctx.ui.notify()` frames slash output through RPC
+- `ctx.isIdle()` — idle-fallback publication capability; `ctx.ui.notify()` frames slash output through RPC
 
 ### Spawn Correlation
 

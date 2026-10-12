@@ -18,12 +18,12 @@ retroactively tracked; restart Claude through the updated Meridian.
 
 **Before upgrading, stop active Meridian launches and back up the affected
 project runtime directories.** The new spawn field is incompatible with older
-strict readers, including released 0.9.3. Do not overlap old runners with new
+strict readers, including released 0.9.3 and 0.9.4. Do not overlap old runners with new
 writers. History projection version 7 is rebuilt from authoritative files in its
 own namespace; it does not migrate the older SQLite file in place.
 
-**Rollback is not an in-place downgrade.** On a copied runtime, released 0.9.3
-rejects a spawn containing `current_chat_id`. Restore the pre-upgrade runtime
+**Rollback is not an in-place downgrade.** On copied runtimes, released 0.9.3 and
+0.9.4 both reject a spawn containing `current_chat_id`. Restore the pre-upgrade runtime
 backup before using the older release, then rebuild its metadata index with
 `meridian session index rebuild --metadata-only`. That backup does not contain
 Meridian records created after the upgrade. Provider-owned native transcripts
