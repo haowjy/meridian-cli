@@ -569,10 +569,8 @@ def iter_opencode_db_session_events(
     yield from iter_opencode_db_events(session_id=session_id, db_path=db_path)
 
 
-def _model_ref_text(raw_model: object) -> str | None:
-    if not isinstance(raw_model, str) or not raw_model.strip():
-        return None
-    parsed = _load_json_object(raw_model)
+def _model_ref(raw_model: object) -> str | None:
+    parsed = raw_model if isinstance(raw_model, dict) else _load_json_object(raw_model)
     if parsed is None:
         return None
     provider = parsed.get("providerID") or parsed.get("provider")
@@ -584,6 +582,37 @@ def _model_ref_text(raw_model: object) -> str | None:
     return f"{provider.strip()}/{model_id.strip()}"
 
 
+def _model_from_message(raw_data: object) -> str | None:
+    payload = raw_data if isinstance(raw_data, dict) else _load_json_object(raw_data)
+    if payload is None:
+        return None
+    return _model_ref(payload.get("model"))
+
+
+def _latest_message_model(
+    connection: sqlite3.Connection,
+    *,
+    session_id: str,
+    typed: bool,
+) -> str | None:
+    if typed:
+        query = (
+            "SELECT data FROM session_message "
+            "WHERE session_id=? AND type IN ('assistant', 'model-switched') "
+            "ORDER BY seq DESC, time_created DESC, id DESC"
+        )
+    else:
+        query = (
+            "SELECT data FROM message WHERE session_id=? "
+            "ORDER BY time_created DESC, id DESC"
+        )
+    for (raw_data,) in connection.execute(query, (session_id,)):
+        model = _model_from_message(raw_data)
+        if model is not None:
+            return model
+    return None
+
+
 def read_last_model(
     session_id: str,
     *,
@@ -592,9 +621,9 @@ def read_last_model(
 ) -> str | None:
     """Return the session's last used model as ``provider/model``.
 
-    Reads ``session_v2.model`` first; falls back to ``session.model`` only when
-    ``session_v2`` is absent. Returns ``None`` for a missing session, absent
-    database, or unparseable model reference.
+    Prefers the latest assistant or ``model-switched`` message. The session row
+    is only the fallback when no message records a model, because a mid-session
+    switch can leave ``session_v2.model`` on the original selection.
     """
 
     normalized_session_id = session_id.strip()
@@ -604,10 +633,22 @@ def read_last_model(
     if not resolved_db_path.is_file():
         return None
 
-    raw_model: object = None
     try:
         with closing(connect_readonly(resolved_db_path)) as connection:
             names = _table_names(connection)
+            if "session_message" in names:
+                used = _latest_message_model(
+                    connection, session_id=normalized_session_id, typed=True
+                )
+                if used is not None:
+                    return used
+            elif "message" in names:
+                used = _latest_message_model(
+                    connection, session_id=normalized_session_id, typed=False
+                )
+                if used is not None:
+                    return used
+            raw_model: object = None
             if "session_v2" in names:
                 row = connection.execute(
                     "SELECT model FROM session_v2 WHERE id=?", (normalized_session_id,)
@@ -622,7 +663,7 @@ def read_last_model(
                     raw_model = row[0]
     except sqlite3.Error:
         return None
-    return _model_ref_text(raw_model)
+    return _model_ref(raw_model)
 
 
 def interpret_opencode_record(
