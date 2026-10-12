@@ -7,14 +7,14 @@ from meridian.lib.state.spawn.model import SpawnRecord
 def run_boundary_summary(
     row: SpawnRecord, *, include_unverified: bool = True,
 ) -> str | None:
-    """Name the continue target; boundary status only chooses the wording."""
+    """Show recorded identity evidence, including for inert historical rows."""
     boundary = row.run_boundary
     if boundary is None:
         return None
     entry = f"{row.chat_id or '?'} ({row.harness_session_id or '?'})"
     if boundary.status == "mismatch":
         return f"warning: Session identity mismatch; recorded entry {entry}."
-    target = row.continue_chat_id
+    target = row.current_chat_id or row.chat_id
     if boundary.status == "verified":
         return f"entry {entry} → exit {target}"
     if target != row.chat_id:
@@ -32,7 +32,7 @@ def run_boundary_summary(
 
 def spawn_view_label(row: SpawnRecord) -> str | None:
     entry_chat = row.chat_id or "?"
-    target = row.continue_chat_id or entry_chat
+    target = row.current_chat_id or entry_chat
     status = row.run_boundary.status if row.run_boundary is not None else None
     running = "; run in progress" if row.status not in TERMINAL_SPAWN_STATUSES else ""
     if status == "mismatch":

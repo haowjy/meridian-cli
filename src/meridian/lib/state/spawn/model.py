@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, cast
+from typing import Any, Literal, Self, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
-from meridian.lib.core.types import OptionalPersistedChatId, OptionalPersistedHarnessSessionId
+from meridian.lib.core.types import (
+    OptionalPersistedChatId,
+    OptionalPersistedHarnessSessionId,
+    normalize_optional_identity,
+)
 
 LaunchMode = Literal["background", "foreground", "app"]
 SpawnKind = Literal["child", "primary", "streaming"]
@@ -89,6 +93,18 @@ class RunBoundaryOutcome(BaseModel):
     trampoline_successor_id: str | None = None
 
 
+class LegacyRunBoundaryOutcome(RunBoundaryOutcome):
+    """Read-only old schema: validate retired evidence before normalizing it away."""
+
+    exit_chat_id: OptionalPersistedChatId = None
+
+    @model_validator(mode="after")
+    def _verified_has_exit_chat(self) -> Self:
+        if (self.status == "verified") != (self.exit_chat_id is not None):
+            raise ValueError("exit_chat_id must be set exactly when status is verified")
+        return self
+
+
 class SpawnStateFields(BaseModel):
     """Fields shared by the stored and prompt-bearing state projections."""
 
@@ -149,12 +165,12 @@ class SpawnStateFields(BaseModel):
         boundary = raw.get("run_boundary")
         if not isinstance(boundary, dict) or "exit_chat_id" not in boundary:
             return raw
+        legacy = LegacyRunBoundaryOutcome.model_validate(boundary)
+        current_chat_id = normalize_optional_identity(raw.get("current_chat_id"))
         normalized = dict(raw)
-        legacy = dict(cast("dict[str, Any]", boundary))
-        exit_chat_id = legacy.pop("exit_chat_id")
-        normalized["run_boundary"] = legacy
-        if exit_chat_id and not normalized.get("current_chat_id"):
-            normalized["current_chat_id"] = exit_chat_id
+        normalized["run_boundary"] = legacy.model_dump(exclude={"exit_chat_id"})
+        if current_chat_id is None and legacy.exit_chat_id is not None:
+            normalized["current_chat_id"] = legacy.exit_chat_id
         return normalized
 
 

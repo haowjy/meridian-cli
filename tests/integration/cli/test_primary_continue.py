@@ -143,7 +143,7 @@ def _record_primary_launch(monkeypatch: pytest.MonkeyPatch) -> list[LaunchReques
 
 
 def test_primary_exit_reporting_preserves_saved_identity(tmp_path, monkeypatch):
-    from meridian.lib.ops.run_boundary import run_boundary_summary
+    from meridian.lib.ops.run_boundary import run_boundary_summary, spawn_view_label
     from meridian.lib.state.spawn.model import RunBoundaryOutcome
 
     runtime_root = _state_root(tmp_path)
@@ -187,6 +187,12 @@ def test_primary_exit_reporting_preserves_saved_identity(tmp_path, monkeypatch):
     assert run_boundary_summary(observed, include_unverified=False) == (
         "entry c-primary (session-41) → last observed chat c-observed"
     )
+    historical = observed.model_copy(update={
+        "record_mode": "historical", "run_boundary": RunBoundaryOutcome(status="verified"),
+    })
+    assert historical.continue_chat_id is None
+    assert run_boundary_summary(historical) == "entry c-primary (session-41) → exit c-observed"
+    assert spawn_view_label(historical) == "p41 → c-observed (verified exit chat)"
 
 
 def test_primary_continue_maps_source_contract_to_launch_request(
