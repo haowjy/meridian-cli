@@ -14,7 +14,14 @@ The same pointer carries a verified post-exit session (Pi): Meridian proves the
 native transcript before reusing or creating that chat, then publishes it as
 current. A 0.9.4 spawn whose `run_boundary` names a verified `exit_chat_id` is
 read as that run's current chat and rewritten without the old field on its next
-update; its continuation target does not change.
+update; its continuation target does not change. The retired exit field is
+validated before removal; invalid evidence is not promoted to a current pointer.
+
+`pN` inherits settings and work from the selected chat's current generation,
+just like an explicit `cN`, even when no startup hook ran. It is not a frozen
+snapshot of the original run's policy or fork source generation. New launches
+record their final policy on the conversation before native execution; older
+generations use their recorded run link, never a newest-owner guess.
 
 Observation does not prove that a transcript was saved. Actual resume and read
 operations still validate the exact native transcript and refuse missing or
