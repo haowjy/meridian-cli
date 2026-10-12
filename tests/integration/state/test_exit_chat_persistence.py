@@ -3,9 +3,11 @@
 from functools import partial
 from pathlib import Path
 
+import pytest
+
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.ops.reference import resolve_session_reference
-from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.spawn.model import RunBoundaryOutcome, SpawnRecord
 
 
@@ -90,7 +92,9 @@ def test_observed_chat_inherits_metadata_without_transcript_or_live_lease(tmp_pa
     assert record.skill_paths == ("/skills/one",)
     assert record.params == ("--flag",)
     assert record.active_work_id == "work-a"
-    assert record.spawn_id == "p1"
+    assert record.spawn_id is None  # An observation is not another execution.
+    assert record.launch_policy_snapshot == snapshot
+    assert (runtime / "sessions.jsonl").stat().st_mode & 0o777 == 0o600
     assert record.stopped_at is not None
     assert record.session_instance_id != original.session_instance_id
     assert record.history_id is not None and record.history_id != original.history_id
@@ -101,8 +105,8 @@ def test_observed_chat_inherits_metadata_without_transcript_or_live_lease(tmp_pa
     assert record.claude_config_dir == original.claude_config_dir
     assert session_store.list_active_sessions(runtime) == []
     assert session_store.get_session_record(runtime, source) == original
-    spawn_store.update_spawn(runtime, "p1", current_chat_id=observed)
     row = spawn_store.get_spawn(runtime, "p1")
+    assert row is not None and row.current_chat_id == observed
     assert row is not None and row.chat_id == source and row.harness_session_id == "entry"
     for ref in ("p1", observed):
         selected = resolve_session_reference(tmp_path, ref, runtime_root=runtime)
@@ -124,10 +128,76 @@ def test_observed_chat_inherits_metadata_without_transcript_or_live_lease(tmp_pa
         runtime, observed, "claude", str(tmp_path / "native"), "following", spawn_id="p1"
     )
     assert session_store.get_session_active_work_id(runtime, following) == "work-b"
-    session_store.update_session_work_id(runtime, observed, "")
+    session_store.update_session_work_id(runtime, following, "")
     assert resolve_session_reference(
         tmp_path, "p1", runtime_root=runtime,
     ).source_work_id is None  # Explicit detachment must not fall back to old spawn work.
+
+    # Resume an existing conversation, then /new: inherit its policy, not p1's.
+    other_policy = LaunchPolicySnapshot(
+        model="model-b", harness="claude", agent="reviewer", env={"OBSERVED_SETTING": "kept"},
+    )
+    other_id = session_store.reserve_chat_id(runtime)
+    spawn_store.start_spawn(
+        runtime, spawn_id="p2", chat_id=other_id, harness="claude",
+        model="model-b", agent="reviewer", prompt="other", kind="primary",
+        launch_policy_snapshot=other_policy,
+    )
+    other = session_store.start_session(
+        runtime, chat_id=other_id, spawn_id="p2", harness="claude",
+        harness_session_id="existing", native_store=str(tmp_path / "other-native"),
+        model="model-b", agent="reviewer", kind="primary",
+    )
+    session_store.update_session_work_id(runtime, other, "other-work")
+    session_store.stop_session(runtime, other)
+    before = session_store.get_session_record(runtime, other)
+    assert session_store.get_or_create_observed_chat(
+        runtime, following, "claude", str(tmp_path / "other-native"), "existing", spawn_id="p1",
+    ) == other
+    assert session_store.get_session_record(runtime, other) == before
+    newest = session_store.get_or_create_observed_chat(
+        runtime, source, "claude", str(tmp_path / "other-native"), "newest", spawn_id="p1",
+    )  # The locked current pointer wins over this stale source argument.
+    selected = resolve_session_reference(tmp_path, newest, runtime_root=runtime)
+    assert selected.source_launch_policy_snapshot == other_policy
+    assert selected.source_work_id == "other-work"
+    assert resolve_session_reference(
+        tmp_path, "p1", runtime_root=runtime,
+    ).source_launch_policy_snapshot == other_policy
+    assert session_store.get_session_record(runtime, source) == original
+    assert session_identity.get_session_record_for_spawn(runtime, "p1") == original
+
+
+def test_observed_chat_is_protected_by_its_live_run_not_a_copied_lease(tmp_path: Path):
+    runtime = tmp_path / "runtime"
+    entry = session_store.reserve_chat_id(runtime)
+    spawn_store.start_spawn(
+        runtime, spawn_id="p1", chat_id=entry, harness="claude", kind="primary",
+        model="", agent="", prompt="",
+    )
+    session_store.start_session(
+        runtime, chat_id=entry, spawn_id="p1", harness="claude", model="",
+        harness_session_id="entry", native_store=str(tmp_path / "native"),
+    )
+    try:
+        current = session_store.get_or_create_observed_chat(
+            runtime, entry, "claude", str(tmp_path / "native"), "current", spawn_id="p1",
+        )
+        assert not session_store.is_session_lease_owner_alive(runtime, current)
+        assert session_identity.live_observer_for_chat(runtime, current) == "p1"
+        with pytest.raises(ValueError, match="in use by live run p1"):
+            session_store.start_session(
+                runtime, chat_id=current, harness="claude", model="",
+                harness_session_id="current", native_store=str(tmp_path / "native"),
+            )
+    finally:
+        session_store.stop_session(runtime, entry)
+    assert session_identity.live_observer_for_chat(runtime, current) is None
+    session_store.start_session(
+        runtime, chat_id=current, harness="claude", model="",
+        harness_session_id="current", native_store=str(tmp_path / "native"),
+    )
+    session_store.stop_session(runtime, current)
 
 
 def test_spawn_current_chat_precedes_boundary_but_not_mismatch():
@@ -137,6 +207,7 @@ def test_spawn_current_chat_precedes_boundary_but_not_mismatch():
     assert row.continue_chat_id == "c-new"
     terminal = row.model_copy(update={"status": "succeeded"})
     assert terminal.continue_chat_id == "c-new"
+    assert terminal.model_copy(update={"record_mode": "historical"}).continue_chat_id is None
     mismatch = row.model_copy(update={
         "run_boundary": RunBoundaryOutcome(status="mismatch"),
     })

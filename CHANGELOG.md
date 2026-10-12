@@ -12,9 +12,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Trim duplicate Claude boundary tests and run recorder edge checks without subprocesses.
 
 ### Fixed
-- Require native transcript proof before reusing any exit chat, not just creating one.
+- Continue Claude from its last observed chat, including live `/clear` and `/resume` switches, without requiring a final callback. Keep exact transcript checks at resume/read time.
+- Require native transcript proof before verified exit-chat reuse, not just creation.
 - Preserve Claude plugin-resolution warnings; valid symlinked plugins no longer appear missing.
-- Create complete chats for newly observed sessions, carrying current settings/work without copying history, fork lineage or live leases. Reusing an existing chat preserves its settings and work.
+- Create complete chats for newly observed sessions, carrying current settings/work without copying history, fork lineage or live leases. Reusing an existing chat preserves its settings and work. Block concurrent Meridian-managed resume/capture; warn when a native switch overlaps another live owner.
 
 ## [0.9.3] - 2026-10-11
 

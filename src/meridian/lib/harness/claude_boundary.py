@@ -1,4 +1,4 @@
-"""Read bounded, launch-correlated Claude hook receipts; never discover a transcript."""
+"""Decode bounded, launch-correlated Claude SessionStart journal records."""
 
 from __future__ import annotations
 
@@ -8,55 +8,70 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from meridian.lib.core.native_identity import NativeKey, PostExit
+from meridian.lib.core.native_identity import (
+    NativeKey,
+    NativeObservation,
+    NativeObservationBatch,
+    Operation,
+)
 
-
-class _Identity(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid")
-    session_id: str = Field(min_length=1, max_length=256, pattern=r"^[a-zA-Z0-9_-]+$")
-    transcript_path: str = Field(min_length=1, max_length=4096, pattern=r"^[^\x00-\x1f]+$")
-
-    def key(self) -> NativeKey:
-        path = Path(self.transcript_path)
-        if not path.is_absolute() or path.name != f"{self.session_id}.jsonl":
-            raise ValueError("not an exact native transcript path")
-        return NativeKey("claude", str(path.parent.resolve()), self.session_id)
+_READ_LIMIT = 64 * 1024
+_ENTRY_OPERATIONS: dict[str, Operation] = {"startup": "create", "resume": "resume", "fork": "fork"}
 
 
 class _Record(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
+
     v: int
     launch_nonce: str = Field(min_length=1, max_length=256)
     pid: int = Field(gt=0)
-    initial: _Identity | None
-    current: _Identity
-    event: Literal["SessionStart", "SessionEnd"]
-    reason: str | None
+    source: Literal["startup", "resume", "fork", "clear", "compact"]
+    session_id: str = Field(min_length=1, max_length=256, pattern=r"^[a-zA-Z0-9_-]+$")
+    transcript_path: str = Field(min_length=1, max_length=4096, pattern=r"^[^\x00-\x1f]+$")
+
+    def observation(self, next_cursor: int) -> NativeObservation:
+        path = Path(self.transcript_path)
+        if not path.is_absolute() or path.name != f"{self.session_id}.jsonl":
+            raise ValueError("not an exact native transcript path")
+        return NativeObservation(
+            key=NativeKey("claude", str(path.parent.resolve()), self.session_id),
+            entry_operation=_ENTRY_OPERATIONS.get(self.source),
+            next_cursor=next_cursor,
+        )
 
 
-def read_boundary(path: Path, *, nonce: str, pid: int | None) -> PostExit:
-    """Switches, missing startup, stale/non-final receipts cannot establish an exit.
+def read_observations(
+    path: Path,
+    *,
+    nonce: str,
+    pid: int,
+    cursor: int,
+) -> NativeObservationBatch:
+    """Read complete journal lines from *cursor*, filtering foreign ownership facts."""
 
-    Receipts establish owned identity, not persistence. The shared finalizer uses
-    the adapter's exact transcript resolver to gate every exit-chat allocation,
-    including reuse of an already-bound chat.
-    """
     try:
         with path.open("rb") as handle:
-            raw = handle.read(16 * 1024 + 1)
-        if len(raw) > 16 * 1024:
-            return PostExit()
-        record = _Record.model_validate(json.loads(raw))
-        if (record.v != 1 or record.launch_nonce != nonce
-                or record.pid != pid or record.initial is None):
-            return PostExit()
-        initial = record.initial.key()
-        final = (
-            record.current.key()
-            if record.event == "SessionEnd"
-            and record.reason in {"prompt_input_exit", "logout", "other"}
-            else None
-        )
-        return PostExit(entry_observed=initial, exit=final)
-    except (OSError, ValueError, ValidationError):
-        return PostExit()
+            handle.seek(cursor)
+            raw = handle.read(_READ_LIMIT + 1)
+    except (OSError, ValueError):
+        return NativeObservationBatch(next_cursor=cursor)
+    if not raw:
+        return NativeObservationBatch(next_cursor=cursor)
+
+    bounded = raw[:_READ_LIMIT]
+    final_newline = bounded.rfind(b"\n")
+    if final_newline < 0:
+        return NativeObservationBatch(next_cursor=cursor)
+
+    consumed = bounded[: final_newline + 1]
+    observations: list[NativeObservation] = []
+    next_cursor = cursor
+    for line in consumed.splitlines(keepends=True):
+        next_cursor += len(line)
+        try:
+            record = _Record.model_validate(json.loads(line))
+            if record.v == 2 and record.launch_nonce == nonce and record.pid == pid:
+                observations.append(record.observation(next_cursor))
+        except (ValueError, ValidationError):
+            continue
+    return NativeObservationBatch(tuple(observations), cursor + len(consumed))

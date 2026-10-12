@@ -1,4 +1,4 @@
-"""Claude command-hook receipt writer; stdlib only to fit the shutdown hook budget."""
+"""Append privacy-safe Claude SessionStart facts; stdlib only."""
 
 from __future__ import annotations
 
@@ -6,13 +6,13 @@ import contextlib
 import json
 import os
 import sys
-import tempfile
 from pathlib import Path
 from typing import cast
 
-_LIMIT = 16 * 1024
-# Native hook input may include a large user prompt; the receipt never retains it.
 _INPUT_LIMIT = 1024 * 1024
+_RECORD_LIMIT = 8 * 1024
+_JOURNAL_LIMIT = 1024 * 1024
+_SOURCES = frozenset({"startup", "resume", "fork", "clear", "compact"})
 
 
 def record() -> None:
@@ -23,6 +23,7 @@ def record() -> None:
     path = Path(destination)
     if not path.is_absolute():
         return
+
     raw = sys.stdin.buffer.read(_INPUT_LIMIT + 1)
     if len(raw) > _INPUT_LIMIT:
         return
@@ -30,8 +31,11 @@ def record() -> None:
     if not isinstance(decoded, dict):
         return
     payload = cast("dict[str, object]", decoded)
-    event = payload.get("hook_event_name")
-    if event not in ("SessionStart", "SessionEnd"):
+    source = payload.get("source")
+    if (
+        payload.get("hook_event_name") != "SessionStart"
+        or not isinstance(source, str) or source not in _SOURCES
+    ):
         return
     session_id = payload.get("session_id")
     transcript = payload.get("transcript_path")
@@ -40,61 +44,35 @@ def record() -> None:
     native = Path(transcript)
     if not native.is_absolute() or native.name != f"{session_id}.jsonl":
         return
-    current = {"session_id": session_id, "transcript_path": transcript}
-    # The hook command execs this interpreter, so its parent is the Claude child.
-    # A nested Claude inheriting these variables must not replace its parent's receipt.
-    pid = os.getppid()
-    initial: object = (
-        current
-        if event == "SessionStart" and payload.get("source") in ("startup", "resume", "fork")
-        else None
-    )
+
+    # A leading separator isolates a prior short/torn append from this record.
+    line = b"\n" + json.dumps(
+        {
+            "v": 2,
+            "launch_nonce": nonce,
+            # The hook command execs this interpreter; its parent is Claude.
+            "pid": os.getppid(),
+            "source": source,
+            "session_id": session_id,
+            "transcript_path": transcript,
+        },
+        separators=(",", ":"),
+    ).encode() + b"\n"
+    if len(line) > _RECORD_LIMIT:
+        return
+
+    # O_CREAT creates only the file, never a deleted spawn parent. One O_APPEND
+    # write preserves file append order without interleaving record bytes.
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     try:
-        with path.open("rb") as handle:
-            previous_raw = handle.read(_LIMIT + 1)
-        if len(previous_raw) > _LIMIT:
-            initial = None
-        else:
-            previous_decoded = json.loads(previous_raw)
-            previous = (
-                cast("dict[str, object]", previous_decoded)
-                if isinstance(previous_decoded, dict) else {}
-            )
-            if not previous.get("launch_nonce"):
-                initial = None
-            elif previous.get("launch_nonce") == nonce:
-                if previous.get("pid") != pid:
-                    return
-                initial = previous.get("initial")
-    except FileNotFoundError:
-        pass
-    except (OSError, ValueError):
-        initial = None
-    receipt = {
-        "v": 1,
-        "launch_nonce": nonce,
-        "pid": pid,
-        "initial": initial,
-        "current": current,
-        "event": event,
-        "reason": payload.get("reason") if event == "SessionEnd" else payload.get("source"),
-    }
-    # Never recreate a deleted spawn directory. Only the launcher owns its lifetime.
-    temporary: str | None = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as handle:
-            temporary = handle.name
-            json.dump(receipt, handle, separators=(",", ":"))
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
+        os.fchmod(fd, 0o600)
+        if os.fstat(fd).st_size >= _JOURNAL_LIMIT:
+            return
+        os.write(fd, line)
     finally:
-        if temporary is not None:
-            Path(temporary).unlink(missing_ok=True)
+        os.close(fd)
 
 
 if __name__ == "__main__":
-    # A failed observer must not break Claude or write into the conversation.
-    # Missing/invalid receipts remain unverified at Meridian's post-exit seam.
     with contextlib.suppress(OSError, ValueError):
         record()

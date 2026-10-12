@@ -5,3 +5,11 @@ control_root/task_cwd/execution_cwd at spawn/session write sites. Other
 persisted path-like fields (claude_config_dir, agent_path, skill_paths) still
 accept raw strings — extend the same write-boundary normalization if their
 consumers ever compare or dedupe on path equality.
+
+[current-chat settings] Each newly observed conversation stores an immutable
+LaunchPolicySnapshot inline in sessions.jsonl, including skill bodies, profile,
+env and inventory prompt. This keeps replay independent of a pruned observing
+run and preserves the selected chat's policy across /resume -> /new. Measure
+journal growth and fold cost before frequent-switch workloads; if material,
+deduplicate immutable snapshots by content, without making a cache authoritative
+or reverting to the observing run's potentially different settings.

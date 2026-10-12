@@ -151,6 +151,8 @@ class SpawnRecord(SpawnStateFields):
     @property
     def continue_chat_id(self) -> str | None:
         """Current observed chat, or the legacy verified terminal chat."""
+        if self.record_mode == "historical":
+            return None
         if self.run_boundary is not None and self.run_boundary.status == "mismatch":
             return self.chat_id
         if self.current_chat_id is not None:

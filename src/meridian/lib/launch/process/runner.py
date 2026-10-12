@@ -953,6 +953,11 @@ def run_harness_process(
                 def _record_primary_started(child_pid: int) -> None:
                     nonlocal native_primary_tui_pid
                     native_primary_tui_pid = child_pid
+                    native_run.start_observing(
+                        harness_adapter,
+                        child_env=child_env,
+                        pid=child_pid,
+                    )
                     lifecycle_service.mark_running(
                         primary_spawn_id,
                         launch_mode=FOREGROUND_LAUNCH_MODE,

@@ -5,12 +5,24 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from meridian.lib.core.resolved_context import ResolvedContext
+from meridian.lib.core.types import SpawnId
 from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
 from meridian.lib.state.runtime_root import derive_runtime_root_from_project
 from meridian.lib.state.user_paths import get_project_home
 
 if TYPE_CHECKING:
     from pytest import MonkeyPatch
+
+
+class _CurrentChatBackend:
+    def get_current_chat_id(self, runtime_root: Path, spawn_id: SpawnId) -> str | None:
+        _ = runtime_root, spawn_id
+        return "c-current"
+
+    def get_session_active_work_id(self, runtime_root: Path, chat_id: str) -> str | None:
+        _ = runtime_root
+        return {"c-current": "work-current", "c-explicit": "work-explicit"}.get(chat_id)
 
 
 def test_derive_runtime_root_uses_project_id_user_home(tmp_path: Path) -> None:
@@ -92,3 +104,31 @@ def test_resolve_runtime_authority_honors_empty_override_over_project_state(
 
     assert authority.runtime_root == override.resolve()
     assert authority.runtime_root_source == "env"
+
+
+def test_ambient_context_follows_spawn_current_chat_but_explicit_chat_does_not(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    project_root = tmp_path / "project"
+    runtime_root.mkdir()
+    project_root.mkdir()
+    monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p1")
+    monkeypatch.setenv("MERIDIAN_CHAT_ID", "c-entry")
+    monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_ID", "work-stale")
+
+    ambient = ResolvedContext.from_environment(
+        explicit_project_root=project_root,
+        explicit_runtime_root=runtime_root,
+        backend=_CurrentChatBackend(),
+    )
+    explicit = ResolvedContext.from_environment(
+        explicit_chat_id="c-explicit",
+        explicit_project_root=project_root,
+        explicit_runtime_root=runtime_root,
+        backend=_CurrentChatBackend(),
+    )
+
+    assert (ambient.chat_id, ambient.work_id) == ("c-current", "work-current")
+    assert (explicit.chat_id, explicit.work_id) == ("c-explicit", "work-explicit")

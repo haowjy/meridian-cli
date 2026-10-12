@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -548,19 +550,20 @@ def test_unrelated_claude_trampoline_candidate_is_diagnostic(
 @pytest.mark.parametrize(
     ("fork", "initial_id", "store_suffix", "status"),
     [
-        pytest.param(False, ENTRY_SESSION_TOKEN, "", "verified", id="create-switches"),
-        pytest.param(True, "fork-native", "", "verified", id="fork-switches"),
+        pytest.param(False, ENTRY_SESSION_TOKEN, "", "unresolved", id="create-switches"),
+        pytest.param(True, "fork-native", "", "unresolved", id="fork-switches"),
         pytest.param(True, "source-native", "", "mismatch", id="fork-reuses-source"),
         pytest.param(True, "fork-native", "foreign", "mismatch", id="fork-wrong-store"),
     ],
 )
-def test_owned_claude_boundary_selects_only_validated_native_exit(
+def test_owned_claude_observations_publish_current_chat_while_running(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     fork: bool, initial_id: str, store_suffix: str, status: str,
 ) -> None:
     """Keep expensive launches for wiring/switches and the two fork-binding guards."""
     from dataclasses import replace
 
+    from meridian.lib.ops.session_target import resolve_transcript_source
     from meridian.lib.state.paths import resolve_project_runtime_root_for_write
     from tests.support.executables import prepend_fake_executables
 
@@ -598,25 +601,102 @@ def test_owned_claude_boundary_selects_only_validated_native_exit(
     )
     context = replace(context, runtime_root=resolve_project_runtime_root_for_write(root))
     fixture_config = tmp_path / "claude-boundary-fixture.json"
+    final_id = initial_id if fork or status == "mismatch" else "unpersisted"
     steps = (
-        ("SessionStart", initial_id, "fork" if fork else "startup"),
-        ("SessionEnd", initial_id, "clear"),
+        # Missing startup must not turn a later /resume into an entry mismatch.
+        ("SessionStart", initial_id if fork else "resumed", "fork" if fork else "resume"),
         ("SessionStart", "cleared", "clear"),
-        ("SessionEnd", "cleared", "resume"),
-        ("SessionStart", "resumed", "resume"),
-        ("SessionEnd", "resumed", "prompt_input_exit"),
+        ("SessionStart", final_id, "resume" if fork else "clear"),
     )
     events = [
         {"hook_event_name": event, "session_id": sid,
          "transcript_path": str(store / store_suffix / f"{sid}.jsonl"),
-         "source" if event == "SessionStart" else "reason": reason}
+         "source" if event == "SessionStart" else "reason": reason,
+         "write_transcript": sid != "unpersisted"}
         for event, sid, reason in steps
     ]
-    fixture_config.write_text(json.dumps({"events": events}))
+    release_file = tmp_path / "release-child"
+    fixture_config.write_text(json.dumps({"events": events, "wait_file": str(release_file)}))
     monkeypatch.setenv("_MERIDIAN_CLAUDE_BOUNDARY_FIXTURE_CONFIG", str(fixture_config))
 
-    outcome = run_harness_process(context, registry)
+    publication_failures = 0
+    committed_switches = []
+    if not fork and status == "unresolved":
+        from meridian.lib.state.spawn import repository
+
+        original_write = repository.atomic_write_text
+
+        def fail_final_pointer(path, text):
+            nonlocal publication_failures
+            current_id = json.loads(text).get("current_chat_id")
+            current = (
+                session_store.get_session_record(context.runtime_root, current_id)
+                if current_id else None
+            )
+            sid = current.harness_session_id if current is not None else None
+            if sid == "unpersisted" and publication_failures == 0:
+                publication_failures += 1
+                raise OSError("injected pointer publication interruption")
+            original_write(path, text)
+            if sid and (not committed_switches or committed_switches[-1] != sid):
+                committed_switches.append(sid)
+
+        monkeypatch.setattr(repository, "atomic_write_text", fail_final_pointer)
+
+    outcomes = []
+    launch = threading.Thread(
+        target=lambda: outcomes.append(run_harness_process(context, registry))
+    )
+    launch.start()
+    deadline = time.monotonic() + 8
+    row = None
+    while time.monotonic() < deadline:
+        rows = list_spawns(context.runtime_root).records
+        row = rows[0] if rows else None
+        cleared_live = any(
+            record.harness_session_id == "cleared"
+            for record in session_store.list_all_session_records(context.runtime_root)
+        )
+        current = (
+            session_store.get_session_record(context.runtime_root, row.current_chat_id)
+            if row is not None and row.current_chat_id is not None
+            else None
+        )
+        if row is not None and (
+            status == "mismatch"
+            or (
+                cleared_live
+                and current is not None
+                and current.harness_session_id == final_id.replace(
+                    ENTRY_SESSION_TOKEN, row.harness_session_id or ""
+                )
+            )
+        ):
+            break
+        time.sleep(0.02)
+    try:
+        assert row is not None
+        if status == "unresolved":
+            # Fork returns A -> B -> A; create switches without a startup hook.
+            # Both publish while the native process remains alive.
+            current = session_store.get_session_record(context.runtime_root, row.current_chat_id)
+            assert current is not None and current.harness_session_id == final_id.replace(
+                ENTRY_SESSION_TOKEN, row.harness_session_id or ""
+            )
+            if not fork:
+                assert publication_failures == 1
+    finally:
+        release_file.touch()
+        launch.join(timeout=10)
+    assert not launch.is_alive()
+    assert not any(
+        thread.name.startswith("meridian-native-observer-")
+        for thread in threading.enumerate()
+    )
+    outcome = outcomes[0]
     row = list_spawns(context.runtime_root).records[0]
+    if not fork and status == "unresolved":
+        assert committed_switches == ["resumed", "cleared", "unpersisted"]
     assert row.run_boundary is not None
     entry = session_store.get_session_record(context.runtime_root, outcome.chat_id)
     assert entry is not None
@@ -624,14 +704,29 @@ def test_owned_claude_boundary_selects_only_validated_native_exit(
     assert row.chat_id == entry.chat_id
     assert row.run_boundary.status == status
     assert outcome.exit_code == (1 if status == "mismatch" else 0)
-    if status == "verified":
+    if status == "unresolved":
         assert entry.harness_session_id is not None
         assert entry.harness_session_id not in {"cleared", "resumed", source_session_id}
         if fork:
             assert entry.harness_session_id == initial_id
-        exit_chat = session_store.get_session_record(context.runtime_root, row.continue_chat_id)
-        assert exit_chat is not None and exit_chat.harness_session_id == "resumed"
-        assert exit_chat.chat_id != entry.chat_id
+        current = session_store.get_session_record(context.runtime_root, row.continue_chat_id)
+        assert current is not None
+        if not fork:
+            assert current.harness_session_id == "unpersisted"
+            with pytest.raises(NativeSessionUnavailable, match="native_transcript_missing"):
+                resolve_transcript_source(
+                    ref=row.id,
+                    file_path=None,
+                    project_root=root,
+                    runtime_root=context.runtime_root,
+                )
+        else:
+            assert row.continue_chat_id == entry.chat_id
+        observed = [
+            record for record in session_store.list_all_session_records(context.runtime_root)
+            if record.harness_session_id == "cleared"
+        ]
+        assert len(observed) == 1
     else:
         assert entry.harness_session_id is None
         assert row.run_boundary.exit_chat_id is None

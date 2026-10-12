@@ -17,7 +17,7 @@ from meridian.lib.core.depth import (
 )
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state import paths as state_paths
-from meridian.lib.state import session_store
+from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.work_scope import WorkScope, resolve_work_scope_from_parts
 
 
@@ -28,12 +28,20 @@ class ContextBackend(Protocol):
         """Look up the active work ID for a session."""
         ...
 
+    def get_current_chat_id(self, runtime_root: Path, spawn_id: SpawnId) -> str | None:
+        """Resolve a launch snapshot to its current observed conversation."""
+        ...
+
 
 class LocalFilesystemBackend:
     """Default context backend backed by local state modules."""
 
     def get_session_active_work_id(self, runtime_root: Path, chat_id: str) -> str | None:
         return session_store.get_session_active_work_id(runtime_root, chat_id)
+
+    def get_current_chat_id(self, runtime_root: Path, spawn_id: SpawnId) -> str | None:
+        row = spawn_store.get_spawn(runtime_root, spawn_id)
+        return row.continue_chat_id if row is not None and row.current_chat_id else None
 
 
 @dataclass(frozen=True)
@@ -80,6 +88,7 @@ class ResolvedContext:
         backend_impl = backend or LocalFilesystemBackend()
 
         spawn_id_raw = os.getenv("MERIDIAN_SPAWN_ID", "").strip()
+        spawn_id = SpawnId(spawn_id_raw) if spawn_id_raw else None
         parent_spawn_id_raw = os.getenv("_MERIDIAN_PARENT_SPAWN_ID", "").strip()
         depth_raw = os.getenv(DEPTH_ENV, "0").strip()
         project_root_raw = os.getenv("MERIDIAN_PROJECT_DIR", "").strip()
@@ -116,6 +125,21 @@ class ResolvedContext:
         else:
             runtime_root = None
 
+        # MERIDIAN_CHAT_ID is a launch snapshot. Once the launcher has admitted
+        # an owned native observation, ambient commands follow the spawn's
+        # durable current pointer and resolve work from that chat. Explicit chat
+        # and work arguments retain their normal precedence.
+        if (
+            not explicit_chat_id_raw
+            and spawn_id is not None
+            and runtime_root is not None
+        ):
+            current_chat_id = backend_impl.get_current_chat_id(runtime_root, spawn_id)
+            if current_chat_id:
+                chat_id_raw = current_chat_id
+                work_id_raw = ""
+                work_dir_raw = ""
+
         # Authoritative work-ID precedence:
         # explicit override > MERIDIAN_ACTIVE_WORK_ID > session attachment.
         work_id: str | None = None
@@ -140,8 +164,6 @@ class ResolvedContext:
             if project_root is not None
             else None
         )
-
-        spawn_id = SpawnId(spawn_id_raw) if spawn_id_raw else None
 
         bound_work_dir: Path | None = None
         project_work_dir = project_paths.work_dir if project_paths is not None else None

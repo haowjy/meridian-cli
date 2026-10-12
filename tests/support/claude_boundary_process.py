@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ENTRY_SESSION_TOKEN = "__MERIDIAN_ENTRY_SESSION_ID__"
@@ -23,11 +24,17 @@ def main() -> None:
         payload = {**event, "session_id": event["session_id"].replace(ENTRY_SESSION_TOKEN, entry),
                    "transcript_path": event["transcript_path"].replace(ENTRY_SESSION_TOKEN, entry)}
         transcript = Path(payload["transcript_path"])
-        transcript.parent.mkdir(parents=True, exist_ok=True)
-        transcript.write_text(json.dumps({"sessionId": payload["session_id"]}) + "\n")
+        if event.get("write_transcript", True):
+            transcript.parent.mkdir(parents=True, exist_ok=True)
+            transcript.write_text(json.dumps({"sessionId": payload["session_id"]}) + "\n")
         subprocess.run(
             [sys.executable, str(recorder)], input=json.dumps(payload), text=True, check=True,
         )
+    wait_file = config.get("wait_file")
+    if wait_file:
+        deadline = time.monotonic() + 10
+        while not Path(wait_file).exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
 
 
 if __name__ == "__main__":

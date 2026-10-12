@@ -176,8 +176,12 @@ def test_primary_exit_reporting_preserves_saved_identity(tmp_path, monkeypatch):
     successor = row.model_copy(update={"run_boundary": RunBoundaryOutcome(
         status="unresolved", trampoline_successor_id="possible-successor",
     )})
+    observed = successor.model_copy(update={"current_chat_id": "c-observed"})
     assert (run_boundary_summary(mismatch, include_unverified=False) or "").startswith("warning:")
     assert (run_boundary_summary(successor, include_unverified=False) or "").startswith("warning:")
+    assert run_boundary_summary(observed, include_unverified=False) == (
+        "entry c-primary (session-41) → last observed chat c-observed"
+    )
 
 
 def test_primary_continue_maps_source_contract_to_launch_request(

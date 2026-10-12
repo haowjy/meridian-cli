@@ -3,7 +3,7 @@
 import json
 import secrets
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import ClassVar
 from uuid import uuid4
@@ -13,6 +13,7 @@ from meridian.lib.core.native_identity import (
     LaunchIntent,
     NativeIdentity,
     NativeKeyFields,
+    NativeObservationBatch,
     NativeSessionUnavailable,
     Operation,
     PostExit,
@@ -44,7 +45,7 @@ from meridian.lib.harness.bundle import (
     HarnessProjectionPorts,
     register_harness_bundle,
 )
-from meridian.lib.harness.claude_boundary import read_boundary
+from meridian.lib.harness.claude_boundary import read_observations
 from meridian.lib.harness.claude_idle import autocompact_off, detect_ttl
 from meridian.lib.harness.claude_preflight import (
     build_claude_preflight_result,
@@ -378,7 +379,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return HarnessPrelaunchState(env_overrides={
             "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PATH": str(
                 (runtime_root / spawn_log_subpath(spawn_id)
-                 / "claude-session-boundary.json").resolve()
+                 / "claude-session-boundary.jsonl").resolve()
             ),
             "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_NONCE": secrets.token_hex(32),
             "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PYTHON": sys.executable,
@@ -453,11 +454,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         pid: int | None,
         started_at_epoch: float | None,
     ) -> PostExit:
-        path = child_env.get("_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PATH")
-        nonce = child_env.get("_MERIDIAN_CLAUDE_SESSION_BOUNDARY_NONCE")
-        observed = read_boundary(Path(path), nonce=nonce, pid=pid) if path and nonce else PostExit()
-        # Diagnostics are independent of exit proof: the allocator may refuse a
-        # missing transcript even when the receipt names an owned final session.
+        _ = child_env, pid
         successor = reconcile_tui_trampoline_session_id(
             project_root=child_cwd,
             recorded_session_id=entry.session_id or "",
@@ -465,10 +462,21 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             native_store=Path(identity.native_store),
         )
         return PostExit(
-            entry_observed=observed.entry_observed,
-            exit=observed.exit,
             trampoline_successor_id=successor if successor != entry.session_id else None,
         )
+
+    def native_observation_reader(
+        self,
+        *,
+        child_env: Mapping[str, str],
+        pid: int,
+    ) -> Callable[[int], NativeObservationBatch] | None:
+        raw_path = child_env.get("_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PATH")
+        nonce = child_env.get("_MERIDIAN_CLAUDE_SESSION_BOUNDARY_NONCE")
+        if not raw_path or not nonce:
+            return None
+        path = Path(raw_path)
+        return lambda cursor: read_observations(path, nonce=nonce, pid=pid, cursor=cursor)
 
     def resolve_native_session_file(
         self,

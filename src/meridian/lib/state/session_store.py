@@ -11,6 +11,7 @@ from typing import IO, Any, Literal, NamedTuple, cast
 import psutil
 from pydantic import BaseModel
 
+from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import (
     BindSource,
     NativeEntryMismatch,
@@ -91,6 +92,10 @@ def _append_session_event(
                 ) and record.record_mode == "historical":
                     raise ValueError("Historical sessions are inert and cannot be mutated")
         changes.mark(HistorySource(kind="sessions"))
+        # Inherited policy can include configured environment values and prompts.
+        if not data_path.exists():
+            atomic_write_text(data_path, "")
+        data_path.chmod(0o600)
         append_event(data_path, lock_path, event, exclude_none=exclude_none)
 
 
@@ -329,6 +334,13 @@ def start_session(
         ):
             existing = get_session_record(runtime_root, resolved_chat_id)
             if existing is not None:
+                from meridian.lib.state.session_identity import live_observer_for_chat
+
+                observer = live_observer_for_chat(
+                    runtime_root, resolved_chat_id, excluding_spawn_id=spawn_id,
+                )
+                if observer is not None:
+                    raise ValueError(f"Chat {resolved_chat_id} is in use by live run {observer}")
                 outcome = bind(existing.key_fields(), event.key_fields())
                 if isinstance(outcome, Conflict):
                     report_conflict(event.chat_id, outcome, "start")
@@ -613,7 +625,9 @@ def get_initial_model_selection(
         (update.spawn_id for update in generation_updates if update.spawn_id), None,
     )
     spawn = get_spawn(runtime_root, spawn_id) if spawn_id else None
-    snapshot = spawn.launch_policy_snapshot if spawn is not None else None
+    snapshot = start.launch_policy_snapshot or (
+        spawn.launch_policy_snapshot if spawn is not None else None
+    )
     selection = ConversationModelSelection(
         requested_token=start.model or None,
         selected_token=start.model or None,
@@ -1008,6 +1022,24 @@ def append_historical_session(runtime_root: Path, record: SessionRecord) -> None
         )
 
 
+def get_session_launch_policy_snapshot(
+    runtime_root: Path, record: SessionRecord,
+) -> LaunchPolicySnapshot | None:
+    """Read settings provenance independently of an observing run's ownership."""
+    from meridian.lib.state import spawn_store
+
+    if record.launch_policy_snapshot is not None:
+        return record.launch_policy_snapshot
+    if record.spawn_id:
+        row = spawn_store.get_spawn(runtime_root, record.spawn_id)
+    elif record.kind == "primary":
+        rows = spawn_store.list_spawns(runtime_root, owner_chat_id=record.chat_id).records
+        row = next((row for row in reversed(rows) if row.kind == "primary"), None)
+    else:
+        row = None
+    return row.launch_policy_snapshot if row is not None else None
+
+
 def get_or_create_observed_chat(
     runtime_root: Path,
     source_chat_id: str,
@@ -1017,7 +1049,14 @@ def get_or_create_observed_chat(
     *,
     spawn_id: str,
 ) -> str:
-    """Reuse or materialize the complete chat for an observed native session."""
+    """Materialize and publish the current chat in one source-lock epoch.
+
+    The caller admits native evidence; this seam owns context inheritance and
+    publication. A missing/deleted run cannot create an orphan chat. Settings
+    come from the current pointer read under the lock, not a stale caller read.
+    """
+    from meridian.lib.state.spawn.model import SpawnRecord
+    from meridian.lib.state.spawn.repository import Applied, write_state_locked
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     with (
@@ -1025,14 +1064,20 @@ def get_or_create_observed_chat(
         lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
         lock_file(paths.sessions_flock),
     ):
-        return _get_or_create_observed_chat_locked(
-            runtime_root,
-            source_chat_id,
-            harness=harness,
-            native_store=native_store,
-            session_id=session_id,
-            spawn_id=spawn_id,
+        def observe(row: SpawnRecord) -> SpawnRecord:
+            chat_id = _get_or_create_observed_chat_locked(
+                runtime_root, row.current_chat_id or source_chat_id,
+                harness=harness, native_store=native_store, session_id=session_id,
+            )
+            return row.model_copy(update={"current_chat_id": chat_id})
+
+        result = write_state_locked(
+            paths.spawns_dir, spawn_id, observe, allow_terminal_overwrite=True,
         )
+        if not isinstance(result, Applied):
+            raise ValueError(f"Observed session has no live spawn record: {spawn_id}")
+        assert result.after.current_chat_id is not None
+        return result.after.current_chat_id
 
 
 def get_or_create_exit_chat(
@@ -1061,7 +1106,6 @@ def _get_or_create_observed_chat_locked(
     harness: str,
     native_store: str,
     session_id: str,
-    spawn_id: str | None = None,
 ) -> str:
     """Materialize context, not a second live execution or a copy of its lineage.
 
@@ -1082,12 +1126,13 @@ def _get_or_create_observed_chat_locked(
     chat_id = reserve_chat_id(runtime_root)
     generation = uuid.uuid4().hex
     now = utc_now_iso()
+    settings = source.model_dump(include=set(SessionSettings.model_fields))
+    settings["launch_policy_snapshot"] = get_session_launch_policy_snapshot(runtime_root, source)
     start = SessionStartEvent(
         chat_id=ChatId(chat_id), history_id=uuid.uuid4(), kind=source.kind,
         harness=harness, harness_session_id=HarnessSessionId(session_id),
         native_store=native_store, session_instance_id=generation, started_at=now,
-        spawn_id=spawn_id if spawn_id is not None else source.spawn_id,
-        **source.model_dump(include=set(SessionSettings.model_fields)),
+        **settings,
     )
     for event in (
         start,

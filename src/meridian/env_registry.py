@@ -212,7 +212,10 @@ ENV_VARS: tuple[EnvVar, ...] = (
         "MERIDIAN_ACTIVE_WORK_DIR", "Active work artifact directory.", hook_field="work_dir"
     ),
     _public_handle("MERIDIAN_ACTIVE_WORK_ID", "Active work identifier.", hook_field="work_id"),
-    _public_handle("MERIDIAN_CHAT_ID", "Current Meridian chat identifier."),
+    _public_handle(
+        "MERIDIAN_CHAT_ID",
+        "Launch-time chat identifier; ambient commands resolve the run's current chat.",
+    ),
     _public_handle(
         "MERIDIAN_PROJECT_DIR",
         "Current Meridian project directory.",

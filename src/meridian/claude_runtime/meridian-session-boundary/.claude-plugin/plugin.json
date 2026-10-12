@@ -1,5 +1,5 @@
 {
   "name": "meridian-session-boundary",
   "version": "0.1.0",
-  "description": "Records launch-correlated Claude session boundaries so Meridian can verify the final native transcript."
+  "description": "Reports launch-correlated Claude SessionStart identity observations to Meridian."
 }

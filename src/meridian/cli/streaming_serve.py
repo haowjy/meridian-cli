@@ -163,6 +163,12 @@ async def streaming_serve(
                 nonlocal connection, started_pid
                 connection = started_connection
                 started_pid = connection.subprocess_pid
+                if started_pid is not None:
+                    native_run.start_observing(
+                        launch_ctx.harness,
+                        child_env=connection_config.child_env,
+                        pid=started_pid,
+                    )
                 fold.bind_scope(connection.session_id)
                 if connection.session_id:
                     native_run.observe(connection.session_id)

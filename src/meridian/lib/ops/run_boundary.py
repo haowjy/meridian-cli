@@ -16,6 +16,8 @@ def run_boundary_summary(
         return f"entry {entry} → exit {boundary.exit_chat_id}"
     if boundary.status == "mismatch":
         return f"warning: Session identity mismatch; recorded entry {entry}."
+    if row.current_chat_id and row.current_chat_id != row.chat_id:
+        return f"entry {entry} → last observed chat {row.current_chat_id}"
     if boundary.trampoline_successor_id:
         return (
             "warning: Possible session change detected "
@@ -29,13 +31,18 @@ def run_boundary_summary(
 
 def spawn_view_label(row: SpawnRecord) -> str | None:
     entry_chat = row.chat_id or "?"
+    current_chat = row.current_chat_id or entry_chat
     if row.status not in TERMINAL_SPAWN_STATUSES:
+        if current_chat != entry_chat:
+            return f"{row.id} → {current_chat} (last observed chat; run in progress)"
         return f"{row.id} → {entry_chat} (entry chat; run in progress)"
     boundary = row.run_boundary
     if boundary is None:
         return f"{row.id} → {entry_chat} (entry chat; run predates exit tracking)"
     if boundary.status == "mismatch":
         return f"{row.id} → {entry_chat} (entry chat; session identity mismatch)"
+    if current_chat != entry_chat:
+        return f"{row.id} → {current_chat} (last observed chat)"
     if boundary.status == "unresolved":
         return f"{row.id} → {entry_chat} (entry chat; exit-session identity unverified)"
     return f"{row.id} → {row.continue_chat_id} (verified exit chat)"

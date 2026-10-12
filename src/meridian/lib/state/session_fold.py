@@ -9,6 +9,7 @@ from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import BindSource, NativeKey, NativeKeyFields
 from meridian.lib.core.types import (
     HarnessSessionId,
@@ -33,6 +34,7 @@ class SessionSettings(BaseModel):
     execution_cwd: str | None = None
     claude_config_dir: str | None = None
     active_work_id: str | None = None
+    launch_policy_snapshot: LaunchPolicySnapshot | None = None
 
 
 class SessionRecord(SessionSettings):

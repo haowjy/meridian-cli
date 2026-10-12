@@ -91,7 +91,8 @@ def test_generated_histories_match_pre_restructure_fold(tmp_path: Path) -> None:
         (tmp_path / "sessions.jsonl").write_text("".join(json.dumps(e) + "\n" for e in events))
         with capture_logs() as logs:
             result = [
-                [r.model_dump(mode="json") for r in f(tmp_path)]
+                # Compare the pre-restructure schema, not later additive settings.
+                [r.model_dump(mode="json", exclude={"launch_policy_snapshot"}) for r in f(tmp_path)]
                 for f in (s.list_session_generations, s.list_all_session_records)
             ]
         assert not logs
