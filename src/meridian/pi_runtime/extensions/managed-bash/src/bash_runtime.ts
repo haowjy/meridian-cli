@@ -129,6 +129,8 @@ const TASK_PING_INTERVAL_ENV = "_MERIDIAN_PI_TASK_PING_INTERVAL_MS";
 const TASK_PING_RESET_ON_ACTIVITY_ENV = "_MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY";
 export const USER_BASH_PANEL_BACKGROUND_MSG = "Sent to background — /ps";
 
+const OWNERSHIP_LOST = "ownership_lost: previous runtime exited; inspect manually or use bash_manage detach to release tracking";
+
 const ownersKey = Symbol.for("meridian.pi.managed-bash.owners.v2");
 const scope = globalThis as typeof globalThis & { [ownersKey]?: Map<string, BashRuntime> };
 const owners = scope[ownersKey] ??= new Map<string, BashRuntime>();
@@ -678,8 +680,9 @@ export class BashRuntime {
     this.runtimeError = file.runtime_error;
     for (const plain of Object.values(file.records)) {
       const record = runtimeRecord(plain);
-      if (record.status === "running") {
-        record.execution_error = "ownership_lost: previous runtime exited; inspect manually or use bash_manage detach to release tracking";
+      if (record.status === "running" && !record.execution_error?.includes(OWNERSHIP_LOST)) {
+        // Durable fault evidence is never replaced; ownership loss is added once.
+        record.execution_error = record.execution_error ? `${record.execution_error}; ${OWNERSHIP_LOST}` : OWNERSHIP_LOST;
       }
       this.records.set(record.bash_id, record);
     }

@@ -23,6 +23,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   file via another task's terminal write, and a failure that claims a task first
   prevents its clean exit from being written. A `ps` query already in flight no longer
   fails a task whose group was observed gone.
+- Keep a managed-Bash row's durable execution fault when a restart recovers it as a
+  running row: lost ownership is added once to the original error instead of replacing it.
 
 ### Changed
 - Stop rewriting the whole managed-Bash records file for every output chunk. The
