@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- An OpenCode primary stays open when its event stream goes quiet. Idle is not a quit; the TUI exit is.
+
 ## [0.9.3] - 2026-10-11
 
 ### Upgrade notes

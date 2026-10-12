@@ -445,31 +445,15 @@ class PrimaryAttachLauncher:
                 with suppress(asyncio.CancelledError, Exception):
                     consumer_task.result()
                 self._event_consumer_task = None
-                if self._connection.harness_id is HarnessId.CODEX:
-                    # Codex TUI takes over the observer endpoint after attach;
-                    # the displaced observer stream closing is normal.
-                    launched = await asyncio.shield(launch_task)
-                    tui_lifecycle_finished = True
-                    return PrimaryAttachOutcome(
-                        facts=self._facts,
-                        exit_code=launched.exit_code,
-                        session_id=session_id,
-                        tui_pid=launched.pid,
-                    )
-                await self._stop_idle_task()
-                await self._connection.stop(reason="event_stream_closed")
-                await self._stop_idle_task()
-                await self._stop_tui_launch_task(
-                    running_process,
-                    launch_task,
-                    reason="event_stream_closed",
-                )
+                # The TUI owns a primary. Observer silence, including an idle
+                # stall, is not a quit. Wait for the user to leave.
+                launched = await asyncio.shield(launch_task)
                 tui_lifecycle_finished = True
                 return PrimaryAttachOutcome(
                     facts=self._facts,
-                    exit_code=1,
+                    exit_code=launched.exit_code,
                     session_id=session_id,
-                    tui_pid=running_process.pid,
+                    tui_pid=launched.pid,
                 )
 
             launched = await asyncio.shield(launch_task)
