@@ -45,7 +45,9 @@ class NativeRun:
     fork_source_id: str | None
     on_accepted: Callable[[str], None] | None = None
     _first_seen: bool = False
-    _noted: dict[str, Conflict | None] = field(default_factory=dict)
+    _noted: dict[str, Conflict | None] = field(
+        default_factory=lambda: dict[str, Conflict | None](),
+    )
     _current_chat_id: str = ""
     _current_key: NativeKey | None = None
     _hook_started: bool = False
