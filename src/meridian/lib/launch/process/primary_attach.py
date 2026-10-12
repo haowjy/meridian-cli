@@ -436,13 +436,8 @@ class PrimaryAttachLauncher:
             )
             telemetry.clear()
 
-            consumer_task = self._event_consumer_task
             # The TUI owns the primary. Observer silence is not a quit.
             launched = await asyncio.shield(launch_task)
-            if consumer_task.done():
-                with suppress(asyncio.CancelledError, Exception):
-                    consumer_task.result()
-                self._event_consumer_task = None
             # Cancellation is only asserted when the relay was actually
             # interrupted by the signal: ``cancel_wait`` returns exit 130, while a
             # clean TUI exit returns its own code. This avoids turning a session
@@ -491,8 +486,19 @@ class PrimaryAttachLauncher:
             consumer_task = self._event_consumer_task
             if consumer_task is not None:
                 consumer_task.cancel()
-                with suppress(asyncio.CancelledError):
+                try:
                     await consumer_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    # An observer failure must not mask cancellation or skip
+                    # TUI/backend teardown.
+                    logger.warning(
+                        "primary_attach.observer_failed",
+                        spawn_id=str(self._spawn_id),
+                        exc_info=True,
+                    )
+                self._event_consumer_task = None
             await self._stop_idle_task()
             heartbeat_task = self._heartbeat_task
             if heartbeat_task is not None:

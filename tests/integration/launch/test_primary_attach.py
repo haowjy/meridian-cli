@@ -411,17 +411,21 @@ class FailingEventConnection(FakeManagedConnection):
         *,
         fail_after_started: asyncio.Event,
         stream_closed: asyncio.Event | None = None,
+        error: Exception | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._fail_after_started = fail_after_started
         self._stream_closed = stream_closed
+        self._error = error
 
     async def events(self):  # type: ignore[no-untyped-def]
         await self._fail_after_started.wait()
         self.state = "failed"
         if self._stream_closed is not None:
             self._stream_closed.set()
+        if self._error is not None:
+            raise self._error
         if False:
             yield RawHarnessEvent(event_type="unreachable", payload={}, harness_id="opencode")
 
@@ -566,19 +570,26 @@ def test_primary_attach_scope_snapshot_records_unknown_birth_sentinel_when_creat
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("observer_error", [None, RuntimeError("observer failed")])
 async def test_primary_attach_observer_end_waits_for_tui(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    observer_error: Exception | None,
 ) -> None:
     spawn_dir = tmp_path / "spawns" / "p900-liveness"
     tui_started = asyncio.Event()
+    stream_closed = asyncio.Event()
     connection = FailingEventConnection(
         fail_after_started=tui_started,
+        stream_closed=stream_closed,
+        error=observer_error,
         events=[],
         session_id="sess-dead",
         harness_id=HarnessId.OPENCODE,
     )
-    process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir)
+    process_launcher = BlockingProcessLauncher(
+        spawn_dir=spawn_dir, wait_timeout_seconds=None, wait_exit_code=0
+    )
     terminated_scopes: list[str] = []
 
     def _terminate_scope(scope: Any, *, grace_seconds: float, reason: str) -> None:
@@ -597,18 +608,30 @@ async def test_primary_attach_observer_end_waits_for_tui(
         on_running=lambda _pid: tui_started.set(),
     )
 
-    outcome = await launcher.run(
-        config=_build_config(
-            spawn_id=SpawnId("p900-liveness"),
-            control_root=tmp_path,
-            harness_id=HarnessId.OPENCODE,
-        ),
-        spec=_build_spec(),
-        cwd=tmp_path,
-        env={},
+    run_task = asyncio.create_task(
+        launcher.run(
+            config=_build_config(
+                spawn_id=SpawnId("p900-liveness"),
+                control_root=tmp_path,
+                harness_id=HarnessId.OPENCODE,
+            ),
+            spec=_build_spec(),
+            cwd=tmp_path,
+            env={},
+        )
     )
+    try:
+        async with asyncio.timeout(1.0):
+            await stream_closed.wait()
+        await asyncio.sleep(0)
+        assert not run_task.done()
+        assert connection.stop_reasons == []
+        assert terminated_scopes == []
+    finally:
+        process_launcher.release.set()
+        outcome = await run_task
 
-    assert outcome.exit_code == 143
+    assert outcome.exit_code == 0
     assert connection.stop_reasons == [None]
     assert terminated_scopes == []
     assert _read_metadata(spawn_dir)["tui_pid"] == 5252
@@ -773,9 +796,11 @@ async def test_primary_attach_codex_event_stream_closure_does_not_stop_backend_o
     assert _read_metadata(spawn_dir)["tui_pid"] == 5252
 
 
+@pytest.mark.parametrize("observer_error", [None, RuntimeError("observer failed")])
 def test_primary_attach_cancellation_after_codex_observer_displacement_cleans_tui(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    observer_error: Exception | None,
 ) -> None:
     spawn_dir = tmp_path / "spawns" / "p902-codex-cancel"
     tui_started = asyncio.Event()
@@ -783,6 +808,7 @@ def test_primary_attach_cancellation_after_codex_observer_displacement_cleans_tu
     connection = FailingEventConnection(
         fail_after_started=tui_started,
         stream_closed=stream_closed,
+        error=observer_error,
         events=[],
         session_id="sess-codex-cancel",
     )

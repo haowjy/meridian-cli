@@ -36,6 +36,8 @@ def test_aliases_and_catalog_use_distinct_argv_keys_and_operation_caches(
                     }
                 ]
             }
+        elif cmd[2] == "list":
+            payload = {"models": [{"harness_model_id": "openai/demo"}]}
         else:
             payload = {"catalog": [{"id": "openai/demo", "provider": "OpenAI"}]}
         return subprocess.CompletedProcess(cmd, 0, json.dumps(payload), "")
@@ -55,6 +57,14 @@ def test_aliases_and_catalog_use_distinct_argv_keys_and_operation_caches(
     CatalogSession(tmp_path).load_catalog()
     assert calls[-1] == calls[1]
     assert len(calls) == 3
+
+    assert model_aliases.run_mars_models_for_harness("opencode", tmp_path) == [
+        {"harness_model_id": "openai/demo"}
+    ]
+    assert calls[-1] == [
+        "/fake/mars", "models", "list", "--harness", "opencode", "--all",
+        "--json", "--no-refresh-models", "--root", str(tmp_path),
+    ]
 
 
 def test_malformed_and_failed_aliases_soft_fall_back_to_merged_file(
