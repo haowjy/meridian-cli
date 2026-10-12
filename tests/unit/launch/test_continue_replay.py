@@ -14,6 +14,7 @@ from meridian.lib.launch.continue_replay import (
     ConversationModelSelection,
     build_continue_replay_contract,
     continue_replay_source_from_reference,
+    launch_model_on_harness,
 )
 from meridian.lib.ops.reference import ResolvedSessionReference
 from meridian.lib.ops.reference_recovery import RecoveryProvenance, RecoveryResult
@@ -221,8 +222,14 @@ def _patch_intent_seams(
     monkeypatch.setattr(
         continue_replay_module, "record_model_observation", lambda *a, **k: True
     )
+    tokens = [token for token in (live, stored) if token]
     monkeypatch.setattr(
-        continue_replay_module, "run_mars_models_resolve", lambda *a, **k: {"harness": "claude"}
+        continue_replay_module,
+        "run_mars_models_for_harness",
+        lambda *a, **k: [
+            {"harness_model_id": token, "model_id": token, "provider": "claude"}
+            for token in tokens
+        ],
     )
 
 
@@ -248,6 +255,28 @@ def test_explicit_override_beats_observed(monkeypatch: pytest.MonkeyPatch) -> No
     assert live_calls == []
     assert contract.model == "explicit-token"
     assert contract.session.conversation_intent.selection_source == "explicit_override"
+
+
+def test_launch_model_stays_on_the_listed_harness_slug() -> None:
+    rows = [
+        {
+            "harness_model_id": "opencode-go/deepseek-v4.1-flash",
+            "model_id": "deepseek-v4.1-flash",
+            "provider": "opencode-go",
+        },
+        {
+            "harness_model_id": "opencode/deepseek-v4.1-flash",
+            "model_id": "deepseek-v4.1-flash",
+            "provider": "opencode",
+        },
+    ]
+
+    assert (
+        launch_model_on_harness("opencode-go/deepseek-v4.1-flash", rows)
+        == "opencode-go/deepseek-v4.1-flash"
+    )
+    assert launch_model_on_harness("deepseek-v4.1-flash", rows) is None
+    assert launch_model_on_harness("pi/deepseek-v4.1-flash", rows) is None
 
 
 def test_observed_beats_recorded(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -293,7 +322,7 @@ def test_unroutable_observed_falls_back_to_recorded(
         stored=None,
     )
     monkeypatch.setattr(
-        continue_replay_module, "run_mars_models_resolve", lambda *a, **k: None
+        continue_replay_module, "run_mars_models_for_harness", lambda *a, **k: []
     )
 
     contract = build_continue_replay_contract(source=source, runtime_root=Path("/tmp/x"))
@@ -314,8 +343,8 @@ def test_observed_routing_to_other_harness_falls_back_to_recorded(
     )
     monkeypatch.setattr(
         continue_replay_module,
-        "run_mars_models_resolve",
-        lambda *a, **k: {"route": {"harness": "opencode"}},
+        "run_mars_models_for_harness",
+        lambda *a, **k: [],
     )
 
     contract = build_continue_replay_contract(source=source, runtime_root=Path("/tmp/x"))

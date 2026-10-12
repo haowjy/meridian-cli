@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Continue keeps the source harness and looks up the last-executed model in that harness's catalog. It no longer asks Mars which harness the model token would prefer, so an OpenCode Go model is not discarded because an unconstrained resolve would pick Pi.
+
 ## [0.9.3] - 2026-10-11
 
 ### Upgrade notes

@@ -5,10 +5,10 @@ from __future__ import annotations
 import contextlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Protocol
 from uuid import UUID
 
-from meridian.lib.catalog.model_aliases import run_mars_models_resolve
+from meridian.lib.catalog.model_aliases import run_mars_models_for_harness
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessSessionId
 from meridian.lib.harness.model_observation import (
@@ -233,38 +233,62 @@ def _fallback_conversation_intent(
     )
 
 
-def _payload_harness(value: object) -> str | None:
-    if not isinstance(value, dict):
-        return None
-    harness = cast("dict[str, object]", value).get("harness")
-    return harness if isinstance(harness, str) else None
+def _row_names(row: dict[str, object]) -> set[str]:
+    names: set[str] = set()
+    launch = row.get("harness_model_id")
+    model_id = row.get("model_id")
+    provider = row.get("provider")
+    if isinstance(launch, str) and launch.strip():
+        names.add(launch.strip())
+    if isinstance(model_id, str) and model_id.strip():
+        names.add(model_id.strip())
+        if isinstance(provider, str) and provider.strip():
+            names.add(f"{provider.strip()}/{model_id.strip()}")
+    return names
 
 
-def _observed_model_routes_to_harness(token: str, harness: str) -> bool:
-    """Best-effort check that an observed token can launch on the replay harness.
+def launch_model_on_harness(token: str, rows: list[dict[str, object]]) -> str | None:
+    """Return the launch id for ``token`` on an already chosen harness's model list.
 
-    ``mars models resolve`` can return a payload for a token that does not route
-    to the harness being continued — for example an OpenCode session on an
-    unconfigured provider (``opencode/deepseek-v4-flash-free``), or a token whose
-    only candidates lack a runnable harness (``claude-fable-5``). Launch pins
-    ``--harness`` to the source session's harness, so a token must route to that
-    same harness; otherwise preferring it would make ``--continue`` fail where
-    the recorded startup selection worked.
+    The harness is fixed before this runs. A token that also exists on another
+    harness is irrelevant here. Several rows on this harness matching a bare id
+    is a miss: continue must not guess a provider.
     """
 
-    resolved: dict[str, object] | None = None
-    with contextlib.suppress(Exception):
-        resolved = run_mars_models_resolve(token)
-    if resolved is None or resolved.get("error"):
-        return False
-    if _payload_harness(resolved.get("route")) == harness or resolved.get("harness") == harness:
-        return True
-    runnable_paths = resolved.get("runnable_paths")
-    if not isinstance(runnable_paths, list):
-        return False
-    return any(
-        _payload_harness(path) == harness for path in cast("list[object]", runnable_paths)
-    )
+    normalized = token.strip()
+    if not normalized:
+        return None
+    matches: list[str] = []
+    for row in rows:
+        launch = row.get("harness_model_id")
+        if not isinstance(launch, str) or not launch.strip():
+            continue
+        if normalized in _row_names(row):
+            matches.append(launch.strip())
+    unique = list(dict.fromkeys(matches))
+    if len(unique) == 1:
+        return unique[0]
+    exact = [item for item in unique if item == normalized]
+    if len(exact) == 1:
+        return exact[0]
+    return None
+
+
+def _observed_launch_model(
+    token: str,
+    harness: str,
+    project_root: str | None,
+) -> str | None:
+    """Find ``token`` in the pinned harness catalog. Never asks Mars to pick a harness."""
+
+    root = Path(project_root) if project_root else None
+    try:
+        rows = run_mars_models_for_harness(harness, root)
+    except Exception:
+        return None
+    if not rows:
+        return None
+    return launch_model_on_harness(token, rows)
 
 
 def _observed_last_executed_model(
@@ -294,7 +318,12 @@ def _observed_last_executed_model(
     token = live if live is not None else get_last_executed_model(
         runtime_root, replay_harness, harness_session_id
     )
-    if token is None or not _observed_model_routes_to_harness(token, replay_harness):
+    if token is None:
+        return None
+    launch_model = _observed_launch_model(
+        token, replay_harness, source.source_control_root
+    )
+    if launch_model is None:
         return None
     if live is not None:
         with contextlib.suppress(Exception):
@@ -303,11 +332,11 @@ def _observed_last_executed_model(
                 SessionModelObservationEvent(
                     harness=replay_harness,
                     harness_session_id=HarnessSessionId(harness_session_id),
-                    observed_model_token=live,
+                    observed_model_token=launch_model,
                     recorded_at=utc_now_iso(),
                 ),
             )
-    return token
+    return launch_model
 
 
 def _resolve_continue_conversation_intent(

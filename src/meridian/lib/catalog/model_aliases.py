@@ -397,6 +397,63 @@ def _is_unknown_alias_error(message: str | None) -> bool:
     return "unknown alias" in message.lower()
 
 
+def run_mars_models_for_harness(
+    harness: str,
+    project_root: Path | None = None,
+) -> list[dict[str, object]] | None:
+    """List models for one harness, including rows hidden from the default catalog.
+
+    Returns ``None`` when mars cannot be run. An empty list means the harness
+    listed nothing. ``--all`` is required: user curation can hide a provider the
+    session already ran, and that must not look like "this harness has no model".
+    """
+
+    normalized = harness.strip()
+    if not normalized:
+        return None
+    mars_bin = _resolve_mars_binary()
+    if mars_bin is None:
+        return None
+    cmd = [
+        mars_bin,
+        "models",
+        "list",
+        "--harness",
+        normalized,
+        "--all",
+        "--json",
+        "--no-refresh-models",
+    ]
+    if project_root is not None:
+        cmd.extend(["--root", str(project_root)])
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        logger.debug("mars models list failed", exc_info=True)
+        return None
+    if result.returncode != 0:
+        logger.debug(
+            "mars models list --harness %s failed (rc=%d): %s",
+            normalized,
+            result.returncode,
+            result.stderr,
+        )
+        return None
+    try:
+        payload = json.loads(result.stdout)
+    except (json.JSONDecodeError, ValueError):
+        logger.debug("mars models list returned invalid JSON")
+        return None
+    if not isinstance(payload, dict):
+        return None
+    models = cast("dict[str, object]", payload).get("models")
+    if not isinstance(models, list) or not all(
+        isinstance(item, dict) for item in cast("list[object]", models)
+    ):
+        return None
+    return cast("list[dict[str, object]]", models)
+
+
 def run_mars_models_resolve(
     name: str,
     project_root: Path | None = None,
