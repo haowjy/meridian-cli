@@ -168,6 +168,17 @@ afterEach(async () => {
   }));
 });
 describe('durable result delivery', () => {
+  it('keeps a Bash infrastructure fault in its automatic result notice', async () => {
+    const root = await setup();
+    await bash(root, record('b-00000001', { status: 'killed', exit_code: -1, execution_error: 'EIO: result publication failed' }));
+    const h = host(false);
+    const runtime = owner(h);
+    await runtime.deliverAtBoundary();
+    expect(h.notices).toHaveLength(1);
+    expect(h.notices[0]!.content).toContain('EIO: result publication failed');
+    expect(h.notices[0]!.details.work_ids).toEqual(['b-00000001']);
+  });
+
   it('does not scan parent-local evidence on active timer ticks', async () => {
     const root = await setup();
     await file(root, 'bash-records.json', { records: [] });

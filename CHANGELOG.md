@@ -5,6 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Include managed-Bash execution faults in automatic completion notices instead
+  of dropping the diagnosis when projecting the task's outcome.
 - Publish a managed-Bash exit before anyone can observe it (#562). A terminal status is
   now committed in memory only once its records write lands, so `wait`, `output`,
   `kill`, `/ps` and foreground results can no longer report or consume an exit whose

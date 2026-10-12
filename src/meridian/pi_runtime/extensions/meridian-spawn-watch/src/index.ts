@@ -18,6 +18,7 @@ import {
 import type { BashRecordsFile, SpawnStateFile } from "../../shared/schemas";
 import { isTerminalBashStatus, parseBashRecordsFile, parseSpawnStateFile } from "../../shared/schemas";
 import { openLogOverlay } from "../../shared/log_overlay";
+import { bashOutcome } from "../../shared/task_outcome";
 import {
   openTaskPanel,
   hasTaskPanelUI,
@@ -241,12 +242,13 @@ export class SpawnWatchRuntime {
       }
     }
     for (const record of Object.values(bash.records)) {
+      const outcome = bashOutcome(record);
       if (record.is_tracked && record.is_background && isTerminalBashStatus(record.status)
           && record.notification_consumed_at_ms == null && !correlated.has(record.bash_id)
           && !consumed.has(record.bash_id) && !claimed.has(record.bash_id)) eligible.push({
-        id: record.bash_id, kind: "bash", status: record.status, label: record.command,
+        id: record.bash_id, kind: "bash", status: outcome.status, label: record.command,
         duration: formatDurationSecs(((record.ended_at_ms ?? Date.now()) - record.started_at_ms) / 1000),
-        exitCode: record.exit_code ?? undefined,
+        exitCode: outcome.exit_code ?? undefined, error: outcome.error,
       });
     }
     return eligible;
@@ -515,8 +517,8 @@ function bashNotificationFrame(item: NotificationItem): NotificationFrame {
   const outcome = item.exitCode === undefined ? item.duration : `exit ${item.exitCode}, ${item.duration}`;
   return {
     prefix: `Background bash ${item.id} ${item.status} (${outcome}).`,
-    detail: `Command: ${item.label}`,
-    truncationNotice: `[Command truncated to fit ${MAX_NOTIFICATION_BYTES} UTF-8 bytes.]`,
+    detail: [item.error ? `Failure: ${item.error}` : "", `Command: ${item.label}`].filter(Boolean).join("\n"),
+    truncationNotice: `[Optional Bash details truncated to fit ${MAX_NOTIFICATION_BYTES} UTF-8 bytes.]`,
     lookup: `Full output: bash_manage({action: "output", bash_id: "${item.id}"})`,
   };
 }
