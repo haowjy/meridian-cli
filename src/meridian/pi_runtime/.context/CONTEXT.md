@@ -83,7 +83,8 @@ schedule another attempt. Publication failure remains a task/storage failure.
 Cold recovery validates and retains the complete record store before accepting
 commands. Historical terminal/wait-consumed rows remain intact. Running rows
 have no recoverable process handle and retain `status=running` plus
-`execution_error=ownership_lost`; a recorded PID never authorizes signalling.
+`ownership_lost` in `execution_error` (appended once after any durable fault, never
+replacing it); a recorded PID never authorizes signalling.
 `bash_manage(kill)` explains the lost ownership, `wait` reports it, and explicit
 `detach` durably releases tracking. `runtime_error` records failed publication
 when storage permits; a successful later command can repair publication. A
