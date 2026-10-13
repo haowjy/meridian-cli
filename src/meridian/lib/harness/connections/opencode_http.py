@@ -776,11 +776,17 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             self._set_failed()
             return None
 
+        def _typed_event_loop_handles() -> tuple[
+            BackendLivenessPolicy,
+            asyncio.Queue[RawHarnessEvent],
+        ]:
+            return self._liveness, self._event_queue
+
+        async def _open_response() -> _EventStreamResponse:
+            return await self._liveness.wait_for_activity(self._open_event_stream())
+
         sse_event_type: str | None = None
         sse_data_lines: list[str] = []
-        liveness: BackendLivenessPolicy = self._liveness
-        event_queue: asyncio.Queue[RawHarnessEvent] = self._event_queue
-        open_event_stream: Callable[[], Awaitable[_EventStreamResponse]] = self._open_event_stream
 
         while self._state in ("connected", "stopping"):
             if self._process_exited():
@@ -805,9 +811,9 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 self._set_failed()
                 return
 
-            liveness.mark_activity_if_idle()
+            self._liveness.mark_activity_if_idle()
             try:
-                response = await liveness.wait_for_activity(open_event_stream())
+                response = await _open_response()
             except EventStreamLivenessTimeout:
                 event = await _handle_stall()
                 if event is not None:
@@ -852,6 +858,8 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                         continue
 
                     try:
+                        # Pyright loses these attribute types inside the nested event loop.
+                        liveness, event_queue = _typed_event_loop_handles()
                         if pending_read is None:
                             pending_read = asyncio.ensure_future(
                                 liveness.wait_for_activity(response.content.read(4096))
