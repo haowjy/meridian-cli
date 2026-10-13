@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, NoReturn, cast
+from typing import Any, Literal, NoReturn, cast
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -72,9 +72,7 @@ from meridian.lib.state.spawn.repository import (
     read_state,
     scan_spawn_ids,
 )
-
-if TYPE_CHECKING:
-    from meridian.lib.state.spawn_store import SpawnScan
+from meridian.lib.state.spawn_store import SpawnScan
 
 logger = logging.getLogger(__name__)
 
@@ -286,7 +284,7 @@ def _engine(
             finally:
                 cursor.close()
 
-        event.listens_for(engine, "connect")(configure)
+        event.listen(engine, "connect", configure)
 
     return engine
 
@@ -1452,8 +1450,6 @@ def indexed_spawn_scan(
     work_id: str | None = None,
 ) -> SpawnScan:
     """Discovery partition; corruption fails coverage rather than omitting a sibling."""
-    from meridian.lib.state.spawn_store import SpawnScan, spawn_sort_key
-
     records = HistoryIndex(runtime_root).spawns(
         chat_id=chat_id,
         related_chat_ids=related_chat_ids,
@@ -1461,4 +1457,4 @@ def indexed_spawn_scan(
         parent_id=parent_id,
         work_id=work_id,
     )
-    return SpawnScan(tuple(sorted(records, key=spawn_sort_key)), ())
+    return SpawnScan.ordered(records, ())

@@ -707,7 +707,7 @@ def mark_spawn_running(
     return _write_state_locked(paths.spawns_dir, str(spawn_id), mark_running)
 
 
-def spawn_sort_key(spawn: SpawnRecord) -> tuple[int, str]:
+def _spawn_sort_key(spawn: SpawnRecord) -> tuple[int, str]:
     if len(spawn.id) >= 2 and spawn.id[0] in {"p", "r"} and spawn.id[1:].isdigit():
         return (int(spawn.id[1:]), spawn.id)
     return (10**9, spawn.id)
@@ -719,6 +719,15 @@ class SpawnScan:
 
     records: tuple[SpawnRecord, ...]
     quarantines: tuple[SpawnStateQuarantineReport, ...]
+
+    @classmethod
+    def ordered(
+        cls,
+        records: Sequence[SpawnRecord],
+        quarantines: Sequence[SpawnStateQuarantineReport],
+    ) -> SpawnScan:
+        """Build a scan with the canonical persisted-spawn ordering."""
+        return cls(tuple(sorted(records, key=_spawn_sort_key)), tuple(quarantines))
 
 
 def quarantine_hint(spawn_ids: Sequence[str]) -> str:
@@ -759,7 +768,7 @@ def list_spawns(
     if work_id is not None:
         spawns = [spawn for spawn in spawns if spawn.work_id == work_id]
 
-    return SpawnScan(tuple(sorted(spawns, key=spawn_sort_key)), tuple(quarantines))
+    return SpawnScan.ordered(spawns, quarantines)
 
 
 def get_spawn(
