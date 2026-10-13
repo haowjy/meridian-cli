@@ -371,11 +371,11 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         )
 
     def _build_command(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> list[str]:
-        _ = config
         return project_subprocess_spec(
             self.harness_id,
             spec,
             base_command=BASE_COMMAND_CLAUDE_STREAMING,
+            env=config.child_env,
         )
 
     async def _send_user_turn(self, text: str) -> None:

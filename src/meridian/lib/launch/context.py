@@ -87,7 +87,7 @@ from .composition import (
 )
 from .constants import DRY_RUN_REPORT_PATH, REPORT_FILENAME, SYSTEM_PROMPT_FILENAME
 from .cwd import LaunchDirectoryContext
-from .env import build_env_plan
+from .env import build_env_plan, undo_direnv
 from .env import merge_env_overrides as _merge_env_overrides
 from .permissions import (
     CLAUDE_NATIVE_DELEGATION_TOOLS,
@@ -1782,6 +1782,16 @@ def bind_launch_context(
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
     system_temp_root = Path(tempfile.gettempdir()).resolve()
     resolved_request = prepared.request
+    ignore_direnv = resolved_request.ignore_direnv
+    if ignore_direnv is None:
+        config = (
+            MeridianConfig.model_validate(runtime.config_snapshot)
+            if runtime.config_snapshot
+            else load_config(project_paths.project_root)
+        )
+        ignore_direnv = config.environment.ignore_direnv
+    # Capture once before deriving any environment-dependent launch overlays.
+    base_env = undo_direnv(os.environ) if ignore_direnv else dict(os.environ)
     harness = prepared.harness
     effective_session_id = bindings.forked_harness_session_id or prepared.seed_harness_session_id
     composition_warnings = prepared.composition_warnings
@@ -1851,7 +1861,7 @@ def bind_launch_context(
     workspace_projection = project_workspace_roots(
         harness_id=harness.id,
         roots=projected_roots,
-        parent_opencode_config_content=os.getenv(OPENCODE_CONFIG_CONTENT_ENV),
+        parent_opencode_config_content=base_env.get(OPENCODE_CONFIG_CONTENT_ENV),
     )
     projected_extra_args = preflight.expanded_passthrough_args
     if workspace_projection.diagnostics:
@@ -2058,6 +2068,9 @@ def bind_launch_context(
     elif harness.id == HarnessId.CLAUDE:
         spec = spec.model_copy(update={"prompt_file_path": system_prompt_path.as_posix()})
     launch_env_overrides: dict[str, str] = {}
+    # Resolve before restoring the environment, then carry the decision to
+    # descendants even when direnv originally supplied the setting itself.
+    launch_env_overrides["MERIDIAN_IGNORE_DIRENV"] = str(ignore_direnv).lower()
     if opencode_version is not None:
         launch_env_overrides["MERIDIAN_HARNESS_OPENCODE_VERSION"] = opencode_version
     child_context_env = build_child_runtime_env_overrides(
@@ -2101,7 +2114,7 @@ def bind_launch_context(
     )
     bind_env_overrides.update(workspace_projection.env_overrides)
     env = build_env_plan(
-        base_env=os.environ,
+        base_env=base_env,
         adapter=harness,
         run_inputs=run_params,
         permission_config=permission_config,
@@ -2132,6 +2145,7 @@ def bind_launch_context(
             run_inputs=run_params,
             perms=perms,
             projected_spec=spec,
+            env=env,
         )
 
     binding = ResolvedLaunchBinding(

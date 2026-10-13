@@ -55,9 +55,8 @@ from meridian.lib.harness.pi_lifecycle_events import (
     redact_pi_command_for_history,
 )
 from meridian.lib.harness.pi_paths import (
-    pi_agent_dir_env_override,
     pi_meridian_state_dir_env_override,
-    pi_spawn_session_root_env_override,
+    resolve_pi_agent_dir,
     resolve_pi_spawn_session_root,
 )
 from meridian.lib.harness.pi_runtime_resolver import (
@@ -467,12 +466,12 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return {}
 
     def env_defaults(
-        self, config: PermissionConfig, *, run: SpawnParams
+        self, config: PermissionConfig, *, run: SpawnParams, env: Mapping[str, str]
     ) -> dict[str, str]:
         _ = config
         defaults = {
-            **pi_agent_dir_env_override(),
-            **pi_spawn_session_root_env_override(),
+            "PI_CODING_AGENT_DIR": str(resolve_pi_agent_dir(env=env)),
+            "PI_CODING_AGENT_SESSION_DIR": str(resolve_pi_spawn_session_root(env=env)),
         }
         if run.interactive:
             defaults["PI_CACHE_RETENTION"] = "long"

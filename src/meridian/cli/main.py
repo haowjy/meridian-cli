@@ -463,6 +463,10 @@ def root(
         bool,
         Parameter(name="--dry-run", help="Preview launch command without starting harness."),
     ] = False,
+    ignore_direnv: Annotated[
+        bool | None,
+        Parameter(help="Undo inherited direnv changes before launching the harness."),
+    ] = None,
 ) -> None:
     """Launch or resume the primary harness."""
 
@@ -525,6 +529,7 @@ def root(
             sandbox=sandbox,
             timeout=timeout,
             dry_run=dry_run,
+            ignore_direnv=ignore_direnv,
             passthrough=get_global_options().passthrough_args,
             reference_files=tuple(references),
             prompt=resolved_prompt,

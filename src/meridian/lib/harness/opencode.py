@@ -48,7 +48,11 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.connections.opencode_connection import OpenCodeConnection
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview, SessionSeed
-from meridian.lib.harness.opencode_backend import resolve_opencode_version
+from meridian.lib.harness.opencode_backend import (
+    detect_opencode_version,
+    normalize_version_preference,
+    resolve_opencode_version,
+)
 from meridian.lib.harness.opencode_idle import autocompact_off, primary_idle_sensor
 from meridian.lib.harness.opencode_report import extract_opencode_session_id
 from meridian.lib.harness.opencode_storage import (
@@ -149,6 +153,19 @@ def project_opencode_spec_to_session_payload_for_project(
     return project_opencode_spec_to_session_payload(spec)
 
 
+def resolve_opencode_subprocess_spec(
+    spec: ResolvedLaunchSpec, env: Mapping[str, str]
+) -> ResolvedLaunchSpec:
+    """Resolve the resume guard using the launch environment; projection stays pure."""
+    if spec.interactive or not spec.continue_session_id or spec.model is None:
+        return spec
+    preference = normalize_version_preference(spec.opencode_version)
+    if preference in ("v1", "v2"):
+        return spec.model_copy(update={"opencode_version": preference})
+    # Unknown versions forward the flag; only a positively identified V1 rejects it.
+    return spec.model_copy(update={"opencode_version": detect_opencode_version(env=env)})
+
+
 def project_opencode_primary_preview(
     spec: ResolvedLaunchSpec,
     *,
@@ -158,6 +175,7 @@ def project_opencode_primary_preview(
     version = resolve_opencode_version(
         (env or {}).get("MERIDIAN_HARNESS_OPENCODE_VERSION"),
         binary="opencode",
+        env=env if env is not None else {},
     )
     backend = project_opencode_spec_to_serve_command(spec, host="127.0.0.1", port=0)
     backend[backend.index("--port") + 1] = "<port>"
@@ -665,6 +683,7 @@ register_harness_bundle(
         connections={TransportId.STREAMING: OpenCodeConnection},
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_opencode_spec_to_cli_args,
+            resolve_subprocess_spec=resolve_opencode_subprocess_spec,
             managed_primary=ManagedPrimaryProjectionPorts(
                 backend_command=project_opencode_spec_to_serve_command,
                 bootstrap_payload=project_opencode_spec_to_session_payload_for_project,

@@ -34,7 +34,8 @@ LaunchContext                      ← complete at construction; ready to run
 once with `dry_run=True` for `--dry-run` display, then again with real spawn-ID and
 paths for actual execution. `prepare_launch_surface()` is expensive (mars calls, profile
 loading, prompt assembly) and safe to do once before the session is opened.
-`bind_launch_context()` is cheap (microseconds) and called as many times as needed.
+`bind_launch_context()` is repeatable; ignoring an active direnv environment invokes
+a bounded subprocess on each bind, including previews.
 
 ### PreparedLaunchSurface
 
@@ -209,6 +210,18 @@ connection boundary.
 The orchestrator reads `os.getenv("_MERIDIAN_HARNESS")` at wait time to determine
 its own yield interval — it is asking about *its own* harness's prompt-cache TTL,
 not the spawns it is waiting on.
+
+### Direnv Inheritance
+
+`environment.ignore_direnv` is resolved from the config snapshot unless the launch
+request explicitly overrides it. Bind reverses direnv's recorded diff before
+deriving environment overlays (including OpenCode workspace JSON). Adapter defaults
+and executable probes consume the effective environment, never ambient `os.environ`.
+Bind emits the resolved `MERIDIAN_IGNORE_DIRENV` into the
+child environment. Descendants retain the decision even if direnv supplied its
+original env input. `env.py:undo_direnv` uses direnv's own reversal, with a bounded
+subprocess only when `DIRENV_DIFF` exists; captured environment and stderr must
+never appear in errors or artifacts. This does not prevent tools reloading `.env`.
 
 ### Harness Profile Env Projection at Bind
 

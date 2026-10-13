@@ -92,6 +92,7 @@ def build_primary_spawn_request(
         agent_opt_out=request.agent_opt_out,
         skills=request.skills,
         extra_args=request.passthrough_args,
+        ignore_direnv=request.ignore_direnv,
         supplemental_prompt_documents=request.supplemental_prompt_documents,
         context_from=request.context_from,
         reference_files=request.reference_files,

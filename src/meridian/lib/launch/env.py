@@ -1,7 +1,11 @@
 """Child-process environment helpers shared by launch and spawn paths."""
 
+import json
 import math
+import shutil
+import subprocess
 from collections.abc import Callable, Collection, Mapping
+from pathlib import Path
 from typing import cast
 
 from meridian.lib.core.child_env import ALLOWED_CHILD_ENV_KEYS
@@ -17,6 +21,41 @@ _PI_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR"
 _PI_CHILD_WAVE_TIMEOUT_MS_ENV = "_MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS"
 _PI_TASK_PING_INTERVAL_MS_ENV = "_MERIDIAN_PI_TASK_PING_INTERVAL_MS"
 _PI_TASK_PING_RESET_ON_ACTIVITY_ENV = "_MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY"
+
+
+def undo_direnv(base_env: Mapping[str, str]) -> dict[str, str]:
+    """Ask direnv to reverse its diff without evaluating shell output or loading an rc.
+
+    The filesystem root has no ancestors to search. Refuse a root rc rather
+    than accidentally load another environment. Never expose captured env or
+    direnv stderr in an exception: either can contain credentials.
+    """
+    if not base_env.get("DIRENV_DIFF"):
+        return dict(base_env)
+    root = Path("/")
+    if any((root / name).exists() for name in (".envrc", ".env")):
+        raise ValueError("Cannot ignore direnv: the filesystem root contains an environment file.")
+    executable = shutil.which("direnv", path=base_env.get("PATH", ""))
+    if executable is None:
+        raise ValueError("Cannot ignore direnv: DIRENV_DIFF is set but direnv is not on PATH.")
+    executable = str(Path(executable).resolve())
+    try:
+        result = subprocess.run(
+            [executable, "exec", str(root), executable, "dump", "json"],
+            env=dict(base_env),
+            capture_output=True,
+            check=True,
+            timeout=10,
+        )
+        restored = json.loads(result.stdout)
+        if not isinstance(restored, dict) or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in cast("dict[object, object]", restored).items()
+        ):
+            raise ValueError("Invalid direnv environment")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        raise ValueError("Cannot ignore direnv: environment restoration failed.") from None
+    return cast("dict[str, str]", restored)
 
 
 def apply_pi_bind_time_env(
@@ -183,7 +222,9 @@ def build_harness_child_env(
         env_overrides=merged_env,
         blocked=BLOCKED_CHILD_ENV_VARS | adapter_blocked | RUNTIME_OVERRIDE_ENV_VARS,
     )
-    for key, value in adapter.env_defaults(permission_config, run=run_params).items():
+    for key, value in adapter.env_defaults(
+        permission_config, run=run_params, env=child_env
+    ).items():
         if not child_env.get(key, "").strip():
             child_env[key] = value
     return child_env

@@ -213,6 +213,7 @@ def build_create_payload(
             pi_task_ping_interval_seconds=parse_duration_seconds(payload.task_ping_interval),
             pi_task_ping_reset_on_activity=payload.task_ping_reset_on_activity,
             env=_resolve_spawn_env(payload),
+            ignore_direnv=payload.ignore_direnv,
         )
 
         if runtime is not None:

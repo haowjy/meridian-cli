@@ -278,6 +278,7 @@ def _shared_launch_input_kwargs(
     task_ping_interval: str | None,
     task_ping_reset_on_activity: bool | None,
     env: tuple[str, ...],
+    ignore_direnv: bool | None = None,
 ) -> SpawnLaunchOptionUpdates:
     return {
         "dry_run": dry_run,
@@ -299,6 +300,7 @@ def _shared_launch_input_kwargs(
         "task_ping_interval": task_ping_interval,
         "task_ping_reset_on_activity": task_ping_reset_on_activity,
         "env": env,
+        "ignore_direnv": ignore_direnv,
     }
 
 
@@ -313,6 +315,10 @@ def _spawn_create(
         ),
     ] = None,
     *,
+    ignore_direnv: Annotated[
+        bool | None,
+        Parameter(help="Undo inherited direnv changes before launching the harness."),
+    ] = None,
     prompt: Annotated[
         str | None,
         Parameter(
@@ -664,6 +670,7 @@ def _spawn_create(
         task_ping_reset_on_activity=task_ping_reset_on_activity,
         debug=debug,
         env=env,
+        ignore_direnv=ignore_direnv,
     )
     logger.debug(
         "spawn_launcher_phase",

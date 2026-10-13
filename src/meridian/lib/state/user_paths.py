@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tomllib
+from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
@@ -12,11 +13,11 @@ from meridian.lib.config.preserving_edit import (
     project_config_transaction,
     set_project_id,
 )
-from meridian.lib.platform import IS_WINDOWS, get_home_path
+from meridian.lib.platform import IS_WINDOWS, expand_home_path, get_home_path
 from meridian.lib.state.wordgen import generate_project_id
 
 
-def get_user_home() -> Path:
+def get_user_home(*, env: Mapping[str, str] | None = None) -> Path:
     """Return the user-level Meridian data directory.
 
     Resolution order:
@@ -27,22 +28,23 @@ def get_user_home() -> Path:
          (fallback: %USERPROFILE%\\AppData\\Local\\meridian\\)
     """
 
-    override = os.getenv("MERIDIAN_HOME", "").strip()
+    source = os.environ if env is None else env
+    override = source.get("MERIDIAN_HOME", "").strip()
     if override:
-        return Path(override).expanduser()
+        return expand_home_path(override, env=env)
 
     if IS_WINDOWS:
-        local_app_data = os.getenv("LOCALAPPDATA", "").strip()
+        local_app_data = source.get("LOCALAPPDATA", "").strip()
         if local_app_data:
             return Path(local_app_data) / "meridian"
 
-        user_profile = os.getenv("USERPROFILE", "").strip()
+        user_profile = source.get("USERPROFILE", "").strip()
         if user_profile:
             return Path(user_profile) / "AppData" / "Local" / "meridian"
 
-        return get_home_path() / "AppData" / "Local" / "meridian"
+        return get_home_path(env=env) / "AppData" / "Local" / "meridian"
 
-    return get_home_path() / ".meridian"
+    return get_home_path(env=env) / ".meridian"
 
 
 def get_committed_project_id(project_root: Path) -> str | None:

@@ -90,6 +90,13 @@ def _internal_handle(name: str, purpose: str, *, child: bool = True) -> EnvVar:
 
 
 ENV_VARS: tuple[EnvVar, ...] = (
+    EnvVar(
+        "MERIDIAN_IGNORE_DIRENV",
+        EnvTier.PUBLIC,
+        EnvSubtype.CONFIG_INPUT,
+        "Undo direnv changes before harness launch; propagate resolved launch policy.",
+        child=True,
+    ),
     # Public configuration inputs.
     _public_config("MERIDIAN_AGENT", "Default agent selection."),
     _public_config("MERIDIAN_APPROVAL", "Harness approval policy override."),
