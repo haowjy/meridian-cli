@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, cast
 
+from typing_extensions import TypeIs
+
 from meridian.lib.core.domain import (
     ACTIVE_SPAWN_STATUSES,
     ALL_SPAWN_STATUSES,
@@ -223,8 +225,15 @@ def is_active_spawn_status(status: str) -> bool:
     return status in ACTIVE_SPAWN_STATUSES
 
 
-def is_terminal_spawn_status(status: str) -> bool:
+def is_terminal_spawn_status(status: str) -> TypeIs[TerminalSpawnStatus]:
     return status in TERMINAL_SPAWN_STATUSES
+
+
+def parse_terminal_status(status: str) -> TerminalSpawnStatus:
+    """Return a validated terminal status, raising for active or unknown values."""
+    if is_terminal_spawn_status(status):
+        return status
+    raise ValueError(f"Invalid terminal spawn status: {status!r}")
 
 
 def coerce_spawn_status(status: str) -> SpawnStatus:

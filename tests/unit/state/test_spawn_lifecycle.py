@@ -1,6 +1,9 @@
+import pytest
+
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     has_durable_report_completion,
+    parse_terminal_status,
     resolve_completion_cancel_precedence,
     resolve_execution_terminal_outcome,
     resolve_execution_terminal_state,
@@ -21,6 +24,17 @@ OPENCODE_LIVE_MESSAGE_PART_UPDATED = (
     '"tool":"bash","type":"tool"},"sessionID":"ses_16cf44268ffeswweMeU0xmAtPb",'
     '"time":1780583483021},"type":"message.part.updated"}'
 )
+
+
+@pytest.mark.parametrize("status", ["succeeded", "failed", "cancelled", "timed_out"])
+def test_parse_terminal_status_accepts_domain_terminal_values(status: str) -> None:
+    assert parse_terminal_status(status) == status
+
+
+@pytest.mark.parametrize("status", ["queued", "running", "finalizing", "unknown"])
+def test_parse_terminal_status_rejects_nonterminal_values(status: str) -> None:
+    with pytest.raises(ValueError, match="Invalid terminal spawn status"):
+        parse_terminal_status(status)
 
 
 def test_has_durable_report_completion_distinguishes_completion_from_cancel_artifacts() -> None:
