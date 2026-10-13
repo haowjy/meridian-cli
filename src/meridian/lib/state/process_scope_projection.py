@@ -16,13 +16,15 @@ import json
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import cast
+
+from pydantic import ConfigDict, TypeAdapter, ValidationError, with_config
+from typing_extensions import NotRequired, TypedDict
 
 from meridian.lib.core.spawn_lifecycle import is_terminal_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
-from meridian.lib.platform.process_scope.base import process_scope_release_id
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.spawn.repository import read_state, spawn_lock_path
@@ -37,6 +39,25 @@ _FIRST_WRITER_WAIT_SECONDS = 2.0
 class ScopeProjection(TypedDict):
     scopes: list[object]
     released: list[object]
+
+
+@with_config(ConfigDict(strict=True, extra="forbid"))
+class ScopeRow(TypedDict):
+    scope_id: str
+    owner_policy: str
+    owner_id: str
+    role: str
+    containment: str
+    root_pid: int
+    root_created_at_epoch: float
+    pgid: int | None
+    job_name: str | None
+    degraded_reason: str | None
+    parent_death_linked: NotRequired[bool]
+    release_id: NotRequired[str]
+
+
+_SCOPE_ROW_ADAPTER = TypeAdapter(ScopeRow)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -100,79 +121,24 @@ def _mutate_scope_projection(
         return updated
 
 
-def scope_snapshot_from_dict(data: dict[str, object]) -> ProcessScopeSnapshot | None:
+def scope_snapshot_from_dict(data: object) -> ProcessScopeSnapshot | None:
     """Deserialize one scope dict; return None on any error."""
     try:
-        expected_fields = {
-            "scope_id",
-            "owner_policy",
-            "owner_id",
-            "role",
-            "containment",
-            "root_pid",
-            "root_created_at_epoch",
-            "pgid",
-            "job_name",
-            "degraded_reason",
-            "parent_death_linked",
-            "release_id",
-        }
-        required_fields = expected_fields - {"parent_death_linked", "release_id"}
-        if not required_fields <= data.keys() or not data.keys() <= expected_fields:
-            raise TypeError("missing or unexpected process scope fields")
-
-        scope_id = data.get("scope_id")
-        owner_policy = data.get("owner_policy")
-        owner_id = data.get("owner_id")
-        role = data.get("role")
-        containment = data.get("containment")
-        root_pid = data.get("root_pid")
-        root_created_at_epoch = data.get("root_created_at_epoch")
-        pgid = data.get("pgid")
-        job_name = data.get("job_name")
-        degraded_reason = data.get("degraded_reason")
-        parent_death_linked = data.get("parent_death_linked", False)
-        release_id = data.get("release_id", "")
-        if (
-            not isinstance(scope_id, str)
-            or not isinstance(owner_policy, str)
-            or not isinstance(owner_id, str)
-            or not isinstance(role, str)
-            or not isinstance(containment, str)
-            or not isinstance(root_pid, int)
-            or isinstance(root_pid, bool)
-            or not isinstance(root_created_at_epoch, int | float)
-            or isinstance(root_created_at_epoch, bool)
-            or (pgid is not None and (not isinstance(pgid, int) or isinstance(pgid, bool)))
-            or (job_name is not None and not isinstance(job_name, str))
-            or (degraded_reason is not None and not isinstance(degraded_reason, str))
-            or not isinstance(parent_death_linked, bool)
-            or not isinstance(release_id, str)
-        ):
-            raise TypeError("invalid process scope field type")
-        if not release_id:
-            release_id = process_scope_release_id(
-                scope_id=scope_id,
-                root_pid=root_pid,
-                root_created_at_epoch=float(root_created_at_epoch),
-            )
-        return ProcessScopeSnapshot(
-            scope_id=scope_id,
-            owner_policy=owner_policy,
-            owner_id=owner_id,
-            role=role,
-            containment=containment,
-            root_pid=root_pid,
-            root_created_at_epoch=float(root_created_at_epoch),
-            pgid=pgid,
-            job_name=job_name,
-            degraded_reason=degraded_reason,
-            parent_death_linked=parent_death_linked,
-            release_id=release_id,
-        )
-    except Exception:
+        row = _SCOPE_ROW_ADAPTER.validate_python(data)
+        return ProcessScopeSnapshot(**row)
+    except (TypeError, ValidationError):
         logger.debug("process_scope_projection: failed to deserialize scope: %r", data)
         return None
+
+
+def parse_scope_entries(entries: list[object]) -> list[ProcessScopeSnapshot]:
+    """Deserialize the valid process scopes in one persisted entry list."""
+    scopes: list[ProcessScopeSnapshot] = []
+    for entry in entries:
+        snapshot = scope_snapshot_from_dict(entry)
+        if snapshot is not None:
+            scopes.append(snapshot)
+    return scopes
 
 
 # ---------------------------------------------------------------------------
@@ -291,13 +257,7 @@ def read_scope_projection(
     except TimeoutError:
         payload = _read_raw(path)
 
-    scopes: list[ProcessScopeSnapshot] = []
-    for entry in payload["scopes"]:
-        if not isinstance(entry, dict):
-            continue
-        snapshot = scope_snapshot_from_dict(cast("dict[str, object]", entry))
-        if snapshot is not None:
-            scopes.append(snapshot)
+    scopes = parse_scope_entries(payload["scopes"])
     released_ids = frozenset(entry for entry in payload["released"] if isinstance(entry, str))
     return ScopeProjectionSnapshot(scopes=tuple(scopes), released_ids=released_ids)
 
@@ -331,6 +291,7 @@ __all__ = [
     "ScopeProjectionSnapshot",
     "is_scope_released",
     "mark_scope_released",
+    "parse_scope_entries",
     "read_scope_projection",
     "read_scopes_from_disk",
     "record_scope",
