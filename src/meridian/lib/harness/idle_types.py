@@ -36,9 +36,7 @@ class PinnedIdleSession:
 class NativeIdleHook:
     """One intercepted native callback's observation and downstream delegation."""
 
-    observe: Callable[
-        [str, Callable[[str], PinnedIdleSession | None]], IdleEvent | None
-    ]
+    observe: Callable[[str, Callable[[str], PinnedIdleSession | None]], IdleEvent | None]
     delegate: Callable[[str, Mapping[str, str]], None]
 
 
@@ -102,7 +100,7 @@ class DetectIdleTtl(Protocol):
         self,
         *,
         session_id: str,
-        cwd: Path | None,
+        native_store: Path | None,
         provider: str | None,
         env: Mapping[str, str],
     ) -> CacheTtl | None: ...

@@ -17,6 +17,7 @@ from meridian.lib.harness.idle_types import CacheTtl
         ("openai", {}, None),
         ("openai", {"PI_CACHE_RETENTION": "short"}, None),
         ("OpenAI", {"PI_CACHE_RETENTION": "long"}, CacheTtl(1800, estimated=True)),
+        ("openai-codex", {}, CacheTtl(1800, estimated=True)),
         ("google", {"PI_CACHE_RETENTION": "long"}, None),
         (None, {"PI_CACHE_RETENTION": "long"}, None),
     ],
@@ -26,4 +27,12 @@ def test_pi_detect_ttl_provider_retention_matrix(
     env: Mapping[str, str],
     expected: CacheTtl | None,
 ) -> None:
-    assert pi_idle.detect_ttl(provider, env) == expected
+    assert (
+        pi_idle.detect_ttl(
+            session_id="pi-session",
+            native_store=None,
+            provider=provider,
+            env=env,
+        )
+        == expected
+    )

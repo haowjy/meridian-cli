@@ -14,6 +14,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   primary and spawned harness launches; carry the setting to descendants.
 
 ### Fixed
+- Detect Claude idle cache TTLs from each chat's recorded native transcript store,
+  even after the session changes directory, and recognize Pi's `openai-codex`
+  provider as an estimated 30-minute cache.
 - Keep cleaned environments authoritative for OpenCode workspace config and
   version probes, and Pi auth/session directory defaults. No ambient-env reinjection.
 - Keep OpenCode and Codex primary event-stream liveness timeout messages at debug level so quiet sessions do not print warnings.

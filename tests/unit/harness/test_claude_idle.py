@@ -7,7 +7,6 @@ from typing import BinaryIO
 import pytest
 
 from meridian.lib.harness import claude_idle
-from meridian.lib.harness.claude_sessions import project_slug
 from meridian.lib.harness.idle_types import CacheTtl
 
 
@@ -28,11 +27,13 @@ def _assistant_row(*, one_hour: int = 0, five_minutes: int = 0) -> bytes:
 
 
 def _transcript_path(tmp_path: Path, *, session_id: str = "session-id") -> tuple[Path, Path]:
-    home = tmp_path / "home"
-    cwd = tmp_path / "project.with.dot"
-    transcript = home / ".claude" / "projects" / project_slug(cwd) / f"{session_id}.jsonl"
-    transcript.parent.mkdir(parents=True)
-    return cwd, transcript
+    native_store = tmp_path / "recorded-native-store"
+    native_store.mkdir()
+    return native_store, native_store / f"{session_id}.jsonl"
+
+
+def _transcript(*rows: bytes, session_id: str = "session-id") -> bytes:
+    return b"\n".join([json.dumps({"sessionId": session_id}).encode(), *rows, b""])
 
 
 @pytest.mark.parametrize(
@@ -48,31 +49,29 @@ def test_detect_ttl_from_transcript_fixtures(
     row: bytes,
     expected: int | None,
 ) -> None:
-    cwd, transcript = _transcript_path(tmp_path)
-    transcript.write_bytes(row + b"\n")
+    native_store, transcript = _transcript_path(tmp_path)
+    transcript.write_bytes(_transcript(row))
 
-    assert (
-        claude_idle.detect_ttl(
-            "session-id",
-            cwd,
-            env={"HOME": str(tmp_path / "home")},
-        )
-        == (CacheTtl(expected, estimated=False) if expected is not None else None)
-    )
+    assert claude_idle.detect_ttl(
+        session_id="session-id",
+        native_store=native_store,
+        provider=None,
+        env={},
+    ) == (CacheTtl(expected, estimated=False) if expected is not None else None)
 
 
 def test_detect_ttl_ignores_a_truncated_last_line(tmp_path: Path) -> None:
-    cwd, transcript = _transcript_path(tmp_path)
-    transcript.write_bytes(_assistant_row(one_hour=1) + b'\n{"type":"assistant","message":')
-
-    assert (
-        claude_idle.detect_ttl(
-            "session-id",
-            cwd,
-            env={"HOME": str(tmp_path / "home")},
-        )
-        == CacheTtl(3600, estimated=False)
+    native_store, transcript = _transcript_path(tmp_path)
+    transcript.write_bytes(
+        _transcript(_assistant_row(one_hour=1)).rstrip(b"\n") + b'\n{"type":"assistant","message":'
     )
+
+    assert claude_idle.detect_ttl(
+        session_id="session-id",
+        native_store=native_store,
+        provider=None,
+        env={},
+    ) == CacheTtl(3600, estimated=False)
 
 
 class _CountingReader:
