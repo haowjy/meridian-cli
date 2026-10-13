@@ -113,19 +113,24 @@ def report_legacy_native_import(
             continue
         fact = cast("dict[str, object]", raw_fact)
         chat_id = fact.get("chat_id")
-        if not chat_id:
+        if not isinstance(chat_id, str) or not chat_id:
             continue
-        typed_chat_id = cast("str", chat_id)
+        raw_prior_session_ids = fact.get("harness_session_ids")
+        if raw_prior_session_ids is None:
+            prior_session_ids: list[object] = []
+        elif isinstance(raw_prior_session_ids, list):
+            prior_session_ids = cast("list[object]", raw_prior_session_ids)
+        else:
+            continue
         for key in ("execution_cwd", "task_cwd", "control_root"):
             value = fact.get(key)
             if isinstance(value, str) and value:
-                cwds[typed_chat_id].add(Path(value))
+                cwds[chat_id].add(Path(value))
         if event.get("source") == "legacy_import":
-            previously_imported.add(typed_chat_id)
-        prior_session_ids = cast("list[object]", fact.get("harness_session_ids") or [])
+            previously_imported.add(chat_id)
         for value in [fact.get("harness_session_id"), *prior_session_ids]:
             if isinstance(value, str) and value.strip():
-                ids[typed_chat_id].add(value.strip())
+                ids[chat_id].add(value.strip())
     spawns: defaultdict[str, list[SpawnRecord]] = defaultdict(list)
     for spawn_id in scan_spawn_ids(runtime_root / "spawns"):
         spawn = read_state(runtime_root / "spawns", spawn_id, include_prompt=False)

@@ -146,6 +146,28 @@ def test_refuse_ambiguity_wrong_header_and_disagreeing_ids(homes: tuple[Path, Pa
     assert all(chat.native_store is None for chat in session_store.list_all_session_records(root))
 
 
+def test_malformed_historical_id_rows_are_skipped(homes: tuple[Path, Path]) -> None:
+    home, root = homes
+    session_id = "native-id"
+    _chat(root, 1, "claude", session_id)
+    source = _claude(home, root, session_id)
+    with (root / "sessions.jsonl").open("a") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "event": "update",
+                    "chat_id": "c1",
+                    "harness_session_ids": "not-an-id-array",
+                }
+            )
+            + "\n"
+        )
+
+    report = legacy.report_legacy_native_import(root)
+
+    assert report.bindings["c1"] == (session_id, str(source.parent))
+
+
 @pytest.mark.parametrize("interactive", [False, True], ids=["spawn-scoped", "interactive-root"])
 def test_pi_import_matches_spawn_and_interactive_stores(
     homes: tuple[Path, Path],
