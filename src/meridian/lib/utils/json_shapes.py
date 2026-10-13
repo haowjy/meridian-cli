@@ -30,6 +30,6 @@ def loads_json_object(text: str) -> dict[str, object] | None:
     """Decode one JSON object, returning ``None`` for invalid or non-object input."""
     try:
         value: object = json.loads(text)
-    except json.JSONDecodeError:
+    except ValueError:
         return None
     return json_object(value)
