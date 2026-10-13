@@ -38,19 +38,19 @@ def register_misc_commands(
         print(app.generate_completion(shell=normalized))
 
     @completion_app.command(name="bash")
-    def completion_bash() -> None:  # pyright: ignore[reportUnusedFunction] - registered via decorator.
+    def completion_bash() -> None:  # pyright: ignore[reportUnusedFunction]  # registered via decorator.
         _emit_completion("bash")
 
     @completion_app.command(name="zsh")
-    def completion_zsh() -> None:  # pyright: ignore[reportUnusedFunction] - registered via decorator.
+    def completion_zsh() -> None:  # pyright: ignore[reportUnusedFunction]  # registered via decorator.
         _emit_completion("zsh")
 
     @completion_app.command(name="fish")
-    def completion_fish() -> None:  # pyright: ignore[reportUnusedFunction] - registered via decorator.
+    def completion_fish() -> None:  # pyright: ignore[reportUnusedFunction]  # registered via decorator.
         _emit_completion("fish")
 
     @completion_app.command(name="install")
-    def completion_install(  # pyright: ignore[reportUnusedFunction] - registered via decorator.
+    def completion_install(  # pyright: ignore[reportUnusedFunction]  # registered via decorator.
         shell: Annotated[
             str,
             Parameter(
@@ -82,7 +82,7 @@ def register_misc_commands(
         emit({"shell": normalized_shell, "path": destination.as_posix()})
 
     @streaming_app.command(name="serve")
-    def streaming_serve_cmd(  # pyright: ignore[reportUnusedFunction] - registered via decorator.
+    def streaming_serve_cmd(  # pyright: ignore[reportUnusedFunction]  # registered via decorator.
         prompt: Annotated[
             str,
             Parameter(name=["--prompt", "-p"], help="Initial prompt for the streaming run."),
@@ -121,7 +121,7 @@ def register_misc_commands(
         )
 
     @context_app.default
-    def context_cmd(  # pyright: ignore[reportUnusedFunction] - registered via decorator.
+    def context_cmd(  # pyright: ignore[reportUnusedFunction]  # registered via decorator.
         name: Annotated[
             str | None,
             Parameter(

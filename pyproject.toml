@@ -108,6 +108,9 @@ exclude = [
 [tool.pyright]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
+# Strict rules must not be demoted. Genuine exceptions use a per-line
+# `# pyright: ignore[rule]  # reason` suppression.
+enableTypeIgnoreComments = false
 reportMissingModuleSource = false
 reportUnnecessaryTypeIgnoreComment = "error"
 venvPath = "."

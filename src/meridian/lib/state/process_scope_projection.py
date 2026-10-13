@@ -103,26 +103,72 @@ def _mutate_scope_projection(
 def scope_snapshot_from_dict(data: dict[str, object]) -> ProcessScopeSnapshot | None:
     """Deserialize one scope dict; return None on any error."""
     try:
+        expected_fields = {
+            "scope_id",
+            "owner_policy",
+            "owner_id",
+            "role",
+            "containment",
+            "root_pid",
+            "root_created_at_epoch",
+            "pgid",
+            "job_name",
+            "degraded_reason",
+            "parent_death_linked",
+            "release_id",
+        }
+        if not data.keys() <= expected_fields:
+            raise TypeError("unexpected process scope fields")
+
+        scope_id = data.get("scope_id")
+        owner_policy = data.get("owner_policy")
+        owner_id = data.get("owner_id")
+        role = data.get("role")
+        containment = data.get("containment")
+        root_pid = data.get("root_pid")
+        root_created_at_epoch = data.get("root_created_at_epoch")
+        pgid = data.get("pgid")
+        job_name = data.get("job_name")
+        degraded_reason = data.get("degraded_reason")
         parent_death_linked = data.get("parent_death_linked", False)
-        if not isinstance(parent_death_linked, bool):
-            return None
-        data["parent_death_linked"] = parent_death_linked
-        if not isinstance(data.get("release_id"), str) or not str(data.get("release_id")):
-            scope_id = data.get("scope_id")
-            root_pid = data.get("root_pid")
-            root_created_at_epoch = data.get("root_created_at_epoch")
-            if not isinstance(scope_id, str):
-                return None
-            if not isinstance(root_pid, int):
-                return None
-            if not isinstance(root_created_at_epoch, int | float):
-                return None
-            data["release_id"] = process_scope_release_id(
+        release_id = data.get("release_id", "")
+        if (
+            not isinstance(scope_id, str)
+            or not isinstance(owner_policy, str)
+            or not isinstance(owner_id, str)
+            or not isinstance(role, str)
+            or not isinstance(containment, str)
+            or not isinstance(root_pid, int)
+            or isinstance(root_pid, bool)
+            or not isinstance(root_created_at_epoch, int | float)
+            or isinstance(root_created_at_epoch, bool)
+            or (pgid is not None and (not isinstance(pgid, int) or isinstance(pgid, bool)))
+            or (job_name is not None and not isinstance(job_name, str))
+            or (degraded_reason is not None and not isinstance(degraded_reason, str))
+            or not isinstance(parent_death_linked, bool)
+            or not isinstance(release_id, str)
+        ):
+            raise TypeError("invalid process scope field type")
+        if not release_id:
+            release_id = process_scope_release_id(
                 scope_id=scope_id,
                 root_pid=root_pid,
                 root_created_at_epoch=float(root_created_at_epoch),
             )
-        return ProcessScopeSnapshot(**data)  # type: ignore[arg-type]  # Runtime validation narrows the deserialized field mapping.
+        return ProcessScopeSnapshot(
+            scope_id=scope_id,
+            owner_policy=owner_policy,
+            owner_id=owner_id,
+            role=role,
+            containment=containment,
+            root_pid=root_pid,
+            root_created_at_epoch=float(root_created_at_epoch),
+            pgid=pgid,
+            job_name=job_name,
+            degraded_reason=degraded_reason,
+            parent_death_linked=parent_death_linked,
+            release_id=release_id,
+        )
     except Exception:
         logger.debug("process_scope_projection: failed to deserialize scope: %r", data)
         return None
