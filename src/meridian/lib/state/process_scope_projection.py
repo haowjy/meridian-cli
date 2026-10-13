@@ -117,8 +117,9 @@ def scope_snapshot_from_dict(data: dict[str, object]) -> ProcessScopeSnapshot | 
             "parent_death_linked",
             "release_id",
         }
-        if not data.keys() <= expected_fields:
-            raise TypeError("unexpected process scope fields")
+        required_fields = expected_fields - {"parent_death_linked", "release_id"}
+        if not required_fields <= data.keys() or not data.keys() <= expected_fields:
+            raise TypeError("missing or unexpected process scope fields")
 
         scope_id = data.get("scope_id")
         owner_policy = data.get("owner_policy")

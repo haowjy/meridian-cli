@@ -120,6 +120,36 @@ def test_malformed_scope_sidecar_field_is_discarded(
     assert process_scope_projection.scope_snapshot_from_dict(payload) is None
 
 
+@pytest.mark.parametrize(
+    "field",
+    [
+        "scope_id",
+        "owner_policy",
+        "owner_id",
+        "role",
+        "containment",
+        "root_pid",
+        "root_created_at_epoch",
+        "pgid",
+        "job_name",
+        "degraded_reason",
+    ],
+)
+def test_scope_sidecar_missing_required_field_is_discarded(field: str) -> None:
+    payload = dataclasses.asdict(
+        _scope(
+            "p1",
+            scope_id="backend",
+            owner_policy="session_owned",
+            owner_id="c1",
+            root_pid=501,
+        )
+    )
+    del payload[field]
+
+    assert process_scope_projection.scope_snapshot_from_dict(payload) is None
+
+
 def test_scope_sidecar_without_release_id_derives_stable_identity() -> None:
     snapshot = _scope(
         "p1",
