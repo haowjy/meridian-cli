@@ -387,47 +387,23 @@ def run_browse_picker(
 
     bindings = KeyBindings()
 
-    def up(event: KeyPressEvent) -> None:
-        _ = event
-        controller.handle(Move(-1))
+    def dispatch(intent: Key) -> Callable[[KeyPressEvent], None]:
+        def handle(_event: KeyPressEvent) -> None:
+            controller.handle(intent)
 
-    bindings.add("up")(up)
+        return handle
 
-    def down(event: KeyPressEvent) -> None:
-        _ = event
-        controller.handle(Move(1))
-
-    bindings.add("down")(down)
-
-    def enter(event: KeyPressEvent) -> None:
-        _ = event
-        controller.handle(Enter())
-
-    bindings.add("enter")(enter)
-
-    def backspace(event: KeyPressEvent) -> None:
-        _ = event
-        controller.handle(Backspace())
-
-    bindings.add("backspace")(backspace)
-
-    def search(event: KeyPressEvent) -> None:
-        _ = event
-        controller.handle(Search())
-
-    bindings.add("/")(search)
-
-    def escape(event: KeyPressEvent) -> None:
-        _ = event
-        controller.handle(Escape())
-
-    bindings.add("escape")(escape)
-
-    def interrupt(event: KeyPressEvent) -> None:
-        _ = event
-        controller.handle(Interrupt())
-
-    bindings.add("c-c")(interrupt)
+    key_intents: dict[str, Key] = {
+        "up": Move(-1),
+        "down": Move(1),
+        "enter": Enter(),
+        "backspace": Backspace(),
+        "/": Search(),
+        "escape": Escape(),
+        "c-c": Interrupt(),
+    }
+    for key, intent in key_intents.items():
+        bindings.add(key)(dispatch(intent))
 
     def character(event: KeyPressEvent) -> None:
         controller.handle(Character(event.data))
