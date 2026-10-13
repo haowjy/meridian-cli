@@ -11,6 +11,8 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from pydantic import BaseModel, ConfigDict
+
 from meridian.lib.core.route_report import RouteDecisionReport
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.compiler import FieldProvenance, ProvenanceLevel
@@ -21,6 +23,7 @@ from meridian.lib.launch.launch_types import (
     TerminalSurfaceMode,
 )
 from meridian.lib.tools import ToolAction, ToolsField
+from meridian.lib.utils.json_shapes import json_object
 
 if TYPE_CHECKING:
     from meridian.lib.catalog.agent import AgentProfile
@@ -282,7 +285,7 @@ class MarsSelectionError(RuntimeError):
             for attempt in report.model_attempts:
                 attempt_reasons: list[str] = []
                 for assessment in attempt.assessments:
-                    extra = cast("dict[str, object]", assessment.model_extra or {})
+                    extra = json_object(assessment.model_extra) or {}
                     reason = extra.get("reason", assessment.verdict)
                     attempt_reasons.append(f"{assessment.harness}: {reason}")
                 reasons = ", ".join(attempt_reasons)
@@ -290,26 +293,32 @@ class MarsSelectionError(RuntimeError):
         super().__init__("; ".join([message, *details]))
 
 
+class _MarsError(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    code: object = "command_failed"
+    message: object = "Mars launch-bundle failed"
+
+
+class _MarsErrorEnvelope(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    error: _MarsError
+    route_trace: RouteDecisionReport | None = None
+
+
 def _raise_bundle_error(*, stdout: str, stderr: str, returncode: int | None = None) -> None:
     try:
         raw_payload = json.loads(stdout)
     except json.JSONDecodeError:
         raw_payload = None
-    payload = (
-        cast("dict[str, object]", raw_payload) if isinstance(raw_payload, dict) else None
-    )
-    raw_error = payload.get("error") if payload is not None else None
-    if payload is not None and isinstance(raw_error, dict):
-        error = cast("dict[str, object]", raw_error)
-        report = (
-            RouteDecisionReport.model_validate(payload["route_trace"])
-            if "route_trace" in payload
-            else None
-        )
+    payload = json_object(raw_payload)
+    if payload is not None and json_object(payload.get("error")) is not None:
+        envelope = _MarsErrorEnvelope.model_validate(payload)
         raise MarsSelectionError(
-            str(error.get("code", "command_failed")),
-            str(error.get("message", "Mars launch-bundle failed")),
-            report,
+            str(envelope.error.code),
+            str(envelope.error.message),
+            envelope.route_trace,
         )
     message = _extract_error_message(stdout=stdout, stderr=stderr)
     normalized = message.lower()

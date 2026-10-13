@@ -17,10 +17,10 @@ import zlib
 from collections.abc import Callable, Generator, Iterable
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
-from typing import IO, Literal, NamedTuple, cast
+from typing import IO, Annotated, Literal, NamedTuple, cast
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from meridian.lib.platform.atomic import fsync_directory, is_atomic_temp_name
 from meridian.lib.platform.locking import lock_file
@@ -45,6 +45,7 @@ from meridian.lib.state.retention_digest import (
 from meridian.lib.state.session_store import SessionRecord
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import StoredSpawnState, record_to_stored_state
+from meridian.lib.utils.json_shapes import json_object
 
 ARCHIVE_MEMBER_PREFIX = "meridian-history-v1/"
 _MANIFEST = ARCHIVE_MEMBER_PREFIX + "manifest.json"
@@ -59,6 +60,22 @@ _EXCLUDED = frozenset(
         "finalize-evidence.json",
         "restored-from.json",
     }
+)
+
+
+class _ArchivedSnapshotHeader(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    record: Literal["meridian.native.snapshot"]
+    transcript: TranscriptHeader
+
+
+_ArchivedTranscriptHeader = Annotated[
+    TranscriptHeader | _ArchivedSnapshotHeader,
+    Field(discriminator="record"),
+]
+_ARCHIVED_TRANSCRIPT_HEADER: TypeAdapter[_ArchivedTranscriptHeader] = TypeAdapter(
+    _ArchivedTranscriptHeader
 )
 
 
@@ -474,23 +491,19 @@ def verify_archive(
                 if len(first) > _MAX_METADATA:
                     raise ValueError("Transcript first record exceeds metadata limit")
                 header = json.loads(first)
-                typed_header = (
-                    cast("dict[str, object]", header) if isinstance(header, dict) else None
-                )
-                if (
-                    typed_header is not None
-                    and typed_header.get("record") == "meridian.transcript"
-                    and TranscriptHeader.model_validate(typed_header).history_id
-                    != record.history_id
-                ):
-                    raise ValueError("Transcript identity does not match selected record")
-                if (
-                    typed_header is not None
-                    and typed_header.get("record") == "meridian.native.snapshot"
-                    and TranscriptHeader.model_validate(typed_header.get("transcript")).history_id
-                    != record.history_id
-                ):
-                    raise ValueError("Transcript identity does not match selected record")
+                typed_header = json_object(header)
+                if typed_header is not None and typed_header.get("record") in {
+                    "meridian.transcript",
+                    "meridian.native.snapshot",
+                }:
+                    parsed_header = _ARCHIVED_TRANSCRIPT_HEADER.validate_python(typed_header)
+                    transcript_header = (
+                        parsed_header
+                        if isinstance(parsed_header, TranscriptHeader)
+                        else parsed_header.transcript
+                    )
+                    if transcript_header.history_id != record.history_id:
+                        raise ValueError("Transcript identity does not match selected record")
             for member in record.files:
                 relative = safe_member_name(member.name)
                 if (
