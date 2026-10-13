@@ -128,7 +128,7 @@ class DebugTracer:
                 try:
                     serialized = json.dumps(value, ensure_ascii=False)
                 except (TypeError, ValueError):
-                    serialized = repr(value)  # type: ignore[arg-type]
+                    serialized = repr(value)  # type: ignore[arg-type]  # Narrowed JSON containers retain untyped element parameters.
                 result[key] = self._truncate(serialized)
             else:
                 result[key] = value  # int, float, bool, None — pass through

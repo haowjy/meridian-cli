@@ -152,7 +152,7 @@ def _collect_from_directory(
     if exclude:
         exclude_spec = cast(
             "pathspec.PathSpec[Any]",
-            pathspec.PathSpec.from_lines("gitwildmatch", exclude),  # pyright: ignore[reportUnknownMemberType]
+            pathspec.PathSpec.from_lines("gitwildmatch", exclude),  # pyright: ignore[reportUnknownMemberType]  # pathspec leaves this factory incompletely typed.
         )
 
     targets: list[DiagramTarget] = []

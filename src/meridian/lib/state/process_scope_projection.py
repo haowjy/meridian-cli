@@ -122,7 +122,7 @@ def scope_snapshot_from_dict(data: dict[str, object]) -> ProcessScopeSnapshot | 
                 root_pid=root_pid,
                 root_created_at_epoch=float(root_created_at_epoch),
             )
-        return ProcessScopeSnapshot(**data)  # type: ignore[arg-type]
+        return ProcessScopeSnapshot(**data)  # type: ignore[arg-type]  # Runtime validation narrows the deserialized field mapping.
     except Exception:
         logger.debug("process_scope_projection: failed to deserialize scope: %r", data)
         return None

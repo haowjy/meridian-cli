@@ -36,7 +36,8 @@ def validate_claude_session_file(path: Path, session_id: str) -> None:
             header = json.loads(handle.readline())
     except (OSError, UnicodeError, ValueError) as exc:
         raise NativeSessionUnavailable(session_id, "missing") from exc
-    observed = header.get("sessionId") if isinstance(header, dict) else None
+    payload = cast("dict[str, object]", header) if isinstance(header, dict) else None
+    observed = payload.get("sessionId") if payload is not None else None
     if not isinstance(observed, str) or not observed:
         raise NativeSessionUnavailable(session_id, "missing")
     if observed != session_id:

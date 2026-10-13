@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import replace
 from io import BufferedWriter
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Final, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, cast
 from urllib.parse import urlparse
 
 if TYPE_CHECKING:
@@ -94,6 +94,16 @@ from meridian.lib.state.paths import (
 logger = logging.getLogger(__name__)
 _STARTUP_STDERR_MAX_BYTES = 16 * 1024
 _ADDRESS_IN_USE_MARKERS = ("address already in use", "address in use", "eaddrinuse")
+
+
+class _EventStreamContent(Protocol):
+    async def read(self, size: int) -> bytes: ...
+
+
+class _EventStreamResponse(Protocol):
+    content: _EventStreamContent
+
+    def close(self) -> None: ...
 
 
 class SessionNotReadyError(RuntimeError):
@@ -768,6 +778,9 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
 
         sse_event_type: str | None = None
         sse_data_lines: list[str] = []
+        liveness: BackendLivenessPolicy = self._liveness
+        event_queue: asyncio.Queue[RawHarnessEvent] = self._event_queue
+        open_event_stream: Callable[[], Awaitable[_EventStreamResponse]] = self._open_event_stream
 
         while self._state in ("connected", "stopping"):
             if self._process_exited():
@@ -792,9 +805,9 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 self._set_failed()
                 return
 
-            self._liveness.mark_activity_if_idle()
+            liveness.mark_activity_if_idle()
             try:
-                response = await self._liveness.wait_for_activity(self._open_event_stream())
+                response = await liveness.wait_for_activity(open_event_stream())
             except EventStreamLivenessTimeout:
                 event = await _handle_stall()
                 if event is not None:
@@ -841,10 +854,10 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                     try:
                         if pending_read is None:
                             pending_read = asyncio.ensure_future(
-                                self._liveness.wait_for_activity(response.content.read(4096))
+                                liveness.wait_for_activity(response.content.read(4096))
                             )
                         if self._queue_waiter is None:
-                            self._queue_waiter = asyncio.ensure_future(self._event_queue.get())
+                            self._queue_waiter = asyncio.ensure_future(event_queue.get())
                         done, _ = await asyncio.wait(
                             {pending_read, self._queue_waiter},
                             return_when=asyncio.FIRST_COMPLETED,
@@ -1386,7 +1399,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         finally:
             self._liveness.signal_request_resolved(request_key)
 
-    async def _open_event_stream(self) -> Any:
+    async def _open_event_stream(self) -> _EventStreamResponse:
         client = await self._ensure_http_client()
         session_id = self._require_session_id()
         paths: list[str] = []
@@ -1414,7 +1427,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                     path=path,
                     status=status,
                 )
-                return response
+                return cast("_EventStreamResponse", response)
 
             body = await response.text()
             response.release()

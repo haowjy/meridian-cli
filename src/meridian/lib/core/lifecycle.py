@@ -28,7 +28,7 @@ import os
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 from uuid import UUID
 
 import psutil
@@ -798,9 +798,9 @@ class SpawnLifecycleService:
         if event_type == "spawn.finalized" and record is not None:
             rec_status = record.status
             if rec_status in _TERMINAL_STATUS_VALUES:
-                status = rec_status  # type: ignore[assignment]
+                status = cast("TerminalStatus", rec_status)
             terminal = record.terminal
-            origin = terminal.origin if terminal is not None else None  # type: ignore[assignment]
+            origin = terminal.origin if terminal is not None else None
             duration_secs = terminal.duration_secs if terminal is not None else None
             total_cost_usd = terminal.total_cost_usd if terminal is not None else None
             input_tokens = terminal.input_tokens if terminal is not None else None

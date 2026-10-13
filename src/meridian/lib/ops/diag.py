@@ -234,7 +234,7 @@ def schedule_background_repairs(project_root: Path) -> None:
     # Eagerly import reaper before spawning the thread — its transitive chain
     # (reaper → managed_primary → connections.base) races with the main-thread
     # harness bootstrap, causing a _ModuleLock deadlock on Python 3.13+.
-    import meridian.lib.state.reaper  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    import meridian.lib.state.reaper  # noqa: F401  # pyright: ignore[reportUnusedImport]  # Import triggers reaper registration.
 
     def _run_repairs() -> None:
         from contextlib import suppress

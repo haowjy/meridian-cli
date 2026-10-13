@@ -276,8 +276,7 @@ def _engine(
     )
     if not readonly:
 
-        @event.listens_for(engine, "connect")
-        def _configure(dbapi_connection: sqlite3.Connection, _record: object) -> None:
+        def configure(dbapi_connection: sqlite3.Connection, _record: object) -> None:
             cursor = dbapi_connection.cursor()
             try:
                 cursor.execute("PRAGMA foreign_keys=ON")
@@ -286,6 +285,8 @@ def _engine(
                     cursor.execute("PRAGMA journal_mode=WAL")
             finally:
                 cursor.close()
+
+        event.listens_for(engine, "connect")(configure)
 
     return engine
 

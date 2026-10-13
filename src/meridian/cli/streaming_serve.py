@@ -207,7 +207,9 @@ async def streaming_serve(
                         on_running=record_started,
                         event_hook=fold,
                     )
-                outcome_status = TypeAdapter(TerminalSpawnStatus).validate_python(outcome.status)
+                outcome_status = TypeAdapter[TerminalSpawnStatus](
+                    TerminalSpawnStatus
+                ).validate_python(outcome.status)
                 outcome_exit_code = outcome.exit_code
                 if outcome_status == "failed":
                     failure_message = outcome.error

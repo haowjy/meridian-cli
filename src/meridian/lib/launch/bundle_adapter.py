@@ -277,27 +277,30 @@ class MarsSelectionError(RuntimeError):
     def __init__(self, code: str, message: str, report: RouteDecisionReport | None) -> None:
         self.code = code
         self.selection_report = report.model_dump(mode="json") if report is not None else None
-        details = []
+        details: list[str] = []
         if report is not None:
             for attempt in report.model_attempts:
-                reasons = ", ".join(
-                    f"{assessment.harness}: "
-                    f"{(assessment.model_extra or {}).get('reason', assessment.verdict)}"
-                    for assessment in attempt.assessments
-                )
+                attempt_reasons: list[str] = []
+                for assessment in attempt.assessments:
+                    extra = cast("dict[str, object]", assessment.model_extra or {})
+                    reason = extra.get("reason", assessment.verdict)
+                    attempt_reasons.append(f"{assessment.harness}: {reason}")
+                reasons = ", ".join(attempt_reasons)
                 details.append(f"{attempt.model_token}: {reasons}")
         super().__init__("; ".join([message, *details]))
 
 
 def _raise_bundle_error(*, stdout: str, stderr: str, returncode: int | None = None) -> None:
     try:
-        payload = json.loads(stdout)
+        raw_payload = json.loads(stdout)
     except json.JSONDecodeError:
-        payload = None
-    if isinstance(payload, dict):
-        payload = cast("dict[str, object]", payload)
-    if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
-        error = cast("dict[str, object]", payload["error"])
+        raw_payload = None
+    payload = (
+        cast("dict[str, object]", raw_payload) if isinstance(raw_payload, dict) else None
+    )
+    raw_error = payload.get("error") if payload is not None else None
+    if payload is not None and isinstance(raw_error, dict):
+        error = cast("dict[str, object]", raw_error)
         report = (
             RouteDecisionReport.model_validate(payload["route_trace"])
             if "route_trace" in payload

@@ -81,7 +81,7 @@ class ObserverEndpoint:
     port: int | None = None
     attach_style: Literal["attach", "server"] = "attach"
     """Client argv dialect used to build the managed-primary TUI command."""
-    client_env: Mapping[str, str] = field(default_factory=dict)
+    client_env: Mapping[str, str] = field(default_factory=dict[str, str])
     """Auth/env overlay required by the attaching TUI client."""
 
 

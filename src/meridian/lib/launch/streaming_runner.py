@@ -741,7 +741,7 @@ async def _run_streaming_attempt(
                 drain_exit_code = drain_outcome.exit_code
                 drain_error = drain_outcome.error
                 if drain_outcome.authoritative and drain_outcome.status != "succeeded":
-                    authoritative_terminal_status = TypeAdapter(
+                    authoritative_terminal_status = TypeAdapter[TerminalSpawnStatus](
                         TerminalSpawnStatus
                     ).validate_python(drain_outcome.status)
             if timed_out and drain_outcome.status == "succeeded":

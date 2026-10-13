@@ -5,7 +5,7 @@ import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, TypeGuard, cast
 
 import structlog
 from pydantic import BaseModel, ConfigDict, field_serializer
@@ -484,21 +484,25 @@ def _dynamic_value_source(
 ) -> Literal["builtin", "file", "user-config", "env var"]:
     current: object = project_dynamic_overrides
     for part in path:
-        if not isinstance(current, dict) or part not in current:
+        if not _is_object_dict(current) or part not in current:
             break
-        current = cast("dict[str, object]", current)[part]  # pyright: ignore[reportUnnecessaryCast]
+        current = current[part]
     else:
         return "file"
 
     current = user_dynamic_overrides
     for part in path:
-        if not isinstance(current, dict) or part not in current:
+        if not _is_object_dict(current) or part not in current:
             break
-        current = cast("dict[str, object]", current)[part]  # pyright: ignore[reportUnnecessaryCast]
+        current = current[part]
     else:
         return "user-config"
 
     return "builtin"
+
+
+def _is_object_dict(value: object) -> TypeGuard[dict[str, object]]:
+    return isinstance(value, dict)
 
 
 def _resolve_env_config_source(

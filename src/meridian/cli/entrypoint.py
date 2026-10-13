@@ -36,11 +36,12 @@ def main() -> None:
 
 
 def _main_impl() -> None:
+    import io
     import sys
 
     if IS_WINDOWS:
         for stream in (sys.stdout, sys.stderr):
-            if hasattr(stream, "reconfigure"):
+            if isinstance(stream, io.TextIOWrapper):
                 stream.reconfigure(encoding="utf-8", errors="replace")
 
     args = canonicalize_argv(sys.argv[1:])

@@ -213,11 +213,13 @@ def resolve_exact_rollout(session_id: str, matches: list[Path]) -> Path | None:
             header = json.loads(handle.readline())
     except (OSError, UnicodeError, ValueError) as exc:
         raise NativeSessionUnavailable(session_id, "missing") from exc
-    payload = header.get("payload") if isinstance(header, dict) else None
-    observed = payload.get("id") if isinstance(payload, dict) else None
+    typed_header = cast("dict[str, object]", header) if isinstance(header, dict) else None
+    raw_payload = typed_header.get("payload") if typed_header is not None else None
+    payload = cast("dict[str, object]", raw_payload) if isinstance(raw_payload, dict) else None
+    observed = payload.get("id") if payload is not None else None
     if (
-        not isinstance(header, dict)
-        or header.get("type") != "session_meta"
+        typed_header is None
+        or typed_header.get("type") != "session_meta"
         or not isinstance(observed, str)
         or not observed
     ):

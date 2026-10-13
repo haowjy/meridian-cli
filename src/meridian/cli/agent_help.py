@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sys
 import textwrap
-from collections.abc import Generator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, cast
 
@@ -135,7 +135,8 @@ def _command_app_from_root(root_app: App, group_name: str) -> App | None:
     commands_obj = object.__getattribute__(root_app, "_commands")
     if not isinstance(commands_obj, dict):
         return None
-    command = commands_obj.get(group_name)
+    commands = cast("dict[str, object]", commands_obj)
+    command = commands.get(group_name)
     if isinstance(command, App):
         return command
     return None
@@ -291,7 +292,11 @@ def _assemble_help_panels(
     advanced: bool,
 ) -> list[tuple[Group | None, HelpPanel]]:
     with advanced_params_visibility(agent_mode=agent_mode, advanced=advanced):
-        return root_app._assemble_help_panels(tokens, help_format)  # pyright: ignore[reportPrivateUsage]
+        assemble = cast(
+            "Callable[[list[str], str], list[tuple[Group | None, HelpPanel]]]",
+            root_app._assemble_help_panels,  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType]  # Cyclopts has no public or fully typed panel assembly API.
+        )
+        return assemble(tokens, help_format)
 
 
 def _filter_help_panels(
@@ -317,7 +322,11 @@ def _filter_help_panels(
             index_map = {name: index for index, name in enumerate(visible)}
             entries = [entry for entry in panel.entries if _command_entry_name(entry) in index_map]
             entries.sort(key=lambda entry: index_map[_command_entry_name(entry)])
-            panel = panel.copy(entries=entries)
+            copy_panel = cast(
+                "Callable[..., HelpPanel]",
+                panel.copy,  # pyright: ignore[reportUnknownMemberType]  # Cyclopts leaves copy kwargs untyped.
+            )
+            panel = copy_panel(entries=entries)
 
         filtered.append((group, panel))
 

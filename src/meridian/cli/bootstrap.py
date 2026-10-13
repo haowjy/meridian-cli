@@ -14,7 +14,7 @@ from meridian.cli.startup.policy import BootstrapPlan, StateRequirement
 
 # Keep these startup parse tables in sync with `@app.default root(...)` in
 # `main.py` plus startup-only flags parsed before cyclopts (`--verbose` at root).
-_TOP_LEVEL_VALUE_FLAGS = frozenset(
+TOP_LEVEL_VALUE_FLAGS = frozenset(
     {
         "--format",
         "--config",
@@ -47,7 +47,7 @@ _TOP_LEVEL_VALUE_FLAGS = frozenset(
         "--mode",
     }
 )
-_TOP_LEVEL_BOOL_FLAGS = frozenset(
+TOP_LEVEL_BOOL_FLAGS = frozenset(
     {
         "--help",
         "-h",
@@ -95,10 +95,10 @@ def _first_positional_token_with_index(argv: Sequence[str]) -> tuple[int, str] |
         if "=" in token:
             index += 1
             continue
-        if token in _TOP_LEVEL_BOOL_FLAGS:
+        if token in TOP_LEVEL_BOOL_FLAGS:
             index += 1
             continue
-        if token in _TOP_LEVEL_VALUE_FLAGS:
+        if token in TOP_LEVEL_VALUE_FLAGS:
             index += 2
             continue
         index += 1

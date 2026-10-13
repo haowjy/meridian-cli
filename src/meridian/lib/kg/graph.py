@@ -269,7 +269,7 @@ def _collect_md_files(
     if exclude:
         exclude_spec = cast(
             "pathspec.PathSpec[Any]",
-            pathspec.PathSpec.from_lines("gitwildmatch", exclude),  # pyright: ignore[reportUnknownMemberType]
+            pathspec.PathSpec.from_lines("gitwildmatch", exclude),  # pyright: ignore[reportUnknownMemberType]  # pathspec leaves this factory incompletely typed.
         )
 
     md_files: list[Path] = []

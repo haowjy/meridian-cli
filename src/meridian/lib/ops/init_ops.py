@@ -242,7 +242,7 @@ def maybe_scaffold_claude_agent_copy(project_root: Path, targets: list[str]) -> 
 
     from meridian.lib.platform.atomic import atomic_write_text
 
-    content: str = tomlkit.dumps(doc)  # pyright: ignore[reportUnknownMemberType]
+    content: str = tomlkit.dumps(doc)  # pyright: ignore[reportUnknownMemberType]  # tomlkit's dumps return is incompletely typed.
     atomic_write_text(mars_toml, content)
     return True
 

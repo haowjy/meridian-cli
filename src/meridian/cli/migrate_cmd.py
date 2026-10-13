@@ -13,7 +13,7 @@ Emitter = Callable[[Any], None]
 
 def register_migrate_command(app: App, emit: Emitter) -> None:
     @app.command(name="migrate")
-    def migrate() -> None:  # pyright: ignore[reportUnusedFunction]
+    def migrate() -> None:  # pyright: ignore[reportUnusedFunction]  # Cyclopts registers this nested command via its decorator.
         """Move legacy repo-local identity into meridian.toml."""
         from meridian.cli.utils import require_established_project_root
         from meridian.lib.ops.migration import migrate_project_id

@@ -44,7 +44,9 @@ class PiObserver:
             content = payload.get("content")
             if isinstance(content, list):
                 for item in cast("list[object]", content):
-                    if isinstance(item, dict) and item.get("type") == "toolCall":
+                    if isinstance(item, dict) and cast("dict[str, object]", item).get(
+                        "type"
+                    ) == "toolCall":
                         self._pending_tools += 1
         elif role in {"toolresult", "tool_result"}:
             self._pending_tools = max(0, self._pending_tools - 1)
@@ -117,7 +119,9 @@ class OpenCodeObserver:
                 self._last_assistant_data = payload
             for part in cast("list[object]", event.get("parts") or ()):
                 if isinstance(part, dict):
-                    self._observe_part(_require_json_payload(part))
+                    self._observe_part(
+                        _require_json_payload(cast("dict[str, object]", part))
+                    )
         elif event.get("table") == "part":
             self._observe_part(_require_json_payload(event.get("row")))
 
@@ -230,7 +234,7 @@ def observer_for(
 def _require_json_payload(row: object) -> dict[str, object]:
     if not isinstance(row, dict):
         raise ValueError("Malformed OpenCode payload")
-    data = row.get("data")
+    data = cast("dict[str, object]", row).get("data")
     if data is None:
         return {}
     if isinstance(data, dict):

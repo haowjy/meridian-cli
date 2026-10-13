@@ -15,7 +15,7 @@ def register_bootstrap_command(
     get_global_harness: Callable[[], str | None],
 ) -> None:
     @app.command(name="bootstrap")
-    def bootstrap(  # pyright: ignore[reportUnusedFunction]
+    def bootstrap(  # pyright: ignore[reportUnusedFunction]  # Cyclopts registers this nested command via its decorator.
         add: Annotated[
             list[str] | None,
             Parameter(

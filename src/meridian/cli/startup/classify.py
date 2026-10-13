@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from meridian.cli.bootstrap import (
-    _TOP_LEVEL_BOOL_FLAGS,  # pyright: ignore[reportPrivateUsage]
-    _TOP_LEVEL_VALUE_FLAGS,  # pyright: ignore[reportPrivateUsage]
     HARNESS_SHORTCUT_NAMES,
+    TOP_LEVEL_BOOL_FLAGS,
+    TOP_LEVEL_VALUE_FLAGS,
 )
 from meridian.cli.startup.catalog import CommandCatalog, CommandDescriptor
 
@@ -35,10 +35,10 @@ def _positional_tokens(argv: Sequence[str]) -> list[str]:
         if "=" in token:
             index += 1
             continue
-        if token in _TOP_LEVEL_BOOL_FLAGS:
+        if token in TOP_LEVEL_BOOL_FLAGS:
             index += 1
             continue
-        if token in _TOP_LEVEL_VALUE_FLAGS:
+        if token in TOP_LEVEL_VALUE_FLAGS:
             index += 2
             continue
         index += 1

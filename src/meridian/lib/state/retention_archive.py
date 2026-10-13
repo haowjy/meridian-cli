@@ -17,7 +17,7 @@ import zlib
 from collections.abc import Callable, Generator, Iterable
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
-from typing import IO, Any, Literal, NamedTuple
+from typing import IO, Literal, NamedTuple, cast
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -81,11 +81,16 @@ class ArchivedRecord(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _discard_replaced_capture_fingerprint(cls, value: Any) -> Any:
+    def _discard_replaced_capture_fingerprint(cls, value: object) -> object:
         # Published ZIPs must remain readable after removing this derived field.
         # It was never portable authority; new records no longer compute/store it.
         if isinstance(value, dict) and "capture_fingerprint" in value:
-            return {key: item for key, item in value.items() if key != "capture_fingerprint"}
+            payload = cast("dict[object, object]", value)
+            return {
+                key: item for key, item in payload.items() if key != "capture_fingerprint"
+            }
+        if isinstance(value, dict):
+            return cast("dict[object, object]", value)
         return value
 
 
@@ -473,16 +478,20 @@ def verify_archive(
                 if len(first) > _MAX_METADATA:
                     raise ValueError("Transcript first record exceeds metadata limit")
                 header = json.loads(first)
+                typed_header = (
+                    cast("dict[str, object]", header) if isinstance(header, dict) else None
+                )
                 if (
-                    isinstance(header, dict)
-                    and header.get("record") == "meridian.transcript"
-                    and TranscriptHeader.model_validate(header).history_id != record.history_id
+                    typed_header is not None
+                    and typed_header.get("record") == "meridian.transcript"
+                    and TranscriptHeader.model_validate(typed_header).history_id
+                    != record.history_id
                 ):
                     raise ValueError("Transcript identity does not match selected record")
                 if (
-                    isinstance(header, dict)
-                    and header.get("record") == "meridian.native.snapshot"
-                    and TranscriptHeader.model_validate(header.get("transcript")).history_id
+                    typed_header is not None
+                    and typed_header.get("record") == "meridian.native.snapshot"
+                    and TranscriptHeader.model_validate(typed_header.get("transcript")).history_id
                     != record.history_id
                 ):
                     raise ValueError("Transcript identity does not match selected record")

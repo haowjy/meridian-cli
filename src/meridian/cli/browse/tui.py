@@ -387,44 +387,52 @@ def run_browse_picker(
 
     bindings = KeyBindings()
 
-    @bindings.add("up")
-    def _up(event: KeyPressEvent) -> None:
+    def up(event: KeyPressEvent) -> None:
         _ = event
         controller.handle(Move(-1))
 
-    @bindings.add("down")
-    def _down(event: KeyPressEvent) -> None:
+    bindings.add("up")(up)
+
+    def down(event: KeyPressEvent) -> None:
         _ = event
         controller.handle(Move(1))
 
-    @bindings.add("enter")
-    def _enter(event: KeyPressEvent) -> None:
+    bindings.add("down")(down)
+
+    def enter(event: KeyPressEvent) -> None:
         _ = event
         controller.handle(Enter())
 
-    @bindings.add("backspace")
-    def _backspace(event: KeyPressEvent) -> None:
+    bindings.add("enter")(enter)
+
+    def backspace(event: KeyPressEvent) -> None:
         _ = event
         controller.handle(Backspace())
 
-    @bindings.add("/")
-    def _search(event: KeyPressEvent) -> None:
+    bindings.add("backspace")(backspace)
+
+    def search(event: KeyPressEvent) -> None:
         _ = event
         controller.handle(Search())
 
-    @bindings.add("escape")
-    def _escape(event: KeyPressEvent) -> None:
+    bindings.add("/")(search)
+
+    def escape(event: KeyPressEvent) -> None:
         _ = event
         controller.handle(Escape())
 
-    @bindings.add("c-c")
-    def _interrupt(event: KeyPressEvent) -> None:
+    bindings.add("escape")(escape)
+
+    def interrupt(event: KeyPressEvent) -> None:
         _ = event
         controller.handle(Interrupt())
 
-    @bindings.add(Keys.Any)
-    def _character(event: KeyPressEvent) -> None:
+    bindings.add("c-c")(interrupt)
+
+    def character(event: KeyPressEvent) -> None:
         controller.handle(Character(event.data))
+
+    bindings.add(Keys.Any)(character)
 
     list_window = Window(FormattedTextControl(list_text), wrap_lines=False)
     list_header = ConditionalContainer(

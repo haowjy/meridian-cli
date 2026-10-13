@@ -901,7 +901,10 @@ def reject_runner_history(path: Path) -> None:
         header = json.loads(first)
     except ValueError:
         return
-    if isinstance(header, dict) and header.get("record") == "meridian.transcript":
+    if (
+        isinstance(header, dict)
+        and cast("dict[str, object]", header).get("record") == "meridian.transcript"
+    ):
         raise ValueError("not a native transcript")
 
 

@@ -570,7 +570,11 @@ def iter_opencode_db_session_events(
 
 
 def _model_ref(raw_model: object) -> str | None:
-    parsed = raw_model if isinstance(raw_model, dict) else _load_json_object(raw_model)
+    parsed = (
+        cast("dict[str, object]", raw_model)
+        if isinstance(raw_model, dict)
+        else _load_json_object(raw_model)
+    )
     if parsed is None:
         return None
     provider = parsed.get("providerID") or parsed.get("provider")
@@ -583,7 +587,11 @@ def _model_ref(raw_model: object) -> str | None:
 
 
 def _model_from_message(raw_data: object) -> str | None:
-    payload = raw_data if isinstance(raw_data, dict) else _load_json_object(raw_data)
+    payload = (
+        cast("dict[str, object]", raw_data)
+        if isinstance(raw_data, dict)
+        else _load_json_object(raw_data)
+    )
     if payload is None:
         return None
     return _model_ref(payload.get("model"))

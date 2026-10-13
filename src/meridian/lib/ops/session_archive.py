@@ -554,7 +554,7 @@ def session_restore_sync(payload: SessionRestoreInput) -> SessionArchiveOutput:
         )[0].path
     restored = restore_archive(roots.runtime_root, archive, payload.refs)
     HistoryIndex(roots.runtime_root).catch_up()
-    mappings = []
+    mappings: list[RestoredHistory] = []
     for key in restored:
         row = read_state(roots.runtime_root / "spawns", key, include_prompt=False)
         if row is not None:

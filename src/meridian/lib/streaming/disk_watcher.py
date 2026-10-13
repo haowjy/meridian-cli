@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import TypeVar
 
 from pydantic import BaseModel
-from watchfiles import awatch  # pyright: ignore[reportUnknownVariableType]
+from watchfiles import (
+    awatch,  # pyright: ignore[reportUnknownVariableType]  # watchfiles exposes an incompletely typed async generator.
+)
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.pi_private_state import (
