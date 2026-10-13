@@ -32,7 +32,10 @@ def test_claude_ttl_uses_the_recorded_store_after_process_cwd_drifts(
     monkeypatch.setenv("HOME", home.as_posix())
     monkeypatch.setenv("MERIDIAN_HOME", (home / ".meridian").as_posix())
 
-    session_id = "05f66a37-e6c2-4425-aa4b-78bf9f6bb700"
+    # `/clear` changes the native session ID while the managed process keeps the
+    # launch chat in MERIDIAN_CHAT_ID. Claude files both IDs in the same store.
+    entry_session_id = "entry-session"
+    session_id = "successor-session"
     (native_store / f"{session_id}.jsonl").write_text(
         "\n".join(
             [
@@ -52,7 +55,7 @@ def test_claude_ttl_uses_the_recorded_store_after_process_cwd_drifts(
     session_store.start_session(
         runtime_root,
         harness="claude",
-        harness_session_id=session_id,
+        harness_session_id=entry_session_id,
         model="claude-opus-4-6",
         chat_id="c1",
         native_store=native_store.as_posix(),
