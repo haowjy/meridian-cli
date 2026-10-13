@@ -317,7 +317,9 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             claude_runtime=resolve_claude_runtime(plugin_names=plugin_names),
         )
 
-    def launch_spec_warnings(self, spec: ResolvedLaunchSpec) -> tuple[CompositionWarning, ...]:
+    def launch_spec_warnings(
+        self, spec: ResolvedLaunchSpec
+    ) -> tuple[CompositionWarning, ...]:
         return spec.claude_runtime.warnings
 
     def preflight(
@@ -374,17 +376,14 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 target_config_root=effective_config_root,
             )
 
-        return HarnessPrelaunchState(
-            env_overrides={
-                "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PATH": str(
-                    (
-                        runtime_root / spawn_log_subpath(spawn_id) / "claude-session-boundary.jsonl"
-                    ).resolve()
-                ),
-                "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_NONCE": secrets.token_hex(32),
-                "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PYTHON": sys.executable,
-            }
-        )
+        return HarnessPrelaunchState(env_overrides={
+            "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PATH": str(
+                (runtime_root / spawn_log_subpath(spawn_id)
+                 / "claude-session-boundary.jsonl").resolve()
+            ),
+            "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_NONCE": secrets.token_hex(32),
+            "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PYTHON": sys.executable,
+        })
 
     def cleanup_prelaunch(
         self,

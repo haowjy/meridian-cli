@@ -31,5 +31,9 @@ a harness adapter: **adapters report facts; core decides**.
   and their wire serialization stay with the service result types.
 - Spawn-store reads for the child guard go through `children.py` and stay
   read-only.
+- TTL detection reads the chat's launch-recorded native store through the
+  session store using `MERIDIAN_CHAT_ID`. Never pass or derive a cwd for
+  transcript lookup: agents can `cd`, while the transcript remains filed under
+  the launch directory.
 - Disk layout, locks, atomic writes, and garbage collection stay in
   `../state/idle_store.py`.

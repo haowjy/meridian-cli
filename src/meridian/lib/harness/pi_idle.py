@@ -9,6 +9,8 @@ from meridian.lib.harness.idle_types import CacheTtl
 
 # OpenAI's "24h" retention typically lasts 30 minutes, so schedule conservatively.
 _OPENAI_LONG_RETENTION_TTL_SECONDS = 1800
+# Unknown backend TTL; mirror the Codex harness's 1800-second estimate.
+_OPENAI_CODEX_ESTIMATED_TTL_SECONDS = 1800
 _PROVIDER_TTLS: dict[str, dict[bool, CacheTtl]] = {
     "anthropic": {
         False: CacheTtl(300, estimated=False),
@@ -17,10 +19,9 @@ _PROVIDER_TTLS: dict[str, dict[bool, CacheTtl]] = {
     "openai": {
         True: CacheTtl(_OPENAI_LONG_RETENTION_TTL_SECONDS, estimated=True),
     },
-    # OpenAI Codex models have a backend-owned 30-minute default that Pi cannot override.
     "openai-codex": {
-        False: CacheTtl(_OPENAI_LONG_RETENTION_TTL_SECONDS, estimated=True),
-        True: CacheTtl(_OPENAI_LONG_RETENTION_TTL_SECONDS, estimated=True),
+        False: CacheTtl(_OPENAI_CODEX_ESTIMATED_TTL_SECONDS, estimated=True),
+        True: CacheTtl(_OPENAI_CODEX_ESTIMATED_TTL_SECONDS, estimated=True),
     },
 }
 

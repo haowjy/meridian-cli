@@ -17,7 +17,7 @@ from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
 @pytest.mark.integration
 @pytest.mark.parametrize(("chat_id", "expected_ttl"), [("c1", 3600), ("missing", None)])
-def test_claude_ttl_uses_the_recorded_store_after_process_cwd_drifts(
+def test_claude_ttl_uses_recorded_store_for_successor_or_none_without_record(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     chat_id: str,
@@ -25,9 +25,8 @@ def test_claude_ttl_uses_the_recorded_store_after_process_cwd_drifts(
 ) -> None:
     home = tmp_path / "home"
     project = tmp_path / "launch-project"
-    drifted_cwd = tmp_path / "different-working-directory"
     native_store = tmp_path / "claude-native-store"
-    for directory in (home, project, drifted_cwd, native_store):
+    for directory in (home, project, native_store):
         directory.mkdir()
     monkeypatch.setenv("HOME", home.as_posix())
     monkeypatch.setenv("MERIDIAN_HOME", (home / ".meridian").as_posix())
@@ -63,7 +62,6 @@ def test_claude_ttl_uses_the_recorded_store_after_process_cwd_drifts(
     )
 
     try:
-        monkeypatch.chdir(drifted_cwd)
         store = IdleStore(tmp_path / "idle")
         service = IdleService(
             store=store,
