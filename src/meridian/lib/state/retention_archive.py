@@ -47,8 +47,8 @@ from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import StoredSpawnState, record_to_stored_state
 from meridian.lib.utils.json_shapes import json_object
 
-ARCHIVE_MEMBER_PREFIX = "meridian-history-v1/"
-_MANIFEST = ARCHIVE_MEMBER_PREFIX + "manifest.json"
+_ARCHIVE_MEMBER_PREFIX = "meridian-history-v1/"
+_MANIFEST = _ARCHIVE_MEMBER_PREFIX + "manifest.json"
 _MAX_MEMBERS = 100_000
 _MAX_METADATA = 32 * 1024 * 1024
 _MAX_CONTENT = 1024**4  # ZIP64, including a single oversized record.
@@ -376,6 +376,11 @@ def archive_location_id(destination: Path) -> UUID:
         return location_id
 
 
+def record_member(history_id: UUID, *parts: str) -> str:
+    """Return the archive member path for one retained history record."""
+    return f"{_ARCHIVE_MEMBER_PREFIX}records/{history_id}/" + "/".join(parts)
+
+
 def _member_bytes(archive: zipfile.ZipFile, name: str, *, limit: int) -> bytes:
     try:
         if archive.getinfo(name).file_size > limit:
@@ -388,7 +393,7 @@ def _member_bytes(archive: zipfile.ZipFile, name: str, *, limit: int) -> bytes:
 def read_record_metadata(archive: zipfile.ZipFile, history_id: UUID) -> bytes:
     """The bounded ``record.json`` bytes exactly as one record stored them."""
     return _member_bytes(
-        archive, f"{ARCHIVE_MEMBER_PREFIX}records/{history_id}/record.json", limit=_MAX_METADATA
+        archive, record_member(history_id, "record.json"), limit=_MAX_METADATA
     )
 
 
@@ -446,7 +451,7 @@ def verify_archive(
             raise ValueError("ZIP member coverage does not match manifest")
         planned_names: set[str] = set()
         for record, stored_record in zip(manifest.records, stored_records, strict=True):
-            prefix = f"{ARCHIVE_MEMBER_PREFIX}records/{record.history_id}/"
+            prefix = record_member(record.history_id)
             meta_name = prefix + "record.json"
             planned_names.add(meta_name)
             if len({m.name for m in record.files}) != len(record.files):
@@ -527,7 +532,7 @@ def verify_archive(
             raise ArchiveValidationError("Selected history is not covered by the ZIP")
         for member in manifest.members if full else ():
             if history_id is not None and not member.name.startswith(
-                f"{ARCHIVE_MEMBER_PREFIX}records/{history_id}/"
+                record_member(history_id)
             ):
                 continue
             checksum = hashlib.sha256()
@@ -647,7 +652,7 @@ def publish_archive(
                 stage, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True
             ) as archive:
                 for record in records:
-                    prefix = f"{ARCHIVE_MEMBER_PREFIX}records/{record.history_id}/"
+                    prefix = record_member(record.history_id)
                     metadata = record.model_dump_json().encode()
                     archive.writestr(prefix + "record.json", metadata)
                     members.append(
@@ -785,7 +790,7 @@ def read_archived_member(
                 with zipfile.ZipFile(archive_path(receipt, directory)) as archive:
                     data = _member_bytes(
                         archive,
-                        f"{ARCHIVE_MEMBER_PREFIX}records/{history_id}/aggregate/{name}",
+                        record_member(history_id, "aggregate", name),
                         limit=limit,
                     )
             except ARCHIVE_READ_ERRORS:
@@ -840,7 +845,7 @@ def iter_archived_events(
     member_name = canonical_transcript_member(m.name for m in record.files)
     if member_name != NATIVE_SNAPSHOT_FILENAME:
         raise ValueError("Legacy runner-history archive members are inert, not transcripts")
-    name = f"{ARCHIVE_MEMBER_PREFIX}records/{history_id}/aggregate/{member_name}"
+    name = record_member(history_id, "aggregate", member_name)
     expected = next((member for member in manifest.members if member.name == name), None)
     if expected is None:
         raise ValueError(f"Archive has no transcript for {history_id}")
