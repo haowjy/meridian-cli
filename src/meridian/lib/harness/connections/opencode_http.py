@@ -876,7 +876,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                         if self._queue_waiter in done:
                             injected = self._queue_waiter.result()
                             self._queue_waiter = None
-                            self._liveness.mark_activity()
+                            liveness.mark_activity()
                             yield injected
                         if pending_read not in done:
                             continue
@@ -904,7 +904,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                         )
                         if event is None:
                             continue
-                        self._liveness.mark_activity()
+                        liveness.mark_activity()
                         if await self._dispatch_inbound_event(event):
                             continue
                         if self._tracer is not None:
