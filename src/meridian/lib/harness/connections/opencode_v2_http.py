@@ -119,8 +119,8 @@ async def _drain_stream(stream: asyncio.StreamReader) -> None:
 class OpenCodeV2Connection(OpenCodeV1Connection):
     """Bidirectional OpenCode 2.x connection over the ``/api`` server surface."""
 
-    CAPABILITIES: ClassVar[ConnectionCapabilities] = replace(
-        OpenCodeV1Connection.CAPABILITIES,
+    _CAPABILITIES: ClassVar[ConnectionCapabilities] = replace(
+        OpenCodeV1Connection._CAPABILITIES,
         runtime_model_switch=True,
     )
     _HEALTH_PATHS: ClassVar[tuple[str, ...]] = ("/api/info",)

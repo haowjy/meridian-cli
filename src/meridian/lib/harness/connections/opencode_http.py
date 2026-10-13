@@ -130,26 +130,29 @@ def project_opencode_spec_to_session_payload(
     return cast("dict[str, object]", projected)
 
 
+OPENCODE_V1_CAPABILITIES: Final[ConnectionCapabilities] = ConnectionCapabilities(
+    mid_turn_injection="http_post",
+    supports_steer=False,
+    supports_cancel=True,
+    runtime_model_switch=False,
+    structured_reasoning=True,
+    supports_primary_observer=True,
+    supported_startup_phases=frozenset(
+        phase.value
+        for phase in (
+            StartupPhase.LAUNCHING_SUBPROCESS,
+            StartupPhase.WAITING_FOR_CONNECTION,
+            StartupPhase.INITIALIZING_SESSION,
+            StartupPhase.HARNESS_READY,
+        )
+    ),
+)
+
+
 class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
     """Bidirectional OpenCode 1.x connection over the legacy JSON HTTP API."""
 
-    CAPABILITIES: ClassVar[ConnectionCapabilities] = ConnectionCapabilities(
-        mid_turn_injection="http_post",
-        supports_steer=False,
-        supports_cancel=True,
-        runtime_model_switch=False,
-        structured_reasoning=True,
-        supports_primary_observer=True,
-        supported_startup_phases=frozenset(
-            phase.value
-            for phase in (
-                StartupPhase.LAUNCHING_SUBPROCESS,
-                StartupPhase.WAITING_FOR_CONNECTION,
-                StartupPhase.INITIALIZING_SESSION,
-                StartupPhase.HARNESS_READY,
-            )
-        ),
-    )
+    _CAPABILITIES: ClassVar[ConnectionCapabilities] = OPENCODE_V1_CAPABILITIES
     _STATE_TRANSITIONS: ClassVar[dict[ConnectionState, frozenset[ConnectionState]]] = {
         "created": frozenset(("starting", "stopping", "failed")),
         "starting": frozenset(("connected", "stopping", "failed")),
@@ -273,7 +276,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         # class descriptor: spawn paths install a broker (auto-reject) while
         # managed-primary paths install the surfacing handler.
         return replace(
-            self.CAPABILITIES,
+            self._CAPABILITIES,
             supports_runtime_hitl=not getattr(self._request_handler, "no_runtime_hitl", True),
         )
 
