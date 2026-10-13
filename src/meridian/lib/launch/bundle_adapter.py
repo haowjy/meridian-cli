@@ -11,7 +11,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from meridian.lib.core.route_report import RouteDecisionReport
 from meridian.lib.core.types import HarnessId
@@ -305,6 +305,13 @@ class _MarsErrorEnvelope(BaseModel):
 
     error: _MarsError
     route_trace: RouteDecisionReport | None = None
+
+    @field_validator("route_trace", mode="before")
+    @classmethod
+    def reject_explicit_null_route_trace(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("route_trace must be a route decision report when present")
+        return value
 
 
 def _raise_bundle_error(*, stdout: str, stderr: str, returncode: int | None = None) -> None:
