@@ -1,5 +1,27 @@
 # Upgrade notes
 
+## Ignoring direnv (unreleased)
+
+`[environment] ignore_direnv = true` opts harness launches out of inherited
+direnv changes. The default remains `false`; upgrading alone changes no launch
+environment. CLI and env overrides are described in
+[configuration](configuration.md#ignoring-direnv-during-harness-launches).
+
+No migration or index rebuild is required. Captured launch requests gain an
+optional `ignore_direnv` field, and config snapshots gain the `environment` table.
+Existing requests without these fields retain normal inheritance. Spawn/session
+authority schemas and provider transcripts are unchanged.
+
+Before enabling the setting, ensure direnv is installed and that harness binaries
+remain available on the pre-direnv `PATH`. Start a new Meridian session to apply
+it; existing processes keep their environment.
+
+Rollback to 0.9.7 can read the additive request/config snapshot fields but ignores
+the new policy. This was checked using the released 0.9.7 package against a scratch
+JSON fixture, without starting a harness. Stop active launchers before switching
+versions, and remove the new config setting/CLI flags when rolling back. The
+direnv inheritance protection is unavailable on the older version.
+
 ## Current-chat tracking (unreleased)
 
 Claude continuation follows the run's last observed native session, including

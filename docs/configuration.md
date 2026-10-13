@@ -74,6 +74,7 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | Key | Type | Purpose |
 |---|---|---|
 | `defaults.max_depth` | int | Max zero-based delegated spawn depth |
+| `environment.ignore_direnv` | bool | Undo inherited direnv environment changes before harness launch (default `false`) |
 | `timeouts.kill_grace_minutes` | float | Grace before force-kill (minutes) |
 | `timeouts.guardrail_minutes` | float | Guardrail timeout (minutes) |
 | `timeouts.startup_minutes` | float | Startup-phase timeout for backend boot, connection, and session handshake (minutes) |
@@ -84,11 +85,6 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | `harness.claude` | str | Default model for Claude harness |
 | `harness.codex` | str | Default model for Codex harness |
 | `harness.opencode` | str | Default model for OpenCode harness |
-| `harness.pi.load_all_pi_extensions` | bool | Retain ambient extensions in spawned RPC and scan `extra_extension_paths` in both roles (default `false`; primary always retains native discovery) |
-| `harness.pi.extra_extension_paths` | array[str] | Extra extension roots scanned only when `load_all_pi_extensions = true` (default: Pi user extension dir) |
-| `harness.pi.background_tasks.enabled` | bool | Toggles `managed-bash` in primary and spawned sessions (`bash` / `bash_manage`, `/ps*`; default `true`) |
-| `harness.pi.spawn_watch.enabled` | bool | Toggles the `meridian-spawn-watch` extension (`/spawn` spawn discovery + wait; default `true`) |
-| `harness.pi.disable_managed_bash` | bool | **Legacy** — same as `background_tasks.enabled = false` |
 | `output.show` | array[str] | Stream categories shown |
 | `output.verbosity` | str\|null | `quiet\|normal\|verbose\|debug` |
 | `state.retention_days` | int | TTL for stale state pruning (`-1` = never, `0` = immediate, default `30`) |
@@ -97,9 +93,48 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | `primary.autocompact` | int | Context-token compaction threshold for the primary session (minimum 1000) |
 | `primary.autocompact_pct` | int | Context-window percentage for primary-session compaction (1–100) |
 
+The following Pi extension settings are TOML-only; generic `config set/get/reset`
+does not yet support them:
+
+| Key | Type | Purpose |
+|---|---|---|
+| `harness.pi.load_all_pi_extensions` | bool | Retain ambient extensions in spawned RPC and scan `extra_extension_paths` in both roles (default `false`; primary always retains native discovery) |
+| `harness.pi.extra_extension_paths` | array[str] | Extra extension roots scanned only when `load_all_pi_extensions = true` (default: Pi user extension dir) |
+| `harness.pi.background_tasks.enabled` | bool | Toggles `managed-bash` in primary and spawned sessions (`bash` / `bash_manage`, `/ps*`; default `true`) |
+| `harness.pi.spawn_watch.enabled` | bool | Toggles the `meridian-spawn-watch` extension (`/spawn` spawn discovery + wait; default `true`) |
+| `harness.pi.disable_managed_bash` | bool | **Legacy** — same as `background_tasks.enabled = false` |
+
 Pi's `session-boundary` extension is always loaded in both roles; it has no config
 toggle. It records launch-correlated native lifecycle evidence for post-exit session
 verification. See the [Pi extension guide](../src/meridian/pi_runtime/README.md).
+
+## Ignoring direnv during harness launches
+
+To keep project-local credentials and other direnv exports out of harnesses:
+
+```toml
+[environment]
+ignore_direnv = true
+```
+
+This uses the normal user, project, and local config inheritance. Override it with
+`MERIDIAN_IGNORE_DIRENV=true` or `false`, or with `--ignore-direnv` /
+`--no-ignore-direnv` on `meridian` and `meridian spawn`. CLI wins over environment,
+then local, project, and user config. The generic `meridian config get/set/reset`
+commands support `environment.ignore_direnv` through the same catalog entry.
+
+Meridian resolves the setting first, then asks direnv to undo its recorded changes
+before constructing the harness environment. Added variables are removed;
+overwritten or deleted variables, including `PATH`, are restored. The working
+directory stays the same. Explicit launch environment overrides are applied afterward.
+The resolved setting is passed to descendants, including when direnv supplied the
+setting itself.
+
+When `DIRENV_DIFF` is absent, restoration is a no-op. When it is present, direnv
+must be installed and its recorded diff valid; restoration failures stop launch.
+The restoration target is `/`, which must contain neither `.envrc` nor `.env`.
+This controls inherited environment only: shell hooks or tools that load `.env`
+again can reintroduce those values.
 
 ## Notifications and idle sessions
 

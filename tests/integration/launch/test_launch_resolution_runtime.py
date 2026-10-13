@@ -70,6 +70,39 @@ def test_build_primary_launch_runtime_preserves_execution_cwd(tmp_path: Path) ->
     assert runtime.project_paths_execution_cwd == execution_cwd.resolve().as_posix()
 
 
+@pytest.mark.parametrize("override", [None, True, False])
+def test_launch_direnv_policy_uses_snapshot_and_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, override: bool | None
+) -> None:
+    import meridian.lib.launch.context as context_module
+
+    _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch, model="claude-sonnet-4", harness=HarnessId.CLAUDE,
+    )
+    monkeypatch.setenv("MERIDIAN_IGNORE_DIRENV", "true")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-direnv-key")
+    runtime = build_primary_launch_runtime(project_root=tmp_path)
+    # A captured policy must not change when the ambient input disappears.
+    monkeypatch.delenv("MERIDIAN_IGNORE_DIRENV")
+    monkeypatch.setattr(context_module, "undo_direnv", lambda env: {
+        key: value for key, value in env.items() if key != "ANTHROPIC_API_KEY"
+    })
+    preview = build_launch_context(
+        spawn_id="dry-run-direnv",
+        request=build_primary_spawn_request(request=LaunchRequest(
+            model="claude-sonnet-4", ignore_direnv=override,
+        )),
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+    env = preview.binding.environment.final_env
+    expected = override is not False
+    assert env["MERIDIAN_IGNORE_DIRENV"] == str(expected).lower()
+    assert ("ANTHROPIC_API_KEY" not in env) == expected
+
+
 @pytest.mark.parametrize(
     ("harness", "requires_initial_prompt"),
     [

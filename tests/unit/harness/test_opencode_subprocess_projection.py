@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import pytest
 
-from meridian.lib.harness.projections import project_opencode_subprocess as module
 from meridian.lib.harness.projections.project_opencode_subprocess import (
     project_opencode_spec_to_cli_args,
 )
@@ -101,11 +100,9 @@ def test_interactive_resume_keeps_model_for_managed_attach() -> None:
     assert command[-2:] == ["--prompt", "hello"]
 
 
-def test_unresolved_version_forwards_model_on_resume(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_unresolved_version_forwards_model_on_resume() -> None:
     # auto/unknown whose probe fails must forward, not reject: the raw CLI
     # supports the flag and an unprobeable binary fails the spawn later anyway.
-    monkeypatch.setattr(module, "detect_opencode_version", lambda: None)
-
     command = project_opencode_spec_to_cli_args(
         _spec(continue_session_id="ses-parent", model="openai/gpt-5.5"),
         base_command=_SUBPROCESS_BASE,

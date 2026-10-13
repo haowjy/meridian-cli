@@ -63,6 +63,7 @@ class LaunchRequest(BaseModel):
     goal: str | None = None
     include_bootstrap_documents: bool = False
     dry_run: bool = False
+    ignore_direnv: bool | None = None
     # Replay persisted launch contract on primary --continue (idempotent resume).
     launch_policy_snapshot: LaunchPolicySnapshot | None = None
     # Execution policy carrier (replaces flat effort/sandbox/approval/autocompact/etc.)

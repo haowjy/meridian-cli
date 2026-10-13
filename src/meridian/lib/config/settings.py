@@ -1731,6 +1731,20 @@ class HistoryConfig(BaseModel):
     archive: HistoryArchiveConfig = Field(default_factory=HistoryArchiveConfig)
 
 
+class EnvironmentConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    ignore_direnv: Annotated[
+        bool,
+        config_field(
+            "environment.ignore_direnv",
+            value_kind="bool",
+            file_aliases=(file_alias("environment", "ignore_direnv"),),
+            env_vars=("MERIDIAN_IGNORE_DIRENV",),
+        ),
+    ] = False
+
+
 class MeridianConfig(BaseSettings):
     """Resolved operational configuration for meridian."""
 
@@ -1909,6 +1923,7 @@ class MeridianConfig(BaseSettings):
     state: StateConfig = Field(default_factory=StateConfig)
     work: WorkConfig = Field(default_factory=WorkConfig)
     env: dict[str, str] = Field(default_factory=dict)
+    environment: EnvironmentConfig = Field(default_factory=EnvironmentConfig)
 
     @field_validator("default_wait_yield_seconds", "min_wait_yield_seconds")
     @classmethod

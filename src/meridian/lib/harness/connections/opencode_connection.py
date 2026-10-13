@@ -70,7 +70,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     def _resolve_version(self, config: ConnectionConfig) -> str:
         preference = config.child_env.get(_VERSION_ENV)
-        return resolve_opencode_version(preference, binary="opencode")
+        return resolve_opencode_version(preference, binary="opencode", env=config.child_env)
 
     def _select(self, config: ConnectionConfig) -> HarnessConnection[ResolvedLaunchSpec]:
         if self._resolve_version(config) == "v2":

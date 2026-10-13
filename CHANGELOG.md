@@ -4,7 +4,18 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Upgrade notes
+- Direnv isolation is opt-in; no state migration. Older releases ignore the new
+  launch policy. See [direnv upgrade notes](docs/upgrading.md#ignoring-direnv-unreleased).
+
+### Added
+- Add `environment.ignore_direnv` with `MERIDIAN_IGNORE_DIRENV` and
+  `--ignore-direnv` / `--no-ignore-direnv` overrides. Undo direnv exports before
+  primary and spawned harness launches; carry the setting to descendants.
+
 ### Fixed
+- Keep cleaned environments authoritative for OpenCode workspace config and
+  version probes, and Pi auth/session directory defaults. No ambient-env reinjection.
 - Keep OpenCode and Codex primary event-stream liveness timeout messages at debug level so quiet sessions do not print warnings.
 
 ## [0.9.7] - 2026-10-12

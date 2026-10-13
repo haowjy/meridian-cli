@@ -126,6 +126,7 @@ def run_primary_launch(
     sandbox: str | None,
     timeout: float | None,
     dry_run: bool,
+    ignore_direnv: bool | None = None,
     passthrough: tuple[str, ...],
     reference_files: tuple[str, ...] = (),
     prompt: str | None = None,
@@ -330,6 +331,7 @@ def run_primary_launch(
     launch_result = launch_primary(
         project_root=project_root,
         request=LaunchRequest(
+            ignore_direnv=ignore_direnv,
             model=requested_model,
             harness=(
                 continue_harness

@@ -68,6 +68,7 @@ class HarnessProjectionPorts(Generic[SpecT]):
     """Projection helpers registered for one harness bundle."""
 
     subprocess_cli_args: SubprocessProjector[SpecT]
+    resolve_subprocess_spec: Callable[[SpecT, Mapping[str, str]], SpecT] | None = None
     managed_primary: ManagedPrimaryProjectionPorts[SpecT, object] | None = None
 
 
@@ -270,10 +271,15 @@ def project_subprocess_spec(
     spec: object,
     *,
     base_command: tuple[str, ...],
+    env: Mapping[str, str],
 ) -> list[str]:
     """Project one resolved spec to subprocess argv through the bundle registry."""
 
     bundle = _require_bundle_spec(harness_id, spec)
+    if bundle.projections.resolve_subprocess_spec is not None:
+        spec = bundle.projections.resolve_subprocess_spec(
+            cast("Any", spec), env
+        )
     return bundle.projections.subprocess_cli_args(
         cast("Any", spec),
         base_command=base_command,

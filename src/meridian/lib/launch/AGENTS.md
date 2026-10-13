@@ -33,7 +33,7 @@ prepare_launch_surface()              ← skill injection, prompt, content compo
         │
         ▼
 bind_launch_context()                 ← env, cwd, spec, argv, permissions
-        │                             (cheap: microseconds)
+        │                             (may invoke direnv when ignoring an active environment)
         ▼
 LaunchContext                         ← complete at construction; ready to run
 ```
@@ -54,7 +54,8 @@ is legacy JSON for harness-default model; replay normalizes it to in-memory
 **Why the split?** The primary CLI path calls `bind_launch_context()` twice: once
 with `dry_run=True` for `--dry-run` display, then again with real spawn ID and paths.
 `prepare_launch_surface()` is expensive and safe to call once. `bind_launch_context()`
-is cheap and idempotent.
+is idempotent; ignoring an active direnv environment invokes a bounded subprocess
+on each bind, including previews.
 
 ## Three Driving Adapters
 

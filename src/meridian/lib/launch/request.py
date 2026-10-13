@@ -106,6 +106,7 @@ class SpawnRequest(BaseModel):
     mcp_tools: tuple[str, ...] = ()
     tools: ToolsField | None = None
     env: dict[str, str] = Field(default_factory=dict)
+    ignore_direnv: bool | None = None
 
     # Execution policy carrier (replaces flat effort/sandbox/approval/autocompact/autocompact_pct)
     execution_policy: ResolvedExecutionPolicy = Field(default_factory=ResolvedExecutionPolicy)

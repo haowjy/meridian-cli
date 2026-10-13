@@ -90,7 +90,8 @@ can cross spawn deletion; a late journal or cursor write must not recreate the d
 Pi runtime metadata uses that same publication gate.
 
 **Environment defaults differ from overrides.** `env_defaults()` receives launch
-context and fills missing or blank child values after explicit inherited/runtime
+context and the effective child environment; never reread ambient env for defaults.
+It fills missing or blank child values after explicit inherited/runtime
 values are bound; Pi uses it for agent and session directories and to default
 `PI_CACHE_RETENTION=long` only for interactive primaries, while forced adapter
 policy remains in `env_overrides()`.

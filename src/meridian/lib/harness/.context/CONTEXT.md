@@ -339,11 +339,16 @@ does not handle flat scoped keys correctly, which is why Meridian compiles them.
 when the binary cannot be probed. `resolve_opencode_version()` never downgrades
 an explicit `v2`. The resolved preference is projected into the OpenCode child
 env as `MERIDIAN_HARNESS_OPENCODE_VERSION` at launch bind (see
-[launch context](../../launch/.context/CONTEXT.md)), so YAML config reaches the
+[launch context](../../launch/.context/CONTEXT.md)), so TOML config reaches the
 connection and dry-run preview instead of being silently ignored. The same
 preference is carried on `ResolvedLaunchSpec.opencode_version`: the non-interactive
 subprocess projector rejects resume-with-model only for a known V1, keeps
 `--model` for V2, and forwards when the preference is `auto` and the probe fails.
+All version probes require an explicit environment, including executable `PATH`
+lookup. The bundle's optional `resolve_subprocess_spec` port runs adapter-owned
+environment-dependent resolution before the pure argv projector; OpenCode uses it
+to probe the resume guard with the bound environment. Primary previews and the
+connection dispatcher pass the same bound environment to version detection.
 
 `connections/opencode_connection.py` is the single registered OpenCode transport.
 At `start()` it resolves the version and delegates to `OpenCodeV2Connection`

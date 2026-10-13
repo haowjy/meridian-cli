@@ -8,6 +8,7 @@ and that the native-continue-fork contract skips the fork call.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -132,6 +133,7 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
         spec: ResolvedLaunchSpec,
         *,
         base_command: tuple[str, ...],
+        env: Mapping[str, str],
     ) -> list[str]:
         assert harness_id is HarnessId.CODEX
         captured["build_continue_session"] = spec.continue_session_id
@@ -264,6 +266,7 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
         spec: ResolvedLaunchSpec,
         *,
         base_command: tuple[str, ...],
+        env: Mapping[str, str],
     ) -> list[str]:
         assert harness_id is HarnessId.CODEX
         captured["build_continue_session"] = spec.continue_session_id

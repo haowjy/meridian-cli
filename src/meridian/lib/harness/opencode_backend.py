@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from collections.abc import Mapping
 from typing import Literal, cast
 
 import structlog
@@ -49,12 +50,13 @@ def parse_opencode_version(output: str) -> OpenCodeVersion | None:
 
 
 def detect_opencode_version(
-    binary: str = "opencode", *, timeout_seconds: float = 10.0
+    binary: str = "opencode", *, env: Mapping[str, str], timeout_seconds: float = 10.0
 ) -> OpenCodeVersion | None:
     """Probe ``binary --version``. Returns ``None`` when it cannot be run."""
     try:
         completed = subprocess.run(
             [binary, "--version"],
+            env=dict(env),
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
@@ -84,6 +86,7 @@ def normalize_version_preference(value: str | None) -> OpenCodeVersionPreference
 def resolve_opencode_version(
     preference: str | None = "auto",
     *,
+    env: Mapping[str, str],
     binary: str = "opencode",
     detected: OpenCodeVersion | None = None,
 ) -> OpenCodeVersion:
@@ -95,7 +98,7 @@ def resolve_opencode_version(
     normalized = normalize_version_preference(preference)
     if normalized in ("v1", "v2"):
         return normalized
-    resolved = detected if detected is not None else detect_opencode_version(binary)
+    resolved = detected if detected is not None else detect_opencode_version(binary, env=env)
     return resolved or DEFAULT_OPENCODE_VERSION
 
 

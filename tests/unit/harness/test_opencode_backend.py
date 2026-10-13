@@ -37,13 +37,13 @@ def test_normalize_version_preference() -> None:
 
 
 def test_explicit_preference_wins_without_probe() -> None:
-    assert resolve_opencode_version("v2", detected=None) == "v2"
-    assert resolve_opencode_version("v1", detected="v2") == "v1"
+    assert resolve_opencode_version("v2", env={}, detected=None) == "v2"
+    assert resolve_opencode_version("v1", env={}, detected="v2") == "v1"
 
 
 def test_auto_uses_detected_version() -> None:
-    assert resolve_opencode_version("auto", detected="v1") == "v1"
-    assert resolve_opencode_version("auto", detected="v2") == "v2"
+    assert resolve_opencode_version("auto", env={}, detected="v1") == "v1"
+    assert resolve_opencode_version("auto", env={}, detected="v2") == "v2"
 
 
 def test_adapter_allows_named_primary_resume() -> None:

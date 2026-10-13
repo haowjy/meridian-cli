@@ -12,7 +12,7 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
-from meridian.lib.platform import get_home_path
+from meridian.lib.platform import expand_home_path, get_home_path
 from meridian.lib.state.user_paths import get_user_home
 
 _PI_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR"
@@ -27,8 +27,8 @@ def resolve_pi_agent_dir(*, env: Mapping[str, str] | None = None) -> Path:
 
     override = (os.environ if env is None else env).get(_PI_AGENT_DIR_ENV, "").strip()
     if override:
-        return Path(override).expanduser()
-    return get_home_path() / ".pi" / "agent"
+        return expand_home_path(override, env=env)
+    return get_home_path(env=env) / ".pi" / "agent"
 
 
 def resolve_pi_default_user_extension_dir(*, env: Mapping[str, str] | None = None) -> Path:
@@ -51,8 +51,8 @@ def resolve_pi_spawn_session_root(*, env: Mapping[str, str] | None = None) -> Pa
 
     override = (os.environ if env is None else env).get(_PI_SESSION_DIR_ENV, "").strip()
     if override:
-        return Path(override).expanduser()
-    return get_user_home() / "meridian-pi" / "sessions"
+        return expand_home_path(override, env=env)
+    return get_user_home(env=env) / "meridian-pi" / "sessions"
 
 
 def resolve_meridian_pi_state_dir(*, env: Mapping[str, str] | None = None) -> Path:
@@ -84,18 +84,6 @@ def _env_strip(key: str) -> str:
     return os.environ.get(key, "").strip()
 
 
-def pi_agent_dir_env_override() -> dict[str, str]:
-    """Env overrides so subprocess Pi uses the standard agent tree."""
-
-    return {_PI_AGENT_DIR_ENV: str(resolve_pi_agent_dir())}
-
-
-def pi_spawn_session_root_env_override() -> dict[str, str]:
-    """Env overrides for Meridian-managed spawn session storage."""
-
-    return {_PI_SESSION_DIR_ENV: str(resolve_pi_spawn_session_root())}
-
-
 def pi_meridian_state_dir_env_override(
     *,
     env: Mapping[str, str] | None = None,
@@ -109,9 +97,7 @@ def pi_meridian_state_dir_env_override(
 
 
 __all__ = [
-    "pi_agent_dir_env_override",
     "pi_meridian_state_dir_env_override",
-    "pi_spawn_session_root_env_override",
     "resolve_meridian_pi_extension_root",
     "resolve_meridian_pi_state_dir",
     "resolve_pi_agent_dir",
