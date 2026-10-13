@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import os
 import sys
 import types
@@ -11,23 +12,15 @@ import pytest  # noqa: TC002
 import meridian.cli.entrypoint as entrypoint_module
 
 
-class _FakeTextIOWrapper:
+class _FakeTextIOWrapper(io.TextIOWrapper):
     """Minimal stand-in for sys.stdout / sys.stderr with reconfigure support."""
 
     def __init__(self, encoding: str = "cp1252") -> None:
-        self.encoding = encoding
+        super().__init__(io.BytesIO(), encoding=encoding)
         self._reconfigure_calls: list[dict[str, object]] = []
 
     def reconfigure(self, **kwargs: object) -> None:
         self._reconfigure_calls.append(kwargs)
-        if "encoding" in kwargs:
-            self.encoding = str(kwargs["encoding"])
-
-    def write(self, s: str) -> int:
-        return len(s)
-
-    def flush(self) -> None:
-        pass
 
 
 def _make_fake_main_module(captured: dict[str, object]) -> types.ModuleType:
