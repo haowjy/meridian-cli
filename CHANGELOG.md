@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Keep OpenCode and Codex primary event-stream liveness timeout messages at debug level so quiet sessions do not print warnings.
+
 ## [0.9.7] - 2026-10-12
 
 ### Fixed

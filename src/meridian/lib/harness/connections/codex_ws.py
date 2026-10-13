@@ -742,7 +742,10 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                         "Codex event stream liveness timeout after "
                         f"{self._LIVENESS_TIMEOUT_SECONDS:.1f}s without events"
                     )
-                    logger.warning(message)
+                    logger.log(
+                        logging.DEBUG if self._primary_observer_mode else logging.WARNING,
+                        message,
+                    )
                     await self._emit_connection_closed_once({"message": message})
                     return
                 except Exception as exc:

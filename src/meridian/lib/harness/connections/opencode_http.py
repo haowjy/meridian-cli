@@ -758,7 +758,8 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             if reconciled is not None:
                 self._liveness.mark_activity()
                 return reconciled
-            logger.warning(
+            logger.log(
+                logging.DEBUG if self._primary_observer_mode else logging.WARNING,
                 "OpenCode event stream liveness timeout after %.1fs without events",
                 self._LIVENESS_TIMEOUT_SECONDS,
             )
@@ -783,7 +784,8 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                     self._liveness.mark_activity()
                     yield reconciled
                     return
-                logger.warning(
+                logger.log(
+                    logging.DEBUG if self._primary_observer_mode else logging.WARNING,
                     "OpenCode event stream liveness timeout after %.1fs without events",
                     self._LIVENESS_TIMEOUT_SECONDS,
                 )
