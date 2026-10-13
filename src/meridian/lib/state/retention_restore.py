@@ -22,7 +22,6 @@ from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_publish_dir, atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.retention_archive import (
-    ARCHIVE_MEMBER_PREFIX,
     ArchivedRecord,
     ArchiveReceipt,
     append_receipt,
@@ -32,6 +31,7 @@ from meridian.lib.state.retention_archive import (
     digest,
     inventory,
     read_record_metadata,
+    record_member,
     restored_record,
     safe_member_name,
     source_witness,
@@ -135,7 +135,7 @@ def _stage_record(
             target.parent.mkdir(parents=True, exist_ok=True)
             with (
                 archive.open(
-                    f"{ARCHIVE_MEMBER_PREFIX}records/{record.history_id}/aggregate/{relative}"
+                    record_member(record.history_id, "aggregate", relative)
                 ) as incoming,
                 atomic_replace(target, mode="wb", encoding=None, permissions=0o600) as outgoing,
             ):

@@ -17,10 +17,10 @@ import zlib
 from collections.abc import Callable, Generator, Iterable
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
-from typing import IO, Literal, NamedTuple, cast
+from typing import IO, Annotated, Literal, NamedTuple, cast
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from meridian.lib.platform.atomic import fsync_directory, is_atomic_temp_name
 from meridian.lib.platform.locking import lock_file
@@ -45,9 +45,10 @@ from meridian.lib.state.retention_digest import (
 from meridian.lib.state.session_store import SessionRecord
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import StoredSpawnState, record_to_stored_state
+from meridian.lib.utils.json_shapes import json_object
 
-ARCHIVE_MEMBER_PREFIX = "meridian-history-v1/"
-_MANIFEST = ARCHIVE_MEMBER_PREFIX + "manifest.json"
+_ARCHIVE_MEMBER_PREFIX = "meridian-history-v1/"
+_MANIFEST = _ARCHIVE_MEMBER_PREFIX + "manifest.json"
 _MAX_MEMBERS = 100_000
 _MAX_METADATA = 32 * 1024 * 1024
 _MAX_CONTENT = 1024**4  # ZIP64, including a single oversized record.
@@ -59,6 +60,22 @@ _EXCLUDED = frozenset(
         "finalize-evidence.json",
         "restored-from.json",
     }
+)
+
+
+class _ArchivedSnapshotHeader(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    record: Literal["meridian.native.snapshot"]
+    transcript: TranscriptHeader
+
+
+_ArchivedTranscriptHeader = Annotated[
+    TranscriptHeader | _ArchivedSnapshotHeader,
+    Field(discriminator="record"),
+]
+_ARCHIVED_TRANSCRIPT_HEADER: TypeAdapter[_ArchivedTranscriptHeader] = TypeAdapter(
+    _ArchivedTranscriptHeader
 )
 
 
@@ -359,6 +376,11 @@ def archive_location_id(destination: Path) -> UUID:
         return location_id
 
 
+def record_member(history_id: UUID, *parts: str) -> str:
+    """Return the archive member path for one retained history record."""
+    return f"{_ARCHIVE_MEMBER_PREFIX}records/{history_id}/" + "/".join(parts)
+
+
 def _member_bytes(archive: zipfile.ZipFile, name: str, *, limit: int) -> bytes:
     try:
         if archive.getinfo(name).file_size > limit:
@@ -371,7 +393,7 @@ def _member_bytes(archive: zipfile.ZipFile, name: str, *, limit: int) -> bytes:
 def read_record_metadata(archive: zipfile.ZipFile, history_id: UUID) -> bytes:
     """The bounded ``record.json`` bytes exactly as one record stored them."""
     return _member_bytes(
-        archive, f"{ARCHIVE_MEMBER_PREFIX}records/{history_id}/record.json", limit=_MAX_METADATA
+        archive, record_member(history_id, "record.json"), limit=_MAX_METADATA
     )
 
 
@@ -429,7 +451,7 @@ def verify_archive(
             raise ValueError("ZIP member coverage does not match manifest")
         planned_names: set[str] = set()
         for record, stored_record in zip(manifest.records, stored_records, strict=True):
-            prefix = f"{ARCHIVE_MEMBER_PREFIX}records/{record.history_id}/"
+            prefix = record_member(record.history_id)
             meta_name = prefix + "record.json"
             planned_names.add(meta_name)
             if len({m.name for m in record.files}) != len(record.files):
@@ -474,23 +496,19 @@ def verify_archive(
                 if len(first) > _MAX_METADATA:
                     raise ValueError("Transcript first record exceeds metadata limit")
                 header = json.loads(first)
-                typed_header = (
-                    cast("dict[str, object]", header) if isinstance(header, dict) else None
-                )
-                if (
-                    typed_header is not None
-                    and typed_header.get("record") == "meridian.transcript"
-                    and TranscriptHeader.model_validate(typed_header).history_id
-                    != record.history_id
-                ):
-                    raise ValueError("Transcript identity does not match selected record")
-                if (
-                    typed_header is not None
-                    and typed_header.get("record") == "meridian.native.snapshot"
-                    and TranscriptHeader.model_validate(typed_header.get("transcript")).history_id
-                    != record.history_id
-                ):
-                    raise ValueError("Transcript identity does not match selected record")
+                typed_header = json_object(header)
+                if typed_header is not None and typed_header.get("record") in {
+                    "meridian.transcript",
+                    "meridian.native.snapshot",
+                }:
+                    parsed_header = _ARCHIVED_TRANSCRIPT_HEADER.validate_python(typed_header)
+                    transcript_header = (
+                        parsed_header
+                        if isinstance(parsed_header, TranscriptHeader)
+                        else parsed_header.transcript
+                    )
+                    if transcript_header.history_id != record.history_id:
+                        raise ValueError("Transcript identity does not match selected record")
             for member in record.files:
                 relative = safe_member_name(member.name)
                 if (
@@ -514,7 +532,7 @@ def verify_archive(
             raise ArchiveValidationError("Selected history is not covered by the ZIP")
         for member in manifest.members if full else ():
             if history_id is not None and not member.name.startswith(
-                f"{ARCHIVE_MEMBER_PREFIX}records/{history_id}/"
+                record_member(history_id)
             ):
                 continue
             checksum = hashlib.sha256()
@@ -634,7 +652,7 @@ def publish_archive(
                 stage, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True
             ) as archive:
                 for record in records:
-                    prefix = f"{ARCHIVE_MEMBER_PREFIX}records/{record.history_id}/"
+                    prefix = record_member(record.history_id)
                     metadata = record.model_dump_json().encode()
                     archive.writestr(prefix + "record.json", metadata)
                     members.append(
@@ -772,7 +790,7 @@ def read_archived_member(
                 with zipfile.ZipFile(archive_path(receipt, directory)) as archive:
                     data = _member_bytes(
                         archive,
-                        f"{ARCHIVE_MEMBER_PREFIX}records/{history_id}/aggregate/{name}",
+                        record_member(history_id, "aggregate", name),
                         limit=limit,
                     )
             except ARCHIVE_READ_ERRORS:
@@ -827,7 +845,7 @@ def iter_archived_events(
     member_name = canonical_transcript_member(m.name for m in record.files)
     if member_name != NATIVE_SNAPSHOT_FILENAME:
         raise ValueError("Legacy runner-history archive members are inert, not transcripts")
-    name = f"{ARCHIVE_MEMBER_PREFIX}records/{history_id}/aggregate/{member_name}"
+    name = record_member(history_id, "aggregate", member_name)
     expected = next((member for member in manifest.members if member.name == name), None)
     if expected is None:
         raise ValueError(f"Archive has no transcript for {history_id}")

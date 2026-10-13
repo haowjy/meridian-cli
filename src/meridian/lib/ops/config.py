@@ -5,7 +5,7 @@ import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypeGuard, cast
+from typing import Literal, cast
 
 import structlog
 from pydantic import BaseModel, ConfigDict, field_serializer
@@ -54,6 +54,7 @@ from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
 )
 from meridian.lib.state.user_paths import get_user_home
+from meridian.lib.utils.json_shapes import is_json_object
 
 _MISSING_PROJECT_CONFIG_MESSAGE = "no project config; run `meridian config init`"
 _LOCAL_CONFIG_FILENAME = "meridian.local.toml"
@@ -484,7 +485,7 @@ def _dynamic_value_source(
 ) -> Literal["builtin", "file", "user-config", "env var"]:
     current: object = project_dynamic_overrides
     for part in path:
-        if not _is_object_dict(current) or part not in current:
+        if not is_json_object(current) or part not in current:
             break
         current = current[part]
     else:
@@ -492,17 +493,13 @@ def _dynamic_value_source(
 
     current = user_dynamic_overrides
     for part in path:
-        if not _is_object_dict(current) or part not in current:
+        if not is_json_object(current) or part not in current:
             break
         current = current[part]
     else:
         return "user-config"
 
     return "builtin"
-
-
-def _is_object_dict(value: object) -> TypeGuard[dict[str, object]]:
-    return isinstance(value, dict)
 
 
 def _resolve_env_config_source(

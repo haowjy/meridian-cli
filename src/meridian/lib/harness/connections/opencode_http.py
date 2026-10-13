@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import errno
-import importlib
 import json
 import logging
 import os
@@ -16,8 +15,10 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import replace
 from io import BufferedWriter
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Final, cast
 from urllib.parse import urlparse
+
+import aiohttp
 
 if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
@@ -94,16 +95,6 @@ from meridian.lib.state.paths import (
 logger = logging.getLogger(__name__)
 _STARTUP_STDERR_MAX_BYTES = 16 * 1024
 _ADDRESS_IN_USE_MARKERS = ("address already in use", "address in use", "eaddrinuse")
-
-
-class _EventStreamContent(Protocol):
-    async def read(self, size: int) -> bytes: ...
-
-
-class _EventStreamResponse(Protocol):
-    content: _EventStreamContent
-
-    def close(self) -> None: ...
 
 
 class SessionNotReadyError(RuntimeError):
@@ -219,8 +210,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         self._spawn_id: SpawnId | None = None
         self._config: ConnectionConfig | None = None
         self._process: asyncio.subprocess.Process | None = None
-        self._client: Any | None = None
-        self._aiohttp_module: Any | None = None
+        self._client: aiohttp.ClientSession | None = None
         self._stderr_handle: BufferedWriter | None = None
         self._stderr_log_path: Path | None = None
         self._stderr_read_offset = 0
@@ -779,17 +769,13 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             self._set_failed()
             return None
 
-        def _typed_event_loop_handles() -> tuple[
-            BackendLivenessPolicy,
-            asyncio.Queue[RawHarnessEvent],
-        ]:
-            return self._liveness, self._event_queue
-
-        async def _open_response() -> _EventStreamResponse:
+        async def _open_response() -> aiohttp.ClientResponse:
             return await self._liveness.wait_for_activity(self._open_event_stream())
 
         sse_event_type: str | None = None
         sse_data_lines: list[str] = []
+        liveness: BackendLivenessPolicy = self._liveness
+        event_queue: asyncio.Queue[RawHarnessEvent] = self._event_queue
 
         while self._state in ("connected", "stopping"):
             if self._process_exited():
@@ -861,8 +847,6 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                         continue
 
                     try:
-                        # Pyright loses these attribute types inside the nested event loop.
-                        liveness, event_queue = _typed_event_loop_handles()
                         if pending_read is None:
                             pending_read = asyncio.ensure_future(
                                 liveness.wait_for_activity(response.content.read(4096))
@@ -1168,7 +1152,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         request_kwargs: dict[str, Any] = {}
         if timeout is not None:
             # aiohttp treats total=0 as "no timeout"; keep it strictly positive.
-            request_kwargs["timeout"] = self._ensure_aiohttp().ClientTimeout(
+            request_kwargs["timeout"] = aiohttp.ClientTimeout(
                 total=max(timeout, 0.001)
             )
         async with client.get(self._url(path), **request_kwargs) as response:
@@ -1383,14 +1367,8 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                     return status, None, content_type
                 try:
                     text_body = await response.text()
-                except Exception as exc:
-                    aiohttp = self._ensure_aiohttp()
-                    client_payload_error = getattr(aiohttp, "ClientPayloadError", None)
-                    if (
-                        tolerate_incomplete_body
-                        and client_payload_error is not None
-                        and isinstance(exc, client_payload_error)
-                    ):
+                except aiohttp.ClientPayloadError:
+                    if tolerate_incomplete_body:
                         logger.warning(
                             "Ignoring incomplete OpenCode response body on %s (status=%s)",
                             path,
@@ -1410,7 +1388,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         finally:
             self._liveness.signal_request_resolved(request_key)
 
-    async def _open_event_stream(self) -> _EventStreamResponse:
+    async def _open_event_stream(self) -> aiohttp.ClientResponse:
         client = await self._ensure_http_client()
         session_id = self._require_session_id()
         paths: list[str] = []
@@ -1438,7 +1416,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                     path=path,
                     status=status,
                 )
-                return cast("_EventStreamResponse", response)
+                return response
 
             body = await response.text()
             response.release()
@@ -1551,19 +1529,12 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             self._signal_in_flight = False
             self._liveness.signal_request_resolved("cancel")
 
-    async def _ensure_http_client(self) -> Any:
+    async def _ensure_http_client(self) -> aiohttp.ClientSession:
         if self._client is not None:
             return self._client
-        aiohttp = self._ensure_aiohttp()
         timeout = aiohttp.ClientTimeout(total=None)
         self._client = aiohttp.ClientSession(timeout=timeout)
         return self._client
-
-    def _ensure_aiohttp(self) -> Any:
-        if self._aiohttp_module is not None:
-            return self._aiohttp_module
-        self._aiohttp_module = importlib.import_module("aiohttp")
-        return self._aiohttp_module
 
     async def _cleanup_runtime(self, *, replacement_deadline: float | None = None) -> None:
         self._liveness.reset()
@@ -1949,14 +1920,7 @@ def summarize_body(body: object | None) -> str:
 
 
 def _is_retryable_transport_error(exc: Exception) -> bool:
-    if isinstance(exc, OSError | TimeoutError):
-        return True
-    try:
-        aiohttp = importlib.import_module("aiohttp")
-    except ImportError:
-        return False
-    client_error = getattr(aiohttp, "ClientError", None)
-    return client_error is not None and isinstance(exc, client_error)
+    return isinstance(exc, OSError | TimeoutError | aiohttp.ClientError)
 
 
 def materialize_system_prompt(system: str | None, env: dict[str, str]) -> Path | None:

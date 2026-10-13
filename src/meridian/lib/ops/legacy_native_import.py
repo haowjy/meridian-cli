@@ -51,6 +51,7 @@ from meridian.lib.state.spawn.repository import (
     read_state,
     scan_spawn_ids,
 )
+from meridian.lib.utils.json_shapes import json_list, json_object
 
 MARKER = "legacy-native-import-v1.json"
 DEFERRAL_NOTE = "legacy-native-import-deferral.json"
@@ -107,19 +108,20 @@ def report_legacy_native_import(
     previously_imported: set[str] = set()
     # Raw historical arrays matter here even though normal replay ignores them.
     for raw_event in read_events(runtime_root / "sessions.jsonl", lambda row: row):
-        event = cast("dict[str, object]", raw_event)
-        raw_fact = event.get("record", event)
-        if not isinstance(raw_fact, dict):
+        event = json_object(raw_event)
+        if event is None:
             continue
-        fact = cast("dict[str, object]", raw_fact)
+        fact = json_object(event.get("record", event))
+        if fact is None:
+            continue
         chat_id = fact.get("chat_id")
         if not isinstance(chat_id, str) or not chat_id:
             continue
         raw_prior_session_ids = fact.get("harness_session_ids")
         if raw_prior_session_ids is None:
             prior_session_ids: list[object] = []
-        elif isinstance(raw_prior_session_ids, list):
-            prior_session_ids = cast("list[object]", raw_prior_session_ids)
+        elif (prior_values := json_list(raw_prior_session_ids)) is not None:
+            prior_session_ids = prior_values
         else:
             continue
         for key in ("execution_cwd", "task_cwd", "control_root"):
@@ -642,8 +644,7 @@ def maybe_import_legacy_native_sessions(runtime_root: Path) -> None:
 def _deferral_is_active(path: Path) -> bool:
     """Read the tiny retry note once; malformed notes safely permit a retry."""
     try:
-        raw_note = json.loads(path.read_text(encoding="utf-8"))
-        note = cast("dict[str, object]", raw_note) if isinstance(raw_note, dict) else None
+        note = json_object(json.loads(path.read_text(encoding="utf-8")))
         retry_after = note.get("retry_after") if note is not None else None
         return isinstance(retry_after, (int, float)) and retry_after > time.time()
     except (OSError, ValueError):
