@@ -38,7 +38,7 @@
 # Harness override for the primary agent (str).
 # harness = ""
 # Agent profile name for the primary session (str; unset = no profile).
-agent = "product-lead"
+agent = "tech-lead"
 
 [spawn]
 # deny_headless_harnesses = ["claude"]
