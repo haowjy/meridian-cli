@@ -16,10 +16,10 @@ import json
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import NotRequired, cast
 
 from pydantic import ConfigDict, TypeAdapter, ValidationError, with_config
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from meridian.lib.core.spawn_lifecycle import is_terminal_spawn_status
 from meridian.lib.core.types import SpawnId
