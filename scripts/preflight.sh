@@ -29,7 +29,7 @@ case "$MODE" in
     # A complete gate must not inherit a last-failed or filtered selection.
     unset PYTEST_ADDOPTS PYTESTS_LAST_FAILED
     run_step uv run --extra dev ruff check .
-    run_step uv run --extra dev python -m pyright
+    run_step uv run --extra dev python -m pyright --warnings
     (
       cd "$ROOT_DIR/src/meridian/pi_runtime"
       # Git hooks have no TTY; allow dependency-tree recreation without prompting.
