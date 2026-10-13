@@ -13,7 +13,7 @@ from collections.abc import Mapping
 import pytest
 
 from meridian.lib.harness.connections.base import HarnessRequest
-from meridian.lib.harness.connections.opencode_http import _permission_liveness_key
+from meridian.lib.harness.connections.opencode_http import permission_liveness_key
 from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -177,7 +177,7 @@ async def test_v2_permission_reply_event_resolves_pending_request() -> None:
     connection._request_handler = handler
     connection._session_id = "ses_v2"
     connection._pending_requests["per_1"] = "ses_v2"
-    connection._liveness.signal_request_in_flight(_permission_liveness_key("per_1"))
+    connection._liveness.signal_request_in_flight(permission_liveness_key("per_1"))
 
     event = connection._event_from_json_line(
         json.dumps(
@@ -200,6 +200,5 @@ async def test_v2_permission_reply_event_resolves_pending_request() -> None:
 
     assert consumed is True
     assert connection._pending_requests == {}
-    assert _permission_liveness_key("per_1") not in connection._liveness._active_requests
+    assert permission_liveness_key("per_1") not in connection._liveness._active_requests
     assert handler.resolutions == [("per_1", {"decision": "accept", "reply": "always"})]
-

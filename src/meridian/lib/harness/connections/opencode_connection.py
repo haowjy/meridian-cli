@@ -46,7 +46,7 @@ _VERSION_ENV = "MERIDIAN_HARNESS_OPENCODE_VERSION"
 class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
     """Resolve the OpenCode version, then defer to the matching transport."""
 
-    _CAPABILITIES = OpenCodeV1Connection._CAPABILITIES
+    CAPABILITIES = OpenCodeV1Connection.CAPABILITIES
 
     def __init__(self, request_handler: ServerRequestHandler | None = None) -> None:
         self._impl: HarnessConnection[ResolvedLaunchSpec] | None = None
@@ -105,7 +105,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
     def capabilities(self) -> ConnectionCapabilities:
         if self._impl is not None:
             return self._impl.capabilities
-        return self._CAPABILITIES
+        return self.CAPABILITIES
 
     @property
     def session_id(self) -> str | None:
@@ -137,9 +137,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._impl = self._select(config)
         await self._impl.start(config, spec)
 
-    async def start_observer(
-        self, config: ConnectionConfig, spec: ResolvedLaunchSpec
-    ) -> None:
+    async def start_observer(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         self._impl = self._select(config)
         await self._impl.start_observer(config, spec)
 

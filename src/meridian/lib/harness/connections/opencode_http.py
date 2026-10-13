@@ -123,7 +123,7 @@ def project_opencode_spec_to_session_payload(
 class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
     """Bidirectional OpenCode 1.x connection over the legacy JSON HTTP API."""
 
-    _CAPABILITIES: ClassVar[ConnectionCapabilities] = ConnectionCapabilities(
+    CAPABILITIES: ClassVar[ConnectionCapabilities] = ConnectionCapabilities(
         mid_turn_injection="http_post",
         supports_steer=False,
         supports_cancel=True,
@@ -263,7 +263,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         # class descriptor: spawn paths install a broker (auto-reject) while
         # managed-primary paths install the surfacing handler.
         return replace(
-            self._CAPABILITIES,
+            self.CAPABILITIES,
             supports_runtime_hitl=not getattr(self._request_handler, "no_runtime_hitl", True),
         )
 
@@ -363,7 +363,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         session_id = self._pending_requests[request_id] or (self._session_id or "")
         if not session_id:
             raise ValueError(f"No pending OpenCode permission request: {request_id}")
-        response = _map_approval_decision(decision, payload)
+        response = map_approval_decision(decision, payload)
         status, body, content_type = await self._post_json(
             f"/session/{session_id}/permissions/{request_id}",
             {"response": response},
@@ -371,10 +371,10 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         )
         if status not in self._SUCCESS_STATUSES or "text/html" in content_type:
             raise RuntimeError(
-                f"OpenCode permission reply failed: status={status} body={_summarize_body(body)}"
+                f"OpenCode permission reply failed: status={status} body={summarize_body(body)}"
             )
         self._pending_requests.pop(request_id, None)
-        self._liveness.signal_request_resolved(_permission_liveness_key(request_id))
+        self._liveness.signal_request_resolved(permission_liveness_key(request_id))
         await self._notify_request_resolved(
             request_id,
             resolution={"decision": decision, **(payload or {})},
@@ -403,7 +403,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 )
                 return False
             self._pending_requests[request_id] = session_id or (self._session_id or "")
-            self._liveness.signal_request_in_flight(_permission_liveness_key(request_id))
+            self._liveness.signal_request_in_flight(permission_liveness_key(request_id))
             harness_request = HarnessRequest(
                 request_id=request_id,
                 request_type="approval",
@@ -422,7 +422,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 # already popped the pending entry and journaled the resolution.
                 return False
             self._pending_requests.pop(request_id, None)
-            self._liveness.signal_request_resolved(_permission_liveness_key(request_id))
+            self._liveness.signal_request_resolved(permission_liveness_key(request_id))
             reply = _extract_opencode_permission_reply(event.payload)
             await self._notify_request_resolved(
                 request_id,
@@ -465,7 +465,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         # (otherwise an in-flight request would suppress stream-stall detection
         # forever) before journaling the failure through the handler.
         self._pending_requests.pop(request.request_id, None)
-        self._liveness.signal_request_resolved(_permission_liveness_key(request.request_id))
+        self._liveness.signal_request_resolved(permission_liveness_key(request.request_id))
         await self._notify_request_failed(request.request_id, error=error)
 
     async def _cancel_request_dispatch_tasks(self) -> None:
@@ -515,7 +515,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         stale_ids = list(self._pending_requests)
         self._pending_requests = {}
         for request_id in stale_ids:
-            self._liveness.signal_request_resolved(_permission_liveness_key(request_id))
+            self._liveness.signal_request_resolved(permission_liveness_key(request_id))
         logger.debug(
             "Dropping %d unanswered OpenCode permission request(s) during %s",
             len(stale_ids),
@@ -925,7 +925,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
 
     async def _launch_process(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         host = config.ws_bind_host or "127.0.0.1"
-        port = config.ws_port if config.ws_port > 0 else _find_free_port(host)
+        port = config.ws_port if config.ws_port > 0 else find_free_port(host)
         self._base_url = f"http://{host}:{port}"
         command = project_managed_primary_backend_command(
             self.harness_id,
@@ -944,7 +944,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         spawn_dir = resolve_spawn_log_dir(
             config.control_root, config.spawn_id, runtime_root=runtime_root
         )
-        self._instruction_path = _materialize_system_prompt(config.system, env)
+        self._instruction_path = materialize_system_prompt(config.system, env)
         self._stderr_log_path = spawn_dir / "stderr.log"
         self._stderr_handle = self._stderr_log_path.open("ab")
         self._stderr_read_offset = self._stderr_handle.tell()
@@ -1005,7 +1005,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 if status in self._SUCCESS_STATUSES:
                     self._last_health_ok = True
                     return
-                last_error = f"{path}: status={status} body={_summarize_body(body)}"
+                last_error = f"{path}: status={status} body={summarize_body(body)}"
 
             if time.monotonic() >= deadline:
                 detail = f": {last_error}" if last_error else ""
@@ -1117,15 +1117,13 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             session_id = _extract_session_id(body)
             if session_id is None:
                 raise RuntimeError(
-                    "OpenCode session creation response missing session id: "
-                    f"{_summarize_body(body)}"
+                    f"OpenCode session creation response missing session id: {summarize_body(body)}"
                 )
             return session_id
         if status in self._PATH_RETRY_STATUSES:
             raise SessionNotReadyError(f"OpenCode session endpoint unavailable: status={status}")
         raise RuntimeError(
-            f"OpenCode session create rejected payload: status={status} "
-            f"body={_summarize_body(body)}"
+            f"OpenCode session create rejected payload: status={status} body={summarize_body(body)}"
         )
 
     async def _get_json(
@@ -1319,18 +1317,18 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 if status in self._PAYLOAD_RETRY_STATUSES:
                     last_error = (
                         f"OpenCode session action rejected payload on {path}: "
-                        f"status={status} body={_summarize_body(body)}"
+                        f"status={status} body={summarize_body(body)}"
                     )
                     continue
                 if status in self._PATH_RETRY_STATUSES:
                     last_error = (
                         f"OpenCode session endpoint unavailable on {path}: "
-                        f"status={status} body={_summarize_body(body)}"
+                        f"status={status} body={summarize_body(body)}"
                     )
                     break
                 raise RuntimeError(
                     f"OpenCode session action failed on {path}: "
-                    f"status={status} body={_summarize_body(body)}"
+                    f"status={status} body={summarize_body(body)}"
                 )
 
         raise RuntimeError(last_error or "OpenCode session action failed")
@@ -1432,12 +1430,12 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 )
                 last_error = (
                     f"OpenCode event endpoint unavailable on {path}: "
-                    f"status={status} body={_summarize_body(body)}"
+                    f"status={status} body={summarize_body(body)}"
                 )
                 continue
             raise RuntimeError(
                 f"OpenCode event stream failed on {path}: "
-                f"status={status} body={_summarize_body(body)}"
+                f"status={status} body={summarize_body(body)}"
             )
 
         raise RuntimeError(last_error or "OpenCode event stream endpoint unavailable")
@@ -1851,11 +1849,11 @@ def _nonempty_str(value: object) -> str | None:
     return stripped or None
 
 
-def _permission_liveness_key(request_id: str) -> str:
+def permission_liveness_key(request_id: str) -> str:
     return f"permission:{request_id}"
 
 
-def _map_approval_decision(
+def map_approval_decision(
     decision: str,
     payload: Mapping[str, object] | None = None,
 ) -> str:
@@ -1905,13 +1903,13 @@ def _extract_session_id_from_mapping(data: Mapping[str, object]) -> str | None:
     return None
 
 
-def _find_free_port(host: str = "127.0.0.1") -> int:
+def find_free_port(host: str = "127.0.0.1") -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind((host, 0))
         return int(sock.getsockname()[1])
 
 
-def _summarize_body(body: object | None) -> str:
+def summarize_body(body: object | None) -> str:
     if body is None:
         return "<empty>"
     if isinstance(body, str):
@@ -1937,7 +1935,7 @@ def _is_retryable_transport_error(exc: Exception) -> bool:
     return client_error is not None and isinstance(exc, client_error)
 
 
-def _materialize_system_prompt(system: str | None, env: dict[str, str]) -> Path | None:
+def materialize_system_prompt(system: str | None, env: dict[str, str]) -> Path | None:
     """Create one owned, private instruction file for this backend attempt."""
     raw = env.get(OPENCODE_CONFIG_CONTENT_ENV, "").strip()
     parsed: object = json.loads(raw) if raw else {}

@@ -32,11 +32,9 @@ def advanced_params_visibility(
     """
 
     reveal = advanced_params_visible(agent_mode=agent_mode, advanced=advanced)
-    prior_show = ADVANCED_PARAMS._show
+    prior_show = ADVANCED_PARAMS._show  # pyright: ignore[reportPrivateUsage]  # Cyclopts has no public getter.
     object.__setattr__(ADVANCED_PARAMS, "_show", reveal)
     try:
         yield
     finally:
         object.__setattr__(ADVANCED_PARAMS, "_show", prior_show)
-
-

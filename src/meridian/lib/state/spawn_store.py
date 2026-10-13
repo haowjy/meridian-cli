@@ -707,7 +707,7 @@ def mark_spawn_running(
     return _write_state_locked(paths.spawns_dir, str(spawn_id), mark_running)
 
 
-def _spawn_sort_key(spawn: SpawnRecord) -> tuple[int, str]:
+def spawn_sort_key(spawn: SpawnRecord) -> tuple[int, str]:
     if len(spawn.id) >= 2 and spawn.id[0] in {"p", "r"} and spawn.id[1:].isdigit():
         return (int(spawn.id[1:]), spawn.id)
     return (10**9, spawn.id)
@@ -759,7 +759,7 @@ def list_spawns(
     if work_id is not None:
         spawns = [spawn for spawn in spawns if spawn.work_id == work_id]
 
-    return SpawnScan(tuple(sorted(spawns, key=_spawn_sort_key)), tuple(quarantines))
+    return SpawnScan(tuple(sorted(spawns, key=spawn_sort_key)), tuple(quarantines))
 
 
 def get_spawn(

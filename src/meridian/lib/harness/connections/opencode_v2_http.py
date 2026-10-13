@@ -41,11 +41,11 @@ from meridian.lib.harness.connections.managed_backend import (
 from meridian.lib.harness.connections.opencode_http import (
     OpenCodeV1Connection,
     SessionNotReadyError,
-    _find_free_port,
-    _map_approval_decision,
-    _materialize_system_prompt,
-    _permission_liveness_key,
-    _summarize_body,
+    find_free_port,
+    map_approval_decision,
+    materialize_system_prompt,
+    permission_liveness_key,
+    summarize_body,
 )
 from meridian.lib.harness.projections.project_opencode_streaming import (
     merge_opencode_v2_permission_config,
@@ -119,19 +119,15 @@ async def _drain_stream(stream: asyncio.StreamReader) -> None:
 class OpenCodeV2Connection(OpenCodeV1Connection):
     """Bidirectional OpenCode 2.x connection over the ``/api`` server surface."""
 
-    _CAPABILITIES: ClassVar[ConnectionCapabilities] = replace(
-        OpenCodeV1Connection._CAPABILITIES,
+    CAPABILITIES: ClassVar[ConnectionCapabilities] = replace(
+        OpenCodeV1Connection.CAPABILITIES,
         runtime_model_switch=True,
     )
     _HEALTH_PATHS: ClassVar[tuple[str, ...]] = ("/api/info",)
     _CREATE_SESSION_PATH: ClassVar[str] = "/api/session"
-    _MESSAGE_PATH_TEMPLATES: ClassVar[tuple[str, ...]] = (
-        "/api/session/{session_id}/prompt",
-    )
+    _MESSAGE_PATH_TEMPLATES: ClassVar[tuple[str, ...]] = ("/api/session/{session_id}/prompt",)
     _EVENT_PATHS: ClassVar[tuple[str, ...]] = ("/api/event",)
-    _CANCEL_PATH_TEMPLATES: ClassVar[tuple[str, ...]] = (
-        "/api/session/{session_id}/interrupt",
-    )
+    _CANCEL_PATH_TEMPLATES: ClassVar[tuple[str, ...]] = ("/api/session/{session_id}/interrupt",)
 
     def __init__(self, request_handler: ServerRequestHandler | None = None) -> None:
         super().__init__(request_handler)
@@ -157,11 +153,9 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             client_env["OPENCODE_PASSWORD"] = self._server_password
         return replace(endpoint, attach_style="server", client_env=client_env)
 
-    async def _launch_process(
-        self, config: ConnectionConfig, spec: ResolvedLaunchSpec
-    ) -> None:
+    async def _launch_process(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         host = config.ws_bind_host or "127.0.0.1"
-        port = config.ws_port if config.ws_port > 0 else _find_free_port(host)
+        port = config.ws_port if config.ws_port > 0 else find_free_port(host)
         self._base_url = f"http://{host}:{port}"
         command = project_managed_primary_backend_command(
             self.harness_id,
@@ -190,7 +184,7 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         spawn_dir = resolve_spawn_log_dir(
             config.control_root, config.spawn_id, runtime_root=runtime_root
         )
-        self._instruction_path = _materialize_system_prompt(config.system, env)
+        self._instruction_path = materialize_system_prompt(config.system, env)
         self._stderr_log_path = spawn_dir / "stderr.log"
         self._stderr_handle = self._stderr_log_path.open("ab")
         self._stderr_read_offset = self._stderr_handle.tell()
@@ -239,9 +233,7 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             if not line:
                 if self._process_exited():
                     raise self._startup_exit_exception()
-                raise RuntimeError(
-                    "OpenCode V2 server closed stdout before printing its password"
-                )
+                raise RuntimeError("OpenCode V2 server closed stdout before printing its password")
             match = _SERVER_PASSWORD_RE.search(line.decode("utf-8", errors="replace"))
             if match:
                 self._server_password = match.group(1)
@@ -307,16 +299,14 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             if session_id is None:
                 raise RuntimeError(
                     "OpenCode V2 session creation response missing session id: "
-                    f"{_summarize_body(body)}"
+                    f"{summarize_body(body)}"
                 )
             return session_id
         if status in self._PATH_RETRY_STATUSES:
-            raise SessionNotReadyError(
-                f"OpenCode V2 session endpoint unavailable: status={status}"
-            )
+            raise SessionNotReadyError(f"OpenCode V2 session endpoint unavailable: status={status}")
         raise RuntimeError(
             f"OpenCode V2 session create rejected payload: status={status} "
-            f"body={_summarize_body(body)}"
+            f"body={summarize_body(body)}"
         )
 
     async def _switch_session_model(self, session_id: str, model: str) -> None:
@@ -338,8 +328,7 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         if status in self._SUCCESS_STATUSES and "text/html" not in content_type:
             return
         raise HarnessCapabilityMismatch(
-            f"OpenCode V2 session model switch failed: status={status} "
-            f"body={_summarize_body(body)}"
+            f"OpenCode V2 session model switch failed: status={status} body={summarize_body(body)}"
         )
 
     async def _post_session_message(
@@ -387,13 +376,13 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
                 if status in self._PAYLOAD_RETRY_STATUSES:
                     last_error = (
                         f"OpenCode V2 session action rejected payload on {path}: "
-                        f"status={status} body={_summarize_body(body)}"
+                        f"status={status} body={summarize_body(body)}"
                     )
                     continue
                 if status in self._PATH_RETRY_STATUSES:
                     last_error = (
                         f"OpenCode V2 session endpoint unavailable on {path}: "
-                        f"status={status} body={_summarize_body(body)}"
+                        f"status={status} body={summarize_body(body)}"
                     )
                     break
                 if status in accepted_statuses:
@@ -403,7 +392,7 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
                     )
                 raise RuntimeError(
                     f"OpenCode V2 session action failed on {path}: "
-                    f"status={status} body={_summarize_body(body)}"
+                    f"status={status} body={summarize_body(body)}"
                 )
 
         raise RuntimeError(last_error or "OpenCode V2 session action failed")
@@ -436,7 +425,7 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         session_id = self._pending_requests[request_id] or (self._session_id or "")
         if not session_id:
             raise ValueError(f"No pending OpenCode permission request: {request_id}")
-        body: dict[str, object] = {"reply": _map_approval_decision(decision, payload)}
+        body: dict[str, object] = {"reply": map_approval_decision(decision, payload)}
         message = payload.get("message") if payload is not None else None
         if isinstance(message, str) and message.strip():
             body["message"] = message
@@ -450,10 +439,10 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         if status not in self._SUCCESS_STATUSES or "text/html" in content_type:
             raise RuntimeError(
                 f"OpenCode V2 permission reply failed: status={status} "
-                f"body={_summarize_body(response_body)}"
+                f"body={summarize_body(response_body)}"
             )
         self._pending_requests.pop(request_id, None)
-        self._liveness.signal_request_resolved(_permission_liveness_key(request_id))
+        self._liveness.signal_request_resolved(permission_liveness_key(request_id))
         await self._notify_request_resolved(
             request_id,
             resolution={"decision": decision, **(payload or {})},

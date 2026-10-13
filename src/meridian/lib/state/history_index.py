@@ -1451,7 +1451,7 @@ def indexed_spawn_scan(
     work_id: str | None = None,
 ) -> SpawnScan:
     """Discovery partition; corruption fails coverage rather than omitting a sibling."""
-    from meridian.lib.state.spawn_store import SpawnScan, _spawn_sort_key
+    from meridian.lib.state.spawn_store import SpawnScan, spawn_sort_key
 
     records = HistoryIndex(runtime_root).spawns(
         chat_id=chat_id,
@@ -1460,4 +1460,4 @@ def indexed_spawn_scan(
         parent_id=parent_id,
         work_id=work_id,
     )
-    return SpawnScan(tuple(sorted(records, key=_spawn_sort_key)), ())
+    return SpawnScan(tuple(sorted(records, key=spawn_sort_key)), ())

@@ -464,7 +464,7 @@ async def test_private_instructions_are_owned_and_removed_on_stop(tmp_path) -> N
     inherited.write_text("user-owned")
     env = {OPENCODE_CONFIG_CONTENT_ENV: json.dumps({"instructions": [str(inherited)]})}
     connection = OpenCodeConnection()
-    connection._instruction_path = opencode_http._materialize_system_prompt("private", env)
+    connection._instruction_path = opencode_http.materialize_system_prompt("private", env)
     owned = connection._instruction_path
     assert owned is not None and owned.read_text() == "private"
     assert json.loads(env[OPENCODE_CONFIG_CONTENT_ENV])["instructions"] == [
@@ -475,7 +475,7 @@ async def test_private_instructions_are_owned_and_removed_on_stop(tmp_path) -> N
     assert not owned.exists()
     assert inherited.read_text() == "user-owned"
     with pytest.raises(ValueError):
-        opencode_http._materialize_system_prompt(None, {OPENCODE_CONFIG_CONTENT_ENV: "{bad"})
+        opencode_http.materialize_system_prompt(None, {OPENCODE_CONFIG_CONTENT_ENV: "{bad"})
 
 
 @pytest.mark.asyncio
@@ -523,4 +523,3 @@ async def test_respond_request_v1_raises_without_a_session() -> None:
 
     with pytest.raises(ValueError, match="No pending OpenCode permission request"):
         await connection.respond_request("per_missing", "reject")
-
