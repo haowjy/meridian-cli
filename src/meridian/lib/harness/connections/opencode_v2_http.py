@@ -22,7 +22,9 @@ import re
 import time
 from collections.abc import Mapping
 from dataclasses import replace
-from typing import Any, ClassVar, cast
+from typing import ClassVar, cast
+
+import aiohttp
 
 from meridian.lib.core.telemetry import StartupPhase
 from meridian.lib.core.types import HarnessId
@@ -240,10 +242,9 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
                 self._stdout_drain_task = asyncio.create_task(_drain_stream(stream))
                 return
 
-    async def _ensure_http_client(self) -> Any:
+    async def _ensure_http_client(self) -> aiohttp.ClientSession:
         if self._client is not None:
             return self._client
-        aiohttp = self._ensure_aiohttp()
         timeout = aiohttp.ClientTimeout(total=None)
         self._client = aiohttp.ClientSession(
             timeout=timeout,
