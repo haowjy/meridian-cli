@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.10] - 2026-10-14
+
 ### Changed
 - Run the strict Pyright gate with warnings fatal and per-rule suppressions only.
 - Stop advertising archived HTTP/app-server extension commands. Extension
@@ -20,6 +22,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Keep runtime-read config on the same resolved project authority snapshot as
   runtime discovery.
 - Honor `--config` and `MERIDIAN_CONFIG` when resolving Git clone path overrides.
+
+## [0.9.9] - 2026-10-14
+
+### Fixed
+- Idle push, warning, and compaction now work on OpenCode 2.x (before: never
+  armed). `openai`-provider sessions are scheduled against an estimated 30-minute
+  cache; other providers stay push-only. A prompt steered or queued into a running
+  turn counts as the user's return at once.
 
 ## [0.9.8] - 2026-10-14
 

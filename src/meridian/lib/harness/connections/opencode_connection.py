@@ -35,7 +35,7 @@ from meridian.lib.harness.connections.opencode_http import (
     OpenCodeV1Connection,
 )
 from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
-from meridian.lib.harness.opencode_backend import resolve_opencode_version
+from meridian.lib.harness.opencode_backend import OpenCodeVersion, resolve_opencode_version
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 if TYPE_CHECKING:
@@ -53,6 +53,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     def __init__(self, request_handler: ServerRequestHandler | None = None) -> None:
         self._impl: HarnessConnection[ResolvedLaunchSpec] | None = None
+        self._resolved_version: OpenCodeVersion | None = None
         self._request_handler = request_handler
         # Managed-primary callers configure the runtime-request policy before
         # ``start()`` resolves the version. Hold it until ``_select()`` builds the
@@ -71,12 +72,13 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             raise RuntimeError("OpenCode connection has not been started")
         return self._impl
 
-    def _resolve_version(self, config: ConnectionConfig) -> str:
+    def _resolve_version(self, config: ConnectionConfig) -> OpenCodeVersion:
         preference = config.child_env.get(_VERSION_ENV)
         return resolve_opencode_version(preference, binary="opencode", env=config.child_env)
 
     def _select(self, config: ConnectionConfig) -> HarnessConnection[ResolvedLaunchSpec]:
-        if self._resolve_version(config) == "v2":
+        self._resolved_version = self._resolve_version(config)
+        if self._resolved_version == "v2":
             impl: HarnessConnection[ResolvedLaunchSpec] = OpenCodeV2Connection(
                 request_handler=self._request_handler
             )
@@ -95,6 +97,12 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
     @property
     def state(self) -> ConnectionState:
         return self._impl.state if self._impl is not None else "created"
+
+    @property
+    def resolved_version(self) -> OpenCodeVersion | None:
+        """Return the backend dialect selected for the active transport."""
+
+        return self._resolved_version
 
     @property
     def harness_id(self) -> HarnessId:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -12,7 +12,9 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.codex_idle import pane_facts
 from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.idle_types import (
+    CacheTtl,
     CompactResult,
+    DetectIdleTtl,
     IdleEvent,
     IdleFacts,
     IdleSensorContext,
@@ -147,10 +149,15 @@ class SensorFailure(BaseException):
     pass
 
 
-def context(tmp_path: Path, alive: list[bool]) -> IdleSensorContext:
+def context(
+    tmp_path: Path,
+    alive: list[bool],
+    *,
+    harness_id: HarnessId = HarnessId.CODEX,
+) -> IdleSensorContext:
     return IdleSensorContext(
         connection=cast("HarnessConnection[Any]", object()),
-        harness_id=HarnessId.CODEX,
+        harness_id=harness_id,
         harness_session_id="session-1",
         env={"MERIDIAN_SESSION_ROLE": "primary"},
         tmux_pane=None,
@@ -164,6 +171,8 @@ def policy(
     tmp_path: Path,
     clock: Clock,
     sender: Sender,
+    *,
+    detect_ttl: DetectIdleTtl | None = None,
 ) -> tuple[IdleService, IdleStore]:
     store = IdleStore(tmp_path / "idle", now_ms=clock.now_ms)
     return (
@@ -174,6 +183,7 @@ def policy(
             now_ms=clock.now_ms,
             notify_sender=sender,
             spawn_reader=lambda: (),
+            detect_ttl=detect_ttl,
         ),
         store,
     )
@@ -219,6 +229,53 @@ async def test_sidecar_drives_idle_push_warn_compact_and_done(tmp_path: Path) ->
     assert sensor.compact_calls == 1
     assert state is not None
     assert state.done == {"push": "sent", "warn": "sent", "compact": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_sidecar_forwards_event_provider_to_ttl_detection(tmp_path: Path) -> None:
+    alive = [True]
+    clock = PendingClock()
+    sender = Sender()
+    observed_providers: list[str | None] = []
+
+    def detect_ttl(
+        *,
+        session_id: str,
+        native_store: Path | None,
+        provider: str | None,
+        env: Mapping[str, str],
+    ) -> CacheTtl:
+        _ = session_id, native_store, env
+        observed_providers.append(provider)
+        return CacheTtl(1800, estimated=True)
+
+    service, store = policy(tmp_path, clock, sender, detect_ttl=detect_ttl)
+    sensor = Sensor(
+        (IdleEvent("turn_end", "session-1", "turn-1", provider="openai"),),
+        alive,
+    )
+
+    ctx = context(tmp_path, alive, harness_id=HarnessId.OPENCODE)
+    task = asyncio.create_task(
+        run(
+            sensor,
+            ctx,
+            service=service,
+            clock=cast("SidecarClock", clock),
+            poll_seconds=0.001,
+        )
+    )
+    await wait_until(
+        lambda: store.read("opencode", "session-1") is not None,
+        description="provider-derived arm",
+    )
+    alive[0] = False
+    await task
+
+    state = store.read("opencode", "session-1")
+    assert observed_providers == ["openai"]
+    assert state is not None
+    assert (state.ttl_seconds, state.ttl_estimated) == (1800, True)
 
 
 @pytest.mark.asyncio

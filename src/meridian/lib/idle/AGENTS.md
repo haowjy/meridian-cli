@@ -35,5 +35,7 @@ a harness adapter: **adapters report facts; core decides**.
   session store using `MERIDIAN_CHAT_ID`. Never pass or derive a cwd for
   transcript lookup: agents can `cd`, while the transcript remains filed under
   the launch directory.
+- A sensor may attach `IdleEvent.provider`; core forwards it to the harness
+  `detect_ttl` port without interpreting provider names.
 - Disk layout, locks, atomic writes, and garbage collection stay in
   `../state/idle_store.py`.
