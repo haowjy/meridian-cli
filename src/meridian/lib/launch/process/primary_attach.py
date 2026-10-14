@@ -566,6 +566,14 @@ class PrimaryAttachLauncher:
         async for event in self._connection.events():
             self._update_activity_from_event(event)
             run_event_hooks(self._event_hooks, event)
+        error = RuntimeError("managed primary event stream ended before launcher teardown")
+        if self._idle_error_reporter is not None:
+            self._idle_error_reporter.record(phase="event_stream", error=error)
+        logger.warning(
+            "primary_attach.observer_ended",
+            spawn_id=str(self._spawn_id),
+            error=str(error),
+        )
 
     def _update_activity_from_event(self, event: RawHarnessEvent) -> None:
         """Update activity state based on connection events."""

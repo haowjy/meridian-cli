@@ -14,6 +14,7 @@ from urllib.parse import quote
 import aiohttp
 
 from meridian.lib.harness.connections.base import RawHarnessEvent
+from meridian.lib.harness.connections.opencode_v2_http import v2_session_idle_marker
 from meridian.lib.harness.idle_types import (
     CacheTtl,
     CompactResult,
@@ -505,6 +506,44 @@ def _v2_message_excerpts(payload: object) -> tuple[str | None, str | None]:
     return message_excerpts(list(reversed(cast("list[object]", messages))))
 
 
+def _v2_has_completed_compaction_message(payload: object, expected_id: str) -> bool:
+    response = json_object(payload)
+    messages = response.get("data") if response is not None else None
+    if not isinstance(messages, list):
+        return False
+    for raw_message in cast("list[object]", messages):
+        message = json_object(raw_message)
+        if message is None:
+            continue
+        info = json_object(message.get("info"))
+        identity = next(
+            (
+                candidate
+                for candidate in (message, info)
+                if candidate is not None
+                and candidate.get("id") == expected_id
+                and candidate.get("type") == "compaction"
+            ),
+            None,
+        )
+        if identity is None:
+            continue
+        raw_status = message.get("status")
+        if not isinstance(raw_status, str) and info is not None:
+            raw_status = info.get("status")
+        return isinstance(raw_status, str) and raw_status.strip().lower() == "completed"
+    return False
+
+
+def _v2_session_idle_after(payload: object, admitted_at_ms: float | None) -> bool:
+    if admitted_at_ms is None:
+        return False
+    outcome, idle_at_ms = v2_session_idle_marker(payload)
+    if isinstance(outcome, str) and outcome.strip().lower() not in {"", "succeeded"}:
+        return False
+    return idle_at_ms is not None and idle_at_ms >= admitted_at_ms
+
+
 class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
     """Translate OpenCode 2.x execution and inbox events into idle facts."""
 
@@ -635,6 +674,39 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
         except (TimeoutError, OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError):
             return None
 
+    async def _confirm_durable_compaction(
+        self,
+        *,
+        inbox_id: str,
+        admitted_at_ms: float | None,
+    ) -> bool:
+        """Confirm a completed compaction after a live-only stream gap."""
+
+        session_id = quote(self._ctx.harness_session_id, safe="")
+        session_path = f"/api/session/{session_id}"
+        try:
+            messages_status, messages_body = await asyncio.wait_for(
+                self._request(
+                    "GET",
+                    f"{session_path}/message?limit=20&order=desc&type=compaction",
+                    None,
+                ),
+                timeout=_GET_TIMEOUT_SECONDS,
+            )
+            if messages_status != 200 or not _v2_has_completed_compaction_message(
+                json.loads(messages_body), inbox_id
+            ):
+                return False
+            session_status, session_body = await asyncio.wait_for(
+                self._request("GET", session_path, None),
+                timeout=_GET_TIMEOUT_SECONDS,
+            )
+            return session_status == 200 and _v2_session_idle_after(
+                json.loads(session_body), admitted_at_ms
+            )
+        except (TimeoutError, OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError):
+            return False
+
     async def compact(self) -> CompactResult:
         if not self._ctx.tui_alive():
             return CompactResult("vetoed", "tui-exited")
@@ -679,10 +751,22 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
                 return CompactResult("failed", "invalid compaction response")
             self._compact_expected_id = inbox_id
             self._maybe_finish_compaction()
-            succeeded, reason = await asyncio.wait_for(
-                waiter,
-                timeout=self._compact_timeout_seconds,
+            admitted_time = json_object(admitted.get("time"))
+            admitted_at_ms = (
+                _epoch_ms(admitted_time.get("created")) if admitted_time is not None else None
             )
+            try:
+                succeeded, reason = await asyncio.wait_for(
+                    waiter,
+                    timeout=self._compact_timeout_seconds,
+                )
+            except TimeoutError:
+                if await self._confirm_durable_compaction(
+                    inbox_id=inbox_id,
+                    admitted_at_ms=admitted_at_ms,
+                ):
+                    return CompactResult("ok")
+                return CompactResult("failed", "timeout")
             if not succeeded:
                 return CompactResult("failed", reason)
         except TimeoutError:

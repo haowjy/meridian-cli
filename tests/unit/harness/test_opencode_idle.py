@@ -476,6 +476,68 @@ async def test_v2_compact_waits_for_matching_recorded_completion(
 
 
 @pytest.mark.parametrize(
+    ("compaction_status", "expected_result"),
+    [("completed", "ok"), ("failed", "failed")],
+)
+async def test_v2_compact_confirms_durable_completion_after_stream_gap(
+    tmp_path: Path,
+    compaction_status: str,
+    expected_result: str,
+) -> None:
+    compact_posted = False
+    session_path = f"/api/session/{V2_SESSION_ID}"
+
+    async def request(
+        method: str, path: str, payload: Mapping[str, object] | None
+    ) -> tuple[int, str]:
+        nonlocal compact_posted
+        if (method, path) == ("GET", session_path):
+            return 200, json.dumps(
+                {
+                    "data": {
+                        "id": V2_SESSION_ID,
+                        "model": {"providerID": "opencode-go", "id": "deepseek-v4.1-flash"},
+                        "outcome": "succeeded" if compact_posted else None,
+                        "time": {"idle": 1_700_000_001_000} if compact_posted else {},
+                    }
+                }
+            )
+        if method == "GET" and path == (
+            f"{session_path}/message?limit=20&order=desc&type=compaction"
+        ):
+            return 200, json.dumps(
+                {
+                    "data": [
+                        {
+                            "id": "msg_v2_compaction",
+                            "type": "compaction",
+                            "status": compaction_status,
+                        }
+                    ]
+                }
+            )
+        assert (method, path, payload) == ("POST", f"{session_path}/compact", {})
+        compact_posted = True
+        return 200, json.dumps(
+            {
+                "data": {
+                    "id": "msg_v2_compaction",
+                    "sessionID": V2_SESSION_ID,
+                    "time": {"created": 1_700_000_000_000},
+                    "type": "compaction",
+                }
+            }
+        )
+
+    sensor, _ = _v2_sensor(tmp_path, request=request, compact_timeout_seconds=0.01)
+
+    result = await sensor.compact()
+
+    assert result.result == expected_result
+    assert result.reason == (None if expected_result == "ok" else "timeout")
+
+
+@pytest.mark.parametrize(
     ("version", "resolved_version", "expected_type"),
     [
         ("v1", "v1", opencode_idle.OpenCodeIdleSensor),

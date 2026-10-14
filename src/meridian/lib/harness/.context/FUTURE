@@ -18,5 +18,8 @@
   shows the guard matters (work item `idle-ttl-detection`, phase 2).
 - `opencode_idle.py`: two dialects (frozen V1, V2) now share
   `_OpenCodeIdleSensorBase` in one ~700-line module. When V2 grows again,
-  move it to `opencode_idle_v2.py` with the base in `opencode_idle.py`,
+  move it to `opencode_v2_idle.py` with the base in `opencode_idle.py`,
   mirroring the `connections/opencode_http.py` / `opencode_v2_http.py` split.
+- `connections/opencode_http.py`: split `events()` into a per-response drain that
+  reports its close reason and small outer policies for spawn and primary-observer
+  lifetimes; the current shared loop intentionally keeps the review fold bounded.
