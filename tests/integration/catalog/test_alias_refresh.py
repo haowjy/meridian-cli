@@ -5,13 +5,16 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    import pytest
+import pytest
 
 from meridian.lib.catalog import model_aliases
 from meridian.lib.catalog.catalog_session import CatalogSession
+
+
+@pytest.fixture(autouse=True)
+def _project_mars_root(tmp_path: Path) -> None:
+    (tmp_path / "mars.toml").write_text("", encoding="utf-8")
 
 
 def test_alias_inventory_separates_cache_only_from_normal_refresh(

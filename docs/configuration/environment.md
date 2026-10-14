@@ -29,8 +29,9 @@ in this order:
 2. `MERIDIAN_PROJECT_DIR` (inherited across spawns)
 3. Literal process CWD (no marker walk-up)
 
-A bare CWD is eligible as a project root: the first durable write creates
-`meridian.toml` and `[project] id` there, while read-only commands create nothing.
+A bare CWD is an ad-hoc place. Reads create nothing; runtime writes keep its
+path-derived `adhoc.*` state under `MERIDIAN_HOME` and never write into the CWD.
+Run `meridian init` when the directory should have committed, shareable identity.
 
 Task directory (where source reads, edits, git, builds, and tests run) is separate.
 `MERIDIAN_TASK_DIR` is inherited across spawns. Precedence within a session:
@@ -85,6 +86,8 @@ These override spawn-level runtime policy. They sit above project config but bel
 - `MERIDIAN_HARNESS_MODEL_OPENCODE`
 - `MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_CLAUDE`, `_CODEX`, `_OPENCODE`, `_PI`
 - `MERIDIAN_STATE_RETENTION_DAYS`
+- `MERIDIAN_STATE_ADHOC_RETENTION_DAYS` — user-scope ad-hoc TTL (`-1` off,
+  `0` once quiescent, default `30`); ignored from cwd project config
 - `MERIDIAN_HISTORY_ARCHIVE_AUTOMATIC`
 - `MERIDIAN_HISTORY_ARCHIVE_AFTER_DAYS`
 - `MERIDIAN_HISTORY_ARCHIVE_DESTINATION`

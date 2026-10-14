@@ -10,6 +10,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.ops.runtime import OperationRuntime
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.user_paths import get_dry_run_preview_root
 
 from .request import (
     LaunchArgvIntent,
@@ -110,13 +111,22 @@ def build_primary_launch_runtime(
     project_root: Path,
     execution_cwd: Path | None = None,
     config: MeridianConfig | None = None,
+    dry_run: bool = False,
 ) -> LaunchRuntime:
     """Build primary-launch runtime inputs for the shared launch factory."""
 
     resolved_root = resolve_project_root_resolution(project_root).project_root
     resolved_cwd = (execution_cwd or project_root).resolve()
     resolved_config = config if config is not None else load_config(resolved_root)
-    runtime_root = resolve_project_runtime_root_for_write(resolved_root)
+    if dry_run:
+        from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
+
+        authority = resolve_runtime_authority_for_read(resolved_root)
+        runtime_root = authority.runtime_root or get_dry_run_preview_root(
+            user_home=authority.user_home
+        )
+    else:
+        runtime_root = resolve_project_runtime_root_for_write(resolved_root)
 
     return LaunchRuntime(
         argv_intent=LaunchArgvIntent.REQUIRED,

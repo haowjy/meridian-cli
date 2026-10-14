@@ -11,6 +11,7 @@ from meridian.lib.ops.config import (
     ensure_runtime_state_bootstrap_sync,
 )
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.project_identity import resolve_project_identity
 
 
 def _repo(tmp_path: Path) -> Path:
@@ -84,18 +85,44 @@ def test_runtime_bootstrap_creates_identity_without_repo_local_state(
     ensure_runtime_state_bootstrap_sync(project_root)
     runtime_root = resolve_project_runtime_root_for_write(project_root)
 
-    import tomllib
-
     assert not (project_root / ".meridian").exists()
-    project_uuid = tomllib.loads(
-        (project_root / "meridian.toml").read_text(encoding="utf-8")
-    )["project"]["id"]
-    assert runtime_root == user_state_root / "projects" / project_uuid
+    assert not (project_root / "meridian.toml").exists()
+    assert runtime_root.parent == user_state_root / "projects"
+    assert runtime_root.name.startswith("adhoc.repo.")
     assert runtime_root.is_dir()
+    assert (runtime_root / "origin.json").is_file()
     assert (runtime_root / "spawns").is_dir()
-    assert (project_root / "meridian.toml").is_file()
     assert not (project_root / ".mars").exists()
     assert not (project_root / "mars.toml").exists()
+
+
+def test_config_init_after_adhoc_use_starts_clean_and_reports_old_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _repo(tmp_path)
+    user_state_root = tmp_path / "user-state"
+    monkeypatch.setenv("MERIDIAN_HOME", user_state_root.as_posix())
+
+    ensure_runtime_state_bootstrap_sync(project_root)
+    adhoc_identity = resolve_project_identity(project_root)
+    old_root = user_state_root / "projects" / adhoc_identity.id
+    old_spawn = old_root / "spawns" / "p1" / "report.md"
+    old_spawn.parent.mkdir(parents=True)
+    old_spawn.write_text("old scratch history\n", encoding="utf-8")
+
+    result = config_init_sync(ConfigInitInput(project_root=project_root.as_posix()))
+    committed_identity = resolve_project_identity(project_root)
+    committed_root = user_state_root / "projects" / str(committed_identity.id)
+
+    assert result.note == (
+        f"earlier ad-hoc state at {old_root.as_posix()} is not carried over"
+    )
+    assert result.format_text().endswith(f"note: {result.note}")
+    assert committed_identity.tier == "committed"
+    assert committed_identity.id != adhoc_identity.id
+    assert list((committed_root / "spawns").iterdir()) == []
+    assert old_spawn.read_text(encoding="utf-8") == "old scratch history\n"
 
 
 def test_runtime_bootstrap_skips_context_dirs_for_git_backed_sources(

@@ -73,7 +73,7 @@ from meridian.cli.output import (
 from meridian.cli.startup.catalog import COMMAND_CATALOG
 from meridian.cli.startup.classify import classify_invocation
 from meridian.cli.startup.help import render_root_help
-from meridian.cli.startup.policy import StartupClass
+from meridian.cli.startup.policy import BootstrapPlan, StartupClass, StateRequirement
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.cli.utils import parse_csv_list
 from meridian.lib.launch.cwd import WorkTaskDirMissing
@@ -702,11 +702,6 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
 
             register_report_commands(report_app)
 
-        def _register_migrate() -> None:
-            from meridian.cli.migrate_cmd import register_migrate_command
-
-            register_migrate_command(app)
-
         bucket_handlers: dict[str, Callable[[], None]] = {
             "spawn": _register_spawn,
             "session": _register_session,
@@ -729,7 +724,6 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
             "idle": _register_idle,
             "qi": _register_qi,
             "report": _register_report,
-            "migrate": _register_migrate,
         }
 
         registrations: dict[str, tuple[str, Callable[[], None]]] = {
@@ -813,6 +807,22 @@ def _bootstrap_setup_requested(argv: Sequence[str]) -> bool:
         if token.startswith("--add=") or token.startswith("--link="):
             return True
     return False
+
+
+def _is_launch_dry_run(argv: Sequence[str], *, command_path: tuple[str, ...] | None) -> bool:
+    """Return whether startup belongs to a non-mutating launch preview."""
+
+    if command_path not in {(), ("spawn",)}:
+        return False
+    enabled = False
+    for token in argv:
+        if token == "--":
+            break
+        if token == "--dry-run":
+            enabled = True
+        elif token == "--no-dry-run":
+            enabled = False
+    return enabled
 
 
 def _known_child_commands(parent: str) -> set[str]:
@@ -1043,6 +1053,12 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
     help_request = _is_help_request(cleaned_args)
     bootstrap_skipped = help_request
     bootstrap_plan = descriptor.bootstrap_plan if descriptor is not None else None
+    launch_dry_run = _is_launch_dry_run(
+        cleaned_args,
+        command_path=descriptor.command_path if descriptor is not None else None,
+    )
+    if launch_dry_run:
+        bootstrap_plan = BootstrapPlan(StateRequirement.PROJECT_READ)
     # bootstrap --add/--link must resolve root with init semantics in the handler
     # and reject invalid --dry-run combinations before any startup writes.
     if _bootstrap_setup_requested(cleaned_args):
@@ -1067,14 +1083,18 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
     )
     with _directory_env_scope(project_root, options.directory_explicit):
         _install_cli_telemetry(
-            telemetry_mode=descriptor.telemetry_mode if descriptor is not None else None,
+            telemetry_mode=(
+                StartupTelemetryMode.NONE
+                if launch_dry_run
+                else descriptor.telemetry_mode if descriptor is not None else None
+            ),
             startup_class=startup_class,
             project_root=project_root,
         )
         _maybe_schedule_background_repairs(
             startup_class=startup_class,
             project_root=project_root,
-            bootstrap_skipped=bootstrap_skipped,
+            bootstrap_skipped=bootstrap_skipped or launch_dry_run,
         )
         _emit_usage_command_invoked(cleaned_args)
 

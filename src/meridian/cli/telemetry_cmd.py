@@ -10,7 +10,7 @@ from typing import Annotated, Any
 from cyclopts import App, Parameter
 
 from meridian.cli.invocation import Emitter, emit
-from meridian.cli.utils import require_established_project_root
+from meridian.cli.utils import resolve_cli_project_root
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state.user_paths import get_user_home
 from meridian.lib.telemetry.query import query_events
@@ -46,7 +46,7 @@ def _resolve_telemetry_dirs(global_flag: bool) -> list[Path]:
             dirs.append(legacy)
         return dirs
 
-    project_root = require_established_project_root()
+    project_root = resolve_cli_project_root()
     runtime_root = resolve_runtime_root_for_read(project_root)
     if runtime_root is None:
         return []

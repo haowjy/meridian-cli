@@ -1,76 +1,159 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import os
+import time
 import tomllib
 from pathlib import Path
 
 import pytest
 
-from meridian.lib.config.project_root import cwd_has_project_id
-from meridian.lib.ops.migration import migrate_project_id
-from meridian.lib.state.spawn_store import get_spawn, start_spawn
-from meridian.lib.state.user_paths import (
-    get_or_create_project_id,
-    get_project_home,
-    get_project_id,
-    write_project_id,
+from meridian.lib.config.project_root import has_project_marker
+from meridian.lib.state.project_identity import (
+    AdHoc,
+    Committed,
+    ensure_project_identity,
+    mint_committed_identity,
+    nearest_ancestor_project_marker,
+    resolve_project_identity,
+    state_id,
 )
 
 
-def test_project_predicate_recognizes_either_toml(tmp_path: Path) -> None:
-    assert not cwd_has_project_id(tmp_path)
+def test_project_predicate_recognizes_markers_except_user_mars_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    user_mars_root = home / "mars"
+    user_mars_root.mkdir(parents=True)
+    monkeypatch.setenv("MERIDIAN_HOME", home.as_posix())
+
+    assert not has_project_marker(tmp_path)
     (tmp_path / "mars.toml").write_text("[settings]\n", encoding="utf-8")
-    assert cwd_has_project_id(tmp_path)
-    (tmp_path / "mars.toml").unlink()
-    (tmp_path / "meridian.toml").write_text("[defaults]\n", encoding="utf-8")
-    assert cwd_has_project_id(tmp_path)
+    assert has_project_marker(tmp_path)
+    (user_mars_root / "mars.toml").write_text("[settings]\n", encoding="utf-8")
+    assert not has_project_marker(user_mars_root)
+    assert isinstance(resolve_project_identity(user_mars_root), AdHoc)
+
+
+def test_nearest_ancestor_marker_is_notice_only(tmp_path: Path) -> None:
+    ancestor = tmp_path / "project"
+    child = ancestor / "nested" / "scratch"
+    child.mkdir(parents=True)
+    (ancestor / "meridian.toml").write_text("", encoding="utf-8")
+
+    assert nearest_ancestor_project_marker(child) == ancestor
+    assert isinstance(resolve_project_identity(child), AdHoc)
+
+
+def test_bare_identity_read_is_pure_and_deterministic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    project_root = tmp_path / "My Scratch!"
+    project_root.mkdir()
+    monkeypatch.setenv("MERIDIAN_HOME", home.as_posix())
+
+    identity = resolve_project_identity(project_root)
+
+    digest = hashlib.sha256(project_root.resolve().as_posix().encode()).hexdigest()[:12]
+    assert identity == AdHoc(id=f"adhoc.my-scratch.{digest}", materialized=False)
+    assert not home.exists()
+    assert list(project_root.iterdir()) == []
+    assert state_id(identity) is None
+
+
+def test_ensure_adhoc_identity_writes_origin_only_under_user_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    project_root = tmp_path / "scratch"
+    project_root.mkdir()
+    monkeypatch.setenv("MERIDIAN_HOME", home.as_posix())
+
+    identity = ensure_project_identity(project_root)
+
+    assert isinstance(identity, AdHoc)
+    assert identity.materialized
+    assert state_id(identity) == identity.id
+    origin_path = home / "projects" / identity.id / "origin.json"
+    original_bytes = origin_path.read_bytes()
+    original_mtime = origin_path.stat().st_mtime_ns
+    origin = json.loads(origin_path.read_text(encoding="utf-8"))
+    assert set(origin) == {"path", "created_at"}
+    assert origin["path"] == project_root.resolve().as_posix()
+    assert list(project_root.iterdir()) == []
+    assert resolve_project_identity(project_root) == identity
+    assert ensure_project_identity(project_root) == identity
+    assert origin_path.read_bytes() == original_bytes
+    assert origin_path.stat().st_mtime_ns == original_mtime
+
+    stale_time = time.time() - 3700
+    os.utime(origin_path, (stale_time, stale_time))
+    ensure_project_identity(project_root)
+    assert origin_path.stat().st_mtime > stale_time
+    assert origin_path.read_bytes() == original_bytes
 
 
 def test_committed_identity_is_read_without_minting(tmp_path: Path) -> None:
     (tmp_path / "meridian.toml").write_text(
         '[project]\nid = "shared-clone-id"\n', encoding="utf-8"
     )
-    assert get_project_id(tmp_path) == "shared-clone-id"
-    assert get_or_create_project_id(tmp_path) == "shared-clone-id"
-    assert not (tmp_path / ".meridian").exists()
+
+    assert resolve_project_identity(tmp_path) == Committed(id="shared-clone-id")
+    assert ensure_project_identity(tmp_path) == Committed(id="shared-clone-id")
 
 
-def test_project_id_rechecks_committed_identity_after_legacy_migration_handoff(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    committed_reads = iter((None, "migrated-project-id"))
-    monkeypatch.setattr(
-        "meridian.lib.state.user_paths.get_committed_project_id",
-        lambda _project_root: next(committed_reads),
-    )
-    monkeypatch.setattr(
-        "meridian.lib.state.user_paths._legacy_project_id",
-        lambda _project_root: None,
-    )
-
-    assert get_project_id(tmp_path) == "migrated-project-id"
-
-
-def test_mars_only_write_creates_meridian_identity(tmp_path: Path) -> None:
+def test_mars_only_write_mints_committed_identity(tmp_path: Path) -> None:
     (tmp_path / "mars.toml").write_text("[settings]\n", encoding="utf-8")
-    project_id = get_or_create_project_id(tmp_path)
+
+    identity = ensure_project_identity(tmp_path)
+
+    assert isinstance(identity, Committed)
+    assert identity.id is not None
     payload = tomllib.loads((tmp_path / "meridian.toml").read_text(encoding="utf-8"))
-    assert payload["project"]["id"] == project_id
-    assert not (tmp_path / ".meridian").exists()
+    assert payload["project"]["id"] == identity.id
 
 
-def test_append_identity_preserves_existing_content_verbatim(tmp_path: Path) -> None:
+def test_scaffold_and_committed_identity_are_written_together(tmp_path: Path) -> None:
+    identity = mint_committed_identity(
+        tmp_path,
+        "[defaults]\nmax_depth = 7\n",
+    )
+
+    assert isinstance(identity, Committed)
+    payload = tomllib.loads((tmp_path / "meridian.toml").read_text(encoding="utf-8"))
+    assert payload["defaults"]["max_depth"] == 7
+    assert payload["project"]["id"] == identity.id
+
+
+def test_ensure_committed_identity_preserves_existing_content_verbatim(
+    tmp_path: Path,
+) -> None:
     original = "# user formatting\n[defaults]\nmax_depth=7 # keep this\n"
-    (tmp_path / "meridian.toml").write_text(original, encoding="utf-8")
-    write_project_id(tmp_path, "preserved-project-id")
-    updated = (tmp_path / "meridian.toml").read_text(encoding="utf-8")
+    config_path = tmp_path / "meridian.toml"
+    config_path.write_text(original, encoding="utf-8")
+
+    identity = ensure_project_identity(tmp_path)
+
+    assert isinstance(identity, Committed)
+    assert identity.id is not None
+    updated = config_path.read_text(encoding="utf-8")
     assert updated.startswith(original)
     assert updated.removeprefix(original) == (
-        '\n# managed by meridian — do not edit\n[project]\nid = "preserved-project-id"\n'
+        "\n# managed by meridian — do not edit\n"
+        "[project]\n"
+        f'id = "{identity.id}"\n'
     )
 
 
 def test_failed_atomic_identity_write_leaves_existing_toml_usable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original = "[defaults]\nmax_depth = 4\n"
     config_path = tmp_path / "meridian.toml"
@@ -79,55 +162,51 @@ def test_failed_atomic_identity_write_leaves_existing_toml_usable(
     def interrupted(_path: Path, _content: str) -> None:
         raise KeyboardInterrupt
 
-    monkeypatch.setattr("meridian.lib.config.preserving_edit.atomic_write_text", interrupted)
+    monkeypatch.setattr(
+        "meridian.lib.state.project_identity.atomic_write_text",
+        interrupted,
+    )
     with pytest.raises(KeyboardInterrupt):
-        write_project_id(tmp_path, "never-committed")
+        ensure_project_identity(tmp_path)
+
     assert config_path.read_text(encoding="utf-8") == original
-    assert tomllib.loads(original)["defaults"]["max_depth"] == 4
-    assert not (tmp_path / ".meridian.toml.identity.lock").exists()
+    assert tomllib.loads(config_path.read_text(encoding="utf-8"))["defaults"]["max_depth"] == 4
 
 
-def test_migration_with_active_spawns_writes_identity_and_removes_legacy_files(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    legacy = tmp_path / ".meridian"
-    legacy.mkdir()
-    (legacy / "id").write_text("legacy-project-id", encoding="utf-8")
-    (legacy / ".gitignore").write_text("*\n!id\n", encoding="utf-8")
-    monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "home").as_posix())
-    runtime_root = get_project_home("legacy-project-id")
-    start_spawn(
-        runtime_root,
-        spawn_id="p1",
-        chat_id="c1",
-        model="gpt-5.4",
-        agent="tester",
-        harness="codex",
-        prompt="active migration regression",
-        status="running",
+def test_committed_identity_rejects_reserved_adhoc_prefix(tmp_path: Path) -> None:
+    (tmp_path / "meridian.toml").write_text(
+        '[project]\nid = "adhoc.repo.0123456789ab"\n', encoding="utf-8"
     )
 
-    result = migrate_project_id(tmp_path)
-
-    assert result.status == "migrated"
-    assert get_project_id(tmp_path) == "legacy-project-id"
-    active_spawn = get_spawn(runtime_root, "p1")
-    assert active_spawn is not None
-    assert active_spawn.status == "running"
-    assert not legacy.exists()
+    with pytest.raises(ValueError, match="reserved"):
+        resolve_project_identity(tmp_path)
 
 
-def test_migration_resumes_after_legacy_straggler_cleanup(
+@pytest.mark.parametrize(
+    "content",
+    ['project = "not-a-table"\n', "[project]\nid = 42\n"],
+)
+def test_committed_identity_rejects_invalid_project_shape(
     tmp_path: Path,
+    content: str,
 ) -> None:
+    (tmp_path / "meridian.toml").write_text(content, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"Invalid \[project\]"):
+        resolve_project_identity(tmp_path)
+
+
+def test_legacy_dot_meridian_id_is_not_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
     legacy = tmp_path / ".meridian"
     legacy.mkdir()
-    (legacy / "id").write_text("legacy-project-id", encoding="utf-8")
-    write_project_id(tmp_path, "legacy-project-id")
-    result = migrate_project_id(tmp_path)
+    (legacy / "id").write_text("legacy-project-id\n", encoding="utf-8")
+    monkeypatch.setenv("MERIDIAN_HOME", home.as_posix())
 
-    assert result.status == "migrated"
-    assert result.removed_legacy_identity
-    assert not result.removed_legacy_gitignore
-    assert get_project_id(tmp_path) == "legacy-project-id"
-    assert not legacy.exists()
+    identity = resolve_project_identity(tmp_path)
+
+    assert isinstance(identity, AdHoc)
+    assert identity.id != "legacy-project-id"

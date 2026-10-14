@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, ParamSpec, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from meridian.lib.catalog.mars_roots import MarsRoots, resolve_mars_roots
 from meridian.lib.config.loader import load_config
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.config.project_paths import ProjectConfigPaths, resolve_project_config_paths
@@ -21,14 +22,13 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_paths
-from meridian.lib.state.user_paths import (
-    get_or_create_project_id,
-    get_project_home,
-    get_user_home,
+from meridian.lib.state.project_identity import (
+    ensure_project_identity,
+    project_identity_was_created,
+    resolve_project_identity,
+    state_id,
 )
-from meridian.lib.state.user_paths import (
-    get_project_id as read_project_id,
-)
+from meridian.lib.state.user_paths import get_project_home, get_user_home
 
 if TYPE_CHECKING:
     from meridian.lib.bootstrap.services import RuntimeWriteContext
@@ -119,6 +119,11 @@ class RuntimeAuthoritySnapshot(BaseModel):
     project_config_paths: ProjectConfigPaths
     project_state_dir: Path
     user_home: Path
+    identity_tier: Literal["committed", "adhoc"]
+    project_id: str | None
+    project_identity_source: Literal["meridian.toml", "path", "unminted"]
+    identity_created: bool = False
+    mars_roots: MarsRoots
     runtime_root: Path | None = None
     runtime_root_source: RuntimeRootSource | None = None
 
@@ -156,7 +161,15 @@ def resolve_project_authority(
         explicit_root,
         execution_cwd=execution_cwd,
     )
+    identity = resolve_project_identity(root_resolution.project_root)
     project_paths = resolve_project_paths(root_resolution.project_root)
+    project_identity_source: Literal["meridian.toml", "path", "unminted"] = (
+        "path"
+        if identity.tier == "adhoc"
+        else "unminted"
+        if identity.id is None
+        else "meridian.toml"
+    )
     return RuntimeAuthoritySnapshot(
         execution_cwd=root_resolution.execution_cwd,
         project_root=root_resolution.project_root,
@@ -167,6 +180,10 @@ def resolve_project_authority(
         ),
         project_state_dir=project_paths.root_dir,
         user_home=get_user_home(),
+        identity_tier=identity.tier,
+        project_id=identity.id,
+        project_identity_source=project_identity_source,
+        mars_roots=resolve_mars_roots(root_resolution.project_root),
     )
 
 
@@ -186,7 +203,8 @@ def resolve_runtime_authority_for_read(
         )
         else None
     )
-    project_id = read_project_id(authority.project_root)
+    identity = resolve_project_identity(authority.project_root)
+    project_id = state_id(identity)
     if override_root is not None:
         runtime_root = override_root
     elif project_id is not None:
@@ -227,9 +245,18 @@ def resolve_runtime_authority_for_write(
         )
         else None
     )
-    runtime_root = override or get_project_home(
-        get_or_create_project_id(authority.project_root)
-    )
+    identity_created = False
+    ensured_project_id = authority.project_id
+    if override is not None:
+        runtime_root = override
+    else:
+        prior = resolve_project_identity(authority.project_root)
+        identity = ensure_project_identity(authority.project_root)
+        identity_created = project_identity_was_created(prior, identity)
+        if identity.id is None:
+            raise ValueError("Runtime write identity did not resolve a project ID.")
+        ensured_project_id = identity.id
+        runtime_root = get_project_home(identity.id)
     runtime_source: RuntimeRootSource = "user-home-project"
     if (
         override is not None
@@ -243,6 +270,8 @@ def resolve_runtime_authority_for_write(
         update={
             "runtime_root": runtime_root,
             "runtime_root_source": runtime_source,
+            "project_id": ensured_project_id,
+            "identity_created": identity_created,
         }
     )
 
@@ -337,12 +366,6 @@ def resolve_runtime_root_for_read(project_root: Path) -> Path | None:
     """Resolve runtime state root for reads, or ``None`` without identity."""
 
     return resolve_runtime_authority_for_read(project_root).runtime_root
-
-
-def get_project_id(project_root: Path) -> str:
-    """Get/create project ID, returns project ID string."""
-
-    return get_or_create_project_id(project_root)
 
 
 def resolve_roots(project_root: str | None) -> ResolvedRoots:

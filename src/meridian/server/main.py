@@ -6,7 +6,11 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from meridian.lib.bootstrap.services import build_extension_entrypoint, prepare_for_runtime_read
+from meridian.lib.bootstrap.services import (
+    build_extension_entrypoint,
+    prepare_for_runtime_read,
+    prepare_for_runtime_write,
+)
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.logging import configure_logging
 from meridian.lib.extensions.context import (
@@ -42,6 +46,13 @@ async def lifespan(_: FastMCP[Any]):
 
 
 mcp = FastMCP("meridian", lifespan=lifespan)
+
+_IDENTITY_WRITING_TOOLS = frozenset(
+    {
+        "meridian.spawn.create",
+        "meridian.spawn.continue",
+    }
+)
 
 
 @mcp.tool()
@@ -136,7 +147,12 @@ async def extension_invoke(
     # Rootless observability stays process-scoped via stderr telemetry rather
     # than segment storage.
     dispatcher = ExtensionCommandDispatcher(registry)
-    prepared = prepare_for_runtime_read(resolve_project_root_resolution().project_root)
+    project_root = resolve_project_root_resolution().project_root
+    prepared = (
+        prepare_for_runtime_write(project_root)
+        if fqid in _IDENTITY_WRITING_TOOLS
+        else prepare_for_runtime_read(project_root)
+    )
     application = build_extension_entrypoint(prepared)
     services = build_extension_command_services(application=application)
     context_builder = ExtensionInvocationContextBuilder(ExtensionSurface.MCP).with_authority(
@@ -162,6 +178,8 @@ async def extension_invoke(
             "message": result.message,
         }
     emit_invoked("ok")
+    if fqid in _IDENTITY_WRITING_TOOLS:
+        result.payload["identity_created"] = prepared.authority.identity_created
     return {"status": "ok", "result": result.payload}
 
 

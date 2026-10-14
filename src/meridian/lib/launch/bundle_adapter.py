@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
-import sys
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -13,6 +11,13 @@ from typing import TYPE_CHECKING, cast
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from meridian.lib.catalog.mars_roots import (
+    MarsRoots,
+    ensure_resolved_mars_root,
+    mars_fallback_args,
+    resolve_mars_executable,
+    resolve_mars_roots,
+)
 from meridian.lib.core.route_report import RouteDecisionReport
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.compiler import FieldProvenance, ProvenanceLevel
@@ -50,6 +55,7 @@ class BundleRequest:
 
     agent: str | None
     project_root: Path
+    agent_path: Path | None = None
     model_override: str | None = None
     literal_model: bool = False
     harness_override: str | None = None
@@ -68,10 +74,12 @@ class LoadedSkillEntry:
     name: str
     skill_type: str
     body: str
+    source_path: str | None = None
 
 
 @dataclass(frozen=True)
 class _BundleResult:
+    agent_source_path: str | None
     selection_report: dict[str, object]
     model: str
     model_token: str
@@ -91,12 +99,7 @@ class _BundleResult:
 
 
 def _resolve_mars_binary() -> str | None:
-    scripts_dir = Path(sys.executable).parent
-    for name in ("mars", "mars.exe"):
-        candidate = scripts_dir / name
-        if candidate.is_file():
-            return str(candidate)
-    return shutil.which("mars")
+    return resolve_mars_executable()
 
 
 def _normalize_str(value: object) -> str:
@@ -140,7 +143,15 @@ def _parse_skills_loaded(raw: object) -> tuple[LoadedSkillEntry, ...]:
             if name:
                 skill_type = _normalize_str(item_dict.get("skill_type")) or "reference"
                 body = _normalize_str(item_dict.get("body"))
-                entries.append(LoadedSkillEntry(name=name, skill_type=skill_type, body=body))
+                source_path = _normalize_str(item_dict.get("source_path")) or None
+                entries.append(
+                    LoadedSkillEntry(
+                        name=name,
+                        skill_type=skill_type,
+                        body=body,
+                        source_path=source_path,
+                    )
+                )
     return tuple(entries)
 
 
@@ -155,14 +166,20 @@ def _parse_skills_available(raw: object) -> tuple[AvailableSkillEntry, ...]:
             name = _normalize_str(item_dict.get("name"))
             skill_type = _normalize_str(item_dict.get("skill_type")) or "reference"
             if name:
-                entries.append(AvailableSkillEntry(name=name, skill_type=skill_type))
+                entries.append(
+                    AvailableSkillEntry(
+                        name=name,
+                        skill_type=skill_type,
+                        source_path=_normalize_str(item_dict.get("source_path")) or None,
+                    )
+                )
     return tuple(entries)
 
 
 def _bundle_schema_error(message: str) -> RuntimeError:
     return RuntimeError(
         f"Mars launch-bundle returned invalid schema: {message}. "
-        "Expected bundle schema 4 with routing report schema 2."
+        "Expected bundle schema 4 with routing report schema 3."
     )
 
 
@@ -211,7 +228,11 @@ def _parse_harness_id(
     return harness_id
 
 
-def _build_bundle_command(request: BundleRequest) -> list[str]:
+def _build_bundle_command(
+    request: BundleRequest,
+    *,
+    roots: MarsRoots | None = None,
+) -> list[str]:
     mars_binary = _resolve_mars_binary()
     if mars_binary is None:
         raise RuntimeError(
@@ -219,14 +240,16 @@ def _build_bundle_command(request: BundleRequest) -> list[str]:
             f"{_MARS_BUNDLE_MIN_VERSION}, but no mars binary was found."
         )
 
+    resolved_roots = roots or resolve_mars_roots(request.project_root)
     command = [
         mars_binary,
         "build",
         "launch-bundle",
         "--json",
         "--root",
-        str(request.project_root),
+        resolved_roots.primary.as_posix(),
     ]
+    command.extend(mars_fallback_args(resolved_roots, executable=mars_binary))
 
     if request.no_refresh_models:
         command.append("--no-refresh-models")
@@ -274,10 +297,21 @@ def _extract_error_message(*, stdout: str, stderr: str) -> str:
     return message or "unknown mars error"
 
 
+def _append_error_note(message: str, note: str | None) -> str:
+    return f"{message}\n{note}" if note is not None else message
+
+
 class MarsSelectionError(RuntimeError):
     """A failed Mars decision with its diagnostic report retained for callers."""
 
-    def __init__(self, code: str, message: str, report: RouteDecisionReport | None) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        report: RouteDecisionReport | None,
+        *,
+        note: str | None = None,
+    ) -> None:
         self.code = code
         self.selection_report = report.model_dump(mode="json") if report is not None else None
         details: list[str] = []
@@ -290,7 +324,7 @@ class MarsSelectionError(RuntimeError):
                     attempt_reasons.append(f"{assessment.harness}: {reason}")
                 reasons = ", ".join(attempt_reasons)
                 details.append(f"{attempt.model_token}: {reasons}")
-        super().__init__("; ".join([message, *details]))
+        super().__init__(_append_error_note("; ".join([message, *details]), note))
 
 
 class _MarsError(BaseModel):
@@ -314,7 +348,13 @@ class _MarsErrorEnvelope(BaseModel):
         return value
 
 
-def _raise_bundle_error(*, stdout: str, stderr: str, returncode: int | None = None) -> None:
+def _raise_bundle_error(
+    *,
+    stdout: str,
+    stderr: str,
+    returncode: int | None = None,
+    note: str | None = None,
+) -> None:
     try:
         raw_payload = json.loads(stdout)
     except json.JSONDecodeError:
@@ -326,6 +366,7 @@ def _raise_bundle_error(*, stdout: str, stderr: str, returncode: int | None = No
             str(envelope.error.code),
             str(envelope.error.message),
             envelope.route_trace,
+            note=note,
         )
     message = _extract_error_message(stdout=stdout, stderr=stderr)
     normalized = message.lower()
@@ -335,13 +376,32 @@ def _raise_bundle_error(*, stdout: str, stderr: str, returncode: int | None = No
         or "invalid subcommand" in normalized
     ):
         raise RuntimeError(
-            "Mars launch-bundle command is unavailable. Meridian requires mars >= "
-            f"{_MARS_BUNDLE_MIN_VERSION}. Error: {message}"
+            _append_error_note(
+                "Mars launch-bundle command is unavailable. Meridian requires mars >= "
+                f"{_MARS_BUNDLE_MIN_VERSION}. Error: {message}",
+                note,
+            )
         )
     prefix = "Mars launch-bundle failed"
     if returncode is not None:
         prefix = f"{prefix} (exit {returncode})"
-    raise RuntimeError(f"{prefix}: {message}")
+    raise RuntimeError(_append_error_note(f"{prefix}: {message}", note))
+
+
+def _fallback_agent_error_note(request: BundleRequest, roots: MarsRoots) -> str | None:
+    agent = (request.agent or "").strip()
+    if (
+        request.agent_path is None
+        or not agent
+        or roots.user is None
+        or not request.agent_path.is_relative_to(roots.user)
+    ):
+        return None
+    return (
+        f"note: '{agent}' comes from user packages ({roots.user}); "
+        "its model aliases must resolve in this project's Mars config. "
+        "Add the package here (meridian mars add <source>) or pass --model."
+    )
 
 
 def _parse_bundle_payload(
@@ -399,6 +459,7 @@ def _parse_bundle_payload(
     skills_available = _parse_skills_available(skills_obj.get("available"))
 
     return _BundleResult(
+        agent_source_path=_normalize_str(payload.get("agent_source_path")) or None,
         selection_report=report.model_dump(mode="json"),
         model=model,
         model_token=model_token,
@@ -425,7 +486,9 @@ def request_and_resolve(
 ) -> _BundleResult:
     """Resolve launch routing and execution policy through Mars launch-bundle."""
 
-    command = _build_bundle_command(request)
+    roots = resolve_mars_roots(request.project_root)
+    command = _build_bundle_command(request, roots=roots)
+    ensure_resolved_mars_root(roots, executable=command[0])
     try:
         result = subprocess.run(
             command,
@@ -451,6 +514,7 @@ def request_and_resolve(
             stdout=result.stdout,
             stderr=result.stderr,
             returncode=result.returncode,
+            note=_fallback_agent_error_note(request, roots),
         )
 
     try:

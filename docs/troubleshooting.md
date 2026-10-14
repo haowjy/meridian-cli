@@ -279,13 +279,15 @@ hint needs manual repair; see [issue #530](https://github.com/haowjy/meridian-cl
 
 ## Stale state accumulating in `~/.meridian/`
 
-Over time, orphan project directories, old spawn artifacts, and expired telemetry segments accumulate under `~/.meridian/`. Per-project orphan repairs (stale locks, orphaned runs) happen silently in the background on each launch. Use `meridian doctor` to inspect and clean up manually.
+Over time, committed orphan roots, ad-hoc roots, old spawn artifacts, and expired
+telemetry segments accumulate under `~/.meridian/`. Per-project repairs run only
+when that project's runtime root exists. `doctor` never creates one.
 
-To inspect what's stale:
+To inspect accumulated state:
 
 ```bash
 meridian doctor           # per-project scan (cheap, run from anywhere)
-meridian doctor --global  # same checks + machine-wide orphan-project-dir scan; must run from the root process
+meridian doctor --global  # add committed-orphan scan and list every ad-hoc root
 ```
 
 `meridian doctor` reports telemetry cleanup candidates as `stale_telemetry_segments`. That warning can mean expired segments, total telemetry size above the cap, or both.
@@ -294,7 +296,7 @@ To clean up:
 
 ```bash
 meridian doctor --prune           # prune stale spawn artifacts and telemetry retention targets (current project only)
-meridian doctor --prune --global  # also prune orphan project dirs machine-wide
+meridian doctor --prune --global  # also prune eligible machine-wide roots
 ```
 
 Telemetry pruning is current-project only: it removes expired non-live segments first, then may remove older closed segments if needed to get back under the telemetry size cap.
@@ -307,5 +309,14 @@ retention_days = 30   # -1 = never prune, 0 = prune immediately
 ```
 
 Or via environment variable: `MERIDIAN_STATE_RETENTION_DAYS=30`.
+
+Ad-hoc roots use `state.adhoc_retention_days` from
+`~/.meridian/config.toml` or `MERIDIAN_STATE_ADHOC_RETENTION_DAYS`, never from
+the cwd project's config. The default is 30 idle days; a missing source path or
+one that now contains a project marker uses the shorter of that window and 7
+days. Every ad-hoc root also needs an hour without activity, even at `0`.
+`doctor --global` reports every root's ID, origin path, reason, last activity,
+size, and `prunable: yes|no`; global pruning deletes only `yes` roots, removing
+both `projects/adhoc.*/` and their matching `context/adhoc.*/` directories.
 
 Active spawns are always protected — pruning never deletes state for running spawns regardless of age.

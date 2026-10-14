@@ -27,8 +27,7 @@ def cli_project(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[tuple[Path, dict[str, str], Path]]:
     project_root = tmp_path / "project"
-    (project_root / ".meridian").mkdir(parents=True)
-    (project_root / ".meridian" / "id").write_text("sparse-json-test\n", encoding="utf-8")
+    project_root.mkdir(parents=True)
     (project_root / "meridian.toml").write_text(
         "[spawn]\ndeny_headless_harnesses = []\n",
         encoding="utf-8",
@@ -315,13 +314,13 @@ def test_hooks_run_json_contract(
     cli_project: tuple[Path, dict[str, str], Path],
 ) -> None:
     project_root, env, _ = cli_project
-    (project_root / "meridian.toml").write_text(
+    with (project_root / "meridian.toml").open("a", encoding="utf-8") as config:
+        config.write(
         "[[hooks]]\n"
         'name = "projection-test"\n'
         'event = "spawn.finalized"\n'
-        'command = "printf hook-output; printf hook-error >&2"\n',
-        encoding="utf-8",
-    )
+        'command = "printf hook-output; printf hook-error >&2"\n'
+        )
 
     payload = _run_json(project_root, env, "hooks", "run", "projection-test")
 
@@ -336,6 +335,7 @@ def test_hooks_run_json_contract(
         "exit_code",
         "duration_ms",
     } <= payload.keys()
+    assert "identity_created" not in payload
     _assert_noisy_keys_absent(payload)
 
     with_output = _run_json(

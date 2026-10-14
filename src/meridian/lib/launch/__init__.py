@@ -123,7 +123,8 @@ def launch_primary(
         if explicit_work_id is not None or not inherit_ambient_work
         else runtime_context.work_id
     )
-    project_state_dir = resolve_project_paths(resolved_project_root).root_dir
+    resolved_project_paths = resolve_project_paths(resolved_project_root)
+    project_state_dir = resolved_project_paths.root_dir
     launch_resolution = resolve_launch_inputs(
         authority_root=resolved_project_root,
         project_state_dir=project_state_dir,
@@ -143,15 +144,18 @@ def launch_primary(
     runtime = build_primary_launch_runtime(
         project_root=resolved_project_root,
         execution_cwd=resolved_project_root,
+        dry_run=request.dry_run,
     )
     if request.include_bootstrap_documents:
         from meridian.lib.catalog.bootstrap import BootstrapRegistry
+        from meridian.lib.catalog.mars_roots import resolve_mars_roots
 
+        mars_root = resolve_mars_roots(resolved_project_root).primary
         request = request.model_copy(
             update={
                 "supplemental_prompt_documents": (
                     *request.supplemental_prompt_documents,
-                    *BootstrapRegistry(resolved_project_root / ".mars").load_all(),
+                    *BootstrapRegistry(mars_root / ".mars").load_all(),
                 )
             }
         )
@@ -167,14 +171,19 @@ def launch_primary(
 
     runtime = runtime.model_copy(update=launch_resolution.runtime_updates)
     effective_work_id = resolved_work_id or launch_resolution.effective_work_id
-    active_work_dir = (
-        resolve_work_scratch_dir_for_project(
+    configured_work_dir = resolved_project_paths.work_dir
+    if effective_work_id is None:
+        active_work_dir = runtime_context.work_dir if inherit_ambient_work else None
+    elif request.dry_run and configured_work_dir is None:
+        active_work_dir = None
+    elif request.dry_run:
+        assert configured_work_dir is not None
+        active_work_dir = configured_work_dir / effective_work_id
+    else:
+        active_work_dir = resolve_work_scratch_dir_for_project(
             resolved_project_root,
             effective_work_id,
         )
-        if effective_work_id is not None
-        else (runtime_context.work_dir if inherit_ambient_work else None)
-    )
     request_updates = dict(launch_resolution.request_updates)
     request_updates["work_id_hint"] = effective_work_id
     spawn_request = build_primary_spawn_request(request=request)
@@ -197,6 +206,7 @@ def launch_primary(
         harness_registry=harness_registry,
         catalog=CatalogSession(resolved_project_root),
         active_work_dir=active_work_dir,
+        explicit_work_id=effective_work_id,
         dry_run=request.dry_run,
     )
     prepared = prepare_launch_surface(

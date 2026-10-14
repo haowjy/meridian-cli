@@ -8,6 +8,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.config.project_root import has_project_marker
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.runtime import async_from_sync, resolve_project_authority
 from meridian.lib.platform.atomic import atomic_write_text
@@ -134,6 +135,8 @@ def _has_workspace_section_or_scaffold(path: Path) -> bool:
 def workspace_init_sync(payload: WorkspaceInitInput) -> WorkspaceInitOutput:
     authority = resolve_project_authority(payload.project_root)
     project_root = authority.project_root
+    if not has_project_marker(project_root):
+        raise ValueError("no project config here; run 'meridian init'")
     project_paths = authority.project_config_paths
 
     workspace_path = project_paths.meridian_local_toml

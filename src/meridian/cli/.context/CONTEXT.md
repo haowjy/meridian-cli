@@ -55,6 +55,14 @@ Four independent mechanisms reduce startup latency and keep dependencies acyclic
 Together these mechanisms keep startup and help paths from importing command
 implementations they do not need.
 
+## Mars passthrough roots
+
+`mars_passthrough.py` owns the Meridian-only `--user` flag. It always replaces a
+Mars `--root` with the primary root from `resolve_mars_roots()`; `--user` selects
+`~/.meridian/mars` explicitly. Package mutations in a bare directory are rejected
+before root injection unless `--user` is present, preventing Mars auto-init from
+writing a project marker there. Plain `mars init` remains project authoring.
+
 ## Help Profile Selection
 
 Human vs agent mode selects a `HelpProfile` at app-build time from the
@@ -62,37 +70,16 @@ command catalog — no runtime mutation of shared `App` objects.
 
 ## Project Root Resolution
 
-The canonical resolver is `resolve_cli_project_root() -> CliProjectRoot` in
-`utils.py`. It returns a typed result (never raises):
+`resolve_cli_project_root() -> Path` in `utils.py` selects `-C`, then
+`MERIDIAN_PROJECT_DIR`, then the literal cwd. Identity resolution happens below
+the CLI boundary and never walks ancestors: a marker selects committed identity;
+otherwise the canonical path selects `adhoc.*` identity.
 
-- `project_root: Path | None`
-- `source: "explicit" | "env" | "cwd"` — how the root was discovered
-- `established: bool`
-
-### Established-project detection is currently a no-op
-
-The root is `-C <path>`, else `MERIDIAN_PROJECT_DIR`, else the literal cwd, and
-`established` is always `True` (since #388). Nothing checks for a project marker,
-so any cwd is treated as a project: write commands run there and
-`prepare_for_runtime_write()` creates the project identity (`meridian.toml`) on
-first use. The established/not-established distinction below is shape without
-behavior. `cwd_has_project_id()` (a literal `meridian.toml`/`mars.toml` check) still
-exists in `lib/config/project_root.py`, but nothing calls it.
-
-Consequently, the no-project exit never fires from cwd resolution. Durable write
-preparation creates project identity on first use; read-only preparation leaves a
-bare directory unchanged.
-
-### Adapters
-
-- `require_established_project_root() -> Path` — calls `resolve_cli_project_root()`
-  and raises `SystemExit(1)` via `exit_no_established_project()` if not established
-  (currently never). Used by project-required commands (spawn, work, telemetry).
-- `optional_cli_project_root_posix() -> str | None` — returns `None` when not
-  established. Used by config/inspection commands that degrade gracefully.
-- `exit_no_established_project()` — the single CLI-edge `SystemExit(1)`.
-
-`resolve_cli_project_root()` never raises.
+Runtime-write preparation materializes ad-hoc state under the user home without
+writing the cwd. Project authoring (`config set/reset`, `workspace init`, Mars
+mutations) still requires a marker or an explicit init operation. Read
+preparation never mints or materializes. `doctor` is rootless startup: it repairs
+only an already existing runtime root, while `--global` scans user state.
 
 ## `to_cli_output()` Dispatch
 
@@ -110,6 +97,10 @@ the small protocol to produce its wire-shaped output.
   one call. Mars is invoked internally by `init_ops`, not via `mars_passthrough`.
 - **Bare `meridian init`** (no flags) → calls `config_init_sync` directly to
   bootstrap the project config only.
+
+Both branches atomically write the scaffold and committed ID before runtime
+bootstrap. If the path already has materialized ad-hoc state, the result names
+that untouched root; no history is moved into the committed project.
 
 There is no passthrough path in this command; do not add one. Auto-link is the
 default behavior, and the init flow has no confirmation prompts or `--yes` option.

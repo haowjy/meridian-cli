@@ -9,13 +9,15 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.catalog.mars_roots import MarsRoots
 from meridian.lib.ops import mars as mars_module
-from meridian.lib.ops.mars import mars_agent_subagents, mars_list_subagents
+from meridian.lib.ops.mars import MarsAgentEntry, mars_agent_subagents, mars_list_subagents
 
 pytestmark = pytest.mark.slow
 
 _FAKE_MARS = "/fake/mars"
 _PROJECT_ROOT = Path("/fake/project")
+_USER_ROOT = Path("/fake/user-mars")
 
 
 def _completed(
@@ -33,6 +35,20 @@ def _completed(
 
 def _patch_mars_binary(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mars_module, "resolve_mars_executable", lambda: _FAKE_MARS)
+    monkeypatch.setattr(
+        mars_module,
+        "_prepare_mars_roots",
+        lambda _project_root, *, executable: MarsRoots(
+            primary=_PROJECT_ROOT,
+            scope="project",
+            user=_USER_ROOT,
+        ),
+    )
+    monkeypatch.setattr(
+        mars_module,
+        "mars_fallback_args",
+        lambda _roots, *, executable: ("--fallback-root", _USER_ROOT.as_posix()),
+    )
 
 
 def test_mars_agent_subagents_parses_show_envelope(
@@ -66,6 +82,8 @@ def test_mars_agent_subagents_parses_show_envelope(
         "--json",
         "--root",
         _PROJECT_ROOT.as_posix(),
+        "--fallback-root",
+        _USER_ROOT.as_posix(),
     ]
     assert recorded["kwargs"] == {
         "check": False,
@@ -129,8 +147,13 @@ def test_mars_list_subagents_parses_list_envelope(
             stdout=json.dumps(
                 {
                     "agents": [
-                        {"name": "reviewer", "mode": "subagent"},
-                        {"name": "coder", "mode": "subagent"},
+                        {
+                            "name": "reviewer",
+                            "mode": "subagent",
+                            "scope": "fallback",
+                            "source_path": "/fake/user-mars/.mars/agents/reviewer.md",
+                        },
+                        {"name": "coder", "mode": "subagent", "scope": "root"},
                         {"name": "coder", "mode": "subagent"},
                         {"name": "tech-lead", "mode": "primary"},
                         {"name": "no-mode"},
@@ -146,7 +169,14 @@ def test_mars_list_subagents_parses_list_envelope(
 
     # Only subagent-mode entries survive the client-side filter; primary and
     # mode-less entries are dropped.
-    assert result == ("coder", "reviewer")
+    assert result == (
+        MarsAgentEntry(name="coder", scope="root"),
+        MarsAgentEntry(
+            name="reviewer",
+            scope="fallback",
+            source_path="/fake/user-mars/.mars/agents/reviewer.md",
+        ),
+    )
     # The ``--mode`` filter is NOT passed to ``agents list`` (it belongs to the
     # parent ``mars agents`` command); filtering happens client-side.
     assert recorded["command"] == [
@@ -156,6 +186,8 @@ def test_mars_list_subagents_parses_list_envelope(
         "--json",
         "--root",
         _PROJECT_ROOT.as_posix(),
+        "--fallback-root",
+        _USER_ROOT.as_posix(),
     ]
     assert recorded["kwargs"] == {
         "check": False,

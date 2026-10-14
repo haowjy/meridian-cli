@@ -8,6 +8,7 @@ from typing import Literal, cast
 import structlog
 from pydantic import BaseModel, ConfigDict, field_serializer
 
+from meridian.lib.catalog.mars_roots import mars_fallback_label
 from meridian.lib.config.context_config import ContextSourceType
 from meridian.lib.config.dynamic_sections import DYNAMIC_SECTION_DESCRIPTORS
 from meridian.lib.config.loader import OPTION_CATALOG
@@ -38,16 +39,20 @@ from meridian.lib.ops.runtime import (
     async_from_sync,
     resolve_runtime_authority_for_read,
 )
-from meridian.lib.platform.atomic import atomic_write_text
 from meridian.lib.state.paths import (
     RuntimePaths,
     load_context_config,
     resolve_project_paths_for_write,
     resolve_project_runtime_root_for_write,
 )
-from meridian.lib.state.user_paths import get_user_home
+from meridian.lib.state.project_identity import (
+    AdHoc,
+    mint_committed_identity,
+    resolve_project_identity,
+)
+from meridian.lib.state.user_paths import get_project_home, get_user_home
 
-_MISSING_PROJECT_CONFIG_MESSAGE = "no project config; run `meridian config init`"
+_MISSING_PROJECT_CONFIG_MESSAGE = "no project config here; run 'meridian init'"
 logger = structlog.get_logger(__name__)
 
 
@@ -62,11 +67,15 @@ class ConfigInitOutput(BaseModel):
 
     path: str
     created: bool
+    note: str | None = None
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
         status = "created" if self.created else "exists"
-        return f"{status}: {self.path}"
+        result = f"{status}: {self.path}"
+        if self.note is not None:
+            result += f"\nnote: {self.note}"
+        return result
 
 
 class ConfigShowInput(BaseModel):
@@ -90,6 +99,11 @@ class ConfigShowOutput(BaseModel):
     path: str
     project_root: str
     project_root_source: str
+    project_identity: str | None
+    project_identity_source: Literal["meridian.toml", "path", "unminted"]
+    mars_root: str
+    mars_scope: Literal["project", "user"]
+    mars_fallback: Literal["active", "unsupported", "n/a"]
     runtime_root: str | None = None
     runtime_root_source: str | None = None
     workspace: ConfigSurfaceWorkspace
@@ -106,6 +120,11 @@ class ConfigShowOutput(BaseModel):
         lines = [f"path: {self.path}"]
         lines.append(f"project_root: {self.project_root}")
         lines.append(f"project_root.source = {self.project_root_source}")
+        lines.append(f"project_identity: {self.project_identity or '(unminted)'}")
+        lines.append(f"project_identity_source: {self.project_identity_source}")
+        lines.append(f"mars_root: {self.mars_root}")
+        lines.append(f"mars_scope: {self.mars_scope}")
+        lines.append(f"mars_fallback: {self.mars_fallback}")
         if self.runtime_root is not None:
             lines.append(f"runtime_root: {self.runtime_root}")
         if self.runtime_root_source is not None:
@@ -491,16 +510,26 @@ def ensure_runtime_state_bootstrap_sync(project_root: Path) -> None:
 
 
 def ensure_state_bootstrap_sync(project_root: Path) -> ConfigInitOutput:
-    """Ensure runtime state exists and scaffold project config when missing."""
+    """Atomically establish committed config identity, then bootstrap its state."""
 
+    project_root = project_root.expanduser().resolve()
+    prior_identity = resolve_project_identity(project_root)
+    prior_adhoc_root = (
+        get_project_home(prior_identity.id)
+        if isinstance(prior_identity, AdHoc) and prior_identity.materialized
+        else None
+    )
     state = _resolve_project_config_state(project_root)
-    if state.path is not None:
-        ensure_runtime_state_bootstrap_sync(project_root)
-        return ConfigInitOutput(path=state.path.as_posix(), created=False)
+    created = state.path is None
+    mint_committed_identity(project_root, _scaffold_template())
 
-    atomic_write_text(state.write_path, _scaffold_template())
     ensure_runtime_state_bootstrap_sync(project_root)
-    return ConfigInitOutput(path=state.write_path.as_posix(), created=True)
+    note = (
+        f"earlier ad-hoc state at {prior_adhoc_root.as_posix()} is not carried over"
+        if prior_adhoc_root is not None
+        else None
+    )
+    return ConfigInitOutput(path=state.write_path.as_posix(), created=created, note=note)
 
 
 def config_init_sync(payload: ConfigInitInput) -> ConfigInitOutput:
@@ -537,6 +566,11 @@ def config_show_sync(payload: ConfigShowInput) -> ConfigShowOutput:
         path=surface.project_config.write_path.as_posix(),
         project_root=surface.project_root.as_posix(),
         project_root_source=surface.authority.project_root_source,
+        project_identity=surface.authority.project_id,
+        project_identity_source=surface.authority.project_identity_source,
+        mars_root=surface.authority.mars_roots.primary.as_posix(),
+        mars_scope=surface.authority.mars_roots.scope,
+        mars_fallback=mars_fallback_label(surface.authority.mars_roots),
         runtime_root=(
             surface.authority.runtime_root.as_posix()
             if surface.authority.runtime_root is not None
@@ -579,7 +613,8 @@ def config_set_sync(payload: ConfigSetInput) -> ConfigSetOutput:
 
 
 def config_get_sync(payload: ConfigGetInput) -> ConfigGetOutput:
-    project_root = _resolve_project_root(payload.project_root)
+    authority = _resolve_project_authority(payload.project_root)
+    project_root = authority.project_root
     option = _resolve_option(payload.key)
     surface = build_config_surface(project_root)
     source, env_var = _source_for_path(surface, option.field_path)

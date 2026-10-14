@@ -12,7 +12,36 @@ from pathlib import Path
 from typing import TextIO
 
 from meridian import __version__
+from meridian.lib.catalog.mars_roots import (
+    ensure_user_mars_root,
+    mars_fallback_args,
+    resolve_mars_roots,
+    user_mars_root,
+)
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.ops.mars import resolve_mars_executable
+
+_MUTATING_COMMANDS = frozenset(
+    {
+        "add",
+        "remove",
+        "link",
+        "unlink",
+        "sync",
+        "upgrade",
+        "rename",
+        "override",
+        "adopt",
+        "version",
+        "repair",
+        "resolve",
+    }
+)
+_MUTATING_COMMAND_PAIRS = frozenset({("models", "alias")})
+_USER_MUTATION_ERROR = (
+    "no project Mars root here; run 'meridian init --link', or use "
+    "'meridian mars --user …'"
+)
 
 
 @dataclass(frozen=True)
@@ -20,7 +49,7 @@ class MarsPassthroughRequest:
     command: tuple[str, ...]
     mars_args: tuple[str, ...]
     wants_json: bool
-    root_override: Path | None
+    user_scope: bool = False
 
 
 @dataclass(frozen=True)
@@ -35,22 +64,50 @@ def mars_requested_json(args: Sequence[str]) -> bool:
     return any(token == "--json" for token in args)
 
 
-def mars_requested_root(args: Sequence[str]) -> Path | None:
+def _strip_meridian_mars_options(
+    args: Sequence[str],
+) -> tuple[list[str], bool, Path | None]:
+    forwarded: list[str] = []
+    user_scope = False
+    requested_root: Path | None = None
     index = 0
     while index < len(args):
         token = args[index]
+        if token == "--user":
+            user_scope = True
+            index += 1
+            continue
         if token == "--root":
-            next_value = args[index + 1].strip() if index + 1 < len(args) else ""
-            if next_value:
-                return Path(next_value)
+            if index + 1 >= len(args) or not args[index + 1].strip():
+                raise ValueError("--root requires a value")
+            requested_root = Path(args[index + 1]).expanduser()
             index += 2
             continue
         if token.startswith("--root="):
-            candidate = token.partition("=")[2].strip()
-            if candidate:
-                return Path(candidate)
+            raw_root = token.partition("=")[2].strip()
+            if not raw_root:
+                raise ValueError("--root requires a value")
+            requested_root = Path(raw_root).expanduser()
+            index += 1
+            continue
+        forwarded.append(token)
         index += 1
-    return None
+    return forwarded, user_scope, requested_root
+
+
+def _mars_subcommand(args: Sequence[str]) -> str | None:
+    return next((token for token in args if not token.startswith("-")), None)
+
+
+def _is_mars_mutation(args: Sequence[str]) -> bool:
+    commands = tuple(token for token in args if not token.startswith("-"))
+    return bool(
+        commands
+        and (
+            commands[0] in _MUTATING_COMMANDS
+            or commands[:2] in _MUTATING_COMMAND_PAIRS
+        )
+    )
 
 
 def decode_json_values(raw_stdout: str) -> list[object] | None:
@@ -78,19 +135,35 @@ def parse_mars_passthrough(
 ) -> MarsPassthroughRequest:
     """Build an executable Mars passthrough request without side effects."""
 
-    mars_args = list(args)
+    mars_args, user_scope, requested_root = _strip_meridian_mars_options(args)
+    explicit_root = requested_root.resolve() if requested_root is not None else None
+    project_root = resolve_project_root_resolution(explicit_root).project_root
+    roots = resolve_mars_roots(project_root)
+    subcommand = _mars_subcommand(mars_args)
+
+    # Gate before root injection so Mars's add/link auto-init can never write a
+    # mars.toml into a bare project directory.
+    if not user_scope and roots.scope == "user" and _is_mars_mutation(mars_args):
+        raise ValueError(_USER_MUTATION_ERROR)
+    if user_scope and subcommand == "init" and any(
+        token == "--link" or token.startswith("--link=") for token in mars_args
+    ):
+        raise ValueError("meridian mars init --link is project-only")
+
     wants_json = mars_requested_json(mars_args) or output_format == "json"
     if wants_json and not mars_requested_json(mars_args):
         mars_args = ["--json", *mars_args]
-    if mars_requested_root(mars_args) is None:
-        project_dir = os.getenv("MERIDIAN_PROJECT_DIR", "").strip()
-        if project_dir:
-            mars_args = [*mars_args, "--root", project_dir]
+    selected_root = user_mars_root() if user_scope else roots.primary
+    if not user_scope and subcommand == "init":
+        selected_root = project_root
+    mars_args = [*mars_args, "--root", selected_root.as_posix()]
+    if not user_scope and subcommand in {"agents", "skills"}:
+        mars_args.extend(mars_fallback_args(roots, executable=executable))
     return MarsPassthroughRequest(
         command=(executable, *mars_args),
         mars_args=tuple(mars_args),
         wants_json=wants_json,
-        root_override=mars_requested_root(mars_args),
+        user_scope=selected_root == user_mars_root(),
     )
 
 
@@ -103,8 +176,13 @@ def execute_mars_passthrough(
     """Execute a prepared Mars passthrough request."""
 
     stderr_stream = sys.stderr if stderr is None else stderr
-    # With MERIDIAN_PROJECT_DIR set, parse_mars_passthrough injects --root to the
-    # launcher project; Mars runs under Meridian management for all passthrough commands.
+    if request.user_scope:
+        try:
+            ensure_user_mars_root(executable=request.command[0])
+        except RuntimeError as exc:
+            print(f"error: {exc}", file=stderr_stream)
+            raise SystemExit(1) from None
+
     run_kwargs: dict[str, object] = {
         "env": {
             **os.environ,
@@ -160,11 +238,15 @@ def run_mars_passthrough(
         )
         raise SystemExit(1)
 
-    request = parse_request(
-        args,
-        output_format=output_format,
-        executable=executable,
-    )
+    try:
+        request = parse_request(
+            args,
+            output_format=output_format,
+            executable=executable,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=stderr_stream)
+        raise SystemExit(1) from None
     result = execute_request(request)
     if request.wants_json:
         if result.stdout_text:

@@ -18,10 +18,10 @@ Each function returns a typed context object (`ProjectReadContext`, `RuntimeRead
 
 ## The `resolve_*` / `ensure_*` Split
 
-This is the central invariant. Violating it causes read-only command paths to silently create filesystem state (UUIDs, directories, `.gitignore` entries).
+This is the central invariant. Violating it causes read-only command paths to silently create identity, directories, or config side effects.
 
 - **`resolve_*`**: pure — no filesystem mutations. Returns `None` if state doesn't exist.
-- **`ensure_*`**: may create directories, UUIDs, `.gitignore` entries. Call only on write paths.
+- **`ensure_*`**: may mint committed identity or create ad-hoc user state and directories. Call only on write paths.
 
 `prepare_for_project_read()` and `prepare_for_runtime_read()` call only `resolve_*`. The `prepare_for_*_write()` functions call `ensure_*`.
 
@@ -34,7 +34,9 @@ Read-only preparation never runs this GC.
 - **Don't instantiate `SpawnApplicationService` directly.** Use `build_spawn_application_service(runtime_write_ctx)`. It's the correct factory.
 - **Post-parse bootstrap exception**: commands with `root_source = RootSource.ARGV` (e.g. `meridian init [path]`) call `prepare_for_project_write(arg_derived_root)` themselves after argument parsing. All other commands receive a pre-prepared context.
 - **One authority per context.** Each `prepare_for_*` resolves a `RuntimeAuthoritySnapshot` once and passes it to `load_config(..., authority=authority)`. Config resolved without it re-derives paths and can diverge from a frozen or custom snapshot.
-- **Create-on-first-write:** every cwd is eligible as a project root. Write preparation creates `meridian.toml` and its project ID when needed; read-only preparation creates neither.
+- **Two-tier identity on first write:** a marked project mints its committed ID;
+  a marker-less path materializes path-derived state under the user home. Runtime
+  writes never create `meridian.toml`; read preparation creates nothing.
 - **Entrypoint carriers** (`SpawnEntryPoint`, `ExtensionEntryPoint`) carry `ApplicationContext + ApplicationServices` downstream. Use `build_spawn_entrypoint()`, `build_extension_entrypoint()` — don't assemble them manually.
 
 ## Context Hierarchy
@@ -44,10 +46,11 @@ ProjectReadContext
   ├── authority: RuntimeAuthoritySnapshot
   ├── project_root: Path
   ├── layout: ProjectLayoutSnapshot
-  └── config: MeridianConfig | None
+  ├── config: MeridianConfig | None
+  └── notice: str | None              ← human-facing first-materialization notice
 
 RuntimeReadContext(ProjectReadContext)
-  └── runtime_root: Path | None   ← None if project has no UUID yet
+  └── runtime_root: Path | None   ← None for unminted or unmaterialized identity
 
 ProjectWriteContext(ProjectReadContext)
   └── project_dirs_ensured: bool = True

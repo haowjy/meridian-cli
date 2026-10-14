@@ -20,10 +20,17 @@ class ProjectRootResolution(BaseModel):
     source: ProjectRootSource
 
 
-def cwd_has_project_id(cwd: Path) -> bool:
-    """Return whether the literal cwd is a Meridian project root."""
+def has_project_marker(root: Path) -> bool:
+    """Return whether a root is committed by a marker other than the user Mars root."""
 
-    return (cwd / "meridian.toml").is_file() or (cwd / "mars.toml").is_file()
+    from meridian.lib.state.user_paths import get_user_home
+
+    resolved_root = root.expanduser().resolve()
+    if resolved_root == (get_user_home() / "mars").expanduser().resolve():
+        return False
+    return (resolved_root / "meridian.toml").is_file() or (
+        resolved_root / "mars.toml"
+    ).is_file()
 
 
 def resolve_project_root_resolution(

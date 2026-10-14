@@ -6,13 +6,18 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.ops.mars import MarsAgentEntry
 from meridian.lib.ops.spawn.api import SpawnSubagentsInput, spawn_subagents_sync
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
 pytestmark = pytest.mark.slow
 
-_ALL_SUBAGENTS = ("coder", "prober", "reviewer")
+_ALL_SUBAGENTS = (
+    MarsAgentEntry(name="coder", scope="root"),
+    MarsAgentEntry(name="prober", scope="fallback"),
+    MarsAgentEntry(name="reviewer", scope="fallback"),
+)
 _ALLOWLIST = ("coder", "reviewer")
 
 
@@ -56,8 +61,9 @@ def test_spawn_subagents_uses_explicit_allow_list(
         assert agent_name == "tech-lead"
         return _ALLOWLIST
 
-    def fail_list_subagents(root: Path) -> tuple[str, ...]:
-        raise AssertionError(f"mars_list_subagents should not run: {root}")
+    def fake_list_subagents(root: Path) -> tuple[MarsAgentEntry, ...]:
+        assert root == project_root
+        return _ALL_SUBAGENTS
 
     monkeypatch.setattr(
         "meridian.lib.ops.spawn.api.mars_agent_subagents",
@@ -65,12 +71,13 @@ def test_spawn_subagents_uses_explicit_allow_list(
     )
     monkeypatch.setattr(
         "meridian.lib.ops.spawn.api.mars_list_subagents",
-        fail_list_subagents,
+        fake_list_subagents,
     )
 
     output = spawn_subagents_sync(SpawnSubagentsInput(project_root=project_root.as_posix()))
 
-    assert output.names == _ALLOWLIST
+    assert tuple(entry.name for entry in output.agents) == _ALLOWLIST
+    assert tuple(entry.scope for entry in output.agents) == ("root", "fallback")
 
 
 def test_spawn_subagents_empty_allow_list_is_leaf_agent(
@@ -86,7 +93,7 @@ def test_spawn_subagents_empty_allow_list_is_leaf_agent(
         assert agent_name == "coder"
         return ()
 
-    def fail_list_subagents(root: Path) -> tuple[str, ...]:
+    def fail_list_subagents(root: Path) -> tuple[MarsAgentEntry, ...]:
         raise AssertionError(f"mars_list_subagents should not run: {root}")
 
     monkeypatch.setattr(
@@ -100,7 +107,7 @@ def test_spawn_subagents_empty_allow_list_is_leaf_agent(
 
     output = spawn_subagents_sync(SpawnSubagentsInput(project_root=project_root.as_posix()))
 
-    assert output.names == ()
+    assert output.agents == ()
 
 
 def test_spawn_subagents_unresolved_agent_returns_empty(
@@ -116,7 +123,7 @@ def test_spawn_subagents_unresolved_agent_returns_empty(
         assert agent_name == "unknown-agent"
         return None
 
-    def fail_list_subagents(root: Path) -> tuple[str, ...]:
+    def fail_list_subagents(root: Path) -> tuple[MarsAgentEntry, ...]:
         raise AssertionError(f"mars_list_subagents should not run: {root}")
 
     monkeypatch.setattr(
@@ -130,7 +137,7 @@ def test_spawn_subagents_unresolved_agent_returns_empty(
 
     output = spawn_subagents_sync(SpawnSubagentsInput(project_root=project_root.as_posix()))
 
-    assert output.names == ()
+    assert output.agents == ()
 
 
 def test_spawn_subagents_without_spawn_context_lists_all_subagents(
@@ -143,7 +150,7 @@ def test_spawn_subagents_without_spawn_context_lists_all_subagents(
     def fail_agent_subagents(root: Path, agent_name: str) -> tuple[str, ...] | None:
         raise AssertionError(f"mars_agent_subagents should not run: {root} {agent_name}")
 
-    def fake_list_subagents(root: Path) -> tuple[str, ...]:
+    def fake_list_subagents(root: Path) -> tuple[MarsAgentEntry, ...]:
         assert root == project_root
         return _ALL_SUBAGENTS
 
@@ -158,4 +165,13 @@ def test_spawn_subagents_without_spawn_context_lists_all_subagents(
 
     output = spawn_subagents_sync(SpawnSubagentsInput(project_root=project_root.as_posix()))
 
-    assert output.names == _ALL_SUBAGENTS
+    assert tuple(entry.name for entry in output.agents) == (
+        "coder",
+        "prober",
+        "reviewer",
+    )
+    assert output.format_text().splitlines() == [
+        "coder\troot",
+        "prober\tfallback",
+        "reviewer\tfallback",
+    ]

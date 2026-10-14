@@ -27,10 +27,6 @@ class ProjectLayoutSnapshot:
         return self.paths.root_dir
 
     @property
-    def id_file(self) -> Path:
-        return self.paths.id_file
-
-    @property
     def kb_dir(self) -> Path | None:
         return self.paths.kb_dir
 
@@ -68,7 +64,7 @@ def ensure_project_dirs(project_root: Path) -> None:
         or project_paths.work_dir is None
         or project_paths.work_archive_dir is None
     ):
-        raise ValueError("Project context paths are unresolved after identity creation.")
+        return
     if context_config is None:
         project_paths.kb_dir.mkdir(parents=True, exist_ok=True)
         project_paths.work_dir.mkdir(parents=True, exist_ok=True)

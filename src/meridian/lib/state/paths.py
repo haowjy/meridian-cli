@@ -11,7 +11,13 @@ from meridian.lib.config.context_config import ContextConfig
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.project_root import resolve_user_config_path
 from meridian.lib.core.types import SpawnId
-from meridian.lib.state.user_paths import get_or_create_project_id, get_project_id, get_user_home
+from meridian.lib.state.project_identity import (
+    ProjectIdentity,
+    ensure_project_identity,
+    resolve_project_identity,
+    state_id,
+)
+from meridian.lib.state.user_paths import get_user_home, project_lifetime_lock_path
 
 
 def normalize_path_for_write(path: str | None) -> str | None:
@@ -56,7 +62,7 @@ class RuntimePaths(BaseModel):
     def project_lifetime_flock(self) -> Path:
         """Return the stable gate coordinating use and deletion of this root."""
 
-        return self.root_dir.parent / ".locks" / f"{self.root_dir.name}.lock"
+        return project_lifetime_lock_path(self.root_dir)
 
     def chat_lifecycle_path(self, c_id: str) -> Path:
         """Return lifecycle.jsonl path for a chat."""
@@ -91,7 +97,6 @@ class ProjectPaths(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     root_dir: Path
-    id_file: Path
     kb_dir: Path | None
     work_dir: Path | None
     work_archive_dir: Path | None
@@ -102,7 +107,6 @@ class ProjectPaths(BaseModel):
 
         return cls(
             root_dir=root_dir,
-            id_file=root_dir / "id",
             kb_dir=root_dir / "kb",
             work_dir=root_dir / "work",
             work_archive_dir=root_dir / "archive" / "work",
@@ -175,9 +179,8 @@ def resolve_project_paths(project_root: Path) -> ProjectPaths:
 def resolve_project_paths_for_write(project_root: Path) -> ProjectPaths:
     """Resolve project-owned state paths for write flows.
 
-    If context paths contain ``{project}``, this ensures `.meridian/id` exists
-    before path substitution so write callers never materialize literal
-    placeholder directories.
+    If context paths contain ``{project}``, this ensures project identity before
+    path substitution so write callers never materialize literal placeholders.
     """
 
     return resolve_project_paths_from_context(project_root, create_project_uuid=True)
@@ -244,6 +247,7 @@ def resolve_project_paths_from_context(
     *,
     project_config_paths: ProjectConfigPaths | None = None,
     create_project_uuid: bool = False,
+    identity: ProjectIdentity | None = None,
 ) -> ProjectPaths:
     """Resolve project paths with optional context config, falling back to defaults.
 
@@ -266,29 +270,28 @@ def resolve_project_paths_from_context(
     )
 
     project_state_dir = project_root / ".meridian"  # legacy carrier; never created
-    project_id: str | None = None
-    if context_uses_project_placeholder(effective_config):
-        if create_project_uuid:
-            project_id = get_or_create_project_id(project_root)
-        else:
-            project_id = get_project_id(project_root)
-        if project_id is None:
-            return ProjectPaths(
-                root_dir=project_state_dir,
-                id_file=project_state_dir / "id",
-                kb_dir=None,
-                work_dir=None,
-                work_archive_dir=None,
-            )
+    resolved_identity = identity or (
+        ensure_project_identity(project_root)
+        if create_project_uuid
+        else resolve_project_identity(project_root)
+    )
+    project_id = state_id(resolved_identity)
+    if context_uses_project_placeholder(effective_config) and project_id is None:
+        return ProjectPaths(
+            root_dir=project_state_dir,
+            kb_dir=None,
+            work_dir=None,
+            work_archive_dir=None,
+        )
 
     resolved = resolve_context_paths(
         project_root,
         effective_config,
         project_id=project_id,
+        identity=resolved_identity,
     )
     return ProjectPaths(
         root_dir=project_state_dir,
-        id_file=project_state_dir / "id",
         kb_dir=resolved.kb_root,
         work_dir=resolved.work_root,
         work_archive_dir=resolved.work_archive,
@@ -305,7 +308,7 @@ def resolve_runtime_paths(project_root: Path) -> ProjectPaths:
 def resolve_project_runtime_root(project_root: Path) -> Path:
     """Resolve runtime state root for read paths.
 
-    This helper is read-only: it never creates `.meridian/id`.
+    This helper is read-only: it never creates project identity.
     Raises when no identity exists; zero-state command paths use the optional resolver.
     """
 

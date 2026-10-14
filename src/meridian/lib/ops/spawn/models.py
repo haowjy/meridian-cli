@@ -1,7 +1,7 @@
 """Spawn operation input/output models and shared lightweight helpers."""
 
 import shlex
-from typing import NotRequired, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_serializer
 
@@ -192,6 +192,7 @@ class SpawnActionOutput(BaseModel):
     project_root_source: str | None = None
     runtime_root: str | None = None
     runtime_root_source: str | None = None
+    identity_created: bool = False
     authority_root: str | None = None
     task_cwd: str | None = None
     reference_anchor: str | None = None
@@ -228,6 +229,8 @@ class SpawnActionOutput(BaseModel):
     def to_wire(self) -> dict[str, object]:
         """Project minimal external JSON shape. Omit nulls and input echo."""
         wire: dict[str, object] = {"status": self.status}
+        if self.identity_created:
+            wire["identity_created"] = True
         if self.spawn_id is not None:
             wire["spawn_id"] = self.spawn_id
             if self.background and self.status == "running":
@@ -1187,14 +1190,23 @@ class SpawnSubagentsInput(BaseModel):
     project_root: str | None = None
 
 
+class SpawnSubagentEntry(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    scope: Literal["root", "fallback"] | None = None
+
+
 class SpawnSubagentsOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    names: tuple[str, ...]
+    agents: tuple[SpawnSubagentEntry, ...]
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
-        return "\n".join(self.names)
+        return "\n".join(
+            f"{agent.name}\t{agent.scope or 'unknown'}" for agent in self.agents
+        )
 
 
 class SpawnContinueInput(SpawnLaunchOptions):
@@ -1430,6 +1442,7 @@ __all__ = [
     "SpawnStatsInput",
     "SpawnStatsOutput",
     "SpawnStatusInput",
+    "SpawnSubagentEntry",
     "SpawnSubagentsInput",
     "SpawnSubagentsOutput",
     "SpawnWaitInput",

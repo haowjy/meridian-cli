@@ -62,7 +62,7 @@ class HookDispatcher(LifecycleHook):
     def __init__(
         self,
         project_root: Path,
-        runtime_root: Path,
+        runtime_root: Path | None,
         *,
         authority: RuntimeAuthoritySnapshot | None = None,
         registry: _HookRegistryLike | None = None,
@@ -72,9 +72,11 @@ class HookDispatcher(LifecycleHook):
     ) -> None:
         if authority is not None:
             self._project_root = authority.project_root.expanduser().resolve()
-            if authority.runtime_root is None:
-                raise ValueError("Hook dispatcher authority is missing runtime_root.")
-            self._runtime_root = authority.runtime_root.expanduser().resolve()
+            self._runtime_root = (
+                authority.runtime_root.expanduser().resolve()
+                if authority.runtime_root is not None
+                else None
+            )
             self._authority = authority.model_copy(
                 update={
                     "project_root": self._project_root,
@@ -83,14 +85,20 @@ class HookDispatcher(LifecycleHook):
             )
         else:
             self._project_root = project_root.expanduser().resolve()
-            self._runtime_root = runtime_root.expanduser().resolve()
+            self._runtime_root = (
+                runtime_root.expanduser().resolve() if runtime_root is not None else None
+            )
             self._authority = None
         self._registry = registry or HookRegistry(
             self._project_root,
             authority=self._authority,
         )
-        self._interval_tracker = interval_tracker or IntervalTracker(self._runtime_root)
-        self._external_runner = external_runner or ExternalHookRunner(self._project_root)
+        self._interval_tracker = interval_tracker or (
+            IntervalTracker(self._runtime_root) if self._runtime_root is not None else None
+        )
+        self._external_runner = external_runner or (
+            ExternalHookRunner(self._project_root) if self._runtime_root is not None else None
+        )
         self._builtin_hooks = builtin_hooks or BUILTIN_HOOKS
 
     @classmethod
@@ -114,8 +122,6 @@ class HookDispatcher(LifecycleHook):
         )
         if project_root is None:
             raise ValueError("Hook dispatcher context is missing project_root.")
-        if runtime_root is None:
-            raise ValueError("Hook dispatcher context is missing runtime_root.")
         return cls(
             project_root=project_root,
             runtime_root=runtime_root,
@@ -129,10 +135,15 @@ class HookDispatcher(LifecycleHook):
     def on_event(self, event: LifecycleEvent) -> None:
         """LifecycleHook protocol implementation."""
 
+        if self._runtime_root is None:
+            return
         self.fire(self._build_context(event))
 
     def fire(self, context: HookContext) -> list[HookResult]:
         """Execute hooks registered for one event and return per-hook results."""
+
+        if self._runtime_root is None:
+            return []
 
         if not hooks_dispatch_enabled():
             logger.info(
@@ -250,6 +261,15 @@ class HookDispatcher(LifecycleHook):
 
         timeout_secs = hook.timeout_secs or DEFAULT_TIMEOUTS[EVENT_CLASS[context.event_name]]
         if hook.interval:
+            if self._interval_tracker is None:
+                return HookResult(
+                    hook_name=hook.name,
+                    event=context.event_name,
+                    outcome="skipped",
+                    success=True,
+                    skipped=True,
+                    skip_reason="no_state",
+                )
             result = self._interval_tracker.run_if_due(
                 hook.name,
                 hook.interval,
@@ -279,6 +299,15 @@ class HookDispatcher(LifecycleHook):
             if hook.builtin:
                 result = self._run_builtin(hook, context)
             else:
+                if self._external_runner is None:
+                    return HookResult(
+                        hook_name=hook.name,
+                        event=context.event_name,
+                        outcome="skipped",
+                        success=True,
+                        skipped=True,
+                        skip_reason="no_state",
+                    )
                 result = self._external_runner.run(hook, context, timeout_secs=timeout_secs)
         except Exception as exc:
             result = HookResult(
@@ -376,6 +405,8 @@ class HookDispatcher(LifecycleHook):
                 work_id=event.work_id,
             )
 
+        if self._runtime_root is None:
+            raise ValueError("Hook dispatcher context is missing runtime_root.")
         return HookContext.from_roots(
             project_root=self._project_root,
             runtime_root=self._runtime_root,

@@ -35,7 +35,9 @@ class ConfigLayer:
     payload: dict[str, object]
 
 
-def _read_toml(path: Path) -> dict[str, object]:
+def read_config_payload(path: Path) -> dict[str, object]:
+    """Read one Meridian TOML layer as an object-shaped payload."""
+
     payload: object = tomllib.loads(path.read_text(encoding="utf-8"))
     if not is_json_object(payload):
         raise ValueError(f"Invalid TOML document in '{path}'.")
@@ -76,4 +78,4 @@ def iter_config_layers(
     )
     for name, path in candidates:
         if path is not None:
-            yield ConfigLayer(name=name, path=path, payload=_read_toml(path))
+            yield ConfigLayer(name=name, path=path, payload=read_config_payload(path))

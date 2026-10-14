@@ -7,7 +7,10 @@ from typing import TYPE_CHECKING
 
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import SpawnId
-from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
+from meridian.lib.ops.runtime import (
+    resolve_runtime_authority_for_read,
+    resolve_runtime_authority_for_write,
+)
 from meridian.lib.state.runtime_root import derive_runtime_root_from_project
 from meridian.lib.state.user_paths import get_project_home
 
@@ -46,6 +49,50 @@ def test_derive_runtime_root_is_unresolved_without_identity(tmp_path: Path) -> N
     derived = derive_runtime_root_from_project(project_root)
 
     assert derived is None
+
+
+def test_adhoc_authority_reports_would_be_id_and_creation(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "scratch"
+    project_root.mkdir()
+    home = tmp_path / "home"
+    monkeypatch.setenv("MERIDIAN_HOME", home.as_posix())
+
+    read = resolve_runtime_authority_for_read(project_root)
+    first_write = resolve_runtime_authority_for_write(project_root)
+    second_write = resolve_runtime_authority_for_write(project_root)
+
+    assert read.identity_tier == "adhoc"
+    assert read.project_id is not None
+    assert read.project_id.startswith("adhoc.scratch.")
+    assert read.runtime_root is None
+    assert not read.identity_created
+    assert first_write.runtime_root == home / "projects" / read.project_id
+    assert first_write.identity_created
+    assert not second_write.identity_created
+    assert list(project_root.iterdir()) == []
+
+
+def test_runtime_override_bypasses_adhoc_materialization(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "scratch"
+    project_root.mkdir()
+    home = tmp_path / "home"
+    override = tmp_path / "override"
+    monkeypatch.setenv("MERIDIAN_HOME", home.as_posix())
+    monkeypatch.setenv("_MERIDIAN_RUNTIME_DIR", override.as_posix())
+    monkeypatch.delenv("_MERIDIAN_DEPTH", raising=False)
+
+    authority = resolve_runtime_authority_for_write(project_root)
+
+    assert authority.runtime_root == override
+    assert not authority.identity_created
+    assert not home.exists()
+    assert list(project_root.iterdir()) == []
 
 
 def test_resolve_runtime_authority_ignores_runtime_env_when_flagged(

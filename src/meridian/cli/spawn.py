@@ -19,7 +19,7 @@ from meridian.cli.invocation import Emitter, current_output_sink, emit, get_glob
 from meridian.cli.spawn_inject import inject_message
 from meridian.cli.utils import (
     parse_csv_list,
-    require_established_project_root,
+    resolve_cli_project_root,
 )
 from meridian.lib.bootstrap.services import (
     RuntimeReadContext,
@@ -95,12 +95,12 @@ _SPAWN_WAIT_HELP_EPILOGUE = (
 
 
 def _prepare_spawn_runtime_read() -> RuntimeReadContext:
-    return prepare_for_runtime_read(require_established_project_root())
+    return prepare_for_runtime_read(resolve_cli_project_root())
 
 
 def _prepare_spawn_runtime_write() -> RuntimeWriteContext:
     logger.debug("spawn_launcher_phase", phase="bootstrap", launcher_pid=os.getpid())
-    prepared = prepare_for_runtime_write(require_established_project_root())
+    prepared = prepare_for_runtime_write(resolve_cli_project_root())
     logger.debug(
         "spawn_launcher_phase",
         phase="bootstrap_complete",
@@ -672,6 +672,7 @@ def _spawn_create(
         phase="prompt_resolution_complete",
         launcher_pid=os.getpid(),
     )
+    prepared = None if dry_run else _prepare_spawn_runtime_write()
     normalized_task_dir = (task_dir or "").strip() or None
     if resolved_continue_from is not None and normalized_task_dir is not None:
         raise ValueError("--continue does not accept --task-dir. Use --fork --task-dir to diverge.")
@@ -698,7 +699,7 @@ def _spawn_create(
                 **shared_launch_kwargs,
             ),
             sink=current_output_sink(),
-            prepared=_prepare_spawn_runtime_write(),
+            prepared=prepared,
         )
     elif resolved_continue_from is not None:
         result = spawn_continue_sync(
@@ -719,7 +720,7 @@ def _spawn_create(
                 **shared_launch_kwargs,
             ),
             sink=current_output_sink(),
-            prepared=_prepare_spawn_runtime_write(),
+            prepared=prepared,
         )
     else:
         result = spawn_create_sync(
@@ -740,7 +741,7 @@ def _spawn_create(
                 **shared_launch_kwargs,
             ),
             sink=current_output_sink(),
-            prepared=_prepare_spawn_runtime_write(),
+            prepared=prepared,
             on_spawn_id=_foreground_spawn_id_notifier(quiet=quiet),
         )
     output_format = get_global_options().output.format

@@ -10,9 +10,9 @@ export REPO_ROOT="${REPO_ROOT:-$PWD}"
 . tests/smoke/scripts/setup.sh --git
 export SMOKE_A="$SCRATCH/proj-a"
 export SMOKE_B="$SCRATCH/proj-b"
-mkdir -p "$SMOKE_A/.meridian" "$SMOKE_B/.meridian"
-printf 'proj-a\n' > "$SMOKE_A/.meridian/id"
-printf 'proj-b\n' > "$SMOKE_B/.meridian/id"
+mkdir -p "$SMOKE_A" "$SMOKE_B"
+printf '[project]\nid = "proj-a"\n' > "$SMOKE_A/meridian.toml"
+printf '[project]\nid = "proj-b"\n' > "$SMOKE_B/meridian.toml"
 
 uv run python - <<'PY'
 from meridian.lib.state.spawn_store import start_spawn

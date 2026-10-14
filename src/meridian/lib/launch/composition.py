@@ -60,10 +60,11 @@ class CompositionBlock:
 
 @dataclass(frozen=True)
 class AvailableSkillEntry:
-    """Lightweight entry for an on-demand skill (name + type only)."""
+    """Lightweight entry for an on-demand skill."""
 
     name: str
     skill_type: str = "reference"
+    source_path: str | None = None
 
 
 @dataclass(frozen=True)

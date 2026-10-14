@@ -4,6 +4,44 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+- Remove the `meridian migrate` command.
+- Stop reading project identity from the legacy `.meridian/id` file.
+
+### Changed
+- Make launch and spawn dry runs create no state.
+- Meridian no longer writes `meridian.toml` into directories that lack one.
+  Their state is kept in `~/.meridian/projects/adhoc.*` and becomes eligible for
+  `meridian doctor --global --prune` after 30 idle days. Running `meridian init`
+  later starts that project with empty history: spawns, sessions and work items
+  from before `init` are not carried over. They remain as files under the old
+  root until pruned. If you relied on automatic creation to share state across
+  worktrees, run `meridian init` once and commit `meridian.toml`.
+- Make `meridian init` report the earlier ad-hoc state root that its new,
+  committed project history does not carry over.
+- Make bare-directory `config set`, `config reset`, and `workspace init` fail
+  with a prompt to run `meridian init`.
+- Store user-scoped packages in `~/.meridian/mars`; manage them with
+  `meridian mars --user add` and `meridian mars --user sync`.
+- Let bare directories launch through every installed harness using user-scope
+  Mars defaults.
+- Resolve agents and skills from project packages, then user packages, then
+  built-in defaults.
+- In projects with their own `mars.toml`, let user-scope agents and skills fill
+  gaps. Needs `mars` 0.16.0 (`--fallback-root`), now the pinned dependency;
+  older binaries keep project-only lookup.
+- Refuse `meridian mars` package mutations without a project Mars root unless
+  `--user` is explicit.
+- Make `meridian doctor` inspect bare directories without creating project or
+  user state.
+- Add user-scoped `state.adhoc_retention_days` (default 30 days, with a one-hour
+  floor after any write under the runtime root or its context directory); ad-hoc
+  state whose source path is gone or now initialized becomes eligible after the
+  shorter of that setting and 7 days.
+- Let `meridian doctor --global` list every ad-hoc root and its pruning
+  eligibility; `--prune` reclaims only eligible runtime roots together with
+  their matching `context/` directories.
+
 ## [0.9.12] - 2026-10-14
 
 ### Removed

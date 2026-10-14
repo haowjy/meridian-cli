@@ -181,10 +181,6 @@ _GROUP_HELP: dict[str, GroupHelp] = {
         summary='Bootstrap an agent runtime.',
         long_help='Bootstrap an agent runtime.',
     ),
-    "migrate": GroupHelp(
-        summary='Run state and configuration migrations.',
-        long_help='Run state and configuration migrations.',
-    ),
     "qi": GroupHelp(
         summary='Inline knowledge navigation: AGENTS.md and .context/ locations.',
         long_help='Inline knowledge navigation: AGENTS.md and .context/ locations.',
@@ -349,10 +345,6 @@ COMMAND_GROUP_SPECS: dict[str, CommandGroupSpec] = {
         help=_GROUP_HELP["bootstrap"],
         human_root_order=19,
         registration_bucket='bootstrap',
-    ),
-    "migrate": CommandGroupSpec(
-        help=_GROUP_HELP["migrate"],
-        registration_bucket='migrate',
     ),
     "qi": CommandGroupSpec(
         help=_GROUP_HELP["qi"],

@@ -136,6 +136,7 @@ def test_load_context_config_uses_meridian_config_env_override(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
+    (project_root / "meridian.toml").write_text("", encoding="utf-8")
 
     user_state_root = tmp_path / "user-state"
     user_state_root.mkdir()
@@ -181,6 +182,36 @@ def test_load_context_config_uses_meridian_config_env_override(
     assert resolved_paths.work_dir == project_root / "env/work"
     assert resolved_paths.work_archive_dir == project_root / "env/archive/work"
     assert resolved_paths.kb_dir == project_root / "env/kb"
+
+
+def test_relative_meridian_config_paths_are_unresolved_for_adhoc_project(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "scratch"
+    project_root.mkdir()
+    env_user_config = tmp_path / "env-user-config.toml"
+    env_user_config.write_text(
+        "\n".join(
+            [
+                "[context.work]",
+                'path = "env/work"',
+                'archive = "env/archive/work"',
+                "",
+                "[context.kb]",
+                'path = "env/kb"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MERIDIAN_CONFIG", env_user_config.as_posix())
+
+    resolved_paths = resolve_project_paths(project_root)
+
+    assert resolved_paths.work_dir is None
+    assert resolved_paths.work_archive_dir is None
+    assert resolved_paths.kb_dir is None
 
 
 def test_resolve_project_paths_does_not_fall_back_to_repo_local_state(

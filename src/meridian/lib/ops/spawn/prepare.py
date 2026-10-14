@@ -28,6 +28,7 @@ from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.session_store import get_session_active_work_id
 from meridian.lib.state.spawn.model import BACKGROUND_LAUNCH_MODE, FOREGROUND_LAUNCH_MODE
+from meridian.lib.state.user_paths import get_dry_run_preview_root
 
 from ..runtime import (
     OperationRuntime,
@@ -223,7 +224,9 @@ def build_create_payload(
             mars_runtime_source = runtime
         else:
             resolved_authority = resolve_runtime_authority_for_read(project_root)
-            preview_root = runtime_root or resolved_authority.user_home / "cache" / "dry-run"
+            preview_root = runtime_root or get_dry_run_preview_root(
+                user_home=resolved_authority.user_home
+            )
             mars_runtime_source = OperationRuntime(
                 project_root=project_root,
                 authority=resolved_authority,

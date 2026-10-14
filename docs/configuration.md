@@ -10,11 +10,11 @@ Meridian now has two configuration surfaces:
   state retention, work/context/workspace roots, hooks, harness defaults, and
   primary-session defaults.
 
-Meridian reads agents, skills, and model aliases from the repo-local `.mars/`
-compiled store. Harness-specific directories such as `.claude/`, `.codex/`,
-`.opencode/`, `.pi/`, and `.cursor/` are Mars targets, not Meridian discovery
-roots. Run `meridian mars sync` to populate `.mars/` and linked targets from
-configured package sources.
+Meridian reads agents and skills from project packages first, then user packages
+under `~/.meridian/mars/.mars/`, then built-in defaults. Project routing config,
+targets, aliases, and the models cache still come from the active Mars root.
+Harness-specific directories such as `.claude/`, `.codex/`, `.opencode/`, `.pi/`,
+and `.cursor/` are Mars targets, not Meridian discovery roots.
 
 ## Quick Start
 
@@ -61,7 +61,35 @@ The ID keys all mutable state outside the repository:
 ~/.meridian/context/<id>/     # default work, archive, and KB roots
 ```
 
-A directory with `meridian.toml` or `mars.toml` is a Meridian project. Read-only commands also run in directories with neither file and create nothing. The first durable write creates `meridian.toml` and `[project] id`; a `mars.toml`-only directory is handled the same way. Identity is committed and immutable, so clones and worktrees share runtime history. No state or generated `.gitignore` lives in a repo-local `.meridian/` directory.
+A directory with `meridian.toml` or `mars.toml` uses **committed identity**. The
+machine-managed ID is stable across moves and is shared by clones and worktrees
+when `meridian.toml` is committed. A `mars.toml`-only project is committed but
+unminted; its next Meridian write adds the ID to `meridian.toml`.
+
+A directory with neither marker uses **ad-hoc identity**, derived from its
+canonical path. Reads create nothing. The first runtime write materializes state
+under `~/.meridian/projects/adhoc.<slug>.<hash>/` and default context under the
+matching `~/.meridian/context/adhoc.<slug>.<hash>/`; Meridian never writes into
+the bare directory. Moving it changes its ad-hoc identity.
+
+`meridian init` and `meridian config init` atomically write the scaffold and a
+committed ID. The committed project starts clean: **spawns, sessions, and work
+items from before init are not carried over.** The command names the old ad-hoc
+root, which remains untouched until retention reclaims it. No state or generated
+`.gitignore` lives in a repo-local `.meridian/` directory.
+
+`meridian doctor --global` lists every materialized ad-hoc root with its ID,
+origin path, reason, last activity, size, and whether it is prunable. Ad-hoc
+roots become prunable after 30 days without a write under their runtime or
+context root or a later recorded spawn or session timestamp. Roots whose source
+path is gone or now contains a marker use the shorter of that window and 7 days.
+Set `state.adhoc_retention_days` in
+`~/.meridian/config.toml` (not project config) or use
+`MERIDIAN_STATE_ADHOC_RETENTION_DAYS`; `-1` disables ad-hoc pruning and `0`
+reclaims as soon as the root is quiescent and its latest activity is over an
+hour old.
+`--prune` removes only roots reported as prunable, deleting the matching runtime
+and context roots together.
 
 ## `meridian.toml` Keys
 
@@ -93,6 +121,17 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | `spawn.min_wait_yield_seconds` | float | Minimum yield interval for `spawn wait` (seconds) |
 | `primary.autocompact` | int | Context-token compaction threshold for the primary session (minimum 1000) |
 | `primary.autocompact_pct` | int | Context-window percentage for primary-session compaction (1–100) |
+
+One machine-wide key is intentionally not exposed through project-scoped
+`config set/get/reset`:
+
+| User config key | Type | Purpose |
+|---|---|---|
+| `state.adhoc_retention_days` | int | TTL for quiescent ad-hoc roots, counting any write under the runtime or context root (`-1` = never, `0` = one hour after the latest activity, default `30`; gone/shadowed paths use the shorter of this value and `7`) |
+
+It is accepted only from `~/.meridian/config.toml` (or `MERIDIAN_CONFIG`) and
+`MERIDIAN_STATE_ADHOC_RETENTION_DAYS` for doctor retention decisions. A value
+in the current project's `meridian.toml` is ignored by the machine-wide scan.
 
 The following Pi extension settings are TOML-only; generic `config set/get/reset`
 does not yet support them:

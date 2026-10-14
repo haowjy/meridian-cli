@@ -9,7 +9,7 @@ from typing import Any
 
 import structlog
 
-from meridian.cli.utils import require_established_project_root
+from meridian.cli.utils import resolve_cli_project_root
 from meridian.lib.bootstrap.services import (
     build_spawn_application_service,
     build_spawn_lifecycle_service_from_roots,
@@ -64,7 +64,7 @@ async def streaming_serve(
         supported = ", ".join(item.value for item in HarnessId)
         raise ValueError(f"unsupported harness '{harness}'. Supported: {supported}") from exc
 
-    prepared = prepare_for_runtime_write(require_established_project_root())
+    prepared = prepare_for_runtime_write(resolve_cli_project_root())
     project_root = prepared.project_root
     if prepared.runtime_root is None:
         raise ValueError("Prepared runtime write context is missing runtime root.")

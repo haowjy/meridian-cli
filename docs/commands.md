@@ -323,20 +323,23 @@ the Claude opt-in command.
 | `meridian mars models catalog --json` | Read raw models.dev catalog metadata |
 | `meridian mars models refresh` | Force-refresh the models.dev cache |
 | `meridian doctor` | Per-project diagnostics and orphan reconciliation (cheap, safe to run anywhere) |
-| `meridian doctor --global` | Adds the machine-wide orphan-project-dir scan (`~/.meridian/projects/*`) to the normal current-project doctor checks; must run from the root process (not inside a spawn) |
+| `meridian doctor --global` | Adds machine-wide committed-orphan and ad-hoc retention scans; must run from the root process (not inside a spawn) |
 | `meridian doctor --prune` | Prune stale spawn artifacts and telemetry retention targets in the current project |
-| `meridian doctor --prune --global` | Same as `--prune`, plus orphan project dirs machine-wide |
+| `meridian doctor --prune --global` | Same as `--prune`, plus committed orphan roots and eligible ad-hoc runtime/context roots machine-wide |
 | `meridian serve` | Start the MCP server |
 
-`meridian doctor` scans for three categories of stale state and reports them as distinct warning codes:
+`meridian doctor` scans for four categories of stale state and reports them as distinct warning codes:
 
 | Warning code | What it means |
 | ------------ | ------------- |
 | `stale_spawn_artifacts` | Spawn artifact directories for completed spawns past the retention window |
 | `stale_telemetry_segments` | Current-project telemetry segments that would be pruned by retention cleanup because they are expired or because total telemetry size exceeds the cap |
 | `stale_orphan_project_dirs` | Project state directories with no matching live project (`--global` only) |
+| `stale_adhoc_project_dirs` | Quiescent `adhoc.*` roots past their user-scope retention window (`--global` only); each row includes its reason and source path |
 
-Local `--prune` removes stale spawn artifacts and telemetry segments selected by current-project retention cleanup. Telemetry cleanup first removes expired non-live segments, then may remove older closed segments to enforce the size cap. Orphan project dirs are only pruned by `meridian doctor --prune --global`.
+Local `--prune` removes stale spawn artifacts and telemetry segments selected by
+current-project retention cleanup. Global pruning also removes committed orphan
+roots and eligible ad-hoc roots with their matching `context/` directories.
 
 ## Telemetry
 

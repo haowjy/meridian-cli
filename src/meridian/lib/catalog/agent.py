@@ -4,6 +4,11 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.catalog.mars_roots import (
+    mars_content_roots,
+    resolve_mars_roots,
+    user_mars_root,
+)
 from meridian.lib.catalog.skill import files_have_equal_text, split_markdown_frontmatter
 from meridian.lib.config.project_root import resolve_project_root_resolution
 
@@ -104,7 +109,8 @@ def parse_agent_profile(path: Path) -> AgentProfile:
 
 
 def _agent_search_dirs(project_root: Path) -> list[Path]:
-    return [project_root / ".mars" / "agents"]
+    roots = resolve_mars_roots(project_root)
+    return [root / ".mars" / "agents" for root in mars_content_roots(roots)]
 
 
 def scan_agent_profiles(
@@ -153,9 +159,31 @@ def load_agent_profile(
 
     root = resolve_project_root_resolution(project_root).project_root
 
+    roots = resolve_mars_roots(root)
     for profile in scan_agent_profiles(project_root=root, search_paths=search_paths):
         if profile.path.stem == normalized or profile.name == normalized:
             return profile
+
+    user_root = user_mars_root()
+    if roots.scope == "project":
+        user_profiles = scan_agent_profiles(
+            project_root=root,
+            search_dirs=[user_root / ".mars" / "agents"],
+        )
+        if any(
+            profile.path.stem == normalized or profile.name == normalized
+            for profile in user_profiles
+        ):
+            raise FileNotFoundError(
+                f"Agent '{normalized}' found in user packages ({user_root}); "
+                "add it here: meridian mars add <source>"
+            )
+
+    if roots.scope == "user":
+        raise FileNotFoundError(
+            f"Agent '{normalized}' not found in user packages ({user_root}). "
+            "Run 'meridian mars --user add <source>'."
+        )
 
     expected_path = Path(".mars") / "agents" / f"{normalized}.md"
     raise FileNotFoundError(

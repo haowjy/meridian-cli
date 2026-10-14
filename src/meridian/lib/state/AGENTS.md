@@ -12,10 +12,14 @@ State splits across distinct roots — understand which goes where before writin
 meridian.toml
   [project] id                      — committed machine-managed project identity
 
+bare path
+  sha256(canonical path)            — ad-hoc identity; no file is written there
+
 ~/.meridian/projects/.locks/<id>.lock
                                     — shared session-lifetime / exclusive deletion gate
 
 ~/.meridian/projects/<id>/          ← user runtime, never committed
+  origin.json                       — ad-hoc path attribution and activity only
   sessions.jsonl                    — session events (append-only)
   locks/spawns/<spawn_id>.lock      — stable per-spawn external-writer lock
   locks/process-scopes/<spawn_id>.lock
@@ -42,9 +46,14 @@ meridian.toml
   prompts/ handoffs/ …              — work artifacts
 ```
 
-The project ID in `meridian.toml` `[project] id` keys into `~/.meridian/projects/<id>/`. Projects
-can move or be renamed without losing runtime history. Project lifetime gates sit outside
-the deletable project root and are never unlinked.
+`project_identity.py` is the only identity reader and writer. Its named minting
+seam atomically writes init scaffolds with their committed identity. A root
+containing `meridian.toml` or `mars.toml` has committed identity; a marker-less
+root gets a stable `adhoc.<slug>.<hash>` ID derived from its canonical path. Ad-hoc
+state is materialized only on writes, under `~/.meridian/projects/<id>/`, and
+nothing is written into the source directory. Committed projects can move without
+losing runtime history; moving an ad-hoc directory changes its identity. Project
+lifetime gates sit outside the deletable project root and are never unlinked.
 
 Work items live under the `[context.work]` root (default
 `{user_home}/context/<id>/work/<slug>/`), resolved by `work_scope.py` /
@@ -83,6 +92,15 @@ above. Reaper claims consume one immutable projection snapshot containing
 both scopes and released IDs, read under a single projection-lock acquisition.
 
 ## History discovery and retention
+
+Machine-wide retention has disjoint owners: committed-root scanning rejects
+`adhoc.*`, while ad-hoc scanning accepts only that prefix. Ad-hoc activity is the
+latest tree mtime under `projects/<id>/` or `context/<id>/`, including
+`origin.json`, plus persisted spawn/session start and finish times. Pruning
+rechecks eligibility under the exclusive project-lifetime gate and removes
+`projects/<id>/` with `context/<id>/`.
+`state.adhoc_retention_days` is user-config/environment-only; cwd project config
+must never control a machine-wide scan.
 
 Use `history_index.py` for filtered discovery, not repeated broad authority scans.
 Keep lifecycle/control decisions on direct authoritative reads. All new indexed
@@ -130,13 +148,13 @@ A crash in the middle of a plain `open()` write leaves a partial file; partial
 
 Use the correct resolver — they have different side effects:
 
-| Resolver | Creates UUID? | Use when |
+| Resolver | Materializes identity? | Use when |
 |---|---|---|
 | `resolve_project_runtime_root()` | No | Read paths (list, show, status) |
 | `resolve_project_runtime_root_for_write()` | Yes (under lock) | Write paths only |
 
-Using `*_for_write()` on a read path creates `meridian.toml` identity in untouched checkouts,
-triggering project setup side effects in CI.
+Using `*_for_write()` on a read path creates user-home state (and mints a committed
+ID when a marker exists), triggering setup side effects in CI.
 
 Transcript reads go through `ops/session_target.resolve_transcript_source`: ref →
 chat → accepted native key → exact harness reader. Artifact storage never redirects
@@ -197,7 +215,8 @@ v2 read upgrader, and pure transitions.
 **Don't read `state.json` without `read_state()`** — raw JSON reads bypass Pydantic
 validation and miss `SpawnRecord` reconstruction from `starting-prompt.md`.
 
-**Don't use `*_for_write()` on read paths** — creates project identity in clean checkouts.
+**Don't use `*_for_write()` on read paths** — mints committed identity or
+materializes ad-hoc user state during an otherwise pure read.
 
 **Don't write state files with `open()`** — use `atomic_write_text()` or `append_text_line()`.
 

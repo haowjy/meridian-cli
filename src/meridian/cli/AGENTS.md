@@ -26,8 +26,17 @@ argv
 - **`to_cli_output()` dispatch, not `isinstance` in `main.py`.** Command handlers return typed result objects. Each implements `to_cli_output()`. Adding result types does not require editing `main.py`.
 - **Read-only invocation classes never initialize authority or telemetry.** `READ_ROOTLESS`, `READ_PROJECT`, and `READ_RUNTIME` never allocate project/session IDs or create missing runtime roots. Discovery within an existing runtime may catch up its disposable history index under the state layer's coordination locks; it must not mutate lifecycle authority.
 - **Every real subcommand gets an exact descriptor.** `classify_invocation()` falls back to the longest matching prefix, so a missing `spawn <sub>` descriptor silently inherits `spawn`'s `WRITE_RUNTIME` bootstrap and telemetry class. Add the descriptor with the command; delete descriptors whose command no longer exists. No test catches drift.
-- **Project identity is create-on-first-write.** Every cwd is eligible as a project root. Write preparation creates `meridian.toml` and its project ID when needed; read-only preparation creates neither.
+- **Project identity has committed and ad-hoc tiers.** Every cwd is eligible.
+  Write preparation mints a marked project's ID or materializes path-derived state
+  under the user home; it never creates `meridian.toml` in a bare directory.
+  Read-only preparation creates neither identity nor state.
 - **`root_source = RootSource.ARGV`** commands (e.g. `meridian init [path]`) defer bootstrap until after argument parsing. They call `prepare_for_project_write(arg_derived_root)` themselves — they don't receive a pre-prepared context.
+- **Init is the tier boundary.** `init` / `config init` atomically write the
+  scaffold and committed ID before bootstrap. They never move ad-hoc history;
+  output names a previously materialized `adhoc.*` root instead.
+- **Doctor is a pure observer when no runtime root exists.** Its project repairs
+  are gated on an existing root; `--global` may scan and explicitly prune state
+  but must not mint identity or initialize the user Mars root.
 - **`validate_fork_mode()` is the single place for fork/from/continue conflict checks.** `spawn.py` and `primary_launch.py` both call it and consume `ForkModeResolution`. Do not re-implement conflict logic or ref resolution in handlers.
 - **`canonicalize_argv()` runs before every classifier.** It normalizes bare `--fork`/`--fork-fresh`/`--from` values and routes bare `--continue` to `session browse`. Never classify or call Cyclopts on raw argv containing these flags.
 - **Session browse keeps process transfer outside the TUI.** `session_cmd.py` selects plain, interactive, or refused presentation before loading `cli/browse/`. The picker returns a typed re-entry decision; only the handler may `exec` it after the full-screen application has closed.

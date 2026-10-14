@@ -16,7 +16,10 @@ is `MERIDIAN_CONTEXT_{NAME}_DIR`. `context_env_key(name)` derives the var name.
 
 ## Key Rules
 
-**`{project}` is resolved from `meridian.toml` identity.** Read-only use does not create identity. When identity is absent, unresolved projection paths are never created; write paths create identity before resolving context state.
+**`{project}` is resolved through `project_identity.py`.** Read-only use does not
+mint or materialize identity. An unmaterialized ad-hoc path stays unresolved;
+after a write its default user-home context paths resolve. Project-relative paths
+remain unresolved for ad-hoc places so bootstrap never writes into them.
 
 **`check_env=False` is for prompt injection, not human display.** `render_context_lines()`
 with `check_env=False` always emits `$ENV_VAR (resolved_path)` — verbose and not
@@ -48,5 +51,5 @@ git-backed resolution, identity-free read behavior, env var naming convention, r
 ## Related
 
 - `../config/context_config.py` — `ContextConfig`, `ContextSourceType` (input schema)
-- `../state/user_paths.py` — `get_project_id()` (project ID lookup)
+- `../state/project_identity.py` — the single project identity resolver
 - `../plugin_api/git.py` — `resolve_clone_path()` (git-backed clone location)

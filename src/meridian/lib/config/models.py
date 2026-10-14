@@ -29,6 +29,7 @@ from meridian.lib.utils.json_shapes import is_json_object
 
 _OUTPUT_VERBOSITY_PRESETS = frozenset({"quiet", "normal", "verbose", "debug"})
 _HARNESS_TABLE_KEYS = frozenset({"claude", "codex", "opencode", "pi"})
+ADHOC_STALE_RETENTION_DAYS = 7
 
 
 class OutputConfig(ConfigModel):
@@ -104,6 +105,16 @@ class StateConfig(ConfigModel):
             env_vars=("MERIDIAN_STATE_RETENTION_DAYS",),
         ),
     ] = 30
+    adhoc_retention_days: Annotated[
+        int,
+        config_field(
+            "state.adhoc_retention_days",
+            value_kind="int",
+            file_aliases=(file_alias("state", "adhoc_retention_days"),),
+            env_vars=("MERIDIAN_STATE_ADHOC_RETENTION_DAYS",),
+            command_visible=False,
+        ),
+    ] = 30
 
     @field_validator("retention_days")
     @classmethod
@@ -111,6 +122,16 @@ class StateConfig(ConfigModel):
         if isinstance(value, bool) or value < -1:
             raise ValueError(
                 f"Invalid value for 'state.retention_days': expected int >= -1, got {value!r}."
+            )
+        return value
+
+    @field_validator("adhoc_retention_days")
+    @classmethod
+    def _validate_adhoc_retention_days(cls, value: int) -> int:
+        if isinstance(value, bool) or value < -1:
+            raise ValueError(
+                "Invalid value for 'state.adhoc_retention_days': "
+                f"expected int >= -1, got {value!r}."
             )
         return value
 

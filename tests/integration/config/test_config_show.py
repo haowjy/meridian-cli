@@ -1,6 +1,7 @@
 # qa-validated: test-suite-redesign
 """Config show operation tests — workspace findings, provenance, hook suppression."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,60 @@ def _repo(tmp_path: Path) -> Path:
     return project_root
 
 
+def test_config_show_reports_path_identity_without_materializing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _repo(tmp_path)
+    home = tmp_path / "home"
+    monkeypatch.setenv("MERIDIAN_HOME", home.as_posix())
+
+    result = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
+
+    assert result.project_identity is not None
+    assert result.project_identity.startswith("adhoc.repo.")
+    assert result.project_identity_source == "path"
+    assert result.mars_fallback == "n/a"
+    assert "project_identity_source: path" in result.format_text()
+    assert "mars_fallback: n/a" in result.format_text()
+    assert not home.exists()
+    assert list(project_root.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("supported", "expected"),
+    [(True, "active"), (False, "unsupported")],
+)
+def test_config_show_reports_project_fallback_activation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    supported: bool,
+    expected: str,
+) -> None:
+    project_root = _repo(tmp_path)
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    monkeypatch.setattr(
+        "meridian.lib.catalog.mars_roots.mars_supports_fallback_root",
+        lambda _executable: supported,
+    )
+
+    result = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
+
+    assert result.mars_fallback == expected
+
+
+def test_config_show_reports_committed_identity_source(tmp_path: Path) -> None:
+    project_root = _repo(tmp_path)
+    (project_root / "meridian.toml").write_text(
+        '[project]\nid = "shared-project"\n', encoding="utf-8"
+    )
+
+    result = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
+
+    assert result.project_identity == "shared-project"
+    assert result.project_identity_source == "meridian.toml"
+
+
 def test_config_show_surfaces_workspace_findings(tmp_path: Path) -> None:
     project_root = _repo(tmp_path)
     (project_root / "meridian.local.toml").write_text(
@@ -27,6 +82,8 @@ def test_config_show_surfaces_workspace_findings(tmp_path: Path) -> None:
 
     result = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
 
+    assert result.mars_root == (Path(os.environ["MERIDIAN_HOME"]) / "mars").resolve().as_posix()
+    assert result.mars_scope == "user"
     assert result.workspace.status == "present"
     assert result.workspace.sources == (
         (project_root / "meridian.local.toml").resolve().as_posix(),

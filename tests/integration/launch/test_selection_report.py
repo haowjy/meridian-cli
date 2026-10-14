@@ -64,6 +64,7 @@ def bundle() -> dict[str, object]:
 def invoke(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, payload: dict[str, object], code: int = 0
 ):
+    (tmp_path / "mars.toml").write_text("", encoding="utf-8")
     binary = tmp_path / "mars"
     binary.write_text(
         f"#!{sys.executable}\nimport sys\nprint({json.dumps(payload)!r})\nsys.exit({code})\n"

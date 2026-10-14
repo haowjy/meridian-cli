@@ -12,7 +12,12 @@ from meridian.lib.config.context_config import (
     ContextConfig,
     ContextSourceType,
 )
-from meridian.lib.state.user_paths import get_project_id
+from meridian.lib.state.project_identity import (
+    AdHoc,
+    ProjectIdentity,
+    resolve_project_identity,
+    state_id,
+)
 from meridian.plugin_api.git import resolve_clone_path
 
 
@@ -58,6 +63,7 @@ def _resolve_path(
     *,
     source: ContextSourceType = ContextSourceType.LOCAL,
     remote: str | None = None,
+    allow_project_relative: bool = True,
 ) -> Path | None:
     """Resolve one path spec with substitution and root rules.
 
@@ -88,6 +94,8 @@ def _resolve_path(
     candidate = Path(path_spec).expanduser()
     if candidate.is_absolute():
         return candidate
+    if not allow_project_relative:
+        return None
     return project_root / candidate
 
 
@@ -95,14 +103,18 @@ def resolve_context_paths(
     project_root: Path,
     config: ContextConfig,
     project_id: str | None = None,
+    *,
+    identity: ProjectIdentity | None = None,
 ) -> ResolvedContextPaths:
     """Resolve context paths from config.
 
     Paths containing ``{project}`` remain unresolved without a project ID.
     """
 
+    resolved_identity = identity or resolve_project_identity(project_root)
     if project_id is None:
-        project_id = get_project_id(project_root)
+        project_id = state_id(resolved_identity)
+    allow_project_relative = not isinstance(resolved_identity, AdHoc)
 
     work_root_resolved = _resolve_path(
         config.work.path,
@@ -110,6 +122,7 @@ def resolve_context_paths(
         project_id,
         source=config.work.source,
         remote=config.work.remote,
+        allow_project_relative=allow_project_relative,
     )
     work_archive_resolved = _resolve_path(
         config.work.archive,
@@ -117,6 +130,7 @@ def resolve_context_paths(
         project_id,
         source=config.work.source,
         remote=config.work.remote,
+        allow_project_relative=allow_project_relative,
     )
     kb_root_resolved = _resolve_path(
         config.kb.path,
@@ -124,6 +138,7 @@ def resolve_context_paths(
         project_id,
         source=config.kb.source,
         remote=config.kb.remote,
+        allow_project_relative=allow_project_relative,
     )
 
     extra: dict[str, tuple[Path, ContextSourceType]] = {}
@@ -141,6 +156,7 @@ def resolve_context_paths(
             project_id,
             source=parsed.source,
             remote=parsed.remote,
+            allow_project_relative=allow_project_relative,
         )
         if resolved is None:
             # Skip extra contexts that can't resolve without a project ID
@@ -221,7 +237,7 @@ def render_context_lines(
         else:
             lines.append(f"kb: ${kb_env_key} ({kb_resolved})")
     else:
-        lines.append("kb: (unresolved — project has no identity)")
+        lines.append("kb: (unresolved — project state is not materialized)")
 
     for name in sorted(resolved.extra):
         path, _ = resolved.extra[name]

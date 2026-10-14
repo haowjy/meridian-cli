@@ -26,6 +26,7 @@ def _warning_by_code(result: diag.DoctorOutput, code: str) -> diag.DoctorWarning
 
 
 def _create_agent_skill_dirs(project_root: Path) -> None:
+    (project_root / "mars.toml").write_text("[settings]\n", encoding="utf-8")
     (project_root / ".mars" / "agents").mkdir(parents=True, exist_ok=True)
     (project_root / ".mars" / "skills").mkdir(parents=True, exist_ok=True)
 

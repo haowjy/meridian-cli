@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import cast
+from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from meridian.lib.catalog.mars_roots import mars_fallback_label
 from meridian.lib.config.context_config import ArbitraryContextConfig, ContextConfig
 from meridian.lib.context.resolver import (
     ResolvedContextPaths,
@@ -52,14 +53,21 @@ class ContextOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     work_path: str
-    work_resolved: str
+    identity_tier: Literal["committed", "adhoc"]
+    project_id: str | None
+    project_identity_source: Literal["meridian.toml", "path", "unminted"]
+    work_resolved: str | None
     work_source: str
     active_work_dir: str | None = None
     work_archive: str
-    work_archive_resolved: str
+    work_archive_resolved: str | None
     kb_path: str
-    kb_resolved: str
+    kb_resolved: str | None
     kb_source: str
+    mars_root: str
+    mars_scope: Literal["project", "user"]
+    mars_user_root: str | None = None
+    mars_fallback: Literal["active", "unsupported", "n/a"]
     extra_contexts: dict[str, ContextEntryOutput] = Field(default_factory=dict)
     sync_status: dict[str, str] = Field(default_factory=dict)
     render_verbose: bool = Field(default=False, exclude=True, repr=False)
@@ -76,10 +84,14 @@ class ContextOutput(BaseModel):
         for name, entry in self.extra_contexts.items():
             extra[name] = (Path(entry.resolved), ContextSourceType(entry.source))
         return ResolvedContextPaths(
-            work_root=Path(self.work_resolved),
-            work_archive=Path(self.work_archive_resolved),
+            work_root=Path(self.work_resolved) if self.work_resolved is not None else None,
+            work_archive=(
+                Path(self.work_archive_resolved)
+                if self.work_archive_resolved is not None
+                else None
+            ),
             work_source=ContextSourceType(self.work_source),
-            kb_root=Path(self.kb_resolved),
+            kb_root=Path(self.kb_resolved) if self.kb_resolved is not None else None,
             kb_source=ContextSourceType(self.kb_source),
             extra=extra,
         )
@@ -91,18 +103,24 @@ class ContextOutput(BaseModel):
 
         lines: list[str]
         if verbose:
-            lines = []
+            lines = [
+                f"identity_tier: {self.identity_tier}",
+                f"project_id: {self.project_id or '(unminted)'}",
+                f"project_identity_source: {self.project_identity_source}",
+            ]
             lines.append("work:")
             lines.append(f"  source: {self.work_source}")
             lines.append(f"  path: {self.work_path}")
-            lines.append(f"  resolved: {self.work_resolved}")
+            lines.append(f"  resolved: {self.work_resolved or '(unresolved)'}")
             lines.append(f"  active: {self.active_work_dir or '(none)'}")
             lines.append(f"  archive: {self.work_archive}")
-            lines.append(f"  archive_resolved: {self.work_archive_resolved}")
+            lines.append(
+                f"  archive_resolved: {self.work_archive_resolved or '(unresolved)'}"
+            )
             lines.append("kb:")
             lines.append(f"  source: {self.kb_source}")
             lines.append(f"  path: {self.kb_path}")
-            lines.append(f"  resolved: {self.kb_resolved}")
+            lines.append(f"  resolved: {self.kb_resolved or '(unresolved)'}")
             for name in sorted(self.extra_contexts):
                 entry = self.extra_contexts[name]
                 lines.append(f"{name}:")
@@ -111,13 +129,24 @@ class ContextOutput(BaseModel):
                 lines.append(f"  resolved: {entry.resolved}")
         else:
             active_work_dir = Path(self.active_work_dir) if self.active_work_dir else None
-            lines = list(
-                render_context_lines(
+            # Package resolution appends Mars root/scope observability beside
+            # these identity lines.
+            lines = [
+                f"identity_tier: {self.identity_tier}",
+                f"project_id: {self.project_id or '(unminted)'}",
+                f"project_identity_source: {self.project_identity_source}",
+                *render_context_lines(
                     self._to_resolved_paths(),
                     check_env=True,
                     active_work_dir=active_work_dir,
-                )
-            )
+                ),
+            ]
+
+        user_root = self.mars_user_root or "(same as primary)"
+        lines.append(f"mars_root: {self.mars_root}")
+        lines.append(f"mars_scope: {self.mars_scope}")
+        lines.append(f"mars_user_root: {user_root}")
+        lines.append(f"mars_fallback: {self.mars_fallback}")
 
         if self.sync_status:
             lines.append("")
@@ -137,9 +166,9 @@ class ContextOutput(BaseModel):
         if normalized == "work":
             return self.active_work_dir or ""
         if normalized == "kb":
-            return self.kb_resolved
+            return self.kb_resolved or ""
         if normalized in {"work.archive", "archive", "archive.work"}:
-            return self.work_archive_resolved
+            return self.work_archive_resolved or ""
         if normalized in self.extra_contexts:
             return self.extra_contexts[normalized].resolved
         raise KeyError(
@@ -442,26 +471,30 @@ def context_sync(input: ContextInput) -> ContextOutput:
     """Synchronous handler for context query."""
 
     authority = resolve_runtime_authority_for_read()
-    if authority.runtime_root is None:
-        raise ValueError("Project has no identity; no context state exists.")
     runtime_root = authority.runtime_root
-    resolved_runtime_context = _resolve_runtime_context(authority.project_root, runtime_root)
+    resolved_runtime_context = (
+        _resolve_runtime_context(authority.project_root, runtime_root)
+        if runtime_root is not None
+        else None
+    )
     context_config = load_context_config(authority.project_root) or ContextConfig()
     resolved_paths = resolve_context_paths(authority.project_root, context_config)
-    if (
-        resolved_paths.work_root is None
-        or resolved_paths.work_archive is None
-        or resolved_paths.kb_root is None
-    ):
-        raise ValueError("Project context paths are unresolved.")
     extra_config = _extra_context_config(context_config)
     extra_contexts: dict[str, ContextEntryOutput] = {}
     sync_status: dict[str, str] = {}
 
-    work_sync = _sync_status_for_context(resolved_paths.work_root, runtime_root=runtime_root)
+    work_sync = (
+        _sync_status_for_context(resolved_paths.work_root, runtime_root=runtime_root)
+        if resolved_paths.work_root is not None and runtime_root is not None
+        else None
+    )
     if work_sync is not None:
         sync_status["work"] = work_sync
-    kb_sync = _sync_status_for_context(resolved_paths.kb_root, runtime_root=runtime_root)
+    kb_sync = (
+        _sync_status_for_context(resolved_paths.kb_root, runtime_root=runtime_root)
+        if resolved_paths.kb_root is not None and runtime_root is not None
+        else None
+    )
     if kb_sync is not None:
         sync_status["kb"] = kb_sync
 
@@ -475,24 +508,49 @@ def context_sync(input: ContextInput) -> ContextOutput:
             path=config_entry.path,
             resolved=path.as_posix(),
         )
-        extra_sync = _sync_status_for_context(path, runtime_root=runtime_root)
+        extra_sync = (
+            _sync_status_for_context(path, runtime_root=runtime_root)
+            if runtime_root is not None
+            else None
+        )
         if extra_sync is not None:
             sync_status[normalized] = extra_sync
 
+    mars_roots = authority.mars_roots
     return ContextOutput(
+        identity_tier=authority.identity_tier,
+        project_id=authority.project_id,
+        project_identity_source=authority.project_identity_source,
         work_path=context_config.work.path,
-        work_resolved=resolved_paths.work_root.as_posix(),
+        work_resolved=(
+            resolved_paths.work_root.as_posix()
+            if resolved_paths.work_root is not None
+            else None
+        ),
         work_source=context_config.work.source.value,
         active_work_dir=(
             resolved_runtime_context.work_dir.as_posix()
-            if resolved_runtime_context.work_dir is not None
+            if resolved_runtime_context is not None
+            and resolved_runtime_context.work_dir is not None
             else None
         ),
         work_archive=context_config.work.archive,
-        work_archive_resolved=resolved_paths.work_archive.as_posix(),
+        work_archive_resolved=(
+            resolved_paths.work_archive.as_posix()
+            if resolved_paths.work_archive is not None
+            else None
+        ),
         kb_path=context_config.kb.path,
-        kb_resolved=resolved_paths.kb_root.as_posix(),
+        kb_resolved=(
+            resolved_paths.kb_root.as_posix()
+            if resolved_paths.kb_root is not None
+            else None
+        ),
         kb_source=context_config.kb.source.value,
+        mars_root=mars_roots.primary.as_posix(),
+        mars_scope=mars_roots.scope,
+        mars_user_root=(mars_roots.user.as_posix() if mars_roots.user is not None else None),
+        mars_fallback=mars_fallback_label(mars_roots),
         extra_contexts=extra_contexts,
         sync_status=sync_status,
         render_verbose=input.verbose,

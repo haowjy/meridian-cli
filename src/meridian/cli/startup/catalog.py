@@ -156,6 +156,19 @@ def _write_project(
     )
 
 
+def _author_project(path: tuple[str, ...], summary: str) -> CommandDescriptor:
+    """Project authoring that must inspect a marker before it may write."""
+
+    return _descriptor(
+        path,
+        StartupClass.WRITE_PROJECT,
+        StateRequirement.PROJECT_READ,
+        TelemetryMode.SEGMENT_OPTIONAL,
+        "text",
+        summary,
+    )
+
+
 def _read_runtime(
     path: tuple[str, ...],
     summary: str,
@@ -372,11 +385,11 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         "Initialize config.",
         root_source=RootSource.ARGV,
     ),
-    _write_project(
+    _author_project(
         ("config", "set"),
         "Set config value.",
     ),
-    _write_project(
+    _author_project(
         ("config", "reset"), "Reset config value."
     ),
     _read_project(("context",), "Show context paths."),
@@ -388,7 +401,6 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _read_runtime(("telemetry", "tail"), "Tail telemetry events."),
     _read_runtime(("telemetry", "query"), "Query telemetry events."),
     _write_project(("init",), "Initialize meridian in a project.", root_source=RootSource.ARGV),
-    _write_project(("migrate",), "Migrate project ID from UUID to three-word format."),
     _read_runtime(("ext",), "List extension commands."),
     _read_rootless(
         ("ext", "list"),
@@ -404,7 +416,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _read_project(
         ("hooks", "check"), "Check hook configuration."
     ),
-    _write_project(("hooks", "run"), "Run hooks."),
+    _read_project(("hooks", "run"), "Run hooks."),
     _read_runtime(
         ("task-dir",),
         "Print effective source-edit directory.",
@@ -421,7 +433,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _read_runtime(("sync", "conflict", "show"), "Show autosync conflict details."),
     _write_runtime(("sync", "conflict", "resolve"), "Mark autosync conflict resolved."),
     _read_project(("workspace", "list"), "List workspaces."),
-    _write_project(
+    _author_project(
         ("workspace", "init"),
         "Initialize workspace config.",
     ),

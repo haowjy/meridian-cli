@@ -59,12 +59,36 @@ If `meridian` is not found after install, run `uv tool update-shell` and restart
 
 ## Initialize a Project
 
+Initialization is optional for running Meridian. To install an agent once for
+use from any bare directory:
+
+```bash
+meridian mars --user add /path/to/local/package
+meridian mars --user sync
+mkdir scratch && cd scratch
+meridian opencode -a reviewer
+```
+
+User packages live under `~/.meridian/mars`. A bare directory stays untouched;
+its runtime and context state use a path-derived `adhoc.*` name under
+`~/.meridian/`.
+
+Initialize when the project should share identity and history across clones or
+worktrees:
+
 ```bash
 cd your-repo
 meridian init
 ```
 
-This creates `meridian.toml` with a machine-managed `[project] id`. Spawn history, locks, caches, and session state live under `~/.meridian/projects/<id>/`; no runtime state lives in the repository.
+This creates `meridian.toml` with a machine-managed `[project] id`. Spawn history,
+locks, caches, and session state live under `~/.meridian/projects/<id>/`; no runtime
+state lives in the repository.
+
+If the directory already has ad-hoc state, init prints its location but starts the
+committed project clean. Earlier spawns, sessions, and work items are not carried
+over; the old files become eligible for global doctor pruning after 7 days (or
+sooner, if `state.adhoc_retention_days` is lower).
 
 Bare `meridian init` bootstraps Meridian config/runtime only. It does not initialize Mars packages on its own.
 

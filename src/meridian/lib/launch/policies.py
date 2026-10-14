@@ -8,6 +8,7 @@ from pathlib import Path
 
 from meridian.lib.catalog.agent import AgentProfile
 from meridian.lib.catalog.catalog_session import CatalogSession
+from meridian.lib.catalog.mars_roots import resolve_mars_roots
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.domain import SkillContent
@@ -66,18 +67,22 @@ def _build_resolved_skills_from_bundle(
     Mars owns the .mars/ directory schema and skill loading. Meridian consumes
     the structured bundle output without reaching into .mars/skills/ on disk.
     """
+    mars_root = resolve_mars_roots(project_root).primary
     loaded_skills: list[SkillContent] = []
     for entry in loaded_entries:
         if not entry.body:
             continue
-        # Synthetic path for downstream heading rendering and snapshot persistence.
-        synthetic_path = (project_root / ".mars" / "skills" / entry.name / "SKILL.md").as_posix()
+        # Older bundle schema-4 producers omitted source_path. Keep the
+        # reconstructed primary path only as their compatibility fallback.
+        source_path = entry.source_path or (
+            mars_root / ".mars" / "skills" / entry.name / "SKILL.md"
+        ).as_posix()
         loaded_skills.append(
             SkillContent(
                 name=entry.name,
                 description="",
                 content=entry.body,
-                path=synthetic_path,
+                path=source_path,
                 skill_type=entry.skill_type,
             )
         )
@@ -455,6 +460,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
     bundle_request = bundle_adapter.BundleRequest(
         agent=profile.name if profile is not None else requested_agent,
         project_root=project_root,
+        agent_path=profile.path if profile is not None else None,
         model_override=bundle_model_override,
         harness_override=bundle_harness_override,
         excluded_harnesses=_excluded_harnesses_for_surface(surface),
@@ -468,6 +474,10 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         bundle_request,
         harness_registry=surface.harness_registry,
     )
+    if profile is not None and bundle_result.agent_source_path is not None:
+        profile = profile.model_copy(
+            update={"path": Path(bundle_result.agent_source_path).expanduser().resolve()}
+        )
 
     resolved_model = bundle_result.model
     resolved_harness = bundle_result.harness

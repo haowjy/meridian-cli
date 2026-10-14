@@ -184,6 +184,10 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _public_config("MERIDIAN_IDLE_QUICK_TURN_PUSH_SECONDS", "Idle quick-turn push delay."),
     _public_config("MERIDIAN_IDLE_WARN_EMAIL", "Idle warning email toggle."),
     _public_config("MERIDIAN_IDLE_WARN_MINUTES", "Idle cache warning lead time."),
+    _public_config(
+        "MERIDIAN_STATE_ADHOC_RETENTION_DAYS",
+        "User-scope ad-hoc project retention period.",
+    ),
     _public_config("MERIDIAN_STATE_RETENTION_DAYS", "Runtime-state retention period."),
     _public_config("MERIDIAN_TIMEOUT", "Spawn timeout override."),
     _public_config("MERIDIAN_WAIT_TIMEOUT_MINUTES", "Wait operation timeout."),

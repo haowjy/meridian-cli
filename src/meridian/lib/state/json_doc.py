@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import TypeVar
+from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError
 
+from meridian.lib.platform.atomic import fsync_directory
 from meridian.lib.state.atomic import atomic_write_text
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
@@ -39,6 +42,32 @@ def write_model(
     )
 
 
+def write_model_once(
+    path: Path,
+    model: BaseModel,
+    *,
+    indent: int | None = None,
+    exclude_none: bool = False,
+) -> bool:
+    """Atomically publish a JSON document only when no document exists yet."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    staged = path.parent / f".{path.name}.{uuid4().hex}.create"
+    try:
+        atomic_write_text(
+            staged,
+            model.model_dump_json(indent=indent, exclude_none=exclude_none) + "\n",
+        )
+        try:
+            os.link(staged, path)
+        except FileExistsError:
+            return False
+        fsync_directory(path.parent)
+        return True
+    finally:
+        staged.unlink(missing_ok=True)
+
+
 def mutate_model(
     path: Path,
     model_type: type[ModelT],
@@ -57,4 +86,4 @@ def mutate_model(
         return updated, result
 
 
-__all__ = ["mutate_model", "read_model", "write_model"]
+__all__ = ["mutate_model", "read_model", "write_model", "write_model_once"]

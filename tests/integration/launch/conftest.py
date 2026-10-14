@@ -1,7 +1,7 @@
 """Shared fixtures for launch integration tests.
 
 Sets CWD and MERIDIAN_PROJECT_DIR to tmp_path so
-require_established_project_root() resolves for tests that depend on
+resolve_cli_project_root() resolves for tests that depend on
 project targeting without passing -C explicitly.
 
 Tests that need a different project root can override CWD or env via

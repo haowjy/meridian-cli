@@ -6,6 +6,7 @@ import tomllib
 from pathlib import Path
 from typing import cast
 
+from meridian.lib.catalog.mars_roots import resolve_mars_roots
 from meridian.lib.core.types import normalize_mars_target_name
 from meridian.lib.safety.permissions import (
     PermissionConfig,
@@ -68,10 +69,11 @@ def _resolve_opencode_override(*, tools: ToolsField | None) -> str | None:
 def project_has_claude_agent_copy(project_root: Path) -> bool:
     """Return whether effective Mars config enables Claude native agent copies."""
 
+    mars_root = resolve_mars_roots(project_root).primary
     targets: tuple[str, ...] = ()
     agent_copy_harnesses: tuple[str, ...] = ()
     for config_name in ("mars.toml", "mars.local.toml"):
-        config_path = project_root / config_name
+        config_path = mars_root / config_name
         if not config_path.is_file():
             continue
         with config_path.open("rb") as handle:

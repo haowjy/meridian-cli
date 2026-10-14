@@ -17,7 +17,10 @@ from meridian.lib.hooks.dispatch import HookDispatcher
 from meridian.lib.hooks.interval import IntervalTracker
 from meridian.lib.hooks.registry import HookRegistry
 from meridian.lib.hooks.types import Hook, HookContext, HookEventName, HookResult
-from meridian.lib.ops.runtime import resolve_project_authority, resolve_roots
+from meridian.lib.ops.runtime import (
+    resolve_project_authority,
+    resolve_runtime_authority_for_read,
+)
 
 
 class HookListInput(BaseModel):
@@ -361,8 +364,8 @@ def _result_to_output(result: HookResult) -> HookRunResult:
 
 
 def hooks_run_sync(payload: HookRunInput) -> HookRunOutput:
-    roots = resolve_roots(payload.project_root)
-    registry = HookRegistry(roots.project_root)
+    authority = resolve_runtime_authority_for_read(payload.project_root)
+    registry = HookRegistry(authority.project_root, authority=authority)
 
     hook_name = payload.name.strip()
     if not hook_name:
@@ -377,17 +380,31 @@ def hooks_run_sync(payload: HookRunInput) -> HookRunOutput:
     if run_event != effective_hook.event:
         effective_hook = replace(effective_hook, event=run_event)
 
+    if authority.runtime_root is None:
+        return HookRunOutput(
+            hook=effective_hook.name,
+            event=effective_hook.event,
+            result=HookRunResult(
+                outcome="skipped",
+                success=True,
+                skipped=True,
+                skip_reason="no_state",
+                duration_ms=0,
+            ),
+        )
+
     dispatcher = HookDispatcher(
-        roots.project_root,
-        roots.runtime_root,
+        authority.project_root,
+        authority.runtime_root,
+        authority=authority,
         registry=_SingleHookRegistry(effective_hook),
-        interval_tracker=_BypassIntervalTracker(IntervalTracker(roots.runtime_root)),
+        interval_tracker=_BypassIntervalTracker(IntervalTracker(authority.runtime_root)),
     )
     context = _manual_context(
         hook=effective_hook,
         event=run_event,
-        project_root=roots.project_root,
-        runtime_root=roots.runtime_root,
+        project_root=authority.project_root,
+        runtime_root=authority.runtime_root,
     )
 
     results = dispatcher.fire(context)

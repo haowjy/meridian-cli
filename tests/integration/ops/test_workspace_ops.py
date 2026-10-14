@@ -13,7 +13,18 @@ def _clear_state_root_override(monkeypatch: pytest.MonkeyPatch) -> None:
 def _repo(tmp_path: Path) -> Path:
     project_root = tmp_path / "repo"
     project_root.mkdir()
+    (project_root / "meridian.toml").write_text("", encoding="utf-8")
     return project_root
+
+
+def test_workspace_init_refuses_bare_directory(tmp_path: Path) -> None:
+    project_root = tmp_path / "bare"
+    project_root.mkdir()
+
+    with pytest.raises(ValueError, match="no project config here; run 'meridian init'"):
+        workspace_init_sync(WorkspaceInitInput(project_root=project_root.as_posix()))
+
+    assert list(project_root.iterdir()) == []
 
 
 def test_workspace_init_creates_template_and_local_gitignore_entry(tmp_path: Path) -> None:

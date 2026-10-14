@@ -97,6 +97,7 @@ from .models import (
     SpawnStatsInput,
     SpawnStatsOutput,
     SpawnStatusInput,
+    SpawnSubagentEntry,
     SpawnSubagentsInput,
     SpawnSubagentsOutput,
     SpawnWaitInput,
@@ -493,9 +494,12 @@ def spawn_create_sync(
         harness=result.harness_id or prepared_request.harness,
         spawn_id=result.spawn_id,
     )
-    if forked_from is None:
-        return result
-    return result.model_copy(update={"forked_from": forked_from})
+    updates: dict[str, object] = {
+        "identity_created": bool(authority.identity_created),
+    }
+    if forked_from is not None:
+        updates["forked_from"] = forked_from
+    return result.model_copy(update=updates)
 
 
 async def spawn_create(
@@ -1000,12 +1004,25 @@ def spawn_subagents_sync(
         # None means mars could not resolve the profile → treat as empty.
         declared = mars_agent_subagents(project_root, agent)
         names = declared if declared is not None else ()
+        inventory = (
+            {entry.name: entry for entry in mars_list_subagents(project_root)} if names else {}
+        )
+        agents = tuple(
+            SpawnSubagentEntry(
+                name=name,
+                scope=inventory[name].scope if name in inventory else None,
+            )
+            for name in sorted(set(names))
+        )
     else:
         # No current agent (no spawn context / record has no agent) → orchestrator
         # view: list all subagent-mode agents.
-        names = mars_list_subagents(project_root)
+        agents = tuple(
+            SpawnSubagentEntry(name=entry.name, scope=entry.scope)
+            for entry in mars_list_subagents(project_root)
+        )
 
-    return SpawnSubagentsOutput(names=tuple(sorted(set(names))))
+    return SpawnSubagentsOutput(agents=agents)
 
 
 async def spawn_subagents(
