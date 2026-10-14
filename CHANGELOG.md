@@ -8,6 +8,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - False `Ignoring unknown Meridian config key 'context.<name>'` warnings for every `[context.*]` table (#580).
 - False unknown-key warnings before the real error for mis-shaped sections such
   as `[hooks]`; sections with a hard error now suppress unknown-key warnings (#582).
+- Meridian reopen closes old idle stretch before exec; no stale push, warn, compact.
 
 ## [0.10.0] - 2026-10-14
 
