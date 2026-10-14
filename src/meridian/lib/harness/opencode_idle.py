@@ -525,6 +525,7 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
         self._compaction_started_at: dict[str, int] = {}
         self._last_compaction_ended_at: int | None = None
         self._last_terminal: tuple[int, str] | None = None
+        self._compacting = False
         self._compact_expected_id: str | None = None
         self._compact_waiter: asyncio.Future[tuple[bool, str | None]] | None = None
 
@@ -542,9 +543,11 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
         if terminal_at <= started_at:
             return
         if terminal_type != "session.execution.succeeded":
+            self._compacting = False
             waiter.set_result((False, terminal_type))
             return
         if ended_at is not None and started_at < ended_at < terminal_at:
+            self._compacting = False
             waiter.set_result((True, None))
 
     def on_raw_event(self, event: RawHarnessEvent) -> None:
@@ -571,8 +574,9 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
         if delivered_id in self._pending_user_inbox_ids:
             self._pending_user_inbox_ids.remove(delivered_id)
             # Queue delivery can begin after another execution armed an idle
-            # stretch. Close that stretch as the queued work begins.
-            self._emit("user_prompt")
+            # stretch. Close it unless Meridian initiated this execution.
+            if not self._compacting:
+                self._emit("user_prompt")
 
         if event.event_type == "session.execution.started":
             self._busy = True
@@ -631,9 +635,10 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
     async def compact(self) -> CompactResult:
         if not self._ctx.tui_alive():
             return CompactResult("vetoed", "tui-exited")
-        if self._compact_waiter is not None and not self._compact_waiter.done():
+        if self._compacting:
             return CompactResult("failed", "compaction already in progress")
 
+        self._compacting = True
         session_id = quote(self._ctx.harness_session_id, safe="")
         session_path = f"/api/session/{session_id}"
         try:
@@ -682,6 +687,7 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
         except (OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError) as exc:
             return CompactResult("failed", str(exc))
         finally:
+            self._compacting = False
             self._compact_expected_id = None
             self._compact_waiter = None
         return CompactResult("ok")

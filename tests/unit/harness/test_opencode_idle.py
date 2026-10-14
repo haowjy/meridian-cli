@@ -514,6 +514,90 @@ async def test_v2_queued_prompt_returns_when_delivered_for_second_execution(
     ]
 
 
+async def test_v2_stranded_steer_delivery_during_compaction_does_not_emit_return(
+    tmp_path: Path,
+) -> None:
+    sensor: opencode_idle.OpenCodeV2IdleSensor
+
+    def raw(event_type: str, **payload: object) -> RawHarnessEvent:
+        return RawHarnessEvent(
+            event_type=event_type,
+            payload={"type": event_type, "sessionID": V2_SESSION_ID, **payload},
+            harness_id="opencode",
+        )
+
+    async def request(
+        method: str,
+        path: str,
+        payload: Mapping[str, object] | None,
+    ) -> tuple[int, str]:
+        if method == "GET":
+            if path.endswith("/message?limit=20&order=desc"):
+                return 200, '{"data":[],"cursor":{"previous":null,"next":null}}'
+            assert path == f"/api/session/{V2_SESSION_ID}"
+            return 200, json.dumps(
+                {
+                    "data": {
+                        "id": V2_SESSION_ID,
+                        "model": {"providerID": "openai", "id": "gpt-6-luna"},
+                    }
+                }
+            )
+        assert (path, payload) == (f"/api/session/{V2_SESSION_ID}/compact", {})
+        sensor.on_raw_event(raw("session.execution.started"))
+        sensor.on_raw_event(
+            raw("session.compaction.started", inputID="msg_v2_compaction")
+        )
+        sensor.on_raw_event(
+            raw("session.inbox.delivered", inboxID="msg_v2_user_stranded")
+        )
+        sensor.on_raw_event(raw("session.compaction.ended"))
+        sensor.on_raw_event(raw("session.execution.succeeded"))
+        return 200, json.dumps(
+            {
+                "data": {
+                    "id": "msg_v2_compaction",
+                    "sessionID": V2_SESSION_ID,
+                    "type": "compaction",
+                    "payload": {},
+                    "delivery": "steer",
+                }
+            }
+        )
+
+    sensor = opencode_idle.OpenCodeV2IdleSensor(
+        _context(tmp_path, session_id=V2_SESSION_ID, version="v2"),
+        request=request,
+        compact_timeout_seconds=0.1,
+    )
+    iterator = sensor.events()
+
+    sensor.on_raw_event(raw("session.execution.started"))
+    sensor.on_raw_event(
+        raw(
+            "session.inbox.enqueued",
+            inboxID="msg_v2_user_stranded",
+            item={
+                "type": "user",
+                "payload": {"text": "follow up while this turn runs"},
+                "delivery": "steer",
+            },
+        )
+    )
+    sensor.on_raw_event(raw("session.execution.succeeded"))
+    assert [event.kind for event in await _take(iterator, 2)] == [
+        "user_prompt",
+        "turn_end",
+    ]
+
+    result = await sensor.compact()
+
+    assert result.result == "ok"
+    assert (await anext(iterator)).kind == "turn_end"
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(anext(iterator), timeout=0.01)
+
+
 async def test_v2_compact_waits_for_matching_recorded_completion(tmp_path: Path) -> None:
     sensor: opencode_idle.OpenCodeV2IdleSensor
 
