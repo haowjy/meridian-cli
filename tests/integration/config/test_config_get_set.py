@@ -41,6 +41,7 @@ def test_config_set_and_identity_creation_share_one_transaction(
     release_config_edit = Event()
     identity_started = Event()
     identity_finished = Event()
+    identity_ids: list[str | None] = []
     failures: list[BaseException] = []
     original_set_scalar_option = config_module.set_scalar_option
 
@@ -69,7 +70,7 @@ def test_config_set_and_identity_creation_share_one_transaction(
             from meridian.lib.state.project_identity import ensure_project_identity
 
             identity_started.set()
-            ensure_project_identity(project_root)
+            identity_ids.append(ensure_project_identity(project_root).id)
         except BaseException as exc:
             failures.append(exc)
         finally:
@@ -91,7 +92,7 @@ def test_config_set_and_identity_creation_share_one_transaction(
     assert failures == []
     payload = tomllib.loads(config_path.read_text(encoding="utf-8"))
     assert payload["defaults"]["max_depth"] == 9
-    assert payload["project"]["id"]
+    assert payload["project"]["id"] == identity_ids[0]
 
 
 def test_config_set_requires_project_config_file(
