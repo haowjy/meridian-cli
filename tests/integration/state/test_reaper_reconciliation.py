@@ -541,7 +541,7 @@ def test_reserve_then_prepare_mid_prep_kill_leaves_queued_row_reconciled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import meridian.lib.ops.spawn.execute as execute_module
-    from meridian.lib.config.settings import load_config
+    from meridian.lib.config.loader import load_config
     from meridian.lib.core.context import RuntimeContext
     from meridian.lib.core.sink import OutputSink
     from meridian.lib.launch.request import SpawnRequest

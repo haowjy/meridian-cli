@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from meridian.lib.config.settings import NotifyConfig
+from meridian.lib.config.models import NotifyConfig
 from meridian.lib.notify.channels.base import SendResult
 from meridian.lib.notify.notice import Notice
 

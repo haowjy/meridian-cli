@@ -17,7 +17,8 @@ from meridian.lib.bootstrap.services import (
     build_spawn_application_service,
     build_spawn_application_service_from_roots,
 )
-from meridian.lib.config.settings import MeridianConfig, load_config
+from meridian.lib.config.loader import load_config
+from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import max_depth_reached
 from meridian.lib.core.native_identity import NativeSessionUnavailable

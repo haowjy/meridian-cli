@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING
 
 from meridian.lib.bootstrap import project_state, runtime_state
 from meridian.lib.bootstrap.project_state import ProjectLayoutSnapshot
-from meridian.lib.config.settings import MeridianConfig, load_config
+from meridian.lib.config.loader import load_config
+from meridian.lib.config.models import MeridianConfig
 from meridian.lib.ops.runtime import (
     RuntimeAuthoritySnapshot,
     resolve_project_authority,

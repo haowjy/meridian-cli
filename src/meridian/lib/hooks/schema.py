@@ -4,13 +4,22 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import re
 from collections.abc import Mapping
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    RootModel,
+    StringConstraints,
+    ValidationError,
+    field_validator,
+)
 from typing_extensions import TypeIs
 
+from meridian.lib.config.errors import config_validation_error, warn_unknown_model_keys
 from meridian.lib.hooks.builtin_registry import (
     BUILTIN_HOOK_REGISTRY,
     get_default_events,
@@ -26,54 +35,21 @@ from meridian.lib.hooks.types import (
 )
 from meridian.lib.utils.json_shapes import is_json_object, json_list
 
-logger = logging.getLogger(__name__)
-
 _INTERVAL_PATTERN = re.compile(r"^\d+[smhd]$")
 _HOOK_NAME_COMPONENT_PATTERN = re.compile(r"[^a-z0-9._-]+")
 _HOOK_NAME_REPEATED_DASH_PATTERN = re.compile(r"-+")
 _KNOWN_FAILURE_POLICIES = frozenset({"fail", "warn", "ignore"})
 _KNOWN_SPAWN_STATUSES = frozenset({"success", "failure", "cancelled", "timeout", "skipped"})
-_ALLOWED_HOOK_KEYS = frozenset(
-    {
-        "name",
-        "builtin",
-        "command",
-        "event",
-        "events",
-        "timeout_secs",
-        "interval",
-        "enabled",
-        "priority",
-        "failure_policy",
-        "require_serial",
-        "when",
-        "exclude",
-        "repo",
-        "remote",
-        "options",
-    }
-)
-_STRING_FIELDS = frozenset(
-    {
-        "name",
-        "event",
-        "command",
-        "builtin",
-        "interval",
-        "failure_policy",
-        "repo",
-        "remote",
-    }
-)
+NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class HookWhenSpec(BaseModel):
     """Validated conditional fields from one hook row."""
 
-    model_config = ConfigDict(frozen=True, strict=True)
+    model_config = ConfigDict(frozen=True, strict=True, extra="ignore")
 
-    status: tuple[str, ...] | None = None
-    agent: str | None = None
+    status: tuple[NonEmptyString, ...] | None = None
+    agent: NonEmptyString | None = None
 
     @field_validator("status", mode="before")
     @classmethod
@@ -85,21 +61,21 @@ class HookWhenSpec(BaseModel):
 class HookSpec(BaseModel):
     """Validated file representation of one configured hook."""
 
-    model_config = ConfigDict(frozen=True, strict=True)
+    model_config = ConfigDict(frozen=True, strict=True, extra="ignore")
 
-    name: str | None = None
-    builtin: str | None = None
-    command: str | None = None
-    event: str | None = None
+    name: NonEmptyString | None = None
+    builtin: NonEmptyString | None = None
+    command: NonEmptyString | None = None
+    event: NonEmptyString | None = None
     timeout_secs: int | None = None
-    interval: str | None = None
+    interval: NonEmptyString | None = None
     enabled: bool = True
     priority: int = 0
-    failure_policy: str | None = None
+    failure_policy: NonEmptyString | None = None
     require_serial: bool = False
     when: HookWhenSpec | None = None
-    exclude: tuple[str, ...] = ()
-    remote: str | None = None
+    exclude: tuple[NonEmptyString, ...] = ()
+    remote: NonEmptyString | None = None
     options: dict[str, object] = Field(default_factory=dict)
 
     @field_validator("exclude", mode="before")
@@ -115,189 +91,51 @@ class HookSpec(BaseModel):
         return self.name or self.event or self.builtin or "hook"
 
 
-def _normalize_required_string(raw: str, *, source: str) -> str:
-    normalized = raw.strip()
-    if not normalized:
-        raise ValueError(f"Invalid value for '{source}': expected non-empty string.")
-    return normalized
+class HookConfigSection(RootModel[tuple[HookSpec, ...]]):
+    """Validated representation of one ``[[hooks]]`` array."""
+
+    model_config = ConfigDict(frozen=True, strict=True)
+
+    @field_validator("root", mode="before")
+    @classmethod
+    def _tuple_rows(cls, value: object) -> object:
+        values = json_list(value)
+        return tuple(values) if values is not None else value
 
 
-def _parse_toml_list(*, raw_value: object, source: str) -> tuple[str, ...]:
+def warn_unknown_hook_keys(raw_value: object, *, source: str) -> None:
+    """Warn for ignored keys in one configured hooks array."""
+
     values = json_list(raw_value)
     if values is None:
-        raise ValueError(
-            f"Invalid value for '{source}': expected array[str], "
-            f"got {type(raw_value).__name__} ({raw_value!r})."
-        )
-
-    normalized: list[str] = []
-    for item in values:
-        if not isinstance(item, str):
-            raise ValueError(
-                f"Invalid value for '{source}': expected array[str], "
-                f"got {type(item).__name__} ({item!r})."
+        return
+    for index, item in enumerate(values, start=1):
+        if not is_json_object(item):
+            continue
+        row_source = f"{source}[{index}]"
+        warn_unknown_model_keys(item, model=HookSpec, source=row_source)
+        raw_when = item.get("when")
+        if raw_when is not None:
+            warn_unknown_model_keys(
+                raw_when,
+                model=HookWhenSpec,
+                source=f"{row_source}.when",
             )
-        compact = item.strip()
-        if not compact:
-            raise ValueError(f"Invalid value for '{source}': expected non-empty entries.")
-        normalized.append(compact)
-    return tuple(normalized)
-
-
-def _normalize_when(raw_value: object, *, source: str) -> HookWhenSpec:
-    if not is_json_object(raw_value):
-        raise ValueError(
-            f"Invalid value for '{source}': expected table, "
-            f"got {type(raw_value).__name__} ({raw_value!r})."
-        )
-
-    status: tuple[str, ...] | None = None
-    agent: str | None = None
-    fields_set: set[str] = set()
-    for key, value in raw_value.items():
-        field_source = f"{source}.{key}"
-        if key == "status":
-            status = _parse_toml_list(raw_value=value, source=field_source)
-            fields_set.add(key)
-            continue
-        if key == "agent":
-            if not isinstance(value, str):
-                raise ValueError(
-                    f"Invalid value for '{field_source}': expected str, got "
-                    f"{type(value).__name__} ({value!r})."
-                )
-            agent = _normalize_required_string(value, source=field_source)
-            fields_set.add(key)
-            continue
-        logger.warning("Ignoring unknown Meridian config key '%s.%s'.", source, key)
-
-    return HookWhenSpec.model_construct(
-        _fields_set=fields_set,
-        status=status,
-        agent=agent,
-    )
 
 
 def normalize_hooks_array(raw_value: object, *, source: str) -> tuple[HookSpec, ...]:
     """Validate and normalize one TOML hooks array into typed specifications."""
 
-    values = json_list(raw_value)
-    if values is None:
+    if json_list(raw_value) is None:
         raise ValueError(
             f"Invalid value for '{source}': expected array[table], "
             f"got {type(raw_value).__name__} ({raw_value!r})."
         )
-
-    specs: list[HookSpec] = []
-    for index, item in enumerate(values, start=1):
-        row_source = f"{source}[{index}]"
-        if not is_json_object(item):
-            raise ValueError(
-                f"Invalid value for '{row_source}': expected table, "
-                f"got {type(item).__name__} ({item!r})."
-            )
-
-        strings: dict[str, str] = {}
-        enabled = True
-        priority = 0
-        timeout_secs: int | None = None
-        require_serial = False
-        exclude: tuple[str, ...] = ()
-        options: dict[str, object] = {}
-        when: HookWhenSpec | None = None
-        fields_set: set[str] = set()
-
-        for key, value in item.items():
-            if key not in _ALLOWED_HOOK_KEYS:
-                logger.warning("Ignoring unknown Meridian config key '%s.%s'.", row_source, key)
-                continue
-
-            field_source = f"{row_source}.{key}"
-            if key in _STRING_FIELDS:
-                if not isinstance(value, str):
-                    raise ValueError(
-                        f"Invalid value for '{field_source}': expected str, got "
-                        f"{type(value).__name__} ({value!r})."
-                    )
-                strings[key] = _normalize_required_string(value, source=field_source)
-                fields_set.add(key)
-                continue
-
-            if key == "enabled":
-                if not isinstance(value, bool):
-                    raise ValueError(
-                        f"Invalid value for '{field_source}': expected bool, got "
-                        f"{type(value).__name__} ({value!r})."
-                    )
-                enabled = value
-                fields_set.add(key)
-                continue
-
-            if key == "require_serial":
-                if not isinstance(value, bool):
-                    raise ValueError(
-                        f"Invalid value for '{field_source}': expected bool, got "
-                        f"{type(value).__name__} ({value!r})."
-                    )
-                require_serial = value
-                fields_set.add(key)
-                continue
-
-            if key in {"priority", "timeout_secs"}:
-                if isinstance(value, bool) or not isinstance(value, int):
-                    raise ValueError(
-                        f"Invalid value for '{field_source}': expected int, got "
-                        f"{type(value).__name__} ({value!r})."
-                    )
-                if key == "priority":
-                    priority = value
-                else:
-                    timeout_secs = value
-                fields_set.add(key)
-                continue
-
-            if key == "exclude":
-                exclude = _parse_toml_list(raw_value=value, source=field_source)
-                fields_set.add(key)
-                continue
-
-            if key == "options":
-                if not is_json_object(value):
-                    raise ValueError(
-                        f"Invalid value for '{field_source}': expected table, got "
-                        f"{type(value).__name__} ({value!r})."
-                    )
-                options = dict(value)
-                fields_set.add(key)
-                continue
-
-            if key == "when":
-                when = _normalize_when(value, source=field_source)
-                fields_set.add(key)
-                continue
-
-            logger.warning("Ignoring unknown Meridian config key '%s.%s'.", row_source, key)
-
-        specs.append(
-            HookSpec.model_construct(
-                _fields_set=fields_set,
-                name=strings.get("name"),
-                builtin=strings.get("builtin"),
-                command=strings.get("command"),
-                event=strings.get("event"),
-                timeout_secs=timeout_secs,
-                interval=strings.get("interval"),
-                enabled=enabled,
-                priority=priority,
-                failure_policy=strings.get("failure_policy"),
-                require_serial=require_serial,
-                when=when,
-                exclude=exclude,
-                remote=strings.get("remote"),
-                options=options,
-            )
-        )
-    return tuple(specs)
+    warn_unknown_hook_keys(raw_value, source=source)
+    try:
+        return HookConfigSection.model_validate(raw_value).root
+    except ValidationError as error:
+        raise config_validation_error(error, source=source) from None
 
 
 def _slugify_hook_name_component(raw: str) -> str:

@@ -16,17 +16,19 @@ from meridian.lib.config.dynamic_sections import (
     merge_nested_dict_values,
     normalize_dynamic_sections,
 )
+from meridian.lib.config.errors import (
+    config_validation_error,
+    validation_error_path,
+    warn_unknown_model_keys,
+)
+from meridian.lib.config.harness_models import HarnessProfileConfig, PiHarnessProfileConfig
 from meridian.lib.config.layers import iter_config_layers
+from meridian.lib.config.model_base import ConfigModel
 from meridian.lib.config.models import (
-    ConfigModel,
-    HarnessProfileConfig,
     MeridianConfig,
-    MeridianConfigModel,
-    PiHarnessProfileConfig,
 )
 from meridian.lib.config.project_paths import (
     ProjectConfigPaths,
-    resolve_project_config_paths,
 )
 from meridian.lib.config.schema import parse_env_scalar, parse_toml_scalar
 from meridian.lib.utils.json_shapes import is_json_object
@@ -129,42 +131,10 @@ def _nested_model_type(annotation: object) -> type[ConfigModel] | None:
 
 
 def _section_model(section: str) -> type[ConfigModel] | None:
-    field = MeridianConfigModel.model_fields.get(section)
+    field = MeridianConfig.model_fields.get(section)
     if field is None:
         return None
     return _nested_model_type(field.annotation)
-
-
-def _warn_unknown_model_keys(
-    raw_value: object,
-    *,
-    model: type[ConfigModel],
-    source: str,
-) -> None:
-    """Warn for ignored Pydantic extras without duplicating field validation."""
-
-    if not is_json_object(raw_value):
-        return
-
-    extra_behavior = model.model_config.get("extra")
-    for key, value in raw_value.items():
-        field = model.model_fields.get(key)
-        if field is None:
-            if (
-                key not in model.config_ignored_keys()
-                and not model.config_silences_extras()
-                and extra_behavior != "forbid"
-            ):
-                logger.warning("Ignoring unknown Meridian config key '%s.%s'.", source, key)
-            continue
-
-        nested_model = _nested_model_type(field.annotation)
-        if nested_model is not None:
-            _warn_unknown_model_keys(
-                value,
-                model=nested_model,
-                source=f"{source}.{key}",
-            )
 
 
 def _legacy_agents_section_error(*, path: Path) -> ValueError:
@@ -221,7 +191,7 @@ def _normalize_toml_payload_values(
 
         section_model = _section_model(key)
         if section_model is not None:
-            _warn_unknown_model_keys(raw_value, model=section_model, source=key)
+            warn_unknown_model_keys(raw_value, model=section_model, source=key)
             normalized[key] = raw_value
             continue
 
@@ -243,10 +213,15 @@ def _normalize_toml_payload_values(
         )
         _assign_nested_value(normalized, option.field_path, coerced)
 
+    validated_env = normalized.pop("env", None)
     try:
-        values = MeridianConfigModel.model_validate(normalized).model_dump(exclude_unset=True)
+        values = MeridianConfig.model_validate(normalized).model_dump(exclude_unset=True)
     except ValidationError as error:
-        raise _config_validation_error(error) from None
+        raise config_validation_error(
+            error, path_formatter=_catalog_validation_error_path
+        ) from None
+    if validated_env is not None:
+        values["env"] = validated_env
     return _NormalizedConfigLayer(values=values, dynamic=dynamic)
 
 
@@ -272,45 +247,10 @@ def _env_alias_overrides() -> tuple[dict[str, object], tuple[ConfigValueSource, 
             )
         )
 
-    hidden_env_specs: tuple[tuple[str, tuple[str, ...], Literal["float", "str"]], ...] = (
-        (
-            "MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_CLAUDE",
-            ("harness", "claude", "wait_yield_seconds"),
-            "float",
-        ),
-        (
-            "MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_CODEX",
-            ("harness", "codex", "wait_yield_seconds"),
-            "float",
-        ),
-        (
-            "MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_OPENCODE",
-            ("harness", "opencode", "wait_yield_seconds"),
-            "float",
-        ),
-    )
-    for env_name, field_path, value_kind in hidden_env_specs:
-        raw_value = os.getenv(env_name)
-        if raw_value is None:
-            continue
-        parsed = parse_env_scalar(
-            value_kind=value_kind,
-            raw_value=raw_value,
-            env_name=env_name,
-        )
-        _assign_nested_value(values, field_path, parsed)
-        sources.append(
-            ConfigValueSource(
-                path=field_path,
-                source="env var",
-                env_var=env_name,
-            )
-        )
-
     return values, tuple(sources)
 
 
-def _validation_error_path(location: tuple[str | int, ...]) -> str:
+def _catalog_validation_error_path(location: tuple[str | int, ...]) -> str:
     field_path = tuple(item for item in location if isinstance(item, str))
     option = OPTION_CATALOG.option_for_field_path(field_path)
     if (
@@ -320,70 +260,7 @@ def _validation_error_path(location: tuple[str | int, ...]) -> str:
     ):
         return option.canonical_key
 
-    parts: list[str] = []
-    for item in location:
-        if isinstance(item, int):
-            if parts:
-                parts[-1] = f"{parts[-1]}[{item + 1}]"
-            continue
-        parts.append(item)
-    return ".".join(parts) or "config"
-
-
-def _config_validation_error(error: ValidationError) -> ValueError:
-    """Translate one Pydantic failure into a concise config-key error."""
-
-    detail = error.errors(include_url=False)[0]
-    path = _validation_error_path(detail["loc"])
-    error_type = detail["type"]
-    raw_value = detail.get("input")
-    got = f"{type(raw_value).__name__} ({raw_value!r})"
-
-    expected_by_type = {
-        "bool_type": "bool",
-        "dict_type": "table",
-        "float_type": "float",
-        "int_type": "int",
-        "list_type": "array",
-        "model_type": "table",
-        "string_type": "str",
-        "tuple_type": "array",
-    }
-    expected = expected_by_type.get(error_type)
-    if expected is not None:
-        if error_type == "bool_type" and path.partition(".")[0] in {
-            "defaults",
-            "environment",
-            "idle",
-            "notify",
-            "spawn",
-            "timeouts",
-        }:
-            return ValueError(f"Invalid value for {path}: expected bool")
-        if error_type == "model_type" and path in {
-            "harness.claude",
-            "harness.codex",
-            "harness.opencode",
-            "harness.pi",
-        }:
-            expected = "str or table"
-        return ValueError(f"Invalid value for '{path}': expected {expected}, got {got}.")
-
-    if error_type == "extra_forbidden":
-        return ValueError(f"Invalid value for '{path}': unknown key.")
-    if error_type == "missing":
-        return ValueError(f"Invalid value for '{path}': required value is missing.")
-
-    context = detail.get("ctx")
-    cause = context.get("error") if context is not None else None
-    if cause is not None:
-        problem = str(cause).removesuffix(".")
-        if problem.startswith("Invalid value for "):
-            return ValueError(f"{problem}.")
-        return ValueError(f"Invalid value for '{path}': {problem}.")
-
-    message = detail["msg"].removeprefix("Input should be ").removesuffix(".")
-    return ValueError(f"Invalid value for '{path}': expected {message}, got {got}.")
+    return validation_error_path(location)
 
 
 def _path_is_present(values: dict[str, object], path: tuple[str, ...]) -> bool:
@@ -432,7 +309,6 @@ def load_config_with_sources(
     *,
     authority: _ProjectAuthorityLike | None = None,
     user_config: Path | None = None,
-    resolve_models: bool = True,
 ) -> LoadedConfig:
     """Load validated config and provenance across all precedence layers.
 
@@ -440,19 +316,17 @@ def load_config_with_sources(
     from ENV here — they are read separately via RuntimeOverrides.from_env().
     """
 
-    _ = resolve_models
-    if authority is not None:
-        resolved_project_root = authority.project_root.expanduser().resolve()
-        project_config_paths = authority.project_config_paths
-    else:
-        resolved_project_root = project_root.expanduser().resolve()
-        project_config_paths = resolve_project_config_paths(resolved_project_root)
+    resolved_project_root = (
+        authority.project_root.expanduser().resolve()
+        if authority is not None
+        else project_root.expanduser().resolve()
+    )
     values: dict[str, object] = {}
     dynamic_values: dict[str, object] = {}
     sources: dict[tuple[str, ...], ConfigValueSource] = {}
     for layer in iter_config_layers(
         resolved_project_root,
-        project_config_paths=project_config_paths,
+        authority=authority,
         user_config=user_config,
     ):
         normalized = _normalize_toml_payload(
@@ -475,11 +349,18 @@ def load_config_with_sources(
     for entry in env_sources:
         sources[entry.path] = entry
 
+    validated_env = values.get("env")
+    config_values = dict(values)
+    config_values.pop("env", None)
     try:
-        config = MeridianConfig.model_validate(values)
+        config = MeridianConfig.model_validate(config_values)
         dynamic = DynamicConfigSections.model_validate(dynamic_values)
     except ValidationError as error:
-        raise _config_validation_error(error) from None
+        raise config_validation_error(
+            error, path_formatter=_catalog_validation_error_path
+        ) from None
+    if is_json_object(validated_env):
+        config = config.model_copy(update={"env": validated_env})
     return LoadedConfig(
         config=config,
         dynamic=dynamic,
@@ -492,7 +373,6 @@ def load_config(
     *,
     authority: _ProjectAuthorityLike | None = None,
     user_config: Path | None = None,
-    resolve_models: bool = True,
 ) -> MeridianConfig:
     """Load config with precedence: defaults < user < project < local < environment."""
 
@@ -500,7 +380,6 @@ def load_config(
         project_root,
         authority=authority,
         user_config=user_config,
-        resolve_models=resolve_models,
     ).config
 
 
@@ -589,9 +468,7 @@ def resolve_opencode_version_for_launch(
 
     if config_snapshot:
         try:
-            return str(
-                MeridianConfig.model_validate(config_snapshot).harness.opencode.version
-            )
+            return str(MeridianConfig.model_validate(config_snapshot).harness.opencode.version)
         except Exception:
             pass
     return str(load_config(project_root).harness.opencode.version)

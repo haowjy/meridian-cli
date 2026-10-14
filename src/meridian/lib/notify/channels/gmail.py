@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from meridian.lib.config.settings import NotifyConfig
+from meridian.lib.config.models import NotifyConfig
 from meridian.lib.notify.channels.base import SendResult
 from meridian.lib.notify.channels.smtp import SMTPChannel, SMTPTransport, open_smtp
 from meridian.lib.notify.notice import Notice

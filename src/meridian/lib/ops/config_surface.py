@@ -8,12 +8,12 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.dynamic_sections import DynamicConfigSections
 from meridian.lib.config.loader import ConfigValueSource, load_config_with_sources
+from meridian.lib.config.models import MeridianConfig
 from meridian.lib.config.project_config_state import (
     ProjectConfigState,
     resolve_project_config_state,
 )
 from meridian.lib.config.project_root import resolve_user_config_path
-from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.config.workspace import (
     WorkspaceFinding,
     WorkspaceSnapshot,
@@ -140,7 +140,6 @@ def build_config_surface(project_root: Path | RuntimeAuthoritySnapshot) -> Confi
         resolved_root,
         authority=authority,
         user_config=user_config_path,
-        resolve_models=False,
     )
     return ConfigSurface(
         authority=authority,

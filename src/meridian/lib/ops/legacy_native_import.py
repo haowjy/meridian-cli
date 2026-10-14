@@ -408,7 +408,7 @@ class RetainedChatFacts:
 def configured_archive_destination(project_root: Path) -> Path | None:
     """The configured archive remount, so reclaimed spawns' retained files stay readable."""
     try:
-        from meridian.lib.config.settings import load_config
+        from meridian.lib.config.loader import load_config
 
         configured = load_config(project_root).history.archive.destination
     except Exception:

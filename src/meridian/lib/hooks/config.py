@@ -8,18 +8,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from meridian.lib.config.layers import iter_config_layers
-from meridian.lib.config.project_paths import resolve_project_config_paths
-from meridian.lib.hooks.builtin_registry import BUILTIN_HOOK_REGISTRY
 from meridian.lib.hooks.schema import hooks_from_spec, normalize_hooks_array
 from meridian.lib.hooks.types import Hook, HookEventName
 
 if TYPE_CHECKING:
     from meridian.lib.ops.runtime import RuntimeAuthoritySnapshot
 
-HOOK_SOURCE_PRECEDENCE: tuple[str, ...] = ("builtin", "context", "user", "project", "local")
-
-# Backward-compatible alias; registry remains the single source of truth.
-BUILTIN_HOOK_DEFAULTS = BUILTIN_HOOK_REGISTRY
+HOOK_SOURCE_PRECEDENCE: tuple[str, ...] = ("builtin", "user", "project", "local")
 
 
 @dataclass(frozen=True)
@@ -82,24 +77,12 @@ def load_hooks_config(
     user_config: Path | None = None,
     authority: RuntimeAuthoritySnapshot | None = None,
 ) -> HooksConfig:
-    """Load hook config with precedence: builtin < context < user < project < local."""
-
-    resolved_root = (
-        authority.project_root.expanduser().resolve()
-        if authority is not None
-        else project_root.expanduser().resolve()
-    )
-    project_paths = (
-        authority.project_config_paths
-        if authority is not None
-        else resolve_project_config_paths(resolved_root)
-    )
+    """Load hook config with precedence: builtin < user < project < local."""
 
     hooks: list[Hook] = []
-    hooks.extend(_hooks_from_payload({}, source="builtin"))
     for layer in iter_config_layers(
-        resolved_root,
-        project_config_paths=project_paths,
+        project_root,
+        authority=authority,
         user_config=user_config,
     ):
         hooks.extend(_hooks_from_payload(layer.payload, source=layer.name))

@@ -1,88 +1,34 @@
 """Typed models for Meridian operational configuration."""
 
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar
+from typing import Annotated, ClassVar
 
 from pydantic import (
-    BaseModel,
     ConfigDict,
     Field,
     ValidationInfo,
-    create_model,
     field_validator,
     model_validator,
 )
-from typing_extensions import TypeIs
 
 from meridian.lib.config.catalog import file_alias
-from meridian.lib.config.schema import config_field
+from meridian.lib.config.harness_models import HarnessConfig, HarnessProfileConfig
+from meridian.lib.config.history_models import HistoryConfig
+from meridian.lib.config.model_base import (
+    ConfigModel,
+    normalize_required_string,
+    normalize_string_sequence,
+)
+from meridian.lib.config.schema import ConfigOptionMeta, ValueKind, config_field
 from meridian.lib.core.overrides import (
     ApprovalValue,
     AutocompactPctValue,
     AutocompactValue,
     EffortValue,
 )
-from meridian.lib.utils.json_shapes import is_json_object, json_list
+from meridian.lib.utils.json_shapes import is_json_object
 
 _OUTPUT_VERBOSITY_PRESETS = frozenset({"quiet", "normal", "verbose", "debug"})
 _HARNESS_TABLE_KEYS = frozenset({"claude", "codex", "opencode", "pi"})
-
-
-class ConfigModel(BaseModel):
-    """Base for models carrying file-key warning policy."""
-
-    _config_ignored_keys: ClassVar[frozenset[str]] = frozenset()
-    _config_silent_extras: ClassVar[bool] = False
-
-    @classmethod
-    def config_ignored_keys(cls) -> frozenset[str]:
-        return cls._config_ignored_keys
-
-    @classmethod
-    def config_silences_extras(cls) -> bool:
-        return cls._config_silent_extras
-
-
-def normalize_required_string(raw: str, *, source: str) -> str:
-    normalized = raw.strip()
-    if not normalized:
-        raise ValueError(f"Invalid value for '{source}': expected non-empty string.")
-    return normalized
-
-
-def _is_object_tuple(value: object) -> TypeIs[tuple[object, ...]]:
-    return isinstance(value, tuple)
-
-
-def normalize_string_sequence(
-    value: object,
-    *,
-    source: str,
-    empty_entries: str = "entries",
-) -> tuple[str, ...]:
-    values = json_list(value)
-    if values is None:
-        if not _is_object_tuple(value):
-            raise ValueError(
-                f"Invalid value for '{source}': expected array[str], "
-                f"got {type(value).__name__} ({value!r})."
-            )
-        values = value
-
-    normalized: list[str] = []
-    for item in values:
-        if not isinstance(item, str):
-            raise ValueError(
-                f"Invalid value for '{source}': expected array[str], "
-                f"got {type(item).__name__} ({item!r})."
-            )
-        compact = item.strip()
-        if not compact:
-            raise ValueError(
-                f"Invalid value for '{source}': expected non-empty {empty_entries}."
-            )
-        normalized.append(compact)
-    return tuple(normalized)
 
 
 class OutputConfig(ConfigModel):
@@ -406,6 +352,21 @@ class NotifyConfig(ConfigModel):
         return value
 
 
+class WorkArtifactsConfig(ConfigModel):
+    """Artifact behavior nested under the work-item settings."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
+
+    sync: str | None = None
+
+    @field_validator("sync")
+    @classmethod
+    def _validate_sync(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_required_string(value, source="work.artifacts.sync")
+
+
 class WorkConfig(ConfigModel):
     """Work-item behavior settings."""
 
@@ -413,12 +374,21 @@ class WorkConfig(ConfigModel):
 
     default_worktree: bool = False
     worktree_base: str | None = None
+    # Inspection-only dynamic values are not part of operational config snapshots.
+    artifacts: WorkArtifactsConfig | None = Field(default=None, exclude=True)
+
+    @field_validator("worktree_base")
+    @classmethod
+    def _validate_worktree_base(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_required_string(value, source="work.worktree_base")
 
 
 class PrimaryConfig(ConfigModel):
     """Primary-specific harness settings."""
 
-    _config_ignored_keys: ClassVar[frozenset[str]] = frozenset({"model", "harness"})
+    config_ignored_keys: ClassVar[frozenset[str]] = frozenset({"model", "harness"})
 
     model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
 
@@ -514,291 +484,6 @@ class PrimaryConfig(ConfigModel):
         return value
 
 
-class HarnessIdleConfig(ConfigModel):
-    """Shared typed fields for every harness-specific idle config."""
-
-    model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
-
-    enabled: bool = True
-    compact: bool = True
-    ttl_seconds: Annotated[int | None, Field(gt=0)] = None
-
-
-class HarnessProfileConfig(ConfigModel):
-    """Per-harness model and wait-yield settings."""
-
-    model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
-
-    model: str = ""
-    wait_yield_seconds: float | None = None
-    idle: HarnessIdleConfig = Field(default_factory=HarnessIdleConfig)
-    # Harness-native subagents (Claude built-in Agent types, Codex multi-agent)
-    # spawn work Meridian cannot see; Meridian is the orchestrator by default.
-    allow_builtin_agents: bool = False
-
-    @model_validator(mode="before")
-    @classmethod
-    def _string_as_model(cls, values: object) -> object:
-        if isinstance(values, str):
-            return {"model": values}
-        return values
-
-    @field_validator("model")
-    @classmethod
-    def _normalize_model(cls, value: str) -> str:
-        return value.strip()
-
-    @field_validator("wait_yield_seconds")
-    @classmethod
-    def _validate_wait_yield_seconds(cls, value: float | None) -> float | None:
-        if value is None:
-            return None
-        if isinstance(value, bool):
-            raise ValueError(
-                f"Invalid value for 'harness.wait_yield_seconds': expected float, got {value!r}."
-            )
-        return float(value)
-
-
-def harness_idle_model(
-    harness_id: str,
-    *,
-    defaults: Mapping[str, object] | None = None,
-) -> type[HarnessIdleConfig]:
-    """Build the metadata-backed idle settings model for one harness."""
-
-    normalized = harness_id.strip().lower()
-    if normalized not in _HARNESS_TABLE_KEYS:
-        raise ValueError(f"Unsupported harness ID for idle config: {harness_id!r}.")
-    resolved_defaults = dict(defaults or {})
-    unknown_defaults = resolved_defaults.keys() - HarnessIdleConfig.model_fields.keys()
-    if unknown_defaults:
-        names = ", ".join(sorted(unknown_defaults))
-        raise ValueError(f"Unsupported idle defaults for {normalized}: {names}.")
-
-    fields: dict[str, Any] = {}
-    for field_name, model_field in HarnessIdleConfig.model_fields.items():
-        option = config_field(
-            f"harness.{normalized}.idle.{field_name}",
-            value_kind="int" if field_name == "ttl_seconds" else "bool",
-            file_aliases=(
-                file_alias(("harness", normalized, "idle"), field_name),
-            ),
-            env_vars=(
-                f"MERIDIAN_HARNESS_IDLE_{field_name.upper()}_{normalized.upper()}",
-            ),
-        )
-        annotation = Annotated[(model_field.annotation, *model_field.metadata, option)]
-        fields[field_name] = (
-            annotation,
-            resolved_defaults.get(field_name, model_field.default),
-        )
-
-    return create_model(
-        f"{normalized.title()}HarnessIdleConfig",
-        __base__=HarnessIdleConfig,
-        __module__=__name__,
-        **fields,
-    )
-
-
-if TYPE_CHECKING:
-    ClaudeHarnessIdleConfig = HarnessIdleConfig
-    CodexHarnessIdleConfig = HarnessIdleConfig
-    OpenCodeHarnessIdleConfig = HarnessIdleConfig
-    PiHarnessIdleConfig = HarnessIdleConfig
-else:
-    ClaudeHarnessIdleConfig = harness_idle_model("claude")
-    CodexHarnessIdleConfig = harness_idle_model("codex", defaults={"ttl_seconds": 1800})
-    OpenCodeHarnessIdleConfig = harness_idle_model(
-        "opencode",
-        defaults={"ttl_seconds": 300},
-    )
-    PiHarnessIdleConfig = harness_idle_model("pi")
-
-
-class ClaudeHarnessProfileConfig(HarnessProfileConfig):
-    idle: ClaudeHarnessIdleConfig = Field(default_factory=ClaudeHarnessIdleConfig)
-    model: Annotated[
-        str,
-        config_field(
-            "harness.claude",
-            value_kind="str",
-            file_aliases=(
-                file_alias("harness", "claude"),
-                file_alias(("harness", "claude"), "model"),
-            ),
-            env_vars=("MERIDIAN_HARNESS_MODEL_CLAUDE",),
-        ),
-    ] = ""
-
-
-class CodexHarnessProfileConfig(HarnessProfileConfig):
-    idle: CodexHarnessIdleConfig = Field(default_factory=CodexHarnessIdleConfig)
-    model: Annotated[
-        str,
-        config_field(
-            "harness.codex",
-            value_kind="str",
-            file_aliases=(
-                file_alias("harness", "codex"),
-                file_alias(("harness", "codex"), "model"),
-            ),
-            env_vars=("MERIDIAN_HARNESS_MODEL_CODEX",),
-        ),
-    ] = ""
-
-
-class OpenCodeHarnessProfileConfig(HarnessProfileConfig):
-    idle: OpenCodeHarnessIdleConfig = Field(default_factory=OpenCodeHarnessIdleConfig)
-    model: Annotated[
-        str,
-        config_field(
-            "harness.opencode",
-            value_kind="str",
-            file_aliases=(
-                file_alias("harness", "opencode"),
-                file_alias(("harness", "opencode"), "model"),
-            ),
-            env_vars=("MERIDIAN_HARNESS_MODEL_OPENCODE",),
-        ),
-    ] = "opencode-go/kimi-k2.6"
-    version: Annotated[
-        str,
-        config_field(
-            "harness.opencode.version",
-            value_kind="str",
-            file_aliases=(file_alias(("harness", "opencode"), "version"),),
-            env_vars=("MERIDIAN_HARNESS_OPENCODE_VERSION",),
-        ),
-    ] = "auto"
-
-    @field_validator("version")
-    @classmethod
-    def _validate_version(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if normalized not in ("auto", "v1", "v2"):
-            raise ValueError(
-                "Invalid value for 'harness.opencode.version': expected one of "
-                f"'auto', 'v1', 'v2', got {value!r}."
-            )
-        return normalized
-
-
-class PiBundleToggleConfig(ConfigModel):
-    """Per-bundle enable switch under ``[harness.pi]``."""
-
-    _config_silent_extras: ClassVar[bool] = True
-
-    model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
-
-    enabled: bool = True
-
-
-class PiHarnessProfileConfig(HarnessProfileConfig):
-    idle: PiHarnessIdleConfig = Field(default_factory=PiHarnessIdleConfig)
-    load_all_pi_extensions: bool = False
-    extra_extension_paths: tuple[str, ...] = ()
-    background_tasks: PiBundleToggleConfig = Field(default_factory=PiBundleToggleConfig)
-    spawn_watch: PiBundleToggleConfig = Field(default_factory=PiBundleToggleConfig)
-    disable_managed_bash: bool = False
-
-    @field_validator("extra_extension_paths", mode="before")
-    @classmethod
-    def _normalize_extra_extension_paths(cls, value: object) -> tuple[str, ...]:
-        items = json_list(value)
-        if items is None:
-            if not _is_object_tuple(value):
-                raise ValueError(
-                    "Invalid value for 'harness.pi.extra_extension_paths': expected array, "
-                    f"got {type(value).__name__} ({value!r})."
-                )
-            items = value
-        return tuple(normalized for item in items if (normalized := str(item).strip()))
-
-    def background_tasks_enabled(self) -> bool:
-        if self.disable_managed_bash:
-            return False
-        return self.background_tasks.enabled
-
-
-class HarnessConfig(ConfigModel):
-    """Default model and wait-yield configuration for each harness adapter."""
-
-    model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
-
-    claude: ClaudeHarnessProfileConfig = Field(
-        default_factory=lambda: ClaudeHarnessProfileConfig(wait_yield_seconds=3000.0)
-    )
-    codex: CodexHarnessProfileConfig = Field(
-        default_factory=lambda: CodexHarnessProfileConfig(wait_yield_seconds=3000.0)
-    )
-    opencode: OpenCodeHarnessProfileConfig = Field(default_factory=OpenCodeHarnessProfileConfig)
-    pi: PiHarnessProfileConfig = Field(default_factory=PiHarnessProfileConfig)
-
-
-class HistoryArchiveConfig(ConfigModel):
-    # This section predated the strict TOML normalizers and historically accepted
-    # Pydantic's scalar coercions. Keep that file behavior while still forbidding extras.
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    automatic: Annotated[
-        bool,
-        config_field(
-            "history.archive.automatic",
-            value_kind="bool",
-            file_aliases=(file_alias(("history", "archive"), "automatic"),),
-            env_vars=("MERIDIAN_HISTORY_ARCHIVE_AUTOMATIC",),
-        ),
-    ] = False
-    after_days: Annotated[
-        int,
-        config_field(
-            "history.archive.after_days",
-            value_kind="int",
-            file_aliases=(file_alias(("history", "archive"), "after_days"),),
-            env_vars=("MERIDIAN_HISTORY_ARCHIVE_AFTER_DAYS",),
-        ),
-    ] = Field(default=30, ge=0)
-    interval_hours: Annotated[
-        int,
-        config_field(
-            "history.archive.interval_hours",
-            value_kind="int",
-            file_aliases=(file_alias(("history", "archive"), "interval_hours"),),
-        ),
-    ] = Field(default=24, ge=0)
-    max_records: Annotated[
-        int,
-        config_field(
-            "history.archive.max_records",
-            value_kind="int",
-            file_aliases=(file_alias(("history", "archive"), "max_records"),),
-        ),
-    ] = Field(default=256, ge=1, le=100_000)
-    max_uncompressed_bytes: Annotated[
-        int,
-        config_field(
-            "history.archive.max_uncompressed_bytes",
-            value_kind="int",
-            file_aliases=(file_alias(("history", "archive"), "max_uncompressed_bytes"),),
-        ),
-    ] = Field(default=1024**3, ge=1, le=1024**4)
-    destination: Annotated[
-        str | None,
-        config_field(
-            "history.archive.destination",
-            value_kind="str",
-            file_aliases=(file_alias(("history", "archive"), "destination"),),
-            env_vars=("MERIDIAN_HISTORY_ARCHIVE_DESTINATION",),
-        ),
-    ] = None
-
-
-class HistoryConfig(ConfigModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    archive: HistoryArchiveConfig = Field(default_factory=HistoryArchiveConfig)
-
-
 class EnvironmentConfig(ConfigModel):
     model_config = ConfigDict(frozen=True, strict=True)
 
@@ -813,7 +498,30 @@ class EnvironmentConfig(ConfigModel):
     ] = False
 
 
-class MeridianConfigModel(ConfigModel):
+_TIMEOUT_FIELD_NAMES = {
+    "guardrail_minutes": "guardrail_timeout_minutes",
+    "startup_minutes": "startup_timeout_minutes",
+    "wait_minutes": "wait_timeout_minutes",
+}
+
+
+def _timeout_field(name: str, kind: ValueKind) -> ConfigOptionMeta:
+    """Describe one timeout option and its accepted legacy field spelling."""
+
+    field_name = _TIMEOUT_FIELD_NAMES.get(name, name)
+    aliases = [file_alias("timeouts", name)]
+    if field_name != name:
+        aliases.append(file_alias("timeouts", field_name))
+    aliases.append(file_alias(None, field_name))
+    return config_field(
+        f"timeouts.{name}",
+        value_kind=kind,
+        file_aliases=tuple(aliases),
+        env_vars=(f"MERIDIAN_{field_name.upper()}",),
+    )
+
+
+class MeridianConfig(ConfigModel):
     """Resolved operational configuration for meridian."""
 
     model_config = ConfigDict(
@@ -833,102 +541,35 @@ class MeridianConfigModel(ConfigModel):
     ] = 3
     kill_grace_minutes: Annotated[
         float,
-        config_field(
-            "timeouts.kill_grace_minutes",
-            value_kind="float",
-            file_aliases=(
-                file_alias("timeouts", "kill_grace_minutes"),
-                file_alias(None, "kill_grace_minutes"),
-            ),
-            env_vars=("MERIDIAN_KILL_GRACE_MINUTES",),
-        ),
+        _timeout_field("kill_grace_minutes", "float"),
     ] = 2.0 / 60.0
     guardrail_timeout_minutes: Annotated[
         float,
-        config_field(
-            "timeouts.guardrail_minutes",
-            value_kind="float",
-            file_aliases=(
-                file_alias("timeouts", "guardrail_minutes"),
-                file_alias("timeouts", "guardrail_timeout_minutes"),
-                file_alias(None, "guardrail_timeout_minutes"),
-            ),
-            env_vars=("MERIDIAN_GUARDRAIL_TIMEOUT_MINUTES",),
-        ),
+        _timeout_field("guardrail_minutes", "float"),
     ] = 0.5
     wait_timeout_minutes: Annotated[
         float,
-        config_field(
-            "timeouts.wait_minutes",
-            value_kind="float",
-            file_aliases=(
-                file_alias("timeouts", "wait_minutes"),
-                file_alias("timeouts", "wait_timeout_minutes"),
-                file_alias(None, "wait_timeout_minutes"),
-            ),
-            env_vars=("MERIDIAN_WAIT_TIMEOUT_MINUTES",),
-        ),
+        _timeout_field("wait_minutes", "float"),
     ] = 30.0
     startup_timeout_minutes: Annotated[
         float,
-        config_field(
-            "timeouts.startup_minutes",
-            value_kind="float",
-            file_aliases=(
-                file_alias("timeouts", "startup_minutes"),
-                file_alias("timeouts", "startup_timeout_minutes"),
-                file_alias(None, "startup_timeout_minutes"),
-            ),
-            env_vars=("MERIDIAN_STARTUP_TIMEOUT_MINUTES",),
-        ),
+        _timeout_field("startup_minutes", "float"),
     ] = 5.0
     pi_child_wave_timeout_seconds: Annotated[
         float | None,
-        config_field(
-            "timeouts.pi_child_wave_timeout_seconds",
-            value_kind="float",
-            file_aliases=(
-                file_alias("timeouts", "pi_child_wave_timeout_seconds"),
-                file_alias(None, "pi_child_wave_timeout_seconds"),
-            ),
-            env_vars=("MERIDIAN_PI_CHILD_WAVE_TIMEOUT_SECONDS",),
-        ),
+        _timeout_field("pi_child_wave_timeout_seconds", "float"),
     ] = None
     resident_deadline_seconds: Annotated[
         float | None,
-        config_field(
-            "timeouts.resident_deadline_seconds",
-            value_kind="float",
-            file_aliases=(
-                file_alias("timeouts", "resident_deadline_seconds"),
-                file_alias(None, "resident_deadline_seconds"),
-            ),
-            env_vars=("MERIDIAN_RESIDENT_DEADLINE_SECONDS",),
-        ),
+        _timeout_field("resident_deadline_seconds", "float"),
     ] = None
     resident_poll_seconds: Annotated[
         float | None,
-        config_field(
-            "timeouts.resident_poll_seconds",
-            value_kind="float",
-            file_aliases=(
-                file_alias("timeouts", "resident_poll_seconds"),
-                file_alias(None, "resident_poll_seconds"),
-            ),
-            env_vars=("MERIDIAN_RESIDENT_POLL_SECONDS",),
-        ),
+        _timeout_field("resident_poll_seconds", "float"),
     ] = None
     resident_rearm_budget: Annotated[
         int | None,
-        config_field(
-            "timeouts.resident_rearm_budget",
-            value_kind="int",
-            file_aliases=(
-                file_alias("timeouts", "resident_rearm_budget"),
-                file_alias(None, "resident_rearm_budget"),
-            ),
-            env_vars=("MERIDIAN_RESIDENT_REARM_BUDGET",),
-        ),
+        _timeout_field("resident_rearm_budget", "int"),
     ] = None
 
     @field_validator("resident_rearm_budget")
@@ -945,15 +586,7 @@ class MeridianConfigModel(ConfigModel):
 
     pi_task_ping_interval_seconds: Annotated[
         float | None,
-        config_field(
-            "timeouts.pi_task_ping_interval_seconds",
-            value_kind="float",
-            file_aliases=(
-                file_alias("timeouts", "pi_task_ping_interval_seconds"),
-                file_alias(None, "pi_task_ping_interval_seconds"),
-            ),
-            env_vars=("MERIDIAN_PI_TASK_PING_INTERVAL_SECONDS",),
-        ),
+        _timeout_field("pi_task_ping_interval_seconds", "float"),
     ] = None
     default_wait_yield_seconds: Annotated[
         float,
@@ -1042,7 +675,3 @@ class MeridianConfigModel(ConfigModel):
         if not isinstance(profile, HarnessProfileConfig):
             return None
         return profile
-
-
-class MeridianConfig(MeridianConfigModel):
-    """Resolved operational configuration for Meridian."""

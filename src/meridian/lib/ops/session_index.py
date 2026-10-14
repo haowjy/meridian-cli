@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.config.settings import load_config
+from meridian.lib.config.loader import load_config
 from meridian.lib.harness.transcript_preview import TRANSCRIPT_PREVIEW_VERSION
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
 from meridian.lib.ops.session_search_index import SearchProjection, SearchStatus

@@ -2,8 +2,9 @@
 
 from pathlib import Path
 
+from meridian.lib.config.loader import load_config
+from meridian.lib.config.models import MeridianConfig
 from meridian.lib.config.project_root import resolve_project_root_resolution
-from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry

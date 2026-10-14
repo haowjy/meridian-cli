@@ -8,6 +8,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Stop writing redundant spawn `inbound.jsonl` control-action journals.
 
 ### Changed
+- Report every invalid config value with the same key, expected type, and received value format.
 - Run the strict Pyright gate with warnings fatal and per-rule suppressions only.
 - Stop advertising archived HTTP/app-server extension commands. Extension
   discovery now exposes only runnable CLI and MCP surfaces and no longer emits
@@ -17,6 +18,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   appearing early.
 
 ### Fixed
+- Honor `MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_PI` like the other harness overrides.
 - Skip malformed legacy native-session rows whose `chat_id` is not a string or
   `harness_session_ids` is not a list.
 - Treat the first `--` as the CLI passthrough boundary, even when it follows a

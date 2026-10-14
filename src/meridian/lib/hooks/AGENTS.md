@@ -10,7 +10,7 @@ The dispatcher is **fail-open** for `observe` and `post` event classes. A failin
 
 Config layers in ascending precedence:
 ```
-builtin defaults < context config < user (~/.meridian/config.toml) < project (meridian.toml) < local (meridian.local.toml)
+builtin defaults < user (~/.meridian/config.toml) < project (meridian.toml) < local (meridian.local.toml)
 ```
 Override key is `(name, event)` — a higher-priority row with the same key replaces the lower-priority one entirely.
 

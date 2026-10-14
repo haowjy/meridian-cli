@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 
 if TYPE_CHECKING:
-    from meridian.lib.config.settings import NotifyConfig
+    from meridian.lib.config.models import NotifyConfig
     from meridian.lib.notify.notice import Notice
 
 type SendStatus = Literal["sent", "failed", "none"]

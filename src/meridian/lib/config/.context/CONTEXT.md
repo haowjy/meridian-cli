@@ -42,7 +42,7 @@ hardcoded defaults (MeridianConfig field defaults)
         < environment variables
 ```
 
-`load_config()` validates each TOML file against the plain `MeridianConfigModel`,
+`load_config()` validates each TOML file against `MeridianConfig`,
 then deep-merges normalized payloads from lowest to highest precedence:
 
 ```python

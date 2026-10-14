@@ -55,8 +55,10 @@ class EnvFamily:
             return False
         middle_end = len(name) - len(self.suffix) if self.suffix else len(name)
         middle = name[len(self.prefix) : middle_end]
-        return bool(middle) and middle[0].isalpha() and all(
-            char.isupper() or char.isdigit() or char == "_" for char in middle
+        return (
+            bool(middle)
+            and middle[0].isalpha()
+            and all(char.isupper() or char.isdigit() or char == "_" for char in middle)
         )
 
 
@@ -108,27 +110,15 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _public_config("MERIDIAN_EFFORT", "Harness reasoning effort override."),
     _public_config("MERIDIAN_FORMAT", "CLI output format override."),
     _public_config("MERIDIAN_GUARDRAIL_TIMEOUT_MINUTES", "Guardrail execution timeout."),
-    _public_config(
-        "MERIDIAN_HARNESS_IDLE_ENABLED_CLAUDE", "Claude idle behavior toggle."
-    ),
-    _public_config(
-        "MERIDIAN_HARNESS_IDLE_COMPACT_CLAUDE", "Claude idle compaction toggle."
-    ),
-    _public_config(
-        "MERIDIAN_HARNESS_IDLE_TTL_SECONDS_CLAUDE", "Claude idle cache TTL."
-    ),
+    _public_config("MERIDIAN_HARNESS_IDLE_ENABLED_CLAUDE", "Claude idle behavior toggle."),
+    _public_config("MERIDIAN_HARNESS_IDLE_COMPACT_CLAUDE", "Claude idle compaction toggle."),
+    _public_config("MERIDIAN_HARNESS_IDLE_TTL_SECONDS_CLAUDE", "Claude idle cache TTL."),
     _public_config("MERIDIAN_HARNESS_IDLE_COMPACT_CODEX", "Codex idle compaction toggle."),
     _public_config("MERIDIAN_HARNESS_IDLE_ENABLED_CODEX", "Codex idle behavior toggle."),
     _public_config("MERIDIAN_HARNESS_IDLE_TTL_SECONDS_CODEX", "Codex idle cache TTL."),
-    _public_config(
-        "MERIDIAN_HARNESS_IDLE_ENABLED_OPENCODE", "OpenCode idle behavior toggle."
-    ),
-    _public_config(
-        "MERIDIAN_HARNESS_IDLE_COMPACT_OPENCODE", "OpenCode idle compaction toggle."
-    ),
-    _public_config(
-        "MERIDIAN_HARNESS_IDLE_TTL_SECONDS_OPENCODE", "OpenCode idle cache TTL."
-    ),
+    _public_config("MERIDIAN_HARNESS_IDLE_ENABLED_OPENCODE", "OpenCode idle behavior toggle."),
+    _public_config("MERIDIAN_HARNESS_IDLE_COMPACT_OPENCODE", "OpenCode idle compaction toggle."),
+    _public_config("MERIDIAN_HARNESS_IDLE_TTL_SECONDS_OPENCODE", "OpenCode idle cache TTL."),
     _public_config("MERIDIAN_HARNESS_IDLE_COMPACT_PI", "Pi idle compaction toggle."),
     _public_config("MERIDIAN_HARNESS_IDLE_ENABLED_PI", "Pi idle behavior toggle."),
     _public_config("MERIDIAN_HARNESS_IDLE_TTL_SECONDS_PI", "Pi idle cache TTL."),
@@ -142,15 +132,10 @@ ENV_VARS: tuple[EnvVar, ...] = (
         "OpenCode backend version selection.",
         child=True,
     ),
-    _public_config(
-        "MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_CLAUDE", "Claude wait yield interval."
-    ),
-    _public_config(
-        "MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_CODEX", "Codex wait yield interval."
-    ),
-    _public_config(
-        "MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_OPENCODE", "OpenCode wait yield interval."
-    ),
+    _public_config("MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_CLAUDE", "Claude wait yield interval."),
+    _public_config("MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_CODEX", "Codex wait yield interval."),
+    _public_config("MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_OPENCODE", "OpenCode wait yield interval."),
+    _public_config("MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_PI", "Pi wait yield interval."),
     _public_config("MERIDIAN_HOME", "Meridian user-state root override."),
     _public_config("MERIDIAN_HOOKS_ENABLED", "Hook dispatch toggle."),
     _public_config("MERIDIAN_KILL_GRACE_MINUTES", "Child termination grace period."),
@@ -161,9 +146,7 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _public_config("MERIDIAN_NOTIFY_EMAIL_COMMAND", "Email notification command."),
     _public_config("MERIDIAN_NOTIFY_EMAIL_FROM", "Notification sender address."),
     _public_config("MERIDIAN_NOTIFY_EMAIL_TO", "Notification recipient address."),
-    _public_config(
-        "MERIDIAN_NOTIFY_INCLUDE_MESSAGES", "Include turn excerpts in notifications."
-    ),
+    _public_config("MERIDIAN_NOTIFY_INCLUDE_MESSAGES", "Include turn excerpts in notifications."),
     _public_config("MERIDIAN_NOTIFY_NTFY_SERVER", "ntfy server URL."),
     _public_config("MERIDIAN_NOTIFY_NTFY_TOPIC", "ntfy topic name."),
     _public_config("MERIDIAN_NOTIFY_PUSH_BACKEND", "Push notification backend."),
@@ -178,17 +161,11 @@ ENV_VARS: tuple[EnvVar, ...] = (
         "MERIDIAN_PI_CHILD_WAVE_TIMEOUT_SECONDS", "Pi child-wave timeout configuration."
     ),
     _public_config("MERIDIAN_PI_DISABLE_MANAGED_BASH", "Disable Pi managed-bash extension."),
-    _public_config(
-        "MERIDIAN_PI_EXTENSION_INSTALL_ROOT", "Installed Pi extension root override."
-    ),
-    _public_config(
-        "MERIDIAN_PI_EXTENSION_SOURCE_ROOT", "Pi extension source root override."
-    ),
+    _public_config("MERIDIAN_PI_EXTENSION_INSTALL_ROOT", "Installed Pi extension root override."),
+    _public_config("MERIDIAN_PI_EXTENSION_SOURCE_ROOT", "Pi extension source root override."),
     _public_config("MERIDIAN_PI_LOAD_ALL_EXTENSIONS", "Load all Pi extension bundles."),
     _public_config("MERIDIAN_PI_MANAGED_BASH", "Pi managed-bash compatibility setting."),
-    _public_config(
-        "MERIDIAN_PI_TASK_PING_INTERVAL_SECONDS", "Pi managed-task ping interval."
-    ),
+    _public_config("MERIDIAN_PI_TASK_PING_INTERVAL_SECONDS", "Pi managed-task ping interval."),
     _public_config("MERIDIAN_RESIDENT_DEADLINE_SECONDS", "Resident spawn deadline."),
     _public_config("MERIDIAN_RESIDENT_POLL_SECONDS", "Resident spawn poll interval."),
     _public_config("MERIDIAN_RESIDENT_REARM_BUDGET", "Resident spawn rearm budget."),
@@ -200,15 +177,11 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _public_config("MERIDIAN_IDLE_ENABLED", "Cross-harness idle behavior toggle."),
     _public_config("MERIDIAN_IDLE_COMPACT", "Cross-harness idle compaction toggle."),
     _public_config("MERIDIAN_IDLE_COMPACT_MINUTES", "Idle compaction lead time."),
-    _public_config(
-        "MERIDIAN_IDLE_LATE_FIRE_TOLERANCE_SECONDS", "Idle timer late-fire tolerance."
-    ),
+    _public_config("MERIDIAN_IDLE_LATE_FIRE_TOLERANCE_SECONDS", "Idle timer late-fire tolerance."),
     _public_config("MERIDIAN_IDLE_LONG_TURN_SECONDS", "Idle long-turn threshold."),
     _public_config("MERIDIAN_IDLE_MIN_COMPACT_TOKENS", "Minimum idle compaction size."),
     _public_config("MERIDIAN_IDLE_PUSH_SECONDS", "Idle push delay."),
-    _public_config(
-        "MERIDIAN_IDLE_QUICK_TURN_PUSH_SECONDS", "Idle quick-turn push delay."
-    ),
+    _public_config("MERIDIAN_IDLE_QUICK_TURN_PUSH_SECONDS", "Idle quick-turn push delay."),
     _public_config("MERIDIAN_IDLE_WARN_EMAIL", "Idle warning email toggle."),
     _public_config("MERIDIAN_IDLE_WARN_MINUTES", "Idle cache warning lead time."),
     _public_config("MERIDIAN_STATE_RETENTION_DAYS", "Runtime-state retention period."),
@@ -284,9 +257,7 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _internal_handle(
         "_MERIDIAN_PI_BACKGROUND_TASKS_ENABLED", "Resolved Pi background-task bundle toggle."
     ),
-    _internal_handle(
-        "_MERIDIAN_PI_SPAWN_WATCH_ENABLED", "Resolved Pi spawn-watch bundle toggle."
-    ),
+    _internal_handle("_MERIDIAN_PI_SPAWN_WATCH_ENABLED", "Resolved Pi spawn-watch bundle toggle."),
 )
 
 ENV_FAMILIES: tuple[EnvFamily, ...] = (
@@ -311,9 +282,7 @@ ENV_VAR_BY_NAME: dict[str, EnvVar] = {item.name: item for item in ENV_VARS}
 if len(ENV_VAR_BY_NAME) != len(ENV_VARS):  # pragma: no cover - import-time invariant
     raise RuntimeError("Duplicate Meridian environment variable registry entry")
 
-ALLOWED_CHILD_ENV_KEYS: frozenset[str] = frozenset(
-    item.name for item in ENV_VARS if item.child
-)
+ALLOWED_CHILD_ENV_KEYS: frozenset[str] = frozenset(item.name for item in ENV_VARS if item.child)
 HOOK_PAYLOAD_ENV_KEYS: dict[str, str] = {
     item.hook_field: item.name for item in ENV_VARS if item.hook_field is not None
 }

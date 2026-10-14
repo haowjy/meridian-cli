@@ -23,7 +23,6 @@ Hook sources in ascending precedence:
 
 ```
 builtin defaults
-  ↑ context config
   ↑ user config  (~/.meridian/config.toml)
   ↑ project config  (meridian.toml)
   ↑ local config  (meridian.local.toml)   ← highest
@@ -52,7 +51,7 @@ The dispatcher bridges internal `HookContext` to plugin `PluginHookContext` via 
 ## Hook Execution Order
 
 Within an event, hooks are sorted by:
-1. Source rank (`builtin` → `context` → `user` → `project` → `local`, lower = earlier)
+1. Source rank (`builtin` → `user` → `project` → `local`, lower = earlier)
 2. Negative priority (higher `priority` value = earlier execution)
 3. Declaration order (stable sort)
 

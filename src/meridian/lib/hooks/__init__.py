@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from meridian.lib.hooks.builtin import BUILTIN_HOOKS, BuiltinHook
     from meridian.lib.hooks.config import (
-        BUILTIN_HOOK_DEFAULTS,
         HOOK_SOURCE_PRECEDENCE,
         HooksConfig,
         load_hooks_config,
@@ -33,7 +32,6 @@ if TYPE_CHECKING:
 
 __all__ = [
     "BUILTIN_HOOKS",
-    "BUILTIN_HOOK_DEFAULTS",
     "DEFAULT_FAILURE_POLICY",
     "DEFAULT_TIMEOUTS",
     "EVENT_CLASS",
@@ -58,7 +56,6 @@ __all__ = [
 _EXPORTS: dict[str, tuple[str, str]] = {
     "BUILTIN_HOOKS": ("meridian.lib.hooks.builtin", "BUILTIN_HOOKS"),
     "BuiltinHook": ("meridian.lib.hooks.builtin", "BuiltinHook"),
-    "BUILTIN_HOOK_DEFAULTS": ("meridian.lib.hooks.config", "BUILTIN_HOOK_DEFAULTS"),
     "HOOK_SOURCE_PRECEDENCE": ("meridian.lib.hooks.config", "HOOK_SOURCE_PRECEDENCE"),
     "HooksConfig": ("meridian.lib.hooks.config", "HooksConfig"),
     "load_hooks_config": ("meridian.lib.hooks.config", "load_hooks_config"),

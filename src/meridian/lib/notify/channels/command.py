@@ -8,7 +8,7 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from meridian.lib.config.settings import NotifyConfig
+from meridian.lib.config.models import NotifyConfig
 from meridian.lib.notify.channels.base import SendResult
 from meridian.lib.notify.notice import Notice
 
