@@ -514,6 +514,16 @@ class PrimaryConfig(ConfigModel):
         return value
 
 
+class HarnessIdleConfig(ConfigModel):
+    """Shared typed fields for every harness-specific idle config."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
+
+    enabled: bool = True
+    compact: bool = True
+    ttl_seconds: Annotated[int | None, Field(gt=0)] = None
+
+
 class HarnessProfileConfig(ConfigModel):
     """Per-harness model and wait-yield settings."""
 
@@ -521,6 +531,7 @@ class HarnessProfileConfig(ConfigModel):
 
     model: str = ""
     wait_yield_seconds: float | None = None
+    idle: HarnessIdleConfig = Field(default_factory=HarnessIdleConfig)
     # Harness-native subagents (Claude built-in Agent types, Codex multi-agent)
     # spawn work Meridian cannot see; Meridian is the orchestrator by default.
     allow_builtin_agents: bool = False
@@ -549,34 +560,24 @@ class HarnessProfileConfig(ConfigModel):
         return float(value)
 
 
-class _HarnessIdleFields(ConfigModel):
-    """Shared typed fields for every harness-specific idle config."""
-
-    model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
-
-    enabled: bool = True
-    compact: bool = True
-    ttl_seconds: Annotated[int | None, Field(gt=0)] = None
-
-
 def harness_idle_model(
     harness_id: str,
     *,
     defaults: Mapping[str, object] | None = None,
-) -> type[_HarnessIdleFields]:
+) -> type[HarnessIdleConfig]:
     """Build the metadata-backed idle settings model for one harness."""
 
     normalized = harness_id.strip().lower()
     if normalized not in _HARNESS_TABLE_KEYS:
         raise ValueError(f"Unsupported harness ID for idle config: {harness_id!r}.")
     resolved_defaults = dict(defaults or {})
-    unknown_defaults = resolved_defaults.keys() - _HarnessIdleFields.model_fields.keys()
+    unknown_defaults = resolved_defaults.keys() - HarnessIdleConfig.model_fields.keys()
     if unknown_defaults:
         names = ", ".join(sorted(unknown_defaults))
         raise ValueError(f"Unsupported idle defaults for {normalized}: {names}.")
 
     fields: dict[str, Any] = {}
-    for field_name, model_field in _HarnessIdleFields.model_fields.items():
+    for field_name, model_field in HarnessIdleConfig.model_fields.items():
         option = config_field(
             f"harness.{normalized}.idle.{field_name}",
             value_kind="int" if field_name == "ttl_seconds" else "bool",
@@ -595,17 +596,17 @@ def harness_idle_model(
 
     return create_model(
         f"{normalized.title()}HarnessIdleConfig",
-        __base__=_HarnessIdleFields,
+        __base__=HarnessIdleConfig,
         __module__=__name__,
         **fields,
     )
 
 
 if TYPE_CHECKING:
-    ClaudeHarnessIdleConfig = _HarnessIdleFields
-    CodexHarnessIdleConfig = _HarnessIdleFields
-    OpenCodeHarnessIdleConfig = _HarnessIdleFields
-    PiHarnessIdleConfig = _HarnessIdleFields
+    ClaudeHarnessIdleConfig = HarnessIdleConfig
+    CodexHarnessIdleConfig = HarnessIdleConfig
+    OpenCodeHarnessIdleConfig = HarnessIdleConfig
+    PiHarnessIdleConfig = HarnessIdleConfig
 else:
     ClaudeHarnessIdleConfig = harness_idle_model("claude")
     CodexHarnessIdleConfig = harness_idle_model("codex", defaults={"ttl_seconds": 1800})
@@ -1017,13 +1018,13 @@ class MeridianConfigModel(ConfigModel):
     def default_model_for_harness(self, harness_id: str) -> str | None:
         """Return configured default model for one harness ID."""
 
-        profile = self._harness_profile_for_id(harness_id)
+        profile = self.harness_profile(harness_id)
         return None if profile is None else profile.model
 
     def wait_yield_seconds_for_harness(self, harness_id: str | None) -> float:
         """Return clamped wait-yield seconds for a harness or the unknown default."""
 
-        configured = self._harness_profile_for_id(harness_id)
+        configured = self.harness_profile(harness_id)
         raw_value = (
             configured.wait_yield_seconds
             if configured is not None and configured.wait_yield_seconds is not None
@@ -1031,7 +1032,9 @@ class MeridianConfigModel(ConfigModel):
         )
         return max(float(raw_value), float(self.min_wait_yield_seconds))
 
-    def _harness_profile_for_id(self, harness_id: str | None) -> HarnessProfileConfig | None:
+    def harness_profile(self, harness_id: str | None) -> HarnessProfileConfig | None:
+        """Return the typed profile for a supported harness ID."""
+
         normalized = (harness_id or "").strip().lower()
         if normalized not in _HARNESS_TABLE_KEYS:
             return None
