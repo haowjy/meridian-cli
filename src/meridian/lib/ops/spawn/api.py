@@ -114,7 +114,6 @@ from .query import (
     read_spawn_row,
     read_written_files,
     resolve_spawn_reference,
-    resolve_spawn_references,
 )
 
 _WAIT_PROGRESS_INTERVAL_SECS = 5.0
@@ -1468,11 +1467,23 @@ def _resolve_wait_targets(
         candidates.append(payload.spawn_id.strip())
 
     if candidates:
-        return resolve_spawn_references(
-            project_root,
-            tuple(dict.fromkeys(candidates)),
-            runtime_root=runtime_root,
-        )
+        resolved: list[RunId] = []
+        for candidate in dict.fromkeys(candidates):
+            try:
+                run_id = resolve_spawn_reference(
+                    project_root,
+                    candidate,
+                    runtime_root=runtime_root,
+                )
+            except ValueError as exc:
+                if str(exc) != f"Spawn '{candidate}' not found":
+                    raise
+                # Preserve the wait preamble for missing concrete refs. The first
+                # read below raises the same not-found error after showing it as
+                # unknown, matching the established CLI behavior.
+                run_id = parse_ref(candidate, row_key=True)
+            resolved.append(run_id)
+        return tuple(resolved)
 
     chat_id = (ctx.chat_id or "").strip()
     if not chat_id:

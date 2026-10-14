@@ -42,7 +42,7 @@ def _selected_archive_locations(index: HistoryIndex, history_id: str, *, destina
     return archive_locations(receipts, destination=destination)
 
 
-def _terminal(root: Path) -> str:
+def _terminal(root: Path, *, spawn_id: str | None = None) -> str:
     native_id = f"native-{root.name}"
     key = str(
         spawn_store.start_spawn(
@@ -53,6 +53,7 @@ def _terminal(root: Path) -> str:
             harness="codex",
             harness_session_id=native_id,
             prompt="hello",
+            spawn_id=spawn_id,
         )
     )
     spawn_store.finalize_spawn(root, key, status="succeeded", exit_code=0, origin="runner")
@@ -72,9 +73,12 @@ def test_rebuild_and_missed_metadata_write_are_discovered(tmp_path: Path) -> Non
     assert HistoryChanges(root).capture()[1] == ()
 
 
-def test_zip_transfer_restore_is_inert_repeatable_and_conflict_safe(tmp_path: Path) -> None:
+@pytest.mark.parametrize("spawn_id", [None, "p-x"], ids=["allocated-id", "legacy-row-id"])
+def test_zip_transfer_restore_is_inert_repeatable_and_conflict_safe(
+    tmp_path: Path, spawn_id: str | None
+) -> None:
     root = tmp_path / "source"
-    key = _terminal(root)
+    key = _terminal(root, spawn_id=spawn_id)
     original = spawn_store.get_spawn(root, key)
     assert original is not None
     output = archive_history(root, destination=tmp_path / "zips", refs=(key,), apply=True)

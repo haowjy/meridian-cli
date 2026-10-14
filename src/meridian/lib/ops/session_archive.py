@@ -155,6 +155,7 @@ def _ref_matches(row: SpawnRecord, ref: str) -> bool:
     if parsed.kind == "run":
         return parsed.run_id == row.id
     return ref in {
+        str(row.id),
         str(row.history_id),
         row.chat_id,
         row.owner_chat_id,
