@@ -13,13 +13,14 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import IO, Annotated, Literal, Protocol, cast
+from typing import IO, Annotated, Literal, Protocol
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.state.history_codec import TranscriptHeader
+from meridian.lib.utils.json_shapes import json_object
 
 NATIVE_SNAPSHOT_FILENAME = "native-transcript.jsonl"
 SNAPSHOT_RECORD = "meridian.native.snapshot"
@@ -177,16 +178,14 @@ def _invalid_constant(value: str) -> object:
     raise ValueError(f"Nonfinite snapshot JSON value: {value}")
 
 
-def _object(raw: bytes | str) -> dict[str, object]:
+def _decode_json(raw: bytes | str) -> object:
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8")
     try:
         value = json.loads(raw, object_pairs_hook=_unique_object, parse_constant=_invalid_constant)
     except RecursionError as exc:
         raise ValueError("Snapshot JSON nesting exceeds the decoder limit") from exc
-    if not isinstance(value, dict):
-        raise ValueError("Snapshot records must be JSON objects")
-    return cast("dict[str, object]", value)
+    return value
 
 
 def _read_chunks(
@@ -297,7 +296,9 @@ class _Contents:
         self.sources: dict[str, _Source] = {}
 
     def add(self, record: SnapshotRecord) -> dict[str, object]:
-        payload = _object(record.raw)
+        payload = json_object(_decode_json(record.raw))
+        if payload is None:
+            raise ValueError("Snapshot records must be JSON objects")
         source = self.sources.setdefault(record.source, _Source())
         if record.ordinal != source.records:
             raise ValueError("Snapshot source ordinals must be consecutive from zero")
@@ -382,7 +383,9 @@ def read_snapshot(
     validation.descriptor = None
     try:
         line = _frame(handle, HEADER_LIMIT, current)
-        value = _object(line)
+        value = json_object(_decode_json(line))
+        if value is None:
+            raise ValueError("Snapshot records must be JSON objects")
         if value.get("record") != SNAPSHOT_RECORD or type(value.get("version")) is not int:
             raise ValueError("Missing or invalid snapshot header discriminator/version")
         header = SnapshotHeader.model_validate_json(line)
@@ -395,7 +398,9 @@ def read_snapshot(
             line = _frame(handle, FRAME_LIMIT, current)
             if not line:
                 raise ValueError("Missing snapshot final seal")
-            value = _object(line)
+            value = json_object(_decode_json(line))
+            if value is None:
+                raise ValueError("Snapshot records must be JSON objects")
             if value.get("record") == "meridian.native.seal":
                 seal = SnapshotSeal.model_validate_json(line)
                 contents.verify(header, seal)

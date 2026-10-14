@@ -535,7 +535,7 @@ async def test_opencode_launch_process_passes_child_env_to_managed_backend(
             parent_death_link=ParentDeathLink(parent_death_linked=False),
         )
 
-    monkeypatch.setattr(opencode_http, "_find_free_port", lambda _host="127.0.0.1": 17777)
+    monkeypatch.setattr(opencode_http, "find_free_port", lambda _host="127.0.0.1": 17777)
     monkeypatch.setattr(opencode_http, "launch_managed_backend", _fake_launch_managed_backend)
 
     await connection._launch_process(config, spec)
@@ -627,7 +627,7 @@ async def test_opencode_startup_exit_with_claimed_port_is_retryable(
         launch_config: ConnectionConfig,
         _spec: ResolvedLaunchSpec,
     ) -> None:
-        port = opencode_http._find_free_port()
+        port = opencode_http.find_free_port()
         competing_socket.bind(("127.0.0.1", port))
         competing_socket.listen()
         connection._base_url = f"http://127.0.0.1:{port}"
@@ -716,7 +716,7 @@ async def test_start_retries_residual_private_instruction_cleanup(tmp_path, monk
         return original_unlink(path, *args, **kwargs)
 
     async def launch(config, spec):
-        path = opencode_http._materialize_system_prompt(config.system, {})
+        path = opencode_http.materialize_system_prompt(config.system, {})
         assert path is not None
         connection._instruction_path = path
         created.append(path)
@@ -891,7 +891,7 @@ async def test_opencode_native_permission_reply_resolves_pending_request(
 
     assert connection._pending_requests == {}
     assert (
-        opencode_http._permission_liveness_key("per_1") not in connection._liveness._active_requests
+        opencode_http.permission_liveness_key("per_1") not in connection._liveness._active_requests
     )
     assert handler.resolutions == [("per_1", {"decision": "accept", "reply": "once"})]
     assert all(event.event_type != "permission.replied" for event in events)

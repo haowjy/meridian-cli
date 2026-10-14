@@ -14,6 +14,7 @@ from meridian.cli.argv_normalization import (
     resolve_optional_ref,
     validate_fork_mode,
 )
+from meridian.cli.bootstrap import iter_positional_tokens
 from meridian.cli.startup.catalog import COMMAND_CATALOG, StartupClass
 from meridian.cli.startup.classify import classify_invocation
 
@@ -72,6 +73,13 @@ def test_bare_continue_classifies_as_runtime_read() -> None:
     assert descriptor.command_path == ("session", "browse")
     assert descriptor.startup_class is StartupClass.READ_RUNTIME
     assert descriptor.bootstrap_plan.auto_init_cwd is False
+
+
+def test_positional_scanner_stops_at_passthrough_separator() -> None:
+    assert list(iter_positional_tokens(["spawn", "--", "--format", "json"])) == [
+        (0, "spawn")
+    ]
+    assert list(iter_positional_tokens(["--format", "--", "spawn"])) == []
 
 
 def test_resolve_fork_ref_self_sentinel(monkeypatch: pytest.MonkeyPatch) -> None:

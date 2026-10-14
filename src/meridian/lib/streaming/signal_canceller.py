@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 from contextlib import suppress
 from dataclasses import dataclass
@@ -26,6 +25,7 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, SpawnOrigin, SpawnRecord
 from meridian.lib.state.timestamps import iso_timestamp_to_epoch
+from meridian.lib.utils.json_shapes import loads_json_object
 
 if TYPE_CHECKING:
     from meridian.lib.streaming.spawn_manager import SpawnManager
@@ -208,7 +208,7 @@ class SignalCanceller:
         except Exception as exc:
             raise RuntimeError(f"cross-process app cancel request failed: {exc}") from exc
 
-        payload = _parse_json_object(raw_body)
+        payload = loads_json_object(raw_body) or {}
         detail = payload.get("detail")
         detail_text = detail if isinstance(detail, str) else ""
         latest = spawn_store.get_spawn(self._runtime_root, spawn_id)
@@ -316,16 +316,6 @@ def _pid_is_alive(pid: int | None, started_epoch: float | None) -> bool:
     if pid is None or pid <= 0:
         return False
     return is_process_alive(pid, created_after_epoch=started_epoch)
-
-
-def _parse_json_object(raw: str) -> dict[str, object]:
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    return cast("dict[str, object]", payload)
 
 
 def _status_from_terminal_detail(detail: str) -> str | None:

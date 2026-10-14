@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import json
-from typing import Protocol, cast
+from typing import Protocol
 
 from meridian.lib.harness.semantics import PI_INCOMPLETE_STOP_REASONS
+from meridian.lib.utils.json_shapes import json_list, json_object, loads_json_object
 
 _OPENCODE_PENDING = frozenset({"pending", "running"})
 _OPENCODE_V2_DIALECT = "opencode.transcript.v2"
@@ -33,18 +33,19 @@ class PiObserver:
         ):
             raise ValueError("Native Pi session identity does not match the selected session")
         message = event.get("message")
-        if event.get("type") not in {"message", "message_end"} or not isinstance(message, dict):
+        payload = json_object(message)
+        if event.get("type") not in {"message", "message_end"} or payload is None:
             return
-        payload = cast("dict[str, object]", message)
         role = str(payload.get("role", "")).strip().lower()
         if role == "assistant":
             stop = str(payload.get("stopReason", "")).strip().lower()
             if stop:
                 self._last_assistant_stop = stop
             content = payload.get("content")
-            if isinstance(content, list):
-                for item in cast("list[object]", content):
-                    if isinstance(item, dict) and item.get("type") == "toolCall":
+            if items := json_list(content):
+                for item in items:
+                    part = json_object(item)
+                    if part is not None and part.get("type") == "toolCall":
                         self._pending_tools += 1
         elif role in {"toolresult", "tool_result"}:
             self._pending_tools = max(0, self._pending_tools - 1)
@@ -115,8 +116,8 @@ class OpenCodeObserver:
             payload = _require_json_payload(event.get("row"))
             if str(payload.get("role", "")).strip().lower() == "assistant":
                 self._last_assistant_data = payload
-            for part in cast("list[object]", event.get("parts") or ()):
-                if isinstance(part, dict):
+            for part in json_list(event.get("parts")) or []:
+                if json_object(part) is not None:
                     self._observe_part(_require_json_payload(part))
         elif event.get("table") == "part":
             self._observe_part(_require_json_payload(event.get("row")))
@@ -132,9 +133,9 @@ class OpenCodeObserver:
 
     def _observe_part(self, payload: dict[str, object]) -> None:
         kind = payload.get("type")
-        state = payload.get("state")
-        if kind == "tool" and isinstance(state, dict):
-            status = str(cast("dict[str, object]", state).get("status", "")).strip().lower()
+        state = json_object(payload.get("state"))
+        if kind == "tool" and state is not None:
+            status = str(state.get("status", "")).strip().lower()
             if status in _OPENCODE_PENDING:
                 self._pending_tools += 1
 
@@ -157,10 +158,9 @@ class OpenCodeV2Observer:
     def observe(self, event: dict[str, object]) -> None:
         if event.get("version") != 2:
             return
-        payload = event.get("data")
-        if not isinstance(payload, dict):
+        data = json_object(event.get("data"))
+        if data is None:
             return
-        data = cast("dict[str, object]", payload)
         kind = str(event.get("type", "")).strip().lower()
         if kind == "session":
             outcome = data.get("idle_outcome")
@@ -181,18 +181,19 @@ class OpenCodeV2Observer:
         return None
 
     def _observe_tools(self, content: object) -> None:
-        if not isinstance(content, list):
+        items = json_list(content)
+        if items is None:
             return
-        for item in cast("list[object]", content):
-            if not isinstance(item, dict):
+        for item in items:
+            part = json_object(item)
+            if part is None:
                 continue
-            part = cast("dict[str, object]", item)
             if str(part.get("type", "")).strip().lower() != "tool":
                 continue
-            state = part.get("state")
-            if not isinstance(state, dict):
+            state = json_object(part.get("state"))
+            if state is None:
                 continue
-            status = str(cast("dict[str, object]", state).get("status", "")).strip().lower()
+            status = str(state.get("status", "")).strip().lower()
             if status in _OPENCODE_PENDING:
                 self._pending_tools += 1
 
@@ -228,34 +229,33 @@ def observer_for(
 
 
 def _require_json_payload(row: object) -> dict[str, object]:
-    if not isinstance(row, dict):
+    payload = json_object(row)
+    if payload is None:
         raise ValueError("Malformed OpenCode payload")
-    data = row.get("data")
+    data = payload.get("data")
     if data is None:
         return {}
-    if isinstance(data, dict):
-        return cast("dict[str, object]", data)
+    nested = json_object(data)
+    if nested is not None:
+        return nested
     if not isinstance(data, str):
         raise ValueError("Malformed OpenCode payload")
-    try:
-        payload = json.loads(data)
-    except json.JSONDecodeError as exc:
-        raise ValueError("Malformed OpenCode payload") from exc
-    if not isinstance(payload, dict):
+    decoded = loads_json_object(data)
+    if decoded is None:
         raise ValueError("Malformed OpenCode payload")
-    return cast("dict[str, object]", payload)
+    return decoded
 
 
 def _opencode_assistant_completed(data: dict[str, object]) -> bool:
-    time_obj = data.get("time")
-    if not isinstance(time_obj, dict):
+    time_obj = json_object(data.get("time"))
+    if time_obj is None:
         return False
-    return cast("dict[str, object]", time_obj).get("completed") is not None
+    return time_obj.get("completed") is not None
 
 
 def _walk_tool_balance(value: object, pending: set[str]) -> None:
-    if isinstance(value, dict):
-        payload = cast("dict[str, object]", value)
+    payload = json_object(value)
+    if payload is not None:
         block_type = str(payload.get("type", "")).strip().lower()
         if block_type == "tool_use":
             ident = payload.get("id")
@@ -267,32 +267,32 @@ def _walk_tool_balance(value: object, pending: set[str]) -> None:
                 pending.discard(ident)
         for item in payload.values():
             _walk_tool_balance(item, pending)
-    elif isinstance(value, list):
-        for item in cast("list[object]", value):
+    elif items := json_list(value):
+        for item in items:
             _walk_tool_balance(item, pending)
 
 
 def _contains_key(value: object, key: str) -> bool:
-    if isinstance(value, dict):
-        payload = cast("dict[str, object]", value)
+    payload = json_object(value)
+    if payload is not None:
         if key in payload:
             return True
         return any(_contains_key(item, key) for item in payload.values())
-    if isinstance(value, list):
-        return any(_contains_key(item, key) for item in cast("list[object]", value))
+    if items := json_list(value):
+        return any(_contains_key(item, key) for item in items)
     return False
 
 
 def _codex_kind(event: dict[str, object]) -> str:
-    payload = event.get("payload")
+    payload = json_object(event.get("payload"))
     nested = ""
-    if isinstance(payload, dict):
-        nested = str(cast("dict[str, object]", payload).get("type") or "").strip().lower()
+    if payload is not None:
+        nested = str(payload.get("type") or "").strip().lower()
     top = str(event.get("type") or "").strip().lower()
     if top == "response_item" and nested == "message":
         role = ""
-        if isinstance(payload, dict):
-            role = str(cast("dict[str, object]", payload).get("role") or "").strip().lower()
+        if payload is not None:
+            role = str(payload.get("role") or "").strip().lower()
         if role == "assistant":
             return "assistant"
     if nested in {"task_started", "task_complete", "turn_aborted"}:

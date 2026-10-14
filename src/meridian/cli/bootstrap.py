@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -84,14 +84,17 @@ class ParsedGlobalOptions:
     directory_explicit: bool = False
 
 
-def _first_positional_token_with_index(argv: Sequence[str]) -> tuple[int, str] | None:
+def iter_positional_tokens(argv: Sequence[str]) -> Iterator[tuple[int, str]]:
+    """Yield command-position tokens before the passthrough separator."""
+
+    stop = next((index for index, token in enumerate(argv) if token == "--"), len(argv))
     index = 0
-    while index < len(argv):
+    while index < stop:
         token = argv[index]
-        if token == "--":
-            return None
         if not token.startswith("-"):
-            return index, token
+            yield index, token
+            index += 1
+            continue
         if "=" in token:
             index += 1
             continue
@@ -102,7 +105,10 @@ def _first_positional_token_with_index(argv: Sequence[str]) -> tuple[int, str] |
             index += 2
             continue
         index += 1
-    return None
+
+
+def _first_positional_token_with_index(argv: Sequence[str]) -> tuple[int, str] | None:
+    return next(iter_positional_tokens(argv), None)
 
 
 def _first_positional_token(argv: Sequence[str]) -> str | None:

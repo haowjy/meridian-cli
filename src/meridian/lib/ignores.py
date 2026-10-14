@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING
 
 import pathspec
 
+if TYPE_CHECKING:
+    from pathspec.pattern import Pattern
 
-def load_ignore_patterns(root: Path, filename: str) -> pathspec.PathSpec[Any] | None:
+
+def compile_gitwildmatch(patterns: list[str]) -> pathspec.PathSpec[Pattern]:
+    """Compile gitwildmatch patterns behind pathspec's incomplete type boundary."""
+    return pathspec.PathSpec.from_lines("gitwildmatch", patterns)  # pyright: ignore[reportUnknownMemberType]  # pathspec leaves this factory incompletely typed.
+
+
+def load_ignore_patterns(root: Path, filename: str) -> pathspec.PathSpec[Pattern] | None:
     """Load gitignore-style patterns from a file.
 
     Args:
@@ -26,10 +34,7 @@ def load_ignore_patterns(root: Path, filename: str) -> pathspec.PathSpec[Any] | 
     patterns = [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
     if not patterns:
         return None
-    return cast(
-        "pathspec.PathSpec[Any]",
-        pathspec.PathSpec.from_lines("gitwildmatch", patterns),  # pyright: ignore[reportUnknownMemberType] - third-party overload has incomplete typing.
-    )
+    return compile_gitwildmatch(patterns)
 
 
-__all__ = ["load_ignore_patterns"]
+__all__ = ["compile_gitwildmatch", "load_ignore_patterns"]

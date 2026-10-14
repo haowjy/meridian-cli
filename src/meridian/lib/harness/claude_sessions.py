@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import cast
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
 from meridian.lib.core.native_identity import (
     NativeEntryMismatch,
     NativeKeyFields,
@@ -21,18 +23,23 @@ from meridian.lib.platform import get_home_path
 logger = logging.getLogger(__name__)
 
 
+class _ClaudeSessionHeader(BaseModel):
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    session_id: str = Field(alias="sessionId", min_length=1)
+
+
 def validate_claude_session_file(path: Path, session_id: str) -> None:
     """Verify the exact native source, not merely its filename."""
-
     try:
         with path.open(encoding="utf-8") as handle:
-            raw_header: object = json.loads(handle.readline())
+            header = json.loads(handle.readline())
     except (OSError, UnicodeError, ValueError) as exc:
         raise NativeSessionUnavailable(session_id, "missing") from exc
-    header = cast("dict[str, object]", raw_header) if isinstance(raw_header, dict) else None
-    observed = header.get("sessionId") if header is not None else None
-    if not isinstance(observed, str) or not observed:
-        raise NativeSessionUnavailable(session_id, "missing")
+    try:
+        observed = _ClaudeSessionHeader.model_validate(header).session_id
+    except ValidationError:
+        raise NativeSessionUnavailable(session_id, "missing") from None
     if observed != session_id:
         raise NativeEntryMismatch(
             NativeKeyFields("claude", str(path.parent), session_id),

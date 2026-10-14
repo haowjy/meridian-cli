@@ -110,20 +110,20 @@ def register_harness_bundle(bundle: HarnessBundle[Any]) -> None:
     # listed in HARNESS_EXTENSION_TOUCHPOINTS for new harness onboarding.
 
     raw_extractor: object = bundle.extractor
-    if raw_extractor is None:  # pyright: ignore[reportUnnecessaryComparison]
+    if raw_extractor is None:  # pyright: ignore[reportUnnecessaryComparison]  # Runtime registration validates dynamically constructed bundles.
         raise TypeError(
             f"HarnessBundle for {bundle.harness_id} is missing extractor "
             "(every harness must declare a HarnessExtractor)"
         )
 
-    if not isinstance(raw_extractor, HarnessExtractor):  # pyright: ignore[reportUnnecessaryIsInstance]
+    if not isinstance(raw_extractor, HarnessExtractor):  # pyright: ignore[reportUnnecessaryIsInstance]  # Runtime registration validates dynamically constructed bundles.
         raise TypeError(
             f"HarnessBundle for {bundle.harness_id} has invalid extractor "
             f"{type(raw_extractor).__name__}; expected HarnessExtractor"
         )
 
     raw_semantics: object = bundle.semantics
-    if not isinstance(raw_semantics, HarnessSemantics):  # pyright: ignore[reportUnnecessaryIsInstance]
+    if not isinstance(raw_semantics, HarnessSemantics):  # pyright: ignore[reportUnnecessaryIsInstance]  # Runtime registration validates dynamically constructed bundles.
         raise TypeError(
             f"HarnessBundle for {bundle.harness_id} is missing a valid HarnessSemantics port"
         )

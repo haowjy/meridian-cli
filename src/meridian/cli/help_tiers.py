@@ -7,6 +7,8 @@ from contextlib import contextmanager
 
 from cyclopts import Group
 
+from meridian.cli.cyclopts_internals import replace_group_show
+
 # Hidden by default; curated help reveals this group at render time for human and
 # agent advanced spawn help.
 ADVANCED_PARAMS = Group("Advanced", show=False)
@@ -32,11 +34,8 @@ def advanced_params_visibility(
     """
 
     reveal = advanced_params_visible(agent_mode=agent_mode, advanced=advanced)
-    prior_show = ADVANCED_PARAMS._show
-    object.__setattr__(ADVANCED_PARAMS, "_show", reveal)
+    prior_show = replace_group_show(ADVANCED_PARAMS, reveal)
     try:
         yield
     finally:
-        object.__setattr__(ADVANCED_PARAMS, "_show", prior_show)
-
-
+        replace_group_show(ADVANCED_PARAMS, prior_show)

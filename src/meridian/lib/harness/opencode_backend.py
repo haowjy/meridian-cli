@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 import subprocess
 from collections.abc import Mapping
-from typing import Literal, cast
+from typing import Literal
 
 import structlog
 
@@ -79,7 +79,7 @@ def normalize_version_preference(value: str | None) -> OpenCodeVersionPreference
     """Coerce a config value to a preferred backend version, defaulting to auto."""
     normalized = (value or "").strip().lower()
     if normalized in VERSION_PREFERENCES:
-        return cast("OpenCodeVersionPreference", normalized)
+        return normalized
     return "auto"
 
 

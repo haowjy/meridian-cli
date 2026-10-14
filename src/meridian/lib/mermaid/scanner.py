@@ -5,11 +5,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
 
-import pathspec
-
-from meridian.lib.ignores import load_ignore_patterns
+from meridian.lib.ignores import compile_gitwildmatch, load_ignore_patterns
 from meridian.lib.markdown.extract import extract_file
 
 # Directories to skip unconditionally during walks
@@ -148,12 +145,7 @@ def _collect_from_directory(
     mermaidignore_spec = load_ignore_patterns(dir_path, ".mermaidignore")
 
     # Combine with --exclude patterns
-    exclude_spec: pathspec.PathSpec[Any] | None = None
-    if exclude:
-        exclude_spec = cast(
-            "pathspec.PathSpec[Any]",
-            pathspec.PathSpec.from_lines("gitwildmatch", exclude),  # pyright: ignore[reportUnknownMemberType]
-        )
+    exclude_spec = compile_gitwildmatch(exclude) if exclude else None
 
     targets: list[DiagramTarget] = []
 

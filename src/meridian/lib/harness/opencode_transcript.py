@@ -15,6 +15,7 @@ from typing import Literal, Protocol, cast
 
 from meridian.lib.harness.opencode_storage import resolve_opencode_home_dir
 from meridian.lib.state.native_snapshot import TranscriptValidation
+from meridian.lib.utils.json_shapes import json_object, loads_json_object
 
 OpenCodeDbSchema = Literal["sqlite_v1", "sqlite_v2"]
 
@@ -237,16 +238,6 @@ def opencode_db_for_session_file(path: Path) -> Path | None:
         return None
     storage_root = path.parent.parent
     return storage_root.parent / "opencode.db" if storage_root.name == "storage" else None
-
-
-def _load_json_object(value: object) -> dict[str, object] | None:
-    try:
-        parsed = json.loads(str(value))
-    except (TypeError, ValueError):
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    return cast("dict[str, object]", parsed)
 
 
 def _text_from_mapping(mapping: dict[str, object], keys: tuple[str, ...]) -> str:
@@ -545,7 +536,7 @@ def iter_v2_session_events(
 
 def v2_message_event(message: sqlite3.Row, session_id: str) -> dict[str, object]:
     """One `session_message` row (type, seq, data) as a V2 transcript event."""
-    payload = _load_json_object(message["data"])
+    payload = loads_json_object(str(message["data"]))
     return {
         "record": _V2_RECORD,
         "version": _V2_VERSION,
@@ -570,7 +561,7 @@ def iter_opencode_db_session_events(
 
 
 def _model_ref(raw_model: object) -> str | None:
-    parsed = raw_model if isinstance(raw_model, dict) else _load_json_object(raw_model)
+    parsed = json_object(raw_model) or loads_json_object(str(raw_model))
     if parsed is None:
         return None
     provider = parsed.get("providerID") or parsed.get("provider")
@@ -583,7 +574,7 @@ def _model_ref(raw_model: object) -> str | None:
 
 
 def _model_from_message(raw_data: object) -> str | None:
-    payload = raw_data if isinstance(raw_data, dict) else _load_json_object(raw_data)
+    payload = json_object(raw_data) or loads_json_object(str(raw_data))
     if payload is None:
         return None
     return _model_ref(payload.get("model"))
@@ -688,7 +679,7 @@ def interpret_opencode_record(
         return [], False, None
     if table != "message":
         return [], False, "Unassociated OpenCode transcript part; rendering is incomplete."
-    message = _load_json_object(row.get("data"))
+    message = loads_json_object(str(row.get("data")))
     raw_parts = event.get("parts")
     if message is None or not isinstance(raw_parts, list):
         return [], False, reason
@@ -698,10 +689,9 @@ def interpret_opencode_record(
     parts: list[dict[str, object]] = []
     rendering_reason: str | None = None
     for raw_part in cast("list[object]", raw_parts):
+        part_row = json_object(raw_part)
         part = (
-            _load_json_object(cast("dict[str, object]", raw_part).get("data"))
-            if isinstance(raw_part, dict)
-            else None
+            loads_json_object(str(part_row.get("data"))) if part_row is not None else None
         )
         if part is None:
             rendering_reason = reason

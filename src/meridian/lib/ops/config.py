@@ -54,6 +54,7 @@ from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
 )
 from meridian.lib.state.user_paths import get_user_home
+from meridian.lib.utils.json_shapes import is_json_object
 
 _MISSING_PROJECT_CONFIG_MESSAGE = "no project config; run `meridian config init`"
 _LOCAL_CONFIG_FILENAME = "meridian.local.toml"
@@ -484,17 +485,17 @@ def _dynamic_value_source(
 ) -> Literal["builtin", "file", "user-config", "env var"]:
     current: object = project_dynamic_overrides
     for part in path:
-        if not isinstance(current, dict) or part not in current:
+        if not is_json_object(current) or part not in current:
             break
-        current = cast("dict[str, object]", current)[part]  # pyright: ignore[reportUnnecessaryCast]
+        current = current[part]
     else:
         return "file"
 
     current = user_dynamic_overrides
     for part in path:
-        if not isinstance(current, dict) or part not in current:
+        if not is_json_object(current) or part not in current:
             break
-        current = cast("dict[str, object]", current)[part]  # pyright: ignore[reportUnnecessaryCast]
+        current = current[part]
     else:
         return "user-config"
 

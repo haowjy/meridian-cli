@@ -37,7 +37,7 @@ def assign_to_new_job(pid: int) -> tuple[str, Any] | None:
     import ctypes
     import ctypes.wintypes
 
-    kernel32 = cast("Any", ctypes.windll.kernel32)  # type: ignore[attr-defined]
+    kernel32 = cast("Any", ctypes.windll.kernel32)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]  # ctypes exposes windll only on Windows.
 
     job_name = f"meridian-scope-{uuid.uuid4().hex}"
     job_handle = kernel32.CreateJobObjectW(None, job_name)
@@ -137,7 +137,7 @@ def terminate_job(
 
     import ctypes
 
-    kernel32 = cast("Any", ctypes.windll.kernel32)  # type: ignore[attr-defined]
+    kernel32 = cast("Any", ctypes.windll.kernel32)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]  # ctypes exposes windll only on Windows.
 
     # --- PID reuse guard (PROC-006) ---
     skip_reason: str | None = None

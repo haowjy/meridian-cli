@@ -23,6 +23,7 @@ from meridian.lib.harness.idle_types import (
     IdleSensorContext,
 )
 from meridian.lib.harness.opencode_backend import OpenCodeVersion, resolve_opencode_version
+from meridian.lib.utils.json_shapes import json_object
 
 CapturePane = Callable[[str], Awaitable[str | None]]
 BackendRequest = Callable[[str, str, Mapping[str, object] | None], Awaitable[tuple[int, str]]]
@@ -47,12 +48,8 @@ def detect_ttl(
     return _PROVIDER_TTLS.get((provider or "").strip().lower())
 
 
-def _mapping(value: object) -> Mapping[str, object] | None:
-    return cast("Mapping[str, object]", value) if isinstance(value, Mapping) else None
-
-
 def _properties(event: RawHarnessEvent) -> Mapping[str, object]:
-    return _mapping(event.payload.get("properties")) or event.payload
+    return json_object(event.payload.get("properties")) or event.payload
 
 
 def _session_id(event: RawHarnessEvent) -> str | None:
@@ -75,11 +72,11 @@ def _epoch_ms(value: object) -> float | None:
 def _user_message(event: RawHarnessEvent) -> tuple[str, float] | None:
     if event.event_type != "message.updated":
         return None
-    info = _mapping(_properties(event).get("info"))
+    info = json_object(_properties(event).get("info"))
     if info is None or info.get("role") != "user":
         return None
     message_id = info.get("id")
-    timestamp = _mapping(info.get("time"))
+    timestamp = json_object(info.get("time"))
     created_ms = _epoch_ms(timestamp.get("created")) if timestamp is not None else None
     if not isinstance(message_id, str) or not message_id or created_ms is None:
         return None
@@ -89,7 +86,7 @@ def _user_message(event: RawHarnessEvent) -> tuple[str, float] | None:
 def _message_part(event: RawHarnessEvent) -> tuple[str, str] | None:
     if event.event_type != "message.part.updated":
         return None
-    part = _mapping(_properties(event).get("part"))
+    part = json_object(_properties(event).get("part"))
     if part is None:
         return None
     message_id = part.get("messageID")
@@ -102,7 +99,7 @@ def _message_part(event: RawHarnessEvent) -> tuple[str, str] | None:
 def _status(event: RawHarnessEvent) -> str | None:
     if event.event_type != "session.status":
         return None
-    status = _mapping(_properties(event).get("status"))
+    status = json_object(_properties(event).get("status"))
     value = status.get("type") if status is not None else None
     return value if isinstance(value, str) else None
 
@@ -140,7 +137,7 @@ def _text_content(value: object) -> str | None:
         return None
     text: list[str] = []
     for raw_part in cast("list[object]", value):
-        part = _mapping(raw_part)
+        part = json_object(raw_part)
         if part is None or part.get("type") != "text":
             continue
         if part.get("synthetic") or part.get("ignored"):
@@ -159,10 +156,10 @@ def message_excerpts(payload: object) -> tuple[str | None, str | None]:
     user: str | None = None
     assistant: str | None = None
     for raw_message in cast("list[object]", payload):
-        message = _mapping(raw_message)
+        message = json_object(raw_message)
         if message is None:
             continue
-        info = _mapping(message.get("info"))
+        info = json_object(message.get("info"))
         role = info.get("role") if info is not None else message.get("role") or message.get("type")
         text = (
             _text_content(message.get("parts"))
@@ -403,8 +400,8 @@ class OpenCodeIdleSensor(_OpenCodeIdleSensorBase):
             )
             if status != 200:
                 return CompactResult("failed", body)
-            session = _mapping(json.loads(body))
-            model = _mapping(session.get("model")) if session is not None else None
+            session = json_object(json.loads(body))
+            model = json_object(session.get("model")) if session is not None else None
             provider = model.get("providerID") if model is not None else None
             model_id = model.get("id") if model is not None else None
             if (
@@ -453,7 +450,7 @@ def _v2_inbox_item(event: RawHarnessEvent) -> tuple[str, str] | None:
     if event.event_type != "session.inbox.enqueued":
         return None
     inbox_id = event.payload.get("inboxID")
-    item = _mapping(event.payload.get("item"))
+    item = json_object(event.payload.get("item"))
     item_type = item.get("type") if item is not None else None
     if not isinstance(inbox_id, str) or not isinstance(item_type, str):
         return None
@@ -475,15 +472,15 @@ def _v2_compaction_input_id(event: RawHarnessEvent) -> str | None:
 
 
 def _v2_response_data(payload: object) -> Mapping[str, object] | None:
-    response = _mapping(payload)
+    response = json_object(payload)
     if response is None:
         return None
-    return _mapping(response.get("data"))
+    return json_object(response.get("data"))
 
 
 def _v2_session_model(payload: object) -> tuple[str, str] | None:
     session = _v2_response_data(payload)
-    model = _mapping(session.get("model")) if session is not None else None
+    model = json_object(session.get("model")) if session is not None else None
     provider = model.get("providerID") if model is not None else None
     model_id = model.get("id") if model is not None else None
     if (
@@ -497,7 +494,7 @@ def _v2_session_model(payload: object) -> tuple[str, str] | None:
 
 
 def _v2_message_excerpts(payload: object) -> tuple[str | None, str | None]:
-    response = _mapping(payload)
+    response = json_object(payload)
     messages = response.get("data") if response is not None else None
     if not isinstance(messages, list):
         return None, None

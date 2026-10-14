@@ -4,6 +4,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Run the strict Pyright gate with warnings fatal and per-rule suppressions only.
+
+### Fixed
+- Skip malformed legacy native-session rows whose `chat_id` is not a string or
+  `harness_session_ids` is not a list.
+- Treat the first `--` as the CLI passthrough boundary, even when it follows a
+  value-taking option.
+
 ## [0.9.9] - 2026-10-14
 
 ### Fixed

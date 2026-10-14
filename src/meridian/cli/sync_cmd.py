@@ -32,16 +32,14 @@ def register_sync_commands(app: App, emit: Emitter) -> None:
     sync_app.command(conflict_app, name="conflict")
     app.command(sync_app, name="sync")
 
-    @conflict_app.command(name="list")
-    def conflict_list() -> None:  # pyright: ignore[reportUnusedFunction] - registered via decorator.
+    def conflict_list() -> None:
         """List unresolved autosync conflicts across all sync roots."""
 
         from meridian.lib.ops.sync_conflicts import list_conflicts_sync
 
         emit(list_conflicts_sync())
 
-    @conflict_app.command(name="show")
-    def conflict_show(  # pyright: ignore[reportUnusedFunction] - registered via decorator.
+    def conflict_show(
         conflict_id: Annotated[
             str,
             Parameter(help="Conflict ID to show details for."),
@@ -53,8 +51,7 @@ def register_sync_commands(app: App, emit: Emitter) -> None:
 
         emit(show_conflict_sync(conflict_id))
 
-    @conflict_app.command(name="resolve")
-    def conflict_resolve(  # pyright: ignore[reportUnusedFunction] - registered via decorator.
+    def conflict_resolve(
         conflict_id: Annotated[
             str,
             Parameter(help="Conflict ID to mark as resolved."),
@@ -65,3 +62,7 @@ def register_sync_commands(app: App, emit: Emitter) -> None:
         from meridian.lib.ops.sync_conflicts import resolve_conflict_sync
 
         emit(resolve_conflict_sync(conflict_id))
+
+    conflict_app.command(conflict_list, name="list")
+    conflict_app.command(conflict_show, name="show")
+    conflict_app.command(conflict_resolve, name="resolve")

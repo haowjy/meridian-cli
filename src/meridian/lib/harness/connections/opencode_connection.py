@@ -30,7 +30,10 @@ from meridian.lib.harness.connections.base import (
     StopProgressCallback,
     StopResult,
 )
-from meridian.lib.harness.connections.opencode_http import OpenCodeV1Connection
+from meridian.lib.harness.connections.opencode_http import (
+    OPENCODE_V1_CAPABILITIES,
+    OpenCodeV1Connection,
+)
 from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
 from meridian.lib.harness.opencode_backend import OpenCodeVersion, resolve_opencode_version
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -46,7 +49,7 @@ _VERSION_ENV = "MERIDIAN_HARNESS_OPENCODE_VERSION"
 class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
     """Resolve the OpenCode version, then defer to the matching transport."""
 
-    _CAPABILITIES = OpenCodeV1Connection._CAPABILITIES
+    _CAPABILITIES = OPENCODE_V1_CAPABILITIES
 
     def __init__(self, request_handler: ServerRequestHandler | None = None) -> None:
         self._impl: HarnessConnection[ResolvedLaunchSpec] | None = None
@@ -145,9 +148,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._impl = self._select(config)
         await self._impl.start(config, spec)
 
-    async def start_observer(
-        self, config: ConnectionConfig, spec: ResolvedLaunchSpec
-    ) -> None:
+    async def start_observer(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         self._impl = self._select(config)
         await self._impl.start_observer(config, spec)
 

@@ -12,8 +12,7 @@ Emitter = Callable[[Any], None]
 
 
 def register_migrate_command(app: App, emit: Emitter) -> None:
-    @app.command(name="migrate")
-    def migrate() -> None:  # pyright: ignore[reportUnusedFunction]
+    def migrate() -> None:
         """Move legacy repo-local identity into meridian.toml."""
         from meridian.cli.utils import require_established_project_root
         from meridian.lib.ops.migration import migrate_project_id
@@ -31,6 +30,8 @@ def register_migrate_command(app: App, emit: Emitter) -> None:
             emit("No migration needed: project identity already uses meridian.toml")
         else:
             raise SystemExit(f"Migration blocked: {result.blocking_reason or 'Unknown reason'}")
+
+    app.command(migrate, name="migrate")
 
 
 __all__ = ["register_migrate_command"]

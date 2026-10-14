@@ -18,9 +18,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, Protocol
 
 from meridian.lib.platform.locking import lock_file
+from meridian.lib.utils.json_shapes import json_list, json_object, loads_json_object
 from meridian.plugin_api.fs import AtomicReplaceDurabilityError, atomic_write_text
 from meridian.plugin_api.state import get_user_home
 
@@ -171,7 +172,7 @@ def read_sync_state(sync_root: Path, *, runtime_root: Path) -> SyncState | None:
     target = state_file(sync_root, runtime_root=runtime_root)
     if not target.exists():
         return None
-    data = _load_json_object(target)
+    data = loads_json_object(_read_text(target) or "")
     if data is None:
         return None
 
@@ -201,7 +202,7 @@ def read_conflicts(sync_root: Path, *, runtime_root: Path) -> list[ConflictRecor
     for file_path in files:
         if file_path.suffix != ".json":
             continue
-        data = _load_json_object(file_path)
+        data = loads_json_object(_read_text(file_path) or "")
         if data is None:
             continue
 
@@ -212,7 +213,7 @@ def read_conflicts(sync_root: Path, *, runtime_root: Path) -> list[ConflictRecor
             else file_path.stem
         )
 
-        trigger_obj = _as_object_dict(data.get("trigger")) or {}
+        trigger_obj = json_object(data.get("trigger")) or {}
         event_name = str(trigger_obj.get("event", "unknown"))
         spawn_id = _to_optional_str(trigger_obj.get("spawn_id"))
 
@@ -372,29 +373,15 @@ def _write_text_reconciled(path: Path, content: str) -> bool:
     return True
 
 
-def _load_json_object(path: Path) -> dict[str, Any] | None:
+def _read_text(path: Path) -> str | None:
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        return path.read_text(encoding="utf-8")
+    except OSError:
         return None
-    if not isinstance(raw, dict):
-        return None
-    typed_raw = cast("dict[object, object]", raw)
-    return {str(key): value for key, value in typed_raw.items()}
-
-
-def _as_object_dict(value: object) -> dict[str, object] | None:
-    if not isinstance(value, dict):
-        return None
-    typed = cast("dict[object, object]", value)
-    return {str(key): item for key, item in typed.items()}
 
 
 def _to_string_tuple(value: object) -> tuple[str, ...]:
-    if not isinstance(value, list):
-        return ()
-    typed = cast("list[object]", value)
-    return tuple(str(item) for item in typed)
+    return tuple(str(item) for item in json_list(value) or [])
 
 
 def _to_optional_str(value: object) -> str | None:
@@ -413,12 +400,12 @@ def _find_conflict_file(
 ) -> tuple[Path | None, dict[str, Any] | None]:
     root = conflict_dir(sync_root, runtime_root=runtime_root)
     direct = root / f"{conflict_id}.json"
-    direct_data = _load_json_object(direct) if direct.exists() else None
+    direct_data = loads_json_object(_read_text(direct) or "") if direct.exists() else None
     if direct_data is not None:
         return direct, direct_data
 
     for file_path in root.glob("*.json"):
-        data = _load_json_object(file_path)
+        data = loads_json_object(_read_text(file_path) or "")
         if data is None:
             continue
         if str(data.get("id", file_path.stem)) == conflict_id:

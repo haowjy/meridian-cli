@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import IO
+from typing import IO, cast
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +128,8 @@ class DebugTracer:
                 try:
                     serialized = json.dumps(value, ensure_ascii=False)
                 except (TypeError, ValueError):
-                    serialized = repr(value)  # type: ignore[arg-type]
+                    raw = cast("object", value)
+                    serialized = repr(raw)
                 result[key] = self._truncate(serialized)
             else:
                 result[key] = value  # int, float, bool, None — pass through

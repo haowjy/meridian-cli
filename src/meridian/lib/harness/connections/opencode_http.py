@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import errno
-import importlib
 import json
 import logging
 import os
@@ -18,6 +17,8 @@ from io import BufferedWriter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Final, cast
 from urllib.parse import urlparse
+
+import aiohttp
 
 if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
@@ -120,26 +121,29 @@ def project_opencode_spec_to_session_payload(
     return cast("dict[str, object]", projected)
 
 
+OPENCODE_V1_CAPABILITIES: Final[ConnectionCapabilities] = ConnectionCapabilities(
+    mid_turn_injection="http_post",
+    supports_steer=False,
+    supports_cancel=True,
+    runtime_model_switch=False,
+    structured_reasoning=True,
+    supports_primary_observer=True,
+    supported_startup_phases=frozenset(
+        phase.value
+        for phase in (
+            StartupPhase.LAUNCHING_SUBPROCESS,
+            StartupPhase.WAITING_FOR_CONNECTION,
+            StartupPhase.INITIALIZING_SESSION,
+            StartupPhase.HARNESS_READY,
+        )
+    ),
+)
+
+
 class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
     """Bidirectional OpenCode 1.x connection over the legacy JSON HTTP API."""
 
-    _CAPABILITIES: ClassVar[ConnectionCapabilities] = ConnectionCapabilities(
-        mid_turn_injection="http_post",
-        supports_steer=False,
-        supports_cancel=True,
-        runtime_model_switch=False,
-        structured_reasoning=True,
-        supports_primary_observer=True,
-        supported_startup_phases=frozenset(
-            phase.value
-            for phase in (
-                StartupPhase.LAUNCHING_SUBPROCESS,
-                StartupPhase.WAITING_FOR_CONNECTION,
-                StartupPhase.INITIALIZING_SESSION,
-                StartupPhase.HARNESS_READY,
-            )
-        ),
-    )
+    _CAPABILITIES: ClassVar[ConnectionCapabilities] = OPENCODE_V1_CAPABILITIES
     _STATE_TRANSITIONS: ClassVar[dict[ConnectionState, frozenset[ConnectionState]]] = {
         "created": frozenset(("starting", "stopping", "failed")),
         "starting": frozenset(("connected", "stopping", "failed")),
@@ -206,8 +210,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         self._spawn_id: SpawnId | None = None
         self._config: ConnectionConfig | None = None
         self._process: asyncio.subprocess.Process | None = None
-        self._client: Any | None = None
-        self._aiohttp_module: Any | None = None
+        self._client: aiohttp.ClientSession | None = None
         self._stderr_handle: BufferedWriter | None = None
         self._stderr_log_path: Path | None = None
         self._stderr_read_offset = 0
@@ -363,7 +366,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         session_id = self._pending_requests[request_id] or (self._session_id or "")
         if not session_id:
             raise ValueError(f"No pending OpenCode permission request: {request_id}")
-        response = _map_approval_decision(decision, payload)
+        response = map_approval_decision(decision, payload)
         status, body, content_type = await self._post_json(
             f"/session/{session_id}/permissions/{request_id}",
             {"response": response},
@@ -371,10 +374,10 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         )
         if status not in self._SUCCESS_STATUSES or "text/html" in content_type:
             raise RuntimeError(
-                f"OpenCode permission reply failed: status={status} body={_summarize_body(body)}"
+                f"OpenCode permission reply failed: status={status} body={summarize_body(body)}"
             )
         self._pending_requests.pop(request_id, None)
-        self._liveness.signal_request_resolved(_permission_liveness_key(request_id))
+        self._liveness.signal_request_resolved(permission_liveness_key(request_id))
         await self._notify_request_resolved(
             request_id,
             resolution={"decision": decision, **(payload or {})},
@@ -403,7 +406,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 )
                 return False
             self._pending_requests[request_id] = session_id or (self._session_id or "")
-            self._liveness.signal_request_in_flight(_permission_liveness_key(request_id))
+            self._liveness.signal_request_in_flight(permission_liveness_key(request_id))
             harness_request = HarnessRequest(
                 request_id=request_id,
                 request_type="approval",
@@ -422,7 +425,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 # already popped the pending entry and journaled the resolution.
                 return False
             self._pending_requests.pop(request_id, None)
-            self._liveness.signal_request_resolved(_permission_liveness_key(request_id))
+            self._liveness.signal_request_resolved(permission_liveness_key(request_id))
             reply = _extract_opencode_permission_reply(event.payload)
             await self._notify_request_resolved(
                 request_id,
@@ -465,7 +468,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         # (otherwise an in-flight request would suppress stream-stall detection
         # forever) before journaling the failure through the handler.
         self._pending_requests.pop(request.request_id, None)
-        self._liveness.signal_request_resolved(_permission_liveness_key(request.request_id))
+        self._liveness.signal_request_resolved(permission_liveness_key(request.request_id))
         await self._notify_request_failed(request.request_id, error=error)
 
     async def _cancel_request_dispatch_tasks(self) -> None:
@@ -515,7 +518,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         stale_ids = list(self._pending_requests)
         self._pending_requests = {}
         for request_id in stale_ids:
-            self._liveness.signal_request_resolved(_permission_liveness_key(request_id))
+            self._liveness.signal_request_resolved(permission_liveness_key(request_id))
         logger.debug(
             "Dropping %d unanswered OpenCode permission request(s) during %s",
             len(stale_ids),
@@ -766,8 +769,13 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             self._set_failed()
             return None
 
+        async def _open_response() -> aiohttp.ClientResponse:
+            return await self._liveness.wait_for_activity(self._open_event_stream())
+
         sse_event_type: str | None = None
         sse_data_lines: list[str] = []
+        liveness: BackendLivenessPolicy = self._liveness
+        event_queue: asyncio.Queue[RawHarnessEvent] = self._event_queue
 
         while self._state in ("connected", "stopping"):
             if self._process_exited():
@@ -794,7 +802,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
 
             self._liveness.mark_activity_if_idle()
             try:
-                response = await self._liveness.wait_for_activity(self._open_event_stream())
+                response = await _open_response()
             except EventStreamLivenessTimeout:
                 event = await _handle_stall()
                 if event is not None:
@@ -841,10 +849,10 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                     try:
                         if pending_read is None:
                             pending_read = asyncio.ensure_future(
-                                self._liveness.wait_for_activity(response.content.read(4096))
+                                liveness.wait_for_activity(response.content.read(4096))
                             )
                         if self._queue_waiter is None:
-                            self._queue_waiter = asyncio.ensure_future(self._event_queue.get())
+                            self._queue_waiter = asyncio.ensure_future(event_queue.get())
                         done, _ = await asyncio.wait(
                             {pending_read, self._queue_waiter},
                             return_when=asyncio.FIRST_COMPLETED,
@@ -852,7 +860,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                         if self._queue_waiter in done:
                             injected = self._queue_waiter.result()
                             self._queue_waiter = None
-                            self._liveness.mark_activity()
+                            liveness.mark_activity()
                             yield injected
                         if pending_read not in done:
                             continue
@@ -880,7 +888,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                         )
                         if event is None:
                             continue
-                        self._liveness.mark_activity()
+                        liveness.mark_activity()
                         if await self._dispatch_inbound_event(event):
                             continue
                         if self._tracer is not None:
@@ -925,7 +933,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
 
     async def _launch_process(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         host = config.ws_bind_host or "127.0.0.1"
-        port = config.ws_port if config.ws_port > 0 else _find_free_port(host)
+        port = config.ws_port if config.ws_port > 0 else find_free_port(host)
         self._base_url = f"http://{host}:{port}"
         command = project_managed_primary_backend_command(
             self.harness_id,
@@ -944,7 +952,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         spawn_dir = resolve_spawn_log_dir(
             config.control_root, config.spawn_id, runtime_root=runtime_root
         )
-        self._instruction_path = _materialize_system_prompt(config.system, env)
+        self._instruction_path = materialize_system_prompt(config.system, env)
         self._stderr_log_path = spawn_dir / "stderr.log"
         self._stderr_handle = self._stderr_log_path.open("ab")
         self._stderr_read_offset = self._stderr_handle.tell()
@@ -1005,7 +1013,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 if status in self._SUCCESS_STATUSES:
                     self._last_health_ok = True
                     return
-                last_error = f"{path}: status={status} body={_summarize_body(body)}"
+                last_error = f"{path}: status={status} body={summarize_body(body)}"
 
             if time.monotonic() >= deadline:
                 detail = f": {last_error}" if last_error else ""
@@ -1117,15 +1125,13 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             session_id = _extract_session_id(body)
             if session_id is None:
                 raise RuntimeError(
-                    "OpenCode session creation response missing session id: "
-                    f"{_summarize_body(body)}"
+                    f"OpenCode session creation response missing session id: {summarize_body(body)}"
                 )
             return session_id
         if status in self._PATH_RETRY_STATUSES:
             raise SessionNotReadyError(f"OpenCode session endpoint unavailable: status={status}")
         raise RuntimeError(
-            f"OpenCode session create rejected payload: status={status} "
-            f"body={_summarize_body(body)}"
+            f"OpenCode session create rejected payload: status={status} body={summarize_body(body)}"
         )
 
     async def _get_json(
@@ -1146,7 +1152,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         request_kwargs: dict[str, Any] = {}
         if timeout is not None:
             # aiohttp treats total=0 as "no timeout"; keep it strictly positive.
-            request_kwargs["timeout"] = self._ensure_aiohttp().ClientTimeout(
+            request_kwargs["timeout"] = aiohttp.ClientTimeout(
                 total=max(timeout, 0.001)
             )
         async with client.get(self._url(path), **request_kwargs) as response:
@@ -1319,18 +1325,18 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 if status in self._PAYLOAD_RETRY_STATUSES:
                     last_error = (
                         f"OpenCode session action rejected payload on {path}: "
-                        f"status={status} body={_summarize_body(body)}"
+                        f"status={status} body={summarize_body(body)}"
                     )
                     continue
                 if status in self._PATH_RETRY_STATUSES:
                     last_error = (
                         f"OpenCode session endpoint unavailable on {path}: "
-                        f"status={status} body={_summarize_body(body)}"
+                        f"status={status} body={summarize_body(body)}"
                     )
                     break
                 raise RuntimeError(
                     f"OpenCode session action failed on {path}: "
-                    f"status={status} body={_summarize_body(body)}"
+                    f"status={status} body={summarize_body(body)}"
                 )
 
         raise RuntimeError(last_error or "OpenCode session action failed")
@@ -1361,14 +1367,8 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                     return status, None, content_type
                 try:
                     text_body = await response.text()
-                except Exception as exc:
-                    aiohttp = self._ensure_aiohttp()
-                    client_payload_error = getattr(aiohttp, "ClientPayloadError", None)
-                    if (
-                        tolerate_incomplete_body
-                        and client_payload_error is not None
-                        and isinstance(exc, client_payload_error)
-                    ):
+                except aiohttp.ClientPayloadError:
+                    if tolerate_incomplete_body:
                         logger.warning(
                             "Ignoring incomplete OpenCode response body on %s (status=%s)",
                             path,
@@ -1388,7 +1388,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         finally:
             self._liveness.signal_request_resolved(request_key)
 
-    async def _open_event_stream(self) -> Any:
+    async def _open_event_stream(self) -> aiohttp.ClientResponse:
         client = await self._ensure_http_client()
         session_id = self._require_session_id()
         paths: list[str] = []
@@ -1432,12 +1432,12 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 )
                 last_error = (
                     f"OpenCode event endpoint unavailable on {path}: "
-                    f"status={status} body={_summarize_body(body)}"
+                    f"status={status} body={summarize_body(body)}"
                 )
                 continue
             raise RuntimeError(
                 f"OpenCode event stream failed on {path}: "
-                f"status={status} body={_summarize_body(body)}"
+                f"status={status} body={summarize_body(body)}"
             )
 
         raise RuntimeError(last_error or "OpenCode event stream endpoint unavailable")
@@ -1529,19 +1529,12 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             self._signal_in_flight = False
             self._liveness.signal_request_resolved("cancel")
 
-    async def _ensure_http_client(self) -> Any:
+    async def _ensure_http_client(self) -> aiohttp.ClientSession:
         if self._client is not None:
             return self._client
-        aiohttp = self._ensure_aiohttp()
         timeout = aiohttp.ClientTimeout(total=None)
         self._client = aiohttp.ClientSession(timeout=timeout)
         return self._client
-
-    def _ensure_aiohttp(self) -> Any:
-        if self._aiohttp_module is not None:
-            return self._aiohttp_module
-        self._aiohttp_module = importlib.import_module("aiohttp")
-        return self._aiohttp_module
 
     async def _cleanup_runtime(self, *, replacement_deadline: float | None = None) -> None:
         self._liveness.reset()
@@ -1851,11 +1844,11 @@ def _nonempty_str(value: object) -> str | None:
     return stripped or None
 
 
-def _permission_liveness_key(request_id: str) -> str:
+def permission_liveness_key(request_id: str) -> str:
     return f"permission:{request_id}"
 
 
-def _map_approval_decision(
+def map_approval_decision(
     decision: str,
     payload: Mapping[str, object] | None = None,
 ) -> str:
@@ -1905,13 +1898,13 @@ def _extract_session_id_from_mapping(data: Mapping[str, object]) -> str | None:
     return None
 
 
-def _find_free_port(host: str = "127.0.0.1") -> int:
+def find_free_port(host: str = "127.0.0.1") -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind((host, 0))
         return int(sock.getsockname()[1])
 
 
-def _summarize_body(body: object | None) -> str:
+def summarize_body(body: object | None) -> str:
     if body is None:
         return "<empty>"
     if isinstance(body, str):
@@ -1927,17 +1920,10 @@ def _summarize_body(body: object | None) -> str:
 
 
 def _is_retryable_transport_error(exc: Exception) -> bool:
-    if isinstance(exc, OSError | TimeoutError):
-        return True
-    try:
-        aiohttp = importlib.import_module("aiohttp")
-    except ImportError:
-        return False
-    client_error = getattr(aiohttp, "ClientError", None)
-    return client_error is not None and isinstance(exc, client_error)
+    return isinstance(exc, OSError | TimeoutError | aiohttp.ClientError)
 
 
-def _materialize_system_prompt(system: str | None, env: dict[str, str]) -> Path | None:
+def materialize_system_prompt(system: str | None, env: dict[str, str]) -> Path | None:
     """Create one owned, private instruction file for this backend attempt."""
     raw = env.get(OPENCODE_CONFIG_CONTENT_ENV, "").strip()
     parsed: object = json.loads(raw) if raw else {}

@@ -87,6 +87,25 @@ modules use `structlog.get_logger()`. The split is load-bearing — `capture_lib
 captures stdlib warnings during spawn; structlog bypasses it and leaks to stderr if used
 in the wrong modules.
 
+## Typing Convention
+
+Pyright strict is the gate, warnings included (`pyright --warnings`, 0/0). Fix
+diagnostics at the source; never demote a rule in `pyproject.toml`.
+
+- **Suppress one rule per line, with a reason:** `# pyright: ignore[rule]  # reason`.
+  `# type: ignore` is disabled (`enableTypeIgnoreComments = false`) because pyright
+  treats it as a blanket suppression. Stale ignores fail the gate. Reserve
+  suppressions for untyped or private third-party APIs.
+- **Narrow decoded JSON with `lib/utils/json_shapes.py`** (`json_object`, `json_list`,
+  `loads_json_object`) instead of `cast` or a new private `isinstance` helper.
+  Fixed-shape payloads parse through a Pydantic model or a TypedDict validated by a
+  `TypeAdapter` at the read boundary.
+- **Cross-module names are public.** If another module imports it, drop the underscore.
+  Third-party private access sits behind one adapter module
+  (e.g. `cli/cyclopts_internals.py`).
+
+Rationale and rejected alternatives: KB `decisions/static-typing.md`.
+
 ## Anti-Patterns
 
 **Don't reach into `lib/` from external plugins.** Extend `plugin_api/` instead.

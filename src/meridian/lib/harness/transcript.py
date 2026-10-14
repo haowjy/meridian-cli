@@ -30,6 +30,7 @@ from meridian.lib.state.native_snapshot import (
     reject_unframed_storage_frame,
     reject_unframed_storage_record,
 )
+from meridian.lib.utils.json_shapes import json_object
 
 _TRANSCRIPT_TEXT_KEYS: tuple[str, ...] = (
     "text",
@@ -901,7 +902,8 @@ def reject_runner_history(path: Path) -> None:
         header = json.loads(first)
     except ValueError:
         return
-    if isinstance(header, dict) and header.get("record") == "meridian.transcript":
+    payload = json_object(header)
+    if payload is not None and payload.get("record") == "meridian.transcript":
         raise ValueError("not a native transcript")
 
 

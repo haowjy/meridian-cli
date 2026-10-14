@@ -14,8 +14,7 @@ def register_bootstrap_command(
     get_passthrough_args: Callable[[], tuple[str, ...]],
     get_global_harness: Callable[[], str | None],
 ) -> None:
-    @app.command(name="bootstrap")
-    def bootstrap(  # pyright: ignore[reportUnusedFunction]
+    def bootstrap(
         add: Annotated[
             list[str] | None,
             Parameter(
@@ -136,6 +135,8 @@ def register_bootstrap_command(
                 include_bootstrap_documents=True,
             )
         )
+
+    app.command(bootstrap, name="bootstrap")
 
 
 __all__ = ["register_bootstrap_command"]

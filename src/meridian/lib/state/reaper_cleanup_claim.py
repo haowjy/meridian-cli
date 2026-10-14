@@ -16,8 +16,8 @@ from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.process_scope_projection import (
+    parse_scope_entries,
     read_scope_projection,
-    scope_snapshot_from_dict,
 )
 from meridian.lib.state.spawn.repository import read_state, spawn_lock_path
 
@@ -50,15 +50,7 @@ def read_cleanup_claim(
     entries = payload.get("scopes")
     if not isinstance(entries, list):
         return []
-    scopes: list[ProcessScopeSnapshot] = []
-    for entry in cast("list[object]", entries):
-        if not isinstance(entry, dict):
-            continue
-        entry_payload = cast("dict[str, object]", entry)
-        scope = scope_snapshot_from_dict(dict(entry_payload))
-        if scope is not None:
-            scopes.append(scope)
-    return scopes
+    return parse_scope_entries(cast("list[object]", entries))
 
 
 def _write_claim(path: Path, scopes: list[ProcessScopeSnapshot]) -> None:

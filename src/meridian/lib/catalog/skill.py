@@ -51,7 +51,7 @@ class SkillRecord(BaseModel):
 
 def split_markdown_frontmatter(markdown: str) -> tuple[dict[str, object], str]:
     """Split markdown into YAML frontmatter and body."""
-    import frontmatter  # type: ignore[import-untyped]
+    import frontmatter  # pyright: ignore[reportMissingTypeStubs]  # python-frontmatter ships no type information.
     import yaml
 
     try:

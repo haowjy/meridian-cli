@@ -6,12 +6,10 @@ import os
 import re
 from collections import deque
 from pathlib import Path
-from typing import Any, cast
 
-import pathspec
 from markdown_it import MarkdownIt
 
-from meridian.lib.ignores import load_ignore_patterns
+from meridian.lib.ignores import compile_gitwildmatch, load_ignore_patterns
 from meridian.lib.kg.types import (
     AnalysisResult,
     CheckFinding,
@@ -265,12 +263,7 @@ def _collect_md_files(
     """Walk directory and collect .md files, applying skip dirs and exclusions."""
     kgignore_spec = load_ignore_patterns(root, ".kgignore")
 
-    exclude_spec: pathspec.PathSpec[Any] | None = None
-    if exclude:
-        exclude_spec = cast(
-            "pathspec.PathSpec[Any]",
-            pathspec.PathSpec.from_lines("gitwildmatch", exclude),  # pyright: ignore[reportUnknownMemberType]
-        )
+    exclude_spec = compile_gitwildmatch(exclude) if exclude else None
 
     md_files: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):

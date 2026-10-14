@@ -8,7 +8,9 @@ import re
 import stat
 from collections.abc import Mapping
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from meridian.lib.platform import get_home_path
 from meridian.lib.platform.atomic import atomic_replace
@@ -16,6 +18,19 @@ from meridian.lib.platform.atomic import atomic_replace
 CODEX_ROLLOUT_FILENAME_RE = re.compile(
     r"^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(?P<session_id>[0-9a-fA-F-]{36})\.jsonl$"
 )
+
+
+class _SessionMetaPayload(BaseModel):
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    id: str = Field(min_length=1)
+
+
+class _SessionMetaHeader(BaseModel):
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    type: Literal["session_meta"]
+    payload: _SessionMetaPayload
 
 
 def _rewritten_session_meta(line: bytes, new_session_id: str) -> bytes:
@@ -213,15 +228,10 @@ def resolve_exact_rollout(session_id: str, matches: list[Path]) -> Path | None:
             header = json.loads(handle.readline())
     except (OSError, UnicodeError, ValueError) as exc:
         raise NativeSessionUnavailable(session_id, "missing") from exc
-    payload = header.get("payload") if isinstance(header, dict) else None
-    observed = payload.get("id") if isinstance(payload, dict) else None
-    if (
-        not isinstance(header, dict)
-        or header.get("type") != "session_meta"
-        or not isinstance(observed, str)
-        or not observed
-    ):
-        raise NativeSessionUnavailable(session_id, "missing")
+    try:
+        observed = _SessionMetaHeader.model_validate(header).payload.id
+    except ValidationError:
+        raise NativeSessionUnavailable(session_id, "missing") from None
     if observed != session_id:
         raise NativeEntryMismatch(
             NativeKeyFields("codex", None, session_id),

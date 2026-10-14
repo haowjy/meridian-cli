@@ -11,7 +11,9 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
+
+from meridian.lib.utils.json_shapes import json_list, json_object
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -71,29 +73,33 @@ def canonical(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
 
 
-def _object(value: object, what: str) -> dict[str, object]:
-    if not isinstance(value, dict):
-        raise ValueError(f"Portable record {what} is not a JSON object")
-    return cast("dict[str, object]", value)
-
-
 def stored_record_digest(stored: Mapping[str, object]) -> str:
     """Digest of one stored record object (manifest entry or ``record.json``)."""
-    state = _object(stored.get("state"), "state")
+    state = json_object(stored.get("state"))
+    if state is None:
+        raise ValueError("Portable record state is not a JSON object")
     session = stored.get("session")
-    files = stored.get("files")
-    if not isinstance(files, list):
+    files = json_list(stored.get("files"))
+    if files is None:
         raise ValueError("Portable record files are not a JSON array")
-    members = [_object(member, "file") for member in cast("list[object]", files)]
+    members: list[dict[str, object]] = []
+    for member in files:
+        member_object = json_object(member)
+        if member_object is None:
+            raise ValueError("Portable record file is not a JSON object")
+        members.append(member_object)
+    session_object = json_object(session) if session is not None else None
+    if session is not None and session_object is None:
+        raise ValueError("Portable record session is not a JSON object")
     return digest(
         canonical(
             {
                 "state": {k: v for k, v in state.items() if k not in _LOCAL_STATE_FIELDS},
                 "session": None
-                if session is None
+                if session_object is None
                 else {
                     k: v
-                    for k, v in _object(session, "session").items()
+                    for k, v in session_object.items()
                     if k not in _LOCAL_SESSION_FIELDS
                 },
                 "files": [m for m in members if m.get("name") not in _METADATA_MEMBERS],

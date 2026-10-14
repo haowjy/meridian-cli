@@ -51,6 +51,7 @@ from meridian.lib.state.spawn.repository import (
     read_state,
     scan_spawn_ids,
 )
+from meridian.lib.utils.json_shapes import json_list, json_object
 
 MARKER = "legacy-native-import-v1.json"
 DEFERRAL_NOTE = "legacy-native-import-deferral.json"
@@ -106,12 +107,22 @@ def report_legacy_native_import(
     cwds: dict[str, set[Path]] = defaultdict(set)
     previously_imported: set[str] = set()
     # Raw historical arrays matter here even though normal replay ignores them.
-    for event in read_events(runtime_root / "sessions.jsonl", lambda row: row):
-        fact = event.get("record", event)
-        if not isinstance(fact, dict):
+    for raw_event in read_events(runtime_root / "sessions.jsonl", lambda row: row):
+        event = json_object(raw_event)
+        if event is None:
+            continue
+        fact = json_object(event.get("record", event))
+        if fact is None:
             continue
         chat_id = fact.get("chat_id")
-        if not chat_id:
+        if not isinstance(chat_id, str) or not chat_id:
+            continue
+        raw_prior_session_ids = fact.get("harness_session_ids")
+        if raw_prior_session_ids is None:
+            prior_session_ids: list[object] = []
+        elif (prior_values := json_list(raw_prior_session_ids)) is not None:
+            prior_session_ids = prior_values
+        else:
             continue
         for key in ("execution_cwd", "task_cwd", "control_root"):
             value = fact.get(key)
@@ -119,10 +130,10 @@ def report_legacy_native_import(
                 cwds[chat_id].add(Path(value))
         if event.get("source") == "legacy_import":
             previously_imported.add(chat_id)
-        for value in [fact.get("harness_session_id"), *(fact.get("harness_session_ids") or [])]:
+        for value in [fact.get("harness_session_id"), *prior_session_ids]:
             if isinstance(value, str) and value.strip():
                 ids[chat_id].add(value.strip())
-    spawns = defaultdict(list)
+    spawns: defaultdict[str, list[SpawnRecord]] = defaultdict(list)
     for spawn_id in scan_spawn_ids(runtime_root / "spawns"):
         spawn = read_state(runtime_root / "spawns", spawn_id, include_prompt=False)
         if spawn is not None and spawn.chat_id:
@@ -633,8 +644,8 @@ def maybe_import_legacy_native_sessions(runtime_root: Path) -> None:
 def _deferral_is_active(path: Path) -> bool:
     """Read the tiny retry note once; malformed notes safely permit a retry."""
     try:
-        note = json.loads(path.read_text(encoding="utf-8"))
-        retry_after = note.get("retry_after") if isinstance(note, dict) else None
+        note = json_object(json.loads(path.read_text(encoding="utf-8")))
+        retry_after = note.get("retry_after") if note is not None else None
         return isinstance(retry_after, (int, float)) and retry_after > time.time()
     except (OSError, ValueError):
         return False

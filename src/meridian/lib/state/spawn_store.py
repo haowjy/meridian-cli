@@ -720,6 +720,15 @@ class SpawnScan:
     records: tuple[SpawnRecord, ...]
     quarantines: tuple[SpawnStateQuarantineReport, ...]
 
+    @classmethod
+    def ordered(
+        cls,
+        records: Sequence[SpawnRecord],
+        quarantines: Sequence[SpawnStateQuarantineReport],
+    ) -> SpawnScan:
+        """Build a scan with the canonical persisted-spawn ordering."""
+        return cls(tuple(sorted(records, key=_spawn_sort_key)), tuple(quarantines))
+
 
 def quarantine_hint(spawn_ids: Sequence[str]) -> str:
     """Quarantined IDs behind the repair pointer, for commands that skip or refuse them."""
@@ -759,7 +768,7 @@ def list_spawns(
     if work_id is not None:
         spawns = [spawn for spawn in spawns if spawn.work_id == work_id]
 
-    return SpawnScan(tuple(sorted(spawns, key=_spawn_sort_key)), tuple(quarantines))
+    return SpawnScan.ordered(spawns, quarantines)
 
 
 def get_spawn(

@@ -37,20 +37,16 @@ def register_misc_commands(
         normalized = _normalize_completion_shell(shell)
         print(app.generate_completion(shell=normalized))
 
-    @completion_app.command(name="bash")
-    def completion_bash() -> None:  # pyright: ignore[reportUnusedFunction] - registered via decorator.
+    def completion_bash() -> None:
         _emit_completion("bash")
 
-    @completion_app.command(name="zsh")
-    def completion_zsh() -> None:  # pyright: ignore[reportUnusedFunction] - registered via decorator.
+    def completion_zsh() -> None:
         _emit_completion("zsh")
 
-    @completion_app.command(name="fish")
-    def completion_fish() -> None:  # pyright: ignore[reportUnusedFunction] - registered via decorator.
+    def completion_fish() -> None:
         _emit_completion("fish")
 
-    @completion_app.command(name="install")
-    def completion_install(  # pyright: ignore[reportUnusedFunction] - registered via decorator.
+    def completion_install(
         shell: Annotated[
             str,
             Parameter(
@@ -81,8 +77,7 @@ def register_misc_commands(
         )
         emit({"shell": normalized_shell, "path": destination.as_posix()})
 
-    @streaming_app.command(name="serve")
-    def streaming_serve_cmd(  # pyright: ignore[reportUnusedFunction] - registered via decorator.
+    def streaming_serve_cmd(
         prompt: Annotated[
             str,
             Parameter(name=["--prompt", "-p"], help="Initial prompt for the streaming run."),
@@ -120,8 +115,7 @@ def register_misc_commands(
             )
         )
 
-    @context_app.default
-    def context_cmd(  # pyright: ignore[reportUnusedFunction] - registered via decorator.
+    def context_cmd(
         name: Annotated[
             str | None,
             Parameter(
@@ -148,3 +142,10 @@ def register_misc_commands(
             emit(output)
             return
         emit(output.resolve_name(name))
+
+    completion_app.command(completion_bash, name="bash")
+    completion_app.command(completion_zsh, name="zsh")
+    completion_app.command(completion_fish, name="fish")
+    completion_app.command(completion_install, name="install")
+    streaming_app.command(streaming_serve_cmd, name="serve")
+    context_app.default(context_cmd)

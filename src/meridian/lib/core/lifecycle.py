@@ -38,6 +38,7 @@ from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.spawn_lifecycle import (
     TERMINAL_SPAWN_STATUSES,
     SpawnReservation,
+    is_terminal_spawn_status,
 )
 from meridian.lib.core.telemetry import (
     CORE_EVENTS,
@@ -101,14 +102,10 @@ def _locked_mutation_snapshot(outcome: LockedMutationResult) -> SpawnRecord | No
 # ---------------------------------------------------------------------------
 
 EventType = Literal["spawn.created", "spawn.running", "spawn.finalized"]
-TerminalStatus = TerminalSpawnStatus
 TerminalOrigin = Literal["runner", "launcher", "cancel", "reconciler", "launch_failure"]
 
 
 type TerminalOutcomeCategory = Literal["succeeded"] | SpawnFailureCategory
-
-
-_TERMINAL_STATUS_VALUES: frozenset[str] = TERMINAL_SPAWN_STATUSES
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +169,7 @@ class LifecycleEvent:
     harness: str | None
 
     # Terminal-only fields (None for non-terminal events)
-    status: TerminalStatus | None = None
+    status: TerminalSpawnStatus | None = None
     origin: TerminalOrigin | None = None
 
     outcome_category: TerminalOutcomeCategory | None = None
@@ -386,7 +383,7 @@ class SpawnLifecycleService:
         self,
         spawn_id: str,
         *,
-        status: TerminalStatus,
+        status: TerminalSpawnStatus,
         exit_code: int,
         error: str | None = None,
         exited_at: str | None = None,
@@ -607,7 +604,7 @@ class SpawnLifecycleService:
         if (
             resolved_status is None
             and record is not None
-            and record.status in _TERMINAL_STATUS_VALUES
+            and is_terminal_spawn_status(record.status)
         ):
             resolved_status = record.status
         resolved_origin = terminal_origin
@@ -783,7 +780,7 @@ class SpawnLifecycleService:
             raise ValueError("spawn_id is required when building an event without a record")
 
         # Terminal-only fields
-        status: TerminalStatus | None = None
+        status: TerminalSpawnStatus | None = None
         origin: TerminalOrigin | None = None
         duration_secs: float | None = None
         total_cost_usd: float | None = None
@@ -797,10 +794,10 @@ class SpawnLifecycleService:
 
         if event_type == "spawn.finalized" and record is not None:
             rec_status = record.status
-            if rec_status in _TERMINAL_STATUS_VALUES:
-                status = rec_status  # type: ignore[assignment]
+            if is_terminal_spawn_status(rec_status):
+                status = rec_status
             terminal = record.terminal
-            origin = terminal.origin if terminal is not None else None  # type: ignore[assignment]
+            origin = terminal.origin if terminal is not None else None
             duration_secs = terminal.duration_secs if terminal is not None else None
             total_cost_usd = terminal.total_cost_usd if terminal is not None else None
             input_tokens = terminal.input_tokens if terminal is not None else None

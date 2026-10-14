@@ -108,20 +108,11 @@ exclude = [
 [tool.pyright]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
+# Strict rules must not be demoted. Genuine exceptions use a per-line
+# `# pyright: ignore[rule]  # reason` suppression.
+enableTypeIgnoreComments = false
 reportMissingModuleSource = false
-# CLI commands are used via decorators; pyright doesn't track decorator usage
-reportUnusedFunction = "warning"
-# Cross-module internal helpers are intentional
-reportPrivateUsage = "warning"
-# Allow casts that may become redundant after type narrowing improvements
-reportUnnecessaryCast = "warning"
-# POSIX-only APIs (SIGWINCH, os.fork, unix sockets) don't exist on Windows;
-# pyright on Windows flags these as errors but they're valid on target platforms
-reportAttributeAccessIssue = "warning"
-# Unknown types from platform-specific APIs
-reportUnknownMemberType = "warning"
-reportUnknownVariableType = "warning"
-reportUnknownArgumentType = "warning"
+reportUnnecessaryTypeIgnoreComment = "error"
 venvPath = "."
 venv = ".venv"
 include = ["src"]

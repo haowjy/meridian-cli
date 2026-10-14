@@ -15,7 +15,7 @@ from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, cast
 
-from cyclopts import App, Group
+from attrs import evolve
 from cyclopts.help.formatters.plain import PlainFormatter
 
 from meridian.cli.command_groups import (
@@ -27,9 +27,11 @@ from meridian.cli.command_groups import (
     group_apps_with_static_apps,
     render_group_help,
 )
+from meridian.cli.cyclopts_internals import assemble_help_panels
 from meridian.cli.help_tiers import ADVANCED_PARAMS, advanced_params_visibility
 
 if TYPE_CHECKING:
+    from cyclopts import App, Group
     from cyclopts.help import HelpEntry, HelpPanel
     from rich.console import Console
 
@@ -132,13 +134,9 @@ _HELP_SKIP_TOKENS = frozenset({"--help", "-h", "--advanced", "--mode"})
 
 
 def _command_app_from_root(root_app: App, group_name: str) -> App | None:
-    commands_obj = object.__getattribute__(root_app, "_commands")
-    if not isinstance(commands_obj, dict):
+    if group_name not in root_app:
         return None
-    command = commands_obj.get(group_name)
-    if isinstance(command, App):
-        return command
-    return None
+    return root_app[group_name]
 
 
 def group_apps_for_help(*, root_app: App) -> dict[str, App]:
@@ -291,7 +289,7 @@ def _assemble_help_panels(
     advanced: bool,
 ) -> list[tuple[Group | None, HelpPanel]]:
     with advanced_params_visibility(agent_mode=agent_mode, advanced=advanced):
-        return root_app._assemble_help_panels(tokens, help_format)  # pyright: ignore[reportPrivateUsage]
+        return assemble_help_panels(root_app, tokens, help_format)
 
 
 def _filter_help_panels(
@@ -317,7 +315,7 @@ def _filter_help_panels(
             index_map = {name: index for index, name in enumerate(visible)}
             entries = [entry for entry in panel.entries if _command_entry_name(entry) in index_map]
             entries.sort(key=lambda entry: index_map[_command_entry_name(entry)])
-            panel = panel.copy(entries=entries)
+            panel = evolve(panel, entries=entries)
 
         filtered.append((group, panel))
 

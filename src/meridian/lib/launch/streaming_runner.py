@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
-from pydantic import TypeAdapter
 
 from meridian.lib.bootstrap.services import (
     build_spawn_application_service_from_roots,
@@ -27,7 +26,7 @@ from meridian.lib.core.domain import Spawn, SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.native_identity import (
     NativeIdentityError,
 )
-from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
+from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts, parse_terminal_status
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.attempt_facts import AttemptFacts
@@ -741,9 +740,7 @@ async def _run_streaming_attempt(
                 drain_exit_code = drain_outcome.exit_code
                 drain_error = drain_outcome.error
                 if drain_outcome.authoritative and drain_outcome.status != "succeeded":
-                    authoritative_terminal_status = TypeAdapter(
-                        TerminalSpawnStatus
-                    ).validate_python(drain_outcome.status)
+                    authoritative_terminal_status = parse_terminal_status(drain_outcome.status)
             if timed_out and drain_outcome.status == "succeeded":
                 timed_out = False
             if drain_outcome.error == "report_watchdog":

@@ -22,16 +22,16 @@ from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_publish_dir, atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.retention_archive import (
-    _PREFIX,
     ArchivedRecord,
     ArchiveReceipt,
-    _location,
     append_receipt,
+    archive_location_id,
     archive_manifest_digest,
     canonical,
     digest,
     inventory,
     read_record_metadata,
+    record_member,
     restored_record,
     safe_member_name,
     source_witness,
@@ -135,7 +135,7 @@ def _stage_record(
             target.parent.mkdir(parents=True, exist_ok=True)
             with (
                 archive.open(
-                    f"{_PREFIX}records/{record.history_id}/aggregate/{relative}"
+                    record_member(record.history_id, "aggregate", relative)
                 ) as incoming,
                 atomic_replace(target, mode="wb", encoding=None, permissions=0o600) as outgoing,
             ):
@@ -310,7 +310,7 @@ def restore_archive(root: Path, archive_path: Path, refs: tuple[str, ...]) -> tu
                 if stage.exists():
                     shutil.rmtree(stage)
         # Keep a local receipt so copying only the ZIP also reconstructs catalog facts.
-        location_id = _location(archive_path.parent)
+        location_id = archive_location_id(archive_path.parent)
         append_receipt(
             root,
             ArchiveReceipt(

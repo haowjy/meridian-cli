@@ -8,7 +8,6 @@ from dataclasses import replace
 from typing import Any
 
 import structlog
-from pydantic import TypeAdapter
 
 from meridian.cli.utils import require_established_project_root
 from meridian.lib.bootstrap.services import (
@@ -18,6 +17,7 @@ from meridian.lib.bootstrap.services import (
 )
 from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.native_identity import NativeIdentityError
+from meridian.lib.core.spawn_lifecycle import parse_terminal_status
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.registry import get_default_harness_registry, get_harness_bundle
@@ -207,7 +207,7 @@ async def streaming_serve(
                         on_running=record_started,
                         event_hook=fold,
                     )
-                outcome_status = TypeAdapter(TerminalSpawnStatus).validate_python(outcome.status)
+                outcome_status = parse_terminal_status(outcome.status)
                 outcome_exit_code = outcome.exit_code
                 if outcome_status == "failed":
                     failure_message = outcome.error
