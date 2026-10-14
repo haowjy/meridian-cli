@@ -20,6 +20,11 @@ the user root permits every installed harness. A project Mars root remains
 authoritative for routing config and package content takes precedence over user
 content.
 
+Inside a project Mars root, user packages are fallback content for agents and
+skills only. Model aliases still resolve from the project's Mars config. If a
+user agent depends on an alias that the project does not define, add its package
+to the project with `meridian mars add <source>` or pass `--model`.
+
 Package mutations without `--user` require a project Mars root. In a bare
 directory they fail before Mars can create a marker. `meridian mars init` is the
 explicit exception: it writes only `mars.toml`; the next Meridian runtime write

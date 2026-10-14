@@ -7,11 +7,12 @@ import subprocess
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from meridian.lib.catalog.mars_roots import (
+    MarsRoots,
     ensure_resolved_mars_root,
     mars_fallback_args,
     resolve_mars_executable,
@@ -54,6 +55,7 @@ class BundleRequest:
 
     agent: str | None
     project_root: Path
+    agent_scope: Literal["root", "fallback"] | None = None
     model_override: str | None = None
     literal_model: bool = False
     harness_override: str | None = None
@@ -291,10 +293,21 @@ def _extract_error_message(*, stdout: str, stderr: str) -> str:
     return message or "unknown mars error"
 
 
+def _append_error_note(message: str, note: str | None) -> str:
+    return f"{message}\n{note}" if note is not None else message
+
+
 class MarsSelectionError(RuntimeError):
     """A failed Mars decision with its diagnostic report retained for callers."""
 
-    def __init__(self, code: str, message: str, report: RouteDecisionReport | None) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        report: RouteDecisionReport | None,
+        *,
+        note: str | None = None,
+    ) -> None:
         self.code = code
         self.selection_report = report.model_dump(mode="json") if report is not None else None
         details: list[str] = []
@@ -307,7 +320,7 @@ class MarsSelectionError(RuntimeError):
                     attempt_reasons.append(f"{assessment.harness}: {reason}")
                 reasons = ", ".join(attempt_reasons)
                 details.append(f"{attempt.model_token}: {reasons}")
-        super().__init__("; ".join([message, *details]))
+        super().__init__(_append_error_note("; ".join([message, *details]), note))
 
 
 class _MarsError(BaseModel):
@@ -331,7 +344,13 @@ class _MarsErrorEnvelope(BaseModel):
         return value
 
 
-def _raise_bundle_error(*, stdout: str, stderr: str, returncode: int | None = None) -> None:
+def _raise_bundle_error(
+    *,
+    stdout: str,
+    stderr: str,
+    returncode: int | None = None,
+    note: str | None = None,
+) -> None:
     try:
         raw_payload = json.loads(stdout)
     except json.JSONDecodeError:
@@ -343,6 +362,7 @@ def _raise_bundle_error(*, stdout: str, stderr: str, returncode: int | None = No
             str(envelope.error.code),
             str(envelope.error.message),
             envelope.route_trace,
+            note=note,
         )
     message = _extract_error_message(stdout=stdout, stderr=stderr)
     normalized = message.lower()
@@ -352,13 +372,27 @@ def _raise_bundle_error(*, stdout: str, stderr: str, returncode: int | None = No
         or "invalid subcommand" in normalized
     ):
         raise RuntimeError(
-            "Mars launch-bundle command is unavailable. Meridian requires mars >= "
-            f"{_MARS_BUNDLE_MIN_VERSION}. Error: {message}"
+            _append_error_note(
+                "Mars launch-bundle command is unavailable. Meridian requires mars >= "
+                f"{_MARS_BUNDLE_MIN_VERSION}. Error: {message}",
+                note,
+            )
         )
     prefix = "Mars launch-bundle failed"
     if returncode is not None:
         prefix = f"{prefix} (exit {returncode})"
-    raise RuntimeError(f"{prefix}: {message}")
+    raise RuntimeError(_append_error_note(f"{prefix}: {message}", note))
+
+
+def _fallback_agent_error_note(request: BundleRequest, roots: MarsRoots) -> str | None:
+    agent = (request.agent or "").strip()
+    if request.agent_scope != "fallback" or not agent or roots.user is None:
+        return None
+    return (
+        f"note: '{agent}' comes from user packages ({roots.user}); "
+        "its model aliases must resolve in this project's Mars config. "
+        "Add the package here (meridian mars add <source>) or pass --model."
+    )
 
 
 def _parse_bundle_payload(
@@ -471,6 +505,7 @@ def request_and_resolve(
             stdout=result.stdout,
             stderr=result.stderr,
             returncode=result.returncode,
+            note=_fallback_agent_error_note(request, roots),
         )
 
     try:
