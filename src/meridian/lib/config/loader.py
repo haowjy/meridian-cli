@@ -151,13 +151,11 @@ def _normalize_toml_payload(
     *,
     payload: dict[str, object],
     path: Path,
-    project_root: Path,
 ) -> _NormalizedConfigLayer:
     try:
         return _normalize_toml_payload_values(
             payload=payload,
             path=path,
-            project_root=project_root,
         )
     except ValueError as error:
         message = str(error)
@@ -170,7 +168,6 @@ def _normalize_toml_payload_values(
     *,
     payload: dict[str, object],
     path: Path,
-    project_root: Path,
 ) -> _NormalizedConfigLayer:
     normalized: dict[str, object] = {}
     dynamic: dict[str, object] = {}
@@ -183,7 +180,6 @@ def _normalize_toml_payload_values(
         if key in DYNAMIC_SECTION_DESCRIPTORS:
             section = normalize_dynamic_sections(
                 payload={key: raw_value},
-                project_root=project_root,
             )
             normalized = merge_dynamic_sections(normalized, section)
             dynamic = merge_dynamic_sections(dynamic, section)
@@ -329,7 +325,6 @@ def load_config_with_sources(
         normalized = _normalize_toml_payload(
             payload=layer.payload,
             path=layer.path,
-            project_root=resolved_project_root,
         )
         values = merge_nested_dict_values(
             values,

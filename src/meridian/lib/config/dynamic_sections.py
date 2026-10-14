@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Annotated
 
 from pydantic import (
@@ -161,11 +160,9 @@ def _dump_configured_value(value: object) -> object:
 def normalize_dynamic_sections(
     *,
     payload: dict[str, object],
-    project_root: Path,
 ) -> dict[str, object]:
     """Validate configured dynamic sections and return mergeable values."""
 
-    _ = project_root
     normalized: dict[str, object] = {}
     for section_key, descriptor in DYNAMIC_SECTION_DESCRIPTORS.items():
         if section_key not in payload or descriptor.merge_kind == "external":
