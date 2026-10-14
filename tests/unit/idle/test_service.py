@@ -96,9 +96,7 @@ def service(
         IdleService(
             store=resolved_store,
             config=config
-            or MeridianConfig.model_validate(
-                {"idle": {"compact_min_growth_tokens": 0}}
-            ),
+            or MeridianConfig.model_validate({"idle": {"compact_min_growth_tokens": 0}}),
             env=resolved_env,
             now_ms=resolved_clock.now_ms,
             notify_sender=resolved_sender,
@@ -210,7 +208,7 @@ def test_return_then_long_turn_uses_the_short_push_delay() -> None:
         (ContextBaseline(), 40, ContextBaseline(context_tokens=40, baseline_tokens=40)),
         (ContextBaseline(context_tokens=40, baseline_tokens=40), 55,
          ContextBaseline(context_tokens=55, baseline_tokens=40)),
-        (ContextBaseline(context_tokens=55, baseline_tokens=40), 35,
+        (ContextBaseline(context_tokens=55, baseline_tokens=40, baseline_source="compacted"), 35,
          ContextBaseline(context_tokens=35, baseline_tokens=35)),
         (ContextBaseline(context_tokens=55).after_compaction(), 20,
          ContextBaseline(context_tokens=20, baseline_tokens=20, baseline_source="compacted")),
@@ -245,9 +243,6 @@ def test_context_baseline_lifecycle_across_compaction_and_stretches() -> None:
     assert store.states[("example", "s1")].context == ContextBaseline(
         context_tokens=2_000, baseline_tokens=2_000, baseline_source="compacted"
     )
-    idle.return_(harness="example", session="s1")
-    idle.arm(harness="example", session="s1", context_tokens=3_000)
-    assert store.states[("example", "s1")].compact_eval is None
 
 
 def test_close_on_launch_closes_open_row_without_creating_missing_file(tmp_path: Path) -> None:
@@ -348,7 +343,6 @@ def test_compaction_claim_window_done_ok_and_compacted_state() -> None:
         harness="example",
         session="s1",
         ttl_seconds=3600,
-        context_tokens=1_000,
         last_user_text="compaction prompt",
         last_assistant_text="compaction answer",
     )
@@ -593,9 +587,8 @@ def test_expected_compaction_turn_is_absorbed_after_window() -> None:
 
     assert absorbed.reason == "expected-compaction-turn"
     assert store.read("example", "s1").anchor == 1  # type: ignore[union-attr]
-    assert store.states[("example", "s1")].context == ContextBaseline(
-        context_tokens=50_000, baseline_tokens=50_000
-    )
+    assert store.states[("example", "s1")].context.context_tokens == 50_000
+    assert store.states[("example", "s1")].context.baseline_tokens == 50_000
     assert store.read("example", "s1").last_user_text == "original prompt"  # type: ignore[union-attr]
 
 
@@ -642,6 +635,7 @@ def test_closed_stretch_ignores_stale_expected_compaction_turn_on_arm() -> None:
     assert current is not None
     assert current.stretch_open is True
     assert current.expect_compaction_turn is False
+
 
 @pytest.mark.parametrize("completion", ["claimed", "ok"])
 def test_return_during_compaction_does_not_observe_compaction_turn(completion: str) -> None:

@@ -178,9 +178,7 @@ def policy(
     return (
         IdleService(
             store=store,
-            config=MeridianConfig.model_validate(
-                {"idle": {"compact_min_growth_tokens": 0}}
-            ),
+            config=MeridianConfig.model_validate({"idle": {"compact_min_growth_tokens": 0}}),
             env={"MERIDIAN_SESSION_ROLE": "primary"},
             now_ms=clock.now_ms,
             notify_sender=sender,
