@@ -427,6 +427,45 @@ async def test_v2_recorded_compaction_never_emits_user_return(tmp_path: Path) ->
         await asyncio.wait_for(anext(iterator), timeout=0.01)
 
 
+async def test_v2_steered_prompt_returns_before_terminal_and_does_not_leak_to_compaction(
+    tmp_path: Path,
+) -> None:
+    sensor = opencode_idle.OpenCodeV2IdleSensor(
+        _context(tmp_path, session_id=V2_SESSION_ID, version="v2")
+    )
+    iterator = sensor.events()
+    normal = _recorded_v2_events("events-v2-normal.sse")
+    steered = RawHarnessEvent(
+        event_type="session.inbox.enqueued",
+        payload={
+            "type": "session.inbox.enqueued",
+            "sessionID": V2_SESSION_ID,
+            "inboxID": "msg_v2_user_steered",
+            "item": {
+                "type": "user",
+                "payload": {"text": "follow up while the turn is running"},
+                "delivery": "steer",
+            },
+        },
+        harness_id="opencode",
+    )
+
+    for event in (*normal[:2], steered, *normal[2:]):
+        sensor.on_raw_event(event)
+    for event in _recorded_v2_events("events-v2-compact.sse"):
+        sensor.on_raw_event(event)
+
+    observed = await _take(iterator, 4)
+    assert [event.kind for event in observed] == [
+        "user_prompt",
+        "user_prompt",
+        "turn_end",
+        "turn_end",
+    ]
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(anext(iterator), timeout=0.01)
+
+
 async def test_v2_compact_waits_for_matching_recorded_completion(tmp_path: Path) -> None:
     sensor: opencode_idle.OpenCodeV2IdleSensor
 

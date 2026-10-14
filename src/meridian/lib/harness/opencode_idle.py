@@ -548,10 +548,12 @@ class OpenCodeV2IdleSensor(OpenCodeIdleSensor):
                 and inbox_id not in self._pending_user_inbox_ids
             ):
                 self._pending_user_inbox_ids.add(inbox_id)
+                # Enqueue is the earliest reliable proof of a real user return.
+                # A steer-delivered prompt may not start a new execution.
+                self._emit_user_returns()
 
         if event.event_type == "session.execution.started":
             self._busy = True
-            self._emit_user_returns()
             return
 
         compaction_input_id = _v2_compaction_input_id(event)
@@ -569,6 +571,7 @@ class OpenCodeV2IdleSensor(OpenCodeIdleSensor):
             return
 
         self._busy = False
+        self._pending_user_inbox_ids.clear()
         self._last_terminal_at = self._event_sequence
         self._maybe_finish_compaction()
         self._emit("turn_end", turn_id=_event_id(event))
