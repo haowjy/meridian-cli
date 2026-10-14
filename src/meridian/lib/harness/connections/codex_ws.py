@@ -268,7 +268,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             runtime_model_switch=False,
             structured_reasoning=True,
             supports_primary_observer=True,
-            supports_runtime_hitl=not getattr(self._request_handler, "no_runtime_hitl", True),
+            supports_runtime_hitl=not self._request_handler.no_runtime_hitl,
             supported_startup_phases=frozenset(
                 phase.value
                 for phase in (
@@ -1118,7 +1118,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         launch_spec = self._launch_spec
         if launch_spec is None or launch_spec.permission_resolver.config.approval != "confirm":
             return False
-        if not getattr(self._request_handler, "no_runtime_hitl", False):
+        if not self._request_handler.no_runtime_hitl:
             return False
 
         logger.warning(

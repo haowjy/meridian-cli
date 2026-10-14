@@ -389,7 +389,7 @@ def _execute_primary_process(
 ) -> tuple[int, str | None, bool, AttemptFacts]:
     """Run managed attach when eligible, otherwise fall back to black-box launch."""
 
-    use_managed_backend = harness_contract.bootstrap.mode.value == "managed_primary_attach"
+    use_managed_backend = harness_contract.bootstrap_mode.value == "managed_primary_attach"
     if use_managed_backend:
         try:
             return _execute_via_managed_attach(
@@ -405,7 +405,7 @@ def _execute_primary_process(
                 on_running=on_running,
             )
         except PrimaryAttachError as exc:
-            if harness_contract.bootstrap.primary_attach_failure_policy == "raise":
+            if harness_contract.primary_attach_failure_policy == "raise":
                 raise
             stderr_excerpt = _managed_primary_stderr_excerpt(log_dir)
             logger.warning(
@@ -423,7 +423,7 @@ def _execute_primary_process(
         else None
     )
     blackbox_env = dict(child_env)
-    if harness_contract.bootstrap.primary_stderr_log:
+    if harness_contract.primary_stderr_log:
         blackbox_env[PRIMARY_STDERR_LOG_PATH_ENV] = str(log_dir / "stderr.log")
     exit_code = _execute_via_blackbox(
         command=command,
@@ -512,8 +512,8 @@ def _create_managed_primary_connection(
 
     connection_ref: dict[str, HarnessConnection[Any]] = {}
 
-    policy = harness_contract.approval.primary_session_runtime_request_policy
-    event_surface = harness_contract.approval.primary_session_runtime_event_surface
+    policy = harness_contract.primary_session_runtime_request_policy
+    event_surface = harness_contract.primary_session_runtime_event_surface
 
     connection = connection_factory()
     connection_ref["connection"] = connection
@@ -727,7 +727,7 @@ def run_harness_process(
                 write_native_primary_metadata = False
                 should_fork = (
                     session_mode == SessionMode.FORK
-                    and harness_adapter.contract.bootstrap.fork_materialization
+                    and harness_adapter.contract.fork_materialization
                     is ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK
                     and bool((preview_request.session.requested_harness_session_id or "").strip())
                 )

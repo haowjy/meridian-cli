@@ -193,9 +193,7 @@ def test_blackbox_fork_cannot_reuse_source(tmp_path, monkeypatch, harness):
                     "capabilities": contract.capabilities.model_copy(
                         update={"captures_blackbox_output": True}
                     ),
-                    "bootstrap": contract.bootstrap.model_copy(
-                        update={"mode": BootstrapMode.SUBPROCESS_ONLY}
-                    ),
+                    "bootstrap_mode": BootstrapMode.SUBPROCESS_ONLY,
                 }
             )
         ),
