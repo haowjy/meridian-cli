@@ -69,7 +69,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             raise RuntimeError("OpenCode connection has not been started")
         return self._impl
 
-    def _resolve_version(self, config: ConnectionConfig) -> str:
+    def _resolve_version(self, config: ConnectionConfig) -> OpenCodeVersion:
         preference = config.child_env.get(_VERSION_ENV)
         return resolve_opencode_version(preference, binary="opencode", env=config.child_env)
 
