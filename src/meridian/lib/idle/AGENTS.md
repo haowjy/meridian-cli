@@ -24,6 +24,9 @@ a harness adapter: **adapters report facts; core decides**.
   TUI launch task, not the backend observer stream. Use stdlib logging for
   library diagnostics and the spawn-dir `DebugTracer` for sensor failures;
   never use structlog or write to stderr.
+- A harness sensor factory may return `None` for an unsupported backend version;
+  the launcher then starts no sidecar. Version-specific upgrade warnings belong
+  in the harness factory, not in this package.
 
 ## Boundaries
 

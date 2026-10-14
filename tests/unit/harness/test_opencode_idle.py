@@ -15,7 +15,6 @@ from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connecti
 from meridian.lib.harness.idle_types import CacheTtl, IdleEvent, IdleSensorContext
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "opencode_idle"
-SESSION_ID = "ses_ee21d9d97ffeN9m0VxoYy7qFQf"
 V2_SESSION_ID = "ses_v2_fixture_primary"
 
 
@@ -26,18 +25,10 @@ class FakeConnection:
         self.resolved_version = resolved_version
 
 
-class FakeClock:
-    def __init__(self, now: float) -> None:
-        self.value = now
-
-    def __call__(self) -> float:
-        return self.value
-
-
 def _context(
     tmp_path: Path,
     *,
-    session_id: str = SESSION_ID,
+    session_id: str = V2_SESSION_ID,
     version: str | None = None,
     resolved_version: str | None = None,
 ) -> IdleSensorContext:
@@ -51,31 +42,6 @@ def _context(
         tui_alive=lambda: True,
         spawn_dir=tmp_path,
     )
-
-
-def _recorded_events(name: str) -> list[RawHarnessEvent]:
-    events: list[RawHarnessEvent] = []
-    for block in (FIXTURES / name).read_text(encoding="utf-8").split("\n\n"):
-        data = next(
-            (
-                line.removeprefix("data: ")
-                for line in block.splitlines()
-                if line.startswith("data: ")
-            ),
-            None,
-        )
-        if data is None:
-            continue
-        payload = json.loads(data)
-        events.append(
-            RawHarnessEvent(
-                event_type=str(payload["type"]),
-                payload=payload,
-                harness_id="opencode",
-                raw_text=data,
-            )
-        )
-    return events
 
 
 def _recorded_v2_events(name: str) -> list[RawHarnessEvent]:
@@ -102,165 +68,6 @@ async def _take(iterator: AsyncIterator[IdleEvent], count: int) -> list[IdleEven
     return [await anext(iterator) for _ in range(count)]
 
 
-async def test_recorded_normal_prompt_emits_one_return_and_one_turn_end(
-    tmp_path: Path,
-) -> None:
-    sensor = opencode_idle.OpenCodeIdleSensor(_context(tmp_path), now=lambda: 1_791_502_764.0)
-    iterator = sensor.events()
-
-    for event in _recorded_events("events-normal.sse"):
-        sensor.on_raw_event(event)
-
-    observed = await _take(iterator, 2)
-    assert [event.kind for event in observed] == ["user_prompt", "turn_end"]
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(anext(iterator), timeout=0.01)
-
-
-async def test_turn_end_fetches_last_user_and_assistant_text_parts(tmp_path: Path) -> None:
-    async def request(
-        method: str,
-        path: str,
-        _payload: Mapping[str, object] | None,
-    ) -> tuple[int, str]:
-        assert (method, path) == ("GET", f"/session/{SESSION_ID}/message?limit=20")
-        return 200, json.dumps(
-            [
-                {"info": {"role": "user"}, "parts": [{"type": "text", "text": "old"}]},
-                {
-                    "info": {"role": "user"},
-                    "parts": [
-                        {"type": "text", "text": "attached file", "synthetic": True},
-                        {"type": "text", "text": "ignored prompt", "ignored": 1},
-                    ],
-                },
-                {
-                    "info": {"role": "assistant"},
-                    "parts": [
-                        {"type": "reasoning", "text": "private"},
-                        {"type": "text", "text": "answer one"},
-                        {"type": "text", "text": "answer two"},
-                    ],
-                },
-                {
-                    "info": {"role": "user"},
-                    "parts": [
-                        {"type": "text", "text": "latest"},
-                        {"type": "text", "text": "mode reminder", "synthetic": True},
-                        {"type": "text", "text": "hidden", "ignored": True},
-                    ],
-                },
-            ]
-        )
-
-    sensor = opencode_idle.OpenCodeIdleSensor(
-        _context(tmp_path),
-        now=lambda: 1_791_502_764.0,
-        request=request,
-    )
-    iterator = sensor.events()
-    for event in _recorded_events("events-normal.sse"):
-        sensor.on_raw_event(event)
-
-    observed = await _take(iterator, 2)
-    turn_end = observed[-1]
-    assert turn_end.last_user_text == "latest"
-    assert turn_end.last_assistant_text == "answer one answer two"
-
-
-async def test_recorded_summarize_never_emits_user_return(tmp_path: Path) -> None:
-    sensor = opencode_idle.OpenCodeIdleSensor(_context(tmp_path), now=lambda: 1_791_502_786.0)
-    iterator = sensor.events()
-
-    for event in _recorded_events("events-summarize.sse"):
-        sensor.on_raw_event(event)
-
-    assert [event.kind for event in await _take(iterator, 1)] == ["turn_end"]
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(anext(iterator), timeout=0.01)
-
-
-async def test_compact_suppresses_return_when_busy_precedes_compaction_part(
-    tmp_path: Path,
-) -> None:
-    post_started = asyncio.Event()
-    release_post = asyncio.Event()
-
-    async def request(
-        method: str,
-        _path: str,
-        _payload: Mapping[str, object] | None,
-    ) -> tuple[int, str]:
-        if method == "GET":
-            return 200, '{"model":{"providerID":"opencode","id":"big-pickle"}}'
-        post_started.set()
-        await release_post.wait()
-        return 200, "true"
-
-    sensor = opencode_idle.OpenCodeIdleSensor(
-        _context(tmp_path),
-        now=FakeClock(1_791_502_764.0),
-        request=request,
-    )
-    iterator = sensor.events()
-    events = _recorded_events("events-summarize.sse")
-    user_message = next(event for event in events if event.event_type == "message.updated")
-    compaction_part = next(
-        event
-        for event in events
-        if event.event_type == "message.part.updated"
-        and cast("Mapping[str, object]", event.payload["properties"])["part"]
-        and cast(
-            "Mapping[str, object]",
-            cast("Mapping[str, object]", event.payload["properties"])["part"],
-        )["type"]
-        == "compaction"
-    )
-    first_busy = next(
-        event
-        for event in events
-        if event.event_type == "session.status"
-        and cast(
-            "Mapping[str, object]",
-            cast("Mapping[str, object]", event.payload["properties"])["status"],
-        )["type"]
-        == "busy"
-    )
-    final_idle = next(
-        event
-        for event in events
-        if event.event_type == "session.status"
-        and cast(
-            "Mapping[str, object]",
-            cast("Mapping[str, object]", event.payload["properties"])["status"],
-        )["type"]
-        == "idle"
-    )
-    session_idle = next(event for event in events if event.event_type == "session.idle")
-
-    compact = asyncio.create_task(sensor.compact())
-    await post_started.wait()
-    for event in (user_message, first_busy, compaction_part):
-        sensor.on_raw_event(event)
-    sensor.on_raw_event(final_idle)
-    sensor.on_raw_event(session_idle)
-    release_post.set()
-    assert (await compact).result == "ok"
-
-    real_user = next(
-        event
-        for event in _recorded_events("events-normal.sse")
-        if event.event_type == "message.updated"
-    )
-    sensor.on_raw_event(real_user)
-    sensor.on_raw_event(first_busy)
-
-    observed = await asyncio.wait_for(_take(iterator, 2), timeout=0.1)
-    assert [event.kind for event in observed] == ["turn_end", "user_prompt"]
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(anext(iterator), timeout=0.01)
-
-
 @pytest.mark.parametrize(
     ("fixture", "expected_draft"),
     [("pane-draft-typed.txt", "yes"), ("pane-draft-empty.txt", "no")],
@@ -273,7 +80,9 @@ async def test_facts_read_draft_from_recorded_pane(
     async def capture(_pane: str) -> str | None:
         return (FIXTURES / fixture).read_text(encoding="utf-8")
 
-    facts = await opencode_idle.OpenCodeIdleSensor(_context(tmp_path), capture_pane=capture).facts()
+    facts = await opencode_idle.OpenCodeV2IdleSensor(
+        _context(tmp_path, version="v2"), capture_pane=capture
+    ).facts()
 
     assert (facts.draft, facts.busy) == (expected_draft, False)
 
@@ -768,30 +577,48 @@ async def test_v2_compact_resolves_terminal_failure_immediately(
 
 
 @pytest.mark.parametrize(
-    ("version", "resolved_version", "expected_type"),
+    ("resolved_version", "expected_type"),
     [
-        ("v1", "v1", opencode_idle.OpenCodeIdleSensor),
-        ("v2", "v2", opencode_idle.OpenCodeV2IdleSensor),
-        ("auto", "v1", opencode_idle.OpenCodeIdleSensor),
-        ("auto", "v2", opencode_idle.OpenCodeV2IdleSensor),
+        ("v1", None),
+        ("v2", opencode_idle.OpenCodeV2IdleSensor),
+        (None, opencode_idle.OpenCodeV2IdleSensor),
     ],
 )
 def test_primary_idle_sensor_dispatches_by_resolved_connection_version(
     tmp_path: Path,
-    version: str | None,
-    resolved_version: str,
-    expected_type: type[object],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    resolved_version: str | None,
+    expected_type: type[object] | None,
 ) -> None:
+    def resolve(
+        _preference: str | None,
+        *,
+        binary: str,
+        env: Mapping[str, str],
+    ) -> str:
+        assert resolved_version is None
+        assert (binary, env) == ("opencode", {})
+        return "v2"
+
+    monkeypatch.setattr(opencode_idle, "resolve_opencode_version", resolve)
     sensor = opencode_idle.primary_idle_sensor(
-        _context(tmp_path, version=version, resolved_version=resolved_version)
+        _context(tmp_path, resolved_version=resolved_version)
     )
 
-    assert type(sensor) is expected_type
+    assert sensor is None if expected_type is None else type(sensor) is expected_type
+    expected_warnings = (
+        ["OpenCode 1.x idle integration is unsupported; upgrade to OpenCode 2.x"]
+        if resolved_version == "v1"
+        else []
+    )
+    assert caplog.messages == expected_warnings
 
 
 def test_primary_idle_sensor_resolves_preference_when_connection_cannot_answer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     observed: list[tuple[str | None, Mapping[str, str]]] = []
 
@@ -809,8 +636,11 @@ def test_primary_idle_sensor_resolves_preference_when_connection_cannot_answer(
 
     sensor = opencode_idle.primary_idle_sensor(_context(tmp_path))
 
-    assert type(sensor) is opencode_idle.OpenCodeIdleSensor
+    assert sensor is None
     assert observed == [(None, {})]
+    assert caplog.messages == [
+        "OpenCode 1.x idle integration is unsupported; upgrade to OpenCode 2.x"
+    ]
 
 
 @pytest.mark.parametrize(

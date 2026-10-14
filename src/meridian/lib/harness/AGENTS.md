@@ -11,16 +11,17 @@ The Meridian OpenCode adapter targets current opencode.ai CLI releases.
 `opencode --version` and prefers V2).
 `connections/opencode_connection.py` is the dispatcher: one registered transport
 resolves the version at `start()` and delegates to the V2 session + `/api/event`
-transport (`opencode_v2_http.py`) or the frozen V1 JSON + SSE transport
+transport (`opencode_v2_http.py`) or the legacy V1 JSON + SSE transport
 (`opencode_http.py`). The launch bind seam projects the version preference into
 `MERIDIAN_HARNESS_OPENCODE_VERSION`; the dispatcher resolves it once and exposes
-`resolved_version` to consumers such as the idle sensor. Capture and
+`resolved_version` to version-specific consumers. Only V2 has an idle sensor;
+for V1 the factory returns no sensor and logs a warning to upgrade. Capture and
 storage/transcript reads select their OpenCode dialect by DB schema (`session_v2`
 → V2, `session` → V1) through
 `detect_opencode_db_schema` in `opencode_transcript.py`, never by the installed
 binary or the env var. V2's session model populates `IdleEvent.provider` for the
-harness `detect_ttl` port. **OpenCode 1.x is legacy and frozen** — registered as
-fallback, no investment; new work targets V2.
+harness `detect_ttl` port. The V1 transport and transcript stack remain available;
+idle integration requires OpenCode 2.x.
 
 ## Translation Pipeline
 

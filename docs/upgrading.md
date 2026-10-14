@@ -1,11 +1,13 @@
 # Upgrade notes
 
-## OpenCode provider-aware idle timing (unreleased)
+## OpenCode 2.x idle timing (unreleased)
 
 OpenCode 2.x sessions using an OpenAI model provider now schedule cache warnings
-and guarded compaction against an estimated 30-minute TTL. OpenCode 1.x and
-other OpenCode providers remain push-only by default. An explicitly configured
-`[harness.opencode.idle] ttl_seconds` still takes precedence.
+and guarded compaction against an estimated 30-minute TTL. Other 2.x providers
+remain push-only by default. OpenCode 1.x idle integration has been removed: no
+idle sidecar, idle notification, cache warning, or compaction starts for it, and
+Meridian logs a warning to upgrade to 2.x. An explicitly configured
+`[harness.opencode.idle] ttl_seconds` still takes precedence for 2.x.
 
 ## Ignoring direnv (unreleased)
 
@@ -132,8 +134,8 @@ One-hour Anthropic cache writes cost more than five-minute writes. Export
 - Per-harness defaults: Claude senses its cache lifetime from the transcript
   (1 h or 5 min); Meridian gives interactive Pi primaries long cache retention;
   Codex assumes 30 minutes (`[harness.codex.idle] ttl_seconds = 1800`); OpenCode
-  is push-only (`ttl_seconds = 300`). Pi provider IDs other than `anthropic` and
-  `openai` remain push-only.
+  2.x senses supported providers, while OpenCode 1.x has no idle integration.
+  Pi provider IDs other than `anthropic` and `openai` remain push-only.
 - Idle and cache-warning titles show time until the cache goes cold when a TTL
   is known. Heuristic/configured TTLs are labelled `est.`. Idle state saves
   `ttl_estimated` alongside the TTL; existing development-build records without

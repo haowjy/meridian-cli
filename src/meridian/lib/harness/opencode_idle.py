@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -30,6 +30,8 @@ BackendRequest = Callable[[str, str, Mapping[str, object] | None], Awaitable[tup
 _GET_TIMEOUT_SECONDS = 10.0
 _SUMMARIZE_TIMEOUT_SECONDS = 300.0
 
+logger = logging.getLogger(__name__)
+
 # D5/D7: the backend TTL is unknown; mirror the Codex harness's estimate.
 _PROVIDER_TTLS = {"openai": CacheTtl(1800, estimated=True)}
 
@@ -51,60 +53,14 @@ def _mapping(value: object) -> Mapping[str, object] | None:
     return cast("Mapping[str, object]", value) if isinstance(value, Mapping) else None
 
 
-def _properties(event: RawHarnessEvent) -> Mapping[str, object]:
-    return _mapping(event.payload.get("properties")) or event.payload
-
-
 def _session_id(event: RawHarnessEvent) -> str | None:
-    properties = _properties(event)
-    value = properties.get("sessionID") or event.payload.get("sessionID")
+    value = event.payload.get("sessionID")
     return value if isinstance(value, str) and value else None
 
 
 def _event_id(event: RawHarnessEvent) -> str | None:
     value = event.payload.get("id")
     return value if isinstance(value, str) and value else None
-
-
-def _epoch_ms(value: object) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return None
-    return float(value * 1000 if value < 10_000_000_000 else value)
-
-
-def _user_message(event: RawHarnessEvent) -> tuple[str, float] | None:
-    if event.event_type != "message.updated":
-        return None
-    info = _mapping(_properties(event).get("info"))
-    if info is None or info.get("role") != "user":
-        return None
-    message_id = info.get("id")
-    timestamp = _mapping(info.get("time"))
-    created_ms = _epoch_ms(timestamp.get("created")) if timestamp is not None else None
-    if not isinstance(message_id, str) or not message_id or created_ms is None:
-        return None
-    return message_id, created_ms
-
-
-def _message_part(event: RawHarnessEvent) -> tuple[str, str] | None:
-    if event.event_type != "message.part.updated":
-        return None
-    part = _mapping(_properties(event).get("part"))
-    if part is None:
-        return None
-    message_id = part.get("messageID")
-    part_type = part.get("type")
-    if not isinstance(message_id, str) or not isinstance(part_type, str):
-        return None
-    return message_id, part_type
-
-
-def _status(event: RawHarnessEvent) -> str | None:
-    if event.event_type != "session.status":
-        return None
-    status = _mapping(_properties(event).get("status"))
-    value = status.get("type") if status is not None else None
-    return value if isinstance(value, str) else None
 
 
 def _draft_from_pane(capture: str) -> Literal["yes", "no"] | None:
@@ -151,7 +107,7 @@ def _text_content(value: object) -> str | None:
     return " ".join(text) or None
 
 
-def message_excerpts(payload: object) -> tuple[str | None, str | None]:
+def _message_excerpts(payload: object) -> tuple[str | None, str | None]:
     """Extract the last user and assistant text parts from a messages response."""
 
     if not isinstance(payload, list):
@@ -223,223 +179,6 @@ async def _backend_request(
             return int(response.status), await response.text()
 
 
-class _OpenCodeIdleSensorBase:
-    """Shared OpenCode sensor plumbing independent of backend dialect."""
-
-    def __init__(
-        self,
-        ctx: IdleSensorContext,
-        *,
-        capture_pane: CapturePane = _capture_tmux_pane,
-        request: BackendRequest | None = None,
-    ) -> None:
-        self._ctx = ctx
-        self._capture_pane = capture_pane
-        if request is None:
-
-            async def request_backend(
-                method: str,
-                path: str,
-                payload: Mapping[str, object] | None,
-            ) -> tuple[int, str]:
-                return await _backend_request(ctx, method, path, payload)
-
-            self._request: BackendRequest = request_backend
-        else:
-            self._request = request
-        self._events: asyncio.Queue[IdleEvent] = asyncio.Queue()
-        self._busy = False
-
-    def _emit(
-        self,
-        kind: Literal["turn_end", "user_prompt"],
-        *,
-        turn_id: str | None = None,
-    ) -> None:
-        self._events.put_nowait(
-            IdleEvent(
-                kind=kind,
-                harness_session_id=self._ctx.harness_session_id,
-                turn_id=turn_id,
-            )
-        )
-
-    async def events(self) -> AsyncIterator[IdleEvent]:
-        while True:
-            event = await self._events.get()
-            if event.kind == "turn_end":
-                provider, (user, assistant) = await asyncio.gather(
-                    self._fetch_provider(),
-                    self._fetch_message_excerpts(),
-                )
-                event = replace(
-                    event,
-                    last_user_text=user,
-                    last_assistant_text=assistant,
-                    provider=provider,
-                )
-            yield event
-
-    async def _fetch_provider(self) -> str | None:
-        return None
-
-    async def _fetch_message_excerpts(self) -> tuple[str | None, str | None]:
-        raise NotImplementedError
-
-    async def facts(self) -> IdleFacts:
-        draft: Literal["yes", "no", "unknown"] = "unknown"
-        pane = self._ctx.tmux_pane
-        if pane:
-            capture = await self._capture_pane(pane)
-            if capture is not None:
-                draft = _draft_from_pane(capture) or "unknown"
-        return IdleFacts(
-            draft=draft,
-            busy=self._busy,
-            agents_running=0,
-            context_tokens=None,
-            harness_autocompact_off=False,
-        )
-
-
-class OpenCodeIdleSensor(_OpenCodeIdleSensorBase):
-    """Translate a managed OpenCode 1.x session's raw stream into idle facts."""
-
-    def __init__(
-        self,
-        ctx: IdleSensorContext,
-        *,
-        now: Callable[[], float] = time.time,
-        capture_pane: CapturePane = _capture_tmux_pane,
-        request: BackendRequest | None = None,
-    ) -> None:
-        super().__init__(ctx, capture_pane=capture_pane, request=request)
-        self._now = now
-        self._saw_busy = False
-        self._last_anchor_ms = now() * 1000
-        self._seen_user_messages: set[str] = set()
-        self._pending_user_messages: set[str] = set()
-        self._compaction_messages: set[str] = set()
-        self._compacting = False
-
-    def _classify_pending_user_messages(self) -> None:
-        for message_id in tuple(self._pending_user_messages):
-            self._pending_user_messages.discard(message_id)
-            self._seen_user_messages.add(message_id)
-            if message_id not in self._compaction_messages:
-                self._emit("user_prompt")
-            self._compaction_messages.discard(message_id)
-        self._compaction_messages.clear()
-
-    def on_raw_event(self, event: RawHarnessEvent) -> None:
-        if event.harness_id != self._ctx.harness_id.value:
-            return
-        session_id = _session_id(event)
-        if session_id != self._ctx.harness_session_id:
-            return
-
-        part = _message_part(event)
-        if part is not None:
-            message_id, part_type = part
-            if part_type == "compaction":
-                self._compaction_messages.add(message_id)
-
-        user_message = _user_message(event)
-        if user_message is not None:
-            message_id, created_ms = user_message
-            if self._compacting:
-                self._compaction_messages.add(message_id)
-            if (
-                message_id not in self._seen_user_messages
-                and message_id not in self._pending_user_messages
-            ):
-                if created_ms > self._last_anchor_ms:
-                    self._pending_user_messages.add(message_id)
-                else:
-                    self._seen_user_messages.add(message_id)
-
-        status = _status(event)
-        if status == "busy":
-            self._classify_pending_user_messages()
-            self._saw_busy = True
-            if not self._busy:
-                self._busy = True
-            return
-        if status == "idle":
-            self._busy = False
-            return
-        if event.event_type != "session.idle":
-            return
-        self._compacting = False
-        if not self._saw_busy or self._busy:
-            return
-
-        self._saw_busy = False
-        self._last_anchor_ms = self._now() * 1000
-        self._emit("turn_end", turn_id=_event_id(event))
-
-    async def _fetch_message_excerpts(self) -> tuple[str | None, str | None]:
-        session_id = quote(self._ctx.harness_session_id, safe="")
-        try:
-            status, body = await asyncio.wait_for(
-                self._request("GET", f"/session/{session_id}/message?limit=20", None),
-                timeout=_GET_TIMEOUT_SECONDS,
-            )
-            if status != 200:
-                return None, None
-            return message_excerpts(json.loads(body))
-        except (TimeoutError, OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError):
-            return None, None
-
-    async def compact(self) -> CompactResult:
-        if not self._ctx.tui_alive():
-            return CompactResult("vetoed", "tui-exited")
-        session_id = quote(self._ctx.harness_session_id, safe="")
-        session_path = f"/session/{session_id}"
-        try:
-            status, body = await asyncio.wait_for(
-                self._request("GET", session_path, None),
-                timeout=_GET_TIMEOUT_SECONDS,
-            )
-            if status != 200:
-                return CompactResult("failed", body)
-            session = _mapping(json.loads(body))
-            model = _mapping(session.get("model")) if session is not None else None
-            provider = model.get("providerID") if model is not None else None
-            model_id = model.get("id") if model is not None else None
-            if (
-                not isinstance(provider, str)
-                or not provider
-                or not isinstance(model_id, str)
-                or not model_id
-            ):
-                return CompactResult("failed", "session model is unavailable")
-            if not self._ctx.tui_alive():
-                return CompactResult("vetoed", "tui-exited")
-            self._compacting = True
-            completed = False
-            try:
-                status, body = await asyncio.wait_for(
-                    self._request(
-                        "POST",
-                        f"{session_path}/summarize",
-                        {"providerID": provider, "modelID": model_id},
-                    ),
-                    timeout=_SUMMARIZE_TIMEOUT_SECONDS,
-                )
-                completed = status == 200 and body.strip() == "true"
-            finally:
-                if not completed:
-                    self._compacting = False
-        except TimeoutError:
-            return CompactResult("failed", "timeout")
-        except (OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError) as exc:
-            return CompactResult("failed", str(exc))
-        if completed:
-            return CompactResult("ok")
-        return CompactResult("failed", body)
-
-
 _V2_TERMINAL_EVENTS = frozenset(
     {
         "session.execution.succeeded",
@@ -503,10 +242,10 @@ def _v2_message_excerpts(payload: object) -> tuple[str | None, str | None]:
         return None, None
     # The V2 request explicitly asks for newest-first results. The shared
     # extractor retains the last text for each role, so restore timeline order.
-    return message_excerpts(list(reversed(cast("list[object]", messages))))
+    return _message_excerpts(list(reversed(cast("list[object]", messages))))
 
 
-class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
+class OpenCodeV2IdleSensor:
     """Translate OpenCode 2.x execution and inbox events into idle facts."""
 
     def __init__(
@@ -517,7 +256,22 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
         request: BackendRequest | None = None,
         compact_timeout_seconds: float = _SUMMARIZE_TIMEOUT_SECONDS,
     ) -> None:
-        super().__init__(ctx, capture_pane=capture_pane, request=request)
+        self._ctx = ctx
+        self._capture_pane = capture_pane
+        if request is None:
+
+            async def request_backend(
+                method: str,
+                path: str,
+                payload: Mapping[str, object] | None,
+            ) -> tuple[int, str]:
+                return await _backend_request(ctx, method, path, payload)
+
+            self._request: BackendRequest = request_backend
+        else:
+            self._request = request
+        self._events: asyncio.Queue[IdleEvent] = asyncio.Queue()
+        self._busy = False
         self._compact_timeout_seconds = compact_timeout_seconds
         self._seen_user_inbox_ids: set[str] = set()
         self._pending_user_inbox_ids: set[str] = set()
@@ -528,6 +282,51 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
         self._compacting = False
         self._compact_expected_id: str | None = None
         self._compact_waiter: asyncio.Future[tuple[bool, str | None]] | None = None
+
+    def _emit(
+        self,
+        kind: Literal["turn_end", "user_prompt"],
+        *,
+        turn_id: str | None = None,
+    ) -> None:
+        self._events.put_nowait(
+            IdleEvent(
+                kind=kind,
+                harness_session_id=self._ctx.harness_session_id,
+                turn_id=turn_id,
+            )
+        )
+
+    async def events(self) -> AsyncIterator[IdleEvent]:
+        while True:
+            event = await self._events.get()
+            if event.kind == "turn_end":
+                provider, (user, assistant) = await asyncio.gather(
+                    self._fetch_provider(),
+                    self._fetch_message_excerpts(),
+                )
+                event = replace(
+                    event,
+                    last_user_text=user,
+                    last_assistant_text=assistant,
+                    provider=provider,
+                )
+            yield event
+
+    async def facts(self) -> IdleFacts:
+        draft: Literal["yes", "no", "unknown"] = "unknown"
+        pane = self._ctx.tmux_pane
+        if pane:
+            capture = await self._capture_pane(pane)
+            if capture is not None:
+                draft = _draft_from_pane(capture) or "unknown"
+        return IdleFacts(
+            draft=draft,
+            busy=self._busy,
+            agents_running=0,
+            context_tokens=None,
+            harness_autocompact_off=False,
+        )
 
     def _maybe_finish_compaction(self) -> None:
         waiter = self._compact_waiter
@@ -697,7 +496,7 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
         return CompactResult("ok")
 
 
-def primary_idle_sensor(ctx: IdleSensorContext) -> IdleSensor:
+def primary_idle_sensor(ctx: IdleSensorContext) -> IdleSensor | None:
     """Create the sensor hosted by the managed-primary attach launcher."""
 
     resolved = getattr(ctx.connection, "resolved_version", None)
@@ -711,7 +510,8 @@ def primary_idle_sensor(ctx: IdleSensorContext) -> IdleSensor:
             env=ctx.env,
         )
     if version == "v1":
-        return OpenCodeIdleSensor(ctx)
+        logger.warning("OpenCode 1.x idle integration is unsupported; upgrade to OpenCode 2.x")
+        return None
     return OpenCodeV2IdleSensor(ctx)
 
 
@@ -722,10 +522,8 @@ def autocompact_off(env: Mapping[str, str]) -> bool:
 
 
 __all__ = [
-    "OpenCodeIdleSensor",
     "OpenCodeV2IdleSensor",
     "autocompact_off",
     "detect_ttl",
-    "message_excerpts",
     "primary_idle_sensor",
 ]

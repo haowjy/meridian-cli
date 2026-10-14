@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+- Remove idle integration for OpenCode 1.x; no sidecar starts, and Meridian logs a warning to upgrade to 2.x.
+
 ### Fixed
 - Arm idle tracking for interactive OpenCode 2.x sessions from execution and
   inbox events, use the V2 API for message excerpts and compaction, and schedule
