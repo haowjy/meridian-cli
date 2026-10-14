@@ -28,7 +28,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Resolve agents and skills from project packages, then user packages, then
   built-in defaults.
 - In projects with their own `mars.toml`, let user-scope agents and skills fill
-  gaps when the installed `mars` supports `--fallback-root`.
+  gaps. Needs `mars` 0.16.0 (`--fallback-root`), now the pinned dependency;
+  older binaries keep project-only lookup.
 - Refuse `meridian mars` package mutations without a project Mars root unless
   `--user` is explicit.
 - Make `meridian doctor` inspect bare directories without creating project or
