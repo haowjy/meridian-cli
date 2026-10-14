@@ -26,6 +26,20 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Keep OpenCode managed-primary event sensing alive through quiet periods and compaction;
   durable fallback now accepts only completed native compaction messages.
 
+- Meridian reopen closes old idle stretch before exec; no stale push, warn, compact.
+
+## [0.10.2] - 2026-10-14
+
+### Changed
+- Make PR CI run the full gate before merge (#576).
+
+## [0.10.1] - 2026-10-14
+
+### Fixed
+- False `Ignoring unknown Meridian config key 'context.<name>'` warnings for every `[context.*]` table (#580).
+- False unknown-key warnings before the real error for mis-shaped sections such
+  as `[hooks]`; sections with a hard error now suppress unknown-key warnings (#582).
+
 ## [0.10.0] - 2026-10-14
 
 ### Fixed
