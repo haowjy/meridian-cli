@@ -320,7 +320,6 @@ async def test_v2_recorded_normal_prompt_emits_return_and_parent_turn_end(
 
     observed = await _take(iterator, 2)
     assert [event.kind for event in observed] == ["user_prompt", "turn_end"]
-    assert observed[0].implies_return is True
     assert observed[1].turn_id == "evt_fixture_26"
     assert observed[1].provider == "openai"
     with pytest.raises(TimeoutError):

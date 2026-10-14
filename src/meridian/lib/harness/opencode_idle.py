@@ -507,14 +507,7 @@ class OpenCodeV2IdleSensor(OpenCodeIdleSensor):
         for inbox_id in tuple(self._pending_user_inbox_ids):
             self._pending_user_inbox_ids.discard(inbox_id)
             self._seen_user_inbox_ids.add(inbox_id)
-            self._events.put_nowait(
-                IdleEvent(
-                    kind="user_prompt",
-                    harness_session_id=self._ctx.harness_session_id,
-                    turn_id=None,
-                    implies_return=True,
-                )
-            )
+            self._emit("user_prompt")
 
     def _maybe_finish_compaction(self) -> None:
         waiter = self._compact_waiter
