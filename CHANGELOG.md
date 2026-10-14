@@ -13,6 +13,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `--ignore-direnv` / `--no-ignore-direnv` overrides. Undo direnv exports before
   primary and spawned harness launches; carry the setting to descendants.
 
+### Changed
+- Name the config file when rejecting an invalid file value.
+
 ### Fixed
 - Keep cleaned environments authoritative for OpenCode workspace config and
   version probes, and Pi auth/session directory defaults. No ambient-env reinjection.

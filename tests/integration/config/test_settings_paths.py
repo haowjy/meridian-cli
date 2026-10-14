@@ -163,12 +163,13 @@ def test_load_config_reports_invalid_key_and_problem(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    (project_root / "meridian.toml").write_text(toml, encoding="utf-8")
+    config_path = project_root / "meridian.toml"
+    config_path.write_text(toml, encoding="utf-8")
 
     with pytest.raises(ValueError) as exc_info:
         load_config(project_root, resolve_models=False)
 
-    assert str(exc_info.value) == message
+    assert str(exc_info.value) == f"{message.removesuffix('.')} in '{config_path}'."
 
 
 def test_load_config_preserves_unknown_and_deprecated_key_policy(
@@ -210,11 +211,13 @@ def test_load_config_keeps_history_unknown_keys_forbidden(tmp_path: Path) -> Non
         encoding="utf-8",
     )
 
-    with pytest.raises(
-        ValueError,
-        match=r"^Invalid value for 'history\.archive\.unknown': unknown key\.$",
-    ):
+    with pytest.raises(ValueError) as exc_info:
         load_config(project_root, resolve_models=False)
+
+    assert str(exc_info.value) == (
+        "Invalid value for 'history.archive.unknown': unknown key "
+        f"in '{project_root / 'meridian.toml'}'."
+    )
 
 
 def test_load_config_preserves_pi_extension_path_normalization(tmp_path: Path) -> None:

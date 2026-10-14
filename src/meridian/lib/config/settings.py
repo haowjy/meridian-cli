@@ -717,7 +717,9 @@ def _normalize_toml_payload(
         try:
             return MeridianConfig.model_validate(normalized).model_dump(exclude_unset=True)
         except ValidationError as error:
-            raise _config_validation_error(error) from None
+            config_error = _config_validation_error(error)
+            message = str(config_error).removesuffix(".")
+            raise ValueError(f"{message} in '{path}'.") from None
     finally:
         _SETTINGS_CONTEXT.reset(validation_token)
 
