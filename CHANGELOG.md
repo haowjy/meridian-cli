@@ -14,6 +14,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   primary and spawned harness launches; carry the setting to descendants.
 
 ### Fixed
+- Keep `spawn done` and `spawn rearm` on existing-state startup paths instead of
+  inheriting spawn creation's auto-initialization policy.
 - Keep cleaned environments authoritative for OpenCode workspace config and
   version probes, and Pi auth/session directory defaults. No ambient-env reinjection.
 - Keep OpenCode and Codex primary event-stream liveness timeout messages at debug level so quiet sessions do not print warnings.

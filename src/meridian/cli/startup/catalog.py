@@ -266,17 +266,6 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         default_output_mode="text",
         auto_init_cwd=True,
     ),
-    _write_runtime(
-        ("spawn", "create"),
-        "Create a spawn.",
-        default_output_mode="text",
-        auto_init_cwd=True,
-    ),
-    _write_runtime(
-        ("spawn", "continue"),
-        "Continue a spawn.",
-        default_output_mode="text",
-    ),
     _read_runtime(
         ("spawn", "list"),
         "List spawns.",
@@ -307,6 +296,8 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         "Cancel all spawns.",
         default_output_mode="text",
     ),
+    _write_runtime(("spawn", "done"), "Signal a resident spawn to finish successfully."),
+    _write_runtime(("spawn", "rearm"), "Signal a resident spawn to keep running."),
     _write_runtime(
         ("spawn", "inject"), "Inject a message into a spawn.", default_output_mode="text"
     ),

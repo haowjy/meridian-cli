@@ -23,7 +23,7 @@ argv
 - **`app_tree.py` breaks the circular import.** It defines top-level Cyclopts app objects (`spawn_app`, `session_app`, etc.) without importing any command implementations. If you import command implementations from `app_tree.py`, the lazy strategy collapses.
 - **`to_cli_output()` dispatch, not `isinstance` in `main.py`.** Command handlers return typed result objects. Each implements `to_cli_output()`. Adding result types does not require editing `main.py`.
 - **Read-only invocation classes never initialize authority or telemetry.** `READ_ROOTLESS`, `READ_PROJECT`, and `READ_RUNTIME` never allocate project/session IDs or create missing runtime roots. Discovery within an existing runtime may catch up its disposable history index under the state layer's coordination locks; it must not mutate lifecycle authority.
-- **Auto-init is explicit, not inferred from write-ness.** Only descriptors whose `bootstrap_plan.auto_init_cwd` is true may turn an unestablished literal cwd into a new project. Use it for creation/bootstrap commands (`meridian`, `spawn create`, `work start`), not existing-state mutations (`spawn cancel`, `work switch`, `config reset`).
+- **Auto-init is explicit, not inferred from write-ness.** Only descriptors whose `bootstrap_plan.auto_init_cwd` is true may turn an unestablished literal cwd into a new project. Use it for creation/bootstrap commands (`meridian`, `spawn`, `work start`), not existing-state mutations (`spawn cancel`, `work switch`, `config reset`).
 - **`root_source = RootSource.ARGV`** commands (e.g. `meridian init [path]`) defer bootstrap until after argument parsing. They call `prepare_for_project_write(arg_derived_root)` themselves — they don't receive a pre-prepared context.
 - **`validate_fork_mode()` is the single place for fork/from/continue conflict checks.** `spawn.py` and `primary_launch.py` both call it and consume `ForkModeResolution`. Do not re-implement conflict logic or ref resolution in handlers.
 - **`canonicalize_argv()` runs before every classifier.** It normalizes bare `--fork`/`--fork-fresh`/`--from` values and routes bare `--continue` to `session browse`. Never classify or call Cyclopts on raw argv containing these flags.
@@ -40,7 +40,7 @@ argv
 | `READ_PROJECT` | `context`, `hooks list` | `prepare_for_project_read()` |
 | `READ_RUNTIME` | `spawn list`, `session log` | `prepare_for_runtime_read()` |
 | `WRITE_PROJECT` | `config init` | `prepare_for_project_write()` |
-| `WRITE_RUNTIME` | `spawn create`, `work start` | `prepare_for_runtime_write()` |
+| `WRITE_RUNTIME` | `spawn`, `work start` | `prepare_for_runtime_write()` |
 | `PRIMARY_LAUNCH` | bare `meridian` | `prepare_for_runtime_write()`; `bootstrap_plan.auto_init_cwd` auto-inits config first |
 | `SERVICE_ROOTLESS` | `serve` | none |
 | `SERVICE_RUNTIME` | `streaming serve` | `prepare_for_runtime_write()` |
