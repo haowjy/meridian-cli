@@ -98,7 +98,6 @@ from meridian.lib.state.spawn.model import (
     LaunchMode,
 )
 from meridian.lib.streaming.spawn_manager import DrainOutcome, SpawnManager
-from meridian.lib.utils.time import minutes_to_seconds
 
 if TYPE_CHECKING:
     from meridian.lib.core.lifecycle import SpawnLifecycleService
@@ -422,8 +421,8 @@ async def run_streaming_spawn(
 ) -> DrainOutcome:
     """Run one streaming spawn to completion without spawn-store finalization.
 
-    Callers are responsible for resolving *spec* via ``build_launch_context()``
-    before calling this function.  I-8 (executors stay mechanism-only): this
+    Callers are responsible for resolving *spec* through the launch prepare/bind
+    pipeline before calling this function. I-8 (executors stay mechanism-only): this
     executor accepts a fully-composed spec and MUST NOT perform composition.
     """
 
@@ -539,6 +538,8 @@ async def run_streaming_spawn(
             )
         return resolved_outcome
     finally:
+        if signal_cleanup is not None:
+            signal_cleanup()
         with signal_coordinator().mask_sigterm():
             if subscriber is not None:
                 manager.unsubscribe(spawn_id)
@@ -547,8 +548,6 @@ async def run_streaming_spawn(
                     task.cancel()
                     with suppress(asyncio.CancelledError):
                         await task
-            if signal_cleanup is not None:
-                signal_cleanup()
             await manager.join_teardown(spawn_id)
             with suppress(Exception):
                 await manager.shutdown(status=SpawnStatus.CANCELLED, exit_code=1, error="shutdown")
@@ -902,7 +901,8 @@ async def execute_with_streaming(
         atexit.register(atexit_callback)
         _record_lifecycle("runner_started")
 
-        timeout_seconds = minutes_to_seconds(request.execution_policy.timeout)
+        timeout_minutes = request.execution_policy.timeout
+        timeout_seconds = timeout_minutes * 60.0 if timeout_minutes is not None else None
         startup_timeout_seconds = resolve_startup_timeout_seconds(
             config_snapshot=launch_context.runtime.config_snapshot,
         )

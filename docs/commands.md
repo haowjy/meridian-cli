@@ -252,11 +252,12 @@ See [configuration.md](configuration/context.md) for the full schema.
 | `meridian ext list` | List registered extensions grouped by namespace |
 | `meridian ext show EXT_ID` | Show commands in one extension |
 | `meridian ext commands` | List all extension commands; `--json` for stable agent output |
-| `meridian ext run FQID` | Invoke an extension command; app-server-backed commands currently report no server |
+| `meridian ext run FQID` | Invoke an extension command in process |
 
-`FQID` is `extension_id.command_id`, e.g. `meridian.sessions.getSpawnStats`.
+`FQID` is `extension_id.command_id`, e.g. `meridian.mermaid.check`.
 
-`ext list`, `ext show`, and `ext commands` work with no app server running. `ext run` runs in-process for commands with `requires_app_server: false`; commands with `requires_app_server: true` currently return exit code `2` while the app server is archived for rebuild.
+`ext list`, `ext show`, `ext commands`, and `ext run` do not require a separate
+app server.
 
 Common `ext run` flags:
 
@@ -268,9 +269,9 @@ Common `ext run` flags:
 | `--request-id ID` | Tracing request ID |
 | `--json` | Output as JSON (alias for `--format json`) |
 
-Exit codes for `ext run`: `2` = app server unavailable, `7` = invalid `--args`.
+Exit codes for `ext run`: `1` = command or invocation error, `7` = invalid `--args`.
 
-See [extensions.md](extensions.md) for HTTP API and MCP tool details.
+See [extensions.md](extensions.md) for the shared CLI and MCP contract.
 
 ## Notifications & Idle Sessions
 

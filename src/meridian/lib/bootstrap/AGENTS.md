@@ -12,7 +12,7 @@ Four entry points, one per invocation class tier. Pick based on what the command
 | `READ_RUNTIME` | `prepare_for_runtime_read()` |
 | `WRITE_PROJECT` | `prepare_for_project_write()` |
 | `WRITE_RUNTIME`, `SERVICE_RUNTIME` | `prepare_for_runtime_write()` |
-| `PRIMARY_LAUNCH` | `prepare_for_runtime_write()`; `bootstrap_plan.auto_init_cwd` auto-inits config first |
+| `PRIMARY_LAUNCH` | `prepare_for_runtime_write()`; inert `bootstrap_plan.auto_init_cwd` flag |
 
 Each function returns a typed context object (`ProjectReadContext`, `RuntimeReadContext`, `ProjectWriteContext`, `RuntimeWriteContext`). These carry the prepared state downstream to command handlers without exposing bootstrap internals.
 
@@ -33,7 +33,8 @@ Read-only preparation never runs this GC.
 
 - **Don't instantiate `SpawnApplicationService` directly.** Use `build_spawn_application_service(runtime_write_ctx)`. It's the correct factory.
 - **Post-parse bootstrap exception**: commands with `root_source = RootSource.ARGV` (e.g. `meridian init [path]`) call `prepare_for_project_write(arg_derived_root)` themselves after argument parsing. All other commands receive a pre-prepared context.
-- **Auto-init exception**: descriptors whose `bootstrap_plan.auto_init_cwd` is true may create `meridian.toml` and project/runtime state from an unestablished literal cwd before continuing. Do not infer this from write-ness; existing-state mutations stay strict.
+- **One authority per context.** Each `prepare_for_*` resolves a `RuntimeAuthoritySnapshot` once and passes it to `load_config(..., authority=authority)`. Config resolved without it re-derives paths and can diverge from a frozen or custom snapshot.
+- **Auto-init metadata is currently inert:** descriptors still carry `bootstrap_plan.auto_init_cwd`, but the CLI bootstrap branch that consumes it is unreachable because project-root resolution always reports an established root.
 - **Entrypoint carriers** (`SpawnEntryPoint`, `ExtensionEntryPoint`) carry `ApplicationContext + ApplicationServices` downstream. Use `build_spawn_entrypoint()`, `build_extension_entrypoint()` — don't assemble them manually.
 
 ## Context Hierarchy
@@ -61,7 +62,6 @@ RuntimeWriteContext(RuntimeReadContext)
 - `services.py` — the four `prepare_for_*()` functions and entrypoint builders
 - `project_state.py` — `ProjectLayoutSnapshot`, `resolve_layout()`, `ensure_project_dirs()`
 - `runtime_state.py` — `ensure_runtime_root()`, `ensure_runtime_dirs()`
-- `config.py` — `load_config()`, `load_context_snapshot()`
 
 ## Anti-Patterns
 

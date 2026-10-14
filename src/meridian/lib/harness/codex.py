@@ -15,23 +15,15 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import LaunchIntent, Operation
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
-    ApprovalContract,
     BaseHarnessAdapter,
-    BootstrapContract,
     BootstrapMode,
-    ExtractionContract,
     ForkMaterializationMode,
     HarnessCapabilities,
     HarnessContract,
     McpConfig,
-    ObserverControllerContract,
     PermissionResolver,
-    ProjectionContract,
-    ProjectionMode,
     RunPromptPolicy,
-    RuntimeHitlMode,
     SpawnParams,
-    TransportContract,
 )
 from meridian.lib.harness.bundle import (
     HarnessBundle,
@@ -295,6 +287,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         {
             "skills",
             "context_from_payload",
+            "model_override_explicit",
             "reference_items",
             "task_cwd",
             "pi_harness_profile",
@@ -307,41 +300,15 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
     @property
     def contract(self) -> HarnessContract:
-        observer = ObserverControllerContract()
         return HarnessContract(
             capabilities=self.capabilities,
-            transport=TransportContract(
-                transport_ids=(TransportId.STREAMING,),
-                observer_controller_required=True,
-            ),
-            projection=ProjectionContract(
-                launch_spec_cls="ResolvedLaunchSpec",
-                mode=ProjectionMode.SYSTEM_FIELD_WITH_USER_TURN,
-            ),
-            extraction=ExtractionContract(
-                session_observation_order=(
-                    "connection_session",
-                    "artifacts",
-                    "current_session",
-                    "primary_detection",
-                )
-            ),
-            approval=ApprovalContract(
-                runtime_hitl=RuntimeHitlMode.CONNECTION_REQUESTS,
-                default_runtime_request_policy="auto_accept",
-                primary_session_runtime_request_policy=(PrimaryRuntimeRequestPolicy.SURFACE_EVENTS),
-                primary_session_runtime_event_surface=(
-                    PrimaryRuntimeEventSurface.CONNECTION_EVENT_STREAM
-                ),
-            ),
-            bootstrap=BootstrapContract(
-                mode=BootstrapMode.MANAGED_PRIMARY_ATTACH,
-                fork_materialization=ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK,
-                primary_attach_failure_policy="raise",
-                observer_controller=observer,
-            ),
-            capability_limits=(
-                "native_inherit declared as contract capability only; policy remains pty_mediated",
+            transport_ids=(TransportId.STREAMING,),
+            launch_spec_cls="ResolvedLaunchSpec",
+            bootstrap_mode=BootstrapMode.MANAGED_PRIMARY_ATTACH,
+            fork_materialization=ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK,
+            primary_session_runtime_request_policy=PrimaryRuntimeRequestPolicy.SURFACE_EVENTS,
+            primary_session_runtime_event_surface=(
+                PrimaryRuntimeEventSurface.CONNECTION_EVENT_STREAM
             ),
         )
 
@@ -356,7 +323,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     @property
     def capabilities(self) -> HarnessCapabilities:
         return HarnessCapabilities(
-            supports_stream_events=True,
             supports_stdin_prompt=True,
             supports_session_resume=True,
             supports_session_fork=True,

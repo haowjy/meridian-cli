@@ -29,7 +29,6 @@ class ExtensionHandler(Protocol):
 class ExtensionSurface(StrEnum):
     """Surfaces where an extension command can be exposed."""
 
-    HTTP = "http"
     CLI = "cli"
     MCP = "mcp"
 
@@ -49,10 +48,10 @@ class ExtensionCommandSpec(BaseModel):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     extension_id: str = Field(
-        description="Extension namespace, e.g. 'meridian.sessions'",
+        description="Extension namespace, e.g. 'meridian.session'",
     )
     command_id: str = Field(
-        description="Command name within extension, e.g. 'archiveSpawn'",
+        description="Command name within extension, e.g. 'check'",
     )
     summary: str = Field(description="One-line description for CLI/MCP help")
     args_schema: type[BaseModel] = Field(
@@ -61,23 +60,18 @@ class ExtensionCommandSpec(BaseModel):
     result_schema: type[BaseModel] = Field(
         description="Pydantic model for output. "
         "Intentionally not validated at runtime — used as documentation metadata "
-        "for manifest hashing (registry) and HTTP discovery (extension_routes).",
+        "for manifest hashing and command discovery.",
     )
     handler: ExtensionHandler
     surfaces: frozenset[ExtensionSurface] = Field(
         default=frozenset(
             {
-                ExtensionSurface.HTTP,
                 ExtensionSurface.CLI,
                 ExtensionSurface.MCP,
             }
         ),
     )
     first_party: bool = Field(default=False)
-    requires_app_server: bool = Field(
-        default=True,
-        description="If True, command only runs when app server is available",
-    )
     required_capabilities: frozenset[str] = Field(default=frozenset())
     cli_group: str | None = Field(
         default=None,
@@ -106,7 +100,6 @@ class ExtensionCommandSpec(BaseModel):
         cli_group: str | None = None,
         cli_name: str | None = None,
         surfaces: frozenset[ExtensionSurface] | None = None,
-        requires_app_server: bool = False,
         first_party: bool = True,
     ) -> ExtensionCommandSpec:
         """Wrap an op-style (InputModel → OutputModel) handler pair as an ExtensionCommandSpec.
@@ -139,7 +132,6 @@ class ExtensionCommandSpec(BaseModel):
                 {
                     ExtensionSurface.CLI,
                     ExtensionSurface.MCP,
-                    ExtensionSurface.HTTP,
                 }
             )
 
@@ -155,7 +147,6 @@ class ExtensionCommandSpec(BaseModel):
             cli_name=cli_name,
             surfaces=resolved_surfaces,
             first_party=first_party,
-            requires_app_server=requires_app_server,
         )
 
     @model_validator(mode="after")

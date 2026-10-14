@@ -11,7 +11,6 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import SpawnParams
 from meridian.lib.harness.claude_sessions import project_slug
 from meridian.lib.harness.registry import HarnessRegistry
-from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
@@ -20,7 +19,7 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from tests.support.executables import prepend_fake_executables
-from tests.support.launch import stub_bundle_request_and_resolve
+from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 
 
 @pytest.mark.parametrize("tracked", [False, True])

@@ -67,7 +67,6 @@ async def extension_list_commands() -> dict[str, Any]:
                 "command_id": spec.command_id,
                 "summary": spec.summary,
                 "surfaces": [surface.value for surface in sorted(spec.surfaces)],
-                "requires_app_server": spec.requires_app_server,
             }
             for spec in commands
         ],
@@ -84,8 +83,7 @@ async def extension_invoke(
 ) -> dict[str, Any]:
     """Invoke an extension command.
 
-    EB3.9: Uses spec.extension_id/spec.command_id for invoke URL.
-    EB3.10: In-process dispatch for requires_app_server=False.
+    EB3.10: Dispatches registered MCP commands in process.
     EB3.11: Returns structured error payload on failures.
     """
 
@@ -135,47 +133,36 @@ async def extension_invoke(
             "message": f"Command {fqid} is not available via MCP",
         }
 
-    if not spec.requires_app_server:
-        # In-process dispatch for local-only commands. Rootless observability
-        # stays process-scoped via stderr telemetry rather than segment storage.
-        dispatcher = ExtensionCommandDispatcher(registry)
-        prepared = prepare_for_runtime_read(resolve_project_root_resolution().project_root)
-        application = build_extension_entrypoint(prepared)
-        services = build_extension_command_services(application=application)
-        context_builder = ExtensionInvocationContextBuilder(ExtensionSurface.MCP).with_authority(
-            prepared.authority
-        )
-        if request_id is not None:
-            context_builder = context_builder.with_request_id(request_id)
-        if work_id is not None:
-            context_builder = context_builder.with_work_id(work_id)
-        if spawn_id is not None:
-            context_builder = context_builder.with_spawn_id(spawn_id)
-        result = await dispatcher.dispatch(
-            fqid=fqid,
-            args=resolved_args,
-            context=context_builder.build(),
-            services=services,
-        )
-        if isinstance(result, ExtensionErrorResult):
-            emit_invoked("error", code=result.code)
-            return {
-                "status": "error",
-                "code": result.code,
-                "message": result.message,
-            }
-        emit_invoked("ok")
-        return {"status": "ok", "result": result.payload}
-
-    emit_invoked("error", code="app_server_archived")
-    return {
-        "status": "error",
-        "code": "app_server_archived",
-        "message": (
-            "This extension requires the archived Meridian app server. "
-            "Rebuild `meridian app` before invoking app-server-backed extensions."
-        ),
-    }
+    # Rootless observability stays process-scoped via stderr telemetry rather
+    # than segment storage.
+    dispatcher = ExtensionCommandDispatcher(registry)
+    prepared = prepare_for_runtime_read(resolve_project_root_resolution().project_root)
+    application = build_extension_entrypoint(prepared)
+    services = build_extension_command_services(application=application)
+    context_builder = ExtensionInvocationContextBuilder(ExtensionSurface.MCP).with_authority(
+        prepared.authority
+    )
+    if request_id is not None:
+        context_builder = context_builder.with_request_id(request_id)
+    if work_id is not None:
+        context_builder = context_builder.with_work_id(work_id)
+    if spawn_id is not None:
+        context_builder = context_builder.with_spawn_id(spawn_id)
+    result = await dispatcher.dispatch(
+        fqid=fqid,
+        args=resolved_args,
+        context=context_builder.build(),
+        services=services,
+    )
+    if isinstance(result, ExtensionErrorResult):
+        emit_invoked("error", code=result.code)
+        return {
+            "status": "error",
+            "code": result.code,
+            "message": result.message,
+        }
+    emit_invoked("ok")
+    return {"status": "ok", "result": result.payload}
 
 
 def run_server() -> None:

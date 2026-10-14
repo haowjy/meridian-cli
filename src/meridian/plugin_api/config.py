@@ -6,18 +6,19 @@ import tomllib
 from collections.abc import Mapping
 from typing import Any, cast
 
-from meridian.plugin_api.state import get_user_home
+from meridian.lib.config.project_root import resolve_user_config_path
 
 
 def get_user_config() -> dict[str, Any]:
-    """Load user config from ``<meridian_home>/config.toml``.
+    """Load the resolved user config, including ``MERIDIAN_CONFIG`` overrides.
 
-    Returns an empty mapping if the config file is missing.
+    Returns an empty mapping when the default config file is missing.
+    Raises ``FileNotFoundError`` when ``MERIDIAN_CONFIG`` names a missing file.
     Raises ``tomllib.TOMLDecodeError`` when config content is invalid.
     """
 
-    config_path = get_user_home() / "config.toml"
-    if not config_path.is_file():
+    config_path = resolve_user_config_path(None)
+    if config_path is None:
         return {}
     return tomllib.loads(config_path.read_text(encoding="utf-8"))
 

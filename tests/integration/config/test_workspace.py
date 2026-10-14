@@ -5,7 +5,6 @@ import pytest
 from meridian.lib.config.workspace import get_projectable_roots, resolve_workspace_snapshot
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
@@ -13,7 +12,7 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from meridian.lib.launch.workspace import ensure_workspace_valid_for_launch
-from tests.support.launch import stub_bundle_request_and_resolve
+from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 
 
 @pytest.fixture(autouse=True)

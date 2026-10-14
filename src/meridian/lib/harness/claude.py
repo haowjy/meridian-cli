@@ -21,24 +21,17 @@ from meridian.lib.core.native_identity import (
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     CLAUDE_SPAWN_USAGE_VARIANTS,
-    ApprovalContract,
     BaseHarnessAdapter,
-    BootstrapContract,
     BootstrapMode,
-    ExtractionContract,
     ForkMaterializationMode,
     HarnessCapabilities,
     HarnessContract,
     HarnessPrelaunchState,
     McpConfig,
     PermissionResolver,
-    PrelaunchBootstrapMode,
-    ProjectionContract,
-    ProjectionMode,
     RecordConfigDirFn,
     RunPromptPolicy,
     SpawnParams,
-    TransportContract,
 )
 from meridian.lib.harness.bundle import (
     HarnessBundle,
@@ -168,6 +161,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             "context_from_payload",
+            "model_override_explicit",
             "reference_items",
             "task_cwd",
             "pi_harness_profile",
@@ -182,31 +176,10 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def contract(self) -> HarnessContract:
         return HarnessContract(
             capabilities=self.capabilities,
-            transport=TransportContract(
-                transport_ids=(TransportId.STREAMING,),
-                observer_controller_required=False,
-            ),
-            projection=ProjectionContract(
-                launch_spec_cls="ResolvedLaunchSpec",
-                mode=ProjectionMode.PROMPT_FILE_APPEND_SYSTEM,
-            ),
-            extraction=ExtractionContract(
-                session_observation_order=(
-                    "artifacts",
-                    "current_session",
-                    "primary_detection",
-                )
-            ),
-            approval=ApprovalContract(),
-            bootstrap=BootstrapContract(
-                mode=BootstrapMode.SUBPROCESS_ONLY,
-                fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
-                prelaunch_bootstrap_mode=PrelaunchBootstrapMode.ENV_OVERLAY_AND_SESSION_ACCESS,
-            ),
-            capability_limits=(
-                "terminal_surface_mode limited to pty_mediated",
-                "no observer/controller backend contract",
-            ),
+            transport_ids=(TransportId.STREAMING,),
+            launch_spec_cls="ResolvedLaunchSpec",
+            bootstrap_mode=BootstrapMode.SUBPROCESS_ONLY,
+            fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
         )
 
     @property
@@ -220,7 +193,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     @property
     def capabilities(self) -> HarnessCapabilities:
         return HarnessCapabilities(
-            supports_stream_events=True,
             supports_stdin_prompt=True,
             supports_session_resume=True,
             supports_session_fork=True,

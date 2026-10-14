@@ -209,6 +209,8 @@ class PrimaryRuntimeEventSurface(StrEnum):
 class ServerRequestHandler(Protocol):
     """Policy boundary for inbound harness server requests."""
 
+    no_runtime_hitl: bool
+
     async def handle_request(
         self,
         connection: HarnessConnection[Any],

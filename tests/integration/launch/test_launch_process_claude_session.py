@@ -24,7 +24,6 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.harness.claude import project_slug
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
@@ -37,7 +36,7 @@ from meridian.lib.launch.types import SessionMode
 from meridian.lib.state import session_store
 from meridian.lib.state.spawn_store import list_spawns
 from tests.support.claude_boundary_process import ENTRY_SESSION_TOKEN
-from tests.support.launch import stub_bundle_request_and_resolve
+from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 
 
 def _write_minimal_mars_config(project_root: Path) -> None:
@@ -138,6 +137,7 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
     outcome = run_harness_process(
         launch_context,
         harness_registry,
+        prepared=launch_context.prepared,
         run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
     )
 
@@ -192,6 +192,7 @@ def test_run_harness_process_keeps_binding_when_observed_session_differs(
     outcome = run_harness_process(
         launch_context,
         harness_registry,
+        prepared=launch_context.prepared,
         run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
     )
 
@@ -284,6 +285,7 @@ def test_run_harness_process_reconciles_claude_tui_trampoline_session_id(
     outcome = run_harness_process(
         launch_context,
         harness_registry,
+        prepared=launch_context.prepared,
         run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
     )
 
@@ -374,7 +376,7 @@ def test_primary_claude_exec_receives_prebound_identity(
         f"{shlex.quote(str(binding_log))}\n"
         f"printf '%s\\n' \"$@\" > {shlex.quote(str(argv_log))}\n" + frames + "exit 0\n"
     )
-    outcome = run_harness_process(context, registry)
+    outcome = run_harness_process(context, registry, prepared=context.prepared)
     assert outcome.exit_code == (1 if signal == "mismatch" else 0)
     argv = argv_log.read_text().splitlines()
     native_id = argv[argv.index("--session-id") + 1]
@@ -512,7 +514,7 @@ def test_unrelated_claude_trampoline_candidate_is_diagnostic(
         f"printf '%s' {shlex.quote(transcript)} > "
         f"{shlex.quote(str(store / f'{successor}.jsonl'))}\nexit 1\n"
     )
-    outcome = run_harness_process(context, registry)
+    outcome = run_harness_process(context, registry, prepared=context.prepared)
     assert outcome.exit_code == 1
     row = list_spawns(context.runtime_root).records[0]
     entry = session_store.get_session_record(context.runtime_root, outcome.chat_id)
@@ -561,8 +563,12 @@ def test_unrelated_claude_trampoline_candidate_is_diagnostic(
     ],
 )
 def test_owned_claude_observations_publish_current_chat_while_running(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    fork: bool, initial_id: str, store_suffix: str, status: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fork: bool,
+    initial_id: str,
+    store_suffix: str,
+    status: str,
 ) -> None:
     """Keep expensive launches for wiring/switches and the two fork-binding guards."""
     from dataclasses import replace
@@ -613,10 +619,13 @@ def test_owned_claude_observations_publish_current_chat_while_running(
         ("SessionStart", final_id, "resume" if fork else "clear"),
     )
     events = [
-        {"hook_event_name": event, "session_id": sid,
-         "transcript_path": str(store / store_suffix / f"{sid}.jsonl"),
-         "source" if event == "SessionStart" else "reason": reason,
-         "write_transcript": sid != "unpersisted"}
+        {
+            "hook_event_name": event,
+            "session_id": sid,
+            "transcript_path": str(store / store_suffix / f"{sid}.jsonl"),
+            "source" if event == "SessionStart" else "reason": reason,
+            "write_transcript": sid != "unpersisted",
+        }
         for event, sid, reason in steps
     ]
     release_file = tmp_path / "release-child"
@@ -635,7 +644,8 @@ def test_owned_claude_observations_publish_current_chat_while_running(
             current_id = json.loads(text).get("current_chat_id")
             current = (
                 session_store.get_session_record(context.runtime_root, current_id)
-                if current_id else None
+                if current_id
+                else None
             )
             sid = current.harness_session_id if current is not None else None
             if sid == "unpersisted" and publication_failures == 0:
@@ -649,7 +659,9 @@ def test_owned_claude_observations_publish_current_chat_while_running(
 
     outcomes = []
     launch = threading.Thread(
-        target=lambda: outcomes.append(run_harness_process(context, registry))
+        target=lambda: outcomes.append(
+            run_harness_process(context, registry, prepared=context.prepared)
+        )
     )
     launch.start()
     deadline = time.monotonic() + 8
@@ -671,9 +683,8 @@ def test_owned_claude_observations_publish_current_chat_while_running(
             or (
                 cleared_live
                 and current is not None
-                and current.harness_session_id == final_id.replace(
-                    ENTRY_SESSION_TOKEN, row.harness_session_id or ""
-                )
+                and current.harness_session_id
+                == final_id.replace(ENTRY_SESSION_TOKEN, row.harness_session_id or "")
             )
         ):
             break
@@ -694,8 +705,7 @@ def test_owned_claude_observations_publish_current_chat_while_running(
         launch.join(timeout=10)
     assert not launch.is_alive()
     assert not any(
-        thread.name.startswith("meridian-native-observer-")
-        for thread in threading.enumerate()
+        thread.name.startswith("meridian-native-observer-") for thread in threading.enumerate()
     )
     outcome = outcomes[0]
     row = list_spawns(context.runtime_root).records[0]
@@ -727,7 +737,8 @@ def test_owned_claude_observations_publish_current_chat_while_running(
         else:
             assert row.continue_chat_id == entry.chat_id
         observed = [
-            record for record in session_store.list_all_session_records(context.runtime_root)
+            record
+            for record in session_store.list_all_session_records(context.runtime_root)
             if record.harness_session_id == "cleared"
         ]
         assert len(observed) == 1
@@ -754,6 +765,6 @@ def test_identity_error_before_spawn_allocation_does_not_assert(tmp_path, monkey
         )
 
     monkeypatch.setattr(SpawnLifecycleService, "start", refuse)
-    outcome = run_harness_process(context, registry)
+    outcome = run_harness_process(context, registry, prepared=context.prepared)
     assert outcome.exit_code == 1
     assert outcome.primary_spawn_id is None

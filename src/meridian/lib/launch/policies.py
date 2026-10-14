@@ -705,8 +705,8 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
 
     raise ValueError(
         f"resolve_launch_policy called with unsupported surface '{surface.surface}'. "
-        "Use compile_prepared_policy_surface for PRIMARY/SPAWN_PREPARE, "
-        "or _build_direct_surface for DIRECT launches."
+        "Use compile_prepared_policy_surface for PRIMARY/SPAWN_PREPARE. "
+        "DIRECT callers must supply an already-prepared surface."
     )
 
 

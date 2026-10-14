@@ -24,7 +24,6 @@ from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.harness.semantics import (
     PrimaryEventScope,
 )
-from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchRuntime,
@@ -36,6 +35,7 @@ from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write, resolve_spawn_log_dir
 from meridian.lib.state.spawn_signals import write_spawn_signal
 from tests.support.fakes import FakeClock
+from tests.support.launch import build_launch_context
 from tests.support.pi import FakePiConnection, pi_event
 from tests.support.pi_extensions import configure_pi_extension_projection
 

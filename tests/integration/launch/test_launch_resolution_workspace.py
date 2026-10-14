@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchRuntime,
@@ -17,6 +16,7 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.launch.workspace_projection import OPENCODE_CONFIG_CONTENT_ENV
 from meridian.plugin_api.git import resolve_clone_path
+from tests.support.launch import build_launch_context
 
 pytestmark = pytest.mark.slow
 

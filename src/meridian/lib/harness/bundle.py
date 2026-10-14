@@ -167,7 +167,7 @@ def register_harness_bundle(bundle: HarnessBundle[Any]) -> None:
         dict(validated_connections)
     )
     _validate_contract_alignment(bundle)
-    declared_transport_ids = frozenset(bundle.adapter.contract.transport.transport_ids)
+    declared_transport_ids = frozenset(bundle.adapter.contract.transport_ids)
     actual_transport_ids = frozenset(frozen_connections)
     if declared_transport_ids != actual_transport_ids:
         raise ValueError(
@@ -194,15 +194,15 @@ def register_harness_bundle(bundle: HarnessBundle[Any]) -> None:
 def _validate_contract_alignment(bundle: HarnessBundle[Any]) -> None:
     contract: HarnessContract = bundle.adapter.contract
 
-    if contract.projection.launch_spec_cls != bundle.spec_cls.__name__:
+    if contract.launch_spec_cls != bundle.spec_cls.__name__:
         raise ValueError(
-            f"HarnessBundle for {bundle.harness_id} declares projection launch_spec_cls "
-            f"{contract.projection.launch_spec_cls!r} but registers spec_cls "
+            f"HarnessBundle for {bundle.harness_id} declares launch_spec_cls "
+            f"{contract.launch_spec_cls!r} but registers spec_cls "
             f"{bundle.spec_cls.__name__!r}"
         )
 
     has_managed_primary_ports = bundle.projections.managed_primary is not None
-    if contract.bootstrap.mode is BootstrapMode.MANAGED_PRIMARY_ATTACH:
+    if contract.bootstrap_mode is BootstrapMode.MANAGED_PRIMARY_ATTACH:
         if not has_managed_primary_ports:
             raise ValueError(
                 f"HarnessBundle for {bundle.harness_id} requires managed-primary "

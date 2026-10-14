@@ -135,7 +135,7 @@ hook_lost_update   {'hook-b': '...'}                                   # whole-d
 
 Evidence: `spawn/repository.py:260-291` (unlocked `write_state`, revision counter
 written and never read — `rg '\.revision'` finds only the incrementer),
-`lib/spawn/archive.py:52-56`, `work_store.py:599` (the module's only lock) vs
+`lib/state/archived_spawns.py:52-56`, `work_store.py:599` (the module's only lock) vs
 `:769-936` unlocked RMW, `hooks/interval.py:38-90`.
 
 The abstraction: every mutation is a pure function applied under the store's

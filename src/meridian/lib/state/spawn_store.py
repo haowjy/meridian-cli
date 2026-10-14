@@ -25,9 +25,6 @@ from meridian.lib.core.launch_policy_snapshot import (
     LaunchPolicySnapshot as LaunchPolicySnapshot,
 )
 from meridian.lib.core.spawn_lifecycle import (
-    ACTIVE_SPAWN_STATUSES as _ACTIVE_SPAWN_STATUSES,
-)
-from meridian.lib.core.spawn_lifecycle import (
     is_active_spawn_status as _is_active_spawn_status,
 )
 from meridian.lib.core.spawn_start import SpawnStartMetadata, derive_display_label
@@ -145,23 +142,6 @@ def reserve_spawn_id(
         next_value = current + 1
         atomic_write_text(_spawn_counter_path(paths), f"{next_value}\n")
         return SpawnId(f"p{next_value}")
-
-
-def next_spawn_id(
-    runtime_root: Path,
-) -> SpawnId:
-    """Return the next spawn ID (`p1`, `p2`, ...) for a state root."""
-
-    paths = RuntimePaths.from_root_dir(runtime_root)
-    with lock_file(paths.spawns_flock):
-        seed = _seed_spawn_counter_from_dirs(paths)
-        next_from_existing = SpawnId(f"p{seed + 1}")
-        next_from_counter = SpawnId(f"p{_read_spawn_counter(paths) + 1}")
-        return max((next_from_existing, next_from_counter), key=_spawn_id_index)
-
-
-ACTIVE_SPAWN_STATUSES = _ACTIVE_SPAWN_STATUSES
-is_active_spawn_status = _is_active_spawn_status
 
 
 def _runner_created_at_epoch_for_pid(runner_pid: int | None) -> float | None:
@@ -556,7 +536,7 @@ def record_runner_exit(
     resolved_exited_at = exited_at or resolved_clock.utc_now_iso()
 
     def merge_exit(current: SpawnRecord) -> SpawnRecord | Decline:
-        if not is_active_spawn_status(current.status):
+        if not _is_active_spawn_status(current.status):
             return Decline("spawn is not active")
         return apply_runner_exit(
             current,
@@ -627,7 +607,7 @@ def finalize_spawn(
         can_replace_reconciliation = (
             current_origin == "reconciler" and origin in AUTHORITATIVE_ORIGINS
         )
-        if not is_active_spawn_status(current.status) and not can_replace_reconciliation:
+        if not _is_active_spawn_status(current.status) and not can_replace_reconciliation:
             logger.info(
                 "Finalize rejected by terminal write policy.",
                 spawn_id=str(spawn_id),
@@ -694,7 +674,7 @@ def mark_spawn_running(
         resolved_runner_created_at_epoch = _runner_created_at_epoch_for_pid(runner_pid)
 
     def mark_running(current: SpawnRecord) -> SpawnRecord | Decline:
-        if not is_active_spawn_status(current.status):
+        if not _is_active_spawn_status(current.status):
             return Decline("spawn is not active")
         return apply_mark_running(
             current,

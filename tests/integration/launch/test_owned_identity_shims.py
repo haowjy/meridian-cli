@@ -11,7 +11,6 @@ import pytest
 
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import HarnessRegistry
-from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
@@ -21,7 +20,7 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.state import session_store
 from tests.support.executables import prepend_fake_executables
-from tests.support.launch import stub_bundle_request_and_resolve
+from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 
 NATIVE_ID = "12345678-1234-4234-8234-123456789abc"
 
@@ -109,7 +108,9 @@ def test_owned_event_pins_store(
             session_id_observer(native_id)
         return PrimaryAttachOutcome(exit_code=0, session_id=native_id, tui_pid=None)
 
-    outcome = run_harness_process(context, registry, run_primary_attach_fn=attach)
+    outcome = run_harness_process(
+        context, registry, prepared=context.prepared, run_primary_attach_fn=attach
+    )
     assert outcome.exit_code == 0
     assert outcome.chat_id
     record = session_store.get_session_record(root / ".meridian", outcome.chat_id)
@@ -192,9 +193,7 @@ def test_blackbox_fork_cannot_reuse_source(tmp_path, monkeypatch, harness):
                     "capabilities": contract.capabilities.model_copy(
                         update={"captures_blackbox_output": True}
                     ),
-                    "bootstrap": contract.bootstrap.model_copy(
-                        update={"mode": BootstrapMode.SUBPROCESS_ONLY}
-                    ),
+                    "bootstrap_mode": BootstrapMode.SUBPROCESS_ONLY,
                 }
             )
         ),
@@ -222,7 +221,7 @@ def test_blackbox_fork_cannot_reuse_source(tmp_path, monkeypatch, harness):
         harness_registry=registry,
         dry_run=True,
     )
-    outcome = run_harness_process(ctx, registry)
+    outcome = run_harness_process(ctx, registry, prepared=ctx.prepared)
     assert outcome.exit_code == 1
     row = spawn_store.get_spawn(ctx.runtime_root, outcome.primary_spawn_id)
     assert row.run_boundary.status == "mismatch"
@@ -284,7 +283,9 @@ def test_primary_later_switch_has_one_conflict(tmp_path, monkeypatch):
         return PrimaryAttachOutcome(exit_code=0, session_id="later-thread", tui_pid=1234)
 
     with capture_logs() as logs:
-        outcome = run_harness_process(ctx, registry, run_primary_attach_fn=attach)
+        outcome = run_harness_process(
+            ctx, registry, prepared=ctx.prepared, run_primary_attach_fn=attach
+        )
     assert outcome.exit_code == 0
     assert outcome.resolved_harness_session_id == "entry-thread"
     assert len([log for log in logs if log["event"] == "native_binding_conflict"]) == 1

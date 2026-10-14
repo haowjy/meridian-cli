@@ -46,7 +46,7 @@ async def dispatch_start(
             f"expected {bundle.spec_cls.__name__}"
         )
 
-    declared_transports = bundle.adapter.contract.transport.transport_ids
+    declared_transports = bundle.adapter.contract.transport_ids
     transport_id = select_dispatch_transport(declared_transports)
     connection_class = get_connection_class(config.harness_id, transport_id)
     request_handler: PermissionBroker | None = None

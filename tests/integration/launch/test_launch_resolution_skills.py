@@ -12,7 +12,6 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.bundle_adapter import LoadedSkillEntry
-from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.launch.plan import (
     build_primary_launch_runtime,
@@ -20,7 +19,7 @@ from meridian.lib.launch.plan import (
 )
 from meridian.lib.launch.types import LaunchRequest
 from tests.support.fixtures import allow_headless_claude, write_agent
-from tests.support.launch import FakeBundleResult
+from tests.support.launch import FakeBundleResult, build_launch_context
 
 pytestmark = pytest.mark.slow
 

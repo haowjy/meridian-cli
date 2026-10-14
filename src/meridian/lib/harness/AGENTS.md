@@ -38,9 +38,11 @@ Running process                      events → SpawnManager drain loop
 
 `adapter.py` defines `SpawnParams` — the universal input struct. Every adapter
 declares `consumed_fields` (fields it uses) and `explicitly_ignored_fields`
-(fields it deliberately skips). Their union must cover every `SpawnParams` field;
-`_enforce_spawn_params_accounting()` raises `ImportError` at startup if any field
-is uncovered. This is enforcement, not documentation.
+(fields it deliberately skips). Each adapter's own `handled_fields` must equal the
+`SpawnParams` fields exactly — no missing and no stale names. Another adapter
+consuming a field does not cover it for yours.
+`_enforce_spawn_params_accounting()` raises `ImportError` at startup on any
+per-adapter drift. This is enforcement, not documentation.
 
 Idle integration uses optional `HarnessBundle` ports: `primary_idle_sensor` for
 launcher-hosted Codex/OpenCode sensing, `native_idle_hook` for native callback
@@ -106,7 +108,9 @@ Numeric cost coercion rejects boolean, nonfinite, and unrepresentable values.
 
 **SpawnParams accounting:** every field must appear in `consumed_fields` or
 `explicitly_ignored_fields` for each adapter. Adding a `SpawnParams` field
-without updating all adapters → startup failure.
+without updating all adapters → startup failure. Ignoring a field is a decision:
+list it in `explicitly_ignored_fields` only when the adapter's projection has no
+use for it.
 
 **Projection drift guard:** each `projections/project_<harness>_*.py` declares
 `_PROJECTED_FIELDS` and `_DELEGATED_FIELDS`. Missing a spec field from both →
@@ -162,7 +166,7 @@ parent report.
 
 ## Entry Points
 
-- `adapter.py` — `SpawnParams`, `HarnessAdapter`, `HarnessContract` and sub-models.
+- `adapter.py` — `SpawnParams`, `HarnessAdapter`, and the flat `HarnessContract`.
   Source of truth for what every adapter must implement.
 - `registry.py` — `HarnessRegistry`, `with_defaults()`. The global singleton.
 - `claude.py` / `codex.py` / `opencode.py` / `cursor.py` — concrete adapter implementations.

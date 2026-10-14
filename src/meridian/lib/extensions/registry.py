@@ -111,7 +111,6 @@ def compute_manifest_hash(registry: ExtensionCommandRegistry) -> str:
             "summary": spec.summary,
             "surfaces": sorted(surface.value for surface in spec.surfaces),
             "first_party": spec.first_party,
-            "requires_app_server": spec.requires_app_server,
             "required_capabilities": sorted(spec.required_capabilities),
             "args_schema": spec.args_schema.model_json_schema(),
             "result_schema": spec.result_schema.model_json_schema(),

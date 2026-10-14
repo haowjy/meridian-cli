@@ -172,7 +172,7 @@ async def _prepare_execution_handoff(
         # the start row). Other harnesses keep continue_fork native for launch
         # projection.
         if (
-            harness_adapter.contract.bootstrap.fork_materialization
+            harness_adapter.contract.fork_materialization
             is ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK
             and resolved_session.continue_fork
             and resolved_session.requested_harness_session_id

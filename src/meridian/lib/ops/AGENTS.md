@@ -105,7 +105,7 @@ is typed unavailable; runner output and primary metadata cannot repair it.
 
 - **Streaming-serve** (via `SpawnApplicationService.prepare_spawn()`): resolution
   first, row created only on success. This is the clean path.
-- **Spawn subprocess** (`execute.py`): row created before calling `build_launch_context()`.
+- **Spawn subprocess** (`execute.py`): row created before composing the prepared surface.
   This is a known gap; do not copy it into new paths.
 
 ## Anti-Patterns

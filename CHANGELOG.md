@@ -8,12 +8,20 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Run the strict Pyright gate with warnings fatal and per-rule suppressions only.
+- Stop advertising archived HTTP/app-server extension commands. Extension
+  discovery now exposes only runnable CLI and MCP surfaces and no longer emits
+  `requires_app_server` in JSON.
 
 ### Fixed
 - Skip malformed legacy native-session rows whose `chat_id` is not a string or
   `harness_session_ids` is not a list.
 - Treat the first `--` as the CLI passthrough boundary, even when it follows a
   value-taking option.
+- Keep streaming SIGTERM masked through connection teardown, then restore the
+  process handler without leaving a closed event loop behind.
+- Keep runtime-read config on the same resolved project authority snapshot as
+  runtime discovery.
+- Honor `--config` and `MERIDIAN_CONFIG` when resolving Git clone path overrides.
 
 ## [0.9.9] - 2026-10-14
 

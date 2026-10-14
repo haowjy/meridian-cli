@@ -19,7 +19,6 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import ForkMaterializationMode
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import command as launch_command
-from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process.primary_attach import PrimaryAttachOutcome
 from meridian.lib.launch.process.runner import run_harness_process
@@ -33,7 +32,7 @@ from meridian.lib.launch.request import (
 from meridian.lib.launch.types import SessionMode
 from meridian.lib.state import session_store
 from meridian.lib.state.spawn_store import list_spawns
-from tests.support.launch import stub_bundle_request_and_resolve
+from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 
 
 def _write_minimal_mars_config(project_root: Path) -> None:
@@ -187,6 +186,7 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
     outcome = run_harness_process(
         launch_context,
         harness_registry,
+        prepared=launch_context.prepared,
         run_primary_attach_fn=fake_run_primary_attach,
     )
 
@@ -222,9 +222,7 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
     codex_adapter = harness_registry.get_subprocess_harness(HarnessId.CODEX)
     native_fork_contract = codex_adapter.contract.model_copy(
         update={
-            "bootstrap": codex_adapter.contract.bootstrap.model_copy(
-                update={"fork_materialization": ForkMaterializationMode.NATIVE_CONTINUE_FORK}
-            )
+            "fork_materialization": ForkMaterializationMode.NATIVE_CONTINUE_FORK,
         }
     )
     monkeypatch.setattr(
@@ -315,6 +313,7 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
     outcome = run_harness_process(
         launch_context,
         harness_registry,
+        prepared=launch_context.prepared,
         run_primary_attach_fn=fake_run_primary_attach,
     )
 
@@ -427,7 +426,9 @@ def test_tracked_codex_fork_runs_shell_in_recorded_namespace(
         observed.append(target_id)
         return PrimaryAttachOutcome(exit_code=0, session_id=target_id, tui_pid=None)
 
-    outcome = run_harness_process(context, registry, run_primary_attach_fn=attach)
+    outcome = run_harness_process(
+        context, registry, prepared=context.prepared, run_primary_attach_fn=attach
+    )
     assert outcome.exit_code == 0
     assert len(observed) == 1
     chat = session_store.get_session_record(context.runtime_root, outcome.chat_id)
@@ -453,7 +454,7 @@ def test_prelaunch_identity_refusal_keeps_pre_exec_phase(
         raise error
 
     monkeypatch.setattr(registry.get(HarnessId.CODEX), "prepare_prelaunch", refuse)
-    outcome = run_harness_process(ctx, registry)
+    outcome = run_harness_process(ctx, registry, prepared=ctx.prepared)
     assert outcome.exit_code == 1
     row = list_spawns(ctx.runtime_root).records[0]
     facts = [

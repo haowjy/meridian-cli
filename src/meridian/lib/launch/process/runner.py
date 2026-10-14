@@ -17,7 +17,6 @@ from typing import Any, cast
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
-from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import (
     NativeIdentityError,
@@ -81,7 +80,6 @@ from ..context import (
     PreparedLaunchSurface,
     RuntimeBindings,
     bind_launch_context,
-    build_launch_context,
 )
 from ..fork import materialize_fork
 from ..request import LaunchCompositionSurface
@@ -391,7 +389,7 @@ def _execute_primary_process(
 ) -> tuple[int, str | None, bool, AttemptFacts]:
     """Run managed attach when eligible, otherwise fall back to black-box launch."""
 
-    use_managed_backend = harness_contract.bootstrap.mode.value == "managed_primary_attach"
+    use_managed_backend = harness_contract.bootstrap_mode.value == "managed_primary_attach"
     if use_managed_backend:
         try:
             return _execute_via_managed_attach(
@@ -407,7 +405,7 @@ def _execute_primary_process(
                 on_running=on_running,
             )
         except PrimaryAttachError as exc:
-            if harness_contract.bootstrap.primary_attach_failure_policy == "raise":
+            if harness_contract.primary_attach_failure_policy == "raise":
                 raise
             stderr_excerpt = _managed_primary_stderr_excerpt(log_dir)
             logger.warning(
@@ -425,7 +423,7 @@ def _execute_primary_process(
         else None
     )
     blackbox_env = dict(child_env)
-    if harness_contract.bootstrap.primary_stderr_log:
+    if harness_contract.primary_stderr_log:
         blackbox_env[PRIMARY_STDERR_LOG_PATH_ENV] = str(log_dir / "stderr.log")
     exit_code = _execute_via_blackbox(
         command=command,
@@ -514,8 +512,8 @@ def _create_managed_primary_connection(
 
     connection_ref: dict[str, HarnessConnection[Any]] = {}
 
-    policy = harness_contract.approval.primary_session_runtime_request_policy
-    event_surface = harness_contract.approval.primary_session_runtime_event_surface
+    policy = harness_contract.primary_session_runtime_request_policy
+    event_surface = harness_contract.primary_session_runtime_event_surface
 
     connection = connection_factory()
     connection_ref["connection"] = connection
@@ -645,8 +643,7 @@ def run_harness_process(
     launch_context: LaunchContext,
     harness_registry: HarnessRegistry,
     *,
-    prepared: PreparedLaunchSurface | None = None,
-    cache: MarsResultCache | None = None,
+    prepared: PreparedLaunchSurface,
     run_primary_process_with_capture_fn: RunPrimaryProcessWithCapture = (
         run_primary_process_with_capture
     ),
@@ -730,7 +727,7 @@ def run_harness_process(
                 write_native_primary_metadata = False
                 should_fork = (
                     session_mode == SessionMode.FORK
-                    and harness_adapter.contract.bootstrap.fork_materialization
+                    and harness_adapter.contract.fork_materialization
                     is ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK
                     and bool((preview_request.session.requested_harness_session_id or "").strip())
                 )
@@ -772,17 +769,6 @@ def run_harness_process(
                         runtime_root=runtime_root,
                         spawn_id=primary_spawn_id,
                     )
-                    if prepared is None:
-                        spawn_request = spawn_request.model_copy(
-                            update={
-                                "session": spawn_request.session.model_copy(
-                                    update={
-                                        "requested_harness_session_id": forked_session_id,
-                                        "continue_fork": False,
-                                    }
-                                )
-                            }
-                        )
                     resolved_harness_session_id = forked_session_id
                 if forked_session_id:
                     expected_harness_session_id = forked_session_id
@@ -792,13 +778,6 @@ def run_harness_process(
                 primary_started = time.monotonic()
                 primary_started_epoch = time.time()
                 primary_started_local_iso = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-                preview_seed_args = preview_context.binding.seed_harness_session_args
-                runtime_request = spawn_request.model_copy(
-                    update={
-                        "extra_args": (*spawn_request.extra_args, *preview_seed_args),
-                        "work_id_hint": attached_work_id,
-                    }
-                )
                 runtime = preview_context.runtime.model_copy(
                     update={
                         "composition_surface": LaunchCompositionSurface.PRIMARY,
@@ -819,36 +798,24 @@ def run_harness_process(
                     for k, v in cast("dict[str, str]", config_env).items():
                         if k.strip():
                             plan_overrides[k] = v
-                if runtime_request.execution_policy.autocompact is not None:
+                if spawn_request.execution_policy.autocompact is not None:
                     plan_overrides["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(
-                        runtime_request.execution_policy.autocompact
+                        spawn_request.execution_policy.autocompact
                     )
-                if prepared is not None:
-                    runtime_context = bind_launch_context(
-                        prepared=prepared,
-                        bindings=RuntimeBindings(
-                            spawn_id=str(primary_spawn_id),
-                            runtime_work_id=attached_work_id,
-                            chat_id=chat_id,
-                            forked_harness_session_id=forked_session_id,
-                            continue_fork_override=False if should_fork else None,
-                            plan_overrides=plan_overrides,
-                        ),
-                        runtime=runtime,
-                        project_root=config_root,
-                        harness_registry=harness_registry,
-                    )
-                else:
-                    runtime_context = build_launch_context(
+                runtime_context = bind_launch_context(
+                    prepared=prepared,
+                    bindings=RuntimeBindings(
                         spawn_id=str(primary_spawn_id),
-                        request=runtime_request,
-                        runtime=runtime,
-                        harness_registry=harness_registry,
-                        plan_overrides=plan_overrides,
                         runtime_work_id=attached_work_id,
                         forked_harness_session_id=forked_session_id,
-                        cache=cache,
-                    )
+                        chat_id=chat_id,
+                        continue_fork_override=False if should_fork else None,
+                        plan_overrides=plan_overrides,
+                    ),
+                    runtime=runtime,
+                    project_root=config_root,
+                    harness_registry=harness_registry,
+                )
                 write_projection_artifacts(
                     log_dir=log_dir,
                     launch_context=runtime_context,

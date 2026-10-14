@@ -4,13 +4,11 @@
 
 ### The Prepare/Bind Composition Seam (Invariant I-1)
 
-Runtime launch composition happens once inside `bind_launch_context()` in `context.py`.
-It produces the complete argv, environment, cwd, and permissions consumed by the
-driving adapter and its connection. No adapter recomposes the child environment
-from `os.environ`. `build_launch_context()` remains the convenience wrapper that
-prepares and binds in one call.
-
-`build_launch_context()` is a backward-compat wrapper over a two-phase pipeline:
+Runtime launch composition follows the prepare/bind pipeline in `context.py`.
+`prepare_launch_surface()` produces the mandatory `PreparedLaunchSurface`, then
+`bind_launch_context()` produces the complete argv, environment, cwd, and
+permissions consumed by the driving adapter and its connection. No adapter
+recomposes the child environment from `os.environ`.
 
 ```
 SpawnRequest + LaunchRuntime
@@ -167,7 +165,7 @@ constraint required for the background worker's disk-persisted request.
 
 | Code | Rule |
 |------|------|
-| I-1 | Runtime composition happens at `bind_launch_context()`; `build_launch_context()` is its prepare+bind wrapper |
+| I-1 | All runtime composition uses `prepare_launch_surface()` then `bind_launch_context()`; adapters do not compose independently |
 | I-2 | Driving adapters and connections consume the bound argv, env, and permissions without reconstruction |
 | I-4 | `conclude_native_run()` once per turn after teardown joins: IDs → adapter → boundary → attribution |
 | I-5 | `SpawnRequest`/`LaunchRuntime` carry no derived state; `LaunchContext` complete at construction |
@@ -377,8 +375,8 @@ configuration would be needed.
 ### Logging Convention
 
 `launch/` uses `structlog.get_logger()`. Do not use stdlib `logging` here —
-the split matters because `capture_library_diagnostics()` (wrapping `build_launch_context()`)
-captures stdlib warnings during spawn; structlog bypasses it and would leak to stderr.
+the split matters because `capture_library_diagnostics()` wraps spawn preparation
+and captures stdlib warnings; structlog bypasses it and would leak to stderr.
 
 ### `session_scope()` Teardown Contract
 

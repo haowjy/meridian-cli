@@ -15,7 +15,7 @@ Surface checks in the dispatcher enforce what's callable via MCP.
 
 - Logging runs in `json_mode=True` — no TTY noise on stdio (stdio is the MCP transport)
 - Telemetry runs in `STDERR` mode — rootless, no Segment storage
-- Commands with `requires_app_server=True` return `app_server_archived` — the app server is archived; only in-process commands are supported
+- Extension commands run in process through the shared dispatcher
 - Bootstrap uses `prepare_for_runtime_read` — read-only, no directory creation
 
 ## Entry Points

@@ -70,25 +70,6 @@ def _empty_env_overrides() -> dict[str, str]:
     return {}
 
 
-class ProjectionMode(StrEnum):
-    """How one adapter projects semantic launch content onto harness channels."""
-
-    # Prompt is written to a temp prompt file and system instructions are
-    # appended into that file content before launch.
-    PROMPT_FILE_APPEND_SYSTEM = "prompt_file_append_system"
-    # Harness accepts structured system/user fields separately.
-    SYSTEM_FIELD_WITH_USER_TURN = "system_field_with_user_turn"
-    # Prompt is projected as one positional CLI argument.
-    POSITIONAL_PROMPT = "positional_prompt"
-
-
-class RuntimeHitlMode(StrEnum):
-    """How one harness exposes runtime approval/user-input requests."""
-
-    NONE = "none"
-    CONNECTION_REQUESTS = "connection_requests"
-
-
 class BootstrapMode(StrEnum):
     """How one harness boots or materializes interactive primary runs."""
 
@@ -103,19 +84,11 @@ class ForkMaterializationMode(StrEnum):
     MERIDIAN_MATERIALIZED_FORK = "meridian_materialized_fork"
 
 
-class PrelaunchBootstrapMode(StrEnum):
-    """How one harness performs prelaunch environment/bootstrap work."""
-
-    NONE = "none"
-    ENV_OVERLAY_AND_SESSION_ACCESS = "env_overlay_and_session_access"
-
-
 class HarnessCapabilities(BaseModel):
     """Feature flags for one harness implementation."""
 
     model_config = ConfigDict(frozen=True)
 
-    supports_stream_events: bool = True
     supports_stdin_prompt: bool = False
     supports_session_resume: bool = False
     supports_session_fork: bool = False
@@ -137,94 +110,26 @@ class HarnessCapabilities(BaseModel):
     default_terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
 
 
-class TransportContract(BaseModel):
-    """Explicit transport responsibility declaration for one harness."""
-
-    model_config = ConfigDict(frozen=True)
-
-    transport_ids: tuple[TransportId, ...]
-    observer_controller_required: bool = False
-
-
-class ProjectionContract(BaseModel):
-    """Explicit projection responsibility declaration for one harness."""
-
-    model_config = ConfigDict(frozen=True)
-
-    launch_spec_cls: str
-    mode: ProjectionMode
-    owns_prompt_policy: bool = True
-    owns_mcp_projection: bool = True
-    owns_env_overrides: bool = True
-
-
-class ExtractionContract(BaseModel):
-    """Explicit extraction responsibility declaration for one harness."""
-
-    model_config = ConfigDict(frozen=True)
-
-    extracts_usage: bool = True
-    extracts_session_id: bool = True
-    extracts_report: bool = True
-    session_observation_order: tuple[str, ...] = ()
-
-
-class ApprovalContract(BaseModel):
-    """Explicit approval/HITL contract for one harness."""
-
-    model_config = ConfigDict(frozen=True)
-
-    runtime_hitl: RuntimeHitlMode = RuntimeHitlMode.NONE
-    subprocess_permission_flags_projected_by_shared_policy: bool = True
-    default_runtime_request_policy: Literal["none", "auto_accept"] = "none"
-    primary_session_runtime_request_policy: PrimaryRuntimeRequestPolicy = (
-        PrimaryRuntimeRequestPolicy.NONE
-    )
-    primary_session_runtime_event_surface: PrimaryRuntimeEventSurface = (
-        PrimaryRuntimeEventSurface.NONE
-    )
-
-
-class ObserverControllerContract(BaseModel):
-    """Managed primary observer/controller backend contract."""
-
-    model_config = ConfigDict(frozen=True)
-
-    starts_sidecar_backend: bool = True
-    exposes_ordered_event_stream: bool = True
-    supports_cancel: bool = True
-    supports_input_injection: bool = True
-    obtains_session_id_during_startup: bool = True
-
-
-class BootstrapContract(BaseModel):
-    """Explicit bootstrap/materialization contract for one harness."""
-
-    model_config = ConfigDict(frozen=True)
-
-    mode: BootstrapMode
-    fork_materialization: ForkMaterializationMode = ForkMaterializationMode.NATIVE_CONTINUE_FORK
-    primary_attach_failure_policy: Literal["raise", "fallback_to_blackbox"] = "raise"
-    seeds_resume_metadata: bool = True
-    prelaunch_bootstrap_mode: PrelaunchBootstrapMode = PrelaunchBootstrapMode.NONE
-    #: Whether the black-box primary child needs the stderr log path env var
-    #: injected so its runtime writes stderr to the spawn dir.
-    primary_stderr_log: bool = False
-    observer_controller: ObserverControllerContract | None = None
-
-
 class HarnessContract(BaseModel):
     """Inspectable contract surface for one harness adapter."""
 
     model_config = ConfigDict(frozen=True)
 
     capabilities: HarnessCapabilities
-    transport: TransportContract
-    projection: ProjectionContract
-    extraction: ExtractionContract
-    approval: ApprovalContract
-    bootstrap: BootstrapContract
-    capability_limits: tuple[str, ...] = ()
+    transport_ids: tuple[TransportId, ...]
+    launch_spec_cls: str
+    bootstrap_mode: BootstrapMode
+    fork_materialization: ForkMaterializationMode = ForkMaterializationMode.NATIVE_CONTINUE_FORK
+    primary_attach_failure_policy: Literal["raise", "fallback_to_blackbox"] = "raise"
+    #: Whether the black-box primary child needs the stderr log path env var
+    #: injected so its runtime writes stderr to the spawn dir.
+    primary_stderr_log: bool = False
+    primary_session_runtime_request_policy: PrimaryRuntimeRequestPolicy = (
+        PrimaryRuntimeRequestPolicy.NONE
+    )
+    primary_session_runtime_event_surface: PrimaryRuntimeEventSurface = (
+        PrimaryRuntimeEventSurface.NONE
+    )
 
 
 class SpawnUsageContractVariants(BaseModel):

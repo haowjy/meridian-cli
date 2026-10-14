@@ -267,7 +267,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         # managed-primary paths install the surfacing handler.
         return replace(
             self._CAPABILITIES,
-            supports_runtime_hitl=not getattr(self._request_handler, "no_runtime_hitl", True),
+            supports_runtime_hitl=not self._request_handler.no_runtime_hitl,
         )
 
     @property

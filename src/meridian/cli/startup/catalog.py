@@ -15,26 +15,15 @@ from meridian.cli.startup.policy import (
 
 
 @dataclass(frozen=True)
-class RedirectPolicy:
-    """Descriptor-owned redirect policy for commands handled elsewhere."""
-
-    target: str
-    message: str | None = None
-
-
-@dataclass(frozen=True)
 class CommandDescriptor:
     """Import-cheap metadata needed to classify a CLI command before dispatch."""
 
     command_path: tuple[str, ...]
-    lazy_target: str
     summary: str
     startup_class: StartupClass
     bootstrap_plan: BootstrapPlan
     telemetry_mode: TelemetryMode
     default_output_mode: str
-    redirect: RedirectPolicy | None = None
-    extension_ref: str | None = None
     root_source: RootSource = RootSource.CWD
 
 
@@ -86,34 +75,25 @@ def _descriptor(
     default_output_mode: str,
     summary: str,
     *,
-    lazy_target: str | None = None,
-    redirect: RedirectPolicy | None = None,
-    extension_ref: str | None = None,
     root_source: RootSource = RootSource.CWD,
     auto_init_cwd: bool = False,
 ) -> CommandDescriptor:
-    target = lazy_target or f"meridian.cli.main:{'.'.join(path) if path else 'root'}"
     bootstrap_plan = BootstrapPlan(
         StateRequirement.NONE if root_source == RootSource.ARGV else state_requirement,
         auto_init_cwd=auto_init_cwd,
     )
     return CommandDescriptor(
         command_path=path,
-        lazy_target=target,
         summary=summary,
         startup_class=startup_class,
         bootstrap_plan=bootstrap_plan,
         telemetry_mode=telemetry_mode,
         default_output_mode=default_output_mode,
-        redirect=redirect,
-        extension_ref=extension_ref,
         root_source=root_source,
     )
 
 
-def _read_project(
-    path: tuple[str, ...], summary: str, *, extension_ref: str | None = None
-) -> CommandDescriptor:
+def _read_project(path: tuple[str, ...], summary: str) -> CommandDescriptor:
     return _descriptor(
         path,
         StartupClass.READ_PROJECT,
@@ -121,7 +101,6 @@ def _read_project(
         TelemetryMode.NONE,
         "text",
         summary,
-        extension_ref=extension_ref,
     )
 
 
@@ -131,7 +110,6 @@ def _read_rootless(
     *,
     startup_class: StartupClass = StartupClass.READ_ROOTLESS,
     default_output_mode: str = "text",
-    extension_ref: str | None = None,
 ) -> CommandDescriptor:
     """Path- or user-level read commands that do not require a Meridian project."""
 
@@ -142,7 +120,6 @@ def _read_rootless(
         TelemetryMode.NONE,
         default_output_mode,
         summary,
-        extension_ref=extension_ref,
     )
 
 
@@ -151,7 +128,6 @@ def _write_rootless(
     summary: str,
     *,
     default_output_mode: str = "text",
-    extension_ref: str | None = None,
 ) -> CommandDescriptor:
     """Path- or user-level write commands that do not require a Meridian project."""
 
@@ -162,7 +138,6 @@ def _write_rootless(
         TelemetryMode.NONE,
         default_output_mode,
         summary,
-        extension_ref=extension_ref,
     )
 
 
@@ -170,7 +145,6 @@ def _write_project(
     path: tuple[str, ...],
     summary: str,
     *,
-    extension_ref: str | None = None,
     root_source: RootSource = RootSource.CWD,
     auto_init_cwd: bool = False,
 ) -> CommandDescriptor:
@@ -181,7 +155,6 @@ def _write_project(
         TelemetryMode.SEGMENT_OPTIONAL,
         "text",
         summary,
-        extension_ref=extension_ref,
         root_source=root_source,
         auto_init_cwd=auto_init_cwd,
     )
@@ -192,7 +165,6 @@ def _read_runtime(
     summary: str,
     *,
     default_output_mode: str = "text",
-    extension_ref: str | None = None,
 ) -> CommandDescriptor:
     return _descriptor(
         path,
@@ -201,7 +173,6 @@ def _read_runtime(
         TelemetryMode.NONE,
         default_output_mode,
         summary,
-        extension_ref=extension_ref,
     )
 
 
@@ -210,7 +181,6 @@ def _write_runtime(
     summary: str,
     *,
     default_output_mode: str = "text",
-    extension_ref: str | None = None,
     auto_init_cwd: bool = False,
 ) -> CommandDescriptor:
     return _descriptor(
@@ -220,7 +190,6 @@ def _write_runtime(
         TelemetryMode.SEGMENT,
         default_output_mode,
         summary,
-        extension_ref=extension_ref,
         auto_init_cwd=auto_init_cwd,
     )
 
@@ -258,10 +227,6 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         TelemetryMode.NONE,
         "text",
         "Inspect the curated harness-model view.",
-        redirect=RedirectPolicy(
-            target="meridian mars models list", message="Redirecting to meridian mars models list"
-        ),
-        extension_ref="meridian.models.list",
     ),
     _descriptor(
         ("completion", "bash"),
@@ -299,58 +264,40 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         ("spawn",),
         "Create a spawn via spawn default route.",
         default_output_mode="text",
-        extension_ref="meridian.spawn.create",
         auto_init_cwd=True,
-    ),
-    _write_runtime(
-        ("spawn", "create"),
-        "Create a spawn.",
-        default_output_mode="text",
-        extension_ref="meridian.spawn.create",
-        auto_init_cwd=True,
-    ),
-    _write_runtime(
-        ("spawn", "continue"),
-        "Continue a spawn.",
-        default_output_mode="text",
-        extension_ref="meridian.spawn.continue",
     ),
     _read_runtime(
         ("spawn", "list"),
         "List spawns.",
         default_output_mode="text",
-        extension_ref="meridian.spawn.list",
     ),
     _read_runtime(
         ("spawn", "show"),
         "Show spawn details.",
         default_output_mode="text",
-        extension_ref="meridian.spawn.show",
     ),
     _read_runtime(
         ("spawn", "status"),
         "Show spawn status details without report body by default.",
         default_output_mode="text",
-        extension_ref="meridian.spawn.status",
     ),
     _read_runtime(
         ("spawn", "wait"),
         "Wait for spawns.",
         default_output_mode="text",
-        extension_ref="meridian.spawn.wait",
     ),
     _write_runtime(
         ("spawn", "cancel"),
         "Cancel a spawn.",
         default_output_mode="text",
-        extension_ref="meridian.spawn.cancel",
     ),
     _write_runtime(
         ("spawn", "cancel-all"),
         "Cancel all spawns.",
         default_output_mode="text",
-        extension_ref="meridian.spawn.cancelAll",
     ),
+    _write_runtime(("spawn", "done"), "Signal a resident spawn to finish successfully."),
+    _write_runtime(("spawn", "rearm"), "Signal a resident spawn to keep running."),
     _write_runtime(
         ("spawn", "inject"), "Inject a message into a spawn.", default_output_mode="text"
     ),
@@ -358,115 +305,94 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         ("spawn", "children"),
         "List child spawns.",
         default_output_mode="text",
-        extension_ref="meridian.spawn.children",
     ),
     _read_runtime(
         ("spawn", "subagents"),
         "List subagents the current agent may spawn.",
-        extension_ref="meridian.spawn.subagents",
     ),
-    _read_runtime(
-        ("spawn", "files"), "List files changed by a spawn.", extension_ref="meridian.spawn.files"
-    ),
-    _read_runtime(("spawn", "stats"), "Show spawn stats.", extension_ref="meridian.spawn.stats"),
-    _read_runtime(
-        ("spawn", "report", "show"), "Show a spawn report.", extension_ref="meridian.report.show"
-    ),
+    _read_runtime(("spawn", "files"), "List files changed by a spawn."),
+    _read_runtime(("spawn", "stats"), "Show spawn stats."),
+    _read_runtime(("spawn", "report", "show"), "Show a spawn report."),
     _read_runtime(
         ("spawn", "report", "search"),
         "Search spawn reports.",
-        extension_ref="meridian.report.search",
     ),
     _read_runtime(
         ("session", "browse"),
         "Browse recent sessions; resume stopped or fork live ones.",
-        extension_ref="meridian.session.browse",
     ),
-    _read_runtime(("session", "log"), "Show session log.", extension_ref="meridian.session.log"),
-    _read_runtime(
-        ("session", "export"), "Export session log.", extension_ref="meridian.session.export"
-    ),
-    _read_runtime(
-        ("session", "search"), "Search session logs.", extension_ref="meridian.session.search"
-    ),
+    _read_runtime(("session", "log"), "Show session log."),
+    _read_runtime(("session", "export"), "Export session log."),
+    _read_runtime(("session", "search"), "Search session logs."),
     _write_runtime(
         ("session", "repair"),
         "Repair stored session metadata from explicit harness-session detection.",
-        extension_ref="meridian.session.repair",
     ),
     _write_runtime(
         ("session", "archive"),
         "Archive retained history.",
-        extension_ref="meridian.session.archive",
     ),
     _write_runtime(
-        ("session", "import"), "Import history ZIP.", extension_ref="meridian.session.import"
+        ("session", "import"), "Import history ZIP."
     ),
     _write_runtime(
-        ("session", "restore"), "Restore inert history.", extension_ref="meridian.session.restore"
+        ("session", "restore"), "Restore inert history."
     ),
     _write_runtime(
         ("session", "index"),
         "Inspect or rebuild history index.",
-        extension_ref="meridian.session.index",
     ),
     _read_runtime(("work",), "Show work dashboard."),
-    _read_runtime(("work", "list"), "List work items.", extension_ref="meridian.work.list"),
-    _read_runtime(("work", "show"), "Show work item.", extension_ref="meridian.work.show"),
+    _read_runtime(("work", "list"), "List work items."),
+    _read_runtime(("work", "show"), "Show work item."),
     _read_runtime(
-        ("work", "sessions"), "Show sessions for work.", extension_ref="meridian.work.sessions"
+        ("work", "sessions"), "Show sessions for work."
     ),
-    _read_runtime(("work", "current"), "Show current work.", extension_ref="meridian.work.current"),
+    _read_runtime(("work", "current"), "Show current work."),
     _write_runtime(
         ("work", "path"),
         "Materialize a path under the active work scope.",
-        extension_ref="meridian.work.path",
     ),
-    _read_runtime(("work", "root"), "Show work root.", extension_ref="meridian.work.root"),
+    _read_runtime(("work", "root"), "Show work root."),
     _write_runtime(
         ("work", "start"),
         "Start work item.",
-        extension_ref="meridian.work.start",
         auto_init_cwd=True,
     ),
     _write_runtime(
-        ("work", "switch"), "Switch current work.", extension_ref="meridian.work.switch"
+        ("work", "switch"), "Switch current work."
     ),
-    _write_runtime(("work", "done"), "Mark work done.", extension_ref="meridian.work.done"),
-    _write_runtime(("work", "reopen"), "Reopen work item.", extension_ref="meridian.work.reopen"),
-    _write_runtime(("work", "update"), "Update work item.", extension_ref="meridian.work.update"),
-    _write_runtime(("work", "delete"), "Delete work item.", extension_ref="meridian.work.delete"),
-    _write_runtime(("work", "rename"), "Rename work item.", extension_ref="meridian.work.rename"),
-    _write_runtime(("work", "clear"), "Clear current work.", extension_ref="meridian.work.clear"),
+    _write_runtime(("work", "done"), "Mark work done."),
+    _write_runtime(("work", "reopen"), "Reopen work item."),
+    _write_runtime(("work", "update"), "Update work item."),
+    _write_runtime(("work", "delete"), "Delete work item."),
+    _write_runtime(("work", "rename"), "Rename work item."),
+    _write_runtime(("work", "clear"), "Clear current work."),
     _write_runtime(
         ("work", "task-dir"),
         "Print or set the active work item's source-code edit directory.",
-        extension_ref="meridian.work.task-dir",
     ),
     _read_rootless(
-        ("config", "show"), "Show resolved config.", extension_ref="meridian.config.show"
+        ("config", "show"), "Show resolved config."
     ),
-    _read_rootless(("config", "get"), "Get config value.", extension_ref="meridian.config.get"),
+    _read_rootless(("config", "get"), "Get config value."),
     _write_project(
         ("config", "init"),
         "Initialize config.",
-        extension_ref="meridian.config.init",
         root_source=RootSource.ARGV,
     ),
     _write_project(
         ("config", "set"),
         "Set config value.",
-        extension_ref="meridian.config.set",
         auto_init_cwd=True,
     ),
     _write_project(
-        ("config", "reset"), "Reset config value.", extension_ref="meridian.config.reset"
+        ("config", "reset"), "Reset config value."
     ),
-    _read_project(("context",), "Show context paths.", extension_ref="meridian.context.context"),
+    _read_project(("context",), "Show context paths."),
     _read_rootless(
         ("doctor",),
         "Run doctor checks.",
-        extension_ref="meridian.doctor.doctor",
     ),
     _read_runtime(("telemetry", "status"), "Show telemetry status."),
     _read_runtime(("telemetry", "tail"), "Tail telemetry events."),
@@ -484,25 +410,22 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         "List extension commands.",
     ),
     _read_runtime(("ext", "run"), "Run extension command."),
-    _read_project(("hooks", "list"), "List hooks.", extension_ref="meridian.hooks.list"),
+    _read_project(("hooks", "list"), "List hooks."),
     _read_project(
-        ("hooks", "check"), "Check hook configuration.", extension_ref="meridian.hooks.check"
+        ("hooks", "check"), "Check hook configuration."
     ),
-    _write_project(("hooks", "run"), "Run hooks.", extension_ref="meridian.hooks.run"),
+    _write_project(("hooks", "run"), "Run hooks."),
     _read_runtime(
         ("task-dir",),
         "Print effective source-edit directory.",
-        extension_ref="meridian.task-dir",
     ),
     _write_runtime(
         ("task-dir", "set"),
         "Set spawn-scope source-edit directory.",
-        extension_ref="meridian.task-dir.set",
     ),
     _write_runtime(
         ("task-dir", "clear"),
         "Clear spawn-scope source-edit directory override.",
-        extension_ref="meridian.task-dir.clear",
     ),
     _read_runtime(("sync", "conflict", "list"), "List unresolved autosync conflicts."),
     _read_runtime(("sync", "conflict", "show"), "Show autosync conflict details."),
@@ -511,7 +434,6 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _write_project(
         ("workspace", "init"),
         "Initialize workspace config.",
-        extension_ref="meridian.workspace.init",
         auto_init_cwd=True,
     ),
     _read_rootless(("kg", "graph"), "Render knowledge graph."),
@@ -562,5 +484,4 @@ __all__ = [
     "COMMAND_CATALOG",
     "CommandCatalog",
     "CommandDescriptor",
-    "RedirectPolicy",
 ]

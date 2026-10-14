@@ -247,7 +247,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=ConfigGetOutput,
         cli_group="config",
         cli_name="get",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.config",
@@ -259,7 +259,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=ConfigInitOutput,
         cli_group="config",
         cli_name="init",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.config",
@@ -271,7 +271,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=ConfigResetOutput,
         cli_group="config",
         cli_name="reset",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.config",
@@ -283,7 +283,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=ConfigSetOutput,
         cli_group="config",
         cli_name="set",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.config",
@@ -295,7 +295,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=ConfigShowOutput,
         cli_group="config",
         cli_name="show",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.workspace",
@@ -307,7 +307,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=WorkspaceInitOutput,
         cli_group="workspace",
         cli_name="init",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.doctor",
@@ -330,7 +330,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=HookCheckOutput,
         cli_group="hooks",
         cli_name="check",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.hooks",
@@ -342,7 +342,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=HookListOutput,
         cli_group="hooks",
         cli_name="list",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.hooks",
@@ -354,7 +354,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=HookResolveOutput,
         cli_group=None,
         cli_name=None,
-        surfaces=frozenset({ExtensionSurface.MCP, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.MCP}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.hooks",
@@ -366,7 +366,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=HookRunOutput,
         cli_group="hooks",
         cli_name="run",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian",
@@ -509,7 +509,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=SessionLogOutput,
         cli_group="session",
         cli_name="log",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.session",
@@ -521,7 +521,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=SessionExportOutput,
         cli_group="session",
         cli_name="export",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.session",
@@ -533,7 +533,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=SessionSearchOutput,
         cli_group="session",
         cli_name="search",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.session",
@@ -545,7 +545,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=SessionRepairOutput,
         cli_group="session",
         cli_name="repair",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.spawn",
@@ -569,7 +569,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=SpawnActionOutput,
         cli_group="spawn",
         cli_name="cancel",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.spawn",
@@ -593,7 +593,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=SpawnWrittenFilesOutput,
         cli_group="spawn",
         cli_name="files",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.spawn",
@@ -605,7 +605,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=SpawnListOutput,
         cli_group="spawn",
         cli_name="children",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.spawn",
@@ -617,7 +617,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=SpawnActionOutput,
         cli_group="spawn",
         cli_name="continue",
-        surfaces=frozenset({ExtensionSurface.MCP, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.MCP}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.spawn",
@@ -629,7 +629,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=SpawnActionOutput,
         cli_group="spawn",
         cli_name="create",
-        surfaces=frozenset({ExtensionSurface.MCP, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.MCP}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.spawn",
@@ -700,7 +700,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=WorkClearOutput,
         cli_group="work",
         cli_name="clear",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.work",
@@ -715,7 +715,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=WorkTaskDirOutput,
         cli_group="work",
         cli_name="task-dir",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.work",
@@ -727,7 +727,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=WorkUpdateOutput,
         cli_group="work",
         cli_name="done",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.work",
@@ -741,7 +741,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=WorkDeleteOutput,
         cli_group="work",
         cli_name="delete",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.work",
@@ -755,7 +755,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=WorkReopenOutput,
         cli_group="work",
         cli_name="reopen",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.work",
@@ -770,7 +770,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=WorkListOutput,
         cli_group="work",
         cli_name="list",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.work",
@@ -782,7 +782,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=WorkRenameOutput,
         cli_group="work",
         cli_name="rename",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.work",
@@ -794,7 +794,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=WorkShowOutput,
         cli_group="work",
         cli_name="show",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.work",
@@ -809,7 +809,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=WorkSessionsOutput,
         cli_group="work",
         cli_name="sessions",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.work",
@@ -823,7 +823,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=WorkStartOutput,
         cli_group="work",
         cli_name="start",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.work",
@@ -835,7 +835,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=WorkSwitchOutput,
         cli_group="work",
         cli_name="switch",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.work",
@@ -847,7 +847,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=WorkUpdateOutput,
         cli_group="work",
         cli_name="update",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.context",
@@ -859,7 +859,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=ContextOutput,
         cli_group="context",
         cli_name="context",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.work",
@@ -871,7 +871,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=WorkCurrentOutput,
         cli_group="work",
         cli_name="current",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.work",
@@ -883,7 +883,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=WorkPathOutput,
         cli_group="work",
         cli_name="path",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.work",
@@ -895,7 +895,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=WorkRootOutput,
         cli_group="work",
         cli_name="root",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
 )
 

@@ -22,7 +22,6 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import ObserverEndpoint
 from meridian.lib.harness.passthrough.codex import CodexPassthrough
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import runner as process_runner
 from meridian.lib.launch.process.ports import ProcessLauncher
@@ -43,7 +42,11 @@ from meridian.lib.launch.types import SessionMode
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.state import session_store
 from meridian.lib.state.spawn_store import get_spawn, list_spawns
-from tests.support.launch import assert_task_cwd_instruction, stub_bundle_request_and_resolve
+from tests.support.launch import (
+    assert_task_cwd_instruction,
+    build_launch_context,
+    stub_bundle_request_and_resolve,
+)
 
 
 def _write_minimal_mars_config(project_root: Path) -> None:
@@ -212,6 +215,7 @@ def test_run_harness_process_writes_codex_system_field_primary_projection_manife
     outcome = run_harness_process(
         launch_context,
         harness_registry,
+        prepared=launch_context.prepared,
         run_primary_attach_fn=fake_launcher_for(captured),
         run_primary_process_with_capture_fn=lambda *_args: (_ for _ in ()).throw(
             AssertionError("managed primary path should avoid black-box launcher")
@@ -300,6 +304,7 @@ def test_run_harness_process_codex_primary_routes_to_managed_path(
     outcome = run_harness_process(
         launch_context,
         harness_registry,
+        prepared=launch_context.prepared,
         run_primary_attach_fn=fake_run_primary_attach,
         run_primary_process_with_capture_fn=fail_black_box,
     )
@@ -366,6 +371,7 @@ def test_run_harness_process_codex_managed_attach_uses_control_root_with_distinc
     outcome = run_harness_process(
         launch_context,
         harness_registry,
+        prepared=launch_context.prepared,
         run_primary_attach_fn=fake_run_primary_attach,
         run_primary_process_with_capture_fn=lambda *_args: (_ for _ in ()).throw(
             AssertionError("managed primary path should avoid black-box launcher")
@@ -452,6 +458,7 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
     outcome = run_harness_process(
         launch_context,
         harness_registry,
+        prepared=launch_context.prepared,
         run_primary_attach_fn=fake_run_primary_attach,
         run_primary_process_with_capture_fn=fail_black_box,
     )
@@ -503,6 +510,7 @@ def test_run_harness_process_codex_managed_failure_raises_error(
         run_harness_process(
             launch_context,
             harness_registry,
+            prepared=launch_context.prepared,
             run_primary_attach_fn=failing_managed,
             run_primary_process_with_capture_fn=lambda *_args: (_ for _ in ()).throw(
                 AssertionError("codex should not fall back to black-box")

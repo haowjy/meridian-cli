@@ -13,7 +13,7 @@ import structlog
 from pydantic import ValidationError
 
 from meridian.lib.catalog.catalog_session import CatalogSession
-from meridian.lib.catalog.model_aliases import AliasEntry, MarsResultCache
+from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.context_config import (
     ArbitraryContextConfig,
     ContextConfig,
@@ -35,7 +35,6 @@ from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
-from meridian.lib.diagnostics import capture_library_diagnostics
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
@@ -788,20 +787,6 @@ def _is_task_cwd_covered_by_projection(
     if _path_within(task_cwd, control_root):
         return True
     return any(_path_within(task_cwd, root) for root in projected_roots)
-
-
-def _resolve_harness_id(
-    *,
-    request: SpawnRequest,
-) -> HarnessId:
-    explicit_harness = (request.harness or "").strip()
-    if explicit_harness:
-        try:
-            return HarnessId(explicit_harness)
-        except ValueError as exc:
-            raise ValueError(f"Unknown harness '{explicit_harness}'.") from exc
-
-    raise ValueError("SpawnRequest.harness is required.")
 
 
 _KNOWN_MODEL_FAMILIES: dict[str, str] = {
@@ -1689,66 +1674,6 @@ def prepare_launch_surface(
     )
 
 
-def _build_direct_surface(
-    *,
-    request: SpawnRequest,
-    project_root: Path,
-    reference_anchor: Path,
-    harness_registry: HarnessRegistry,
-) -> PreparedLaunchSurface:
-    """Build the lightweight prepared surface for already-resolved DIRECT launches."""
-
-    resolved_project_root = project_root.expanduser().resolve()
-    harness_id = _resolve_harness_id(request=request)
-    harness = harness_registry.get_subprocess_harness(harness_id)
-    composition_warnings = _build_composition_warnings(
-        request_warning=request.warning,
-        policy_warnings=(),
-        route_warning=None,
-        missing_skills_warning=None,
-        continuation_warning=None,
-    )
-    loaded_references = load_reference_items(
-        request.reference_files,
-        reference_anchor=reference_anchor.expanduser().resolve(),
-        kb_dir=resolve_kb_dir(resolved_project_root),
-    )
-    resolved_request = (
-        request
-        if request.launch_policy_snapshot is not None
-        else request.model_copy(
-            update={"launch_policy_snapshot": build_launch_policy_snapshot(request)}
-        )
-    )
-
-    return PreparedLaunchSurface(
-        request=resolved_request,
-        harness=harness,
-        composition_warnings=composition_warnings,
-        content=PreparedLaunchContent(
-            final_prompt=request.prompt,
-            resolved_context_from=request.context_from,
-            loaded_references=loaded_references,
-            prompt_payload=prepare_prompt_payload(
-                adhoc_agent_payload=request.prompt_payload.adhoc_agent_payload,
-                appended_system_prompt=request.prompt_payload.appended_system_prompt,
-                user_turn_content=request.prompt_payload.user_turn_content,
-            ),
-        ),
-        runtime_seeds=PreparedLaunchRuntimeSeeds(
-            seed_harness_session_id=(
-                (request.session.requested_harness_session_id or "").strip() or None
-            ),
-            seed_session_args=(),
-        ),
-        profile_tools_for_nested_deny=None,
-        has_profile_for_nested_deny=False,
-        model_selection=None,
-        alias_catalog=None,
-        launch_request=resolved_request,
-    )
-
-
 def bind_launch_context(
     *,
     prepared: PreparedLaunchSurface,
@@ -2181,103 +2106,6 @@ def bind_launch_context(
     )
 
 
-def _build_launch_context_impl(
-    *,
-    spawn_id: str,
-    request: SpawnRequest,
-    runtime: LaunchRuntime,
-    harness_registry: HarnessRegistry,
-    dry_run: bool = False,
-    plan_overrides: Mapping[str, str] | None = None,
-    runtime_work_id: str | None = None,
-    forked_harness_session_id: str | None = None,
-    cache: MarsResultCache | None = None,
-) -> LaunchContext:
-    """Build deterministic launch context from raw request/runtime inputs."""
-
-    resolved_config_root = Path(runtime.resolved_config_root).expanduser().resolve()
-    resolved_requested_task_cwd = (
-        Path(runtime.resolved_requested_task_cwd).expanduser().resolve()
-        if runtime.resolved_requested_task_cwd is not None
-        else Path(runtime.resolved_control_root).expanduser().resolve()
-    )
-    project_paths = ProjectConfigPaths(
-        project_root=resolved_config_root,
-        execution_cwd=resolved_requested_task_cwd,
-    )
-    if runtime.composition_surface != LaunchCompositionSurface.DIRECT:
-        catalog = CatalogSession(project_paths.project_root, cache=cache)
-        explicit_work_id = normalize_explicit_work_id(
-            request_work_id_hint=request.work_id_hint,
-            runtime_work_id=runtime_work_id,
-        )
-        prepared_policy = compile_prepared_policy_surface(
-            request=request,
-            runtime=runtime,
-            project_root=project_paths.project_root,
-            harness_registry=harness_registry,
-            catalog=catalog,
-            explicit_work_id=explicit_work_id,
-            dry_run=dry_run,
-        )
-        prepared = prepare_launch_surface(
-            request=request,
-            runtime=runtime,
-            prepared_policy=prepared_policy,
-        )
-    else:
-        prepared = _build_direct_surface(
-            request=request,
-            project_root=project_paths.project_root,
-            reference_anchor=project_paths.execution_cwd,
-            harness_registry=harness_registry,
-        )
-
-    bindings = RuntimeBindings(
-        spawn_id=spawn_id,
-        runtime_work_id=runtime_work_id,
-        forked_harness_session_id=forked_harness_session_id,
-        plan_overrides=dict(plan_overrides or {}),
-        dry_run=dry_run,
-    )
-
-    return bind_launch_context(
-        prepared=prepared,
-        bindings=bindings,
-        runtime=runtime,
-        project_root=project_paths.project_root,
-        harness_registry=harness_registry,
-    )
-
-
-def build_launch_context(
-    *,
-    spawn_id: str,
-    request: SpawnRequest,
-    runtime: LaunchRuntime,
-    harness_registry: HarnessRegistry,
-    dry_run: bool = False,
-    plan_overrides: Mapping[str, str] | None = None,
-    runtime_work_id: str | None = None,
-    forked_harness_session_id: str | None = None,
-    cache: MarsResultCache | None = None,
-) -> LaunchContext:
-    """Build deterministic launch context without leaking library warnings."""
-
-    with capture_library_diagnostics():
-        return _build_launch_context_impl(
-            spawn_id=spawn_id,
-            request=request,
-            runtime=runtime,
-            harness_registry=harness_registry,
-            dry_run=dry_run,
-            plan_overrides=plan_overrides,
-            runtime_work_id=runtime_work_id,
-            forked_harness_session_id=forked_harness_session_id,
-            cache=cache,
-        )
-
-
 __all__ = [
     "ChildEnvContext",
     "LaunchContext",
@@ -2290,7 +2118,6 @@ __all__ = [
     "TaskContextInputs",
     "bind_launch_context",
     "build_child_runtime_env_overrides",
-    "build_launch_context",
     "build_launch_policy_snapshot",
     "compile_prepared_policy_surface",
     "materialize_launch_artifacts",

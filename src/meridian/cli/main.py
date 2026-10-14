@@ -1126,14 +1126,6 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
     _validate_top_level_command(cleaned_args, global_harness=options.harness)
     _validate_workspace_subcommand(cleaned_args)
 
-    # Handle descriptor-owned redirects before bootstrap work or lazy command registration.
-    if descriptor is not None and descriptor.redirect is not None:
-        print(
-            "`meridian models list` has moved to Mars.\nUse `meridian mars models list` instead.",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
-
     startup_class = (
         descriptor.startup_class if descriptor is not None else StartupClass.PRIMARY_LAUNCH
     )

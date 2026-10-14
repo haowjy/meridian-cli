@@ -101,11 +101,7 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
 ) -> None:
     harness_registry = get_default_harness_registry()
     harness_contract = harness_registry.get_contract(HarnessId.CODEX).model_copy(
-        update={
-            "bootstrap": harness_registry.get_contract(HarnessId.CODEX).bootstrap.model_copy(
-                update={"mode": BootstrapMode.SUBPROCESS_ONLY}
-            )
-        }
+        update={"bootstrap_mode": BootstrapMode.SUBPROCESS_ONLY}
     )
     black_box_calls = 0
 
@@ -160,12 +156,8 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
     harness_registry = get_default_harness_registry()
     harness_contract = harness_registry.get_contract(HarnessId.CLAUDE).model_copy(
         update={
-            "bootstrap": harness_registry.get_contract(HarnessId.CLAUDE).bootstrap.model_copy(
-                update={
-                    "mode": BootstrapMode.MANAGED_PRIMARY_ATTACH,
-                    "primary_attach_failure_policy": "fallback_to_blackbox",
-                }
-            )
+            "bootstrap_mode": BootstrapMode.MANAGED_PRIMARY_ATTACH,
+            "primary_attach_failure_policy": "fallback_to_blackbox",
         }
     )
     black_box_calls = 0

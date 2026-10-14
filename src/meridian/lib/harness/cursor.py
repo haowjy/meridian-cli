@@ -9,22 +9,15 @@ from typing import ClassVar
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import HarnessId, TransportId
 from meridian.lib.harness.adapter import (
-    ApprovalContract,
     BaseHarnessAdapter,
-    BootstrapContract,
     BootstrapMode,
-    ExtractionContract,
     ForkMaterializationMode,
     HarnessCapabilities,
     HarnessContract,
     McpConfig,
     PermissionResolver,
-    ProjectionContract,
-    ProjectionMode,
     RunPromptPolicy,
-    RuntimeHitlMode,
     SpawnParams,
-    TransportContract,
 )
 from meridian.lib.harness.bundle import (
     HarnessBundle,
@@ -80,6 +73,7 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "continue_harness_session_id",
             "continue_fork",
             "effort",
+            "model_override_explicit",
             "pi_harness_profile",
             "allow_builtin_agents",
         }
@@ -93,29 +87,10 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def contract(self) -> HarnessContract:
         return HarnessContract(
             capabilities=self.capabilities,
-            transport=TransportContract(
-                transport_ids=(TransportId.SUBPROCESS,),
-                observer_controller_required=False,
-            ),
-            projection=ProjectionContract(
-                launch_spec_cls="ResolvedLaunchSpec",
-                mode=ProjectionMode.POSITIONAL_PROMPT,
-            ),
-            extraction=ExtractionContract(
-                session_observation_order=(
-                    "artifacts",
-                    "current_session",
-                )
-            ),
-            approval=ApprovalContract(
-                runtime_hitl=RuntimeHitlMode.NONE,
-                subprocess_permission_flags_projected_by_shared_policy=False,
-                default_runtime_request_policy="none",
-            ),
-            bootstrap=BootstrapContract(
-                mode=BootstrapMode.SUBPROCESS_ONLY,
-                fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
-            ),
+            transport_ids=(TransportId.SUBPROCESS,),
+            launch_spec_cls="ResolvedLaunchSpec",
+            bootstrap_mode=BootstrapMode.SUBPROCESS_ONLY,
+            fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
         )
 
     @property
@@ -129,7 +104,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     @property
     def capabilities(self) -> HarnessCapabilities:
         return HarnessCapabilities(
-            supports_stream_events=True,
             supports_stdin_prompt=False,
             supports_session_resume=True,
             supports_session_fork=False,

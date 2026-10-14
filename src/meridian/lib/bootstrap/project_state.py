@@ -8,11 +8,9 @@ from pathlib import Path
 from meridian.lib.config.context_config import ContextConfig, ContextSourceType
 from meridian.lib.state.paths import (
     ProjectPaths,
+    load_context_config,
     resolve_project_paths,
     resolve_project_paths_for_write,
-)
-from meridian.lib.state.paths import (
-    load_context_config as _load_context_config,
 )
 
 
@@ -43,12 +41,6 @@ class ProjectLayoutSnapshot:
     @property
     def work_archive_dir(self) -> Path | None:
         return self.paths.work_archive_dir
-
-
-def load_context_config(project_root: Path) -> ContextConfig | None:
-    """Load merged context config for a project without mutating state."""
-
-    return _load_context_config(project_root)
 
 
 def resolve_layout(project_root: Path) -> ProjectLayoutSnapshot:

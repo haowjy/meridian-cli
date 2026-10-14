@@ -160,7 +160,6 @@ disk. Historical ZIP snapshots are left out of corpus search and reported as a
 warning; search one by reference (`meridian session search "phrase" HISTORY_UUID`).
 Coverage warnings and unavailable sources are reported alongside results; they
 never turn confirmed matches into false negatives.
-The existing `spawn archive` visibility flag is separate from ZIP retention.
 
 ## Browser previews
 

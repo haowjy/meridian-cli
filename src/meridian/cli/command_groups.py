@@ -432,17 +432,6 @@ def group_apps_with_static_apps() -> dict[str, App]:
     return dict(_group_apps)
 
 
-def registration_buckets() -> dict[str, frozenset[str]]:
-    """Map lazy-registration bucket names to command group names."""
-
-    buckets: dict[str, set[str]] = {}
-    for name, spec in COMMAND_GROUP_SPECS.items():
-        if spec.registration_bucket is None:
-            continue
-        buckets.setdefault(spec.registration_bucket, set()).add(name)
-    return {bucket: frozenset(names) for bucket, names in buckets.items()}
-
-
 def supports_advanced_help(group_name: str) -> bool:
     spec = COMMAND_GROUP_SPECS.get(group_name)
     return spec is not None and spec.help.agent_core_subcommands is not None
@@ -490,7 +479,6 @@ __all__ = [
     "group_app",
     "group_apps_with_static_apps",
     "register_group_app",
-    "registration_buckets",
     "render_group_help",
     "supports_advanced_help",
 ]

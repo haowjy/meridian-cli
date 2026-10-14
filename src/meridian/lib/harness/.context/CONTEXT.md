@@ -517,7 +517,7 @@ Tracked, non-blocking:
 > KB lives at `$MERIDIAN_CONTEXT_KB_DIR` (see `meridian context kb`).
 
 - `$MERIDIAN_CONTEXT_KB_DIR/codebase/harness-adapters.md` — capability matrix, per-adapter flag projection, connections subpackage, primary event scope
-- `$MERIDIAN_CONTEXT_KB_DIR/architecture/launch-system.md` — how adapters plug into `build_launch_context()`
+- `$MERIDIAN_CONTEXT_KB_DIR/architecture/launch-system.md` — how adapters plug into the prepare/bind launch pipeline
 
 ## Related .context/
 
