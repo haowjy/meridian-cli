@@ -448,7 +448,7 @@ def test_adhoc_retention_zero_has_touch_interval_floor(tmp_path: Path) -> None:
     ("path_state", "expected_reason"),
     [("gone", "adhoc-path-gone"), ("marker", "adhoc-shadowed")],
 )
-def test_adhoc_gone_and_shadowed_paths_use_seven_day_retention(
+def test_adhoc_gone_and_shadowed_paths_use_shorter_retention(
     tmp_path: Path,
     path_state: str,
     expected_reason: str,
@@ -461,7 +461,7 @@ def test_adhoc_gone_and_shadowed_paths_use_seven_day_retention(
         user_home,
         f"adhoc.{path_state}.2123456789ab",
         source_path,
-        mtime=now - (8 * 24 * 60 * 60),
+        mtime=now - (4 * 24 * 60 * 60),
     )
     if path_state == "gone":
         source_path.rmdir()
@@ -470,7 +470,7 @@ def test_adhoc_gone_and_shadowed_paths_use_seven_day_retention(
             '[project]\nid = "committed"\n', encoding="utf-8"
         )
 
-    candidates = scan_adhoc_project_dirs(user_home, retention_days=30, now=now)
+    candidates = scan_adhoc_project_dirs(user_home, retention_days=3, now=now)
 
     assert len(candidates) == 1
     assert candidates[0].project_id == runtime_root.name

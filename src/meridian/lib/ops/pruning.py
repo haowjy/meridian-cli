@@ -228,7 +228,11 @@ def _scan_adhoc_project_dir(
 
     size_bytes, latest_activity, origin = _adhoc_activity(runtime_root)
     reason, source_path = _adhoc_reason(origin)
-    threshold = stale_retention_days if reason != "adhoc-idle" else retention_days
+    threshold = (
+        min(retention_days, stale_retention_days)
+        if reason != "adhoc-idle"
+        else retention_days
+    )
     if not _is_stale(
         latest_activity,
         retention_days=threshold,
