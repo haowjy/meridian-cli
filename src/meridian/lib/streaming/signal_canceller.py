@@ -25,6 +25,7 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, SpawnOrigin, SpawnRecord
 from meridian.lib.state.timestamps import iso_timestamp_to_epoch
+from meridian.lib.streaming.control_socket import bounded_socket_path
 from meridian.lib.utils.json_shapes import loads_json_object
 
 if TYPE_CHECKING:
@@ -188,7 +189,7 @@ class SignalCanceller:
                 raise RuntimeError(f"invalid app port value in {port_file}") from exc
             url = f"http://127.0.0.1:{port}/api/spawns/{spawn_id}/cancel"
         else:
-            socket_path = self._runtime_root / "app.sock"
+            socket_path = bounded_socket_path(self._runtime_root, "app")
             if not socket_path.exists():
                 raise RuntimeError(f"app socket not found: {socket_path}")
             connector = cast("object", aiohttp.UnixConnector(path=str(socket_path)))

@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Keep the app-lane cancel socket under the Unix path limit for deep runtime roots.
+
 ### Removed
 - Remove the `meridian migrate` command.
 - Stop reading project identity from the legacy `.meridian/id` file.

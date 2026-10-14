@@ -21,6 +21,10 @@ from meridian.lib.state.process_scope_projection import (
 )
 from meridian.lib.state.spawn.model import LaunchMode
 from meridian.lib.state.spawn.repository import Applied
+from meridian.lib.streaming.control_socket import (
+    bounded_socket_path,
+    prepare_socket_directory,
+)
 from meridian.lib.streaming.signal_canceller import SignalCanceller
 
 
@@ -253,6 +257,7 @@ async def _start_http_socket_server(
         port_file = socket_path.parent / "app.port"
         port_file.write_text(str(port))
         return server
+    prepare_socket_directory(socket_path.parent)
     return await asyncio.start_unix_server(_handler, path=str(socket_path))
 
 
@@ -262,7 +267,7 @@ async def test_signal_canceller_app_lane_cross_process_http_success(
 ) -> None:
     runtime_root = resolve_runtime_paths(tmp_path).root_dir
     spawn_id = _start_spawn(runtime_root, spawn_id="p1", launch_mode="app")
-    socket_path = runtime_root / "app.sock"
+    socket_path = bounded_socket_path(runtime_root, "app")
 
     def _finalize_spawn() -> None:
         spawn_store.finalize_spawn(
@@ -298,7 +303,7 @@ async def test_signal_canceller_app_lane_cross_process_http_409_maps_already_ter
 ) -> None:
     runtime_root = resolve_runtime_paths(tmp_path).root_dir
     spawn_id = _start_spawn(runtime_root, spawn_id="p1", launch_mode="app")
-    socket_path = runtime_root / "app.sock"
+    socket_path = bounded_socket_path(runtime_root, "app")
 
     server = await _start_http_socket_server(
         socket_path,
@@ -323,7 +328,7 @@ async def test_signal_canceller_app_lane_cross_process_http_503_maps_finalizing(
 ) -> None:
     runtime_root = resolve_runtime_paths(tmp_path).root_dir
     spawn_id = _start_spawn(runtime_root, spawn_id="p1", launch_mode="app")
-    socket_path = runtime_root / "app.sock"
+    socket_path = bounded_socket_path(runtime_root, "app")
 
     server = await _start_http_socket_server(
         socket_path,

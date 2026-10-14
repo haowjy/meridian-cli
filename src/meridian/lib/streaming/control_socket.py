@@ -11,7 +11,7 @@ import sys
 import tempfile
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform import IS_WINDOWS
@@ -27,33 +27,45 @@ if TYPE_CHECKING:
 UNIX_SOCKET_PATH_MAX_BYTES = 103 if sys.platform == "darwin" else 107
 
 
-def control_socket_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
-    """Return the deterministic, bounded control endpoint for a spawn."""
-
-    if IS_WINDOWS:
-        return runtime_root / "spawns" / str(spawn_id) / "control.sock"
+def bounded_socket_path(
+    runtime_root: Path,
+    kind: Literal["app", "control"],
+    key: str | None = None,
+) -> Path:
+    """Return a deterministic Unix socket path below the platform limit."""
 
     uid = os.getuid()
-    identity = os.fsencode(runtime_root.resolve()) + b"\0" + str(spawn_id).encode("utf-8")
+    identity = os.fsencode(runtime_root.resolve())
+    if key is not None:
+        identity += b"\0" + key.encode("utf-8")
     digest = hashlib.sha256(identity).hexdigest()[:32]
-    path = Path(tempfile.gettempdir()) / f"meridian-{uid}" / f"control-{digest}.sock"
+    path = Path(tempfile.gettempdir()) / f"meridian-{uid}" / f"{kind}-{digest}.sock"
     path_length = len(os.fsencode(path))
     if path_length > UNIX_SOCKET_PATH_MAX_BYTES:
         msg = (
-            f"control socket path is {path_length} bytes, exceeding the platform "
+            f"{kind} socket path is {path_length} bytes, exceeding the platform "
             f"limit of {UNIX_SOCKET_PATH_MAX_BYTES}: {path}"
         )
         raise ValueError(msg)
     return path
 
 
-def _prepare_socket_directory(path: Path) -> None:
+def control_socket_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
+    """Return the deterministic, bounded control endpoint for a spawn."""
+
+    if IS_WINDOWS:
+        return runtime_root / "spawns" / str(spawn_id) / "control.sock"
+
+    return bounded_socket_path(runtime_root, "control", str(spawn_id))
+
+
+def prepare_socket_directory(path: Path) -> None:
     """Create a private per-user socket directory under the shared temp root."""
 
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     directory_stat = path.lstat()
     if not stat.S_ISDIR(directory_stat.st_mode) or directory_stat.st_uid != os.getuid():
-        msg = f"control socket directory is not owned by the current user: {path}"
+        msg = f"socket directory is not owned by the current user: {path}"
         raise PermissionError(msg)
     path.chmod(0o700)
 
@@ -116,7 +128,7 @@ class ControlSocketServer:
                 handle.write(f"{port_value}\n")
             return
 
-        _prepare_socket_directory(self._socket_path.parent)
+        prepare_socket_directory(self._socket_path.parent)
         self._socket_path.unlink(missing_ok=True)
         self._server = await asyncio.start_unix_server(
             self._handle_client, path=str(self._socket_path)
@@ -257,5 +269,7 @@ class ControlSocketServer:
 __all__ = [
     "UNIX_SOCKET_PATH_MAX_BYTES",
     "ControlSocketServer",
+    "bounded_socket_path",
     "control_socket_path",
+    "prepare_socket_directory",
 ]
