@@ -17,7 +17,7 @@ from meridian.lib.state.project_identity import (
     ensure_project_identity,
     resolve_project_identity,
 )
-from meridian.lib.state.user_paths import get_user_home
+from meridian.lib.state.user_paths import get_user_home, project_lifetime_lock_path
 
 
 def normalize_path_for_write(path: str | None) -> str | None:
@@ -62,7 +62,7 @@ class RuntimePaths(BaseModel):
     def project_lifetime_flock(self) -> Path:
         """Return the stable gate coordinating use and deletion of this root."""
 
-        return self.root_dir.parent / ".locks" / f"{self.root_dir.name}.lock"
+        return project_lifetime_lock_path(self.root_dir)
 
     def chat_lifecycle_path(self, c_id: str) -> Path:
         """Return lifecycle.jsonl path for a chat."""

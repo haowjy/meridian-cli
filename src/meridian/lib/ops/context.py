@@ -98,7 +98,7 @@ class ContextOutput(BaseModel):
         lines: list[str]
         if verbose:
             lines = [
-                f"identity.tier: {self.identity_tier}",
+                f"identity_tier: {self.identity_tier}",
                 f"project_id: {self.project_id or '(unminted)'}",
             ]
             lines.append("work:")
@@ -125,7 +125,7 @@ class ContextOutput(BaseModel):
             # Package resolution appends Mars root/scope observability beside
             # these identity lines.
             lines = [
-                f"identity: {self.identity_tier}",
+                f"identity_tier: {self.identity_tier}",
                 f"project_id: {self.project_id or '(unminted)'}",
                 *render_context_lines(
                     self._to_resolved_paths(),

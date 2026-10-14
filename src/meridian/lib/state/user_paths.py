@@ -48,6 +48,12 @@ def get_project_home(project_id: str) -> Path:
     return get_user_home() / "projects" / project_id
 
 
+def project_lifetime_lock_path(runtime_root: Path) -> Path:
+    """Return the stable gate coordinating use and deletion of a runtime root."""
+
+    return runtime_root.parent / ".locks" / f"{runtime_root.name}.lock"
+
+
 def get_context_home(project_id: str) -> Path:
     """Return the user-level context directory.
 

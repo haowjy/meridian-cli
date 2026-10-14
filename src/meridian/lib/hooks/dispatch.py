@@ -135,6 +135,8 @@ class HookDispatcher(LifecycleHook):
     def on_event(self, event: LifecycleEvent) -> None:
         """LifecycleHook protocol implementation."""
 
+        if self._runtime_root is None:
+            return
         self.fire(self._build_context(event))
 
     def fire(self, context: HookContext) -> list[HookResult]:

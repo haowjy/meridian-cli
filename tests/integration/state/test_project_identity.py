@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import time
 import tomllib
 from pathlib import Path
 
@@ -64,11 +66,22 @@ def test_ensure_adhoc_identity_writes_origin_only_under_user_home(
     assert isinstance(identity, AdHoc)
     assert identity.materialized
     origin_path = home / "projects" / identity.id / "origin.json"
-    assert json.loads(origin_path.read_text(encoding="utf-8"))["path"] == (
-        project_root.resolve().as_posix()
-    )
+    original_bytes = origin_path.read_bytes()
+    original_mtime = origin_path.stat().st_mtime_ns
+    origin = json.loads(origin_path.read_text(encoding="utf-8"))
+    assert set(origin) == {"path", "created_at"}
+    assert origin["path"] == project_root.resolve().as_posix()
     assert list(project_root.iterdir()) == []
     assert resolve_project_identity(project_root) == identity
+    assert ensure_project_identity(project_root) == identity
+    assert origin_path.read_bytes() == original_bytes
+    assert origin_path.stat().st_mtime_ns == original_mtime
+
+    stale_time = time.time() - 3700
+    os.utime(origin_path, (stale_time, stale_time))
+    ensure_project_identity(project_root)
+    assert origin_path.stat().st_mtime > stale_time
+    assert origin_path.read_bytes() == original_bytes
 
 
 def test_committed_identity_is_read_without_minting(tmp_path: Path) -> None:

@@ -119,6 +119,7 @@ def test_config_get_reports_unminted_committed_identity(tmp_path: Path) -> None:
 
     assert result.project_identity is None
     assert result.project_identity_source == "unminted"
+    assert "project_identity_source: unminted" in result.format_text()
 
 
 @pytest.mark.parametrize(

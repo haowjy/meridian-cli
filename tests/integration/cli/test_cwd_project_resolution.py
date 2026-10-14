@@ -123,10 +123,35 @@ def test_context_observes_unmaterialized_adhoc_identity_without_writing(
     )
 
     assert result.returncode == 0, result.stderr
-    assert "identity: adhoc" in result.stdout
+    assert "identity_tier: adhoc" in result.stdout
     assert "project_id: adhoc.no-project." in result.stdout
     _assert_project_not_initialized(cwd_without_project_id)
     assert list(meridian_home.iterdir()) == []
+
+
+@pytest.mark.integration
+def test_hooks_run_is_noop_without_materialized_state(
+    cwd_without_project_id: Path,
+    meridian_home: Path,
+) -> None:
+    (meridian_home / "config.toml").write_text(
+        "[[hooks]]\n"
+        'name = "manual-test"\n'
+        'event = "spawn.finalized"\n'
+        'command = "printf should-not-run"\n',
+        encoding="utf-8",
+    )
+
+    result = _run_meridian(
+        ["hooks", "run", "manual-test"],
+        cwd=cwd_without_project_id,
+        meridian_home=meridian_home,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "skip_reason: no_state" in result.stdout
+    assert not (meridian_home / "projects").exists()
+    _assert_project_not_initialized(cwd_without_project_id)
 
 
 @pytest.mark.integration
@@ -226,6 +251,37 @@ def test_runtime_writes_materialize_adhoc_state_without_litter(
 
     assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
     _assert_adhoc_materialized(cwd_without_project_id, meridian_home)
+
+
+@pytest.mark.integration
+def test_materialization_notice_names_nearest_marked_ancestor(
+    tmp_path: Path,
+    meridian_home: Path,
+) -> None:
+    ancestor = tmp_path / "parent"
+    project_root = ancestor / "scratch"
+    project_root.mkdir(parents=True)
+    (ancestor / "meridian.toml").write_text(
+        '[project]\nid = "parent-project"\n', encoding="utf-8"
+    )
+
+    result = _run_meridian(
+        ["--mode", "human", "work", "start", "first work"],
+        cwd=project_root,
+        meridian_home=meridian_home,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert f"(nearest project: {ancestor.as_posix()})" in result.stderr
+    assert list(project_root.iterdir()) == []
+
+    second = _run_meridian(
+        ["--mode", "human", "work", "switch", "first-work"],
+        cwd=project_root,
+        meridian_home=meridian_home,
+    )
+    assert second.returncode == 0, second.stderr
+    assert "state is kept for this path only" not in second.stderr
 
 
 @pytest.mark.integration

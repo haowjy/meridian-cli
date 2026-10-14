@@ -109,7 +109,7 @@ class ConfigShowOutput(BaseModel):
         lines.append(f"project_root: {self.project_root}")
         lines.append(f"project_root.source = {self.project_root_source}")
         lines.append(f"project_identity: {self.project_identity or '(unminted)'}")
-        lines.append(f"project_identity.source = {self.project_identity_source}")
+        lines.append(f"project_identity_source: {self.project_identity_source}")
         if self.runtime_root is not None:
             lines.append(f"runtime_root: {self.runtime_root}")
         if self.runtime_root_source is not None:
@@ -190,7 +190,7 @@ class ConfigGetOutput(BaseModel):
         return "\n".join(
             (
                 f"project_identity: {self.project_identity or '(unminted)'}",
-                f"project_identity.source = {self.project_identity_source}",
+                f"project_identity_source: {self.project_identity_source}",
                 f"{self.key}: {_format_value_for_text(self.value)} [source: {source_note}]",
             )
         )

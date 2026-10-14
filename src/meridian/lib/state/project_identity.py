@@ -21,7 +21,11 @@ from meridian.lib.config.project_root import has_project_marker
 from meridian.lib.platform.atomic import atomic_write_text
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.json_doc import write_model_once
-from meridian.lib.state.user_paths import get_project_home, get_user_home
+from meridian.lib.state.user_paths import (
+    get_project_home,
+    get_user_home,
+    project_lifetime_lock_path,
+)
 from meridian.lib.state.wordgen import generate_project_id
 
 _ADHOC_PREFIX = "adhoc."
@@ -146,7 +150,7 @@ def _mint_committed_project_id(project_root: Path) -> Committed:
 
 def _materialize_adhoc_identity(project_root: Path, identity: AdHoc) -> AdHoc:
     runtime_root = get_project_home(identity.id)
-    lifetime_lock = runtime_root.parent / ".locks" / f"{identity.id}.lock"
+    lifetime_lock = project_lifetime_lock_path(runtime_root)
     origin_path = runtime_root / "origin.json"
     with lock_file(lifetime_lock, mode="shared"):
         if not origin_path.is_file():
