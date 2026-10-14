@@ -123,7 +123,6 @@ export class IdleRuntime {
       if (provider) {
         args.push("--provider", provider);
       }
-      args.push("--cwd", ctx.cwd);
       const excerpts = messageExcerpts(messages);
       if (excerpts.user !== null) this.lastUserText = excerpts.user;
       if (this.lastUserText !== null) {

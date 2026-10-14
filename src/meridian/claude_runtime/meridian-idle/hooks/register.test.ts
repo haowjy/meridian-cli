@@ -62,7 +62,6 @@ function install(on: On, h: Host) {
     }
   })
   on('session.id', () => ({ value: 'sess-1' }))
-  on('session.cwd', () => ({ value: '/work/project' }))
   on('session.surfaces', () => ({ value: ['terminal'] }))
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1_000_000, tokens: 120_000 }, rateLimits: [] } }))
   on('prompt.read', () => ({ value: { text: h.draft, cursor: h.draft.length } }))
@@ -122,7 +121,7 @@ test('a completed turn arms every returned deadline and reports a successful com
 
   expect(calls(h, 'arm')).toEqual([
     [
-      'arm', '--harness', 'claude', '--session', 'sess-1', '--cwd', '/work/project',
+      'arm', '--harness', 'claude', '--session', 'sess-1',
       '--assistant-text=done', '--interactive',
     ],
   ])
@@ -212,7 +211,7 @@ test('reload recovery skips completed stages and an absorbed arm keeps its timer
 
   expect(calls(h, 'status')).toEqual([['status', '--json', '--interactive']])
   expect(calls(h, 'arm')).toEqual([[
-    'arm', '--harness', 'claude', '--session', 'sess-1', '--cwd', '/work/project',
+    'arm', '--harness', 'claude', '--session', 'sess-1',
     '--assistant-text=done', '--interactive',
   ]])
   expect(calls(h, 'fire').map(args => args[1])).toEqual(['warn'])

@@ -50,13 +50,13 @@ from meridian.lib.harness.claude_idle import autocompact_off, detect_ttl
 from meridian.lib.harness.claude_preflight import (
     build_claude_preflight_result,
     ensure_claude_session_accessible,
-    validate_claude_session_file,
 )
 from meridian.lib.harness.claude_runtime_resolver import resolve_claude_runtime
 from meridian.lib.harness.claude_sessions import (
     candidate_claude_project_dirs,
     reconcile_tui_trampoline_session_id,
     resolve_claude_config_root,
+    resolve_claude_native_session_file,
 )
 from meridian.lib.harness.claude_sessions import (
     project_slug as project_slug,
@@ -484,13 +484,10 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         session_id: str,
         native_store: Path,
     ) -> Path | None:
-        if Path(session_id).name != session_id or ".." in session_id:
-            raise NativeSessionUnavailable(session_id, "missing")
-        candidate = native_store / f"{session_id}.jsonl"
-        if not candidate.is_file():
-            return None
-        validate_claude_session_file(candidate, session_id)
-        return candidate
+        return resolve_claude_native_session_file(
+            session_id=session_id,
+            native_store=native_store,
+        )
 
     def resolve_session_file(
         self,

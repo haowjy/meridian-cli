@@ -11,9 +11,54 @@ from datetime import datetime
 from pathlib import Path
 from typing import cast
 
+from meridian.lib.core.native_identity import (
+    NativeEntryMismatch,
+    NativeKeyFields,
+    NativeSessionUnavailable,
+)
 from meridian.lib.platform import get_home_path
 
 logger = logging.getLogger(__name__)
+
+
+def validate_claude_session_file(path: Path, session_id: str) -> None:
+    """Verify the exact native source, not merely its filename."""
+
+    try:
+        with path.open(encoding="utf-8") as handle:
+            raw_header: object = json.loads(handle.readline())
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise NativeSessionUnavailable(session_id, "missing") from exc
+    header = cast("dict[str, object]", raw_header) if isinstance(raw_header, dict) else None
+    observed = header.get("sessionId") if header is not None else None
+    if not isinstance(observed, str) or not observed:
+        raise NativeSessionUnavailable(session_id, "missing")
+    if observed != session_id:
+        raise NativeEntryMismatch(
+            NativeKeyFields("claude", str(path.parent), session_id),
+            NativeKeyFields("claude", str(path.parent), str(observed)),
+        )
+
+
+def resolve_claude_native_session_file(
+    *,
+    session_id: str,
+    native_store: Path,
+) -> Path | None:
+    """Resolve one recorded Claude store/ID pair without discovery fallbacks."""
+
+    normalized_session_id = session_id.strip()
+    if (
+        not normalized_session_id
+        or Path(normalized_session_id).name != normalized_session_id
+        or ".." in normalized_session_id
+    ):
+        raise NativeSessionUnavailable(session_id, "missing")
+    candidate = native_store / f"{normalized_session_id}.jsonl"
+    if not candidate.is_file():
+        return None
+    validate_claude_session_file(candidate, normalized_session_id)
+    return candidate
 
 
 def project_slug(project_root: Path) -> str:

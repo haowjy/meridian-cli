@@ -102,7 +102,7 @@ class DetectIdleTtl(Protocol):
         self,
         *,
         session_id: str,
-        cwd: Path | None,
+        native_store: Path | None,
         provider: str | None,
         env: Mapping[str, str],
     ) -> CacheTtl | None: ...

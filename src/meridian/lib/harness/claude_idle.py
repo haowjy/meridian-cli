@@ -8,10 +8,8 @@ from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Protocol, cast
 
-from meridian.lib.harness.claude_sessions import (
-    candidate_claude_project_dirs,
-    resolve_claude_config_root,
-)
+from meridian.lib.core.native_identity import NativeIdentityError
+from meridian.lib.harness.claude_sessions import resolve_claude_native_session_file
 from meridian.lib.harness.idle_types import CacheTtl
 
 _TAIL_CHUNK_BYTES = 64 * 1024
@@ -80,36 +78,28 @@ def _ttl_from_stream(handle: _SeekableBinaryReader) -> int | None:
 
 
 def detect_ttl(
-    session_id: str,
-    cwd: str | Path | None,
     *,
-    provider: str | None = None,
-    env: Mapping[str, str] | None = None,
+    session_id: str,
+    native_store: Path | None,
+    provider: str | None,
+    env: Mapping[str, str],
 ) -> CacheTtl | None:
     """Detect Claude's known TTL from the latest cache-writing transcript row."""
 
-    _ = provider
-    normalized_session_id = session_id.strip()
-    if (
-        not normalized_session_id
-        or Path(normalized_session_id).name != normalized_session_id
-        or ".." in normalized_session_id
-        or cwd is None
-    ):
-        return None
-    project_root = Path(cwd)
-    process_env = os.environ if env is None else env
-    config_root = resolve_claude_config_root(process_env, project_root)
-    candidates = candidate_claude_project_dirs(project_root, config_root)
-    matches = [
-        directory / f"{normalized_session_id}.jsonl"
-        for directory in candidates
-        if (directory / f"{normalized_session_id}.jsonl").is_file()
-    ]
-    if len(matches) != 1:
+    _ = provider, env
+    if native_store is None:
         return None
     try:
-        with matches[0].open("rb") as handle:
+        transcript = resolve_claude_native_session_file(
+            session_id=session_id,
+            native_store=native_store,
+        )
+    except NativeIdentityError:
+        return None
+    if transcript is None:
+        return None
+    try:
+        with transcript.open("rb") as handle:
             seconds = _ttl_from_stream(handle)
             return CacheTtl(seconds, estimated=False) if seconds is not None else None
     except OSError:
