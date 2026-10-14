@@ -486,6 +486,10 @@ def test_continue_preserves_native_and_switched_chat_sources(
         )
         session_store.stop_session(runtime_root, "c2")
         spawn_store.update_spawn(runtime_root, parse_ref("p30", row_key=True), current_chat_id="c2")
+    stub_bundle_request_and_resolve(
+        monkeypatch, model="gpt-5.3-codex", model_token="gpt-5.3-codex",
+        harness=HarnessId.CODEX, harness_model="gpt-5.3-codex",
+    )
     calls = _record_spawn_create(monkeypatch)
 
     result = spawn_api.spawn_continue_sync(
