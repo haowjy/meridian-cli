@@ -16,7 +16,7 @@ def test_public_max_depth_caps_internal_depth_counter(
     monkeypatch.setenv("MERIDIAN_MAX_DEPTH", "2")
     monkeypatch.setenv("_MERIDIAN_DEPTH", "2")
 
-    config = load_config(tmp_path, resolve_models=False)
+    config = load_config(tmp_path)
     context = RuntimeContext.from_environment()
     current_depth, max_depth = depth_limits(config.max_depth, ctx=context)
 

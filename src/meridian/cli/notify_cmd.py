@@ -74,7 +74,7 @@ def cmd_notify(
     project_root = resolve_project_root_resolution(
         Path(explicit_root) if explicit_root is not None else None
     ).project_root
-    config = load_config(project_root, resolve_models=False).notify
+    config = load_config(project_root).notify
     label = build_session_label()
     notice = manual_notice(
         message,

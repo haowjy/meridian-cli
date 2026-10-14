@@ -39,7 +39,7 @@ Structlog bypasses it and leaks to stderr. This rule applies to both `lib/config
 and `lib/catalog/`.
 
 **File validation and source merging are explicit.** `loader.py` validates each file
-against the plain `MeridianConfigModel`, then merges user → project → local → env.
+against `MeridianConfig`, then merges user → project → local → env.
 `load_config_with_sources()` retains typed dynamic sections and field provenance for
 inspection; `load_config()` returns its final `MeridianConfig`. Do not add implicit
 Pydantic settings sources or ambient loader state.
@@ -61,7 +61,7 @@ module and run inside that transaction.
 ## Entry Points
 
 - `settings.py` — compatibility re-exports for the split config implementation
-- `models.py` — section models and the plain `MeridianConfigModel` schema root
+- `models.py` — section models and the `MeridianConfig` schema root
 - `loader.py` — TOML/env validation, precedence merge, provenance, and load entry points
 - `layers.py` — shared user/project/local discovery and TOML reads
 - `dynamic_sections.py` — typed work/context/hooks/env values, normalization, merge policy

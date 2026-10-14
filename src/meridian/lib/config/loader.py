@@ -26,7 +26,6 @@ from meridian.lib.config.models import (
     ConfigModel,
     HarnessProfileConfig,
     MeridianConfig,
-    MeridianConfigModel,
     PiHarnessProfileConfig,
 )
 from meridian.lib.config.project_paths import (
@@ -134,7 +133,7 @@ def _nested_model_type(annotation: object) -> type[ConfigModel] | None:
 
 
 def _section_model(section: str) -> type[ConfigModel] | None:
-    field = MeridianConfigModel.model_fields.get(section)
+    field = MeridianConfig.model_fields.get(section)
     if field is None:
         return None
     return _nested_model_type(field.annotation)
@@ -218,7 +217,7 @@ def _normalize_toml_payload_values(
 
     validated_env = normalized.pop("env", None)
     try:
-        values = MeridianConfigModel.model_validate(normalized).model_dump(exclude_unset=True)
+        values = MeridianConfig.model_validate(normalized).model_dump(exclude_unset=True)
     except ValidationError as error:
         raise config_validation_error(
             error, path_formatter=_catalog_validation_error_path
@@ -312,7 +311,6 @@ def load_config_with_sources(
     *,
     authority: _ProjectAuthorityLike | None = None,
     user_config: Path | None = None,
-    resolve_models: bool = True,
 ) -> LoadedConfig:
     """Load validated config and provenance across all precedence layers.
 
@@ -320,7 +318,6 @@ def load_config_with_sources(
     from ENV here — they are read separately via RuntimeOverrides.from_env().
     """
 
-    _ = resolve_models
     if authority is not None:
         resolved_project_root = authority.project_root.expanduser().resolve()
         project_config_paths = authority.project_config_paths
@@ -379,7 +376,6 @@ def load_config(
     *,
     authority: _ProjectAuthorityLike | None = None,
     user_config: Path | None = None,
-    resolve_models: bool = True,
 ) -> MeridianConfig:
     """Load config with precedence: defaults < user < project < local < environment."""
 
@@ -387,7 +383,6 @@ def load_config(
         project_root,
         authority=authority,
         user_config=user_config,
-        resolve_models=resolve_models,
     ).config
 
 

@@ -140,7 +140,6 @@ def build_config_surface(project_root: Path | RuntimeAuthoritySnapshot) -> Confi
         resolved_root,
         authority=authority,
         user_config=user_config_path,
-        resolve_models=False,
     )
     return ConfigSurface(
         authority=authority,

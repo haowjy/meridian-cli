@@ -850,7 +850,7 @@ class EnvironmentConfig(ConfigModel):
     ] = False
 
 
-class MeridianConfigModel(ConfigModel):
+class MeridianConfig(ConfigModel):
     """Resolved operational configuration for meridian."""
 
     model_config = ConfigDict(
@@ -1079,7 +1079,3 @@ class MeridianConfigModel(ConfigModel):
         if not isinstance(profile, HarnessProfileConfig):
             return None
         return profile
-
-
-class MeridianConfig(MeridianConfigModel):
-    """Resolved operational configuration for Meridian."""

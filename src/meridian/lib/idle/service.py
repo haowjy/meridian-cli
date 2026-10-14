@@ -247,10 +247,7 @@ def resolve_policy(
 ) -> IdlePolicyConfig:
     """Resolve all policy fields once for an operation."""
 
-    values = {
-        field: effective(field, harness, config, env)
-        for field in _IDLE_POLICY_OPTIONS
-    }
+    values = {field: effective(field, harness, config, env) for field in _IDLE_POLICY_OPTIONS}
     return IdlePolicyConfig.model_validate(values)
 
 
@@ -296,9 +293,7 @@ class IdleService:
         configured_role = self.env.get("MERIDIAN_SESSION_ROLE")
         self.role = "primary" if configured_role is None and interactive else configured_role
         self.project_root = project_root or Path(self.env.get("MERIDIAN_PROJECT_DIR", Path.cwd()))
-        self.config = (
-            config if config is not None else load_config(self.project_root, resolve_models=False)
-        )
+        self.config = config if config is not None else load_config(self.project_root)
         self._now_ms = now_ms
         self.store = store if store is not None else IdleStore(now_ms=now_ms)
         self._notify_sender = notify_sender if notify_sender is not None else send
