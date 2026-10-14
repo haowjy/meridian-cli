@@ -172,12 +172,12 @@ def _is_quiescent(runtime_root: Path) -> bool:
     )
 
 
-def _adhoc_activity(runtime_root: Path) -> tuple[int, float, AdHocOrigin | None]:
+def _adhoc_activity(
+    runtime_root: Path,
+    *,
+    context_root: Path,
+) -> tuple[int, float, AdHocOrigin | None]:
     size_bytes, tree_mtime = _tree_activity(runtime_root)
-    context_root = get_context_home(
-        runtime_root.name,
-        user_home=runtime_root.parent.parent,
-    )
     _, context_tree_mtime = _tree_activity(context_root)
     origin_path = runtime_root / "origin.json"
     try:
@@ -230,7 +230,14 @@ def _scan_adhoc_project_dir(
     if not _is_adhoc_project_dir_name(runtime_root.name) or not runtime_root.is_dir():
         return None
 
-    size_bytes, latest_activity, origin = _adhoc_activity(runtime_root)
+    context_root = get_context_home(
+        runtime_root.name,
+        user_home=runtime_root.parent.parent,
+    )
+    size_bytes, latest_activity, origin = _adhoc_activity(
+        runtime_root,
+        context_root=context_root,
+    )
     reason, source_path = _adhoc_reason(origin)
     threshold = (
         min(retention_days, stale_retention_days)
@@ -244,10 +251,6 @@ def _scan_adhoc_project_dir(
         minimum_age_seconds=ADHOC_TOUCH_INTERVAL_SECONDS,
     )
 
-    context_root = get_context_home(
-        runtime_root.name,
-        user_home=runtime_root.parent.parent,
-    )
     return AdHocProjectDir(
         project_id=runtime_root.name,
         path=source_path,
