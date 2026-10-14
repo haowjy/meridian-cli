@@ -10,7 +10,10 @@ from meridian.lib.harness.claude_preflight import CLAUDE_PARENT_ALLOWED_TOOLS_FL
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.launch.permissions import compute_nested_claude_deny_additions
+from meridian.lib.launch.permissions import (
+    compute_nested_claude_deny_additions,
+    project_has_claude_agent_copy,
+)
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
 from meridian.lib.safety.permissions import PermissionConfig, ToolsPermissionResolver
 from meridian.lib.tools import ToolsField
@@ -195,3 +198,16 @@ def test_agent_copy_exception_keeps_generic_agent_only(
         "TaskStop",
         "TaskUpdate",
     }.issubset(disallowed)
+
+
+def test_agent_copy_setting_comes_from_ancestor_mars_root(tmp_path: Path) -> None:
+    nested = tmp_path / "repo" / "subdirectory"
+    nested.mkdir(parents=True)
+    (tmp_path / "repo" / "mars.toml").write_text(
+        '[settings]\ntargets = [".claude"]\n\n'
+        "[settings.meridian.agent_copy]\n"
+        'harnesses = ["claude"]\n',
+        encoding="utf-8",
+    )
+
+    assert project_has_claude_agent_copy(nested)
