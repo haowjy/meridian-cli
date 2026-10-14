@@ -243,16 +243,6 @@ def _resolve_project_root(project_root: str | None) -> Path:
     return _resolve_project_authority(project_root).project_root
 
 
-def _project_identity_source(
-    authority: RuntimeAuthoritySnapshot,
-) -> Literal["meridian.toml", "path", "unminted"]:
-    if authority.identity_tier == "adhoc":
-        return "path"
-    if authority.project_id is None:
-        return "unminted"
-    return "meridian.toml"
-
-
 def _resolve_option(key: str) -> ConfigOptionDescriptor:
     return OPTION_CATALOG.resolve_key(key)
 
@@ -578,7 +568,7 @@ def config_show_sync(payload: ConfigShowInput) -> ConfigShowOutput:
         project_root=surface.project_root.as_posix(),
         project_root_source=surface.authority.project_root_source,
         project_identity=surface.authority.project_id,
-        project_identity_source=_project_identity_source(surface.authority),
+        project_identity_source=surface.authority.project_identity_source,
         mars_root=surface.authority.mars_roots.primary.as_posix(),
         mars_scope=surface.authority.mars_roots.scope,
         mars_fallback=(
