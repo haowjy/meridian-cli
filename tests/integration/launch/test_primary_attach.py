@@ -120,12 +120,21 @@ async def test_primary_attach_live_consumer_runs_hooks(tmp_path: Path) -> None:
         process_launcher=cast("ProcessLauncher", object()),
     )
     seen: list[RawHarnessEvent] = []
+    stream_error_phases: list[str] = []
+
+    class ErrorReporter:
+        def record(self, *, phase: str, error: BaseException) -> None:
+            _ = error
+            stream_error_phases.append(phase)
+
     launcher._event_hooks = (seen.append,)
     launcher._update_activity_from_event = lambda _event: None  # type: ignore[method-assign]
+    launcher._idle_error_reporter = cast("Any", ErrorReporter())
 
     await launcher._consume_live_events()
 
     assert seen == [event]
+    assert stream_error_phases == ["event_stream"]
 
 
 def _publish_spawn(spawn_dir: Path) -> None:

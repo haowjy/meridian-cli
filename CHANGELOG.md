@@ -9,6 +9,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - False unknown-key warnings before the real error for mis-shaped sections such
   as `[hooks]`; sections with a hard error now suppress unknown-key warnings (#582).
 - Meridian reopen closes old idle stretch before exec; no stale push, warn, compact.
+- Detect unsent drafts in the OpenCode 2.x composer before idle compaction.
+- Keep OpenCode managed-primary event sensing alive through quiet periods and compaction;
+  durable fallback now accepts only completed native compaction messages.
 
 ## [0.10.0] - 2026-10-14
 

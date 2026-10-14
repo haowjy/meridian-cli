@@ -304,20 +304,62 @@ async def test_compact_suppresses_return_when_busy_precedes_compaction_part(
 
 
 @pytest.mark.parametrize(
-    ("fixture", "expected_draft"),
-    [("pane-draft-typed.txt", "yes"), ("pane-draft-empty.txt", "no")],
+    ("capture", "expected_draft"),
+    [
+        pytest.param(
+            """\
+ ┃
+ ┃
+ ┃
+ ┃ DeepSeek V4.1 Flash
+ ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+ …/opencode-idle-draft  8.8K (1%) · $0.00
+""",
+            "no",
+            id="opencode-2-empty",
+        ),
+        pytest.param(
+            """\
+ ┃
+ ┃ unsent draft
+ ┃
+ ┃ DeepSeek V4.1 Flash
+ ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+ …/opencode-idle-draft  8.8K (1%) · $0.00
+""",
+            "yes",
+            id="opencode-2-typed",
+        ),
+        pytest.param(
+            """\
+  ┃
+  ┃
+  ┃
+  ┃  Build · Big Pickle OpenCode Zen
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   /workspace  12.0K (6%) ctrl+p commands
+""",
+            "no",
+            id="opencode-1-empty",
+        ),
+        pytest.param(
+            """\
+ ┃
+ ┃ quoted transcript content
+ ┃
+ ┃ Build · quoted transcript metadata
+ transcript status
+""",
+            None,
+            id="transcript-block-without-composer",
+        ),
+    ],
 )
-async def test_facts_read_draft_from_recorded_pane(
-    tmp_path: Path,
-    fixture: str,
-    expected_draft: str,
+def test_draft_from_pane_recognizes_composer_shape(
+    capture: str,
+    expected_draft: str | None,
 ) -> None:
-    async def capture(_pane: str) -> str | None:
-        return (FIXTURES / fixture).read_text(encoding="utf-8")
-
-    facts = await opencode_idle.OpenCodeIdleSensor(_context(tmp_path), capture_pane=capture).facts()
-
-    assert (facts.draft, facts.busy) == (expected_draft, False)
+    assert opencode_idle._draft_from_pane(capture) == expected_draft
 
 
 @pytest.mark.parametrize(
@@ -431,6 +473,68 @@ async def test_v2_compact_waits_for_matching_recorded_completion(
     assert result.reason == (None if expected_result == "ok" else terminal_type)
     assert [event.kind for event in await _take(iterator, 1)] == ["turn_end"]
     await _assert_quiet(iterator)
+
+
+@pytest.mark.parametrize(
+    ("compaction_status", "expected_result"),
+    [("completed", "ok"), ("failed", "failed")],
+)
+async def test_v2_compact_confirms_durable_completion_after_stream_gap(
+    tmp_path: Path,
+    compaction_status: str,
+    expected_result: str,
+) -> None:
+    compact_posted = False
+    session_path = f"/api/session/{V2_SESSION_ID}"
+
+    async def request(
+        method: str, path: str, payload: Mapping[str, object] | None
+    ) -> tuple[int, str]:
+        nonlocal compact_posted
+        if (method, path) == ("GET", session_path):
+            return 200, json.dumps(
+                {
+                    "data": {
+                        "id": V2_SESSION_ID,
+                        "model": {"providerID": "opencode-go", "id": "deepseek-v4.1-flash"},
+                        "outcome": "succeeded" if compact_posted else None,
+                        "time": {"idle": 1_700_000_001_000} if compact_posted else {},
+                    }
+                }
+            )
+        if method == "GET" and path == (
+            f"{session_path}/message?limit=20&order=desc&type=compaction"
+        ):
+            return 200, json.dumps(
+                {
+                    "data": [
+                        {
+                            "id": "msg_v2_compaction",
+                            "type": "compaction",
+                            "status": compaction_status,
+                        }
+                    ]
+                }
+            )
+        assert (method, path, payload) == ("POST", f"{session_path}/compact", {})
+        compact_posted = True
+        return 200, json.dumps(
+            {
+                "data": {
+                    "id": "msg_v2_compaction",
+                    "sessionID": V2_SESSION_ID,
+                    "time": {"created": 1_700_000_000_000},
+                    "type": "compaction",
+                }
+            }
+        )
+
+    sensor, _ = _v2_sensor(tmp_path, request=request, compact_timeout_seconds=0.01)
+
+    result = await sensor.compact()
+
+    assert result.result == expected_result
+    assert result.reason == (None if expected_result == "ok" else "timeout")
 
 
 @pytest.mark.parametrize(
