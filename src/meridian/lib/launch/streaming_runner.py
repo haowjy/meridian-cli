@@ -539,6 +539,8 @@ async def run_streaming_spawn(
             )
         return resolved_outcome
     finally:
+        if signal_cleanup is not None:
+            signal_cleanup()
         with signal_coordinator().mask_sigterm():
             if subscriber is not None:
                 manager.unsubscribe(spawn_id)
@@ -547,8 +549,6 @@ async def run_streaming_spawn(
                     task.cancel()
                     with suppress(asyncio.CancelledError):
                         await task
-            if signal_cleanup is not None:
-                signal_cleanup()
             await manager.join_teardown(spawn_id)
             with suppress(Exception):
                 await manager.shutdown(status=SpawnStatus.CANCELLED, exit_code=1, error="shutdown")
