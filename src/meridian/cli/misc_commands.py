@@ -3,17 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Literal, Protocol, cast
+from typing import Annotated, Literal, cast
 
 from cyclopts import App, Parameter
 
+from meridian.cli.invocation import emit, get_global_options
 from meridian.cli.streaming_serve import streaming_serve
-
-
-class _GlobalOptionsLike(Protocol):
-    harness: str | None
 
 
 def _normalize_completion_shell(shell: str) -> Literal["bash", "zsh", "fish"]:
@@ -30,8 +26,6 @@ def register_misc_commands(
     context_app: App,
     streaming_app: App,
     test_app: App,
-    emit: Callable[[object], None],
-    get_global_options: Callable[[], _GlobalOptionsLike],
 ) -> None:
     def _emit_completion(shell: str) -> None:
         normalized = _normalize_completion_shell(shell)

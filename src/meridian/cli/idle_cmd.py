@@ -11,6 +11,7 @@ from typing import Annotated, Literal, Never, Protocol, cast
 from cyclopts import Parameter
 
 from meridian.cli.app_tree import idle_app
+from meridian.cli.invocation import get_global_options
 from meridian.lib.harness.idle_types import IdleFacts
 from meridian.lib.idle.service import IdleService
 from meridian.lib.state.idle_store import CompactResultValue, Stage
@@ -96,7 +97,6 @@ def _event_payload(payload: str | None) -> str:
 
 
 def _harness(value: str | None, *, env_fallback: bool = False) -> str:
-    from meridian.cli.main import get_global_options
     from meridian.lib.core.types import HarnessId
 
     resolved = value or get_global_options().harness
@@ -333,8 +333,6 @@ def cmd_idle_status(
             )
             for state in _service(interactive=interactive).status()
         ]
-        from meridian.cli.main import get_global_options
-
         if json_mode or get_global_options().output.format == "json":
             _emit_json(rows)
         else:

@@ -32,7 +32,7 @@ telemetry, spawn no writer thread, create no UUID, and make no filesystem mutati
 
 ## Lazy Import Strategy
 
-Three independent mechanisms reduce startup latency:
+Four independent mechanisms reduce startup latency and keep dependencies acyclic:
 
 1. **Selective command registration** — `_register_commands_for_invocation()`
    imports only the module group matching the first positional token.
@@ -44,6 +44,11 @@ Three independent mechanisms reduce startup latency:
 
 3. **Heavy module deferral** — `primary_launch` and `mars_passthrough` imported
    inside handler functions, not at module scope.
+
+4. **One-way invocation state** — `invocation.py` owns the typed global options
+   context and output routing. Both `main.py` and command modules depend on it;
+   command modules never import back into `main.py`. Registration functions
+   receive no invocation callbacks and return no metadata to the dispatcher.
 
 Together these mechanisms keep startup and help paths from importing command
 implementations they do not need.

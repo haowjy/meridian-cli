@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Annotated
 
 from cyclopts import App, Parameter
 
+from meridian.cli.invocation import emit, get_global_options
 
-def register_bootstrap_command(
-    app: App,
-    emit: Callable[[object], None],
-    get_passthrough_args: Callable[[], tuple[str, ...]],
-    get_global_harness: Callable[[], str | None],
-) -> None:
+
+def register_bootstrap_command(app: App) -> None:
     def bootstrap(
         add: Annotated[
             list[str] | None,
@@ -96,7 +92,8 @@ def register_bootstrap_command(
             raise ValueError("Cannot combine setup flags (--add/--link) with --dry-run.")
 
         explicit_harness = harness.strip() if harness is not None and harness.strip() else None
-        global_harness = get_global_harness()
+        options = get_global_options()
+        global_harness = options.harness
         if global_harness and explicit_harness and global_harness != explicit_harness:
             raise ValueError(
                 f"Conflicting harness selections: '{global_harness}' and '{explicit_harness}'."
@@ -131,7 +128,7 @@ def register_bootstrap_command(
                 sandbox=sandbox,
                 timeout=timeout,
                 dry_run=dry_run,
-                passthrough=get_passthrough_args(),
+                passthrough=options.passthrough_args,
                 include_bootstrap_documents=True,
             )
         )

@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Annotated, Any
+from typing import Annotated
 
 from cyclopts import App, Parameter
 
 from meridian.cli.help_content import GROUPS
+from meridian.cli.invocation import emit
 
-Emitter = Callable[[Any], None]
 
-
-def register_sync_commands(app: App, emit: Emitter) -> None:
+def register_sync_commands(app: App) -> None:
     """Register sync conflict CLI commands under a ``sync`` subapp."""
 
     sync_app = App(

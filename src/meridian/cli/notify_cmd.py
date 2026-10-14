@@ -8,6 +8,7 @@ from typing import Annotated
 from cyclopts import Parameter
 
 from meridian.cli.app_tree import notify_app
+from meridian.cli.invocation import current_output_sink, get_global_options
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.config.settings import load_config
 from meridian.lib.notify.label import build_session_label
@@ -16,8 +17,6 @@ from meridian.lib.notify.service import SendReport, send
 
 
 def _render_report(report: SendReport, *, json_mode: bool = False) -> None:
-    from meridian.cli.main import current_output_sink, get_global_options
-
     sink = current_output_sink()
     for warning in report.warnings:
         sink.warning(warning)
@@ -66,8 +65,6 @@ def cmd_notify(
     ] = False,
 ) -> None:
     """Send one manual notification."""
-    from meridian.cli.main import current_output_sink, get_global_options
-
     sink = current_output_sink()
     if not 1 <= priority <= 5:
         sink.error("--priority must be between 1 and 5", exit_code=2)

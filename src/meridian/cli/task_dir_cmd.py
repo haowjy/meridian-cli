@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import partial
-from typing import Annotated, Any
+from typing import Annotated
 
 from cyclopts import App, Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
+from meridian.cli.invocation import Emitter, current_output_sink, emit
 from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.ops.context import (
     TaskDirClearInput,
@@ -19,12 +20,8 @@ from meridian.lib.ops.context import (
     task_dir_sync,
 )
 
-Emitter = Callable[[Any], None]
-
 
 def _task_dir_query(emit: Emitter) -> None:
-    from meridian.cli.main import current_output_sink
-
     output = task_dir_sync(TaskDirInput())
     if output.warning:
         current_output_sink().warning(output.warning)
@@ -45,18 +42,17 @@ def _task_dir_clear(emit: Emitter) -> None:
     emit(task_dir_clear_sync(TaskDirClearInput()))
 
 
-def register_task_dir_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str, str]]:
+def register_task_dir_commands(app: App) -> None:
     """Register task-dir CLI commands using registry metadata as source of truth."""
 
     handlers: dict[str, Callable[[], Callable[..., None]]] = {
         "meridian.task-dir.set": lambda: partial(_task_dir_set, emit),
         "meridian.task-dir.clear": lambda: partial(_task_dir_clear, emit),
     }
-    return register_extension_cli_group(
+    register_extension_cli_group(
         app,
         registry=get_first_party_registry(),
         group="task-dir",
         handlers=handlers,
-        emit=emit,
         default_handler=partial(_task_dir_query, emit),
     )
