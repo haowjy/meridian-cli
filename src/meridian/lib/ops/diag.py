@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
@@ -163,6 +164,29 @@ class DoctorWarning(BaseModel):
     payload: dict[str, object] | None = None
 
 
+@dataclass(frozen=True)
+class LocalReport:
+    spawns: tuple[SpawnRecord, ...] = ()
+    stale_spawn_artifacts: tuple[StaleSpawnArtifact, ...] = ()
+    pruned_spawn_artifacts: int = 0
+    lock_gc: LockGcStats = field(default_factory=LockGcStats)
+    telemetry_cleanup: TelemetryCleanupStats | None = None
+    warnings: tuple[DoctorWarning, ...] = ()
+    repaired: tuple[str, ...] = ()
+    legacy_pi_sessions: str | None = None
+    killed_orphan_spawns: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class GlobalReport:
+    orphan_project_dirs: tuple[OrphanProjectDir, ...] = ()
+    adhoc_project_dirs: tuple[AdHocProjectDir, ...] = ()
+    pruned_orphan_dirs: int = 0
+    pruned_adhoc_dirs: int = 0
+    warnings: tuple[DoctorWarning, ...] = ()
+    repaired: tuple[str, ...] = ()
+
+
 def _telemetry_cleanup_stats(stats: RetentionStats) -> TelemetryCleanupStats:
     return TelemetryCleanupStats(
         total_segments=stats.total_segments,
@@ -301,125 +325,115 @@ def schedule_background_repairs(project_root: Path) -> None:
     ).start()
 
 
-def doctor_sync(payload: DoctorInput) -> DoctorOutput:
-    authority = resolve_runtime_authority_for_read(payload.project_root)
-    surface = build_config_surface(authority)
-    project_root = surface.project_root
-    runtime_root = (
-        authority.runtime_root
-        if authority.runtime_root is not None and authority.runtime_root.is_dir()
-        else None
+def _doctor_local(
+    runtime_root: Path,
+    *,
+    project_root: Path,
+    project_state_dir: Path,
+    retention_days: int,
+    now: float,
+    prune: bool,
+    kill_orphans: bool,
+) -> LocalReport:
+    from meridian.lib.ops.legacy_native_import import (
+        bind_late_legacy_sessions,
+        configured_archive_destination,
+        recover_legacy_pi_sessions,
     )
-    retention_days = surface.resolved_config.state.retention_days
-    now = time.time()
 
     repaired: list[str] = []
-    killed_orphan_spawns: tuple[str, ...] = ()
+    warnings: list[DoctorWarning] = []
+
+    late_bindings = bind_late_legacy_sessions(runtime_root)
+    if late_bindings.bound:
+        repaired.append("late_legacy_bindings")
+    pi_recovery = recover_legacy_pi_sessions(
+        runtime_root,
+        archive_destination=configured_archive_destination(project_root),
+    )
     legacy_pi_summary: str | None = None
-    dogfood_failed: tuple[tuple[str, str], ...] = ()
-    dogfood_index_rearm_warning: str | None = None
-    lock_gc = LockGcStats()
-    spawns: tuple[SpawnRecord, ...] = ()
-    stale_spawn_artifacts: list[StaleSpawnArtifact] = []
-    telemetry_cleanup: TelemetryCleanupStats | None = None
-    adhoc_retention_days: int | None = None
-
-    orphan_project_dirs: list[OrphanProjectDir] = []
-    adhoc_project_dirs: list[AdHocProjectDir] = []
-    if payload.global_:
-        if not is_root_side_effect_process():
-            raise RuntimeError(
-                "Global doctor maintenance requires a root Meridian process. "
-                "Run 'meridian doctor --global' from a top-level shell, not from a nested spawn."
+    if pi_recovery.bound:
+        repaired.append("legacy_pi_sessions")
+        legacy_pi_summary = (
+            f"bound {pi_recovery.bound} old Pi chat(s) to their native sessions; "
+            f"{len(pi_recovery.unbound)} left unbound"
+        )
+        if pi_recovery.unbound:
+            legacy_pi_summary += (
+                f"; inspect one with `meridian session repair cN` (e.g. {pi_recovery.unbound[0]})"
             )
-        orphan_project_dirs = scan_orphan_project_dirs(get_user_home(), retention_days, now)
-        adhoc_retention_days = load_user_config().state.adhoc_retention_days
-        adhoc_project_dirs = scan_adhoc_project_dirs(
-            get_user_home(),
-            adhoc_retention_days,
-            now,
-        )
 
-    if runtime_root is not None:
-        from meridian.lib.ops.legacy_native_import import (
-            bind_late_legacy_sessions,
-            configured_archive_destination,
-            recover_legacy_pi_sessions,
-        )
-
-        late_bindings = bind_late_legacy_sessions(runtime_root)
-        if late_bindings.bound:
-            repaired.append("late_legacy_bindings")
-        pi_recovery = recover_legacy_pi_sessions(
-            runtime_root,
-            archive_destination=configured_archive_destination(project_root),
-        )
-        if pi_recovery.bound:
-            repaired.append("legacy_pi_sessions")
-            legacy_pi_summary = (
-                f"bound {pi_recovery.bound} old Pi chat(s) to their native sessions; "
-                f"{len(pi_recovery.unbound)} left unbound"
+    dogfood = migrate_dogfood_spawn_rows(runtime_root)
+    if dogfood.migrated:
+        repaired.append("dogfood_spawn_rows")
+    if dogfood.failed:
+        warnings.append(
+            DoctorWarning(
+                code="dogfood_spawn_rows_failed",
+                message=(
+                    f"{len(dogfood.failed)} dogfood spawn row(s) could not be migrated "
+                    "and stay quarantined: "
+                    + "; ".join(f"{spawn_id} ({reason})" for spawn_id, reason in dogfood.failed)
+                ),
+                payload={
+                    "spawn_ids": [spawn_id for spawn_id, _ in dogfood.failed],
+                    "reasons": dict(dogfood.failed),
+                },
             )
-            if pi_recovery.unbound:
-                legacy_pi_summary += (
-                    "; inspect one with `meridian session repair cN` "
-                    f"(e.g. {pi_recovery.unbound[0]})"
-                )
-        dogfood = migrate_dogfood_spawn_rows(runtime_root)
-        dogfood_failed = dogfood.failed
-        dogfood_index_rearm_warning = dogfood.index_rearm_warning
-        if dogfood.migrated:
-            repaired.append("dogfood_spawn_rows")
-        stale_locks = _repair_stale_session_locks(
+        )
+    if dogfood.index_rearm_warning:
+        warnings.append(
+            DoctorWarning(
+                code="dogfood_index_rearm_failed",
+                message=dogfood.index_rearm_warning,
+            )
+        )
+
+    stale_locks = _repair_stale_session_locks(project_root, runtime_root=runtime_root)
+    if stale_locks > 0:
+        repaired.append("stale_session_locks")
+    lock_gc = gc_orphaned_locks(runtime_root)
+
+    active_work_items, _ = work_store.list_work_items(project_state_dir)
+    archived_work_items, _ = work_store.list_archived_work_items(
+        project_state_dir,
+        all_archived=True,
+    )
+    healed_work_items = 0
+    for work_id in {item.name for item in (*active_work_items, *archived_work_items)}:
+        if work_store.work_item_needs_repair(project_state_dir, work_id):
+            work_repository.repair_work_item(project_state_dir, work_id)
+            healed_work_items += 1
+    if healed_work_items:
+        repaired.append("work_item_metadata")
+
+    killed_orphan_spawns: tuple[str, ...] = ()
+    if kill_orphans and is_root_side_effect_process():
+        orphan_runs, killed_orphan_spawns = _repair_orphan_runs(
             project_root,
             runtime_root=runtime_root,
         )
-        if stale_locks > 0:
-            repaired.append("stale_session_locks")
-        lock_gc = gc_orphaned_locks(runtime_root)
+        if orphan_runs > 0:
+            repaired.append("orphan_runs")
 
-        project_state_dir = authority.project_state_dir
-        active_work_items, _ = work_store.list_work_items(project_state_dir)
-        archived_work_items, _ = work_store.list_archived_work_items(
-            project_state_dir,
-            all_archived=True,
-        )
-        healed_work_items = 0
-        for work_id in {item.name for item in (*active_work_items, *archived_work_items)}:
-            if work_store.work_item_needs_repair(project_state_dir, work_id):
-                work_repository.repair_work_item(project_state_dir, work_id)
-                healed_work_items += 1
-        if healed_work_items:
-            repaired.append("work_item_metadata")
-
-        if payload.kill_orphans and is_root_side_effect_process():
-            orphan_runs, killed_orphan_spawns = _repair_orphan_runs(
-                project_root,
-                runtime_root=runtime_root,
-            )
-            if orphan_runs > 0:
-                repaired.append("orphan_runs")
-
-        spawn_scan = spawn_store.list_spawns(runtime_root)
-        spawns = spawn_scan.records
-        active_spawn_ids = {
-            spawn.id for spawn in spawns if is_active_spawn_status(spawn.status)
-        }
-        protected_spawn_ids = active_spawn_ids | {
-            quarantine.spawn_id for quarantine in spawn_scan.quarantines
-        }
-        stale_spawn_artifacts = scan_stale_spawn_artifacts(
+    spawn_scan = spawn_store.list_spawns(runtime_root)
+    spawns = spawn_scan.records
+    active_spawn_ids = {spawn.id for spawn in spawns if is_active_spawn_status(spawn.status)}
+    protected_spawn_ids = active_spawn_ids | {
+        quarantine.spawn_id for quarantine in spawn_scan.quarantines
+    }
+    stale_spawn_artifacts = tuple(
+        scan_stale_spawn_artifacts(
             runtime_root,
             retention_days,
             protected_spawn_ids,
             now,
         )
+    )
 
-    pruned_orphan_dirs = 0
-    pruned_adhoc_dirs = 0
     pruned_spawn_artifacts = 0
-    if payload.prune and runtime_root is not None:
-        spawn_prune = prune_stale_spawn_artifacts(stale_spawn_artifacts)
+    if prune:
+        spawn_prune = prune_stale_spawn_artifacts(list(stale_spawn_artifacts))
         pruned_spawn_artifacts = spawn_prune.removed
         lock_gc = lock_gc.combine(spawn_prune.lock_gc)
         if pruned_spawn_artifacts > 0:
@@ -427,119 +441,28 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     if lock_gc.files_removed > 0:
         repaired.append("orphaned_locks")
 
-    if runtime_root is not None:
-        telemetry_dir = runtime_root / "telemetry"
-        telemetry_retention = (
-            run_retention_cleanup(
-                telemetry_dir,
-                runtime_root=runtime_root,
-                max_age_days=retention_days,
-            )
-            if payload.prune
-            else scan_telemetry_segments(
-                telemetry_dir,
-                runtime_root=runtime_root,
-                max_age_days=retention_days,
-            )
+    telemetry_dir = runtime_root / "telemetry"
+    telemetry_retention = (
+        run_retention_cleanup(
+            telemetry_dir,
+            runtime_root=runtime_root,
+            max_age_days=retention_days,
         )
-        telemetry_cleanup = _telemetry_cleanup_stats(telemetry_retention)
-        if telemetry_cleanup.deleted_segments > 0:
-            repaired.append("telemetry_segments")
+        if prune
+        else scan_telemetry_segments(
+            telemetry_dir,
+            runtime_root=runtime_root,
+            max_age_days=retention_days,
+        )
+    )
+    telemetry_cleanup = _telemetry_cleanup_stats(telemetry_retention)
+    if telemetry_cleanup.deleted_segments > 0:
+        repaired.append("telemetry_segments")
 
-    # Global root deletion is last: local prune/telemetry helpers may create
-    # coordination directories inside the current runtime root.
-    if payload.prune and payload.global_:
-        pruned_orphan_dirs = prune_orphan_project_dirs(orphan_project_dirs)
-        if adhoc_retention_days is None:
-            raise AssertionError("Global ad-hoc retention was not resolved.")
-        pruned_adhoc_dirs = prune_adhoc_project_dirs(
-            adhoc_project_dirs,
-            retention_days=adhoc_retention_days,
-            now=now,
-        )
-        if pruned_orphan_dirs > 0:
-            repaired.append("orphan_project_dirs")
-        if pruned_adhoc_dirs > 0:
-            repaired.append("adhoc_project_dirs")
-
-    mars_roots = authority.mars_roots
-    agents_dir = mars_roots.primary / ".mars" / "agents"
-    skills_dir = mars_roots.primary / ".mars" / "skills"
-    agents_dirs = [
-        root / ".mars" / "agents"
-        for root in mars_content_roots(mars_roots)
-        if (root / ".mars" / "agents").is_dir()
-    ]
-    skills_dirs = [
-        root / ".mars" / "skills"
-        for root in mars_content_roots(mars_roots)
-        if (root / ".mars" / "skills").is_dir()
-    ]
-
-    warnings: list[DoctorWarning] = []
-    if dogfood_failed:
-        warnings.append(
-            DoctorWarning(
-                code="dogfood_spawn_rows_failed",
-                message=(
-                    f"{len(dogfood_failed)} dogfood spawn row(s) could not be migrated "
-                    "and stay quarantined: "
-                    + "; ".join(f"{spawn_id} ({reason})" for spawn_id, reason in dogfood_failed)
-                ),
-                payload={
-                    "spawn_ids": [spawn_id for spawn_id, _ in dogfood_failed],
-                    "reasons": dict(dogfood_failed),
-                },
-            )
-        )
-    if dogfood_index_rearm_warning:
-        warnings.append(
-            DoctorWarning(
-                code="dogfood_index_rearm_failed",
-                message=dogfood_index_rearm_warning,
-            )
-        )
-    if runtime_root is not None:
-        legacy_worktree_temp_warning = _check_legacy_worktree_temp(runtime_root)
-        if legacy_worktree_temp_warning is not None:
-            warnings.append(legacy_worktree_temp_warning)
-    if surface.warning is not None:
-        warnings.append(
-            DoctorWarning(
-                code="missing_project_root",
-                message=surface.warning,
-            )
-        )
-    if not payload.prune and adhoc_project_dirs:
-        warnings.append(
-            DoctorWarning(
-                code="stale_adhoc_project_dirs",
-                message=(
-                    f"{len(adhoc_project_dirs)} ad-hoc project dir(s) would be pruned "
-                    "with --prune --global."
-                ),
-                payload={
-                    "project_ids": [item.project_id for item in adhoc_project_dirs],
-                    "paths": [item.path or item.runtime_root for item in adhoc_project_dirs],
-                    "reasons": [item.reason for item in adhoc_project_dirs],
-                },
-            )
-        )
-    if not payload.prune and orphan_project_dirs:
-        warnings.append(
-            DoctorWarning(
-                code="stale_orphan_project_dirs",
-                message=(
-                    f"{len(orphan_project_dirs)} stale project dir(s) would be pruned "
-                    "with --prune --global."
-                ),
-                payload={
-                    "project_uuids": [item.uuid for item in orphan_project_dirs],
-                    "paths": [item.path for item in orphan_project_dirs],
-                },
-            )
-        )
-    if not payload.prune and stale_spawn_artifacts:
+    legacy_worktree_temp_warning = _check_legacy_worktree_temp(runtime_root)
+    if legacy_worktree_temp_warning is not None:
+        warnings.append(legacy_worktree_temp_warning)
+    if not prune and stale_spawn_artifacts:
         warnings.append(
             DoctorWarning(
                 code="stale_spawn_artifacts",
@@ -553,13 +476,9 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
                 },
             )
         )
-    if (
-        not payload.prune
-        and telemetry_cleanup is not None
-        and (
-            telemetry_cleanup.expired_segments > 0
-            or telemetry_cleanup.total_bytes > DEFAULT_MAX_TOTAL_BYTES
-        )
+    if not prune and (
+        telemetry_cleanup.expired_segments > 0
+        or telemetry_cleanup.total_bytes > DEFAULT_MAX_TOTAL_BYTES
     ):
         reasons: list[str] = []
         if telemetry_cleanup.expired_segments > 0:
@@ -582,6 +501,165 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
                     "expired_segments": telemetry_cleanup.expired_segments,
                     "max_total_bytes": DEFAULT_MAX_TOTAL_BYTES,
                 },
+            )
+        )
+
+    running = [row.id for row in spawns if is_active_spawn_status(row.status)]
+    if running:
+        reconciliation_mode = (
+            "after orphan-kill reconciliation"
+            if kill_orphans
+            else "without orphan-kill reconciliation"
+        )
+        warnings.append(
+            DoctorWarning(
+                code="live_active_spawns_remain",
+                message=(
+                    f"Live active spawns remain {reconciliation_mode} and were not pruned: "
+                    + ", ".join(running)
+                ),
+                payload={"spawn_ids": running},
+            )
+        )
+
+    return LocalReport(
+        spawns=spawns,
+        stale_spawn_artifacts=stale_spawn_artifacts,
+        pruned_spawn_artifacts=pruned_spawn_artifacts,
+        lock_gc=lock_gc,
+        telemetry_cleanup=telemetry_cleanup,
+        warnings=tuple(warnings),
+        repaired=tuple(repaired),
+        legacy_pi_sessions=legacy_pi_summary,
+        killed_orphan_spawns=killed_orphan_spawns,
+    )
+
+
+def _doctor_global(
+    now: float,
+    *,
+    retention_days: int,
+    prune: bool,
+) -> GlobalReport:
+    user_home = get_user_home()
+    orphan_project_dirs = tuple(scan_orphan_project_dirs(user_home, retention_days, now))
+    adhoc_retention_days = load_user_config().state.adhoc_retention_days
+    adhoc_project_dirs = tuple(scan_adhoc_project_dirs(user_home, adhoc_retention_days, now))
+    warnings: list[DoctorWarning] = []
+    repaired: list[str] = []
+    pruned_orphan_dirs = 0
+    pruned_adhoc_dirs = 0
+
+    if prune:
+        pruned_orphan_dirs = prune_orphan_project_dirs(list(orphan_project_dirs))
+        pruned_adhoc_dirs = prune_adhoc_project_dirs(
+            list(adhoc_project_dirs),
+            retention_days=adhoc_retention_days,
+            now=now,
+        )
+        if pruned_orphan_dirs > 0:
+            repaired.append("orphan_project_dirs")
+        if pruned_adhoc_dirs > 0:
+            repaired.append("adhoc_project_dirs")
+    else:
+        if adhoc_project_dirs:
+            warnings.append(
+                DoctorWarning(
+                    code="stale_adhoc_project_dirs",
+                    message=(
+                        f"{len(adhoc_project_dirs)} ad-hoc project dir(s) would be pruned "
+                        "with --prune --global."
+                    ),
+                    payload={
+                        "project_ids": [item.project_id for item in adhoc_project_dirs],
+                        "paths": [item.path or item.runtime_root for item in adhoc_project_dirs],
+                        "reasons": [item.reason for item in adhoc_project_dirs],
+                    },
+                )
+            )
+        if orphan_project_dirs:
+            warnings.append(
+                DoctorWarning(
+                    code="stale_orphan_project_dirs",
+                    message=(
+                        f"{len(orphan_project_dirs)} stale project dir(s) would be pruned "
+                        "with --prune --global."
+                    ),
+                    payload={
+                        "project_uuids": [item.uuid for item in orphan_project_dirs],
+                        "paths": [item.path for item in orphan_project_dirs],
+                    },
+                )
+            )
+
+    return GlobalReport(
+        orphan_project_dirs=orphan_project_dirs,
+        adhoc_project_dirs=adhoc_project_dirs,
+        pruned_orphan_dirs=pruned_orphan_dirs,
+        pruned_adhoc_dirs=pruned_adhoc_dirs,
+        warnings=tuple(warnings),
+        repaired=tuple(repaired),
+    )
+
+
+def doctor_sync(payload: DoctorInput) -> DoctorOutput:
+    authority = resolve_runtime_authority_for_read(payload.project_root)
+    surface = build_config_surface(authority)
+    project_root = surface.project_root
+    runtime_root = (
+        authority.runtime_root
+        if authority.runtime_root is not None and authority.runtime_root.is_dir()
+        else None
+    )
+    retention_days = surface.resolved_config.state.retention_days
+    now = time.time()
+    if payload.global_ and not is_root_side_effect_process():
+        raise RuntimeError(
+            "Global doctor maintenance requires a root Meridian process. "
+            "Run 'meridian doctor --global' from a top-level shell, not from a nested spawn."
+        )
+
+    local_report = (
+        _doctor_local(
+            runtime_root,
+            project_root=project_root,
+            project_state_dir=authority.project_state_dir,
+            retention_days=retention_days,
+            now=now,
+            prune=payload.prune,
+            kill_orphans=payload.kill_orphans,
+        )
+        if runtime_root is not None
+        else LocalReport()
+    )
+    # Global root deletion is last: local prune/telemetry helpers may create
+    # coordination directories inside the current runtime root.
+    global_report = (
+        _doctor_global(now, retention_days=retention_days, prune=payload.prune)
+        if payload.global_
+        else GlobalReport()
+    )
+
+    mars_roots = authority.mars_roots
+    agents_dir = mars_roots.primary / ".mars" / "agents"
+    skills_dir = mars_roots.primary / ".mars" / "skills"
+    agents_dirs = [
+        root / ".mars" / "agents"
+        for root in mars_content_roots(mars_roots)
+        if (root / ".mars" / "agents").is_dir()
+    ]
+    skills_dirs = [
+        root / ".mars" / "skills"
+        for root in mars_content_roots(mars_roots)
+        if (root / ".mars" / "skills").is_dir()
+    ]
+
+    warnings = [*local_report.warnings, *global_report.warnings]
+    if surface.warning is not None:
+        warnings.append(
+            DoctorWarning(
+                code="missing_project_root",
+                message=surface.warning,
             )
         )
     for finding in surface.workspace_findings:
@@ -607,7 +685,6 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
                 message="No configured agent profile directories were found.",
             )
         )
-
     if mars_marker_exists:
         availability = check_upgrade_availability(project_root)
         if availability is None:
@@ -633,24 +710,7 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
                 )
             )
 
-    running = [row.id for row in spawns if is_active_spawn_status(row.status)]
-    if running:
-        reconciliation_mode = (
-            "after orphan-kill reconciliation"
-            if payload.kill_orphans
-            else "without orphan-kill reconciliation"
-        )
-        warnings.append(
-            DoctorWarning(
-                code="live_active_spawns_remain",
-                message=(
-                    f"Live active spawns remain {reconciliation_mode} and were not pruned: "
-                    + ", ".join(running)
-                ),
-                payload={"spawn_ids": running},
-            )
-        )
-
+    repaired = tuple(sorted({*local_report.repaired, *global_report.repaired}))
     return DoctorOutput(
         ok=not warnings,
         project_root=project_root.as_posix(),
@@ -660,21 +720,21 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         mars_roots=authority.mars_roots,
         runtime_root=runtime_root.as_posix() if runtime_root is not None else None,
         runtime_root_source=authority.runtime_root_source or "unresolved",
-        runs_checked=len(spawns),
+        runs_checked=len(local_report.spawns),
         agents_dir=agents_dir.as_posix(),
         skills_dir=skills_dir.as_posix(),
-        orphan_project_dirs=tuple(orphan_project_dirs),
-        adhoc_project_dirs=tuple(adhoc_project_dirs),
-        stale_spawn_artifacts=tuple(stale_spawn_artifacts),
-        pruned_orphan_dirs=pruned_orphan_dirs,
-        pruned_adhoc_dirs=pruned_adhoc_dirs,
-        pruned_spawn_artifacts=pruned_spawn_artifacts,
-        lock_gc=lock_gc,
-        telemetry_cleanup=telemetry_cleanup,
+        orphan_project_dirs=global_report.orphan_project_dirs,
+        adhoc_project_dirs=global_report.adhoc_project_dirs,
+        stale_spawn_artifacts=local_report.stale_spawn_artifacts,
+        pruned_orphan_dirs=global_report.pruned_orphan_dirs,
+        pruned_adhoc_dirs=global_report.pruned_adhoc_dirs,
+        pruned_spawn_artifacts=local_report.pruned_spawn_artifacts,
+        lock_gc=local_report.lock_gc,
+        telemetry_cleanup=local_report.telemetry_cleanup,
         warnings=tuple(warnings),
-        repaired=tuple(sorted(set(repaired))),
-        legacy_pi_sessions=legacy_pi_summary,
-        killed_orphan_spawns=killed_orphan_spawns,
+        repaired=repaired,
+        legacy_pi_sessions=local_report.legacy_pi_sessions,
+        killed_orphan_spawns=local_report.killed_orphan_spawns,
     )
 
 
