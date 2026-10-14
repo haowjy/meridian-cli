@@ -499,9 +499,9 @@ class OpenCodeV2IdleSensor(OpenCodeIdleSensor):
         self._event_sequence = 0
         self._compaction_started_at: dict[str, int] = {}
         self._last_compaction_ended_at: int | None = None
-        self._last_terminal_at: int | None = None
+        self._last_terminal: tuple[int, str] | None = None
         self._compact_expected_id: str | None = None
-        self._compact_waiter: asyncio.Future[None] | None = None
+        self._compact_waiter: asyncio.Future[tuple[bool, str | None]] | None = None
 
     def _emit_user_returns(self) -> None:
         for inbox_id in tuple(self._pending_user_inbox_ids):
@@ -523,14 +523,17 @@ class OpenCodeV2IdleSensor(OpenCodeIdleSensor):
             return
         started_at = self._compaction_started_at.get(expected_id)
         ended_at = self._last_compaction_ended_at
-        terminal_at = self._last_terminal_at
-        if (
-            started_at is not None
-            and ended_at is not None
-            and terminal_at is not None
-            and started_at < ended_at < terminal_at
-        ):
-            waiter.set_result(None)
+        terminal = self._last_terminal
+        if started_at is None or terminal is None:
+            return
+        terminal_at, terminal_type = terminal
+        if terminal_at <= started_at:
+            return
+        if terminal_type != "session.execution.succeeded":
+            waiter.set_result((False, terminal_type))
+            return
+        if ended_at is not None and started_at < ended_at < terminal_at:
+            waiter.set_result((True, None))
 
     def on_raw_event(self, event: RawHarnessEvent) -> None:
         if event.harness_id != self._ctx.harness_id.value:
@@ -572,7 +575,7 @@ class OpenCodeV2IdleSensor(OpenCodeIdleSensor):
 
         self._busy = False
         self._pending_user_inbox_ids.clear()
-        self._last_terminal_at = self._event_sequence
+        self._last_terminal = (self._event_sequence, event.event_type)
         self._maybe_finish_compaction()
         self._emit("turn_end", turn_id=_event_id(event))
 
@@ -651,7 +654,12 @@ class OpenCodeV2IdleSensor(OpenCodeIdleSensor):
                 return CompactResult("failed", "invalid compaction response")
             self._compact_expected_id = inbox_id
             self._maybe_finish_compaction()
-            await asyncio.wait_for(waiter, timeout=self._compact_timeout_seconds)
+            succeeded, reason = await asyncio.wait_for(
+                waiter,
+                timeout=self._compact_timeout_seconds,
+            )
+            if not succeeded:
+                return CompactResult("failed", reason)
         except TimeoutError:
             return CompactResult("failed", "timeout")
         except (OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError) as exc:

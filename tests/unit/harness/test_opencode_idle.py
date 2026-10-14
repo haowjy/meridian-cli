@@ -524,6 +524,78 @@ async def test_v2_compact_waits_for_matching_recorded_completion(tmp_path: Path)
 
 
 @pytest.mark.parametrize(
+    ("terminal_type", "include_ended"),
+    [
+        ("session.execution.failed", False),
+        ("session.execution.interrupted", False),
+        ("session.execution.failed", True),
+    ],
+)
+async def test_v2_compact_resolves_terminal_failure_immediately(
+    tmp_path: Path,
+    terminal_type: str,
+    include_ended: bool,
+) -> None:
+    sensor: opencode_idle.OpenCodeV2IdleSensor
+
+    async def request(
+        method: str,
+        path: str,
+        payload: Mapping[str, object] | None,
+    ) -> tuple[int, str]:
+        if method == "GET":
+            assert path == f"/api/session/{V2_SESSION_ID}"
+            return 200, json.dumps(
+                {
+                    "data": {
+                        "id": V2_SESSION_ID,
+                        "model": {"providerID": "openai", "id": "gpt-6-luna"},
+                    }
+                }
+            )
+        assert (method, path, payload) == (
+            "POST",
+            f"/api/session/{V2_SESSION_ID}/compact",
+            {},
+        )
+        for event in _recorded_v2_events("events-v2-compact.sse"):
+            if event.event_type == "session.compaction.ended" and not include_ended:
+                continue
+            if event.event_type in {
+                "session.execution.succeeded",
+                "session.execution.failed",
+                "session.execution.interrupted",
+            }:
+                event = RawHarnessEvent(
+                    event_type=terminal_type,
+                    payload={**event.payload, "type": terminal_type},
+                    harness_id=event.harness_id,
+                    raw_text=event.raw_text,
+                )
+            sensor.on_raw_event(event)
+        return 200, json.dumps(
+            {
+                "data": {
+                    "id": "msg_v2_compaction",
+                    "sessionID": V2_SESSION_ID,
+                    "type": "compaction",
+                }
+            }
+        )
+
+    sensor = opencode_idle.OpenCodeV2IdleSensor(
+        _context(tmp_path, session_id=V2_SESSION_ID, version="v2"),
+        request=request,
+        compact_timeout_seconds=10,
+    )
+
+    result = await asyncio.wait_for(sensor.compact(), timeout=0.1)
+
+    assert result.result == "failed"
+    assert result.reason == terminal_type
+
+
+@pytest.mark.parametrize(
     ("version", "resolved_version", "expected_type"),
     [
         ("v1", "v1", opencode_idle.OpenCodeIdleSensor),
