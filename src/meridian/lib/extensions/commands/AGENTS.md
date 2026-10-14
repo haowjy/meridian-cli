@@ -5,8 +5,6 @@ This directory holds handler logic for first-party extension commands. Each file
 ## What Lives Here
 
 - `mermaid.py` — `MERMAID_CHECK_SPEC`: validates Mermaid diagram syntax in a file or directory
-- `sessions.py` — `ARCHIVE_SPAWN_SPEC`, `GET_SPAWN_STATS_SPEC`: archive a spawn; retrieve token stats
-- `workbench.py` — `PING_SPEC`: health check for the extension system itself
 - `biomed.py` — placeholder for biomed runtime bridge commands (currently empty)
 
 ## Adding a Command
@@ -21,7 +19,6 @@ Handler must return `ExtensionJSONResult` or `ExtensionErrorResult` — never ra
 ## Key Rules
 
 - `first_party=True` is required for all specs here
-- Commands requiring the app server: set `requires_app_server=True`. These return `app_server_archived` in the MCP server (app server is archived)
 - Import from `meridian.lib.*` freely — these are internal implementations, not plugin boundary code
 
 ## Related

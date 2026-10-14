@@ -14,7 +14,6 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_root,
     resolve_runtime_root_and_config,
 )
-from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state import spawn_store
 from meridian.lib.streaming.control_socket import control_socket_path
 
@@ -26,32 +25,6 @@ _ENDPOINT_DISCOVERY_POLL_SECONDS = 0.1
 def _fail(message: str) -> None:
     print(f"Error: {message}", file=sys.stderr)
     raise SystemExit(1)
-
-
-async def _connect_windows(
-    port_file_path: str,
-) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-    """Read port file and connect via TCP on Windows."""
-    from pathlib import Path
-
-    port_file = Path(port_file_path)
-    try:
-        port_str = port_file.read_text(encoding="utf-8").strip()
-        port = int(port_str)
-    except (OSError, ValueError) as exc:
-        _fail(f"failed to read control port: {exc}")
-        raise  # unreachable but satisfies type checker
-    return await asyncio.open_connection("127.0.0.1", port)
-
-
-async def _connect_posix(
-    socket_path: str,
-) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-    """Connect via Unix domain socket on POSIX."""
-    # Import the function locally to avoid pyright errors on Windows
-    from asyncio import open_unix_connection as _open_unix
-
-    return await _open_unix(socket_path)
 
 
 async def _send_and_receive(
@@ -75,10 +48,7 @@ async def inject_message(
     spawn_id: str,
     message: str,
 ) -> None:
-    """Send a control message to a running bidirectional spawn.
-
-    Uses Unix sockets on POSIX and TCP via a port file on Windows.
-    """
+    """Send a control message to a running bidirectional spawn over a Unix socket."""
 
     normalized_spawn_id = spawn_id.strip()
     if not normalized_spawn_id:
@@ -88,7 +58,6 @@ async def inject_message(
     runtime_root = resolve_runtime_root(project_root)
     spawn_dir = runtime_root / "spawns" / normalized_spawn_id
     socket_path = control_socket_path(runtime_root, normalized_spawn_id)
-    port_file = spawn_dir / "control.port"
 
     if not spawn_dir.exists():
         _fail(f"spawn not found: {normalized_spawn_id}")
@@ -97,13 +66,12 @@ async def inject_message(
     if not normalized_message:
         _fail("message is required")
 
-    discovery_path = port_file if IS_WINDOWS else socket_path
     discovery_deadline = time.monotonic() + _ENDPOINT_DISCOVERY_TIMEOUT_SECONDS
     while True:
         record = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
         if record is None or record.status not in ACTIVE_SPAWN_STATUSES:
             _fail(f"spawn not running: {normalized_spawn_id} has no control endpoint")
-        if discovery_path.exists():
+        if socket_path.exists():
             break
         remaining = discovery_deadline - time.monotonic()
         if remaining <= 0:
@@ -114,10 +82,7 @@ async def inject_message(
 
     response_data = b""
     try:
-        if IS_WINDOWS:
-            reader, writer = await _connect_windows(str(port_file))
-        else:
-            reader, writer = await _connect_posix(str(socket_path))
+        reader, writer = await asyncio.open_unix_connection(str(socket_path))
         response_data = await _send_and_receive(reader, writer, request)
     except TimeoutError:
         _fail(f"timed out waiting for response from spawn {normalized_spawn_id}")

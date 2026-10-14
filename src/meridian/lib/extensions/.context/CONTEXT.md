@@ -7,11 +7,10 @@ Every call to `ExtensionCommandDispatcher.dispatch(fqid, args, context, services
 1. **Registry lookup** — `not_found` if fqid unknown
 2. **Trust check** — `trust_violation` if `spec.first_party` is False (third-party commands not yet supported)
 3. **Surface check** — `surface_not_allowed` if `context.caller_surface` not in `spec.surfaces`
-4. **App server check** — `app_server_required` if `spec.requires_app_server` and `context.project_uuid is None`
-5. **Args validation** — `args_invalid` if Pydantic validation fails on `spec.args_schema`
-6. **Capability check** — `capability_missing` if any `spec.required_capabilities` absent from context
-7. **Handler execution** — `handler_error` if handler raises
-8. **Observability** — writes `ExtensionInvocationSummary` to `extension-invocations.jsonl` in `finally` block (always, success or failure)
+4. **Args validation** — `args_invalid` if Pydantic validation fails on `spec.args_schema`
+5. **Capability check** — `capability_missing` if any `spec.required_capabilities` absent from context
+6. **Handler execution** — `handler_error` if handler raises
+7. **Observability** — writes `ExtensionInvocationSummary` to `extension-invocations.jsonl` in `finally` block (always, success or failure)
 
 Errors at any stage return `ExtensionErrorResult(code=..., message=...)` — no exceptions propagate to callers.
 
@@ -31,9 +30,7 @@ Op-style handlers (single Pydantic input model) use `ExtensionCommandSpec.from_o
 
 ## Surface Rules
 
-`ExtensionSurface` declares `CLI`, `MCP`, and `HTTP`. CLI and MCP are active.
-HTTP remains in command specs, but no HTTP dispatcher or app server exists, so it
-is a dormant surface rather than a runnable endpoint.
+`ExtensionSurface` declares the two active adapters: `CLI` and `MCP`.
 
 **Non-first-party commands cannot expose `CLI` or `MCP`** — enforced at `registry.register()`. This is a hard constraint, not a default. Attempting to register a non-first-party command with CLI or MCP surfaces raises `ValueError`.
 
@@ -43,12 +40,8 @@ is a dormant surface rather than a runnable endpoint.
 
 `ExtensionCapabilities` carries three flags: `subprocess`, `kernel`, `hitl`.
 
-**Surface-aware defaults** (applied by `ExtensionInvocationContextBuilder.build()` when `with_capabilities()` is not called explicitly):
-- `CLI` and `MCP` → `ExtensionCapabilities.denied()` (all False)
-- dormant `HTTP` → `ExtensionCapabilities.elevated()` (all True)
-
-CLI/MCP callers are unprivileged by default. The HTTP default is retained policy
-for a possible app-server return; no active boundary currently uses it.
+`ExtensionInvocationContextBuilder.build()` uses `ExtensionCapabilities.denied()`
+unless the caller explicitly supplies capabilities with `with_capabilities()`.
 
 ## Registry Singleton
 

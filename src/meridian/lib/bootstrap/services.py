@@ -6,10 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from meridian.lib.bootstrap import config as bootstrap_config
 from meridian.lib.bootstrap import project_state, runtime_state
 from meridian.lib.bootstrap.project_state import ProjectLayoutSnapshot
-from meridian.lib.config.settings import MeridianConfig
+from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.ops.runtime import (
     RuntimeAuthoritySnapshot,
     resolve_project_authority,
@@ -75,7 +74,7 @@ def prepare_for_project_read(project_root: Path) -> ProjectReadContext:
         authority=authority,
         project_root=authority.project_root,
         layout=project_state.resolve_layout(authority.project_root),
-        config=bootstrap_config.load_config(authority.project_root, authority=authority),
+        config=load_config(authority.project_root, authority=authority),
     )
 
 
@@ -89,7 +88,7 @@ def prepare_for_runtime_read(
         authority=authority,
         project_root=authority.project_root,
         layout=project_state.resolve_layout(authority.project_root),
-        config=bootstrap_config.load_config(authority.project_root),
+        config=load_config(authority.project_root, authority=authority),
     )
     return RuntimeReadContext(
         authority=authority,
@@ -109,7 +108,7 @@ def prepare_for_project_write(project_root: Path) -> ProjectWriteContext:
         authority=authority,
         project_root=authority.project_root,
         layout=project_state.resolve_layout(authority.project_root),
-        config=bootstrap_config.load_config(authority.project_root, authority=authority),
+        config=load_config(authority.project_root, authority=authority),
     )
 
 
@@ -129,7 +128,7 @@ def prepare_for_runtime_write(
         authority=authority.model_copy(update={"runtime_root": runtime_root}),
         project_root=authority.project_root,
         layout=project_state.resolve_layout(authority.project_root),
-        config=bootstrap_config.load_config(authority.project_root, authority=authority),
+        config=load_config(authority.project_root, authority=authority),
         runtime_root=runtime_root,
     )
 

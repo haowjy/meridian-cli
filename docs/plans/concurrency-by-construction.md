@@ -10,7 +10,7 @@ Meridian is a multi-process coordinator whose only authority is files, yet almos
 store mutates those files as unlocked read-modify-write: the spawn record has a documented
 "owner tier" that whole-file-replaces from a stale in-memory cache
 (`lib/state/spawn/repository.py:260-291`, `lib/core/lifecycle.py:733-747`), the archive
-set spans two separate flock acquisitions (`lib/spawn/archive.py:52-56`), the work store
+set spans two separate flock acquisitions (`lib/state/archived_spawns.py:52-56`), the work store
 takes its flock in exactly one of its ~11 mutating functions (`lib/state/work_store.py:599`),
 and hook interval state is a load-once dict rewritten whole (`lib/hooks/interval.py:38-40,86-90`).
 Underneath, the lock primitive itself is breakable — lock files are unlinked while held
@@ -107,11 +107,11 @@ publish-process ≠ run-process topology); the lifecycle cache demotes to a read
 convention prose in `spawn/AGENTS.md` / `state/.context/CONTEXT.md:79-80` is deleted.
 
 **Archive set: one mutate API** `[61]` absorbing `[27]`
-`archive_spawn` = read (flock acquired+released, `archive.py:29`) → in-memory add → write
+`archive_spawn` = read (flock acquired+released, `archived_spawns.py:29`) → in-memory add → write
 (flock re-acquired, `:48`); the service's per-spawn-id **asyncio** lock
 (`spawn_service.py:955-971`) serializes neither different IDs nor different processes.
 Lost update reproduced; breaks the documented permanent-archive invariant
-(`lib/spawn/AGENTS.md`). Remedy: `mutate_archived_spawns(runtime_root, mutator)` holding
+(`lib/state/AGENTS.md`). Remedy: `mutate_archived_spawns(runtime_root, mutator)` holding
 the flock across RMW; whole-set write privatized (reads may stay public — sol). Per sol,
 the mutator returns whether the ID was newly inserted, and the service uses that instead of
 its separate `is_spawn_archived()` check — closing the duplicate-event race in the same move.

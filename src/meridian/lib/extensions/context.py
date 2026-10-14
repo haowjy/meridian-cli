@@ -57,12 +57,6 @@ class ExtensionCapabilities:
     hitl: bool = False
 
     @classmethod
-    def elevated(cls) -> ExtensionCapabilities:
-        """Full capabilities for UI/HTTP contexts."""
-
-        return cls(subprocess=True, kernel=True, hitl=True)
-
-    @classmethod
     def denied(cls) -> ExtensionCapabilities:
         """No capabilities for CLI/MCP contexts."""
 
@@ -80,7 +74,6 @@ class ExtensionInvocationContext:
 
     caller_surface: ExtensionSurface
     authority: RuntimeAuthoritySnapshot | None
-    project_uuid: str | None
     work_id: str | None
     work_path: Path | None
     spawn_id: str | None
@@ -94,7 +87,6 @@ class ExtensionInvocationContextBuilder:
     def __init__(self, surface: ExtensionSurface) -> None:
         self._surface = surface
         self._authority: RuntimeAuthoritySnapshot | None = None
-        self._project_uuid: str | None = None
         self._work_id: str | None = None
         self._work_path: Path | None = None
         self._spawn_id: str | None = None
@@ -106,10 +98,6 @@ class ExtensionInvocationContextBuilder:
         authority: RuntimeAuthoritySnapshot | None,
     ) -> ExtensionInvocationContextBuilder:
         self._authority = authority
-        return self
-
-    def with_project_uuid(self, uuid: str | None) -> ExtensionInvocationContextBuilder:
-        self._project_uuid = uuid
         return self
 
     def with_work_id(self, work_id: str | None) -> ExtensionInvocationContextBuilder:
@@ -138,15 +126,7 @@ class ExtensionInvocationContextBuilder:
     def build(self) -> ExtensionInvocationContext:
         """Build context with surface-appropriate capability defaults."""
 
-        from meridian.lib.extensions.types import ExtensionSurface
-
-        if self._capabilities is None:
-            if self._surface in (ExtensionSurface.CLI, ExtensionSurface.MCP):
-                caps = ExtensionCapabilities.denied()
-            else:
-                caps = ExtensionCapabilities.elevated()
-        else:
-            caps = self._capabilities
+        caps = self._capabilities or ExtensionCapabilities.denied()
 
         resolved_work_path: Path | None = None
         if self._work_id is not None and self._work_path is not None and self._work_path.exists():
@@ -155,7 +135,6 @@ class ExtensionInvocationContextBuilder:
         return ExtensionInvocationContext(
             caller_surface=self._surface,
             authority=self._authority,
-            project_uuid=self._project_uuid,
             work_id=self._work_id,
             work_path=resolved_work_path,
             spawn_id=self._spawn_id,

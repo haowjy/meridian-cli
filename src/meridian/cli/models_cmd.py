@@ -25,13 +25,6 @@ def _models_list_stub(
     raise SystemExit(1)
 
 
-def maybe_handle_models_redirect(argv: list[str]) -> None:
-    """Fast-path removed `meridian models list` before primary-launch parsing."""
-    if len(argv) >= 2 and argv[0] == "models" and argv[1] == "list":
-        print(_MODELS_LIST_REDIRECT, file=sys.stderr)
-        raise SystemExit(1)
-
-
 def register_models_commands(app: Any, emit: Emitter) -> tuple[set[str], dict[str, str]]:
     handlers: dict[str, Callable[[], Callable[..., None]]] = {
         "meridian.models.list": lambda: partial(_models_list_stub, emit),
