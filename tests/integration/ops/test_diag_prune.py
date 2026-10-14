@@ -452,6 +452,23 @@ def test_adhoc_gone_and_shadowed_paths_use_seven_day_retention(
     assert candidates[0].reason == expected_reason
 
 
+def test_adhoc_scan_without_origin_falls_back_to_tree_activity(tmp_path: Path) -> None:
+    now = 2_000_000_000.0
+    user_home = tmp_path / "user-home"
+    runtime_root = user_home / "projects" / "adhoc.crashed.6123456789ab"
+    _write_text(runtime_root / "state.txt", "crash residue\n")
+    _set_tree_mtime(runtime_root, now - (8 * 24 * 60 * 60))
+
+    candidates = scan_adhoc_project_dirs(user_home, retention_days=30, now=now)
+
+    assert len(candidates) == 1
+    assert candidates[0].path is None
+    assert candidates[0].reason == "adhoc-path-gone"
+    assert candidates[0].last_activity == datetime.fromtimestamp(
+        now - (8 * 24 * 60 * 60), tz=UTC
+    ).isoformat()
+
+
 def test_adhoc_prune_removes_context_and_rechecks_activity_under_lock(tmp_path: Path) -> None:
     now = 2_000_000_000.0
     user_home = tmp_path / "user-home"
