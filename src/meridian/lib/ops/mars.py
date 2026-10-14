@@ -11,7 +11,9 @@ from typing import Literal, cast
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.catalog.mars_roots import (
+    MarsRoots,
     ensure_resolved_mars_root,
+    mars_fallback_args,
     resolve_mars_roots,
 )
 from meridian.lib.catalog.mars_roots import (
@@ -35,16 +37,26 @@ class UpgradeAvailability(BaseModel):
         return len(self.within_constraint) + len(self.beyond_constraint)
 
 
+class MarsAgentEntry(BaseModel):
+    """One Mars agent inventory entry with content-layer provenance."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    scope: Literal["root", "fallback"] = "root"
+    source_path: str | None = None
+
+
 def resolve_mars_executable() -> str | None:
     """Prefer the Mars binary from this install environment over PATH."""
     return _resolve_mars_executable()
 
 
-def _prepare_mars_root(project_root: Path | None, *, executable: str) -> Path:
+def _prepare_mars_roots(project_root: Path | None, *, executable: str) -> MarsRoots:
     project = resolve_project_root_resolution(project_root).project_root
     roots = resolve_mars_roots(project)
     ensure_resolved_mars_root(roots, executable=executable)
-    return roots.primary
+    return roots
 
 
 def _is_head_constraint(value: object) -> bool:
@@ -67,11 +79,11 @@ def check_upgrade_availability(project_root: Path | None = None) -> UpgradeAvail
         return None
 
     try:
-        mars_root = _prepare_mars_root(project_root, executable=executable)
+        mars_roots = _prepare_mars_roots(project_root, executable=executable)
     except RuntimeError:
         return None
 
-    command = [executable, "outdated", "--json", "--root", mars_root.as_posix()]
+    command = [executable, "outdated", "--json", "--root", mars_roots.primary.as_posix()]
 
     try:
         result = subprocess.run(
@@ -172,7 +184,7 @@ def mars_agent_subagents(project_root: Path, agent_name: str) -> tuple[str, ...]
         return None
 
     try:
-        mars_root = _prepare_mars_root(project_root, executable=executable)
+        mars_roots = _prepare_mars_roots(project_root, executable=executable)
     except RuntimeError:
         return None
 
@@ -183,8 +195,9 @@ def mars_agent_subagents(project_root: Path, agent_name: str) -> tuple[str, ...]
         agent_name,
         "--json",
         "--root",
-        mars_root.as_posix(),
+        mars_roots.primary.as_posix(),
     ]
+    command.extend(mars_fallback_args(mars_roots, executable=executable))
 
     try:
         result = subprocess.run(
@@ -234,8 +247,8 @@ def mars_agent_subagents(project_root: Path, agent_name: str) -> tuple[str, ...]
     return subagents
 
 
-def mars_list_subagents(project_root: Path) -> tuple[str, ...]:
-    """List subagent-mode profile names via ``mars agents list``.
+def mars_list_subagents(project_root: Path) -> tuple[MarsAgentEntry, ...]:
+    """List subagent-mode profiles via ``mars agents list``.
 
     The ``--mode`` filter is an argument of the parent ``mars agents`` command,
     not of the ``list`` subcommand, so we list everything and filter on each
@@ -248,7 +261,7 @@ def mars_list_subagents(project_root: Path) -> tuple[str, ...]:
         return ()
 
     try:
-        mars_root = _prepare_mars_root(project_root, executable=executable)
+        mars_roots = _prepare_mars_roots(project_root, executable=executable)
     except RuntimeError:
         return ()
 
@@ -258,8 +271,9 @@ def mars_list_subagents(project_root: Path) -> tuple[str, ...]:
         "list",
         "--json",
         "--root",
-        mars_root.as_posix(),
+        mars_roots.primary.as_posix(),
     ]
+    command.extend(mars_fallback_args(mars_roots, executable=executable))
 
     try:
         result = subprocess.run(
@@ -298,7 +312,7 @@ def mars_list_subagents(project_root: Path) -> tuple[str, ...]:
     if not isinstance(agents_raw, list):
         return ()
 
-    names: list[str] = []
+    entries: list[MarsAgentEntry] = []
     seen: set[str] = set()
     for row_obj in cast("list[object]", agents_raw):
         if not isinstance(row_obj, dict):
@@ -313,8 +327,20 @@ def mars_list_subagents(project_root: Path) -> tuple[str, ...]:
         if not normalized or normalized in seen:
             continue
         seen.add(normalized)
-        names.append(normalized)
-    return tuple(sorted(names))
+        scope: Literal["root", "fallback"] = (
+            "fallback" if row.get("scope") == "fallback" else "root"
+        )
+        source_path = row.get("source_path")
+        entries.append(
+            MarsAgentEntry(
+                name=normalized,
+                scope=scope,
+                source_path=source_path.strip()
+                if isinstance(source_path, str) and source_path.strip()
+                else None,
+            )
+        )
+    return tuple(sorted(entries, key=lambda entry: entry.name))
 
 
 def format_upgrade_availability(
@@ -356,6 +382,7 @@ def format_upgrade_availability(
 
 
 __all__ = [
+    "MarsAgentEntry",
     "UpgradeAvailability",
     "check_upgrade_availability",
     "format_upgrade_availability",

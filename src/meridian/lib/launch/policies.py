@@ -72,14 +72,17 @@ def _build_resolved_skills_from_bundle(
     for entry in loaded_entries:
         if not entry.body:
             continue
-        # Synthetic path for downstream heading rendering and snapshot persistence.
-        synthetic_path = (mars_root / ".mars" / "skills" / entry.name / "SKILL.md").as_posix()
+        # Older bundle schema-4 producers omitted source_path. Keep the
+        # reconstructed primary path only as their compatibility fallback.
+        source_path = entry.source_path or (
+            mars_root / ".mars" / "skills" / entry.name / "SKILL.md"
+        ).as_posix()
         loaded_skills.append(
             SkillContent(
                 name=entry.name,
                 description="",
                 content=entry.body,
-                path=synthetic_path,
+                path=source_path,
                 skill_type=entry.skill_type,
             )
         )
@@ -470,6 +473,10 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         bundle_request,
         harness_registry=surface.harness_registry,
     )
+    if profile is not None and bundle_result.agent_source_path is not None:
+        profile = profile.model_copy(
+            update={"path": Path(bundle_result.agent_source_path).expanduser().resolve()}
+        )
 
     resolved_model = bundle_result.model
     resolved_harness = bundle_result.harness

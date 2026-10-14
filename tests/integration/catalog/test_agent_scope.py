@@ -37,6 +37,10 @@ def test_project_agent_wins_over_user_agent(
     project.mkdir()
     (project / "mars.toml").write_text("", encoding="utf-8")
     monkeypatch.setenv("MERIDIAN_HOME", user_home.as_posix())
+    monkeypatch.setattr(
+        "meridian.lib.catalog.agent.mars_supports_fallback_root",
+        lambda _executable: False,
+    )
     _write_agent(user_home / "mars", "reviewer")
     _write_agent(project, "reviewer")
 
@@ -54,6 +58,10 @@ def test_user_agent_inside_project_reports_install_here_message(
     project.mkdir()
     (project / "mars.toml").write_text("", encoding="utf-8")
     monkeypatch.setenv("MERIDIAN_HOME", user_home.as_posix())
+    monkeypatch.setattr(
+        "meridian.lib.catalog.agent.mars_supports_fallback_root",
+        lambda _executable: False,
+    )
     _write_agent(user_home / "mars", "reviewer")
 
     with pytest.raises(FileNotFoundError) as exc_info:
@@ -63,6 +71,26 @@ def test_user_agent_inside_project_reports_install_here_message(
         "Agent 'reviewer' found in user packages (~/.meridian/mars); "
         "add it here: meridian mars add <source>"
     )
+
+
+def test_user_agent_inside_project_loads_when_mars_supports_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_home = tmp_path / "user-home"
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "mars.toml").write_text("", encoding="utf-8")
+    monkeypatch.setenv("MERIDIAN_HOME", user_home.as_posix())
+    monkeypatch.setattr(
+        "meridian.lib.catalog.agent.mars_supports_fallback_root",
+        lambda _executable: True,
+    )
+    _write_agent(user_home / "mars", "reviewer")
+
+    profile = load_agent_profile("reviewer", project_root=project)
+
+    assert profile.path == (user_home / "mars/.mars/agents/reviewer.md").resolve()
 
 
 def test_missing_user_agent_reports_user_install_command(

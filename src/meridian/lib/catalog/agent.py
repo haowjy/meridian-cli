@@ -4,8 +4,10 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.catalog.mars_capabilities import mars_supports_fallback_root
 from meridian.lib.catalog.mars_roots import (
     mars_content_roots,
+    resolve_mars_executable,
     resolve_mars_fallback_root,
     resolve_mars_roots,
 )
@@ -166,6 +168,7 @@ def load_agent_profile(
             if (
                 fallback_root is not None
                 and profile.path.is_relative_to(fallback_root / ".mars" / "agents")
+                and not mars_supports_fallback_root(resolve_mars_executable())
             ):
                 raise FileNotFoundError(
                     f"Agent '{normalized}' found in user packages (~/.meridian/mars); "

@@ -11,6 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.catalog.mars_capabilities import mars_supports_fallback_root
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.user_paths import get_user_home
 
@@ -71,6 +72,15 @@ def mars_content_roots(roots: MarsRoots) -> tuple[Path, ...]:
 
     fallback = resolve_mars_fallback_root(roots)
     return (roots.primary,) if fallback is None else (roots.primary, fallback)
+
+
+def mars_fallback_args(roots: MarsRoots, *, executable: str) -> tuple[str, ...]:
+    """Build the optional Mars content-fallback arguments for *roots*."""
+
+    fallback = resolve_mars_fallback_root(roots)
+    if fallback is None or not mars_supports_fallback_root(executable):
+        return ()
+    return ("--fallback-root", fallback.as_posix())
 
 
 def resolve_mars_executable() -> str | None:
@@ -146,6 +156,7 @@ __all__ = [
     "ensure_resolved_mars_root",
     "ensure_user_mars_root",
     "mars_content_roots",
+    "mars_fallback_args",
     "resolve_mars_executable",
     "resolve_mars_fallback_root",
     "resolve_mars_roots",

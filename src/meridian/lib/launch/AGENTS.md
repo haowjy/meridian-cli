@@ -9,8 +9,10 @@ composition seam that wires them together.
 
 Skill content comes from the Mars launch-bundle JSON (`skills.loaded[].{name, skill_type, body}`),
 not from reading `.mars/skills/` on disk. `_build_resolved_skills_from_bundle()` in `policies.py`
-constructs `ResolvedSkills` from bundle data. `resolve_skills_from_profile()` is kept only for
-legacy snapshot replay when a persisted snapshot's `loaded_skills` field is empty.
+constructs `ResolvedSkills` from bundle data and preserves `source_path` for snapshots and
+workspace projection. It reconstructs a primary-root path only for older producers that omit
+provenance. `resolve_skills_from_profile()` is kept only for legacy snapshot replay when a
+persisted snapshot's `loaded_skills` field is empty.
 
 ## The Composition Seam (Invariant I-1)
 

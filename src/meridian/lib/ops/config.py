@@ -8,6 +8,8 @@ from typing import Literal, cast
 import structlog
 from pydantic import BaseModel, ConfigDict, field_serializer
 
+from meridian.lib.catalog.mars_capabilities import mars_supports_fallback_root
+from meridian.lib.catalog.mars_roots import resolve_mars_executable
 from meridian.lib.config.context_config import ContextSourceType
 from meridian.lib.config.dynamic_sections import DYNAMIC_SECTION_DESCRIPTORS
 from meridian.lib.config.loader import OPTION_CATALOG
@@ -94,6 +96,7 @@ class ConfigShowOutput(BaseModel):
     project_identity_source: Literal["meridian.toml", "path", "unminted"]
     mars_root: str
     mars_scope: Literal["project", "user"]
+    mars_fallback: Literal["supported", "unsupported"]
     runtime_root: str | None = None
     runtime_root_source: str | None = None
     workspace: ConfigSurfaceWorkspace
@@ -114,6 +117,7 @@ class ConfigShowOutput(BaseModel):
         lines.append(f"project_identity_source: {self.project_identity_source}")
         lines.append(f"mars_root: {self.mars_root}")
         lines.append(f"mars_scope: {self.mars_scope}")
+        lines.append(f"mars_fallback: {self.mars_fallback}")
         if self.runtime_root is not None:
             lines.append(f"runtime_root: {self.runtime_root}")
         if self.runtime_root_source is not None:
@@ -567,6 +571,11 @@ def config_show_sync(payload: ConfigShowInput) -> ConfigShowOutput:
         project_identity_source=_project_identity_source(surface.authority),
         mars_root=surface.authority.mars_roots.primary.as_posix(),
         mars_scope=surface.authority.mars_roots.scope,
+        mars_fallback=(
+            "supported"
+            if mars_supports_fallback_root(resolve_mars_executable())
+            else "unsupported"
+        ),
         runtime_root=(
             surface.authority.runtime_root.as_posix()
             if surface.authority.runtime_root is not None

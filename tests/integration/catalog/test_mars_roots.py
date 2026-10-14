@@ -6,6 +6,8 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from meridian.lib.catalog import mars_capabilities
+from meridian.lib.catalog.mars_capabilities import mars_supports_fallback_root
 from meridian.lib.catalog.mars_roots import ensure_user_mars_root, resolve_mars_roots
 
 if TYPE_CHECKING:
@@ -99,3 +101,53 @@ def test_ensure_user_mars_root_initializes_only_user_root(
     assert ensure_user_mars_root(executable="/fake/mars", run=fake_run) == user_root.resolve()
     assert calls == [["/fake/mars", "init", "--root", user_root.resolve().as_posix()]]
     assert not any(bare.iterdir())
+
+
+def test_fallback_root_capability_probe_is_cached_per_executable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        assert kwargs["timeout"] == 10
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            "Usage: mars build launch-bundle [OPTIONS]\n  --fallback-root <DIR>\n",
+            "",
+        )
+
+    mars_supports_fallback_root.cache_clear()
+    monkeypatch.setattr(mars_capabilities.subprocess, "run", fake_run)
+
+    assert mars_supports_fallback_root("/fake/supported-mars")
+    assert mars_supports_fallback_root("/fake/supported-mars")
+    assert calls == [
+        ["/fake/supported-mars", "build", "launch-bundle", "--help"]
+    ]
+
+
+def test_fallback_root_capability_probe_rejects_missing_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, "Usage: launch-bundle", "")
+
+    mars_supports_fallback_root.cache_clear()
+    monkeypatch.setattr(mars_capabilities.subprocess, "run", fake_run)
+
+    assert not mars_supports_fallback_root("/fake/old-mars")
+
+
+def test_fallback_root_capability_probe_treats_missing_binary_as_unsupported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(_command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise FileNotFoundError
+
+    mars_supports_fallback_root.cache_clear()
+    monkeypatch.setattr(mars_capabilities.subprocess, "run", fake_run)
+
+    assert not mars_supports_fallback_root("/fake/missing-mars")
+    assert not mars_supports_fallback_root(None)
