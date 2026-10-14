@@ -1049,7 +1049,7 @@ class SpawnApplicationService:
         SEAM-5.2: Returns False if already archived (idempotent).
         SEAM-5.3: Emits spawn.archived exactly once.
         """
-        from meridian.lib.spawn.archive import archive_spawn
+        from meridian.lib.state.archived_spawns import archive_spawn
 
         spawn_id_str = str(spawn_id)
         record = self.require_spawn(spawn_id)

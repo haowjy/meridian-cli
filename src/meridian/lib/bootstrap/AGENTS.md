@@ -61,7 +61,6 @@ RuntimeWriteContext(RuntimeReadContext)
 - `services.py` — the four `prepare_for_*()` functions and entrypoint builders
 - `project_state.py` — `ProjectLayoutSnapshot`, `resolve_layout()`, `ensure_project_dirs()`
 - `runtime_state.py` — `ensure_runtime_root()`, `ensure_runtime_dirs()`
-- `config.py` — read-only `load_config()` facade
 
 ## Anti-Patterns
 

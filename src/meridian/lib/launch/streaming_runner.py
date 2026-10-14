@@ -98,7 +98,6 @@ from meridian.lib.state.spawn.model import (
     LaunchMode,
 )
 from meridian.lib.streaming.spawn_manager import DrainOutcome, SpawnManager
-from meridian.lib.utils.time import minutes_to_seconds
 
 if TYPE_CHECKING:
     from meridian.lib.core.lifecycle import SpawnLifecycleService
@@ -902,7 +901,8 @@ async def execute_with_streaming(
         atexit.register(atexit_callback)
         _record_lifecycle("runner_started")
 
-        timeout_seconds = minutes_to_seconds(request.execution_policy.timeout)
+        timeout_minutes = request.execution_policy.timeout
+        timeout_seconds = timeout_minutes * 60.0 if timeout_minutes is not None else None
         startup_timeout_seconds = resolve_startup_timeout_seconds(
             config_snapshot=launch_context.runtime.config_snapshot,
         )

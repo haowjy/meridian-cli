@@ -69,7 +69,6 @@ from meridian.lib.state.work_state import slugify
 from meridian.lib.telemetry.init import setup_telemetry
 from meridian.lib.telemetry.observer import register_spawn_telemetry_observer
 from meridian.lib.telemetry.router import emit_telemetry
-from meridian.lib.utils.time import minutes_to_seconds
 
 from .execute import (
     depth_exceeded_output,
@@ -1750,7 +1749,7 @@ def spawn_wait_sync(
     timeout_minutes = (
         payload.timeout if payload.timeout is not None else config.wait_timeout_minutes
     )
-    timeout_seconds = minutes_to_seconds(timeout_minutes) or 0.0
+    timeout_seconds = timeout_minutes * 60.0
     checkpoint_seconds = _resolve_wait_checkpoint_seconds(
         payload=payload,
         spawn_ids=spawn_ids,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-from meridian.lib.spawn import archive as archive_module
+from meridian.lib.state import archived_spawns as archive_module
 
 
 def test_concurrent_archives_preserve_both_spawn_ids(

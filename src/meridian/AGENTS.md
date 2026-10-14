@@ -55,7 +55,6 @@ config entry. If adding a feature requires editing 10 files, the abstraction is 
 | `lib/platform/` | OS abstractions: locking, process scope, signals |
 | `lib/catalog/` | Agent/skill catalog, profile resolution |
 | `lib/config/` | Config loading and layering |
-| `lib/spawn/` | Archive overlay: UI visibility flag for terminal spawns |
 | `lib/streaming/` | Harness output streaming, event parsing |
 | `lib/safety/` | Budget enforcement, guardrails, permission resolution |
 | `lib/context/` | Context resolution (KB, strategy, work directories) |

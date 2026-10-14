@@ -1,4 +1,4 @@
-"""Archive-state helpers for spawn visibility."""
+"""Persisted archive overlay for spawn visibility."""
 
 from __future__ import annotations
 
