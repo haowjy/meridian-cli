@@ -8,25 +8,20 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Replace the idle compaction total-context floor with a growth-based,
   per-harness break-even; `idle.compact_min_growth_tokens` is the explicit
   override and replaces `idle.min_compact_tokens`.
-
 - Skip idle compaction when current context, its growth baseline, or route
   economics are unknown, and expose the persisted evaluation in idle status.
+
 ### Upgrade notes
 - Replace `idle.min_compact_tokens` with `idle.compact_min_growth_tokens`; idle
   baselines start fresh. See [upgrade steps](docs/upgrading.md#idle-compaction-growth-floor-unreleased).
 
 ### Fixed
-- Ignore compaction-only context after a return during idle compaction.
-- Stop OpenCode context reads at an in-progress compaction message.
-- False `Ignoring unknown Meridian config key 'context.<name>'` warnings for every `[context.*]` table (#580).
-- False unknown-key warnings before the real error for mis-shaped sections such
-  as `[hooks]`; sections with a hard error now suppress unknown-key warnings (#582).
 - Meridian reopen closes old idle stretch before exec; no stale push, warn, compact.
 - Detect unsent drafts in the OpenCode 2.x composer before idle compaction.
 - Keep OpenCode managed-primary event sensing alive through quiet periods and compaction;
   durable fallback now accepts only completed native compaction messages.
-
-- Meridian reopen closes old idle stretch before exec; no stale push, warn, compact.
+- Ignore compaction-only context after a return during idle compaction.
+- Stop OpenCode context reads at an in-progress compaction message.
 
 ## [0.10.2] - 2026-10-14
 
