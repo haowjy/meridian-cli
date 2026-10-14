@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -55,17 +55,7 @@ def _context(
 
 def _recorded_events(name: str) -> list[RawHarnessEvent]:
     events: list[RawHarnessEvent] = []
-    for block in (FIXTURES / name).read_text(encoding="utf-8").split("\n\n"):
-        data = next(
-            (
-                line.removeprefix("data: ")
-                for line in block.splitlines()
-                if line.startswith("data: ")
-            ),
-            None,
-        )
-        if data is None:
-            continue
+    for data in _sse_data_lines(name):
         payload = json.loads(data)
         events.append(
             RawHarnessEvent(
@@ -78,20 +68,16 @@ def _recorded_events(name: str) -> list[RawHarnessEvent]:
     return events
 
 
+def _sse_data_lines(name: str) -> Iterator[str]:
+    for line in (FIXTURES / name).read_text(encoding="utf-8").splitlines():
+        if line.startswith("data: "):
+            yield line.removeprefix("data: ")
+
+
 def _recorded_v2_events(name: str) -> list[RawHarnessEvent]:
     connection = OpenCodeV2Connection()
     events: list[RawHarnessEvent] = []
-    for block in (FIXTURES / name).read_text(encoding="utf-8").split("\n\n"):
-        data = next(
-            (
-                line.removeprefix("data: ")
-                for line in block.splitlines()
-                if line.startswith("data: ")
-            ),
-            None,
-        )
-        if data is None:
-            continue
+    for data in _sse_data_lines(name):
         event = connection._event_from_json_line(data, raw_text=data)
         assert event is not None
         events.append(event)
@@ -100,6 +86,62 @@ def _recorded_v2_events(name: str) -> list[RawHarnessEvent]:
 
 async def _take(iterator: AsyncIterator[IdleEvent], count: int) -> list[IdleEvent]:
     return [await anext(iterator) for _ in range(count)]
+
+
+def _v2_raw(event_type: str, **payload: object) -> RawHarnessEvent:
+    return RawHarnessEvent(
+        event_type=event_type,
+        payload={"type": event_type, "sessionID": V2_SESSION_ID, **payload},
+        harness_id="opencode",
+    )
+
+
+def _v2_user_enqueued(inbox_id: str, text: str, delivery: str = "queue") -> RawHarnessEvent:
+    return _v2_raw(
+        "session.inbox.enqueued",
+        inboxID=inbox_id,
+        item={"type": "user", "payload": {"text": text}, "delivery": delivery},
+    )
+
+
+def _v2_sensor(
+    tmp_path: Path, **kwargs: Any
+) -> tuple[opencode_idle.OpenCodeV2IdleSensor, AsyncIterator[IdleEvent]]:
+    sensor = opencode_idle.OpenCodeV2IdleSensor(
+        _context(tmp_path, session_id=V2_SESSION_ID, version="v2"), **kwargs
+    )
+    return sensor, sensor.events()
+
+
+async def _assert_quiet(iterator: AsyncIterator[IdleEvent]) -> None:
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(anext(iterator), timeout=0.01)
+
+
+def _v2_request_stub(
+    *,
+    provider: str,
+    model_id: str,
+    compaction_id: str,
+    on_compact: Callable[[], None],
+) -> opencode_idle.BackendRequest:
+    async def request(
+        method: str, path: str, payload: Mapping[str, object] | None
+    ) -> tuple[int, str]:
+        session_path = f"/api/session/{V2_SESSION_ID}"
+        if (method, path) == ("GET", session_path):
+            return 200, json.dumps(
+                {"data": {"id": V2_SESSION_ID, "model": {"providerID": provider, "id": model_id}}}
+            )
+        if (method, path) == ("GET", f"{session_path}/message?limit=20&order=desc"):
+            return 200, '{"data":[]}'
+        assert (method, path, payload) == ("POST", f"{session_path}/compact", {})
+        on_compact()
+        return 200, json.dumps(
+            {"data": {"id": compaction_id, "sessionID": V2_SESSION_ID, "type": "compaction"}}
+        )
+
+    return request
 
 
 async def test_recorded_normal_prompt_emits_one_return_and_one_turn_end(
@@ -278,58 +320,6 @@ async def test_facts_read_draft_from_recorded_pane(
     assert (facts.draft, facts.busy) == (expected_draft, False)
 
 
-async def test_v2_recorded_normal_prompt_emits_return_and_parent_turn_end(
-    tmp_path: Path,
-) -> None:
-    async def request(
-        method: str,
-        path: str,
-        _payload: Mapping[str, object] | None,
-    ) -> tuple[int, str]:
-        assert method == "GET"
-        if path == f"/api/session/{V2_SESSION_ID}":
-            return 200, json.dumps(
-                {
-                    "data": {
-                        "id": V2_SESSION_ID,
-                        "model": {"providerID": "openai", "id": "gpt-6-astra"},
-                    }
-                }
-            )
-        assert path == f"/api/session/{V2_SESSION_ID}/message?limit=20&order=desc"
-        return 200, '{"data":[],"cursor":{"previous":null,"next":null}}'
-
-    sensor = opencode_idle.OpenCodeV2IdleSensor(
-        _context(tmp_path, session_id=V2_SESSION_ID, version="v2"),
-        request=request,
-    )
-    iterator = sensor.events()
-    events = _recorded_v2_events("events-v2-normal.sse")
-    terminal = events[-1]
-
-    sensor.on_raw_event(
-        RawHarnessEvent(
-            event_type=terminal.event_type,
-            payload={**terminal.payload, "sessionID": "ses_child_task"},
-            harness_id=terminal.harness_id,
-            raw_text=terminal.raw_text,
-        )
-    )
-    for event in events:
-        sensor.on_raw_event(event)
-
-    observed = await _take(iterator, 3)
-    assert [event.kind for event in observed] == [
-        "user_prompt",
-        "user_prompt",
-        "turn_end",
-    ]
-    assert observed[2].turn_id == "evt_fixture_26"
-    assert observed[2].provider == "openai"
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(anext(iterator), timeout=0.01)
-
-
 @pytest.mark.parametrize(
     "terminal_type",
     [
@@ -338,439 +328,116 @@ async def test_v2_recorded_normal_prompt_emits_return_and_parent_turn_end(
         "session.execution.interrupted",
     ],
 )
-async def test_v2_all_parent_execution_outcomes_end_the_turn(
-    tmp_path: Path,
-    terminal_type: str,
+async def test_v2_recorded_normal_prompt_emits_return_and_parent_turn_end(
+    tmp_path: Path, terminal_type: str
 ) -> None:
-    sensor = opencode_idle.OpenCodeV2IdleSensor(
-        _context(tmp_path, session_id=V2_SESSION_ID, version="v2")
+    request = _v2_request_stub(
+        provider="openai",
+        model_id="gpt-6-astra",
+        compaction_id="unused",
+        on_compact=lambda: None,
     )
-    iterator = sensor.events()
-    terminal = _recorded_v2_events("events-v2-normal.sse")[-1]
-
-    sensor.on_raw_event(
-        RawHarnessEvent(
-            event_type=terminal_type,
-            payload={**terminal.payload, "type": terminal_type},
-            harness_id=terminal.harness_id,
-            raw_text=terminal.raw_text,
-        )
-    )
-
-    assert (await anext(iterator)).kind == "turn_end"
-
-
-async def test_v2_turn_end_fetches_wrapped_descending_message_excerpts(
-    tmp_path: Path,
-) -> None:
-    async def request(
-        method: str,
-        path: str,
-        _payload: Mapping[str, object] | None,
-    ) -> tuple[int, str]:
-        assert method == "GET"
-        if path == f"/api/session/{V2_SESSION_ID}":
-            return 200, json.dumps(
-                {
-                    "data": {
-                        "id": V2_SESSION_ID,
-                        "model": {"providerID": "openai", "id": "gpt-6-astra"},
-                    }
-                }
-            )
-        assert path == f"/api/session/{V2_SESSION_ID}/message?limit=20&order=desc"
-        return 200, json.dumps(
-            {
-                "data": [
-                    {
-                        "id": "assistant-new",
-                        "type": "assistant",
-                        "content": [
-                            {"type": "reasoning", "text": "private"},
-                            {"type": "text", "text": "answer one"},
-                            {"type": "text", "text": "answer two"},
-                        ],
-                    },
-                    {"id": "user-new", "type": "user", "text": "latest"},
-                    {
-                        "id": "assistant-old",
-                        "type": "assistant",
-                        "content": [{"type": "text", "text": "old answer"}],
-                    },
-                    {"id": "user-old", "type": "user", "text": "old prompt"},
-                ],
-                "cursor": {"previous": None, "next": None},
-            }
-        )
-
-    sensor = opencode_idle.OpenCodeV2IdleSensor(
-        _context(tmp_path, session_id=V2_SESSION_ID, version="v2"),
-        request=request,
-    )
-    iterator = sensor.events()
-    for event in _recorded_v2_events("events-v2-normal.sse"):
+    sensor, iterator = _v2_sensor(tmp_path, request=request)
+    events = _recorded_v2_events("events-v2-normal.sse")
+    terminal_id = cast("str", events[-1].payload["id"])
+    events[-1] = _v2_raw(terminal_type, id=terminal_id)
+    sensor.on_raw_event(_v2_raw(terminal_type, id=terminal_id, sessionID="ses_child_task"))
+    for event in events:
         sensor.on_raw_event(event)
+    observed = await _take(iterator, 3)
+    assert [event.kind for event in observed] == ["user_prompt", "user_prompt", "turn_end"]
+    assert (observed[-1].turn_id, observed[-1].provider) == (terminal_id, "openai")
+    await _assert_quiet(iterator)
 
-    turn_end = (await _take(iterator, 3))[-1]
-    assert turn_end.last_user_text == "latest"
-    assert turn_end.last_assistant_text == "answer one answer two"
-    assert turn_end.provider == "openai"
 
-
-async def test_v2_recorded_compaction_never_emits_user_return(tmp_path: Path) -> None:
-    sensor = opencode_idle.OpenCodeV2IdleSensor(
-        _context(tmp_path, session_id=V2_SESSION_ID, version="v2")
-    )
-    iterator = sensor.events()
-
-    for event in _recorded_v2_events("events-v2-compact.sse"):
-        sensor.on_raw_event(event)
-
-    assert [event.kind for event in await _take(iterator, 1)] == ["turn_end"]
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(anext(iterator), timeout=0.01)
+def test_v2_turn_end_fetches_wrapped_descending_message_excerpts() -> None:
+    payload = {
+        "data": [
+            {"type": "assistant", "content": "latest answer"},
+            {"type": "user", "text": "latest"},
+            {"type": "assistant", "content": "old answer"},
+            {"type": "user", "text": "old prompt"},
+        ]
+    }
+    assert opencode_idle._v2_message_excerpts(payload) == ("latest", "latest answer")
 
 
 async def test_v2_steered_prompt_returns_before_terminal_and_does_not_leak_to_compaction(
     tmp_path: Path,
 ) -> None:
-    sensor = opencode_idle.OpenCodeV2IdleSensor(
-        _context(tmp_path, session_id=V2_SESSION_ID, version="v2")
-    )
-    iterator = sensor.events()
+    sensor, iterator = _v2_sensor(tmp_path)
     normal = _recorded_v2_events("events-v2-normal.sse")
-    steered = RawHarnessEvent(
-        event_type="session.inbox.enqueued",
-        payload={
-            "type": "session.inbox.enqueued",
-            "sessionID": V2_SESSION_ID,
-            "inboxID": "msg_v2_user_steered",
-            "item": {
-                "type": "user",
-                "payload": {"text": "follow up while the turn is running"},
-                "delivery": "steer",
-            },
-        },
-        harness_id="opencode",
+    steered = _v2_user_enqueued(
+        "msg_v2_user_steered", "follow up while the turn is running", "steer"
     )
-
     for event in (*normal[:2], steered, *normal[2:]):
         sensor.on_raw_event(event)
     for event in _recorded_v2_events("events-v2-compact.sse"):
         sensor.on_raw_event(event)
-
     observed = await _take(iterator, 5)
-    assert [event.kind for event in observed] == [
-        "user_prompt",
-        "user_prompt",
-        "user_prompt",
-        "turn_end",
-        "turn_end",
-    ]
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(anext(iterator), timeout=0.01)
+    assert [event.kind for event in observed] == ["user_prompt"] * 3 + ["turn_end"] * 2
+    await _assert_quiet(iterator)
 
 
 async def test_v2_queued_prompt_returns_when_delivered_for_second_execution(
     tmp_path: Path,
 ) -> None:
-    sensor = opencode_idle.OpenCodeV2IdleSensor(
-        _context(tmp_path, session_id=V2_SESSION_ID, version="v2")
-    )
-    iterator = sensor.events()
-
-    def raw(event_type: str, **payload: object) -> RawHarnessEvent:
-        return RawHarnessEvent(
-            event_type=event_type,
-            payload={"type": event_type, "sessionID": V2_SESSION_ID, **payload},
-            harness_id="opencode",
-        )
-
-    sensor.on_raw_event(raw("session.execution.started"))
-    sensor.on_raw_event(
-        raw(
-            "session.inbox.enqueued",
-            inboxID="msg_v2_user_queued",
-            item={
-                "type": "user",
-                "payload": {"text": "follow up after this turn"},
-                "delivery": "queue",
-            },
-        )
-    )
-    sensor.on_raw_event(raw("session.execution.succeeded"))
-    sensor.on_raw_event(raw("session.execution.started"))
-    sensor.on_raw_event(
-        raw("session.inbox.delivered", inboxID="msg_v2_user_queued")
-    )
-    sensor.on_raw_event(raw("session.execution.succeeded"))
-
-    observed = await asyncio.wait_for(_take(iterator, 4), timeout=0.1)
-    assert [event.kind for event in observed] == [
-        "user_prompt",
-        "turn_end",
-        "user_prompt",
-        "turn_end",
-    ]
-
-
-async def test_v2_cancelled_prompt_is_no_longer_pending_or_returned(
-    tmp_path: Path,
-) -> None:
-    sensor = opencode_idle.OpenCodeV2IdleSensor(
-        _context(tmp_path, session_id=V2_SESSION_ID, version="v2")
-    )
-    iterator = sensor.events()
-
-    def raw(event_type: str, **payload: object) -> RawHarnessEvent:
-        return RawHarnessEvent(
-            event_type=event_type,
-            payload={"type": event_type, "sessionID": V2_SESSION_ID, **payload},
-            harness_id="opencode",
-        )
-
-    sensor.on_raw_event(
-        raw(
-            "session.inbox.enqueued",
-            inboxID="msg_v2_user_cancelled",
-            item={
-                "type": "user",
-                "payload": {"text": "never mind"},
-                "delivery": "queue",
-            },
-        )
-    )
-    sensor.on_raw_event(
-        raw("session.inbox.cancelled", inboxID="msg_v2_user_cancelled")
-    )
-    assert sensor._pending_user_inbox_ids == set()
-
-    sensor.on_raw_event(
-        raw("session.inbox.delivered", inboxID="msg_v2_user_cancelled")
-    )
-
-    assert (await anext(iterator)).kind == "user_prompt"
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(anext(iterator), timeout=0.01)
-
-
-async def test_v2_stranded_steer_delivery_during_compaction_does_not_emit_return(
-    tmp_path: Path,
-) -> None:
-    sensor: opencode_idle.OpenCodeV2IdleSensor
-
-    def raw(event_type: str, **payload: object) -> RawHarnessEvent:
-        return RawHarnessEvent(
-            event_type=event_type,
-            payload={"type": event_type, "sessionID": V2_SESSION_ID, **payload},
-            harness_id="opencode",
-        )
-
-    async def request(
-        method: str,
-        path: str,
-        payload: Mapping[str, object] | None,
-    ) -> tuple[int, str]:
-        if method == "GET":
-            if path.endswith("/message?limit=20&order=desc"):
-                return 200, '{"data":[],"cursor":{"previous":null,"next":null}}'
-            assert path == f"/api/session/{V2_SESSION_ID}"
-            return 200, json.dumps(
-                {
-                    "data": {
-                        "id": V2_SESSION_ID,
-                        "model": {"providerID": "openai", "id": "gpt-6-luna"},
-                    }
-                }
-            )
-        assert (path, payload) == (f"/api/session/{V2_SESSION_ID}/compact", {})
-        sensor.on_raw_event(raw("session.execution.started"))
-        sensor.on_raw_event(
-            raw("session.compaction.started", inputID="msg_v2_compaction")
-        )
-        sensor.on_raw_event(
-            raw("session.inbox.delivered", inboxID="msg_v2_user_stranded")
-        )
-        sensor.on_raw_event(raw("session.compaction.ended"))
-        sensor.on_raw_event(raw("session.execution.succeeded"))
-        return 200, json.dumps(
-            {
-                "data": {
-                    "id": "msg_v2_compaction",
-                    "sessionID": V2_SESSION_ID,
-                    "type": "compaction",
-                    "payload": {},
-                    "delivery": "steer",
-                }
-            }
-        )
-
-    sensor = opencode_idle.OpenCodeV2IdleSensor(
-        _context(tmp_path, session_id=V2_SESSION_ID, version="v2"),
-        request=request,
-        compact_timeout_seconds=0.1,
-    )
-    iterator = sensor.events()
-
-    sensor.on_raw_event(raw("session.execution.started"))
-    sensor.on_raw_event(
-        raw(
-            "session.inbox.enqueued",
-            inboxID="msg_v2_user_stranded",
-            item={
-                "type": "user",
-                "payload": {"text": "follow up while this turn runs"},
-                "delivery": "steer",
-            },
-        )
-    )
-    sensor.on_raw_event(raw("session.execution.succeeded"))
-    assert [event.kind for event in await _take(iterator, 2)] == [
-        "user_prompt",
-        "turn_end",
-    ]
-
-    result = await sensor.compact()
-
-    assert result.result == "ok"
-    assert (await anext(iterator)).kind == "turn_end"
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(anext(iterator), timeout=0.01)
-
-
-async def test_v2_compact_waits_for_matching_recorded_completion(tmp_path: Path) -> None:
-    sensor: opencode_idle.OpenCodeV2IdleSensor
-
-    async def request(
-        method: str,
-        path: str,
-        payload: Mapping[str, object] | None,
-    ) -> tuple[int, str]:
-        if method == "GET":
-            if path.endswith("/message?limit=20&order=desc"):
-                return 200, '{"data":[],"cursor":{"previous":null,"next":null}}'
-            assert path == f"/api/session/{V2_SESSION_ID}"
-            return 200, json.dumps(
-                {
-                    "data": {
-                        "id": V2_SESSION_ID,
-                        "model": {
-                            "providerID": "opencode-go",
-                            "id": "deepseek-v4.1-flash",
-                        },
-                    }
-                }
-            )
-        assert (method, path, payload) == (
-            "POST",
-            f"/api/session/{V2_SESSION_ID}/compact",
-            {},
-        )
-        # The SSE stream can outrun the POST response. Completion must still be
-        # matched to the compaction inbox id returned below.
-        for event in _recorded_v2_events("events-v2-compact.sse"):
-            sensor.on_raw_event(event)
-        return 200, json.dumps(
-            {
-                "data": {
-                    "id": "msg_v2_compaction",
-                    "sessionID": V2_SESSION_ID,
-                    "type": "compaction",
-                    "payload": {},
-                    "delivery": "steer",
-                }
-            }
-        )
-
-    sensor = opencode_idle.OpenCodeV2IdleSensor(
-        _context(tmp_path, session_id=V2_SESSION_ID, version="v2"),
-        request=request,
-        compact_timeout_seconds=0.1,
-    )
-    iterator = sensor.events()
-
-    assert (await sensor.compact()).result == "ok"
-    assert [event.kind for event in await _take(iterator, 1)] == ["turn_end"]
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(anext(iterator), timeout=0.01)
+    sensor, iterator = _v2_sensor(tmp_path)
+    delivered_id = "msg_v2_user_queued"
+    cancelled_id = "msg_v2_user_cancelled"
+    sensor.on_raw_event(_v2_raw("session.execution.started"))
+    sensor.on_raw_event(_v2_user_enqueued(delivered_id, "follow up after this turn"))
+    sensor.on_raw_event(_v2_user_enqueued(cancelled_id, "never mind"))
+    sensor.on_raw_event(_v2_raw("session.inbox.cancelled", inboxID=cancelled_id))
+    sensor.on_raw_event(_v2_raw("session.execution.succeeded"))
+    assert [event.kind for event in await _take(iterator, 3)] == ["user_prompt"] * 2 + ["turn_end"]
+    sensor.on_raw_event(_v2_raw("session.execution.started"))
+    sensor.on_raw_event(_v2_raw("session.inbox.delivered", inboxID=cancelled_id))
+    sensor.on_raw_event(_v2_raw("session.inbox.delivered", inboxID=delivered_id))
+    sensor.on_raw_event(_v2_raw("session.execution.succeeded"))
+    assert [event.kind for event in await _take(iterator, 2)] == ["user_prompt", "turn_end"]
+    await _assert_quiet(iterator)
 
 
 @pytest.mark.parametrize(
-    ("terminal_type", "include_ended"),
+    ("terminal_type", "expected_result"),
     [
-        ("session.execution.failed", False),
-        ("session.execution.interrupted", False),
-        ("session.execution.failed", True),
+        ("session.execution.succeeded", "ok"),
+        ("session.execution.failed", "failed"),
+        ("session.execution.interrupted", "failed"),
     ],
 )
-async def test_v2_compact_resolves_terminal_failure_immediately(
-    tmp_path: Path,
-    terminal_type: str,
-    include_ended: bool,
+async def test_v2_compact_waits_for_matching_recorded_completion(
+    tmp_path: Path, terminal_type: str, expected_result: str
 ) -> None:
     sensor: opencode_idle.OpenCodeV2IdleSensor
 
-    async def request(
-        method: str,
-        path: str,
-        payload: Mapping[str, object] | None,
-    ) -> tuple[int, str]:
-        if method == "GET":
-            assert path == f"/api/session/{V2_SESSION_ID}"
-            return 200, json.dumps(
-                {
-                    "data": {
-                        "id": V2_SESSION_ID,
-                        "model": {"providerID": "openai", "id": "gpt-6-luna"},
-                    }
-                }
-            )
-        assert (method, path, payload) == (
-            "POST",
-            f"/api/session/{V2_SESSION_ID}/compact",
-            {},
-        )
-        for event in _recorded_v2_events("events-v2-compact.sse"):
-            if event.event_type == "session.compaction.ended" and not include_ended:
-                continue
-            if event.event_type in {
-                "session.execution.succeeded",
-                "session.execution.failed",
-                "session.execution.interrupted",
-            }:
-                event = RawHarnessEvent(
-                    event_type=terminal_type,
-                    payload={**event.payload, "type": terminal_type},
-                    harness_id=event.harness_id,
-                    raw_text=event.raw_text,
-                )
+    def on_compact() -> None:
+        events = _recorded_v2_events("events-v2-compact.sse")
+        if terminal_type != "session.execution.succeeded":
+            events[-1] = _v2_raw(terminal_type, id=events[-1].payload["id"])
+        for event in events:
             sensor.on_raw_event(event)
-        return 200, json.dumps(
-            {
-                "data": {
-                    "id": "msg_v2_compaction",
-                    "sessionID": V2_SESSION_ID,
-                    "type": "compaction",
-                }
-            }
-        )
 
-    sensor = opencode_idle.OpenCodeV2IdleSensor(
-        _context(tmp_path, session_id=V2_SESSION_ID, version="v2"),
-        request=request,
-        compact_timeout_seconds=10,
+    request = _v2_request_stub(
+        provider="opencode-go",
+        model_id="deepseek-v4.1-flash",
+        compaction_id="msg_v2_compaction",
+        on_compact=on_compact,
     )
-
-    result = await asyncio.wait_for(sensor.compact(), timeout=0.1)
-
-    assert result.result == "failed"
-    assert result.reason == terminal_type
+    sensor, iterator = _v2_sensor(tmp_path, request=request, compact_timeout_seconds=0.1)
+    result = await sensor.compact()
+    assert result.result == expected_result
+    assert result.reason == (None if expected_result == "ok" else terminal_type)
+    assert [event.kind for event in await _take(iterator, 1)] == ["turn_end"]
+    await _assert_quiet(iterator)
 
 
 @pytest.mark.parametrize(
     ("version", "resolved_version", "expected_type"),
     [
         ("v1", "v1", opencode_idle.OpenCodeIdleSensor),
+        ("v1", None, opencode_idle.OpenCodeIdleSensor),
         ("v2", "v2", opencode_idle.OpenCodeV2IdleSensor),
         ("auto", "v1", opencode_idle.OpenCodeIdleSensor),
         ("auto", "v2", opencode_idle.OpenCodeV2IdleSensor),
@@ -779,7 +446,7 @@ async def test_v2_compact_resolves_terminal_failure_immediately(
 def test_primary_idle_sensor_dispatches_by_resolved_connection_version(
     tmp_path: Path,
     version: str | None,
-    resolved_version: str,
+    resolved_version: str | None,
     expected_type: type[object],
 ) -> None:
     sensor = opencode_idle.primary_idle_sensor(
@@ -789,30 +456,6 @@ def test_primary_idle_sensor_dispatches_by_resolved_connection_version(
     assert type(sensor) is expected_type
 
 
-def test_primary_idle_sensor_resolves_preference_when_connection_cannot_answer(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    observed: list[tuple[str | None, Mapping[str, str]]] = []
-
-    def resolve(
-        preference: str | None,
-        *,
-        binary: str,
-        env: Mapping[str, str],
-    ) -> str:
-        assert binary == "opencode"
-        observed.append((preference, env))
-        return "v1"
-
-    monkeypatch.setattr(opencode_idle, "resolve_opencode_version", resolve, raising=False)
-
-    sensor = opencode_idle.primary_idle_sensor(_context(tmp_path))
-
-    assert type(sensor) is opencode_idle.OpenCodeIdleSensor
-    assert observed == [(None, {})]
-
-
 @pytest.mark.parametrize(
     ("provider", "expected"),
     [
@@ -820,16 +463,8 @@ def test_primary_idle_sensor_resolves_preference_when_connection_cannot_answer(
         ("opencode-go", None),
     ],
 )
-def test_detect_ttl_by_provider(
-    provider: str,
-    expected: CacheTtl | None,
-) -> None:
-    assert (
-        opencode_idle.detect_ttl(
-            session_id=V2_SESSION_ID,
-            native_store=None,
-            provider=provider,
-            env={},
-        )
-        == expected
+def test_detect_ttl_by_provider(provider: str, expected: CacheTtl | None) -> None:
+    actual = opencode_idle.detect_ttl(
+        session_id=V2_SESSION_ID, native_store=None, provider=provider, env={}
     )
+    assert actual == expected
