@@ -4,7 +4,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Replace the idle compaction total-context floor with a growth-based,
+  per-harness break-even; `idle.compact_min_growth_tokens` is the explicit
+  override and replaces `idle.min_compact_tokens`.
+
 ### Fixed
+- Skip idle compaction when current context, its growth baseline, or route
+  economics are unknown, and expose the persisted evaluation in idle status.
 - False `Ignoring unknown Meridian config key 'context.<name>'` warnings for every `[context.*]` table (#580).
 - False unknown-key warnings before the real error for mis-shaped sections such
   as `[hooks]`; sections with a hard error now suppress unknown-key warnings (#582).
