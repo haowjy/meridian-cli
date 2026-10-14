@@ -6,13 +6,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, ValidationInfo, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.constants import PRIMARY_META_FILENAME
-from meridian.lib.state.json_doc import read_model, write_model
-from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
-from meridian.lib.utils.json_shapes import is_object_sequence, json_object
+from meridian.lib.state.json_doc import mutate_model, read_model, write_model
+from meridian.lib.state.spawn_aggregate import (
+    PublishedArtifactUnavailable,
+    published_artifact_lock,
+)
+from meridian.lib.utils.json_shapes import is_object_sequence
 
 ActivityState = Literal["starting", "idle", "turn_active", "finalizing"]
 
@@ -69,7 +72,7 @@ class PrimaryMetadata(BaseModel):
 
     model_config = ConfigDict(frozen=True, strict=True, extra="ignore")
 
-    managed_backend: bool = True
+    managed_backend: bool
     launcher_pid: _PositiveInt = None
     launcher_birth_epoch: _NonnegativeFloat = None
     backend_pid: _PositiveInt = None
@@ -89,16 +92,6 @@ class PrimaryMetadata(BaseModel):
     runtime_version: _OptionalText = None
     session_dir: _OptionalText = None
     auth_policy: _OptionalText = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _require_persisted_discriminator(cls, value: object, info: ValidationInfo) -> object:
-        if info.context and info.context.get("json_doc"):
-            document = json_object(value)
-            if document is None or not isinstance(document.get("managed_backend"), bool):
-                raise ValueError("managed_backend is required")
-        return value
-
 
 @dataclass(frozen=True)
 class PrimarySurfaceMetadata:
@@ -167,11 +160,16 @@ def write_primary_metadata(
     if runtime_root is None or spawn_id is None:
         write_model(path, metadata)
         return True
-    return mutate_published_spawn_artifact(
-        runtime_root,
-        SpawnId(spawn_id),
-        lambda: write_model(path, metadata),
-    )
+    try:
+        mutate_model(
+            path,
+            PrimaryMetadata,
+            lambda _current: (metadata, None),
+            lock=published_artifact_lock(runtime_root, SpawnId(spawn_id)),
+        )
+    except PublishedArtifactUnavailable:
+        return False
+    return True
 
 def read_primary_surface_metadata(runtime_root: Path, spawn_id: str) -> PrimarySurfaceMetadata:
     """Read projection for CLI surfaces. Returns defaults if file missing."""

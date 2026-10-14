@@ -29,7 +29,7 @@ from pydantic import (
 )
 
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state.json_doc import read_model, write_model
+from meridian.lib.state.json_doc import mutate_model, read_model, write_model
 from meridian.lib.utils.json_shapes import is_object_sequence, json_object
 from meridian.plugin_api.fs import AtomicReplaceDurabilityError
 from meridian.plugin_api.state import get_user_home
@@ -364,31 +364,38 @@ def _mark_resolved(sync_root: Path, conflict_id: str, *, runtime_root: Path) -> 
     """Mark one conflict as resolved. Returns True when metadata was updated."""
 
     try:
-        target, document = _find_conflict_file(
+        target = _find_conflict_file(
             sync_root, conflict_id, runtime_root=runtime_root
         )
     except OSError:
         return False
-    if target is None or document is None:
+    if target is None:
         return False
 
-    resolved = document.model_copy(
-        update={"resolved": True, "resolved_at": datetime.now(UTC).isoformat()}
-    )
+    expected: ConflictRecord | None = None
+
+    def resolve(document: ConflictRecord | None) -> tuple[ConflictRecord | None, bool]:
+        nonlocal expected
+        if document is None:
+            return None, False
+        expected = document.model_copy(
+            update={"resolved": True, "resolved_at": datetime.now(UTC).isoformat()}
+        )
+        return expected, True
+
     try:
-        return _write_model_reconciled(target, resolved)
+        _updated, resolved = mutate_model(
+            target,
+            ConflictRecord,
+            resolve,
+            lock=lock_file(autosync_lock_path(sync_root), reentrant=True),
+            indent=2,
+        )
+        return resolved
+    except AtomicReplaceDurabilityError:
+        return expected is not None and read_model(target, ConflictRecord) == expected
     except OSError:
         return False
-
-
-def _write_model_reconciled(path: Path, document: ConflictRecord) -> bool:
-    """Write a document, verifying visibility after a post-commit durability error."""
-
-    try:
-        write_model(path, document, indent=2)
-    except AtomicReplaceDurabilityError:
-        return read_model(path, ConflictRecord) == document
-    return True
 
 
 def _find_conflict_file(
@@ -396,20 +403,20 @@ def _find_conflict_file(
     conflict_id: str,
     *,
     runtime_root: Path,
-) -> tuple[Path | None, ConflictRecord | None]:
+) -> Path | None:
     root = conflict_dir(sync_root, runtime_root=runtime_root)
     direct = root / f"{conflict_id}.json"
     direct_document = read_model(direct, ConflictRecord)
     if direct_document is not None:
-        return direct, direct_document
+        return direct
 
     for file_path in root.glob("*.json"):
         document = read_model(file_path, ConflictRecord)
         if document is None:
             continue
         if (document.id or file_path.stem) == conflict_id:
-            return file_path, document
-    return None, None
+            return file_path
+    return None
 
 
 __all__ = [

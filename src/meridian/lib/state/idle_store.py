@@ -147,9 +147,9 @@ class IdleStore:
 
         next_state, result = mutate_model(
             path,
-            self._lock_path(path),
             IdleState,
             stamp,
+            lock=lock_file(self._lock_path(path)),
             indent=2,
         )
         if next_state is not None:

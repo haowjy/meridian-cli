@@ -174,7 +174,10 @@ def test_list_and_reentry_refuse_primary_metadata_as_binding(tmp_path: Path) -> 
     )
     primary_meta.write_primary_metadata(
         runtime_root / "spawns" / "p42",
-        primary_meta.PrimaryMetadata(harness_session_id=harness_session_id),
+        primary_meta.PrimaryMetadata(
+            managed_backend=True,
+            harness_session_id=harness_session_id,
+        ),
     )
 
     live_listing = session_list_sync(SessionListInput(project_root=project_root.as_posix()))

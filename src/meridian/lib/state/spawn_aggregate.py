@@ -5,8 +5,8 @@ from __future__ import annotations
 import os
 import shutil
 import stat
-from collections.abc import Callable
-from contextlib import suppress
+from collections.abc import Callable, Generator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -27,14 +27,18 @@ from meridian.lib.state.spawn.repository import (
 type SpawnDeletionPrecondition = Callable[[SpawnRecord | None], bool]
 
 
-def mutate_published_spawn_artifact(
+class PublishedArtifactUnavailable(RuntimeError):
+    """A spawn-owned artifact can no longer be mutated safely."""
+
+
+@contextmanager
+def published_artifact_lock(
     runtime_root: Path,
     spawn_id: SpawnId,
-    mutate: Callable[[], None],
     *,
     can_mutate: Callable[[SpawnRecord], bool] | None = None,
-) -> bool:
-    """Mutate a spawn-owned artifact without outliving its published row."""
+) -> Generator[None, None, None]:
+    """Lock a spawn-owned artifact after verifying its published row."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     resolved_spawn_id = str(spawn_id)
@@ -51,8 +55,29 @@ def mutate_published_spawn_artifact(
             or current.record_mode == "historical"
             or (can_mutate is not None and not can_mutate(current))
         ):
-            return False
-        mutate()
+            raise PublishedArtifactUnavailable(resolved_spawn_id)
+        yield
+
+
+def mutate_published_spawn_artifact(
+    runtime_root: Path,
+    spawn_id: SpawnId,
+    mutate: Callable[[], None],
+    *,
+    can_mutate: Callable[[SpawnRecord], bool] | None = None,
+) -> bool:
+    """Mutate a spawn-owned artifact without outliving its published row."""
+
+    try:
+        with published_artifact_lock(
+            runtime_root,
+            spawn_id,
+            can_mutate=can_mutate,
+        ):
+            mutate()
+    except PublishedArtifactUnavailable:
+        return False
+    else:
         return True
 
 
