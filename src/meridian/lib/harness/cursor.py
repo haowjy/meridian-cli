@@ -80,6 +80,7 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "continue_harness_session_id",
             "continue_fork",
             "effort",
+            "model_override_explicit",
             "pi_harness_profile",
             "allow_builtin_agents",
         }

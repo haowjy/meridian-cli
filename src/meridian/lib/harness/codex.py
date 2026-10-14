@@ -295,6 +295,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         {
             "skills",
             "context_from_payload",
+            "model_override_explicit",
             "reference_items",
             "task_cwd",
             "pi_harness_profile",
