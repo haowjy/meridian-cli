@@ -35,7 +35,7 @@ switch ($Mode) {
         Remove-Item Env:PYTEST_ADDOPTS -ErrorAction SilentlyContinue
         Remove-Item Env:PYTESTS_LAST_FAILED -ErrorAction SilentlyContinue
         Invoke-Step uv, run, ruff, check, '.'
-        Invoke-Step uv, run, --extra, dev, python, '-m', pyright
+        Invoke-Step uv, run, --extra, dev, python, '-m', pyright, --warnings
         Push-Location (Join-Path $RootDir 'src\meridian\pi_runtime')
         try {
             Invoke-Step pnpm, install, --frozen-lockfile, '--config.confirmModulesPurge=false'
