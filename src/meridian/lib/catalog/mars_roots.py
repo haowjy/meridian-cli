@@ -63,22 +63,24 @@ def mars_content_roots(
 ) -> tuple[Path, ...]:
     """Return content roots that the installed Mars can launch from."""
 
-    if not mars_fallback_active(roots, executable=executable):
+    fallback_root = mars_fallback_active(roots, executable=executable)
+    if fallback_root is None:
         return (roots.primary,)
-    assert roots.user is not None
-    return (roots.primary, roots.user)
+    return (roots.primary, fallback_root)
 
 
 def mars_fallback_active(
     roots: MarsRoots,
     *,
     executable: str | None = None,
-) -> bool:
-    """Return whether user packages can fall back from this primary root."""
+) -> Path | None:
+    """Return the active user package fallback root, if available."""
 
-    return roots.user is not None and mars_supports_fallback_root(
-        executable or resolve_mars_executable()
-    )
+    if roots.user is None:
+        return None
+    if not mars_supports_fallback_root(executable or resolve_mars_executable()):
+        return None
+    return roots.user
 
 
 def mars_fallback_label(
@@ -90,7 +92,7 @@ def mars_fallback_label(
 
     if roots.user is None:
         return "n/a"
-    if mars_fallback_active(roots, executable=executable):
+    if mars_fallback_active(roots, executable=executable) is not None:
         return "active"
     return "unsupported"
 
@@ -98,10 +100,10 @@ def mars_fallback_label(
 def mars_fallback_args(roots: MarsRoots, *, executable: str) -> tuple[str, ...]:
     """Build the optional Mars content-fallback arguments for *roots*."""
 
-    if not mars_fallback_active(roots, executable=executable):
+    fallback_root = mars_fallback_active(roots, executable=executable)
+    if fallback_root is None:
         return ()
-    assert roots.user is not None
-    return ("--fallback-root", roots.user.as_posix())
+    return ("--fallback-root", fallback_root.as_posix())
 
 
 def resolve_mars_executable() -> str | None:

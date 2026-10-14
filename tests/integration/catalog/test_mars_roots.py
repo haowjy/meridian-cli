@@ -85,13 +85,13 @@ def test_fallback_activation_is_shared_by_content_and_argv(
     project_roots = MarsRoots(primary=primary, scope="project", user=user)
     user_roots = MarsRoots(primary=user, scope="user")
 
-    assert mars_fallback_active(project_roots, executable="/fake/mars")
+    assert mars_fallback_active(project_roots, executable="/fake/mars") == user
     assert mars_content_roots(project_roots, executable="/fake/mars") == (primary, user)
     assert mars_fallback_args(project_roots, executable="/fake/mars") == (
         "--fallback-root",
         user.as_posix(),
     )
-    assert not mars_fallback_active(user_roots, executable="/fake/mars")
+    assert mars_fallback_active(user_roots, executable="/fake/mars") is None
     assert mars_content_roots(user_roots, executable="/fake/mars") == (user,)
     assert mars_fallback_args(user_roots, executable="/fake/mars") == ()
     assert calls == ["/fake/mars", "/fake/mars", "/fake/mars"]
