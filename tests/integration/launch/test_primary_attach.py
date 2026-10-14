@@ -537,13 +537,13 @@ async def test_opencode_bundle_registers_idle_sensor_and_autocompact_guard(
     )
 
     assert bundle.primary_idle_sensor is opencode_idle.primary_idle_sensor
-    assert bundle.detect_ttl is None
+    assert bundle.detect_ttl is opencode_idle.detect_ttl
     assert autocompact_off is opencode_idle.autocompact_off
     assert autocompact_off is not None
     assert autocompact_off({"OPENCODE_DISABLE_AUTOCOMPACT": "set"}) is True
     assert autocompact_off({"OPENCODE_DISABLE_AUTOCOMPACT": ""}) is False
     assert outcome.exit_code == 0
-    assert sidecar_hooks == [(autocompact_off, None)]
+    assert sidecar_hooks == [(autocompact_off, opencode_idle.detect_ttl)]
 
 
 def test_primary_attach_scope_snapshot_records_unknown_birth_sentinel_when_create_time_fails(

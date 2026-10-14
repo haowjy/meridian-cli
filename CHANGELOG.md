@@ -5,7 +5,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Removed
-- Stop writing redundant spawn `inbound.jsonl` control-action journals.
 - Remove the `meridian migrate` command.
 - Stop reading project identity from the legacy `.meridian/id` file.
 
@@ -41,31 +40,58 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Let `meridian doctor --global` list every ad-hoc root and its pruning
   eligibility; `--prune` reclaims only eligible runtime roots together with
   their matching `context/` directories.
+
+## [0.9.12] - 2026-10-14
+
+### Removed
+- Stop writing redundant spawn `inbound.jsonl` control-action journals.
+
+### Changed
 - Report every invalid config value with the same key, expected type, and received value format.
-- Run the strict Pyright gate with warnings fatal and per-rule suppressions only.
-- Stop advertising archived HTTP/app-server extension commands. Extension
-  discovery now exposes only runnable CLI and MCP surfaces and no longer emits
-  `requires_app_server` in JSON.
 - Treat only newline-terminated JSONL rows as committed across sessions, archive
   catalogs, and telemetry. Interrupted tails wait for completion instead of
   appearing early.
 
 ### Fixed
 - Honor `MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_PI` like the other harness overrides.
-- Skip malformed legacy native-session rows whose `chat_id` is not a string or
-  `harness_session_ids` is not a list.
-- Treat the first `--` as the CLI passthrough boundary, even when it follows a
-  value-taking option.
-- Keep streaming SIGTERM masked through connection teardown, then restore the
-  process handler without leaving a closed event loop behind.
-- Keep runtime-read config on the same resolved project authority snapshot as
-  runtime discovery.
-- Honor `--config` and `MERIDIAN_CONFIG` when resolving Git clone path overrides.
 - Repair incomplete telemetry JSONL tails before appending complete durable records.
 - Preserve legacy autosync conflict fields when marking a conflict resolved.
 - Keep permanent malformed JSONL rows from repeating warnings on every state read.
 - Warn once for an unknown hook config key instead of repeating the warning during
   hook loading.
+
+## [0.9.11] - 2026-10-14
+
+### Changed
+- Stop advertising archived HTTP/app-server extension commands. Extension
+  discovery now exposes only runnable CLI and MCP surfaces and no longer emits
+  `requires_app_server` in JSON.
+
+### Fixed
+- Keep streaming SIGTERM masked through connection teardown, then restore the
+  process handler without leaving a closed event loop behind.
+- Keep runtime-read config on the same resolved project authority snapshot as
+  runtime discovery.
+- Honor `--config` and `MERIDIAN_CONFIG` when resolving Git clone path overrides.
+
+## [0.9.10] - 2026-10-14
+
+### Changed
+- Run the strict Pyright gate with warnings fatal and per-rule suppressions only.
+
+### Fixed
+- Skip malformed legacy native-session rows whose `chat_id` is not a string or
+  `harness_session_ids` is not a list.
+- Treat the first `--` as the CLI passthrough boundary, even when it follows a
+  value-taking option.
+
+## [0.9.9] - 2026-10-14
+
+### Fixed
+- Idle push, warning, and compaction now work on OpenCode 2.x (before: never
+  armed). `openai`-provider sessions are scheduled against an estimated 30-minute
+  cache; other providers stay push-only. A prompt steered or queued into a running
+  turn counts as the user's return at once.
 
 ## [0.9.8] - 2026-10-14
 
@@ -78,9 +104,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `--ignore-direnv` / `--no-ignore-direnv` overrides. Undo direnv exports before
   primary and spawned harness launches; carry the setting to descendants.
 
-### Changed
-- Name the config file when rejecting an invalid file value.
-
 ### Fixed
 - Detect Claude idle cache TTLs from each chat's recorded native transcript store,
   even after the session changes directory, and recognize Pi's `openai-codex`
@@ -88,8 +111,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Keep cleaned environments authoritative for OpenCode workspace config and
   version probes, and Pi auth/session directory defaults. No ambient-env reinjection.
 - Keep OpenCode and Codex primary event-stream liveness timeout messages at debug level so quiet sessions do not print warnings.
-- Report invalid config values with the full config key and a concise expected-value
-  explanation instead of exposing raw Pydantic validation output.
 
 ## [0.9.7] - 2026-10-12
 
@@ -430,20 +451,17 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.6.7] - 2026-09-25
 
 ### Changed
-
 - Headless Claude spawns are allowed by default again. `spawn.deny_headless_harnesses` defaults to empty; set `["claude"]` to opt out. Anthropic paused the June 15 Agent SDK credit split, so `claude -p` still draws on subscription usage limits.
 - Removed the primary startup warning that claimed Anthropic would disable headless Claude runs on 2026-06-15.
 
 ## [0.6.6] - 2026-09-22
 
 ### Changed
-
 - Bump pinned `mars-agents` to 0.14.2 for the latest sync ownership fixes.
 
 ## [0.6.5] - 2026-09-22
 
 ### Fixed
-
 - Pi descendant completion no longer performs blocking global reconciliation for
   every streamed event. Assessments are shared, single-flight refreshes and use
   the rebuildable history index for transitive discovery before reconciling
@@ -452,7 +470,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   poll, stabilization, and completion-deadline wakes.
 
 ### Changed
-
 - Shared spawn guidance: use profile models and fallbacks; model overrides require an explicit request or unmet task requirement, not a failed run.
 
 ## [0.6.4] - 2026-09-21
@@ -460,7 +477,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.6.3] - 2026-09-21
 
 ### Fixed
-
 - OpenCode spawns no longer hang on an unanswered `permission.asked`/`permission.v2.asked`. The V1/V2 connection now routes stream permission asks to the injected request handler, so spawned agents auto-reject and managed primaries surface them; `respond_request` posts the version's reply endpoint (`/session/{id}/permissions/{permissionID}` for V1, `/api/session/{id}/permission/{requestID}/reply` for V2). Injected policy events (`request/opened`, `request/resolved`) are multiplexed into `events()` ahead of an idle SSE read, and unanswered requests are cancelled on cleanup.
 - An OpenCode permission ask answered natively in the TUI (a `permission.replied`/`permission.v2.replied` stream event) is now observed instead of ignored: the connection clears the pending request, journals `request/resolved` with the mapped decision (`once`/`always` → `accept`, `reject` → `reject`, raw `reply` retained) and releases its liveness key. A natively-answered managed primary can no longer mask a later real stream stall.
 - A spawn that hung on an unanswered permission ask and was then killed (`SIGTERM`, exit 143) is no longer recorded `succeeded`/`0`. Execution facts now outrank report text in terminal-state resolution, and `classify_durable_report_text` only treats a structured payload as completion when it carries explicit report text — a raw harness event envelope (for example a `permission.asked` payload) and other non-report JSON classify as absent.
@@ -478,29 +494,24 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.6.2] - 2026-09-20
 
 ### Added
-
 - Record the last executed conversation model as a distinct observation (never overwriting selected intent) and replay it on `--continue` when the native store is readable; explicit `--model` still wins. Readers cover OpenCode, Claude, Codex, and Pi.
 
 ### Fixed
-
 - `meridian opencode --continue` no longer fails managed attach on OpenCode 1.x with "cannot switch the model". Exact continue replays the session's own model, which is not a switch request, so the replayed model is no longer sent on resume (the native committed model is retained). An explicit `--model` still fails loudly on V1 and still applies on V2.
 
 ## [0.6.1] - 2026-09-20
 
 ### Fixed
-
 - Restore cold history-index build speed: the sessions projection loads its working set in memory and publishes sessions, work chats, aliases and record refreshes in bulk instead of issuing one ORM statement per `sessions.jsonl` event. A real-corpus metadata rebuild drops from ~19s to ~5s, back under the 15s automatic initialization budget (#500).
 
 ## [0.6.0] - 2026-09-19
 
 ### Added
-
 - Add an OpenCode backend seam (`harness/opencode_backend.py`) that resolves the installed version (`auto`/`v1`/`v2`). New config `[harness.opencode] version` / `MERIDIAN_HARNESS_OPENCODE_VERSION`.
 - Allow an explicit model on OpenCode primary continue: V2 applies it on resume via `POST /api/session/{id}/model`.
 - Capture OpenCode V2 sessions as `opencode.transcript.v2` (V1 stays `opencode.transcript.v1`) by dispatching on detected DB schema.
 
 ### Fixed
-
 - Fail loudly when an explicit model is requested on OpenCode 1.x resume instead of silently retaining the native committed model; the non-interactive subprocess projector (`opencode run`) now rejects the same request instead of forwarding `--model`.
 - Make the OpenCode subprocess projector version-aware: an explicit model on resume is rejected only for a known V1. V2 keeps `--model`, and an unresolved `auto` probe forwards rather than failing the preview.
 - Stop advertising session fork for OpenCode: both streaming transports reject `continue_fork`, so the adapter reports `supports_session_fork=False` and launch policy downgrades to in-place resume with a warning.
@@ -512,20 +523,17 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.5.0] - 2026-09-18
 
 ### Changed
-
 - Session log display uses the history index or live/untracked native files; it no longer attaches spawn `history.jsonl` as a second source. Archive packs already-sealed records and does not capture on `--apply`.
 - Bump pinned `mars-agents` to 0.14.1.
 - Document that `settings.targets` is launch permission, not only materialization.
 
 ### Added
-
 - Give new spawn records relocation-stable history IDs and monotonic state revisions.
 - Index history discovery in rebuildable SQLite; preserve readable transcripts across retries and transfers.
 - Add opt-in verified ZIP retention, direct archive reads, selective inert restore, and explicit archived-content search.
 - Read sealed native snapshot files through shared log, search, export and preview parsing; reject corrupt seals and unverified matches.
 
 ### Fixed
-
 - Read mixed ZIP archives per record so a legacy history.jsonl session co-archived with a native snapshot remains readable.
 - Thread transcript read budget and reserved-frame checks through providers instead of type-switching in the shared reader.
 - Refuse sealed publication for in-progress OpenCode responses and Pi-cancelled/truncated tails; share the Pi incomplete-stop vocabulary with the terminal resolver.
@@ -540,55 +548,39 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Preserve raw OpenCode session/message/part rows before rendering, including unknown material and orphan parts.
 - Keep DB failures distinct from empty sessions; render OpenCode summary compactions through shared readers.
 - Keep DB-only OpenCode reports working; diagnose malformed part types and avoid repeated session-wide part scans.
-
 - Read native Pi messages, compactions and branch annotations across logs, search, exports and previews.
 - Invalidate old parser previews and counts; report unsupported Pi rendering instead of empty success.
 - Keep incomplete Pi rendering visible in archived previews; diagnose malformed text and tool content.
 - Bind post-stop history capture to the completed spawn, even after its chat starts another run.
 - Warm archived child previews during index rebuild; count unsupported archived rendering as unavailable.
-
 - Own history index schema and queries with SQLAlchemy Core; keep the `meta.version` migrate runner.
 - Migrate compatible older history indexes in place; rebuild only when rows cannot be trusted.
 - Give cold history indexes 15 seconds; remember failed initialization and recover through manual rebuild.
 - Reuse concurrent index builds; keep status cache-only and preserve warm search deadlines.
 - Remember malformed history failures without masking cancellation or successful index publication.
 - Retry stale failure-marker cleanup on warm history reads; report cleanup warnings once.
-
 - Keep static alias lookup cache-only during dry-run, including continuation previews.
-
 - Preserve native OpenCode permission denials and rule order when adding workspace roots.
-
 - Keep dry-run model resolution cache-only; reject malformed inherited OpenCode config before workspace projection can discard it.
-
 - Honor explicit OpenCode models across native agent defaults; fail closed without silent launch fallback.
 - Preserve committed native model/variant on injection; show truthful managed-primary dry-runs and clean owned instructions.
 - Keep preview freshness visible at narrow widths; reject same-size mutations at cache publication.
-
 - Show bounded cached browser previews immediately; refresh selected sources without replaying unchanged conversations.
 - Warm previews through explicit index rebuild; support metadata-only rebuild and oversized final events.
-
 - Repair interrupted retirement synchronization before GC or reclaim acknowledgement.
-
 - Verify retention sources under shared locks and clean retired artifacts without blocking history writers.
-
 - Keep browser content search loose-only by default; add explicit `browse --include-archives`.
-
 - Search browser previews through the shared loose/ZIP resolver without replaying session files per row.
 - Report incomplete discovery on SQLite failures; keep exact launch references and metadata recovery file-backed.
 - Remove unused log sidecars and replaced scan paths; clean failed index rebuild stages.
-
 - Reclaim history dependents before their dependencies; keep unselected dependencies loose.
 - Clean failed archive/restore stages and recover owned staging paths on retry.
-
 - Document history commands, retention settings and environment overrides in the CLI references.
-
 - Detect cleared historical session identities during repeat restore and recapture.
-
 - Preserve snapshot identity and required prompts across restore/archive round trips.
 - Reject historical-session mutations and explain historical launch rejection.
 - Verify repeat restores without blocking unrelated writers; group equivalent ZIP locations.
 - Bind child fork ancestry before launch; include work discovery in the search deadline.
-
 - Reject restore conflicts in session recovery metadata, even when local transcript bytes match.
 - Honor explicit reselection of a previously imported history snapshot.
 - Preserve exact fork ancestry across resumed generations and ignore torn retry output.
@@ -601,54 +593,42 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.4.6-rc.1] - 2026-09-16
 
 ### Added
-
 - Native-ID continuation keeps the supplied ID; ambiguous harness ownership requires an explicit harness instead of choosing a different conversation.
 - Legacy continuation seeds the original session's initialized model, not a failed resume's snapshot; previews remain read-only and pruned snapshots retain partial history.
 - Spawn continuation accepts explicit model overrides with the same warning and recorded-selection replay as primary sessions; startup attempts bind selection and native identity together.
 - Primary continuation accepts explicit model overrides with a cache/cost warning; later resumes use the recorded selection and revalidate current target restrictions.
-
 - Session-log model-selection records preserve conversation-scoped intent, startup-attempt identity, and retry dedup without rewriting launch history.
 
 ### Changed
-
 - Bump pinned `mars-agents` to 0.14.0 for target-constrained routing and bundle schema 4 / report schema 2.
 - Require Mars bundle schema 4/report schema 2; retain validated selection diagnostics in snapshots, previews, and spawn failures instead of unused fallback-chain transport.
 
 ### Fixed
-
 - Accept tracked native session IDs for spawn continuation without replacing the requested conversation with its chat's latest ID.
-
 - Carry OpenCode selections in native create/prompt model objects; reject instead of clearing unsupported payloads, and preserve override tokens during worker recomposition.
-
 - Record streaming-serve model selections at accepted startup and keep native spawn forks from updating the parent conversation.
-
 - Keep primary session seeds and native-fork parent IDs out of recorded model selections; bind actual identities durably and retain cleanup on binding failure.
-
 - Pass headless harness exclusions to Mars before selection; keep primary routing and the final execution guard unchanged.
 - Fail durable JSONL appends when tail repair fails instead of silently losing the new event.
 
 ## [0.4.5] - 2026-09-12
 
 ### Fixed
-
 - Keep Codex managed-primary remote attach from overriding app-server workspace permissions with rejected `--add-dir` flags.
 
 ## [0.4.4] - 2026-09-11
 
 ### Changed
-
 - Bump pinned `mars-agents` to 0.13.1 for configurable models.dev catalog ingest (`settings.catalog_providers`) and the default xAI/OpenRouter allowlist.
 
 ## [0.4.3] - 2026-08-27
 
 ### Added
-
 - Add `meridian session browse`, a full-screen recent-session picker with
   metadata filtering, transcript search and preview, safe resume/fork actions,
   a plain table fallback, and equivalent bare `--continue` routing.
 
 ### Fixed
-
 - Open the session browser promptly in projects with large session and spawn
   histories by enriching only the visible `--limit` page and resolving deep-search
   targets with one session replay and at most one spawn scan per search.
@@ -669,12 +649,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.4.2] - 2026-07-29
 
 ### Added
-
 - Mars passthrough commands now report the invoking Meridian version so package
   compatibility constraints can be enforced.
 
 ### Changed
-
 - Bump pinned `mars-agents` to 0.13.0, which enforces `requires-mars` and
   `requires-meridian` engine version constraints — the feature this
   `MERIDIAN_VERSION` export activates.
@@ -682,7 +660,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.4.1] - 2026-07-26
 
 ### Changed
-
 - CI no longer runs an unsupported native-Windows lane, and platform docs now
   identify retained Windows branches as untested legacy code rather than future
   support work.
@@ -690,7 +667,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.4.0] - 2026-07-25
 
 ### Changed
-
 - Mars 0.12.0. Package hooks must ship per-target native fragments; the old
   `events`/`matcher` schema is rejected at config load. Upgrade packages to
   `meridian-base >=0.10.0` before syncing. Package cleanup now preserves
@@ -702,7 +678,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.3.54] - 2026-07-25
 
 ### Fixed
-
 - Remove the unused and ineffective spawn artifact redaction pipeline, avoiding
   whole-history reads and rewrites during finalization.
 - Keep one authoritative spawn history under `spawns/<id>/history.jsonl` while
@@ -713,7 +688,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.3.53] - 2026-07-25
 
 ### Fixed
-
 - Refuse to cancel process-verified live managed primary sessions unless
   `spawn cancel --force` is explicit, even when their session lease is missing
   or corrupt.
@@ -731,6 +705,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   lossless envelope metadata and omitting empty causal fields.
 - Preserve malformed harness wire text in bounded history metadata instead of
   discarding the only available diagnostic evidence.
+
 ## [0.3.52] - 2026-07-24
 
 ### Fixed
@@ -986,6 +961,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.3.37] - 2026-07-17
 
 ## [0.3.36] - 2026-07-17
+
 - Retire dead Pi notification/subspawn lifecycle machinery: the real Pi runtime never emits `meridian.notification.*` / `meridian.subspawn.*` events, so the pending-notification ledger and `pi_notification_timeout` gating are removed. Tracked-work wake continues via persisted-descendant discovery, the direct `meridian-spawn-watch` follow-up turn, and `last-notification.json` epoch gating. (#440)
 - Codex resident spawns: a resolved terminal outcome (including a succeeded turn) is no longer overwritten by a late generic connection-close when the backend dies; backend death with tracked children now reports `backend_dead_while_awaiting_done` instead of the raw WebSocket-close message.
 - OpenCode process death now preserves the subprocess exit code and stderr in the terminal outcome instead of collapsing to a generic `connection_closed_without_terminal_event`.
@@ -1652,6 +1628,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Fix 9 pyright warnings in settings.py, transcript.py, report.py — proper type narrowing for parsed JSON dicts/lists.
 
 ## [0.2.13] - 2026-05-28
+
 - bump mars to v0.7.6 to fix some model resolutions bugs
 
 ## [0.2.12] - 2026-05-28
@@ -1998,6 +1975,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Slow/implementation-pinning tests: `test_launch_process_pi_primary.py`, `test_managed_bash_extension.py`.
 
 ## [0.1.13] - 2026-05-19
+
 ### Changed
 - Release flow matches Mars shape: main workflow creates RC-by-default release commits/tags; tag-triggered `release.yml` is sole PyPI publish identity.
 
@@ -2115,15 +2093,16 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Config overlay `model-policies` accepts empty `override: {}` for fallback-candidate rules (parity with profile parsing).
 
 ## [0.1.3] - 2026-05-14
+
 ### Fixed
 - Release workflow honors the highest stable semver tag, including historical/manual releases, when computing the next version.
-
 
 ## [0.0.50] - 2026-05-14
 
 ## [0.0.34] - 2026-05-13
 
 ## [0.1.2] - 2026-05-13
+
 ### Added
 - `model-invocable` frontmatter field on agent profiles. `false` omits the agent from the model-facing `# Meridian Agents` inventory. Missing defaults to visible; non-boolean values warn and stay visible.
 - Native-skill harness suppression: harnesses declaring `supports_native_skills=True` no longer duplicate skill prompt documents into supplemental_documents. Claude skill delivery preserved via `--append-system-prompt-file`.
@@ -2150,6 +2129,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `scripts/release.sh` — manual release script replaced by CI auto-release.
 
 ## [0.1.0] - 2026-05-12
+
 ### Fixed
 - Process reaper escape — spawned processes (Vite, Codex) no longer persist as orphans after session exit. Sync cleanup paths now use containment-aware dispatch (`terminate_scope_sync()`) instead of PID-tree fallback that missed reparented processes. Session-exit triggers cleanup of session-owned scopes. Dead `reclaim_stale_session_scopes()` deleted.
 
@@ -2229,6 +2209,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Dead `read_spawn_events()` fallback in history module
 
 ## [0.0.49] - 2026-05-04
+
 ### Added
 - Descriptor-driven startup pipeline. CommandDescriptor catalog classifies all CLI commands at parse time — startup class, state requirements, telemetry mode, output format. Thin entrypoint handles `--help`/`--version` in ~16ms without importing the full CLI tree (11.6× faster).
 - Bootstrap service split. `resolve_*` functions are pure reads; `ensure_*` functions may mutate. Explicit `prepare_for_{project,runtime}_{read,write}` facade.
@@ -2258,8 +2239,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Startup token scanner: unknown flags no longer greedily consume next positional token.
 - Spawn event reducer hardened against missing fields in malformed JSONL.
 
-
 ## [0.0.48] - 2026-05-03
+
 ### Added
 - `meridian session export` command. Emits stitched full-session markdown transcripts; optional child spawn report appendix.
 - Diagnostic guard test for launch warning suppression. Catches catalog/config warnings leaking through spawn prompt assembly.
@@ -2339,7 +2320,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Chat backend FastAPI transport: REST command wrappers, bidirectional WebSocket command acks, fan-out, replay, close replay, and restart lost-backend recovery.
 - Claude chat backend vertical slice: harness normalizer registry, Claude event normalization, and cold SpawnManager acquisition with observer-before-start.
 - Chat substrate: normalized ChatEvent, shared ChatCommand dispatch, JSONL event log, lifecycle service, backend handle, observer bridge, and persistence-first pipeline.
-
 - Harness connection runtime HITL seam. Codex server requests now pass through typed handler policy before JSON-RPC responses; default auto-accept keeps existing spawn behavior.
 - `meridian mermaid check` style warnings: ox-edge, bare-end, fill-no-color
 - `--strict` flag: treat warnings as errors

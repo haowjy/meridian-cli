@@ -238,7 +238,6 @@ else:
         "opencode",
         base=OpenCodeHarnessProfileBase,
         model_default="opencode-go/kimi-k2.6",
-        idle_defaults={"ttl_seconds": 300},
     )
     PiHarnessProfileConfig = harness_profile_model("pi", base=PiHarnessProfileBase)
 

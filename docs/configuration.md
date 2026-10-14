@@ -113,6 +113,7 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | `harness.claude` | str | Default model for Claude harness |
 | `harness.codex` | str | Default model for Codex harness |
 | `harness.opencode` | str | Default model for OpenCode harness |
+| `harness.opencode.version` | `auto` \| `v1` \| `v2` | OpenCode backend version (default `auto`) |
 | `output.show` | array[str] | Stream categories shown |
 | `output.verbosity` | str\|null | `quiet\|normal\|verbose\|debug` |
 | `state.retention_days` | int | TTL for stale state pruning (`-1` = never, `0` = immediate, default `30`) |
@@ -146,6 +147,12 @@ does not yet support them:
 Pi's `session-boundary` extension is always loaded in both roles; it has no config
 toggle. It records launch-correlated native lifecycle evidence for post-exit session
 verification. See the [Pi extension guide](../src/meridian/pi_runtime/README.md).
+
+### OpenCode versions
+
+OpenCode 2.x is the supported target. `harness.opencode.version = "auto"` (the
+default) probes `opencode --version`; a 1.x install still works as a frozen
+fallback with no new features and push-only idle.
 
 ## Ignoring direnv during harness launches
 
@@ -275,7 +282,7 @@ Use `claude`, `codex`, `opencode`, or `pi` for `<harness>`.
 |---|---|---|
 | `enabled` | `true` | `MERIDIAN_HARNESS_IDLE_ENABLED_<H>` |
 | `compact` | `true` | `MERIDIAN_HARNESS_IDLE_COMPACT_<H>` |
-| `ttl_seconds` | Claude/Pi: sensed; Codex: `1800`; OpenCode: `300` | `MERIDIAN_HARNESS_IDLE_TTL_SECONDS_<H>` |
+| `ttl_seconds` | Claude/OpenCode/Pi: sensed; Codex: `1800` | `MERIDIAN_HARNESS_IDLE_TTL_SECONDS_<H>` |
 
 `<H>` is the uppercase harness name, for example
 `MERIDIAN_HARNESS_IDLE_TTL_SECONDS_CODEX`.
@@ -298,9 +305,13 @@ local config. Environment always beats every file, so a per-tmux
 | Harness | Default behavior |
 |---|---|
 | Claude | Push, warning, and compaction; the mod reads the cache TTL from the transcript |
-| Pi | Push, warning, and compaction: Meridian defaults `PI_CACHE_RETENTION=long` for interactive primaries when it is absent; `openai` is scheduled against 30 minutes, because OpenAI's `24h` retention typically lasts about that long. Set `PI_CACHE_RETENTION=short` to keep Pi's short-cache default. Unknown provider IDs remain push-only. |
-| Codex | Push, warning, and compaction with a conservative 1800-second TTL |
-| OpenCode | Push only with the 300-second default because the warning and compaction do not fit; raise `ttl_seconds` to schedule them |
+| Pi | Push, warning, and compaction. Meridian sets `PI_CACHE_RETENTION=long` for interactive primaries unless you set it; `anthropic` and `openai` are scheduled under long retention, `openai-codex` against an estimated 30 minutes. `PI_CACHE_RETENTION=short` and other providers are push-only. |
+| Codex | Push, warning, and compaction with a fixed 1800-second TTL |
+| OpenCode | 2.x: push, warning, and compaction when the session's provider is `openai` (estimated 30 minutes); other providers push-only. 1.x: push only ([OpenCode versions](#opencode-versions)). |
+
+The OpenAI estimates (Pi `openai-codex`, OpenCode `openai`) are per provider, not
+per model, and assume GPT-5.6 or later. For an older model on those routes, set
+`ttl_seconds` yourself.
 
 The Pi cache-retention default is launch behavior, independent of whether
 `[idle]` is enabled: an interactive Pi session gets the longer provider cache
