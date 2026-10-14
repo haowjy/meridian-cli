@@ -5,15 +5,18 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+import pytest
 
 from meridian.lib.catalog import model_aliases
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.models import resolve_model
 from meridian.lib.ops.catalog import CatalogModel, ModelsListInput, models_list_sync
 
-if TYPE_CHECKING:
-    import pytest
+
+@pytest.fixture(autouse=True)
+def _project_mars_root(tmp_path: Path) -> None:
+    (tmp_path / "mars.toml").write_text("", encoding="utf-8")
 
 
 def test_aliases_and_catalog_use_distinct_argv_keys_and_operation_caches(

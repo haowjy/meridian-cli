@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
-import sys
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -13,6 +11,11 @@ from typing import TYPE_CHECKING, cast
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from meridian.lib.catalog.mars_roots import (
+    ensure_resolved_mars_root,
+    resolve_mars_executable,
+    resolve_mars_roots,
+)
 from meridian.lib.core.route_report import RouteDecisionReport
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.compiler import FieldProvenance, ProvenanceLevel
@@ -91,12 +94,7 @@ class _BundleResult:
 
 
 def _resolve_mars_binary() -> str | None:
-    scripts_dir = Path(sys.executable).parent
-    for name in ("mars", "mars.exe"):
-        candidate = scripts_dir / name
-        if candidate.is_file():
-            return str(candidate)
-    return shutil.which("mars")
+    return resolve_mars_executable()
 
 
 def _normalize_str(value: object) -> str:
@@ -219,13 +217,14 @@ def _build_bundle_command(request: BundleRequest) -> list[str]:
             f"{_MARS_BUNDLE_MIN_VERSION}, but no mars binary was found."
         )
 
+    roots = resolve_mars_roots(request.project_root)
     command = [
         mars_binary,
         "build",
         "launch-bundle",
         "--json",
         "--root",
-        str(request.project_root),
+        roots.primary.as_posix(),
     ]
 
     if request.no_refresh_models:
@@ -426,6 +425,8 @@ def request_and_resolve(
     """Resolve launch routing and execution policy through Mars launch-bundle."""
 
     command = _build_bundle_command(request)
+    roots = resolve_mars_roots(request.project_root)
+    ensure_resolved_mars_root(roots, executable=command[0])
     try:
         result = subprocess.run(
             command,

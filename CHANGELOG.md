@@ -8,6 +8,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Stop writing redundant spawn `inbound.jsonl` control-action journals.
 
 ### Changed
+- Store user-scoped packages in `~/.meridian/mars`; manage them with
+  `meridian mars --user add` and `meridian mars --user sync`.
+- Let bare directories launch through every installed harness using user-scope
+  Mars defaults.
+- Resolve agents and skills from project packages, then user packages, then
+  built-in defaults.
+- Refuse `meridian mars` package mutations without a project Mars root unless
+  `--user` is explicit.
 - Report every invalid config value with the same key, expected type, and received value format.
 - Run the strict Pyright gate with warnings fatal and per-rule suppressions only.
 - Stop advertising archived HTTP/app-server extension commands. Extension

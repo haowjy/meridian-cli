@@ -146,12 +146,14 @@ def launch_primary(
     )
     if request.include_bootstrap_documents:
         from meridian.lib.catalog.bootstrap import BootstrapRegistry
+        from meridian.lib.catalog.mars_roots import resolve_mars_roots
 
+        mars_root = resolve_mars_roots(resolved_project_root).primary
         request = request.model_copy(
             update={
                 "supplemental_prompt_documents": (
                     *request.supplemental_prompt_documents,
-                    *BootstrapRegistry(resolved_project_root / ".mars").load_all(),
+                    *BootstrapRegistry(mars_root / ".mars").load_all(),
                 )
             }
         )

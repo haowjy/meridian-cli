@@ -7,6 +7,7 @@ from pathlib import Path
 import structlog
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.catalog.mars_roots import mars_content_roots, resolve_mars_roots
 from meridian.lib.core.depth import is_root_side_effect_process
 from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_chat
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
@@ -386,10 +387,19 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     if telemetry_cleanup.deleted_segments > 0:
         repaired.append("telemetry_segments")
 
-    agents_dir = project_root / ".mars" / "agents"
-    skills_dir = project_root / ".mars" / "skills"
-    agents_dirs = [agents_dir] if agents_dir.is_dir() else []
-    skills_dirs = [skills_dir] if skills_dir.is_dir() else []
+    mars_roots = resolve_mars_roots(project_root)
+    agents_dir = mars_roots.primary / ".mars" / "agents"
+    skills_dir = mars_roots.primary / ".mars" / "skills"
+    agents_dirs = [
+        root / ".mars" / "agents"
+        for root in mars_content_roots(mars_roots)
+        if (root / ".mars" / "agents").is_dir()
+    ]
+    skills_dirs = [
+        root / ".mars" / "skills"
+        for root in mars_content_roots(mars_roots)
+        if (root / ".mars" / "skills").is_dir()
+    ]
 
     warnings: list[DoctorWarning] = []
     if dogfood.failed:

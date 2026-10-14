@@ -1,6 +1,7 @@
 # qa-validated: test-suite-redesign
 """Config show operation tests — workspace findings, provenance, hook suppression."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,8 @@ def test_config_show_surfaces_workspace_findings(tmp_path: Path) -> None:
 
     result = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
 
+    assert result.mars_root == (Path(os.environ["MERIDIAN_HOME"]) / "mars").resolve().as_posix()
+    assert result.mars_scope == "user"
     assert result.workspace.status == "present"
     assert result.workspace.sources == (
         (project_root / "meridian.local.toml").resolve().as_posix(),

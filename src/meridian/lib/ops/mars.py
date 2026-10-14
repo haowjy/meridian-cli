@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import json
 import logging
-import shutil
 import subprocess
-import sys
 from pathlib import Path
 from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict
+
+from meridian.lib.catalog.mars_roots import (
+    ensure_resolved_mars_root,
+    resolve_mars_roots,
+)
+from meridian.lib.catalog.mars_roots import (
+    resolve_mars_executable as _resolve_mars_executable,
+)
+from meridian.lib.config.project_root import resolve_project_root_resolution
 
 _logger = logging.getLogger(__name__)
 
@@ -30,16 +37,14 @@ class UpgradeAvailability(BaseModel):
 
 def resolve_mars_executable() -> str | None:
     """Prefer the Mars binary from this install environment over PATH."""
+    return _resolve_mars_executable()
 
-    # Keep the wrapper path intact: uv tool scripts point at a symlinked Python
-    # binary, and resolving it jumps out of the tool environment where sibling
-    # scripts (including `mars`) live.
-    scripts_dir = Path(sys.executable).parent
-    for name in ("mars", "mars.exe"):
-        candidate = scripts_dir / name
-        if candidate.is_file():
-            return str(candidate)
-    return shutil.which("mars")
+
+def _prepare_mars_root(project_root: Path | None, *, executable: str) -> Path:
+    project = resolve_project_root_resolution(project_root).project_root
+    roots = resolve_mars_roots(project)
+    ensure_resolved_mars_root(roots, executable=executable)
+    return roots.primary
 
 
 def _is_head_constraint(value: object) -> bool:
@@ -61,9 +66,12 @@ def check_upgrade_availability(project_root: Path | None = None) -> UpgradeAvail
     if executable is None:
         return None
 
-    command = [executable, "outdated", "--json"]
-    if project_root is not None:
-        command.extend(["--root", project_root.as_posix()])
+    try:
+        mars_root = _prepare_mars_root(project_root, executable=executable)
+    except RuntimeError:
+        return None
+
+    command = [executable, "outdated", "--json", "--root", mars_root.as_posix()]
 
     try:
         result = subprocess.run(
@@ -163,6 +171,11 @@ def mars_agent_subagents(project_root: Path, agent_name: str) -> tuple[str, ...]
     if executable is None:
         return None
 
+    try:
+        mars_root = _prepare_mars_root(project_root, executable=executable)
+    except RuntimeError:
+        return None
+
     command = [
         executable,
         "agents",
@@ -170,7 +183,7 @@ def mars_agent_subagents(project_root: Path, agent_name: str) -> tuple[str, ...]
         agent_name,
         "--json",
         "--root",
-        project_root.as_posix(),
+        mars_root.as_posix(),
     ]
 
     try:
@@ -234,13 +247,18 @@ def mars_list_subagents(project_root: Path) -> tuple[str, ...]:
     if executable is None:
         return ()
 
+    try:
+        mars_root = _prepare_mars_root(project_root, executable=executable)
+    except RuntimeError:
+        return ()
+
     command = [
         executable,
         "agents",
         "list",
         "--json",
         "--root",
-        project_root.as_posix(),
+        mars_root.as_posix(),
     ]
 
     try:

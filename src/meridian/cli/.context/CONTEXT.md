@@ -55,6 +55,14 @@ Four independent mechanisms reduce startup latency and keep dependencies acyclic
 Together these mechanisms keep startup and help paths from importing command
 implementations they do not need.
 
+## Mars passthrough roots
+
+`mars_passthrough.py` owns the Meridian-only `--user` flag. It always replaces a
+Mars `--root` with the primary root from `resolve_mars_roots()`; `--user` selects
+`~/.meridian/mars` explicitly. Package mutations in a bare directory are rejected
+before root injection unless `--user` is present, preventing Mars auto-init from
+writing a project marker there. Plain `mars init` remains project authoring.
+
 ## Help Profile Selection
 
 Human vs agent mode selects a `HelpProfile` at app-build time from the

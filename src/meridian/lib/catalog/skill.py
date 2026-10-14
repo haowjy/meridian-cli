@@ -4,6 +4,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.catalog.mars_roots import mars_content_roots, resolve_mars_roots
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.domain import IndexReport, SkillContent, SkillManifest
 
@@ -134,7 +135,8 @@ def discover_skill_variants(skill_root: Path) -> dict[tuple[str, str | None], Pa
 
 
 def _skill_search_dirs(project_root: Path) -> list[Path]:
-    return [project_root / ".mars" / "skills"]
+    roots = resolve_mars_roots(project_root)
+    return [root / ".mars" / "skills" for root in mars_content_roots(roots)]
 
 
 def replace_skill_body(base: SkillDocument, body: str) -> str:

@@ -90,6 +90,8 @@ class ConfigShowOutput(BaseModel):
     path: str
     project_root: str
     project_root_source: str
+    mars_root: str
+    mars_scope: Literal["project", "user"]
     runtime_root: str | None = None
     runtime_root_source: str | None = None
     workspace: ConfigSurfaceWorkspace
@@ -106,6 +108,8 @@ class ConfigShowOutput(BaseModel):
         lines = [f"path: {self.path}"]
         lines.append(f"project_root: {self.project_root}")
         lines.append(f"project_root.source = {self.project_root_source}")
+        lines.append(f"mars_root: {self.mars_root}")
+        lines.append(f"mars_scope: {self.mars_scope}")
         if self.runtime_root is not None:
             lines.append(f"runtime_root: {self.runtime_root}")
         if self.runtime_root_source is not None:
@@ -537,6 +541,8 @@ def config_show_sync(payload: ConfigShowInput) -> ConfigShowOutput:
         path=surface.project_config.write_path.as_posix(),
         project_root=surface.project_root.as_posix(),
         project_root_source=surface.authority.project_root_source,
+        mars_root=surface.authority.mars_roots.primary.as_posix(),
+        mars_scope=surface.authority.mars_roots.scope,
         runtime_root=(
             surface.authority.runtime_root.as_posix()
             if surface.authority.runtime_root is not None

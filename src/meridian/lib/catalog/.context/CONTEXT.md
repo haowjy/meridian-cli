@@ -4,6 +4,13 @@ Alias resolution, agent profile parsing, and skill loading. The catalog layer
 translates symbolic names into concrete execution parameters before any process
 launches.
 
+`resolve_mars_roots()` is the package-content authority. It walks up for the
+nearest `mars.toml`; without one it selects `~/.meridian/mars`. Project agent and
+skill discovery then falls back to the user root, while aliases, models cache,
+bootstrap documents, targets, and other Mars configuration come only from the
+primary root. `ensure_user_mars_root()` initializes that ordinary Mars project
+under a Meridian lock before any Mars subprocess targets it.
+
 ## Contracts
 
 ### Zero Builtin Aliases
