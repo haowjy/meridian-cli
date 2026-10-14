@@ -5,11 +5,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
-- Arm idle tracking for interactive OpenCode 2.x sessions from execution and
-  inbox events, use the V2 API for message excerpts and compaction, and schedule
-  cache warnings and compaction for OpenAI-provider sessions. Mid-execution
-  steering now records the user return immediately, and failed or interrupted
-  compaction executions fail without waiting for the timeout.
+- Idle push, warning, and compaction now work on OpenCode 2.x (before: never
+  armed). `openai`-provider sessions are scheduled against an estimated 30-minute
+  cache; other providers stay push-only. A prompt steered or queued into a running
+  turn counts as the user's return at once.
 
 ## [0.9.8] - 2026-10-14
 

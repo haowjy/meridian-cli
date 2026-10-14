@@ -94,14 +94,6 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | `primary.autocompact` | int | Context-token compaction threshold for the primary session (minimum 1000) |
 | `primary.autocompact_pct` | int | Context-window percentage for primary-session compaction (1–100) |
 
-### OpenCode versions
-
-OpenCode 2.x is the supported target. With `[harness.opencode] version = "auto"`,
-Meridian probes `opencode --version` and silently falls back to a detected 1.x
-installation. OpenCode 1.x support is frozen and receives no new features: idle
-handling is push-only on 1.x, while 2.x senses the provider TTL for cache warnings
-and guarded compaction.
-
 The following Pi extension settings are TOML-only; generic `config set/get/reset`
 does not yet support them:
 
@@ -116,6 +108,12 @@ does not yet support them:
 Pi's `session-boundary` extension is always loaded in both roles; it has no config
 toggle. It records launch-correlated native lifecycle evidence for post-exit session
 verification. See the [Pi extension guide](../src/meridian/pi_runtime/README.md).
+
+### OpenCode versions
+
+OpenCode 2.x is the supported target. `harness.opencode.version = "auto"` (the
+default) probes `opencode --version`; a 1.x install still works as a frozen
+fallback with no new features and push-only idle.
 
 ## Ignoring direnv during harness launches
 
@@ -268,15 +266,13 @@ local config. Environment always beats every file, so a per-tmux
 | Harness | Default behavior |
 |---|---|
 | Claude | Push, warning, and compaction; the mod reads the cache TTL from the transcript |
-| Pi | Push, warning, and compaction: Meridian defaults `PI_CACHE_RETENTION=long` for interactive primaries when it is absent; `openai` is scheduled against 30 minutes, because OpenAI's `24h` retention typically lasts about that long. Set `PI_CACHE_RETENTION=short` to keep Pi's short-cache default. Unknown provider IDs remain push-only. |
-| Codex | Push, warning, and compaction with a conservative 1800-second TTL |
-| OpenCode | OpenAI-provider models on OpenCode 2.x get push, warning, and compaction with an estimated 1800-second TTL; OpenCode 1.x and unknown providers remain push-only. See [OpenCode versions](#opencode-versions). |
+| Pi | Push, warning, and compaction. Meridian sets `PI_CACHE_RETENTION=long` for interactive primaries unless you set it; `anthropic` and `openai` are scheduled under long retention, `openai-codex` against an estimated 30 minutes. `PI_CACHE_RETENTION=short` and other providers are push-only. |
+| Codex | Push, warning, and compaction with a fixed 1800-second TTL |
+| OpenCode | 2.x: push, warning, and compaction when the session's provider is `openai` (estimated 30 minutes); other providers push-only. 1.x: push only ([OpenCode versions](#opencode-versions)). |
 
-Limitation: the sensed TTL for OpenAI providers (Pi `openai-codex`, OpenCode
-`openai`) is chosen by provider, not by model. It assumes a GPT-5.6-or-later
-model, whose prompt cache lives 30 minutes; a pre-5.6 model on the same route
-inherits the same 1800-second estimate. Set `[harness.<name>.idle] ttl_seconds`
-explicitly when you run older models there.
+The OpenAI estimates (Pi `openai-codex`, OpenCode `openai`) are per provider, not
+per model, and assume GPT-5.6 or later. For an older model on those routes, set
+`ttl_seconds` yourself.
 
 The Pi cache-retention default is launch behavior, independent of whether
 `[idle]` is enabled: an interactive Pi session gets the longer provider cache
