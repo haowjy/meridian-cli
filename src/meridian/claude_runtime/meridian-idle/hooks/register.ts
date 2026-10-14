@@ -261,8 +261,7 @@ async function armTask($: EngineInterface, s: State, epoch: number, assistantTex
       return
     }
     const session = await $.session.id()
-    const cwd = await $.session.cwd()
-    const args = ['arm', '--harness', HARNESS, '--session', session, '--cwd', cwd]
+    const args = ['arm', '--harness', HARNESS, '--session', session]
     const userExcerpt = capExcerpt(s.lastUserText)
     const assistantExcerpt = capExcerpt(assistantText)
     if (userExcerpt !== undefined) args.push(`--user-text=${userExcerpt}`)

@@ -44,8 +44,9 @@ Idle integration uses optional `HarnessBundle` ports: `primary_idle_sensor` for
 launcher-hosted Codex/OpenCode sensing, `native_idle_hook` for native callback
 observation plus unconditional downstream delegation, `autocompact_off` for the
 harness-owned compaction guard, and `detect_ttl` where the harness can observe cache
-retention. Keep all native parsing, facts, and actuators in `*_idle.py`; `lib/idle/`
-owns policy and state.
+retention. The core passes `detect_ttl` the chat's launch-recorded `native_store`
+from its session record. Keep all native parsing, facts, and actuators in
+`*_idle.py`; `lib/idle/` owns policy and state.
 
 ## Two Launch Paths
 

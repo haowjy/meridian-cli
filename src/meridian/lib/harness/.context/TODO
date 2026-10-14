@@ -1,7 +1,7 @@
 # Harness follow-ups
 
-- `pi_idle.py`: Keep `openai-codex` push-only. Pi 1.1.0's
-  `openai-codex-responses.js` sends `prompt_cache_key` but does not apply
-  `PI_CACHE_RETENTION`, so scheduling warning and compaction would target a cold
-  cache. Revisit when Pi applies `PI_CACHE_RETENTION` in its `openai-codex`
-  adapter; check `openai-codex-responses.js` in the installed package.
+- `pi_idle.py`: Its `openai-codex` 1800 s TTL is an estimate; the ChatGPT
+  backend publishes no TTL. Local data shows 90% cache hits after 20–30 min idle
+  gaps (work item `idle-ttl-detection`,
+  `evidence/openai-codex-observed-cache.md`). Revisit if OpenAI publishes a
+  ChatGPT-backend TTL or observed hit rates at 20–30 min drop.

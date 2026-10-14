@@ -6,7 +6,6 @@ import json
 import os
 import sys
 from collections.abc import Callable
-from pathlib import Path
 from typing import Annotated, Literal, Never, Protocol, cast
 
 from cyclopts import Parameter
@@ -27,7 +26,6 @@ StretchOption = Annotated[int, _option("--stretch", "Stretch number.")]
 AnchorOption = Annotated[int, _option("--anchor", "Anchor version.")]
 TtlOption = Annotated[int | None, _option("--ttl", "Detected cache TTL in seconds.")]
 ProviderOption = Annotated[str | None, _option("--provider", "Harness model provider.")]
-CwdOption = Annotated[Path | None, _option("--cwd", "Harness session working directory.")]
 StageOption = Annotated[str, Parameter(help="Stage: push, warn, or compact.")]
 DoneStage = Annotated[str, Parameter(help="Completed stage (compact).")]
 ImpliesReturnOption = Annotated[
@@ -148,7 +146,6 @@ def cmd_idle_arm(
     session: SessionOption,
     ttl: TtlOption = None,
     provider: ProviderOption = None,
-    cwd: CwdOption = None,
     implies_return: ImpliesReturnOption = False,
     turn_id: TurnIdOption = None,
     user_text: UserTextOption = None,
@@ -165,7 +162,6 @@ def cmd_idle_arm(
             session=session,
             ttl_seconds=ttl,
             provider=provider,
-            cwd=cwd,
             implies_return=implies_return,
             turn_id=turn_id,
             last_user_text=user_text,

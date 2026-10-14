@@ -40,6 +40,8 @@ from meridian.lib.state.idle_store import (
     IdleStoreReader,
     Stage,
 )
+from meridian.lib.state.paths import resolve_project_runtime_root_or_none
+from meridian.lib.state.session_store import get_session_record
 
 _COMPACT_GRACE_MS = 30_000
 
@@ -51,6 +53,27 @@ class NotifySender(Protocol):
 
 
 AutocompactOffReader = Callable[[Mapping[str, str]], bool | None]
+
+
+def _recorded_native_store(
+    project_root: Path,
+    env: Mapping[str, str],
+    harness: str,
+) -> Path | None:
+    """Read the launch-recorded native store for this managed chat."""
+
+    chat_id = env.get("MERIDIAN_CHAT_ID", "").strip()
+    if not chat_id:
+        return None
+    try:
+        runtime_root = resolve_project_runtime_root_or_none(project_root)
+        record = get_session_record(runtime_root, chat_id) if runtime_root is not None else None
+    except (OSError, ValueError):
+        return None
+    if record is None or record.harness != harness or not record.native_store:
+        return None
+    native_store = Path(record.native_store)
+    return native_store if native_store.is_absolute() else None
 
 
 @dataclass(frozen=True)
@@ -274,8 +297,10 @@ class IdleService:
         self.env = dict(os.environ if env is None else env)
         configured_role = self.env.get("MERIDIAN_SESSION_ROLE")
         self.role = "primary" if configured_role is None and interactive else configured_role
-        root = project_root or Path(self.env.get("MERIDIAN_PROJECT_DIR", Path.cwd()))
-        self.config = config if config is not None else load_config(root, resolve_models=False)
+        self.project_root = project_root or Path(self.env.get("MERIDIAN_PROJECT_DIR", Path.cwd()))
+        self.config = (
+            config if config is not None else load_config(self.project_root, resolve_models=False)
+        )
         self._now_ms = now_ms
         self.store = store if store is not None else IdleStore(now_ms=now_ms)
         self._notify_sender = notify_sender if notify_sender is not None else send
@@ -304,7 +329,6 @@ class IdleService:
         input_count: int | None = None,
         last_user_text: str | None = None,
         last_assistant_text: str | None = None,
-        cwd: Path | None = None,
         provider: str | None = None,
     ) -> ArmResult:
         config_result = self.config_for(harness)
@@ -316,7 +340,7 @@ class IdleService:
         if resolved_ttl is None and self._detect_ttl is not None:
             detected = self._detect_ttl(
                 session_id=session,
-                cwd=cwd,
+                native_store=_recorded_native_store(self.project_root, self.env, harness),
                 provider=provider,
                 env=self.env,
             )

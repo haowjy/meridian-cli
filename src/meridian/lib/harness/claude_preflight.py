@@ -11,14 +11,12 @@ from typing import cast
 from uuid import uuid4
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from meridian.lib.core.native_identity import (
-    NativeEntryMismatch,
-    NativeKeyFields,
-    NativeSessionUnavailable,
+from meridian.lib.harness.claude_sessions import (
+    project_slug,
+    resolve_claude_config_root,
+    validate_claude_session_file,
 )
-from meridian.lib.harness.claude_sessions import project_slug, resolve_claude_config_root
 from meridian.lib.launch.launch_types import PreflightResult
 from meridian.lib.launch.text_utils import dedupe_nonempty
 from meridian.lib.platform import IS_WINDOWS
@@ -28,30 +26,6 @@ logger = structlog.get_logger(__name__)
 
 # Internal sentinel consumed by Claude projection; never forwarded to the CLI.
 CLAUDE_PARENT_ALLOWED_TOOLS_FLAG = "--meridian-parent-allowed-tools"
-
-
-class _ClaudeSessionHeader(BaseModel):
-    model_config = ConfigDict(extra="ignore", strict=True)
-
-    session_id: str = Field(alias="sessionId", min_length=1)
-
-
-def validate_claude_session_file(path: Path, session_id: str) -> None:
-    """Verify the exact native source, not merely its filename."""
-    try:
-        with path.open(encoding="utf-8") as handle:
-            header = json.loads(handle.readline())
-    except (OSError, UnicodeError, ValueError) as exc:
-        raise NativeSessionUnavailable(session_id, "missing") from exc
-    try:
-        observed = _ClaudeSessionHeader.model_validate(header).session_id
-    except ValidationError:
-        raise NativeSessionUnavailable(session_id, "missing") from None
-    if observed != session_id:
-        raise NativeEntryMismatch(
-            NativeKeyFields("claude", str(path.parent), session_id),
-            NativeKeyFields("claude", str(path.parent), str(observed)),
-        )
 
 
 def ensure_claude_session_accessible(

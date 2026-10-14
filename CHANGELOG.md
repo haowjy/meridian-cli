@@ -4,6 +4,17 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Run the strict Pyright gate with warnings fatal and per-rule suppressions only.
+
+### Fixed
+- Skip malformed legacy native-session rows whose `chat_id` is not a string or
+  `harness_session_ids` is not a list.
+- Treat the first `--` as the CLI passthrough boundary, even when it follows a
+  value-taking option.
+
+## [0.9.8] - 2026-10-14
+
 ### Upgrade notes
 - Direnv isolation is opt-in; no state migration. Older releases ignore the new
   launch policy. See [direnv upgrade notes](docs/upgrading.md#ignoring-direnv-unreleased).
@@ -13,15 +24,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `--ignore-direnv` / `--no-ignore-direnv` overrides. Undo direnv exports before
   primary and spawned harness launches; carry the setting to descendants.
 
-### Changed
-- Run the strict Pyright gate with warnings fatal and per-rule suppressions only.
-
 ### Fixed
-- Skip malformed legacy native-session rows whose `chat_id` is not a string or
-  `harness_session_ids` is not a list.
-- Reject process-scope sidecar entries with wrong field types or extra keys.
-- Treat the first `--` as the CLI passthrough boundary, even when it follows a
-  value-taking option.
+- Detect Claude idle cache TTLs from each chat's recorded native transcript store,
+  even after the session changes directory, and recognize Pi's `openai-codex`
+  provider as an estimated 30-minute cache.
 - Keep cleaned environments authoritative for OpenCode workspace config and
   version probes, and Pi auth/session directory defaults. No ambient-env reinjection.
 - Keep OpenCode and Codex primary event-stream liveness timeout messages at debug level so quiet sessions do not print warnings.
