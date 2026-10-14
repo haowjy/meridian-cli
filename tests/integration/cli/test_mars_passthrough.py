@@ -93,6 +93,61 @@ def test_passthrough_injects_project_primary_root(
     assert not request.user_scope
 
 
+@pytest.mark.integration
+@posix_only
+def test_mars_init_creates_nested_project_below_ancestor_mars_root(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    nested = project / "nested"
+    nested.mkdir(parents=True)
+    (project / "mars.toml").write_text("", encoding="utf-8")
+    env = os.environ.copy()
+    env["MERIDIAN_HOME"] = (tmp_path / "meridian-home").as_posix()
+    env.pop("MERIDIAN_PROJECT_DIR", None)
+
+    result = subprocess.run(
+        [sys.executable, "-m", "meridian", "mars", "init"],
+        cwd=nested,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert (nested / "mars.toml").is_file()
+
+
+@pytest.mark.integration
+@posix_only
+def test_init_link_creates_nested_project_below_ancestor_mars_root(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    nested = project / "nested"
+    nested.mkdir(parents=True)
+    (project / "mars.toml").write_text("", encoding="utf-8")
+    env = os.environ.copy()
+    env["MERIDIAN_HOME"] = (tmp_path / "meridian-home").as_posix()
+    env.pop("MERIDIAN_PROJECT_DIR", None)
+
+    result = subprocess.run(
+        [sys.executable, "-m", "meridian", "init", "--link", ".claude"],
+        cwd=nested,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert (nested / "mars.toml").is_file()
+    assert (nested / ".claude").is_dir()
+
+
 def test_passthrough_user_flag_injects_user_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
