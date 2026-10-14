@@ -27,6 +27,7 @@ Override key is `(name, event)` — a higher-priority row with the same key repl
 - `dispatch.py` — `HookDispatcher.fire(context)`, `HookDispatcher.from_application_context(ctx)`
 - `registry.py` — `HookRegistry` (loads config, serves event-scoped hook lists)
 - `config.py` — `load_hooks_config(project_root, ...)` with source layering
+- `schema.py` — `HookSpec` parsing, validation, and runtime `Hook` construction
 - `types.py` — `Hook`, `HookContext`, `HookResult`, `HookEventName`
 - `builtin/` — built-in hook implementations (`git_autosync.py` is the primary one)
 

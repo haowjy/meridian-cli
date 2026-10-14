@@ -38,16 +38,17 @@ boundary (`capture_library_diagnostics()`) captures stdlib warnings during spawn
 Structlog bypasses it and leaks to stderr. This rule applies to both `lib/config/`
 and `lib/catalog/`.
 
-**`_SETTINGS_CONTEXT` ContextVar is only valid during `MeridianConfig()` construction.**
-It carries load context into field validators. Never read it outside `settings.py` field
-validators or the source callables. Misuse causes `AttributeError` or silently wrong
-paths depending on timing.
+**File validation and source merging are explicit.** `loader.py` validates each file
+against the plain `MeridianConfigModel`, then merges user → project → local → env.
+`load_config_with_sources()` retains typed dynamic sections and field provenance for
+inspection; `load_config()` returns its final `MeridianConfig`. Do not add implicit
+Pydantic settings sources or ambient loader state.
 
 **Dynamic section merge strategies vary by section** — don't assume they all deep-merge:
 
 | Section | Strategy | Effect |
 |---|---|---|
-| `agents`, `work`, `context` | `nested_dict` | Keys in higher-precedence file overwrite matching keys; others inherited |
+| `work`, `context`, `env` | `nested_dict` | Keys in higher-precedence file overwrite matching keys; others inherited |
 | `hooks` | `replace` | Entire section from higher-precedence file wins |
 | `workspace` | `external` | Not merged by settings |
 
@@ -59,7 +60,11 @@ module and run inside that transaction.
 
 ## Entry Points
 
-- `settings.py` — `MeridianConfig`, `load_config()`: start here
+- `settings.py` — compatibility re-exports for the split config implementation
+- `models.py` — section models and the plain `MeridianConfigModel` schema root
+- `loader.py` — TOML/env validation, precedence merge, provenance, and load entry points
+- `layers.py` — shared user/project/local discovery and TOML reads
+- `dynamic_sections.py` — typed work/context/hooks/env values, normalization, merge policy
 - `schema.py` — `config_field()`, `ConfigOptionMeta`: field metadata and parse helpers
 - `project_root.py` — `resolve_project_root_resolution()`, `resolve_user_config_path()`
 - `context_config.py` — `ContextConfig`, `ContextSourceType`: context path schema

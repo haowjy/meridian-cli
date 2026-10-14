@@ -42,40 +42,22 @@ hardcoded defaults (MeridianConfig field defaults)
         < environment variables
 ```
 
-`load_config()` implements this by ordering `settings_customise_sources()` in
-`MeridianConfig`:
+`load_config()` validates each TOML file against the plain `MeridianConfigModel`,
+then deep-merges normalized payloads from lowest to highest precedence:
 
 ```python
-return (
-    init_settings,          # highest — direct constructor kwargs
-    layered_env_source,     # env vars
-    local_toml_source,      # meridian.local.toml
-    project_toml_source,    # meridian.toml
-    user_toml_source,       # ~/.meridian/config.toml
-)
+user → project → local → environment
 ```
 
-pydantic-settings applies sources left-to-right, first-wins. Env vars beat local
-beats project beats user.
+Higher-precedence dictionaries replace or recursively overlay lower-precedence
+dictionaries. Lists replace. The final merged payload is validated into
+`MeridianConfig`; there is no ambient load context or re-entrant settings source.
+`layers.iter_config_layers()` is the single user/project/local discovery and TOML-read
+seam shared by the loader, hook registry, and config inspection.
 
-### ContextVar Thread-Local Loading Pattern
-
-`_SETTINGS_CONTEXT: ContextVar` carries the `_SettingsLoadContext` (project root,
-config paths, user config path) into `MeridianConfig`'s field validators during
-instantiation. This is necessary because pydantic-settings constructs models without
-passing context to field validators.
-
-**Pattern:**
-```python
-token = _SETTINGS_CONTEXT.set(_SettingsLoadContext(...))
-try:
-    return MeridianConfig()
-finally:
-    _SETTINGS_CONTEXT.reset(token)
-```
-
-Never read `_SETTINGS_CONTEXT` outside of `settings.py` field validators or the source
-callables. It is only valid during `MeridianConfig()` construction.
+`load_config_with_sources()` also retains `DynamicConfigSections` plus one
+`ConfigValueSource` per explicitly set field. Inspection commands render those validated
+values and sources; they do not re-read or re-cast TOML.
 
 ### `resolve_project_root_resolution()` — `ignore_env` Parameter
 
@@ -100,15 +82,14 @@ Sections in `DYNAMIC_SECTION_DESCRIPTORS` use one of three merge strategies:
 
 | Section | Strategy | Behavior |
 |---|---|---|
-| `agents` | `nested_dict` | Deep merge: overlay values overwrite matching agent names |
 | `hooks` | `replace` | Later source entirely replaces earlier source |
 | `work` | `nested_dict` | Deep merge: worktree_base etc. overwrite per-key |
 | `context` | `nested_dict` | Deep merge: named contexts overwrite per-context-name |
 | `workspace` | `external` | Not merged by settings — handled externally |
+| `env` | `nested_dict` | Deep merge: higher-precedence values overwrite per variable |
 
 For `nested_dict`, keys in the local config overlay keys in the project config;
-both overlay the user config. This lets a local `meridian.local.toml` add one
-agent override without replacing all agent overrides from `meridian.toml`.
+both overlay the user config.
 
 For `replace`, the entire section from the higher-precedence file wins.
 

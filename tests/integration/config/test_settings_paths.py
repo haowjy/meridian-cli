@@ -126,6 +126,139 @@ def test_load_config_ignores_deleted_defaults_model_and_harness_keys(tmp_path: P
     assert not hasattr(config.primary, "harness")
 
 
+@pytest.mark.parametrize(
+    ("toml", "message"),
+    [
+        (
+            "[output]\nverbosity = 7\n",
+            "Invalid value for 'output.verbosity': expected str, got int (7).",
+        ),
+        (
+            '[harness.pi.background_tasks]\nenabled = "yes"\n',
+            "Invalid value for 'harness.pi.background_tasks.enabled': "
+            "expected bool, got str ('yes').",
+        ),
+        (
+            "[harness.claude]\nmodel = 3\n",
+            "Invalid value for 'harness.claude.model': expected str, got int (3).",
+        ),
+        (
+            "harness = { claude = 3 }\n",
+            "Invalid value for 'harness.claude': expected str or table, got int (3).",
+        ),
+        (
+            "[primary]\nautocompact_pct = 50.0\n",
+            "Invalid value for 'primary.autocompact_pct': expected int, got float (50.0).",
+        ),
+        (
+            "[primary]\nautocompact = 50000.0\n",
+            "Invalid value for 'primary.autocompact': expected int, got float (50000.0).",
+        ),
+        (
+            '[spawn]\ndeny_headless_harnesses = ["claude", ""]\n',
+            "Invalid value for 'spawn.deny_headless_harnesses': expected non-empty items.",
+        ),
+        (
+            'hooks = "invalid"\n',
+            "Invalid value for 'hooks': expected array[table], got str ('invalid').",
+        ),
+    ],
+)
+def test_load_config_reports_invalid_key_and_problem(
+    tmp_path: Path,
+    toml: str,
+    message: str,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    config_path = project_root / "meridian.toml"
+    config_path.write_text(toml, encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        load_config(project_root, resolve_models=False)
+
+    assert str(exc_info.value) == f"{message.removesuffix('.')} in '{config_path}'."
+
+
+def test_load_config_preserves_unknown_and_deprecated_key_policy(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "meridian.toml").write_text(
+        "[output]\n"
+        "unknown = true\n"
+        "[primary]\n"
+        'model = "legacy-model"\n'
+        'harness = "claude"\n'
+        "[harness.claude]\n"
+        "unknown = true\n"
+        "[harness.pi.background_tasks]\n"
+        "unknown = true\n"
+        "[idle]\n"
+        "unknown = true\n"
+        "[notify]\n"
+        "unknown = true\n"
+        "[environment]\n"
+        "unknown = true\n"
+        "[defaults]\n"
+        "unknown = true\n"
+        "[spawn]\n"
+        "unknown = true\n"
+        "[timeouts]\n"
+        "unknown = true\n",
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="meridian.lib.config.settings"):
+        config = load_config(project_root, resolve_models=False)
+
+    assert caplog.messages == [
+        "Ignoring unknown Meridian config key 'output.unknown'.",
+        "Ignoring unknown Meridian config key 'harness.claude.unknown'.",
+        "Ignoring unknown Meridian config key 'idle.unknown'.",
+        "Ignoring unknown Meridian config key 'notify.unknown'.",
+        "Ignoring unknown Meridian config key 'environment.unknown'.",
+        "Ignoring unknown Meridian config key 'defaults.unknown'.",
+        "Ignoring unknown Meridian config key 'spawn.unknown'.",
+        "Ignoring unknown Meridian config key 'timeouts.unknown'.",
+    ]
+    assert not hasattr(config.primary, "model")
+    assert not hasattr(config.primary, "harness")
+    assert config.harness.pi.background_tasks.enabled is True
+
+
+def test_load_config_keeps_history_unknown_keys_forbidden(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "meridian.toml").write_text(
+        "[history.archive]\nunknown = true\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_config(project_root, resolve_models=False)
+
+    assert str(exc_info.value) == (
+        "Invalid value for 'history.archive.unknown': unknown key "
+        f"in '{project_root / 'meridian.toml'}'."
+    )
+
+
+def test_load_config_preserves_pi_extension_path_normalization(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "meridian.toml").write_text(
+        '[harness.pi]\nextra_extension_paths = [1, true, " ./extension ", ""]\n',
+        encoding="utf-8",
+    )
+
+    config = load_config(project_root, resolve_models=False)
+
+    assert config.harness.pi.extra_extension_paths == ("1", "True", "./extension")
+
+
 def test_load_config_reads_harness_wait_yield_settings(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()

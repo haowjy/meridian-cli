@@ -6,6 +6,7 @@
 HookDispatcher.fire(context: HookContext)
   └── HookRegistry.get_hooks_for_event(event)
         ← load_hooks_config(project_root)  [config.py]
+              validates each row once as HookSpec  [schema.py]
               layered: builtin < user < project < local
               override key: (name, event)
   └── for each Hook (ordered by source rank, priority, declaration order):
