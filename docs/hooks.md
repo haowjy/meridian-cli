@@ -99,22 +99,6 @@ event   = "spawn.finalized"
 
 Inline commands are fine when they remain short and readable.
 
-### `repo` → `remote` Migration
-
-`repo` is accepted as a deprecated alias for `remote`. Meridian emits a warning when it sees `repo`. Update your config:
-
-```toml
-# Before (deprecated)
-[[hooks]]
-builtin = "git-autosync"
-repo = "git@github.com:team/docs.git"
-
-# After
-[[hooks]]
-builtin = "git-autosync"
-remote = "git@github.com:team/docs.git"
-```
-
 ## Builtin: `git-autosync`
 
 `git-autosync` keeps a remote Git repo in sync with local changes. On each trigger it:
