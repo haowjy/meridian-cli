@@ -358,25 +358,8 @@ def maybe_bootstrap_runtime_state(
         elif requirement == StateRequirement.RUNTIME_WRITE:
             prepared = prepare_for_runtime_write(project_root)
 
-        if (
-            prepared is not None
-            and prepared.authority.identity_tier == "adhoc"
-            and prepared.authority.identity_created
-        ):
-            from meridian.lib.config.project_root import has_project_marker
-
-            nearest_marker: Path | None = None
-            for ancestor in project_root.parents:
-                if has_project_marker(ancestor):
-                    nearest_marker = ancestor
-                    break
-            notice = (
-                f"meridian: {project_root.as_posix()} has no meridian.toml; "
-                "state is kept for this path only. Run 'meridian init' to share it."
-            )
-            if nearest_marker is not None:
-                notice += f" (nearest project: {nearest_marker.as_posix()})"
-            print(notice, file=sys.stderr)
+        if prepared is not None and prepared.notice is not None:
+            print(prepared.notice, file=sys.stderr)
 
         return project_root
     except Exception:

@@ -147,6 +147,13 @@ def resolve_project_identity(project_root: Path) -> ProjectIdentity:
     )
 
 
+def nearest_ancestor_project_marker(project_root: Path) -> Path | None:
+    """Return the nearest marked ancestor without changing identity resolution."""
+
+    root = project_root.expanduser().resolve()
+    return next((ancestor for ancestor in root.parents if has_project_marker(ancestor)), None)
+
+
 def generate_committed_project_id(user_home: Path) -> str:
     """Generate an unused committed identity under one Meridian user home."""
 
@@ -232,6 +239,7 @@ __all__ = [
     "ensure_project_identity",
     "generate_committed_project_id",
     "get_committed_project_id",
+    "nearest_ancestor_project_marker",
     "project_identity_was_created",
     "resolve_project_identity",
     "state_id",

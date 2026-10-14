@@ -14,6 +14,7 @@ from meridian.lib.state.project_identity import (
     AdHoc,
     Committed,
     ensure_project_identity,
+    nearest_ancestor_project_marker,
     resolve_project_identity,
     state_id,
 )
@@ -34,6 +35,16 @@ def test_project_predicate_recognizes_markers_except_user_mars_root(
     (user_mars_root / "mars.toml").write_text("[settings]\n", encoding="utf-8")
     assert not has_project_marker(user_mars_root)
     assert isinstance(resolve_project_identity(user_mars_root), AdHoc)
+
+
+def test_nearest_ancestor_marker_is_notice_only(tmp_path: Path) -> None:
+    ancestor = tmp_path / "project"
+    child = ancestor / "nested" / "scratch"
+    child.mkdir(parents=True)
+    (ancestor / "meridian.toml").write_text("", encoding="utf-8")
+
+    assert nearest_ancestor_project_marker(child) == ancestor
+    assert isinstance(resolve_project_identity(child), AdHoc)
 
 
 def test_bare_identity_read_is_pure_and_deterministic(

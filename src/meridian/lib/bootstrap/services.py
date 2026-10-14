@@ -24,6 +24,7 @@ from meridian.lib.service_context import (
 )
 from meridian.lib.state.project_identity import (
     ensure_project_identity,
+    nearest_ancestor_project_marker,
     project_identity_was_created,
     resolve_project_identity,
 )
@@ -40,6 +41,7 @@ class ProjectReadContext:
     project_root: Path
     layout: ProjectLayoutSnapshot
     config: MeridianConfig | None
+    notice: str | None
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,19 @@ class ProjectWriteContext(ProjectReadContext):
 class RuntimeWriteContext(RuntimeReadContext):
     project_dirs_ensured: bool = True
     runtime_dirs_ensured: bool = True
+
+
+def _materialization_notice(authority: RuntimeAuthoritySnapshot) -> str | None:
+    if authority.identity_tier != "adhoc" or not authority.identity_created:
+        return None
+    notice = (
+        f"meridian: {authority.project_root.as_posix()} has no meridian.toml; "
+        "state is kept for this path only. Run 'meridian init' to share it."
+    )
+    nearest_marker = nearest_ancestor_project_marker(authority.project_root)
+    if nearest_marker is not None:
+        notice += f" (nearest project: {nearest_marker.as_posix()})"
+    return notice
 
 
 def _application_context_from_runtime(
@@ -81,6 +96,7 @@ def prepare_for_project_read(project_root: Path) -> ProjectReadContext:
         project_root=authority.project_root,
         layout=project_state.resolve_layout(authority.project_root),
         config=load_config(authority.project_root, authority=authority),
+        notice=None,
     )
 
 
@@ -95,12 +111,14 @@ def prepare_for_runtime_read(
         project_root=authority.project_root,
         layout=project_state.resolve_layout(authority.project_root),
         config=load_config(authority.project_root, authority=authority),
+        notice=None,
     )
     return RuntimeReadContext(
         authority=authority,
         project_root=project_context.project_root,
         layout=project_context.layout,
         config=project_context.config,
+        notice=None,
         runtime_root=authority.runtime_root,
     )
 
@@ -123,6 +141,7 @@ def prepare_for_project_write(project_root: Path) -> ProjectWriteContext:
         project_root=authority.project_root,
         layout=project_state.resolve_layout(authority.project_root),
         config=load_config(authority.project_root, authority=authority),
+        notice=_materialization_notice(authority),
     )
 
 
@@ -143,6 +162,7 @@ def prepare_for_runtime_write(
         project_root=authority.project_root,
         layout=project_state.resolve_layout(authority.project_root),
         config=load_config(authority.project_root, authority=authority),
+        notice=_materialization_notice(authority),
         runtime_root=runtime_root,
     )
 
