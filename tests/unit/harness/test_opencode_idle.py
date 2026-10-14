@@ -514,6 +514,46 @@ async def test_v2_queued_prompt_returns_when_delivered_for_second_execution(
     ]
 
 
+async def test_v2_cancelled_prompt_is_no_longer_pending_or_returned(
+    tmp_path: Path,
+) -> None:
+    sensor = opencode_idle.OpenCodeV2IdleSensor(
+        _context(tmp_path, session_id=V2_SESSION_ID, version="v2")
+    )
+    iterator = sensor.events()
+
+    def raw(event_type: str, **payload: object) -> RawHarnessEvent:
+        return RawHarnessEvent(
+            event_type=event_type,
+            payload={"type": event_type, "sessionID": V2_SESSION_ID, **payload},
+            harness_id="opencode",
+        )
+
+    sensor.on_raw_event(
+        raw(
+            "session.inbox.enqueued",
+            inboxID="msg_v2_user_cancelled",
+            item={
+                "type": "user",
+                "payload": {"text": "never mind"},
+                "delivery": "queue",
+            },
+        )
+    )
+    sensor.on_raw_event(
+        raw("session.inbox.cancelled", inboxID="msg_v2_user_cancelled")
+    )
+    assert sensor._pending_user_inbox_ids == set()
+
+    sensor.on_raw_event(
+        raw("session.inbox.delivered", inboxID="msg_v2_user_cancelled")
+    )
+
+    assert (await anext(iterator)).kind == "user_prompt"
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(anext(iterator), timeout=0.01)
+
+
 async def test_v2_stranded_steer_delivery_during_compaction_does_not_emit_return(
     tmp_path: Path,
 ) -> None:

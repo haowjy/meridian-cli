@@ -570,6 +570,10 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
                 # A steer-delivered prompt may not start a new execution.
                 self._emit("user_prompt")
 
+        cancelled_id = event.payload.get("inboxID")
+        if event.event_type == "session.inbox.cancelled" and isinstance(cancelled_id, str):
+            self._pending_user_inbox_ids.discard(cancelled_id)
+
         delivered_id = _v2_delivered_inbox_id(event)
         if delivered_id in self._pending_user_inbox_ids:
             self._pending_user_inbox_ids.remove(delivered_id)
