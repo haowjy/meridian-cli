@@ -8,7 +8,7 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from meridian.lib.catalog.mars_roots import mars_fallback_active
+from meridian.lib.catalog.mars_roots import mars_fallback_label
 from meridian.lib.config.context_config import ArbitraryContextConfig, ContextConfig
 from meridian.lib.context.resolver import (
     ResolvedContextPaths,
@@ -67,7 +67,7 @@ class ContextOutput(BaseModel):
     mars_root: str
     mars_scope: Literal["project", "user"]
     mars_user_root: str | None = None
-    mars_fallback: Literal["supported", "unsupported"]
+    mars_fallback: Literal["active", "unsupported", "n/a"]
     extra_contexts: dict[str, ContextEntryOutput] = Field(default_factory=dict)
     sync_status: dict[str, str] = Field(default_factory=dict)
     render_verbose: bool = Field(default=False, exclude=True, repr=False)
@@ -517,7 +517,6 @@ def context_sync(input: ContextInput) -> ContextOutput:
             sync_status[normalized] = extra_sync
 
     mars_roots = authority.mars_roots
-    fallback_supported = mars_fallback_active(mars_roots)
     return ContextOutput(
         identity_tier=authority.identity_tier,
         project_id=authority.project_id,
@@ -551,7 +550,7 @@ def context_sync(input: ContextInput) -> ContextOutput:
         mars_root=mars_roots.primary.as_posix(),
         mars_scope=mars_roots.scope,
         mars_user_root=(mars_roots.user.as_posix() if mars_roots.user is not None else None),
-        mars_fallback="supported" if fallback_supported else "unsupported",
+        mars_fallback=mars_fallback_label(mars_roots),
         extra_contexts=extra_contexts,
         sync_status=sync_status,
         render_verbose=input.verbose,

@@ -32,11 +32,33 @@ def test_config_show_reports_path_identity_without_materializing(
     assert result.project_identity is not None
     assert result.project_identity.startswith("adhoc.repo.")
     assert result.project_identity_source == "path"
-    assert result.mars_fallback == "unsupported"
+    assert result.mars_fallback == "n/a"
     assert "project_identity_source: path" in result.format_text()
-    assert "mars_fallback: unsupported" in result.format_text()
+    assert "mars_fallback: n/a" in result.format_text()
     assert not home.exists()
     assert list(project_root.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("supported", "expected"),
+    [(True, "active"), (False, "unsupported")],
+)
+def test_config_show_reports_project_fallback_activation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    supported: bool,
+    expected: str,
+) -> None:
+    project_root = _repo(tmp_path)
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    monkeypatch.setattr(
+        "meridian.lib.catalog.mars_roots.mars_supports_fallback_root",
+        lambda _executable: supported,
+    )
+
+    result = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
+
+    assert result.mars_fallback == expected
 
 
 def test_config_show_reports_committed_identity_source(tmp_path: Path) -> None:

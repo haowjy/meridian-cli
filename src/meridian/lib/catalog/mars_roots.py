@@ -81,6 +81,20 @@ def mars_fallback_active(
     )
 
 
+def mars_fallback_label(
+    roots: MarsRoots,
+    *,
+    executable: str | None = None,
+) -> Literal["active", "unsupported", "n/a"]:
+    """Describe whether project content can fall back to user packages."""
+
+    if roots.user is None:
+        return "n/a"
+    if mars_fallback_active(roots, executable=executable):
+        return "active"
+    return "unsupported"
+
+
 def mars_fallback_args(roots: MarsRoots, *, executable: str) -> tuple[str, ...]:
     """Build the optional Mars content-fallback arguments for *roots*."""
 
@@ -165,6 +179,7 @@ __all__ = [
     "mars_content_roots",
     "mars_fallback_active",
     "mars_fallback_args",
+    "mars_fallback_label",
     "resolve_mars_executable",
     "resolve_mars_roots",
     "user_mars_root",
