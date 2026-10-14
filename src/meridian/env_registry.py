@@ -179,7 +179,10 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _public_config("MERIDIAN_IDLE_COMPACT_MINUTES", "Idle compaction lead time."),
     _public_config("MERIDIAN_IDLE_LATE_FIRE_TOLERANCE_SECONDS", "Idle timer late-fire tolerance."),
     _public_config("MERIDIAN_IDLE_LONG_TURN_SECONDS", "Idle long-turn threshold."),
-    _public_config("MERIDIAN_IDLE_MIN_COMPACT_TOKENS", "Minimum idle compaction size."),
+    _public_config(
+        "MERIDIAN_IDLE_COMPACT_MIN_GROWTH_TOKENS",
+        "Idle compaction growth-floor override.",
+    ),
     _public_config("MERIDIAN_IDLE_PUSH_SECONDS", "Idle push delay."),
     _public_config("MERIDIAN_IDLE_QUICK_TURN_PUSH_SECONDS", "Idle quick-turn push delay."),
     _public_config("MERIDIAN_IDLE_WARN_EMAIL", "Idle warning email toggle."),

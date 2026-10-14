@@ -7,8 +7,47 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
+
+BaselineSource = Literal["observed", "compacted"]
+
+
+class CompactCosts(BaseModel):
+    """One route's compaction economics in base input-token price units."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    w: float = Field(gt=0)
+    c: float = Field(ge=0)
+    u: int = Field(ge=0)
+    o: float = Field(gt=0)
+    summary_tokens: int = Field(ge=0)
+    residue_tokens: int = Field(ge=0)
+
+
+class CompactEval(BaseModel):
+    """Persisted inputs and verdict from the growth break-even guard."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    stretch: int = Field(ge=1)
+    context_tokens: int | None = Field(default=None, ge=0)
+    baseline_tokens: int | None = Field(default=None, ge=0)
+    baseline_source: BaselineSource = "observed"
+    growth_tokens: int | None = None
+    need_tokens: int | None = Field(default=None, ge=0)
+    basis: Literal["break-even", "configured", "never"]
+    r: float = Field(ge=0, le=1)
+    costs: CompactCosts | None = None
+    verdict: Literal[
+        "worth-it",
+        "not-worth-it",
+        "context-unknown",
+        "baseline-unknown",
+    ]
 
 
 @dataclass(frozen=True)
@@ -24,6 +63,7 @@ class IdleEvent:
     last_user_text: str | None = None
     last_assistant_text: str | None = None
     provider: str | None = None
+    context_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -38,7 +78,8 @@ class NativeIdleHook:
     """One intercepted native callback's observation and downstream delegation."""
 
     observe: Callable[
-        [str, Callable[[str], PinnedIdleSession | None]], IdleEvent | None
+        [str, Callable[[str], PinnedIdleSession | None], Mapping[str, str]],
+        IdleEvent | None,
     ]
     delegate: Callable[[str, Mapping[str, str]], None]
 
@@ -109,8 +150,22 @@ class DetectIdleTtl(Protocol):
     ) -> CacheTtl | None: ...
 
 
+class ResolveCompactCosts(Protocol):
+    """Resolve economics for one harness provider and cache lifetime."""
+
+    def __call__(
+        self,
+        *,
+        provider: str | None,
+        ttl_seconds: int | None,
+    ) -> CompactCosts | None: ...
+
+
 __all__ = [
+    "BaselineSource",
     "CacheTtl",
+    "CompactCosts",
+    "CompactEval",
     "CompactResult",
     "DetectIdleTtl",
     "IdleEvent",
@@ -119,4 +174,5 @@ __all__ = [
     "IdleSensorContext",
     "NativeIdleHook",
     "PinnedIdleSession",
+    "ResolveCompactCosts",
 ]

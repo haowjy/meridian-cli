@@ -123,6 +123,7 @@ def _service(harness: str | None = None, *, interactive: bool = False) -> IdleSe
         interactive=interactive,
         autocompact_off=bundle.autocompact_off,
         detect_ttl=bundle.detect_ttl,
+        compact_costs=bundle.compact_costs,
         native_idle_hook=bundle.native_idle_hook,
     )
 
@@ -150,6 +151,7 @@ def cmd_idle_arm(
     turn_id: TurnIdOption = None,
     user_text: UserTextOption = None,
     assistant_text: AssistantTextOption = None,
+    context_tokens: ContextTokensOption = None,
     interactive: InteractiveOption = False,
 ) -> None:
     """Open or re-anchor; same stretch and anchor means keep your timers."""
@@ -166,6 +168,13 @@ def cmd_idle_arm(
             turn_id=turn_id,
             last_user_text=user_text,
             last_assistant_text=assistant_text,
+            context_tokens=context_tokens,
+        ),
+        checks=(
+            (
+                context_tokens is None or context_tokens >= 0,
+                "--context-tokens must not be negative",
+            ),
         ),
     )
 
@@ -299,7 +308,10 @@ def _print_status_table(rows: list[dict[str, object]]) -> None:
     if not rows:
         print("No open idle stretches.")
         return
-    print(f"{'HARNESS':<10} {'SESSION':<24} {'STRETCH':>7} {'ANCHOR':>6} SCHEDULE")
+    print(
+        f"{'HARNESS':<10} {'SESSION':<24} {'STRETCH':>7} {'ANCHOR':>6} "
+        f"{'COMPACT':<38} SCHEDULE"
+    )
     for row in rows:
         schedule = cast("dict[str, object]", row["schedule"])
         deadlines = ", ".join(
@@ -307,10 +319,19 @@ def _print_status_table(rows: list[dict[str, object]]) -> None:
             for stage in ("push", "warn", "compact")
             if schedule.get(f"{stage}_at") is not None
         )
+        done = cast("dict[str, object]", row["done"])
+        compact = str(done.get("compact", "-"))
+        evaluation = row.get("compact_eval")
+        if compact == "skipped:not-worth-it" and isinstance(evaluation, dict):
+            evaluation_dict = cast("dict[str, object]", evaluation)
+            growth = evaluation_dict.get("growth_tokens")
+            need = evaluation_dict.get("need_tokens")
+            if isinstance(growth, int) and isinstance(need, int):
+                compact += f" ({round(growth / 1000)}k/{round(need / 1000)}k)"
         print(
             f"{row['harness']!s:<10} {row['session']!s:<24} "
             f"{int(cast('int', row['stretch'])):>7} "
-            f"{int(cast('int', row['anchor'])):>6} {deadlines}"
+            f"{int(cast('int', row['anchor'])):>6} {compact:<38} {deadlines}"
         )
 
 

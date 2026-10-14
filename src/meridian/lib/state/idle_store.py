@@ -11,6 +11,7 @@ from typing import Literal, Protocol, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from meridian.lib.harness.idle_types import BaselineSource, CompactEval
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.json_doc import mutate_model, read_model
 from meridian.lib.state.user_paths import get_user_home
@@ -55,6 +56,11 @@ class IdleState(BaseModel):
     returned_at_ms: int | None = None
     ttl_seconds: int | None = Field(default=None, gt=0)
     ttl_estimated: bool = True
+    provider: str | None = None
+    context_tokens: int | None = Field(default=None, ge=0)
+    baseline_tokens: int | None = Field(default=None, ge=0)
+    baseline_source: BaselineSource = "observed"
+    compact_eval: CompactEval | None = None
     schedule: IdleSchedule
     done: dict[Stage, str] = Field(default_factory=_empty_done)
     compact_window_until_ms: int | None = None

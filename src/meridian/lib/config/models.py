@@ -218,16 +218,16 @@ class IdleConfig(ConfigModel):
             env_vars=("MERIDIAN_IDLE_COMPACT",),
         ),
     ] = True
-    min_compact_tokens: Annotated[
-        int,
+    compact_min_growth_tokens: Annotated[
+        int | None,
         config_field(
-            "idle.min_compact_tokens",
+            "idle.compact_min_growth_tokens",
             value_kind="int",
-            file_aliases=(file_alias("idle", "min_compact_tokens"),),
-            env_vars=("MERIDIAN_IDLE_MIN_COMPACT_TOKENS",),
+            file_aliases=(file_alias("idle", "compact_min_growth_tokens"),),
+            env_vars=("MERIDIAN_IDLE_COMPACT_MIN_GROWTH_TOKENS",),
         ),
         Field(ge=0),
-    ] = 40_000
+    ] = None
     late_fire_tolerance_seconds: Annotated[
         int,
         config_field(
