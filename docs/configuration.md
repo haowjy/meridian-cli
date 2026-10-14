@@ -261,7 +261,7 @@ local config. Environment always beats every file, so a per-tmux
 | Claude | Push, warning, and compaction; the mod reads the cache TTL from the transcript |
 | Pi | Push, warning, and compaction: Meridian defaults `PI_CACHE_RETENTION=long` for interactive primaries when it is absent; `openai` is scheduled against 30 minutes, because OpenAI's `24h` retention typically lasts about that long. Set `PI_CACHE_RETENTION=short` to keep Pi's short-cache default. Unknown provider IDs remain push-only. |
 | Codex | Push, warning, and compaction with a conservative 1800-second TTL |
-| OpenCode | OpenAI-provider models get push, warning, and compaction with an estimated 1800-second TTL; unknown providers remain push-only |
+| OpenCode | OpenAI-provider models on OpenCode 2.x get push, warning, and compaction with an estimated 1800-second TTL; OpenCode 1.x and unknown providers remain push-only |
 
 The Pi cache-retention default is launch behavior, independent of whether
 `[idle]` is enabled: an interactive Pi session gets the longer provider cache
