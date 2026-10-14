@@ -53,6 +53,13 @@ therefore decided against the locked snapshot, never by an unlocked preflight re
 
 ## Key Rules
 
+**A spawn groups immutable run rows.** `runs.py` owns discovery, bound-only continue
+targets, read-only busy projection, and retention. `reserve_run` in the parent
+store publishes max-K+1 under the allocation lock; reservations borrow no session
+generation. Chat ownership is derived from linked generations, not persisted as
+another spawn field.
+
+
 **Status authority is `SpawnStatus` (StrEnum).** One enum in `core/domain.py` defines
 every valid status. Lifecycle sets are derived from an exhaustive enum-member map;
 transition policy is keyed by enum members. `TerminalSpawnStatus` is checked against

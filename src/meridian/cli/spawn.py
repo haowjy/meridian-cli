@@ -115,7 +115,8 @@ def _foreground_spawn_id_notifier(*, quiet: bool) -> Callable[[str], None] | Non
     sink = current_output_sink()
 
     def _notify(spawn_id: str) -> None:
-        sink.status(f"Spawn id: {spawn_id}")
+        from meridian.lib.core.refs import spawn_of
+        sink.status(f"Spawn id: {spawn_of(spawn_id)}")
         from meridian.cli.output import flush_sink
 
         flush_sink(sink)
@@ -1213,7 +1214,7 @@ def _spawn_done(
     emit: Emitter,
     spawn_id: Annotated[
         str | None,
-        Parameter(help="Spawn ID to finish (defaults to MERIDIAN_SPAWN_ID)."),
+        Parameter(help="Spawn or run to finish (defaults to MERIDIAN_RUN_ID)."),
     ] = None,
 ) -> None:
     result = spawn_done_sync(
@@ -1232,7 +1233,7 @@ def _spawn_rearm(
     emit: Emitter,
     spawn_id: Annotated[
         str | None,
-        Parameter(help="Spawn ID to keep resident (defaults to MERIDIAN_SPAWN_ID)."),
+        Parameter(help="Spawn or run to keep resident (defaults to MERIDIAN_RUN_ID)."),
     ] = None,
 ) -> None:
     result = spawn_rearm_sync(

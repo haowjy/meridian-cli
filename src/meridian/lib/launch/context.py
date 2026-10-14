@@ -33,7 +33,7 @@ from meridian.lib.context.resolver import resolve_context_paths
 from meridian.lib.core.child_env import validate_child_env_keys
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.overrides import RuntimeOverrides
-from meridian.lib.core.refs import parse_ref
+from meridian.lib.core.refs import parse_ref, spawn_of
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
@@ -1839,7 +1839,7 @@ def bind_launch_context(
         "usage",
         "usage.model.selected",
         scope="core.launch",
-        ids={"spawn_id": bindings.spawn_id},
+        ids={"spawn_id": spawn_of(bindings.spawn_id), "run_id": bindings.spawn_id},
         data={"model_family": model_family, "harness": harness.id.value},
     )
     effective_model = model

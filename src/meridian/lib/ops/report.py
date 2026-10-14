@@ -31,7 +31,7 @@ def _resolve_target_spawn_id(
     normalized_current_spawn = (current_spawn_id or "").strip()
     if normalized_current_spawn:
         return parse_ref(normalized_current_spawn, row_key=True)
-    raise ValueError("Spawn ID is required. Pass --spawn or set MERIDIAN_SPAWN_ID.")
+    raise ValueError("Spawn ID is required. Pass --spawn or set MERIDIAN_RUN_ID.")
 
 
 def _resolve_spawn(

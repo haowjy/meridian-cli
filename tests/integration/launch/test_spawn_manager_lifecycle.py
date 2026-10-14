@@ -337,7 +337,7 @@ async def test_backpressure_drop_emits_runtime_telemetry(tmp_path: Path) -> None
     event = next(event for event in sink.events if event.event == "runtime.stream_event_dropped")
     assert event.scope == "streaming.spawn_manager"
     assert event.severity == "warning"
-    assert event.ids == {"spawn_id": "p-drop"}
+    assert event.ids == {"spawn_id": "p-drop", "run_id": "p-drop"}
     assert event.data["event_type"] == "second"
     assert event.data["error"]["type"] == "QueueFullBackpressure"
 

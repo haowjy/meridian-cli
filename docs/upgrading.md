@@ -2,9 +2,11 @@
 
 ## Spawn/run identity boundary (unreleased)
 
-No action is needed before or after installing. Launch and continue still mint
-fresh bare spawn IDs; list/show flags and output stay unchanged. Existing spawn
-state schema v3 and session authority files are not migrated.
+No authority migration is needed. `--continue pN` now keeps the spawn ID and
+publishes a new run `pN.K`; `--continue cN` reopens the chat's owner spawn.
+Existing rows are run 1; legacy resume chains are not merged. List shows one
+row per spawn, and show includes its runs. Fully archived spawns must be restored
+before continuing; fork can still use their captured context.
 
 The rebuildable history index moves from schema 7 to 8, adding stable spawn and
 numeric run columns. The first indexed read rebuilds `history-v8.sqlite3` from
@@ -12,11 +14,15 @@ authority and may take longer; the older `history-v7.sqlite3` is left untouched.
 Bare spawn lookup now scans run directories (about 27 ms over 3,891 copied rows);
 commands resolving many references pay that cost for each reference.
 
-Rollback to 0.10.2 needs no authority restore for this change. Its index uses the
-v7 namespace. The v0.10.2 build successfully read/listed scratch state after the
-new build created v8; both index files coexisted and authority hashes were
-unchanged. New launchers also expose `MERIDIAN_RUN_ID`; old launcher environments
-continue to work through the `MERIDIAN_SPAWN_ID` fallback.
+Older binaries treat dotted run directories as separate spawns; they do not
+provide stable-ID continue semantics. No state rewrite is needed to roll back.
+`MERIDIAN_SPAWN_ID` stays stable; `MERIDIAN_RUN_ID` names the exact launch.
+Old launcher environments use the spawn-ID fallback for run 1.
+
+A bare `pN` now resolves to its newest result. Use `pN.1` for the original result
+and `pN.K` for later ones. Continuing a pre-`/clear` chat moves the spawn's next
+continue target back to that segment. Children from earlier runs remain children
+of the spawn, so active earlier children still participate in no-argument wait.
 
 ## OpenCode 2.x idle (unreleased)
 

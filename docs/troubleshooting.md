@@ -117,7 +117,7 @@ meridian --continue 01JABCDEF1234567890
 
 When a primary session ends, the quit message now shows the chat ID (e.g. `c123`) as the preferred `--continue` reference. Chat IDs are stable and human-friendly; UUIDs still work but are no longer the default suggestion.
 
-`--continue` resumes the same session. `--fork` starts a new session seeded from prior context while preserving source agent/model/skills. `--fork-fresh` starts a new fork and allows agent/model/skills overrides. `--from [REF]` starts an independent session with prior context as reference material (no transcript lineage). Bare `--from` defaults to `$MERIDIAN_SPAWN_ID`.
+`--continue` reopens the same spawn and its selected chat; each launch is a separate run. `--fork` starts a new session seeded from prior context while preserving source agent/model/skills. `--fork-fresh` starts a new fork and allows agent/model/skills overrides. `--from [REF]` starts an independent session with prior context as reference material (no transcript lineage). Bare `--from` defaults to `$MERIDIAN_SPAWN_ID`.
 
 Inside a Meridian-managed session, `--fork`, `--fork-fresh`, and `--from` default `REF` to `$MERIDIAN_SPAWN_ID`, so bare forms work for "branch/seed from this session."
 

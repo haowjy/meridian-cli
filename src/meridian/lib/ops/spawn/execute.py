@@ -248,6 +248,8 @@ def _reserve_then_prepare(
         runtime=runtime,
         ctx=resolved_context,
     )
+    from meridian.lib.launch.continue_replay import seed_continue_scope
+    seed_continue_scope(runtime.project_root, str(context.spawn.spawn_id), request.session)
     logger.debug(
         "spawn_launcher_phase",
         phase="reservation_complete",
@@ -261,9 +263,15 @@ def _reserve_then_prepare(
         ctx=ctx,
     )
     if isinstance(preparation, SpawnActionOutput):
-        spawn_store.remove_spawn_events(
-            context.runtime_root, parse_ref(context.spawn.spawn_id, row_key=True)
-        )
+        if request.session.reopen_spawn_id:
+            finalize_launch_failure_sync(
+                context.runtime_root, runtime.project_root, context.spawn.spawn_id,
+                preparation.error or preparation.message or "pre_init_failed",
+            )
+        else:
+            spawn_store.remove_spawn_events(
+                context.runtime_root, parse_ref(context.spawn.spawn_id, row_key=True)
+            )
         return preparation
 
     project_paths = preparation.project_paths

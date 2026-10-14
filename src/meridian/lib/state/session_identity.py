@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-from meridian.lib.core.refs import parse_ref
+from meridian.lib.core.refs import parse_ref, spawn_of
 from meridian.lib.core.types import SpawnId, normalize_optional_identity
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.primary_meta import read_primary_harness_session_id
@@ -298,3 +298,27 @@ __all__ = [
     "spawn_matches_owner_chat",
     "spawn_owner_chat_id",
 ]
+
+
+def owner_spawns_for_chats(runtime_root: Path, chat_ids: Iterable[str]) -> dict[str, SpawnId]:
+    """Batch ownership discovery: linked generations win over observed publishers."""
+    wanted = set(chat_ids)
+    owners: dict[str, SpawnId] = {}
+    for generation in session_store.list_session_generations(runtime_root):
+        if generation.chat_id in wanted and generation.spawn_id:
+            owners[generation.chat_id] = spawn_of(generation.spawn_id)
+    unresolved = wanted - owners.keys()
+    if unresolved:
+        from meridian.lib.state.history_index import HistoryIndex
+        publishers = sorted(HistoryIndex(runtime_root).spawns(),
+                            key=lambda row: row.started_at or "")
+        for row in publishers:
+            if row.current_chat_id in unresolved:
+                current = spawn_store.get_spawn(runtime_root, row.id)
+                if current is not None and current.current_chat_id in unresolved:
+                    owners[current.current_chat_id] = spawn_of(current.id)
+    return owners
+
+
+def owner_spawn_for_chat(runtime_root: Path, chat_id: str) -> SpawnId | None:
+    return owner_spawns_for_chats(runtime_root, (chat_id,)).get(chat_id)

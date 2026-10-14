@@ -6,7 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Separate spawn references from exact run keys; retain latest and bound runs safely.
-- Keep launch, continue, list, and show behavior unchanged.
+- `--continue` keeps spawn id; each launch is a run `pN.K`.
+- List one row per spawn; show its runs. Fork and from still make new spawns.
 - Expose the exact launch as `MERIDIAN_RUN_ID`; keep existing launcher environments working.
 
 ### Upgrade notes

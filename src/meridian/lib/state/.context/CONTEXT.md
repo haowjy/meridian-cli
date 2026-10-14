@@ -331,3 +331,18 @@ later individual mutations creates unnecessary contention. Use `write_state_lock
 - [../../launch/.context/CONTEXT.md](../../launch/.context/CONTEXT.md) — launch pipeline that writes spawn state via `SpawnStore`; composition seam, prepare/bind split
 - [../../platform/.context/CONTEXT.md](../../platform/.context/CONTEXT.md) — `lock_file()`
   implementation details, Windows/POSIX branching
+
+## Reopening a spawn
+
+`reserve_run` takes mutation(shared) → spawns allocation lock, repeats the
+read-only reaper busy projection, and atomically publishes max surviving K + 1.
+Its runner PID/birth stamp protects queued startup; no generation is copied.
+The chat lease is acquired only after releasing the allocation lock. A live
+owner refuses; transient lock contention without a live owner retries for 10 s.
+Session scope binds the acquired generation to the new row. Never reopen a
+terminal row in place or mint run 1 when all loose runs have been archived.
+
+The continue target is the latest generation-bound run's current/entry chat;
+failed unbound reservations cannot redirect it. The newest linked generation
+owns a chat; only chats without any linked generation fall back to the run
+publishing `current_chat_id`. Session `spawn_id` remains an exact run key.

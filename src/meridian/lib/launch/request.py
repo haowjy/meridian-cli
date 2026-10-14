@@ -42,6 +42,8 @@ class SessionRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
+    reopen_spawn_id: str | None = None
+    source_run_id: str | None = None
     continue_chat_id: str | None = None
     requested_harness_session_id: str | None = None
     initial_model_selection: SessionModelSelectionEvent | None = None

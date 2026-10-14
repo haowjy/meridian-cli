@@ -144,7 +144,7 @@ def _emit_usage_spawn_launched(*, harness: str | None, spawn_id: str | None = No
         "usage",
         "usage.spawn.launched",
         scope="core.launch",
-        ids={"spawn_id": spawn_id} if spawn_id is not None else None,
+        ids={"spawn_id": spawn_of(spawn_id), "run_id": spawn_id} if spawn_id is not None else None,
         data={"harness": normalized_harness},
     )
 
@@ -546,7 +546,10 @@ def spawn_list_sync(
     )
     if runtime_root is None:
         return SpawnListOutput(spawns=())
-    spawns = list(reversed(_all_run_rows(project_root, runtime_root)))
+    from meridian.lib.state.spawn.runs import group_runs
+    groups = group_runs(_all_run_rows(project_root, runtime_root))
+    spawns = sorted((group[-1] for group in groups.values()),
+                    key=lambda row: row.started_at or "", reverse=True)
 
     # When statuses is empty tuple, show all statuses but cap intelligently:
     # always include all active spawns, pad with recent non-active up to limit.
@@ -599,7 +602,9 @@ def spawn_list_sync(
             surfaced_activity = _surface_primary_activity(row.status, activity)
         entries.append(
             SpawnListEntry(
-                spawn_id=row.id,
+                spawn_id=spawn_of(row.id),
+                run_id=row.id,
+                run_count=len(groups[spawn_of(row.id)]),
                 status=row.status,
                 status_display=(
                     f"{row.status} ({surfaced_activity})" if surfaced_activity is not None else None
@@ -884,9 +889,23 @@ def spawn_show_sync(
         include_report_body=payload.include_report_body,
         runtime_root=runtime_root,
     )
+    from meridian.lib.state.spawn.runs import group_runs
+
+    from .models import SpawnRunEntry
+    runs = ()
+    if parse_ref(payload.spawn_id).kind == "spawn":
+        siblings = group_runs(_all_run_rows(project_root, runtime_root)).get(spawn_of(row.id), ())
+        runs = tuple(SpawnRunEntry(
+            run_id=str(item.id) if parse_ref(item.id).kind == "run" else f"{item.id}.1",
+            status=item.status, started_at=item.started_at,
+            chat_id=item.chat_id, current_chat_id=item.current_chat_id,
+            duration_secs=item.terminal.duration_secs if item.terminal else None,
+            cost_usd=item.terminal.total_cost_usd if item.terminal else None,
+        ) for item in siblings)
     surfaced_activity = _surface_primary_activity(row.status, activity)
     return detail.model_copy(
         update={
+            "runs": runs,
             "kind": kind,
             "activity": surfaced_activity,
             "managed_backend": managed_backend,
@@ -1151,7 +1170,7 @@ def _resolve_signal_spawn_id(
         resolved_spawn_id = ambient_run_id
     else:
         raise ValueError(
-            "Spawn ID is required. Pass spawn_id or set MERIDIAN_SPAWN_ID."
+            "Spawn ID is required. Pass spawn_id or set MERIDIAN_RUN_ID."
         )
     record = spawn_store.get_spawn(runtime_root, resolved_spawn_id)
     if record is None:
@@ -2123,14 +2142,14 @@ def _reject_continue_policy_overrides(payload: SpawnContinueInput) -> None:
 def _build_continue_create_input(
     *,
     payload: SpawnContinueInput,
-    source_spawn: SpawnRecord,
-    source_spawn_id: RunId,
+    source_spawn: SpawnRecord | None,
+    source_spawn_id: str,
     resolved_reference: ResolvedSessionReference,
     runtime_root: Path,
 ) -> SpawnCreateInput:
     continue_contract = build_continue_replay_contract(
         source=continue_replay_source_from_reference(
-            source_spawn_id,
+            spawn_of(source_spawn_id) if payload.spawn_id.startswith("@") else payload.spawn_id,
             resolved_reference,
             harness_session_id=resolved_reference.authoritative_harness_session_id,
         ),
@@ -2149,8 +2168,14 @@ def _build_continue_create_input(
         }
     )
 
-    resolved_goal = payload.goal if payload.goal is not None else source_spawn.goal
-    derived_prompt = _prompt_for_follow_up(source_spawn, source_spawn_id, payload.prompt)
+    resolved_goal = (payload.goal if payload.goal is not None
+                     else source_spawn.goal if source_spawn else None)
+    derived_prompt = (
+        _prompt_for_follow_up(source_spawn, source_spawn_id, payload.prompt)
+        if source_spawn else payload.prompt or ""
+    )
+    if not derived_prompt.strip():
+        raise ValueError("Continuing an unowned chat requires a prompt")
 
     return SpawnCreateInput(
         prompt=derived_prompt,
@@ -2364,13 +2389,6 @@ def spawn_continue_sync(
 ) -> SpawnActionOutput:
     if payload.model is not None and not payload.model.strip():
         raise ValueError("--model must not be empty")
-    parsed_source = parse_ref(payload.spawn_id)
-    if parsed_source.kind == "run":
-        assert parsed_source.spawn_id is not None
-        raise ValueError(
-            f"Cannot continue run '{parsed_source.value}'; continue the spawn "
-            f"(`{parsed_source.spawn_id}`) or fork the run (`--fork {parsed_source.value}`)."
-        )
     project_root, runtime_root = _resolve_spawn_read_authority(
         project_root=payload.project_root,
         prepared=prepared,
@@ -2378,12 +2396,27 @@ def spawn_continue_sync(
     if runtime_root is None:
         normalized = payload.spawn_id.strip()
         raise ValueError(f"Spawn '{normalized}' not found")
-    resolved_spawn_id, source_spawn, resolved_reference = _source_spawn_for_follow_up(
-        payload.spawn_id,
-        project_root,
-        runtime_root=runtime_root,
-        harness_hint=payload.harness,
-    )
+    from meridian.lib.ops.reference import validate_continue_reference
+    from meridian.lib.state.session_identity import owner_spawn_for_chat
+    from meridian.lib.state.spawn.runs import latest_run
+    validate_continue_reference(runtime_root, payload.spawn_id)
+    if parse_ref(payload.spawn_id).kind == "chat":
+        resolved_reference = resolve_session_reference(
+            project_root, payload.spawn_id, runtime_root=runtime_root,
+        )
+        if (payload.harness and resolved_reference.harness
+                and payload.harness != resolved_reference.harness):
+            raise ValueError(cross_harness_continue_error(
+                resolved_reference.source_chat_id, resolved_reference.harness, payload.harness,
+            ))
+        owner = owner_spawn_for_chat(runtime_root, payload.spawn_id)
+        owner_run = latest_run(runtime_root, owner) if owner else None
+        source_spawn = spawn_store.get_spawn(runtime_root, owner_run) if owner_run else None
+        resolved_spawn_id = str(owner_run or payload.spawn_id)
+    else:
+        resolved_spawn_id, source_spawn, resolved_reference = _source_spawn_for_follow_up(
+            payload.spawn_id, project_root, runtime_root=runtime_root, harness_hint=payload.harness,
+        )
     if resolved_reference.missing_harness_session_id:
         raise NativeSessionUnavailable(resolved_spawn_id, "unbound")
 

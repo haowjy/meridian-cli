@@ -44,7 +44,10 @@ precedence, `--from` work inheritance, task cwd selection, reference anchoring,
 and `-f` validation. Primary and spawn may differ in prompt/session projection,
 but they should not hand-roll directory or reference resolution.
 
-Exact continue (`meridian --continue`, `spawn --continue`) enters through
+Exact continue (`meridian --continue`, `spawn --continue`) reserves a new run of
+the same spawn before acquiring its chat; fork/from still allocate a new spawn.
+Replay copies the predecessor run's scope override, including a cleared tombstone.
+It enters through
 `continue_replay.py`. `ContinueReplayContract` is the launch-owned seam that
 primary and spawn share for replaying source session identity, launch-policy
 snapshot, work, and task directory. Persisted `LaunchPolicySnapshot.model == ""`

@@ -275,8 +275,8 @@ def test_primary_cli_resume_hint_uses_verified_exit_or_entry_fallback(
     row = spawn_store.list_spawns(runtime).records[0]
     target_chat = row.current_chat_id if expected_chat == "exit" else row.chat_id
     assert target_chat is not None
-    assert output.resume_command == f"meridian --continue {target_chat}"
-    assert f"meridian --continue {target_chat}" in rendered
+    assert output.resume_command == f"meridian --continue {row.id}"
+    assert f"meridian --continue {row.id}" in rendered
 
 
 @pytest.mark.parametrize(

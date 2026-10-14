@@ -12,8 +12,9 @@ ownership at each step:
 ```
 run_harness_process()
     │
-    ├── session_scope()            ← open/close session store entry
-    ├── lifecycle_service.start()  ← create spawn row
+    ├── reserve_run()              ← exact continue only, before chat acquisition
+    ├── session_scope()            ← acquire/open/close session generation
+    ├── lifecycle_service.start()  ← fresh/fork row only; reopen already reserved
     ├── select_process_backend()   ← pick {PTY, subprocess, legacy Windows console}
     │
     ├── _execute_via_managed_attach()   ← PrimaryAttachLauncher path
@@ -72,9 +73,10 @@ inside `with native_run.observing(...)`; once `on_running` supplies the concrete
 child PID, one bounded drainer starts. Leaving the block, normally or by
 exception, final-drains and joins it before conclusion and session scope close.
 
-**Session scope wraps everything.** `session_scope()` opens before the spawn row is
-created and closes in the finally block. If `lifecycle_service.start()` fails, the
-session is still properly closed.
+**Reopen reserves before session scope.** Exact continue publishes a queued run
+with no generation, then acquires the chat with try-lock and binds its generation.
+Fresh/fork launches still create the row inside session scope. Failure to acquire
+a live chat finalizes only the new run; the previous generation remains untouched.
 
 ## Key Rules
 

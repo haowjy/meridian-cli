@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.event_hooks import run_event_hooks
-from meridian.lib.core.refs import parse_ref
+from meridian.lib.core.refs import parse_ref, spawn_of
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import (
@@ -876,7 +876,7 @@ class SpawnManager:
                 "runtime.stream_event_dropped",
                 scope="streaming.spawn_manager",
                 severity="warning",
-                ids={"spawn_id": str(spawn_id)},
+                ids={"spawn_id": spawn_of(str(spawn_id)), "run_id": str(spawn_id)},
                 data={**error_data, "event_type": event.raw.event_type},
             )
             if session.debug_tracer is not None:

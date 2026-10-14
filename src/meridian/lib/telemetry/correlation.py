@@ -8,6 +8,8 @@ from dataclasses import dataclass
 
 import structlog
 
+from meridian.lib.core.refs import spawn_of
+
 _CANONICAL_CORRELATION_FIELDS: tuple[str, ...] = (
     "spawn_id",
     "parent_id",
@@ -49,6 +51,9 @@ class LifecycleCorrelation:
             value = getattr(self, field_name)
             if value is not None and str(value).strip():
                 context[field_name] = str(value)
+        if self.spawn_id:
+            context["run_id"] = self.spawn_id
+            context["spawn_id"] = spawn_of(self.spawn_id)
         return context
 
 

@@ -176,7 +176,7 @@ def test_build_continue_replay_contract_rejects_agent_opt_out() -> None:
 
 def _continue_source() -> ContinueReplaySource:
     return ContinueReplaySource(
-        source_ref="p41",
+        source_ref="c41",
         harness_session_id="session-41",
         harness="claude",
         source_chat_id="c41",

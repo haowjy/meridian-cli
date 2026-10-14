@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validat
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.core.refs import spawn_of
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status, is_terminal_spawn_status
 from meridian.lib.core.util import FormatContext
 from meridian.lib.launch.request import SessionRequest
@@ -45,7 +46,7 @@ def _truncate_cell(value: str, *, max_chars: int) -> str:
 def _background_wait_note(spawn_id: str) -> str:
     return (
         f"Background spawn submitted.\n"
-        f"Spawn id: {spawn_id}\n"
+        f"Spawn id: {spawn_of(spawn_id)}\n"
         f"\n"
         f"After spawning all subagents, you MUST run:\n"
         f"\n"
@@ -232,7 +233,8 @@ class SpawnActionOutput(BaseModel):
         if self.identity_created:
             wire["identity_created"] = True
         if self.spawn_id is not None:
-            wire["spawn_id"] = self.spawn_id
+            wire["spawn_id"] = spawn_of(self.spawn_id)
+            wire["run_id"] = self.spawn_id
             if self.background and self.status == "running":
                 wire["note"] = _background_wait_note(self.spawn_id)
                 wire["terminal"] = False
@@ -338,7 +340,8 @@ class SpawnActionOutput(BaseModel):
 
         wire: dict[str, object] = {"status": self.status}
         if self.spawn_id is not None:
-            wire["spawn_id"] = self.spawn_id
+            wire["spawn_id"] = spawn_of(self.spawn_id)
+            wire["run_id"] = self.spawn_id
             wire["note"] = _background_wait_note(self.spawn_id)
             wire["terminal"] = False
             wire["wait_required"] = True
@@ -425,7 +428,9 @@ class SpawnActionOutput(BaseModel):
         else:
             lines.append(f"Spawn {self.status}.")
         if self.spawn_id:
-            lines.append(f"Spawn id: {self.spawn_id}")
+            lines.append(f"Spawn id: {spawn_of(self.spawn_id)}")
+            if spawn_of(self.spawn_id) != self.spawn_id:
+                lines.append(f"Run: {self.spawn_id}")
         if self.forked_from:
             lines.append(f"Forked from: {self.forked_from}")
         if self.model and self.harness_id:
@@ -616,6 +621,8 @@ class SpawnStatsOutput(BaseModel):
 class SpawnListEntry(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    run_id: str | None = None
+    run_count: int = 1
     spawn_id: str
     status: str
     status_display: str | None = None
@@ -637,7 +644,7 @@ class SpawnListEntry(BaseModel):
     def as_row(self) -> list[str]:
         """Return columnar cells for tabular alignment."""
         return [
-            self.spawn_id,
+            self.spawn_id + (f" ({self.run_count} runs)" if self.run_count > 1 else ""),
             self.display_status(),
             _truncate_cell(self.model, max_chars=18),
             f"{self.duration_secs:.1f}s" if self.duration_secs is not None else "-",
@@ -658,6 +665,8 @@ class SpawnListOutput(BaseModel):
         for entry in self.spawns:
             payload_entry: dict[str, object] = {
                 "spawn_id": entry.spawn_id,
+                "run_id": entry.run_id or entry.spawn_id,
+                "run_count": entry.run_count,
                 "status": entry.status,
                 "agent": entry.agent,
                 "desc": entry.desc,
@@ -783,6 +792,16 @@ class SpawnCancelAllOutput(BaseModel):
         return "\n".join(lines)
 
 
+class SpawnRunEntry(BaseModel):
+    run_id: str
+    status: str
+    started_at: str | None
+    chat_id: str | None
+    current_chat_id: str | None
+    duration_secs: float | None
+    cost_usd: float | None
+
+
 class SpawnDetailOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -833,6 +852,8 @@ class SpawnDetailOutput(BaseModel):
     last_attempt_exit_code: int | None = None
     session_config_dir: str | None = None
     session_log_available: bool = False
+
+    runs: tuple[SpawnRunEntry, ...] = ()
 
     def _normalized_report_body(self) -> str | None:
         report_text = (self.report_body or "").strip()
@@ -967,6 +988,8 @@ class SpawnDetailOutput(BaseModel):
             wire["report_body"] = self.report_body
         if self.session_config_dir is not None:
             wire["session_config_dir"] = self.session_config_dir
+        if self.runs:
+            wire["runs"] = [run.model_dump() for run in self.runs]
         return wire
 
     def to_cli_output(
@@ -990,6 +1013,18 @@ class SpawnDetailOutput(BaseModel):
             if effective_ctx.verbosity > 0
             else self._format_moderate_text()
         )
+        if self.runs:
+            from meridian.lib.core.formatting import tabular
+            rows = [["run", "status", "started", "chat", "duration", "cost"]]
+            rows.extend([
+                run.run_id, run.status, run.started_at or "-",
+                (run.chat_id or "-") + (f" → {run.current_chat_id}" if run.current_chat_id else ""),
+                f"{run.duration_secs:.1f}s" if run.duration_secs is not None else "-",
+                f"${run.cost_usd:.4f}" if run.cost_usd is not None else "-",
+            ] for run in self.runs)
+            text += "\n\n" + tabular(rows)
+            text += (f"\nTotal: {sum(run.duration_secs or 0 for run in self.runs):.1f}s, "
+                     f"${sum(run.cost_usd or 0 for run in self.runs):.4f}")
         return f"{self.boundary_summary}\n{text}" if self.boundary_summary else text
 
     def format_wait_text(self, ctx: FormatContext | None = None) -> str:

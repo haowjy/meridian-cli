@@ -90,12 +90,13 @@ def render_list(model: BrowseModel, width: int) -> StyleAndTextTuples:
         prefix = f"{marker} {live} "
         if width < _WIDE_LIST_WIDTH:
             line = (
-                f"{prefix}{_cell(row.chat_id, _CHAT_ID_WIDTH)} "
+                f"{prefix}{_cell(row.owner_spawn_id or row.chat_id, _CHAT_ID_WIDTH)} "
                 f"{_cell(age, _AGE_WIDTH)} {row.work_label or '—'}"
             )
         else:
             line = (
-                f"{prefix}{_cell(row.chat_id, _CHAT_ID_WIDTH)} {_cell(age, _AGE_WIDTH)} "
+                f"{prefix}{_cell(row.owner_spawn_id or row.chat_id, _CHAT_ID_WIDTH)} "
+                f"{_cell(age, _AGE_WIDTH)} "
                 f"{_cell(row.agent or '—', _AGENT_WIDTH)} "
                 f"{_cell(row.model or '—', _MODEL_WIDTH)} {row.work_label or '—'}"
             )
@@ -125,7 +126,7 @@ def render_preview(model: BrowseModel, width: int, height: int) -> StyleAndTextT
         lines = model.preview_lines or ("preview temporarily unavailable",)
     detail = model.preview_detail
     visible = lines[-max(1, height - (2 if detail else 1)) :]
-    header = f"{row.chat_id} · current segment"
+    header = f"{row.owner_spawn_id or row.chat_id} · {row.chat_id} · current segment"
     if model.preview_status:
         header = f"{model.preview_status} · {header}"
     fragments: StyleAndTextTuples = [("class:preview-title", _clip(header, width)), ("", "\n")]

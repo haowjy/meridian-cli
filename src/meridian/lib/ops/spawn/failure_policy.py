@@ -15,6 +15,7 @@ from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_service import CompleteSpawnOutcome
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
+from meridian.lib.state.session_store import ChatBusy
 
 
 async def finalize_launch_failure(
@@ -36,7 +37,8 @@ async def finalize_launch_failure(
         "failed",
         1,
         origin="launch_failure",
-        error=(error.failure_code if isinstance(error, NativeIdentityError) else str(error)),
+        error=(error.failure_code if isinstance(error, NativeIdentityError)
+               else "chat_busy" if isinstance(error, ChatBusy) else str(error)),
     )
 
 

@@ -4,23 +4,32 @@ Full command surface. Use `--help` on any command for flags and options.
 
 ## Spawning & Monitoring
 
+`--continue` keeps the spawn ID for primaries and children. `--fork`,
+`--fork-fresh`, and `--from` create new spawns. Continue accepts `pN` or `cN`,
+not `pN.K`; fork accepts exact runs. A busy spawn refuses another run: inject
+a turn or fork instead. `spawn wait pN` pins the latest run when the wait starts.
+
+A bare spawn ID is no longer an immutable result receipt. Cite `pN.1` or
+`pN.K` when a particular run's report matters. Runs share the native transcript;
+an exact run reference does not truncate that transcript.
+
 | Command | Description |
 | ------- | ----------- |
 | `meridian` | Launch the primary agent session with startup context, including the installed agent catalog |
-| `meridian --continue REF` | Resume a prior primary session from a chat/session ref (`c123`), spawn ref (`p123`), or raw harness session id. Chat IDs are now the preferred reference — shown in the quit message when a primary session ends. |
+| `meridian --continue REF` | Reopen the same spawn (`p123`), or the owner of a chat (`c123`). Each launch gets a run key (`p123.2`). The quit hint uses the spawn ID. |
 | `meridian --fork [REF]` | Launch a new primary session by forking while preserving launch identity (agent/model/skills). `REF` accepts a spawn ref (`p123`), chat/session ref (`c123`), or raw harness session id. |
 | `meridian --fork-fresh [REF]` | Launch a new primary session by forking and allowing launch identity changes (`-m`, `-a`). |
 | `meridian --from [REF]` | Launch a fresh primary session with prior spawn or chat/session context as reference material only. `REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions. Does not fork transcript lineage. |
 | `meridian bootstrap` | Launch a primary session with all installed bootstrap docs injected — guides first-time setup |
 | `meridian --task-dir PATH` | Override the source-edit directory for this primary launch only. Does not modify the work item's `task_dir` setting. Relative `-f` paths resolve against this directory. Rejected with `--continue` — use `--fork --task-dir` to diverge. |
 | `meridian spawn -a AGENT -p "task"` | Delegate work to a routed agent/model |
-| `meridian spawn list` | See running and recent spawns |
+| `meridian spawn list` | One row per spawn, showing its latest run |
 | `meridian spawn list --profile reviewer` | Show spawns launched with the `reviewer` profile |
 | `meridian spawn list --primary` | Show only primary spawns (top-level sessions) |
 | `meridian spawn wait ID` | Block until a spawn completes; report body included by default, `--no-full` to suppress |
-| `meridian spawn show ID` | Read a spawn's report and status |
+| `meridian spawn show ID` | Read the latest report and run table; `p123.2` selects one exact run |
 | `meridian spawn status ID` | Read spawn status summary (report body off by default; add `--full` to include) |
-| `meridian spawn --continue ID -p "more"` | Resume a prior spawn with new input |
+| `meridian spawn --continue ID -p "more"` | Reopen the same spawn with new input (or use `c123` for a particular chat segment) |
 | `meridian spawn --fork [REF] -p "next"` | Start a new spawn by forking while preserving launch identity (agent/model/skills) |
 | `meridian spawn --fork-fresh [REF] -p "next"` | Start a new spawn by forking and allowing launch identity changes (`-m`, `-a`, `--skills`) |
 | `meridian spawn --from [REF] -p "next"` | Start a new spawn with prior spawn or chat/session context (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |

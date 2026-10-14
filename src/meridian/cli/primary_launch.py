@@ -14,7 +14,7 @@ from meridian.cli.argv_normalization import validate_fork_mode
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
-from meridian.lib.core.refs import parse_ref
+from meridian.lib.core.refs import parse_ref, spawn_of
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.registry import get_default_harness_registry
@@ -104,6 +104,8 @@ def resolve_session_target(
     normalized = continue_ref.strip()
     if not normalized:
         raise ValueError("--continue requires a non-empty session reference.")
+    from meridian.lib.ops.reference import validate_continue_reference
+    validate_continue_reference(resolve_project_runtime_root(project_root), normalized)
     return resolve_session_reference(project_root, normalized, harness_hint=harness_hint)
 
 
@@ -407,8 +409,8 @@ def run_primary_launch(
         continue_chat_id=continue_chat_id,
         forked_from=output_forked_from,
         resume_command=(
-            f"meridian --continue {continue_chat_id}"
-            if continue_chat_id is not None
+            f"meridian --continue {spawn_of(launch_result.primary_spawn_id)}"
+            if launch_result.primary_spawn_id is not None
             else (
                 f"meridian --continue {launch_result.continue_ref}"
                 if launch_result.continue_ref is not None

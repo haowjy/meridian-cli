@@ -14,6 +14,7 @@ import pytest
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.ops.reference import ResolvedSessionReference
@@ -89,6 +90,11 @@ def _seed_spawn(
         harness_session_id=harness_session_id,
         task_cwd=task_cwd,
         launch_policy_snapshot=snapshot,
+    )
+
+    spawn_store.finalize_spawn(
+        runtime_root, parse_ref(spawn_id, row_key=True),
+        status="succeeded", exit_code=0, origin="runner",
     )
 
 

@@ -52,7 +52,7 @@ overrides — not `-C`, which retargets the entire project/control root.
 | `MERIDIAN_ACTIVE_WORK_ID` | Active attached work item slug, when one exists |
 | `MERIDIAN_ACTIVE_WORK_DIR` | Active scope directory: named work item scratch dir when attached, else the run's ambient spawn scope (`spawns/p<N>/work`) |
 | `MERIDIAN_SPAWN_ID` | Current spawn ID for primary and delegated execution; delegated children record it as their parent |
-| `MERIDIAN_RUN_ID` | Exact launch (run) key that self-targeting commands such as `spawn report`, `spawn done` and `task-dir` act on. Every launch currently starts a new spawn, so it equals `MERIDIAN_SPAWN_ID`; processes started by older launchers fall back to `MERIDIAN_SPAWN_ID` |
+| `MERIDIAN_RUN_ID` | Exact launch (run) key that self-targeting commands such as `spawn report`, `spawn done` and `task-dir` act on. Run 1 uses `pN`; later runs use `pN.K`. Processes started by older launchers fall back to `MERIDIAN_SPAWN_ID` |
 | `MERIDIAN_CHAT_ID` | Top-level session id inherited across the spawn tree |
 | `MERIDIAN_MAX_DEPTH` | Max zero-based delegated spawn depth override |
 

@@ -10,7 +10,7 @@ import secrets
 import shutil
 from collections.abc import Sequence
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, cast
@@ -25,6 +25,9 @@ from meridian.lib.core.launch_policy_snapshot import (
     LaunchPolicySnapshot as LaunchPolicySnapshot,
 )
 from meridian.lib.core.refs import parse_ref, reference_sort_key
+from meridian.lib.core.spawn_lifecycle import (
+    SpawnReservation,
+)
 from meridian.lib.core.spawn_lifecycle import (
     is_active_spawn_status as _is_active_spawn_status,
 )
@@ -68,6 +71,7 @@ from meridian.lib.state.spawn.repository import (
 from meridian.lib.state.spawn.repository import read_state as _read_state
 from meridian.lib.state.spawn.repository import scan_spawn_ids as _scan_spawn_ids
 from meridian.lib.state.spawn.repository import write_state_locked as _write_state_locked
+from meridian.lib.state.spawn.runs import check_spawn_available, runs_of
 from meridian.lib.state.spawn.transitions import (
     apply_cancel_intent,
     apply_finalize,
@@ -227,6 +231,137 @@ def _publish_record(paths: RuntimePaths, record: SpawnRecord) -> None:
         atomic_publish_dir(stage_dir, spawn_dir)
 
 
+def _build_record(
+    paths: RuntimePaths,
+    resolved_run_id: RunId,
+    *,
+    bind_existing_generation: bool = True,
+    chat_id: str,
+    owner_chat_id: str | None = None,
+    parent_id: SpawnId | None = None,
+    parent_run_id: RunId | None = None,
+    model: str,
+    agent: str,
+    agent_path: str | None = None,
+    skills: tuple[str, ...] = (),
+    skill_paths: tuple[str, ...] = (),
+    harness: str,
+    kind: SpawnKind = "child",
+    prompt: str,
+    metadata: SpawnStartMetadata | None = None,
+    desc: str | None = None,
+    work_id: str | None = None,
+    goal: str | None = None,
+    harness_session_id: str | None = None,
+    control_root: str | None = None,
+    task_cwd: str | None = None,
+    execution_cwd: str | None = None,
+    claude_config_dir: str | None = None,
+    launch_mode: LaunchMode | None = None,
+    worker_pid: int | None = None,
+    runner_pid: int | None = None,
+    runner_created_at_epoch: float | None = None,
+    launch_policy_snapshot: LaunchPolicySnapshot | None = None,
+    status: SpawnStatus = SpawnStatus.RUNNING,
+    started_at: str | None = None,
+    clock: Clock | None = None,
+) -> SpawnRecord:
+    """Build a run without borrowing the chat's previous generation."""
+
+    resolved_clock = clock or RealClock()
+    started = started_at or resolved_clock.utc_now_iso()
+    start_metadata = _resolve_start_metadata(
+        metadata=metadata,
+        desc=desc,
+        work_id=work_id,
+        goal=goal,
+        launch_policy_snapshot=launch_policy_snapshot,
+    )
+    normalized_goal: str | None = None
+    if start_metadata.goal is not None:
+        normalized_goal = start_metadata.goal.strip()
+        if not normalized_goal:
+            raise ValueError("--goal cannot be empty")
+
+    resolved_runner_created_at_epoch = runner_created_at_epoch
+    if resolved_runner_created_at_epoch is None:
+        resolved_runner_created_at_epoch = _runner_created_at_epoch_for_pid(runner_pid)
+
+    resolved_launch_policy_snapshot = (
+        launch_policy_snapshot or start_metadata.launch_policy_snapshot
+    )
+
+    from meridian.lib.state.session_store import get_session_record
+
+    parent = (
+        _read_state(
+            paths.spawns_dir,
+            parent_run_id or parse_ref(str(parent_id), row_key=True),
+            include_prompt=False,
+        )
+        if parent_id
+        else None
+    )
+    owner = get_session_record(paths.root_dir, owner_chat_id or chat_id)
+    return SpawnRecord(
+        session_instance_id=(owner.session_instance_id
+                             if owner and kind == "primary" and bind_existing_generation else None),
+        parent_history_id=parent.history_id if parent else None,
+        owner_history_id=owner.history_id if owner and kind != "primary" else None,
+        forked_from_history_id=(
+            start_metadata.forked_from_history_id
+            or (owner.forked_from_history_id
+                if owner and kind == "primary" and bind_existing_generation else None)
+        ),
+        id=resolved_run_id,
+        history_id=uuid4(),
+        state_revision=1,
+        chat_id=ChatId(chat_id),
+        owner_chat_id=ChatId(owner_chat_id) if owner_chat_id is not None else None,
+        parent_id=parent_id,
+        originating_bash_id=os.environ.get("_MERIDIAN_PI_BASH_ID") or None,
+        model=model,
+        agent=agent,
+        agent_path=agent_path,
+        skills=skills,
+        skill_paths=skill_paths,
+        harness=harness,
+        kind=kind,
+        desc=start_metadata.desc,
+        work_id=(
+            start_metadata.work_id.strip() or None
+            if start_metadata.work_id is not None
+            else None
+        ),
+        goal=normalized_goal,
+        display_label=derive_display_label(
+            goal=normalized_goal,
+            desc=start_metadata.desc,
+            prompt=prompt,
+        ),
+        harness_session_id=(
+            HarnessSessionId(harness_session_id) if harness_session_id is not None else None
+        ),
+        control_root=normalize_path_for_write(control_root),
+        task_cwd=normalize_path_for_write(task_cwd),
+        execution_cwd=normalize_path_for_write(execution_cwd),
+        claude_config_dir=claude_config_dir,
+        launch_mode=launch_mode,
+        worker_pid=worker_pid,
+        runner_pid=runner_pid,
+        runner_created_at_epoch=resolved_runner_created_at_epoch,
+        status=status,
+        prompt=prompt,
+        started_at=started,
+        last_attempt_exited_at=None,
+        last_attempt_exit_code=None,
+        runner_exit=None,
+        cancel_intent=None,
+        terminal=None,
+        launch_policy_snapshot=resolved_launch_policy_snapshot,
+    )
+
+
 def start_spawn(
     runtime_root: Path,
     *,
@@ -263,30 +398,7 @@ def start_spawn(
 ) -> RunId:
     """Create a spawn's first immutable run row and return its exact key."""
 
-    resolved_clock = clock or RealClock()
     paths = RuntimePaths.from_root_dir(runtime_root)
-    started = started_at or resolved_clock.utc_now_iso()
-    start_metadata = _resolve_start_metadata(
-        metadata=metadata,
-        desc=desc,
-        work_id=work_id,
-        goal=goal,
-        launch_policy_snapshot=launch_policy_snapshot,
-    )
-    normalized_goal: str | None = None
-    if start_metadata.goal is not None:
-        normalized_goal = start_metadata.goal.strip()
-        if not normalized_goal:
-            raise ValueError("--goal cannot be empty")
-
-    resolved_runner_created_at_epoch = runner_created_at_epoch
-    if resolved_runner_created_at_epoch is None:
-        resolved_runner_created_at_epoch = _runner_created_at_epoch_for_pid(runner_pid)
-
-    resolved_launch_policy_snapshot = (
-        launch_policy_snapshot or start_metadata.launch_policy_snapshot
-    )
-
     changes = HistoryChanges(runtime_root)
     with lock_file(changes.mutation_lock, mode="shared"), lock_file(paths.spawns_flock):
         if spawn_id is not None:
@@ -301,33 +413,12 @@ def start_spawn(
             next_value = current + 1
             atomic_write_text(_spawn_counter_path(paths), f"{next_value}\n")
             resolved_run_id = parse_ref(f"p{next_value}", row_key=True)
-        from meridian.lib.state.session_store import get_session_record
-
-        parent = (
-            _read_state(
-                paths.spawns_dir,
-                parent_run_id or parse_ref(str(parent_id), row_key=True),
-                include_prompt=False,
-            )
-            if parent_id
-            else None
-        )
-        owner = get_session_record(runtime_root, owner_chat_id or chat_id)
-        record = SpawnRecord(
-            session_instance_id=owner.session_instance_id if owner and kind == "primary" else None,
-            parent_history_id=parent.history_id if parent else None,
-            owner_history_id=owner.history_id if owner and kind != "primary" else None,
-            forked_from_history_id=(
-                start_metadata.forked_from_history_id
-                or (owner.forked_from_history_id if owner and kind == "primary" else None)
-            ),
-            id=resolved_run_id,
-            history_id=uuid4(),
-            state_revision=1,
-            chat_id=ChatId(chat_id),
-            owner_chat_id=ChatId(owner_chat_id) if owner_chat_id is not None else None,
+        record = _build_record(
+            paths, resolved_run_id,
+            chat_id=chat_id,
+            owner_chat_id=owner_chat_id,
             parent_id=parent_id,
-            originating_bash_id=os.environ.get("_MERIDIAN_PI_BASH_ID") or None,
+            parent_run_id=parent_run_id,
             model=model,
             agent=agent,
             agent_path=agent_path,
@@ -335,41 +426,78 @@ def start_spawn(
             skill_paths=skill_paths,
             harness=harness,
             kind=kind,
-            desc=start_metadata.desc,
-            work_id=(
-                start_metadata.work_id.strip() or None
-                if start_metadata.work_id is not None
-                else None
-            ),
-            goal=normalized_goal,
-            display_label=derive_display_label(
-                goal=normalized_goal,
-                desc=start_metadata.desc,
-                prompt=prompt,
-            ),
-            harness_session_id=(
-                HarnessSessionId(harness_session_id) if harness_session_id is not None else None
-            ),
-            control_root=normalize_path_for_write(control_root),
-            task_cwd=normalize_path_for_write(task_cwd),
-            execution_cwd=normalize_path_for_write(execution_cwd),
+            prompt=prompt,
+            metadata=metadata,
+            desc=desc,
+            work_id=work_id,
+            goal=goal,
+            harness_session_id=harness_session_id,
+            control_root=control_root,
+            task_cwd=task_cwd,
+            execution_cwd=execution_cwd,
             claude_config_dir=claude_config_dir,
             launch_mode=launch_mode,
             worker_pid=worker_pid,
             runner_pid=runner_pid,
-            runner_created_at_epoch=resolved_runner_created_at_epoch,
+            runner_created_at_epoch=runner_created_at_epoch,
+            launch_policy_snapshot=launch_policy_snapshot,
             status=status,
-            prompt=prompt,
-            started_at=started,
-            last_attempt_exited_at=None,
-            last_attempt_exit_code=None,
-            runner_exit=None,
-            cancel_intent=None,
-            terminal=None,
-            launch_policy_snapshot=resolved_launch_policy_snapshot,
+            started_at=started_at,
+            clock=clock,
         )
         _publish_record(paths, record)
         return resolved_run_id
+
+
+def reserve_run(runtime_root: Path, spawn_id: SpawnId, reservation: SpawnReservation) -> RunId:
+    """Publish max-K+1 under the allocation gate; never copy a generation."""
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    reservation = replace(reservation, status=SpawnStatus.QUEUED, runner_pid=os.getpid())
+    with (lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
+          lock_file(paths.spawns_flock)):
+        check_spawn_available(runtime_root, spawn_id, reservation.chat_id)
+        if reservation.parent_id:
+            from meridian.lib.core.refs import spawn_of
+            from meridian.lib.state.spawn_tree import iter_descendants
+            descendants = iter_descendants(spawn_id, list_spawns(runtime_root).records)
+            if reservation.parent_id == spawn_id or any(
+                spawn_of(row.id) == reservation.parent_id for row in descendants
+            ):
+                raise ValueError(f"Cannot reopen ancestor spawn {spawn_id}")
+        latest = runs_of(runtime_root, spawn_id)[-1]
+        run_id = parse_ref(f"{spawn_id}.{(parse_ref(latest).run or 1) + 1}", row_key=True)
+        record = _build_record(
+            paths, run_id, bind_existing_generation=False,
+            chat_id=reservation.chat_id,
+            owner_chat_id=reservation.owner_chat_id,
+            parent_run_id=reservation.parent_run_id,
+            kind=reservation.kind,
+            prompt=reservation.prompt,
+            metadata=reservation.metadata,
+            desc=reservation.desc,
+            work_id=reservation.work_id,
+            goal=reservation.goal,
+            harness_session_id=reservation.harness_session_id,
+            control_root=reservation.control_root,
+            task_cwd=reservation.task_cwd,
+            execution_cwd=reservation.execution_cwd,
+            launch_mode=reservation.launch_mode,
+            worker_pid=reservation.worker_pid,
+            runner_pid=reservation.runner_pid,
+            launch_policy_snapshot=reservation.launch_policy_snapshot,
+            status=reservation.status,
+            started_at=reservation.started_at,
+            clock=reservation.clock,
+            parent_id=SpawnId(reservation.parent_id) if reservation.parent_id else None,
+            model=reservation.session_metadata.model,
+            agent=reservation.session_metadata.agent,
+            agent_path=reservation.session_metadata.agent_path,
+            skills=reservation.session_metadata.skills,
+            skill_paths=reservation.session_metadata.skill_paths,
+            harness=reservation.session_metadata.harness,
+        )
+        _publish_record(paths, record)
+        return run_id
 
 
 def remove_spawn_events(
@@ -395,6 +523,7 @@ def update_spawn(
     *,
     chat_id: str | None = None,
     current_chat_id: str | None = None,
+    session_instance_id: str | None = None,
     run_boundary: RunBoundaryOutcome | None = None,
     launch_mode: LaunchMode | None = None,
     worker_pid: int | None = None,
@@ -420,6 +549,8 @@ def update_spawn(
 
     def merge(current: SpawnRecord) -> SpawnRecord:
         updates: dict[str, object] = {}
+        if session_instance_id is not None:
+            updates["session_instance_id"] = session_instance_id
         if run_boundary is not None:
             updates["run_boundary"] = run_boundary
         if chat_id is not None:

@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from typing import IO, cast
 
+from meridian.lib.core.refs import spawn_of
+
 logger = logging.getLogger(__name__)
 
 
@@ -58,7 +60,8 @@ class DebugTracer:
         try:
             record: dict[str, object] = {
                 "ts": time.time(),
-                "spawn_id": self._spawn_id,
+                "spawn_id": spawn_of(self._spawn_id),
+                "run_id": self._spawn_id,
                 "layer": layer,
                 "direction": direction,
                 "event": event,
@@ -90,7 +93,7 @@ class DebugTracer:
                 "runtime.debug_tracer_disabled",
                 scope="observability.debug_tracer",
                 severity="warning",
-                ids={"spawn_id": self._spawn_id},
+                ids={"spawn_id": spawn_of(self._spawn_id), "run_id": self._spawn_id},
                 data=make_error_data(exc=exc),
             )
             logger.warning(

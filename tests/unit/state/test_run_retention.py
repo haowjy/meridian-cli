@@ -1,4 +1,4 @@
-"""Retention keeps the last bound generation even behind a distinct target."""
+"""Retention never mistakes a failed reservation for a bound continuation."""
 
 from meridian.lib.core.refs import parse_ref
 from meridian.lib.state.spawn.model import SpawnRecord
@@ -13,5 +13,5 @@ def test_retention_keeps_bound_and_reserved_continuation_sources() -> None:
     latest = SpawnRecord(id=parse_ref("p1.3", row_key=True))
     rows = (bound, target, latest)
 
-    assert continue_target_run(rows) == target
-    assert retention_run_ids(rows) == {row.id for row in rows}
+    assert continue_target_run(rows) == bound
+    assert retention_run_ids(rows) == {bound.id, latest.id}

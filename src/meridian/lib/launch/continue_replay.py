@@ -16,7 +16,7 @@ from meridian.lib.harness.model_observation import (
     read_last_executed_model,
 )
 from meridian.lib.launch.policy_snapshot import managed_model_override_from_persisted_model
-from meridian.lib.launch.request import SessionRequest
+from meridian.lib.launch.request import SessionRequest, is_exact_continue_session
 from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.session_store import (
     ConversationModelSelection,
@@ -55,6 +55,7 @@ class ContinueReplaySource:
     source_control_root: str | None
     source_launch_policy_snapshot: LaunchPolicySnapshot | None
     tracked: bool
+    source_run_id: str | None = None
     source_native_store: str | None = None
     source_history_id: UUID | None = None
     source_model: str | None = None
@@ -85,6 +86,9 @@ class ContinueReplayReference(Protocol):
     whether a recovered harness session id is authoritative enough to use, stay
     in the caller; the caller passes the final harness_session_id explicitly.
     """
+
+    @property
+    def source_spawn_id(self) -> str | None: ...
 
     @property
     def harness(self) -> str | None: ...
@@ -133,6 +137,7 @@ def continue_replay_source_from_reference(
 
     return ContinueReplaySource(
         source_ref=source_ref,
+        source_run_id=resolved_reference.source_spawn_id,
         harness_session_id=harness_session_id,
         harness=resolved_reference.harness,
         source_chat_id=resolved_reference.source_chat_id,
@@ -442,7 +447,34 @@ def build_continue_replay_contract(
         snapshot_model=snapshot_model,
     )
 
+    from meridian.lib.core.refs import parse_ref
+    from meridian.lib.state.session_identity import owner_spawn_for_chat
+    from meridian.lib.state.spawn.runs import check_spawn_available, latest_run
+    from meridian.lib.state.spawn_scope import read_spawn_scope
+
+    reopen_spawn = None
+    predecessor = source.source_run_id
+    task_dir = source.source_execution_cwd
+    if not fork and runtime_root is not None:
+        parsed = parse_ref(source.source_ref)
+        reopen_spawn = (parsed.spawn_id if parsed.kind == "spawn" else
+                        owner_spawn_for_chat(runtime_root, source.source_chat_id)
+                        if source.source_chat_id else None)
+        if reopen_spawn is not None:
+            check_spawn_available(runtime_root, reopen_spawn, source.source_chat_id or "")
+            predecessor = latest_run(runtime_root, reopen_spawn)
+        if predecessor and source.source_control_root:
+            scope = read_spawn_scope(
+                Path(source.source_control_root), parse_ref(predecessor, row_key=True),
+            )
+            if scope.task_dir_cleared:
+                task_dir = source.source_control_root
+            elif scope.task_dir is not None:
+                task_dir = str(scope.task_dir)
+
     session = SessionRequest(
+        reopen_spawn_id=reopen_spawn,
+        source_run_id=predecessor,
         requested_harness_session_id=source.harness_session_id,
         initial_model_selection=seed_event,
         conversation_intent=intent,
@@ -454,7 +486,7 @@ def build_continue_replay_contract(
         forked_from_chat_id=source.source_chat_id if fork else None,
         forked_from_history_id=source.source_history_id if fork else None,
         source_control_root=source.source_control_root,
-        source_execution_cwd=source.source_execution_cwd,
+        source_execution_cwd=task_dir,
         source_native_store=source.source_native_store,
     )
 
@@ -468,7 +500,7 @@ def build_continue_replay_contract(
         launch_policy_snapshot=snapshot,
         session=session,
         work_id=source.source_work_id,
-        task_dir=source.source_execution_cwd,
+        task_dir=task_dir,
     )
 
 
@@ -478,3 +510,16 @@ __all__ = [
     "build_continue_replay_contract",
     "continue_replay_source_from_reference",
 ]
+
+
+def seed_continue_scope(project_root: Path, run_id: str, request: SessionRequest) -> None:
+    """Copy the predecessor's run-local override, including an explicit clear."""
+    from meridian.lib.core.refs import parse_ref
+    from meridian.lib.state.spawn_scope import read_spawn_scope, write_spawn_scope_task_dir
+
+    if request.source_run_id and is_exact_continue_session(request):
+        scope = read_spawn_scope(project_root, parse_ref(request.source_run_id, row_key=True))
+        if scope.task_dir is not None or scope.task_dir_cleared:
+            write_spawn_scope_task_dir(
+                project_root, parse_ref(run_id, row_key=True), scope.task_dir,
+            )

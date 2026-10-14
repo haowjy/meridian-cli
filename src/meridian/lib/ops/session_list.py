@@ -15,6 +15,7 @@ from meridian.lib.ops.session_reentry import Blocked, SessionReentryDecision, de
 from meridian.lib.state import session_store, work_store
 from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state.session_identity import owner_spawns_for_chats
 from meridian.lib.state.spawn.model import SpawnRecord
 
 
@@ -29,6 +30,7 @@ class SessionListRow(BaseModel):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     chat_id: str
+    owner_spawn_id: str | None = None
     history_id: str | None = None
     session_generation: str = ""
     archived: bool = False
@@ -45,7 +47,8 @@ class SessionListRow(BaseModel):
     @property
     def filter_text(self) -> str:
         return " ".join(
-            (self.chat_id, self.work_label, self.agent, self.model, self.task_cwd)
+            (self.chat_id, self.owner_spawn_id or "", self.work_label,
+             self.agent, self.model, self.task_cwd)
         ).lower()
 
 
@@ -64,9 +67,10 @@ class SessionListOutput(BaseModel):
         if not self.rows:
             return "no primary sessions"
 
-        rows = [["C-ID", "AGE", "LIVE", "AGENT", "MODEL", "WORK", "NATIVE"]]
+        rows = [["SPAWN", "C-ID", "AGE", "LIVE", "AGENT", "MODEL", "WORK", "NATIVE"]]
         rows.extend(
             [
+                row.owner_spawn_id or "—",
                 row.chat_id
                 + (" [ZIP]" if row.archived else " [historical]" if row.historical else ""),
                 relative_time(row.activity_at).removesuffix(" ago"),
@@ -113,6 +117,11 @@ def session_list_sync(
     visible_records, total_count = HistoryIndex(roots.runtime_root).recent_sessions(
         limit=payload.limit, live_chat_ids=live_chat_ids
     )
+    owners = owner_spawns_for_chats(
+        roots.runtime_root,
+        (record.chat_id for record in visible_records
+         if isinstance(record, session_store.SessionRecord)),
+    )
     recorded_harness_sessions = recover_recorded_chat_harness_session_ids(
         roots.runtime_root,
         [record for record in visible_records if isinstance(record, session_store.SessionRecord)],
@@ -151,6 +160,7 @@ def session_list_sync(
         rows.append(
             SessionListRow(
                 chat_id=record.chat_id,
+                owner_spawn_id=owners.get(record.chat_id),
                 history_id=str(record.history_id) if record.history_id else None,
                 session_generation=record.session_instance_id
                 or record.harness_session_id

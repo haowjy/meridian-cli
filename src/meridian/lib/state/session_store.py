@@ -1,6 +1,7 @@
 """File-backed session tracking for a Meridian state root's `sessions.jsonl`."""
 
 import os
+import time
 import uuid
 from collections.abc import Callable, Mapping
 from contextlib import ExitStack
@@ -22,6 +23,7 @@ from meridian.lib.core.types import (
     HarnessSessionId,
 )
 from meridian.lib.platform.locking import (
+    FileLockTimeout,
     acquire_file_lock,
     lock_file,
     release_file_lock,
@@ -259,6 +261,28 @@ def _discard_expected_session_lock(
         del _SESSION_LOCK_HANDLES[key]
 
 
+class ChatBusy(ValueError):
+    """A live session owner prevents acquisition of its chat."""
+
+    def __init__(self, chat_id: str):
+        super().__init__(f"chat_busy: Chat {chat_id} has a live owner")
+
+
+def _acquire_reopen_lock(runtime_root: Path, chat_id: str, lock_path: Path) -> IO[bytes]:
+    deadline = time.monotonic() + 10
+    while True:
+        try:
+            return acquire_file_lock(lock_path, timeout=0)
+        except FileLockTimeout:
+            if is_session_lease_owner_alive(runtime_root, chat_id):
+                raise ChatBusy(chat_id) from None
+            if time.monotonic() >= deadline:
+                raise FileLockTimeout(
+                    f"Timed out waiting for transient chat lock: {chat_id}"
+                ) from None
+            time.sleep(0.05)
+
+
 def start_session(
     runtime_root: Path,
     harness: str,
@@ -280,6 +304,7 @@ def start_session(
     kind: Literal["primary", "spawn"] = "spawn",
     spawn_id: str | None = None,
     model_selection_protocol: Literal[1] | None = None,
+    reopen: bool = False,
 ) -> str:
     """Append a session start event and acquire a lifetime session lock."""
 
@@ -293,7 +318,8 @@ def start_session(
         if not resolved_chat_id:
             resolved_chat_id = reserve_chat_id(runtime_root)
         lock_path = paths.sessions_dir / f"{resolved_chat_id}.lock"
-        handle = acquire_file_lock(lock_path)
+        handle = (_acquire_reopen_lock(runtime_root, resolved_chat_id, lock_path)
+                  if reopen else acquire_file_lock(lock_path))
         event = SessionStartEvent(
             chat_id=ChatId(resolved_chat_id),
             kind=kind,
@@ -331,7 +357,7 @@ def start_session(
                     runtime_root, resolved_chat_id, excluding_spawn_id=spawn_id,
                 )
                 if observer is not None:
-                    raise ValueError(f"Chat {resolved_chat_id} is in use by live run {observer}")
+                    raise ChatBusy(resolved_chat_id)
                 outcome = bind(existing.key_fields(), event.key_fields())
                 if isinstance(outcome, Conflict):
                     report_conflict(event.chat_id, outcome, "start")

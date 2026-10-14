@@ -350,7 +350,7 @@ def _join_scope_path(scope_dir: Path, relpath: str) -> Path:
 
 def _require_session_spawn_id(ctx: RuntimeContext) -> RunId:
     if ctx.run_key is None:
-        raise ValueError("Not in a session (MERIDIAN_SPAWN_ID is unset).")
+        raise ValueError("Not in a session (MERIDIAN_RUN_ID is unset).")
     return ctx.run_key
 
 

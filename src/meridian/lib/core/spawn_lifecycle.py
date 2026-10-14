@@ -46,6 +46,7 @@ class SpawnReservation:
     desc: str | None = None
     work_id: str | None = None
     goal: str | None = None
+    reopen_spawn_id: str | None = None
     spawn_id: str | None = None
     harness_session_id: str | None = None
     control_root: str | None = None

@@ -211,7 +211,8 @@ def build_spawn_reservation(
         skill_paths=request.skill_paths,
     )
     return SpawnReservation(
-        chat_id=owner_chat_id,
+        reopen_spawn_id=request.session.reopen_spawn_id,
+        chat_id=request.session.continue_chat_id or owner_chat_id,
         owner_chat_id=owner_chat_id,
         parent_id=str(resolved_context.spawn_id) if resolved_context.spawn_id else None,
         parent_run_id=resolved_context.run_key,

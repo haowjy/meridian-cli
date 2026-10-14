@@ -21,10 +21,9 @@ def group_runs(rows: Iterable[SpawnRecord]) -> dict[SpawnId, tuple[SpawnRecord, 
 
 
 def continue_target_run(rows: Sequence[SpawnRecord]) -> SpawnRecord | None:
-    """Newest bound run or reopen reservation, never a legacy caller-chat row."""
+    """Newest run that actually acquired a session generation."""
     return max(
-        (row for row in rows if row.session_instance_id is not None
-         or (row.owner_chat_id is not None and row.owner_chat_id != row.chat_id)),
+        (row for row in rows if row.session_instance_id is not None),
         key=lambda row: reference_sort_key(row.id), default=None,
     )
 
@@ -77,3 +76,38 @@ def latest_run(runtime_root: Path, spawn_id: SpawnId) -> RunId | None:
 
     runs = runs_of(runtime_root, spawn_id)
     return runs[-1] if runs else None
+
+
+class SpawnBusy(ValueError):
+    """A reopen would overlap an active run of the same spawn."""
+
+    def __init__(self, run_id: RunId):
+        self.run_id = run_id
+        spawn = spawn_of(run_id)
+        super().__init__(
+            f"Spawn {spawn} is busy (run {run_id}); use `spawn inject {spawn}` "
+            f"or `--fork {spawn}`."
+        )
+
+
+def check_spawn_available(
+    runtime_root: Path, spawn_id: SpawnId, chat_id: str | None = None,
+) -> None:
+    """Read-only preflight, repeated under the allocation gate before publication."""
+    from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
+    from meridian.lib.state.reaper import peek_reconciled_active_spawn
+    from meridian.lib.state.session_store import ChatBusy, is_session_lease_owner_alive
+    from meridian.lib.state.spawn.repository import read_state
+
+    latest = latest_run(runtime_root, spawn_id)
+    if latest is None:
+        raise ValueError(f"{spawn_id} is archived; restore it, or `--fork {spawn_id}`")
+    row = read_state(
+        RuntimePaths.from_root_dir(runtime_root).spawns_dir, latest, include_prompt=False,
+    )
+    if row is None:
+        raise ValueError(f"Latest run unavailable: {latest}; run `meridian doctor`")
+    if is_active_spawn_status(peek_reconciled_active_spawn(runtime_root, row).status):
+        raise SpawnBusy(latest)
+    if chat_id is not None and is_session_lease_owner_alive(runtime_root, chat_id):
+        raise ChatBusy(chat_id)

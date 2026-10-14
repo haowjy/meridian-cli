@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import NamedTuple, cast
 
 from meridian.lib.core.depth import is_root_side_effect_process
-from meridian.lib.core.refs import parse_ref
+from meridian.lib.core.refs import parse_ref, reference_sort_key
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.types import RunId
 from meridian.lib.ops.reference import resolve_spawn_ref
@@ -177,7 +177,7 @@ def _select_latest_spawn_id(
         spawns = [item for item in spawns if item.status in wanted]
     if not spawns:
         return None
-    return spawns[-1].id
+    return max(spawns, key=lambda row: (row.started_at or "", reference_sort_key(row.id))).id
 
 
 def resolve_spawn_reference(

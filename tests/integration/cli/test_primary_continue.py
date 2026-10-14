@@ -18,6 +18,7 @@ import meridian.lib.launch.context as launch_context
 from meridian.cli.primary_launch import PrimaryLaunchOutput, run_primary_launch
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import LaunchRequest, LaunchResult, launch_primary
@@ -88,6 +89,11 @@ def _seed_primary_spawn(
         task_cwd=task_cwd,
         harness_session_id=harness_session_id,
         launch_policy_snapshot=snapshot,
+    )
+
+    spawn_store.finalize_spawn(
+        runtime_root, parse_ref(spawn_id, row_key=True),
+        status="succeeded", exit_code=0, origin="runner",
     )
 
 
@@ -168,7 +174,7 @@ def test_primary_exit_reporting_preserves_saved_identity(tmp_path, monkeypatch):
     output = _run_primary_continue(tmp_path, "")
     text = output.format_text()
     assert "Session finished." in text
-    assert "meridian --continue c-primary" in text
+    assert "meridian --continue p41" in text
     assert "exit unresolved" not in text
     assert output.exit_code == 0 and output.boundary_summary is None
     row = spawn_store.get_spawn(runtime_root, "p41")
@@ -361,10 +367,12 @@ def test_primary_continue_spawn_session_ref_uses_linked_spawn_snapshot(
     )
     requests = _record_primary_launch(monkeypatch)
 
-    try:
-        _run_primary_continue(project_root, spawn_chat_id)
-    finally:
-        session_store.stop_session(runtime_root, spawn_chat_id)
+    session_store.stop_session(runtime_root, spawn_chat_id)
+    spawn_store.finalize_spawn(
+        runtime_root, parse_ref("p51", row_key=True),
+        status="succeeded", exit_code=0, origin="runner",
+    )
+    _run_primary_continue(project_root, spawn_chat_id)
 
     assert requests[0].launch_policy_snapshot == snapshot
     assert requests[0].passthrough_args == snapshot.extra_args
