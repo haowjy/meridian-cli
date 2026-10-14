@@ -8,8 +8,7 @@ from typing import Literal, cast
 import structlog
 from pydantic import BaseModel, ConfigDict, field_serializer
 
-from meridian.lib.catalog.mars_capabilities import mars_supports_fallback_root
-from meridian.lib.catalog.mars_roots import resolve_mars_executable
+from meridian.lib.catalog.mars_roots import mars_fallback_active
 from meridian.lib.config.context_config import ContextSourceType
 from meridian.lib.config.dynamic_sections import DYNAMIC_SECTION_DESCRIPTORS
 from meridian.lib.config.loader import OPTION_CATALOG
@@ -573,7 +572,7 @@ def config_show_sync(payload: ConfigShowInput) -> ConfigShowOutput:
         mars_scope=surface.authority.mars_roots.scope,
         mars_fallback=(
             "supported"
-            if mars_supports_fallback_root(resolve_mars_executable())
+            if mars_fallback_active(surface.authority.mars_roots)
             else "unsupported"
         ),
         runtime_root=(
