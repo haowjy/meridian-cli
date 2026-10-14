@@ -12,9 +12,9 @@ import pytest
 
 from meridian.lib.ops.session_archive import archive_history
 from meridian.lib.state import spawn_store
-from meridian.lib.state.event_store import JsonlDecodeError
 from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.history_index import HistoryIndex
+from meridian.lib.state.jsonl import JsonlDecodeError
 from meridian.lib.state.retention_archive import (
     archive_locations,
     read_receipts,

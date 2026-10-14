@@ -434,6 +434,7 @@ def test_orphan_primary_diagnostics_use_scope_liveness(
         _collect_artifact_snapshot(runtime_root, record, now),
         ManagedPrimarySnapshot(
             metadata=PrimaryMetadata(
+                managed_backend=True,
                 launcher_pid=42001,
                 backend_pid=41001,
                 activity="idle",

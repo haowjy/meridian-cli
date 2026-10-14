@@ -9,9 +9,9 @@ from meridian.lib.core.native_identity import BindSource, NativeKeyFields
 from meridian.lib.core.types import ChatId, HarnessSessionId
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_fold as sessions
-from meridian.lib.state.atomic import append_durable_jsonl_line
 from meridian.lib.state.event_store import read_events
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
+from meridian.lib.state.jsonl import append_durable_jsonl_lines
 from meridian.lib.state.native_binding import BindOutcome, Bound, Conflict, bind, report_conflict
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.session_store import resolve_session_instance_id
@@ -80,7 +80,7 @@ class SessionBindings:
         if not self._pending:
             return
         HistoryChanges(self.runtime_root).mark(HistorySource(kind="sessions"))
-        lines = "".join(
+        lines = (
             json.dumps(
                 event.model_dump(mode="json", exclude_none=True),
                 separators=(",", ":"),
@@ -90,7 +90,7 @@ class SessionBindings:
             for event in self._pending
         )
         # One fsync per lock-scoped batch; torn tails remain recoverable JSONL.
-        append_durable_jsonl_line(self.paths.sessions_jsonl, lines)
+        append_durable_jsonl_lines(self.paths.sessions_jsonl, lines)
         self._pending.clear()
 
 

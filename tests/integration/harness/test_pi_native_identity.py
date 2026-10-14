@@ -63,7 +63,8 @@ def test_reference_store_comes_from_exact_binding_not_primary_metadata(
         native_store=store,
     )
     write_primary_metadata(
-        tmp_path / "spawns" / key, PrimaryMetadata(session_dir=str(tmp_path / "wrong"))
+        tmp_path / "spawns" / key,
+        PrimaryMetadata(managed_backend=True, session_dir=str(tmp_path / "wrong")),
     )
     reference = resolve_session_reference(
         tmp_path,

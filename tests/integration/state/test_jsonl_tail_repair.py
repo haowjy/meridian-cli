@@ -11,7 +11,7 @@ import pytest
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.control_action import ControlActionCoordinator, ControlActionType
 from meridian.lib.harness.permission_broker import PermissionBroker
-from meridian.lib.state.atomic import (
+from meridian.lib.state.jsonl import (
     _jsonl_tail_needs_repair,
     append_durable_jsonl_line,
     repair_jsonl_tail,

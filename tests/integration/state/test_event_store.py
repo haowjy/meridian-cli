@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from pathlib import Path
 from typing import Any
@@ -9,7 +10,8 @@ import pytest
 from pydantic import BaseModel
 
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state.event_store import JsonlDecodeError, append_event, iter_jsonl, read_events
+from meridian.lib.state.event_store import append_event, read_events
+from meridian.lib.state.jsonl import JsonlDecodeError, iter_jsonl
 from tests.conftest import posix_only
 
 
@@ -76,7 +78,11 @@ def test_read_events_skips_and_logs_malformed_complete_rows(
     )
 
     rows = read_events(data_path, _parse_read_event)
+    assert [row.id for row in rows] == [1, 2]
+    assert "Skipping malformed JSONL row" not in caplog.text
 
+    with caplog.at_level(logging.DEBUG, logger="meridian.lib.state.jsonl"):
+        rows = read_events(data_path, _parse_read_event)
     assert [row.id for row in rows] == [1, 2]
     assert "Skipping malformed JSONL row" in caplog.text
 

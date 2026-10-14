@@ -22,14 +22,16 @@ from typing import Protocol
 from pydantic import (
     BaseModel,
     ConfigDict,
+    RootModel,
     SerializerFunctionWrapHandler,
+    ValidationError,
     field_validator,
     model_serializer,
     model_validator,
 )
 
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state.json_doc import read_model, write_model
+from meridian.lib.state.json_doc import mutate_model, read_model, write_model
 from meridian.lib.utils.json_shapes import is_object_sequence, json_object
 from meridian.plugin_api.fs import AtomicReplaceDurabilityError
 from meridian.plugin_api.state import get_user_home
@@ -40,9 +42,9 @@ _DEFAULT_LOCK_TIMEOUT_SECONDS = 60.0
 
 
 class ConflictRecord(BaseModel):
-    """One conflict, as stored on disk."""
+    """Public view of one stored conflict."""
 
-    model_config = ConfigDict(frozen=True, strict=True, extra="allow")
+    model_config = ConfigDict(frozen=True, strict=True, extra="ignore")
 
     id: str = ""
     context: str = "unknown"
@@ -119,6 +121,10 @@ class ConflictRecord(BaseModel):
         else:
             document.pop("resolved_at", None)
         return document
+
+
+class _ConflictDocument(RootModel[dict[str, object]]):
+    """Lossless conflict document used when mutating an existing file."""
 
 
 class SyncState(BaseModel):
@@ -274,14 +280,14 @@ def read_conflicts(sync_root: Path, *, runtime_root: Path) -> list[ConflictRecor
     for file_path in files:
         if file_path.suffix != ".json":
             continue
-        document = read_model(file_path, ConflictRecord)
-        if document is None:
+        record = _read_conflict_record(file_path)
+        if record is None:
             continue
         records.append(
-            document.model_copy(
+            record.model_copy(
                 update={
-                    "id": document.id or file_path.stem,
-                    "sync_root": document.sync_root or sync_root.as_posix(),
+                    "id": record.id or file_path.stem,
+                    "sync_root": record.sync_root or sync_root.as_posix(),
                 }
             )
         )
@@ -364,31 +370,54 @@ def _mark_resolved(sync_root: Path, conflict_id: str, *, runtime_root: Path) -> 
     """Mark one conflict as resolved. Returns True when metadata was updated."""
 
     try:
-        target, document = _find_conflict_file(
+        target = _find_conflict_file(
             sync_root, conflict_id, runtime_root=runtime_root
         )
     except OSError:
         return False
-    if target is None or document is None:
+    if target is None:
         return False
 
-    resolved = document.model_copy(
-        update={"resolved": True, "resolved_at": datetime.now(UTC).isoformat()}
-    )
+    expected: _ConflictDocument | None = None
+
+    def resolve(
+        document: _ConflictDocument | None,
+    ) -> tuple[_ConflictDocument | None, bool]:
+        nonlocal expected
+        if document is None:
+            return None, False
+        expected = _ConflictDocument.model_validate(
+            {
+                **document.root,
+                "resolved": True,
+                "resolved_at": datetime.now(UTC).isoformat(),
+            }
+        )
+        return expected, True
+
     try:
-        return _write_model_reconciled(target, resolved)
+        _updated, resolved = mutate_model(
+            target,
+            _ConflictDocument,
+            resolve,
+            lock=lock_file(autosync_lock_path(sync_root), reentrant=True),
+            indent=2,
+        )
+        return resolved
+    except AtomicReplaceDurabilityError:
+        return expected is not None and read_model(target, _ConflictDocument) == expected
     except OSError:
         return False
 
 
-def _write_model_reconciled(path: Path, document: ConflictRecord) -> bool:
-    """Write a document, verifying visibility after a post-commit durability error."""
-
+def _read_conflict_record(path: Path) -> ConflictRecord | None:
+    document = read_model(path, _ConflictDocument)
+    if document is None:
+        return None
     try:
-        write_model(path, document, indent=2)
-    except AtomicReplaceDurabilityError:
-        return read_model(path, ConflictRecord) == document
-    return True
+        return ConflictRecord.model_validate(document.root)
+    except ValidationError:
+        return None
 
 
 def _find_conflict_file(
@@ -396,20 +425,20 @@ def _find_conflict_file(
     conflict_id: str,
     *,
     runtime_root: Path,
-) -> tuple[Path | None, ConflictRecord | None]:
+) -> Path | None:
     root = conflict_dir(sync_root, runtime_root=runtime_root)
     direct = root / f"{conflict_id}.json"
-    direct_document = read_model(direct, ConflictRecord)
-    if direct_document is not None:
-        return direct, direct_document
+    direct_record = _read_conflict_record(direct)
+    if direct_record is not None:
+        return direct
 
     for file_path in root.glob("*.json"):
-        document = read_model(file_path, ConflictRecord)
-        if document is None:
+        record = _read_conflict_record(file_path)
+        if record is None:
             continue
-        if (document.id or file_path.stem) == conflict_id:
-            return file_path, document
-    return None, None
+        if (record.id or file_path.stem) == conflict_id:
+            return file_path
+    return None
 
 
 __all__ = [

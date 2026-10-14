@@ -29,6 +29,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   runtime discovery.
 - Honor `--config` and `MERIDIAN_CONFIG` when resolving Git clone path overrides.
 - Repair incomplete telemetry JSONL tails before appending complete durable records.
+- Preserve legacy autosync conflict fields when marking a conflict resolved.
+- Keep permanent malformed JSONL rows from repeating warnings on every state read.
 
 ## [0.9.8] - 2026-10-14
 

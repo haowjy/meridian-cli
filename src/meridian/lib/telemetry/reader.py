@@ -6,7 +6,7 @@ import time
 from collections.abc import Generator
 from pathlib import Path
 
-from meridian.lib.state.event_store import iter_jsonl
+from meridian.lib.state.jsonl import iter_jsonl
 from meridian.lib.utils.json_shapes import json_object
 
 

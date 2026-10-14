@@ -7,13 +7,16 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from meridian.lib.core.types import SpawnId
-from meridian.lib.state.json_doc import read_model, write_model
+from meridian.lib.state.json_doc import mutate_model, read_model
 from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
     resolve_spawn_log_dir,
     spawn_log_subpath,
 )
-from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
+from meridian.lib.state.spawn_aggregate import (
+    PublishedArtifactUnavailable,
+    published_artifact_lock,
+)
 
 _SCOPE_FILENAME = "scope.json"
 
@@ -78,11 +81,16 @@ def write_spawn_scope_task_dir(
     stored = _StoredSpawnScope(
         task_dir=task_dir.expanduser().resolve().as_posix() if task_dir is not None else None
     )
-    return mutate_published_spawn_artifact(
-        runtime_root,
-        SpawnId(spawn_id),
-        lambda: write_model(path, stored),
-    )
+    try:
+        mutate_model(
+            path,
+            _StoredSpawnScope,
+            lambda _current: (stored, None),
+            lock=published_artifact_lock(runtime_root, SpawnId(spawn_id)),
+        )
+    except PublishedArtifactUnavailable:
+        return False
+    return True
 
 
 __all__ = [

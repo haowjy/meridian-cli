@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from meridian.lib.state import session_store as store
@@ -51,3 +52,22 @@ def test_observation_does_not_require_a_session_start(tmp_path: Path) -> None:
     # The observation never projects a session record or mutates selection intent.
     assert store.list_all_session_records(root) == []
     assert store.get_model_selection(root, "opencode", "native-1") is None
+
+
+def test_malformed_observation_row_is_ignored_like_other_invalid_events(tmp_path: Path) -> None:
+    root = tmp_path / ".meridian"
+    root.mkdir(parents=True)
+    valid = _observation("codex", "thread-1", "gpt-5.6-luna")
+    assert store.record_model_observation(root, valid)
+
+    malformed = {
+        "event": "model_observation",
+        "harness": 7,
+        "harness_session_id": "thread-1",
+        "observed_model_token": "invalid",
+        "recorded_at": "2026-09-15T00:00:01Z",
+    }
+    with (root / "sessions.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(malformed) + "\n")
+
+    assert store.get_last_executed_model(root, "codex", "thread-1") == "gpt-5.6-luna"

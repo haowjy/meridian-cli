@@ -110,10 +110,12 @@ def _mutate_scope_projection(
     path = _sidecar_path(runtime_root, spawn_id)
     updated, _ = mutate_model(
         path,
-        scope_projection_lock_path(runtime_root, spawn_id),
         ScopeProjection,
         lambda current: (mutator(current or ScopeProjection()), None),
-        reentrant=False,
+        lock=lock_file(
+            scope_projection_lock_path(runtime_root, spawn_id),
+            reentrant=False,
+        ),
     )
     return updated or ScopeProjection()
 
