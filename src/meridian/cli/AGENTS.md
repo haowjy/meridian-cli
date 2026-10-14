@@ -20,11 +20,12 @@ argv
 ## Key Rules
 
 - **Selective command imports.** `_register_commands_for_invocation()` imports and explicitly registers only the module group matching the first positional token. Full registration fires only for `--help`.
-- **`app_tree.py` breaks the circular import.** It defines top-level Cyclopts app objects (`spawn_app`, `session_app`, etc.) without importing any command implementations. If you import command implementations from `app_tree.py`, the lazy strategy collapses.
+- **`app_tree.py` breaks the circular import.** It defines top-level Cyclopts app objects (`spawn_app`, `session_app`, etc.) without importing any command implementations. If you import command implementations from `app_tree.py`, selective registration collapses into importing everything.
 - **`invocation.py` owns invocation state.** Command modules import `emit`, `get_global_options()`, and `current_output_sink()` from there. They never import `main.py` or receive those values through registration callbacks.
 - **`to_cli_output()` dispatch, not `isinstance` in `main.py`.** Command handlers return typed result objects. Each implements `to_cli_output()`. Adding result types does not require editing `main.py`.
 - **Read-only invocation classes never initialize authority or telemetry.** `READ_ROOTLESS`, `READ_PROJECT`, and `READ_RUNTIME` never allocate project/session IDs or create missing runtime roots. Discovery within an existing runtime may catch up its disposable history index under the state layer's coordination locks; it must not mutate lifecycle authority.
-- **Auto-init is explicit, not inferred from write-ness.** Only descriptors whose `bootstrap_plan.auto_init_cwd` is true may turn an unestablished literal cwd into a new project. Use it for creation/bootstrap commands (`meridian`, `spawn`, `work start`), not existing-state mutations (`spawn cancel`, `work switch`, `config reset`).
+- **Every real subcommand gets an exact descriptor.** `classify_invocation()` falls back to the longest matching prefix, so a missing `spawn <sub>` descriptor silently inherits `spawn`'s `WRITE_RUNTIME` bootstrap and telemetry class. Add the descriptor with the command; delete descriptors whose command no longer exists. No test catches drift.
+- **Auto-init metadata is currently inert:** descriptors still carry `bootstrap_plan.auto_init_cwd`, but the branch that consumes it is unreachable because `resolve_cli_project_root()` always reports an established root.
 - **`root_source = RootSource.ARGV`** commands (e.g. `meridian init [path]`) defer bootstrap until after argument parsing. They call `prepare_for_project_write(arg_derived_root)` themselves — they don't receive a pre-prepared context.
 - **`validate_fork_mode()` is the single place for fork/from/continue conflict checks.** `spawn.py` and `primary_launch.py` both call it and consume `ForkModeResolution`. Do not re-implement conflict logic or ref resolution in handlers.
 - **`canonicalize_argv()` runs before every classifier.** It normalizes bare `--fork`/`--fork-fresh`/`--from` values and routes bare `--continue` to `session browse`. Never classify or call Cyclopts on raw argv containing these flags.
@@ -44,7 +45,7 @@ argv
 | `READ_RUNTIME` | `spawn list`, `session log` | `prepare_for_runtime_read()` |
 | `WRITE_PROJECT` | `config init` | `prepare_for_project_write()` |
 | `WRITE_RUNTIME` | `spawn`, `work start` | `prepare_for_runtime_write()` |
-| `PRIMARY_LAUNCH` | bare `meridian` | `prepare_for_runtime_write()`; `bootstrap_plan.auto_init_cwd` auto-inits config first |
+| `PRIMARY_LAUNCH` | bare `meridian` | `prepare_for_runtime_write()`; inert `bootstrap_plan.auto_init_cwd` flag |
 | `SERVICE_ROOTLESS` | `serve` | none |
 | `SERVICE_RUNTIME` | `streaming serve` | `prepare_for_runtime_write()` |
 

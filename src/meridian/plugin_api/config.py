@@ -12,7 +12,8 @@ from meridian.lib.config.project_root import resolve_user_config_path
 def get_user_config() -> dict[str, Any]:
     """Load the resolved user config, including ``MERIDIAN_CONFIG`` overrides.
 
-    Returns an empty mapping if the config file is missing.
+    Returns an empty mapping when the default config file is missing.
+    Raises ``FileNotFoundError`` when ``MERIDIAN_CONFIG`` names a missing file.
     Raises ``tomllib.TOMLDecodeError`` when config content is invalid.
     """
 

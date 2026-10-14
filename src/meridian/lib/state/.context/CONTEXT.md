@@ -251,18 +251,6 @@ worktrees. Archiving or reopening a work item clears `pending`.
 backslash separators to POSIX (forward slash) at the Pydantic validation boundary via
 `@field_validator(..., mode="before")`. This keeps stored metadata separator-stable.
 
-### Archived Spawn Visibility
-
-`archived_spawns.py` manages `<runtime_root>/app/archived_spawns.json`, a set of
-spawn IDs hidden from default listings. This is a presentation overlay, not a
-lifecycle transition: the spawn's authoritative `state.json` is untouched, and
-the ops layer requires a terminal spawn before archiving it.
-
-`read_archived_spawns()` takes a shared lock. `mutate_archived_spawns()` holds a
-non-reentrant exclusive lock across the complete read-modify-write and publishes
-with `atomic_write_text()`. `archive_spawn()` is idempotent, and the overlay has no
-unarchive operation.
-
 ### User-Level Storage for New Features
 
 New features that need user-level storage (git clones, cache, custom data) go under

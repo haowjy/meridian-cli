@@ -81,13 +81,6 @@ the repository never imports the projection. Cross-leaf operations belong in
 above. Reaper claims consume one immutable projection snapshot containing
 both scopes and released IDs, read under a single projection-lock acquisition.
 
-## Archived Spawn Visibility
-
-`archived_spawns.py` owns the per-user visibility overlay at
-`<runtime_root>/app/archived_spawns.json`. It never changes authoritative spawn
-records. All mutations hold `locks/archived-spawns.lock` across the full
-read-modify-write and publish atomically.
-
 ## History discovery and retention
 
 Use `history_index.py` for filtered discovery, not repeated broad authority scans.
@@ -174,7 +167,6 @@ inverts accepted chat records without discarding aliases or doing I/O. Historica
 - `paths.py` — `RuntimePaths`, read vs write root resolvers.
 - `spawn_store.py` — listing/query, creation, and mutation interface; scans return `SpawnScan`.
 - `spawn_aggregate.py` — published-row deletion and spawn-owned artifact lifetime guard.
-- `archived_spawns.py` — terminal-spawn visibility overlay and its locked mutation seam.
 - `work_state.py` / `work_store.py` / `work_repository.py` — work-item models and
   codec, pure reads, and the single locked mutation repository, respectively.
 - `session_store.py` — Session event I/O and lease ownership.

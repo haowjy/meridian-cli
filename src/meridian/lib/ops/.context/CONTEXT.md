@@ -47,16 +47,15 @@ is the policy coordinator that `ops/spawn/api.py` instantiates. It sits above
 `SpawnLifecycleService` (sole state writer) and below the driving adapters:
 
 ```
-Layer 3: build_launch_context()      ← pure resolution, may fail, no side effects
-Layer 4: SpawnApplicationService     ← lifecycle policy
-Layer 5: SpawnLifecycleService       ← sole state writer (spawn_store)
+Layer 3: prepare/bind launch pipeline ← resolution and runtime composition
+Layer 4: SpawnApplicationService      ← lifecycle policy
+Layer 5: SpawnLifecycleService        ← sole state writer (spawn_store)
 ```
 
 Key `SpawnApplicationService` methods:
 - `prepare_spawn()` — resolve-before-persist entry point for streaming-serve
 - `cancel()` — surface-neutral cancel pipeline; managed-primary, signal, finalizing races
 - `complete_spawn()` — idempotent terminal seam; acquires per-spawn lock internally
-- `archive()` — validates terminal state, emits exactly one `spawn.archived`
 
 ### Execution Paths in ops/spawn/execute.py
 
@@ -71,7 +70,7 @@ Both paths converge at `launch_prepared_spawn()`. This helper:
 1. Resolves session continuation (if resuming or forking)
 2. Materializes fork (only after spawn row exists — invariant I-10)
 3. Builds child env overrides
-4. Calls `build_launch_context()`
+4. Reuses or recomposes the prepared surface, then calls `bind_spawn_launch_context()`
 5. Calls `execute_with_streaming()`
 
 `launch_prepared_spawn()` owns pre-run failure finalization via a broad `except`.
@@ -79,9 +78,10 @@ This is safe because `complete_spawn()` is idempotent.
 
 ### Resolve-Before-Persist Pattern
 
-The spawn subprocess path creates the row *before* calling `build_launch_context()`.
-This is a known gap — it differs from streaming-serve, which uses
-resolve-before-persist (`build_launch_context()` first, row creation only on success).
+The spawn subprocess path calls `build_create_payload()` before row creation to
+produce a mandatory `PreparedLaunchSurface`. After the row exists,
+`launch_prepared_spawn()` reuses that surface (or recomposes it if session/fork
+resolution changed the request), then binds it with the real spawn ID.
 
 For streaming-serve, `SpawnApplicationService.prepare_spawn()` enforces:
 - **SEAM-1**: No spawn row on resolution failure
@@ -244,7 +244,7 @@ even when no lease changed.
 
 `ops/` uses `structlog.get_logger()` throughout. Do not use stdlib `logging` —
 the logging split between catalog/config (stdlib) and ops/launch/harness (structlog)
-matters for the `capture_library_diagnostics()` boundary in `build_launch_context()`.
+matters for the `capture_library_diagnostics()` boundary around spawn preparation.
 
 ## Patterns
 
@@ -281,5 +281,3 @@ discovery stays in ops and artifact presence checking stays in the store.
 
 - [launch/.context/CONTEXT.md](../../launch/.context/CONTEXT.md) — mechanism layer
   ops/spawn drives
-- [spawn/.context/CONTEXT.md](../../spawn/.context/CONTEXT.md) — archive visibility
-  ops/spawn reads

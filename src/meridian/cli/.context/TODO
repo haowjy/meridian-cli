@@ -1,0 +1,5 @@
+# cli/ — must-do follow-ups
+
+- `bootstrap.py` and `utils.py`: delete `bootstrap_plan.auto_init_cwd` or restore
+  a real established-project check; #388 made `resolve_cli_project_root()` always
+  return `established=True`, leaving the bootstrap auto-init branch unreachable.

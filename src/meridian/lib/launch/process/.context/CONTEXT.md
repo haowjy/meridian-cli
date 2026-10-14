@@ -106,9 +106,9 @@ Callers must provide a fully resolved `LaunchContext` with a valid `binding.argv
 6. Executes process
 7. Finalizes lifecycle in `finally`
 
-The `prepared` argument carries a `PreparedLaunchSurface` from the prepare/bind split. When
-present, `bind_launch_context()` is used instead of `build_launch_context()` — this is the
-primary CLI's prepare-once/bind-twice optimization path.
+The mandatory `prepared` argument carries a `PreparedLaunchSurface` from the
+prepare/bind pipeline; `run_harness_process()` binds it again with the real spawn
+ID and paths after the primary CLI's preview bind.
 
 ## Lateral Links
 
