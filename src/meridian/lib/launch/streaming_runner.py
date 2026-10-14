@@ -422,8 +422,8 @@ async def run_streaming_spawn(
 ) -> DrainOutcome:
     """Run one streaming spawn to completion without spawn-store finalization.
 
-    Callers are responsible for resolving *spec* via ``build_launch_context()``
-    before calling this function.  I-8 (executors stay mechanism-only): this
+    Callers are responsible for resolving *spec* through the launch prepare/bind
+    pipeline before calling this function. I-8 (executors stay mechanism-only): this
     executor accepts a fully-composed spec and MUST NOT perform composition.
     """
 

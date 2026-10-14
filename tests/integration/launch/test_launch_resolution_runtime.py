@@ -15,7 +15,6 @@ from meridian.lib.harness.registry import (
 )
 from meridian.lib.launch import LaunchRequest as PrimaryLaunchRequest
 from meridian.lib.launch import launch_primary
-from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy, TerminalSurfaceMode
 from meridian.lib.launch.plan import (
     build_primary_launch_runtime,
@@ -27,7 +26,7 @@ from meridian.lib.ops.spawn import context_ref
 from meridian.lib.state import work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths
 from tests.support.fixtures import write_agent
-from tests.support.launch import stub_bundle_request_and_resolve
+from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 
 pytestmark = pytest.mark.slow
 
@@ -520,7 +519,7 @@ def test_primary_launch_materializes_context_from_work(
 
     from meridian.lib.launch.process import ProcessOutcome
 
-    def fake_run_harness_process(preview_context, harness_registry, *, prepared=None):
+    def fake_run_harness_process(preview_context, harness_registry, *, prepared):
         _ = (preview_context, harness_registry, prepared)
         return ProcessOutcome(
             command=(),

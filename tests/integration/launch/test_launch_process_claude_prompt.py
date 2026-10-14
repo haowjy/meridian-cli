@@ -19,7 +19,6 @@ from meridian.lib.config.settings import load_config
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.constants import OUTPUT_FILENAME
-from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.process.primary_attach import PrimaryAttachOutcome
 from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.launch.request import (
@@ -30,7 +29,11 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from meridian.lib.state.spawn_store import list_spawns
-from tests.support.launch import assert_task_cwd_instruction, stub_bundle_request_and_resolve
+from tests.support.launch import (
+    assert_task_cwd_instruction,
+    build_launch_context,
+    stub_bundle_request_and_resolve,
+)
 
 
 def _write_minimal_mars_config(project_root: Path, *, claude_agent_copy: bool = False) -> None:
@@ -151,6 +154,7 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
     outcome = run_harness_process(
         launch_context,
         harness_registry,
+        prepared=launch_context.prepared,
         run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
     )
 
@@ -222,6 +226,7 @@ def test_run_harness_process_black_box_primary_uses_control_root_with_distinct_t
     outcome = run_harness_process(
         launch_context,
         harness_registry,
+        prepared=launch_context.prepared,
         run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
     )
 
@@ -274,6 +279,7 @@ def test_run_harness_process_claude_primary_print_json_persists_session_id_from_
     outcome = run_harness_process(
         launch_context,
         harness_registry,
+        prepared=launch_context.prepared,
         run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
     )
 
@@ -343,6 +349,7 @@ def test_run_harness_process_claude_primary_stays_on_black_box_path(
     outcome = run_harness_process(
         launch_context,
         harness_registry,
+        prepared=launch_context.prepared,
         run_primary_attach_fn=fail_managed,
         run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
     )
@@ -412,6 +419,7 @@ def test_primary_print_survives_corrupt_stdout_and_fold_drift(monkeypatch, tmp_p
     outcome = run_harness_process(
         context,
         registry,
+        prepared=context.prepared,
         run_primary_process_with_capture_fn=captured_child,
     )
     assert outcome.exit_code == 0

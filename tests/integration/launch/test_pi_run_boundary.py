@@ -159,7 +159,12 @@ def install_boundary_shim(root: Path, shape: str) -> None:
 def test_primary_post_exit_boundary(pi_runtime: Path, shape: str) -> None:  # noqa: F811
     root = pi_runtime
     install_boundary_shim(root, shape)
-    outcome = run_harness_process(context(root), HarnessRegistry.with_defaults())
+    launch_context = context(root)
+    outcome = run_harness_process(
+        launch_context,
+        HarnessRegistry.with_defaults(),
+        prepared=launch_context.prepared,
+    )
     assert outcome.primary_spawn_id is not None and outcome.chat_id is not None
     runtime = root / ".meridian"
     row = spawn_store.get_spawn(runtime, outcome.primary_spawn_id)
@@ -266,9 +271,7 @@ def test_primary_cli_resume_hint_uses_verified_exit_or_entry_fallback(
     rendered = output.format_text()
     runtime = resolve_project_runtime_root_for_write(root)
     row = spawn_store.list_spawns(runtime).records[0]
-    target_chat = (
-        row.current_chat_id if expected_chat == "exit" else row.chat_id
-    )
+    target_chat = row.current_chat_id if expected_chat == "exit" else row.chat_id
     assert target_chat is not None
     assert output.resume_command == f"meridian --continue {target_chat}"
     assert f"meridian --continue {target_chat}" in rendered
@@ -297,9 +300,7 @@ def test_primary_cli_spawn_refs_project_exit_or_entry_native_key(
     forked = _primary_cli(root, fork_ref=row.id, dry_run=True)
     chat_continued = _primary_cli(root, continue_ref=row.chat_id, dry_run=True)
 
-    target_chat_id = (
-        row.current_chat_id if shape == "switch" else row.chat_id
-    )
+    target_chat_id = row.current_chat_id if shape == "switch" else row.chat_id
     target_record = session_store.get_session_record(runtime, target_chat_id or "")
     entry_record = session_store.get_session_record(runtime, row.chat_id)
     assert target_record is not None and target_record.native_store is not None
@@ -352,10 +353,19 @@ def assert_entry_mismatch(runtime: Path, spawn_id: str, entry: session_store.Ses
 def test_concurrent_exits_converge_on_one_stopped_chat(pi_runtime: Path) -> None:  # noqa: F811
     root = pi_runtime
     install_shim(root)
-    outcome = run_harness_process(context(root), HarnessRegistry.with_defaults())
+    launch_context = context(root)
+    outcome = run_harness_process(
+        launch_context,
+        HarnessRegistry.with_defaults(),
+        prepared=launch_context.prepared,
+    )
     assert outcome.chat_id is not None and outcome.primary_spawn_id is not None
     args = (
-        root / ".meridian", outcome.chat_id, "pi", "/exit-store", "exit-id",
+        root / ".meridian",
+        outcome.chat_id,
+        "pi",
+        "/exit-store",
+        "exit-id",
         str(outcome.primary_spawn_id),
     )
     ids = run_spawn_race_or_skip(_allocate_test_exit_chat, [args, args])
@@ -535,7 +545,12 @@ def test_primary_header_mismatch_prevents_exit_attribution(
         if boundary == "poisoned":
             text = text.replace('"invalid_reason":null', '"invalid_reason":"poison"')
         shim.write_text(text)
-    outcome = run_harness_process(context(root), HarnessRegistry.with_defaults())
+    launch_context = context(root)
+    outcome = run_harness_process(
+        launch_context,
+        HarnessRegistry.with_defaults(),
+        prepared=launch_context.prepared,
+    )
     runtime = root / ".meridian"
     assert outcome.primary_spawn_id is not None
     row = spawn_store.get_spawn(runtime, outcome.primary_spawn_id)

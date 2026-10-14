@@ -91,7 +91,7 @@ replay the model turn.
 
 ## Anti-Patterns
 
-**Don't create spawn rows before calling `build_launch_context()` on new code paths.**
+**Don't create spawn rows before launch preparation on new code paths.**
 The existing subprocess path does this (known gap); don't replicate the pattern. New
 paths should use the resolve-before-persist streaming-serve model.
 

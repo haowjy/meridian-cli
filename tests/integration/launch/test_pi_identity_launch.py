@@ -13,7 +13,6 @@ from meridian.lib.core.domain import Spawn
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.registry import HarnessRegistry
-from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
@@ -28,7 +27,7 @@ from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.artifact_store import LocalStore
 from tests.support.executables import prepend_fake_executables
-from tests.support.launch import stub_bundle_request_and_resolve
+from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 from tests.support.pi_extensions import configure_pi_extension_projection
 
 HELP = (
@@ -188,7 +187,12 @@ def test_primary_assigns_before_exec_and_verifies_exact_entry(
 ) -> None:
     root = pi_runtime
     install_shim(root, behavior=behavior)
-    outcome = run_harness_process(context(root), HarnessRegistry.with_defaults())
+    launch_context = context(root)
+    outcome = run_harness_process(
+        launch_context,
+        HarnessRegistry.with_defaults(),
+        prepared=launch_context.prepared,
+    )
     assert outcome.chat_id is not None
     native_id, store = assert_prebound(root, outcome.chat_id)
     assert outcome.exit_code == (0 if behavior == "ok" else 7 if behavior == "fail" else 1)
@@ -223,24 +227,31 @@ def test_resume_and_fork_use_verified_absolute_source(
 ) -> None:
     root = pi_runtime
     install_shim(root)
-    first = run_harness_process(context(root), HarnessRegistry.with_defaults())
+    first_context = context(root)
+    first = run_harness_process(
+        first_context,
+        HarnessRegistry.with_defaults(),
+        prepared=first_context.prepared,
+    )
     assert first.chat_id is not None
     native_id, store = assert_prebound(root, first.chat_id)
     before = session_store.get_session_record(root / ".meridian", first.chat_id)
     source = store / f"1_{native_id}.jsonl"
     install_shim(root, behavior=behavior)
-    outcome = run_harness_process(
-        context(
-            root,
-            session=SessionRequest(
-                requested_harness_session_id=native_id,
-                continue_chat_id=first.chat_id,
-                source_native_store=str(store),
-                continue_fork=fork,
-                primary_session_mode="fork" if fork else "resume",
-            ),
+    resumed_context = context(
+        root,
+        session=SessionRequest(
+            requested_harness_session_id=native_id,
+            continue_chat_id=first.chat_id,
+            source_native_store=str(store),
+            continue_fork=fork,
+            primary_session_mode="fork" if fork else "resume",
         ),
+    )
+    outcome = run_harness_process(
+        resumed_context,
         HarnessRegistry.with_defaults(),
+        prepared=resumed_context.prepared,
     )
     argv = (root.parent / "argv").read_text().splitlines()
     assert argv[argv.index("--fork" if fork else "--session") + 1] == str(source)
@@ -455,7 +466,12 @@ def test_primary_create_with_unreadable_sibling_warns_and_executes(pi_runtime: P
     unreadable = store / "torn.jsonl"
     unreadable.write_text("")
     with capture_logs() as logs:
-        outcome = run_harness_process(context(pi_runtime), HarnessRegistry.with_defaults())
+        launch_context = context(pi_runtime)
+        outcome = run_harness_process(
+            launch_context,
+            HarnessRegistry.with_defaults(),
+            prepared=launch_context.prepared,
+        )
     assert outcome.exit_code == 0
     assert outcome.chat_id is not None
     assert_prebound(pi_runtime, outcome.chat_id)

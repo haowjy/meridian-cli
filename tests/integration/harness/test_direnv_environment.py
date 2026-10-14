@@ -17,13 +17,12 @@ from meridian.lib.harness.opencode import project_opencode_primary_preview
 from meridian.lib.harness.pi import PiAdapter
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.env import build_harness_child_env, undo_direnv
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.plan import build_primary_launch_runtime, build_primary_spawn_request
 from meridian.lib.launch.types import LaunchRequest
 from meridian.lib.safety.permissions import PermissionConfig, UnsafeNoOpPermissionResolver
-from tests.support.launch import stub_bundle_request_and_resolve
+from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 
 
 def test_undo_direnv_without_metadata_needs_no_executable() -> None:
