@@ -107,24 +107,26 @@ def _status(event: RawHarnessEvent) -> str | None:
 def _draft_from_pane(capture: str) -> Literal["yes", "no"] | None:
     """Read the final OpenCode composer box from a plain tmux pane capture."""
 
-    groups: list[list[str]] = []
-    current: list[str] = []
-    for line in capture.splitlines():
-        stripped = line.lstrip()
-        if stripped.startswith("┃"):
-            current.append(stripped.removeprefix("┃"))
+    lines = capture.splitlines()
+    for border_index in range(len(lines) - 1, 0, -1):
+        border = lines[border_index].strip()
+        if len(border) < 4 or border[0] != "╹" or set(border[1:]) != {"▀"}:
             continue
-        if current:
-            groups.append(current)
-            current = []
-    if current:
-        groups.append(current)
 
-    for box in reversed(groups):
+        box: list[str] = []
+        row_index = border_index - 1
+        while row_index >= 0:
+            row = lines[row_index].lstrip()
+            if not row.startswith("┃"):
+                break
+            box.append(row.removeprefix("┃"))
+            row_index -= 1
+        box.reverse()
         if len(box) < 4:
             continue
+
         top, *prompt_rows, footer = box
-        if top.strip() or " · " not in footer:
+        if top.strip() or not footer.strip():
             continue
         return "yes" if any(row.strip() for row in prompt_rows) else "no"
     return None

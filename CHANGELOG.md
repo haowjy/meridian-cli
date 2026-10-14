@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Detect unsent drafts in the OpenCode 2.x composer before idle compaction.
+
 ## [0.10.0] - 2026-10-14
 
 ### Fixed
