@@ -38,8 +38,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   floor after any write under the runtime root or its context directory); ad-hoc
   state whose source path is gone or now initialized becomes eligible after the
   shorter of that setting and 7 days.
-- Let `meridian doctor --global --prune` reclaim eligible ad-hoc runtime roots
-  together with their matching `context/` directories.
+- Let `meridian doctor --global` list every ad-hoc root and its pruning
+  eligibility; `--prune` reclaims only eligible runtime roots together with
+  their matching `context/` directories.
 - Report every invalid config value with the same key, expected type, and received value format.
 - Run the strict Pyright gate with warnings fatal and per-rule suppressions only.
 - Stop advertising archived HTTP/app-server extension commands. Extension

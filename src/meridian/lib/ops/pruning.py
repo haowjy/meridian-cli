@@ -64,6 +64,7 @@ class AdHocProjectDir(BaseModel):
     size_bytes: int
     last_activity: str
     reason: str
+    prunable: bool
 
 
 class StaleSpawnArtifact(BaseModel):
@@ -228,8 +229,6 @@ def _scan_adhoc_project_dir(
 ) -> AdHocProjectDir | None:
     if not _is_adhoc_project_dir_name(runtime_root.name) or not runtime_root.is_dir():
         return None
-    if not _is_quiescent(runtime_root):
-        return None
 
     size_bytes, latest_activity, origin = _adhoc_activity(runtime_root)
     reason, source_path = _adhoc_reason(origin)
@@ -238,13 +237,12 @@ def _scan_adhoc_project_dir(
         if reason != "adhoc-idle"
         else retention_days
     )
-    if not _is_stale(
+    prunable = _is_quiescent(runtime_root) and _is_stale(
         latest_activity,
         retention_days=threshold,
         now=now,
         minimum_age_seconds=ADHOC_TOUCH_INTERVAL_SECONDS,
-    ):
-        return None
+    )
 
     context_root = get_context_home(
         runtime_root.name,
@@ -258,6 +256,7 @@ def _scan_adhoc_project_dir(
         size_bytes=size_bytes,
         last_activity=_iso_from_mtime(latest_activity),
         reason=reason,
+        prunable=prunable,
     )
 
 
@@ -305,10 +304,8 @@ def scan_adhoc_project_dirs(
     *,
     stale_retention_days: int = ADHOC_STALE_RETENTION_DAYS,
 ) -> list[AdHocProjectDir]:
-    """Find quiescent ad-hoc roots eligible for machine-wide reclamation."""
+    """Inspect every ad-hoc root and report its reclamation eligibility."""
 
-    if retention_days < 0:
-        return []
     projects_root = user_home / "projects"
     if not projects_root.is_dir():
         return []
@@ -470,7 +467,7 @@ def prune_adhoc_project_dirs(
                 stale_retention_days=stale_retention_days,
                 now=now,
             )
-            if refreshed is None:
+            if refreshed is None or not refreshed.prunable:
                 continue
             if not _prune_dir(runtime_root):
                 continue
