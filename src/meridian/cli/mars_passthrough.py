@@ -49,7 +49,6 @@ class MarsPassthroughRequest:
     command: tuple[str, ...]
     mars_args: tuple[str, ...]
     wants_json: bool
-    root_override: Path | None
     user_scope: bool = False
 
 
@@ -63,24 +62,6 @@ class MarsPassthroughResult:
 
 def mars_requested_json(args: Sequence[str]) -> bool:
     return any(token == "--json" for token in args)
-
-
-def mars_requested_root(args: Sequence[str]) -> Path | None:
-    index = 0
-    while index < len(args):
-        token = args[index]
-        if token == "--root":
-            next_value = args[index + 1].strip() if index + 1 < len(args) else ""
-            if next_value:
-                return Path(next_value)
-            index += 2
-            continue
-        if token.startswith("--root="):
-            candidate = token.partition("=")[2].strip()
-            if candidate:
-                return Path(candidate)
-        index += 1
-    return None
 
 
 def _strip_meridian_mars_options(
@@ -182,7 +163,6 @@ def parse_mars_passthrough(
         command=(executable, *mars_args),
         mars_args=tuple(mars_args),
         wants_json=wants_json,
-        root_override=mars_requested_root(mars_args),
         user_scope=selected_root == user_mars_root(),
     )
 

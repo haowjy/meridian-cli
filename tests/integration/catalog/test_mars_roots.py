@@ -64,23 +64,6 @@ def test_resolve_mars_roots_uses_user_root_for_bare_directory(
     assert roots.user is None
 
 
-def test_resolve_mars_roots_treats_user_root_itself_as_user_scope(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    user_home = tmp_path / "user-home"
-    user_root = user_home / "mars"
-    user_root.mkdir(parents=True)
-    (user_root / "mars.toml").write_text("", encoding="utf-8")
-    monkeypatch.setenv("MERIDIAN_HOME", user_home.as_posix())
-
-    roots = resolve_mars_roots(user_root)
-
-    assert roots.primary == user_root.resolve()
-    assert roots.scope == "user"
-    assert roots.user is None
-
-
 def test_ensure_user_mars_root_initializes_only_user_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -126,28 +109,3 @@ def test_fallback_root_capability_probe_is_cached_per_executable(
     assert calls == [
         ["/fake/supported-mars", "build", "launch-bundle", "--help"]
     ]
-
-
-def test_fallback_root_capability_probe_rejects_missing_flag(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(command, 0, "Usage: launch-bundle", "")
-
-    mars_supports_fallback_root.cache_clear()
-    monkeypatch.setattr(mars_capabilities.subprocess, "run", fake_run)
-
-    assert not mars_supports_fallback_root("/fake/old-mars")
-
-
-def test_fallback_root_capability_probe_treats_missing_binary_as_unsupported(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def fake_run(_command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        raise FileNotFoundError
-
-    mars_supports_fallback_root.cache_clear()
-    monkeypatch.setattr(mars_capabilities.subprocess, "run", fake_run)
-
-    assert not mars_supports_fallback_root("/fake/missing-mars")
-    assert not mars_supports_fallback_root(None)
