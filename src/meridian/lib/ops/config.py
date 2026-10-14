@@ -189,19 +189,11 @@ class ConfigGetOutput(BaseModel):
     value: object
     source: Literal["builtin", "file", "user-config", "env var"]
     env_var: str | None = None
-    project_identity: str | None
-    project_identity_source: Literal["meridian.toml", "path", "unminted"]
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
         source_note = self.source if self.env_var is None else f"{self.source} ({self.env_var})"
-        return "\n".join(
-            (
-                f"project_identity: {self.project_identity or '(unminted)'}",
-                f"project_identity_source: {self.project_identity_source}",
-                f"{self.key}: {_format_value_for_text(self.value)} [source: {source_note}]",
-            )
-        )
+        return f"{self.key}: {_format_value_for_text(self.value)} [source: {source_note}]"
 
 
 class ConfigResetInput(BaseModel):
@@ -631,8 +623,6 @@ def config_get_sync(payload: ConfigGetInput) -> ConfigGetOutput:
         ),
         source=source,
         env_var=env_var,
-        project_identity=authority.project_id,
-        project_identity_source=_project_identity_source(authority),
     )
 
 
