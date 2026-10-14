@@ -23,7 +23,7 @@ never queries the extension registry for routing answers.
 | `READ_RUNTIME` | `spawn list`, `session log` | runtime-read | none |
 | `WRITE_PROJECT` | `config init` | project-write | optional |
 | `WRITE_RUNTIME` | `spawn`, `work start` | runtime-write | segment |
-| `PRIMARY_LAUNCH` | bare `meridian` | runtime-write; `bootstrap_plan.auto_init_cwd` auto-inits config first | segment |
+| `PRIMARY_LAUNCH` | bare `meridian` | runtime-write; inert `bootstrap_plan.auto_init_cwd` flag | segment |
 | `SERVICE_ROOTLESS` | `serve` | none | stderr |
 | `SERVICE_RUNTIME` | `streaming serve` | runtime-write | segment |
 
@@ -73,12 +73,9 @@ A project is **established** when:
 CWD resolution where `cwd_has_project_id()` returns `False` is **not established** —
 project-required commands exit 1; rootless commands exit 0.
 
-Descriptors whose `bootstrap_plan.auto_init_cwd` is true are the write-path
-exception: when the literal cwd is not established, they treat cwd as a new
-project, scaffold `meridian.toml`, then run normal project/runtime bootstrap.
-This flag belongs on creation/bootstrap commands (`meridian`, `spawn`,
-`work start`), not existing-state operations (`spawn cancel`, `work switch`,
-`config reset`) or read commands.
+Descriptors still carry `bootstrap_plan.auto_init_cwd`, but the branch that
+consumes it is currently unreachable because `resolve_cli_project_root()` always
+reports an established root.
 
 ### Adapters
 

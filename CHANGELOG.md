@@ -19,8 +19,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Keep runtime-read config on the same resolved project authority snapshot as
   runtime discovery.
 - Honor `--config` and `MERIDIAN_CONFIG` when resolving Git clone path overrides.
-- Keep `spawn done` and `spawn rearm` on existing-state startup paths instead of
-  inheriting spawn creation's auto-initialization policy.
 
 ## [0.9.8] - 2026-10-14
 
