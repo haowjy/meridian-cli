@@ -19,6 +19,7 @@ from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import record_to_stored_state
+from tests.conftest import requires_pi_dist
 from tests.support.opencode_db import write_opencode_db_session
 
 
@@ -429,7 +430,10 @@ def test_null_old_id_array_and_crash_recovery_counts(homes: tuple[Path, Path]) -
     assert len((root / "sessions.jsonl").read_text().splitlines()) == 2
 
 
-@pytest.mark.parametrize("harness", ["claude", "codex", "pi", "opencode"])
+@pytest.mark.parametrize(
+    "harness",
+    ["claude", "codex", pytest.param("pi", marks=requires_pi_dist), "opencode"],
+)
 def test_imported_chat_native_log_and_continue_projection(
     homes: tuple[Path, Path],
     monkeypatch: pytest.MonkeyPatch,
