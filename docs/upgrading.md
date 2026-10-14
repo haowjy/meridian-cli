@@ -1,5 +1,23 @@
 # Upgrade notes
 
+## Spawn/run identity boundary (unreleased)
+
+No action is needed before or after installing. Launch and continue still mint
+fresh bare spawn IDs; list/show flags and output stay unchanged. Existing spawn
+state schema v3 and session authority files are not migrated.
+
+The rebuildable history index moves from schema 7 to 8, adding stable spawn and
+numeric run columns. The first indexed read rebuilds `history-v8.sqlite3` from
+authority and may take longer; the older `history-v7.sqlite3` is left untouched.
+Bare spawn lookup now scans run directories (about 27 ms over 3,891 copied rows);
+commands resolving many references pay that cost for each reference.
+
+Rollback to 0.10.2 needs no authority restore for this change. Its index uses the
+v7 namespace. The v0.10.2 build successfully read/listed scratch state after the
+new build created v8; both index files coexisted and authority hashes were
+unchanged. New launchers also expose `MERIDIAN_RUN_ID`; old launcher environments
+continue to work through the `MERIDIAN_SPAWN_ID` fallback.
+
 ## OpenCode 2.x idle (unreleased)
 
 Idle push, warning, and compaction now work on OpenCode 2.x; before, no OpenCode

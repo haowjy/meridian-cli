@@ -9,6 +9,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Keep launch, continue, list, and show behavior unchanged.
 - Expose the exact launch as `MERIDIAN_RUN_ID`; keep existing launcher environments working.
 
+### Upgrade notes
+- First indexed read rebuilds history schema 8; no authority migration. See [upgrade notes](docs/upgrading.md#spawnrun-identity-boundary-unreleased).
+
 ## [0.10.2] - 2026-10-14
 
 ### Changed
