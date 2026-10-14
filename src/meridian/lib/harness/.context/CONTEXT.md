@@ -355,7 +355,7 @@ connection dispatcher pass the same bound environment to version detection.
 
 `connections/opencode_connection.py` is the single registered OpenCode transport.
 At `start()` it resolves the version and delegates to `OpenCodeV2Connection`
-(`opencode_v2_http.py`) or the legacy `OpenCodeV1Connection`
+(`opencode_v2_http.py`) or the frozen `OpenCodeV1Connection`
 (`opencode_http.py`). The V2 transport subclasses V1 to reuse process lifecycle,
 `BackendLivenessPolicy`, retry classification, and SSE framing, overriding only
 the API surface: `/api` session routes, basic auth
@@ -375,11 +375,10 @@ session. `iter_opencode_db_session_events()` dispatches accordingly.
 `opencode.transcript.v1` or `opencode.transcript.v2` from the same detection and
 streams through the dispatcher.
 
-OpenCode 1.x remains registered for transport, capture, and transcript compatibility,
-but has no idle integration. The primary idle factory returns no sensor for V1 and
-logs one warning to upgrade to 2.x. Because V2 migrates a V1 DB in place and keeps
-the V1 tables, a V1 *fallback* after a V2-first install needs a separate data root
-(`OPENCODE_DB`/`XDG_DATA_HOME`).
+**OpenCode 1.x is legacy and frozen.** V1 stays registered as a fallback only;
+fixing it is out of scope unless trivial. New work targets V2. Because V2 migrates
+a V1 DB in place and keeps the V1 tables, a V1 *fallback* after a V2-first install
+needs a separate data root (`OPENCODE_DB`/`XDG_DATA_HOME`).
 
 ### Cursor: Subprocess-Only, Read-Only stdout
 
@@ -482,9 +481,10 @@ Direct path access bypasses the abstraction and breaks tests that mock artifacts
 
 **Don't assume `event_type` is globally unique** — always check `event.harness_id`
 first. `turn/completed` is a Codex event; OpenCode V1 uses `session.idle` and V2
-uses `session.execution.{succeeded,failed,interrupted}` for the same semantic. The
-shared `OPENCODE_SEMANTICS` table covers both transport dialects. The V2 idle sensor
-only consumes V2 events; the factory returns no sensor for V1.
+uses `session.execution.{succeeded,failed,interrupted}` for the same semantic. Any
+consumer that matches OpenCode event names itself (the idle sensor does) must
+handle both dialects, selected by the connection's `resolved_version`; the shared
+`OPENCODE_SEMANTICS` table covers only consumers that read it.
 
 **Don't call adapter methods before `ensure_bootstrap()`** — the SpawnParams
 accounting guard runs on a partial adapter set and will raise false `ImportError`.
