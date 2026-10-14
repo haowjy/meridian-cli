@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-10-14
+
 ### Fixed
 - False `Ignoring unknown Meridian config key 'context.<name>'` warnings for every `[context.*]` table (#580).
 - False unknown-key warnings before the real error for mis-shaped sections such
