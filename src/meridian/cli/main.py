@@ -4,7 +4,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable, Generator, Sequence
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, cast
 
@@ -57,9 +57,7 @@ from meridian.cli.invocation import (
     GlobalOptions,
     emit,
     get_global_options,
-    has_global_options,
-    reset_global_options,
-    set_global_options,
+    invocation_scope,
 )
 from meridian.cli.invocation import (
     emit_error as _emit_error,
@@ -117,7 +115,6 @@ def _extract_global_options(argv: Sequence[str]) -> tuple[list[str], GlobalOptio
         harness=parsed.harness,
         yes=parsed.yes,
         no_input=parsed.no_input,
-        output_explicit=parsed.output_explicit,
         render_mode=render_mode,
         explicit_format=explicit_format,
         project_root=project_root,
@@ -414,65 +411,66 @@ def root(
     for token in skills:
         parsed_skills.extend(parse_csv_list(token, field_name="skills"))
 
-    if not has_global_options():
+    try:
+        options = get_global_options()
+    except RuntimeError:
         from meridian.cli.mode import parse_render_mode
 
         resolved = normalize_output_format(requested=output_format, json_mode=json_mode)
         forced_mode = parse_render_mode(mode) if mode is not None else None
-        set_global_options(
-            GlobalOptions(
-                output=OutputConfig(format=resolved),
-                config_file=config_file,
-                harness=harness,
-                yes=yes,
-                no_input=no_input,
-                render_mode=resolve_render_mode(
-                    forced=forced_mode,
-                    stdin_isatty=sys.stdin.isatty(),
-                    stdout_isatty=sys.stdout.isatty(),
-                ),
+        options = GlobalOptions(
+            output=OutputConfig(format=resolved),
+            config_file=config_file,
+            harness=harness,
+            yes=yes,
+            no_input=no_input,
+            render_mode=resolve_render_mode(
+                forced=forced_mode,
+                stdin_isatty=sys.stdin.isatty(),
+                stdout_isatty=sys.stdout.isatty(),
+            ),
+        )
+
+    with invocation_scope(options):
+        global_harness = options.harness
+        explicit_harness = harness.strip() if harness is not None and harness.strip() else None
+        if global_harness and explicit_harness and global_harness != explicit_harness:
+            raise ValueError(
+                f"Conflicting harness selections: '{global_harness}' and '{explicit_harness}'."
+            )
+
+        normalized_task_dir = (task_dir or "").strip() or None
+
+        from meridian.cli import primary_launch
+
+        emit(
+            primary_launch.run_primary_launch(
+                project_root=options.project_root,
+                continue_ref=continue_ref,
+                fork_ref=fork_ref,
+                fork_fresh_ref=fork_fresh_ref,
+                from_ref=from_ref,
+                model=model,
+                harness=global_harness or explicit_harness,
+                agent=agent,
+                work=work,
+                task_dir=normalized_task_dir,
+                yolo=yolo,
+                approval=approval,
+                autocompact=autocompact,
+                autocompact_pct=autocompact_pct,
+                effort=effort,
+                sandbox=sandbox,
+                timeout=timeout,
+                dry_run=dry_run,
+                ignore_direnv=ignore_direnv,
+                passthrough=options.passthrough_args,
+                reference_files=tuple(references),
+                prompt=resolved_prompt,
+                skills=tuple(parsed_skills),
+                goal=goal,
             )
         )
-
-    global_harness = get_global_options().harness
-    explicit_harness = harness.strip() if harness is not None and harness.strip() else None
-    if global_harness and explicit_harness and global_harness != explicit_harness:
-        raise ValueError(
-            f"Conflicting harness selections: '{global_harness}' and '{explicit_harness}'."
-        )
-
-    normalized_task_dir = (task_dir or "").strip() or None
-
-    from meridian.cli import primary_launch
-
-    emit(
-        primary_launch.run_primary_launch(
-            project_root=get_global_options().project_root,
-            continue_ref=continue_ref,
-            fork_ref=fork_ref,
-            fork_fresh_ref=fork_fresh_ref,
-            from_ref=from_ref,
-            model=model,
-            harness=global_harness or explicit_harness,
-            agent=agent,
-            work=work,
-            task_dir=normalized_task_dir,
-            yolo=yolo,
-            approval=approval,
-            autocompact=autocompact,
-            autocompact_pct=autocompact_pct,
-            effort=effort,
-            sandbox=sandbox,
-            timeout=timeout,
-            dry_run=dry_run,
-            ignore_direnv=ignore_direnv,
-            passthrough=get_global_options().passthrough_args,
-            reference_files=tuple(references),
-            prompt=resolved_prompt,
-            skills=tuple(parsed_skills),
-            goal=goal,
-        )
-    )
 
 
 @app.command(name="serve")
@@ -1051,17 +1049,18 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
         bootstrap_plan = None
     # Install options early so resolve_cli_project_root() sees project_root
     # from -C / --directory during bootstrap resolution.
-    _pre_bootstrap_token = set_global_options(options)
     bootstrap_project_root = None
-    with manual_hook_authority_scope(
-        suppress=should_suppress_manual_hook_authority(argv=cleaned_args)
+    with (
+        invocation_scope(options),
+        manual_hook_authority_scope(
+            suppress=should_suppress_manual_hook_authority(argv=cleaned_args)
+        ),
     ):
         if not bootstrap_skipped:
             bootstrap_project_root = maybe_bootstrap_runtime_state(
                 render_mode=options.render_mode,
                 plan=bootstrap_plan,
             )
-    reset_global_options(_pre_bootstrap_token)
     # Prefer bootstrap's resolved root; fall back to -C path if bootstrap was skipped/no-op.
     project_root = (
         bootstrap_project_root if bootstrap_project_root is not None else options.project_root
@@ -1081,8 +1080,9 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
 
         active_sink = create_sink(options.output)
         options = options.model_copy(update={"project_root": project_root, "sink": active_sink})
-        token = set_global_options(options)
-        try:
+        with ExitStack() as invocation_stack:
+            invocation_stack.enter_context(invocation_scope(options))
+            invocation_stack.callback(flush_sink, active_sink)
             from meridian.cli.agent_help import (
                 leaf_help_rendering_scope,
                 try_render_curated_group_help,
@@ -1127,6 +1127,3 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
                     )
                 except (KeyError, ValueError, FileNotFoundError, OSError, RuntimeError) as exc:
                     _emit_error(_operation_error_message(exc))
-        finally:
-            flush_sink(active_sink)
-            reset_global_options(token)

@@ -15,8 +15,9 @@ from meridian.cli.argv_normalization import (
     validate_fork_mode,
 )
 from meridian.cli.bootstrap import iter_positional_tokens
-from meridian.cli.startup.catalog import COMMAND_CATALOG, StartupClass
+from meridian.cli.startup.catalog import COMMAND_CATALOG
 from meridian.cli.startup.classify import classify_invocation
+from meridian.cli.startup.policy import StartupClass, StateRequirement
 
 
 @pytest.mark.parametrize(
@@ -72,7 +73,7 @@ def test_bare_continue_classifies_as_runtime_read() -> None:
     assert descriptor is not None
     assert descriptor.command_path == ("session", "browse")
     assert descriptor.startup_class is StartupClass.READ_RUNTIME
-    assert descriptor.bootstrap_plan.auto_init_cwd is False
+    assert descriptor.bootstrap_plan.state_requirement is StateRequirement.RUNTIME_READ
 
 
 def test_positional_scanner_stops_at_passthrough_separator() -> None:
