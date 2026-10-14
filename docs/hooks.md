@@ -99,6 +99,10 @@ event   = "spawn.finalized"
 
 Inline commands are fine when they remain short and readable.
 
+Spawn hooks receive stable `MERIDIAN_SPAWN_ID` (`pN`) and exact `MERIDIAN_RUN_ID`
+(`pN.K`, or `pN` for run 1). JSON stdin carries `spawn.id` and `spawn.run_id`;
+Python hook contexts expose `spawn_id` and `run_id`.
+
 ## Builtin: `git-autosync`
 
 `git-autosync` keeps a remote Git repo in sync with local changes. On each trigger it:

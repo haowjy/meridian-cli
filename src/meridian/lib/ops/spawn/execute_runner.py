@@ -229,6 +229,7 @@ async def _prepare_execution_handoff(
         bindings = RuntimeBindings(
             spawn_id=str(spawn.spawn_id),
             runtime_work_id=runtime_work_id,
+            chat_id=session_context.chat_id,
             plan_overrides=dict(run_env_overrides),
             dry_run=False,
         )

@@ -8,7 +8,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Separate spawn references from exact run keys; retain latest and bound runs safely.
 - `--continue` keeps spawn id; each launch is a run `pN.K`.
 - List one row per spawn; show its runs. Fork and from still make new spawns.
-- Expose the exact launch as `MERIDIAN_RUN_ID`; keep existing launcher environments working.
+- Expose the exact launch as `MERIDIAN_RUN_ID`; hooks carry both IDs too.
+
+### Fixed
+- Give child tools their entry chat ID; no-argument wait works without a parent chat.
 
 ### Upgrade notes
 - First indexed read rebuilds history schema 8; no authority migration. See [upgrade notes](docs/upgrading.md#spawnrun-identity-boundary-unreleased).

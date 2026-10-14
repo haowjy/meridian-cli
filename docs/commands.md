@@ -353,6 +353,8 @@ roots and eligible ad-hoc roots with their matching `context/` directories.
 ## Telemetry
 
 Meridian writes structured telemetry events to per-process JSONL segment files.
+Events carry stable `spawn_id` and exact `run_id`; `--spawn pN` selects all its runs,
+not an individual `pN.K`.
 Segments live under the project's runtime directory:
 
 ```
@@ -387,7 +389,7 @@ Filtering flags available on `tail` and `query`:
 | Flag | Description |
 | ---- | ----------- |
 | `--domain DOMAIN` | Filter by telemetry domain |
-| `--spawn ID` | Filter by spawn ID |
+| `--spawn ID` | Filter all runs of stable spawn ID `pN` |
 | `--chat ID` | Filter by chat ID |
 | `--work ID` | Filter by work item ID |
 

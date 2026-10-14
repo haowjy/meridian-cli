@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Protocol, cast
 import structlog
 
 from meridian.lib.core.lifecycle import LifecycleEvent, LifecycleHook
+from meridian.lib.core.refs import spawn_of
 from meridian.lib.hooks.builtin import BUILTIN_HOOKS
 from meridian.lib.hooks.builtin.base import BuiltinHook
 from meridian.lib.hooks.interval import IntervalTracker
@@ -396,7 +397,8 @@ class HookDispatcher(LifecycleHook):
                 event_name=cast("HookEventName", event.event_type),
                 event_id=event.event_id,
                 timestamp=event.timestamp.isoformat(),
-                spawn_id=event.spawn_id,
+                spawn_id=spawn_of(event.spawn_id),
+                run_id=event.spawn_id,
                 spawn_status=_normalize_spawn_status(event.status),
                 spawn_agent=event.agent,
                 spawn_model=event.model,
@@ -413,7 +415,8 @@ class HookDispatcher(LifecycleHook):
             event_name=cast("HookEventName", event.event_type),
             event_id=event.event_id,
             timestamp=event.timestamp.isoformat(),
-            spawn_id=event.spawn_id,
+            spawn_id=spawn_of(event.spawn_id),
+            run_id=event.spawn_id,
             spawn_status=_normalize_spawn_status(event.status),
             spawn_agent=event.agent,
             spawn_model=event.model,
@@ -459,6 +462,7 @@ def _to_plugin_context(context: HookContext) -> PluginHookContext:
         runtime_root=context.runtime_root,
         schema_version=context.schema_version,
         spawn_id=context.spawn_id,
+        run_id=context.run_id,
         spawn_status=context.spawn_status,
         spawn_agent=context.spawn_agent,
         spawn_model=context.spawn_model,

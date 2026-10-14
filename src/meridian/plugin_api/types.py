@@ -58,6 +58,7 @@ class HookContext:
     schema_version: int = 1
 
     spawn_id: str | None = None
+    run_id: str | None = None
     spawn_status: SpawnStatus | None = None
     spawn_agent: str | None = None
     spawn_model: str | None = None
@@ -78,6 +79,7 @@ class HookContext:
         event_id: UUID,
         timestamp: str,
         spawn_id: str | None = None,
+        run_id: str | None = None,
         spawn_status: SpawnStatus | None = None,
         spawn_agent: str | None = None,
         spawn_model: str | None = None,
@@ -94,6 +96,7 @@ class HookContext:
             project_root=Path(project_root).as_posix(),
             runtime_root=Path(runtime_root).as_posix(),
             spawn_id=spawn_id,
+            run_id=run_id,
             spawn_status=spawn_status,
             spawn_agent=spawn_agent,
             spawn_model=spawn_model,
@@ -113,6 +116,7 @@ class HookContext:
         event_id: UUID,
         timestamp: str,
         spawn_id: str | None = None,
+        run_id: str | None = None,
         spawn_status: SpawnStatus | None = None,
         spawn_agent: str | None = None,
         spawn_model: str | None = None,
@@ -135,6 +139,7 @@ class HookContext:
             event_id=event_id,
             timestamp=timestamp,
             spawn_id=spawn_id,
+            run_id=run_id,
             spawn_status=spawn_status,
             spawn_agent=spawn_agent,
             spawn_model=spawn_model,
@@ -157,6 +162,7 @@ class HookContext:
             "schema_version": str(self.schema_version),
             "project_root": self.project_root,
             "spawn_id": self.spawn_id,
+            "run_id": self.run_id,
             "spawn_status": self.spawn_status,
             "spawn_agent": self.spawn_agent,
             "spawn_model": self.spawn_model,
@@ -188,6 +194,7 @@ class HookContext:
             "runtime_root": self.runtime_root,
             "spawn": {
                 "id": self.spawn_id,
+                "run_id": self.run_id,
                 "status": self.spawn_status,
                 "agent": self.spawn_agent,
                 "model": self.spawn_model,

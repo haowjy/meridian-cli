@@ -438,15 +438,6 @@ def build_continue_replay_contract(
         skills = ()
         passthrough_args = ()
 
-    intent, seed_event = _resolve_continue_conversation_intent(
-        source=source,
-        replay_harness=replay_harness,
-        fork=fork,
-        requested_model_override=requested_model_override,
-        runtime_root=runtime_root,
-        snapshot_model=snapshot_model,
-    )
-
     from meridian.lib.core.refs import parse_ref
     from meridian.lib.state.session_identity import owner_spawn_for_chat
     from meridian.lib.state.spawn.runs import check_spawn_available, latest_run
@@ -471,6 +462,15 @@ def build_continue_replay_contract(
                 task_dir = source.source_control_root
             elif scope.task_dir is not None:
                 task_dir = str(scope.task_dir)
+
+    intent, seed_event = _resolve_continue_conversation_intent(
+        source=source,
+        replay_harness=replay_harness,
+        fork=fork,
+        requested_model_override=requested_model_override,
+        runtime_root=runtime_root,
+        snapshot_model=snapshot_model,
+    )
 
     session = SessionRequest(
         reopen_spawn_id=reopen_spawn,

@@ -25,6 +25,7 @@ def _context(project_root: Path, runtime_root: Path) -> HookContext:
         project_root=str(project_root),
         runtime_root=str(runtime_root),
         spawn_id="p123",
+        run_id="p123.2",
         spawn_status="success",
         spawn_agent="reviewer",
         spawn_model="gpt-5.3-codex",
@@ -61,7 +62,9 @@ def test_external_runner_sets_cwd_env_and_json_stdin(tmp_path: Path) -> None:
         "print(os.environ['MERIDIAN_SPAWN_AGENT'])\n"
         "print(os.environ['MERIDIAN_SPAWN_MODEL'])\n"
         "print(payload['event_name'])\n"
-        "print(payload['spawn']['id'])\n",
+        "print(payload['spawn']['id'])\n"
+        "print(payload['spawn']['run_id'])\n"
+        "print(os.environ['MERIDIAN_RUN_ID'])\n",
         encoding="utf-8",
     )
 
@@ -84,7 +87,7 @@ def test_external_runner_sets_cwd_env_and_json_stdin(tmp_path: Path) -> None:
     assert lines[5] == "p123"
     assert lines[6:9] == ["success", "reviewer", "gpt-5.3-codex"]
     assert lines[9] == "spawn.finalized"
-    assert lines[10] == "p123"
+    assert lines[10:] == ["p123", "p123.2", "p123.2"]
 
 
 def test_external_runner_captures_nonzero_exit_and_1kb_tails(tmp_path: Path) -> None:

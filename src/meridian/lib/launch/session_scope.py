@@ -145,8 +145,6 @@ def session_scope(
     _stop_session: Callable[[Path, str], None] = stop_session,
     _reclaim_session_scopes: Callable[[Path, str], object] = reclaim_session_owned_scopes_for_chat,
 ) -> Generator[SessionAttempt, None, None]:
-    if request.initial_model_selection is not None:
-        record_model_selection(runtime_root, request.initial_model_selection)
     resolved_chat_id = _start_session(
         runtime_root,
         harness=metadata.harness,
@@ -171,6 +169,8 @@ def session_scope(
     record = get_session_record(runtime_root, resolved_chat_id)
     generation = record.session_instance_id if record is not None else ""
     try:
+        if request.initial_model_selection is not None:
+            record_model_selection(runtime_root, request.initial_model_selection)
         if spawn_id is not None:
             spawn_store.update_spawn(
                 runtime_root, parse_ref(spawn_id, row_key=True), session_instance_id=generation,

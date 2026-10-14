@@ -224,7 +224,7 @@ def test_observed_chat_is_protected_by_its_live_run_not_a_copied_lease(tmp_path:
         )
         assert not session_store.is_session_lease_owner_alive(runtime, current)
         assert session_identity.live_observer_for_chat(runtime, current) == "p1"
-        with pytest.raises(ValueError, match="in use by live run p1"):
+        with pytest.raises(session_store.ChatBusy, match="chat_busy"):
             session_store.start_session(
                 runtime, chat_id=current, harness="claude", model="",
                 harness_session_id="current", native_store=str(tmp_path / "native"),

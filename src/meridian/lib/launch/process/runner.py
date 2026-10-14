@@ -869,8 +869,6 @@ def run_harness_process(
                     )
                 launch_child_cwd = runtime_context.binding.child_cwd
                 child_env = dict(runtime_context.binding.environment.final_env)
-                if managed.chat_id:
-                    child_env["MERIDIAN_CHAT_ID"] = managed.chat_id
                 selected_task_cwd = runtime_context.task_cwd
                 spawn_store.update_spawn(
                     runtime_root,

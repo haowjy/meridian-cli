@@ -1685,7 +1685,7 @@ def bind_launch_context(
 ) -> LaunchContext:
     """Cheap materialization: env, cwd, spec, argv, permissions."""
 
-    _ = (harness_registry, bindings.chat_id)
+    _ = harness_registry
 
     resolved_config_root = Path(runtime.resolved_config_root).expanduser().resolve()
     resolved_control_root = Path(runtime.resolved_control_root).expanduser().resolve()
@@ -2008,6 +2008,8 @@ def bind_launch_context(
         increment_depth=not is_primary_launch,
         additional_overrides=launch_env_overrides or None,
     )
+    if bindings.chat_id is not None:
+        child_context_env["MERIDIAN_CHAT_ID"] = bindings.chat_id
     if requested_work_id is None and _suppresses_ambient_work(resolved_request):
         child_context_env.pop("MERIDIAN_ACTIVE_WORK_ID", None)
         child_context_env.pop("MERIDIAN_ACTIVE_WORK_DIR", None)
