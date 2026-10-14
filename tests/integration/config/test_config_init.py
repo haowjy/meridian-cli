@@ -84,16 +84,13 @@ def test_runtime_bootstrap_creates_identity_without_repo_local_state(
     ensure_runtime_state_bootstrap_sync(project_root)
     runtime_root = resolve_project_runtime_root_for_write(project_root)
 
-    import tomllib
-
     assert not (project_root / ".meridian").exists()
-    project_uuid = tomllib.loads(
-        (project_root / "meridian.toml").read_text(encoding="utf-8")
-    )["project"]["id"]
-    assert runtime_root == user_state_root / "projects" / project_uuid
+    assert not (project_root / "meridian.toml").exists()
+    assert runtime_root.parent == user_state_root / "projects"
+    assert runtime_root.name.startswith("adhoc.repo.")
     assert runtime_root.is_dir()
+    assert (runtime_root / "origin.json").is_file()
     assert (runtime_root / "spawns").is_dir()
-    assert (project_root / "meridian.toml").is_file()
     assert not (project_root / ".mars").exists()
     assert not (project_root / "mars.toml").exists()
 

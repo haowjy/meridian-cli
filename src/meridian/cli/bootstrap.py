@@ -336,13 +336,9 @@ def maybe_bootstrap_runtime_state(
     if requirement in {None, StateRequirement.NONE}:
         return None
 
-    from meridian.cli.utils import exit_no_established_project, resolve_cli_project_root
+    from meridian.cli.utils import resolve_cli_project_root
 
-    resolution = resolve_cli_project_root()
-    project_root = resolution.project_root
-    if not resolution.established or project_root is None:
-        exit_no_established_project()
-    assert project_root is not None
+    project_root = resolve_cli_project_root()
 
     try:
         from meridian.lib.bootstrap.services import (
@@ -352,14 +348,35 @@ def maybe_bootstrap_runtime_state(
             prepare_for_runtime_write,
         )
 
+        prepared = None
         if requirement == StateRequirement.PROJECT_READ:
-            prepare_for_project_read(project_root)
+            prepared = prepare_for_project_read(project_root)
         elif requirement == StateRequirement.RUNTIME_READ:
-            prepare_for_runtime_read(project_root)
+            prepared = prepare_for_runtime_read(project_root)
         elif requirement == StateRequirement.PROJECT_WRITE:
-            prepare_for_project_write(project_root)
+            prepared = prepare_for_project_write(project_root)
         elif requirement == StateRequirement.RUNTIME_WRITE:
-            prepare_for_runtime_write(project_root)
+            prepared = prepare_for_runtime_write(project_root)
+
+        if (
+            prepared is not None
+            and prepared.authority.identity_tier == "adhoc"
+            and prepared.authority.identity_created
+        ):
+            from meridian.lib.config.project_root import has_project_marker
+
+            nearest_marker: Path | None = None
+            for ancestor in project_root.parents:
+                if has_project_marker(ancestor):
+                    nearest_marker = ancestor
+                    break
+            notice = (
+                f"meridian: {project_root.as_posix()} has no meridian.toml; "
+                "state is kept for this path only. Run 'meridian init' to share it."
+            )
+            if nearest_marker is not None:
+                notice += f" (nearest project: {nearest_marker.as_posix()})"
+            print(notice, file=sys.stderr)
 
         return project_root
     except Exception:

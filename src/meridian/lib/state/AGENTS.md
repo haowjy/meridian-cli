@@ -12,10 +12,14 @@ State splits across distinct roots — understand which goes where before writin
 meridian.toml
   [project] id                      — committed machine-managed project identity
 
+bare path
+  sha256(canonical path)            — ad-hoc identity; no file is written there
+
 ~/.meridian/projects/.locks/<id>.lock
                                     — shared session-lifetime / exclusive deletion gate
 
 ~/.meridian/projects/<id>/          ← user runtime, never committed
+  origin.json                       — ad-hoc path attribution and activity only
   sessions.jsonl                    — session events (append-only)
   locks/spawns/<spawn_id>.lock      — stable per-spawn external-writer lock
   locks/process-scopes/<spawn_id>.lock
@@ -42,9 +46,13 @@ meridian.toml
   prompts/ handoffs/ …              — work artifacts
 ```
 
-The project ID in `meridian.toml` `[project] id` keys into `~/.meridian/projects/<id>/`. Projects
-can move or be renamed without losing runtime history. Project lifetime gates sit outside
-the deletable project root and are never unlinked.
+`project_identity.py` is the only identity reader and writer. A root containing
+`meridian.toml` or `mars.toml` has committed identity; a marker-less root gets a
+stable `adhoc.<slug>.<hash>` ID derived from its canonical path. Ad-hoc state is
+materialized only on writes, under `~/.meridian/projects/<id>/`, and nothing is
+written into the source directory. Committed projects can move without losing
+runtime history; moving an ad-hoc directory changes its identity. Project lifetime
+gates sit outside the deletable project root and are never unlinked.
 
 Work items live under the `[context.work]` root (default
 `{user_home}/context/<id>/work/<slug>/`), resolved by `work_scope.py` /
@@ -130,13 +138,13 @@ A crash in the middle of a plain `open()` write leaves a partial file; partial
 
 Use the correct resolver — they have different side effects:
 
-| Resolver | Creates UUID? | Use when |
+| Resolver | Materializes identity? | Use when |
 |---|---|---|
 | `resolve_project_runtime_root()` | No | Read paths (list, show, status) |
 | `resolve_project_runtime_root_for_write()` | Yes (under lock) | Write paths only |
 
-Using `*_for_write()` on a read path creates `meridian.toml` identity in untouched checkouts,
-triggering project setup side effects in CI.
+Using `*_for_write()` on a read path creates user-home state (and mints a committed
+ID when a marker exists), triggering setup side effects in CI.
 
 Transcript reads go through `ops/session_target.resolve_transcript_source`: ref →
 chat → accepted native key → exact harness reader. Artifact storage never redirects

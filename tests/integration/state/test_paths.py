@@ -178,9 +178,9 @@ def test_load_context_config_uses_meridian_config_env_override(
     assert context_config.work.path == "env/work"
     assert context_config.work.archive == "env/archive/work"
     assert context_config.kb.path == "env/kb"
-    assert resolved_paths.work_dir == project_root / "env/work"
-    assert resolved_paths.work_archive_dir == project_root / "env/archive/work"
-    assert resolved_paths.kb_dir == project_root / "env/kb"
+    assert resolved_paths.work_dir is None
+    assert resolved_paths.work_archive_dir is None
+    assert resolved_paths.kb_dir is None
 
 
 def test_resolve_project_paths_does_not_fall_back_to_repo_local_state(

@@ -6,8 +6,20 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 - Stop writing redundant spawn `inbound.jsonl` control-action journals.
+- Remove the `meridian migrate` command.
+- Stop reading project identity from the legacy `.meridian/id` file.
 
 ### Changed
+- Meridian no longer writes `meridian.toml` into directories that lack one.
+  Their state is kept in `~/.meridian/projects/adhoc.*` and becomes eligible for
+  `meridian doctor --global --prune` after 30 idle days. Running `meridian init`
+  later starts that project with empty history: spawns, sessions and work items
+  from before `init` are not carried over. They remain as files under the old
+  root until pruned. If you relied on automatic creation to share state across
+  worktrees, run `meridian init` once and commit `meridian.toml`.
+- Stop auto-creating `meridian.toml` on launch and other runtime writes.
+- Make bare-directory `config set`, `config reset`, and `workspace init` fail
+  with a prompt to run `meridian init`.
 - Report every invalid config value with the same key, expected type, and received value format.
 - Run the strict Pyright gate with warnings fatal and per-rule suppressions only.
 - Stop advertising archived HTTP/app-server extension commands. Extension

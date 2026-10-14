@@ -19,7 +19,7 @@ from meridian.cli.invocation import Emitter, current_output_sink, emit, get_glob
 from meridian.cli.spawn_inject import inject_message
 from meridian.cli.utils import (
     parse_csv_list,
-    require_established_project_root,
+    resolve_cli_project_root,
 )
 from meridian.lib.bootstrap.services import (
     RuntimeReadContext,
@@ -95,12 +95,12 @@ _SPAWN_WAIT_HELP_EPILOGUE = (
 
 
 def _prepare_spawn_runtime_read() -> RuntimeReadContext:
-    return prepare_for_runtime_read(require_established_project_root())
+    return prepare_for_runtime_read(resolve_cli_project_root())
 
 
 def _prepare_spawn_runtime_write() -> RuntimeWriteContext:
     logger.debug("spawn_launcher_phase", phase="bootstrap", launcher_pid=os.getpid())
-    prepared = prepare_for_runtime_write(require_established_project_root())
+    prepared = prepare_for_runtime_write(resolve_cli_project_root())
     logger.debug(
         "spawn_launcher_phase",
         phase="bootstrap_complete",

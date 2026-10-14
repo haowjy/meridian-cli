@@ -192,6 +192,7 @@ class SpawnActionOutput(BaseModel):
     project_root_source: str | None = None
     runtime_root: str | None = None
     runtime_root_source: str | None = None
+    identity_created: bool = False
     authority_root: str | None = None
     task_cwd: str | None = None
     reference_anchor: str | None = None
@@ -228,6 +229,8 @@ class SpawnActionOutput(BaseModel):
     def to_wire(self) -> dict[str, object]:
         """Project minimal external JSON shape. Omit nulls and input echo."""
         wire: dict[str, object] = {"status": self.status}
+        if self.identity_created:
+            wire["identity_created"] = True
         if self.spawn_id is not None:
             wire["spawn_id"] = self.spawn_id
             if self.background and self.status == "running":

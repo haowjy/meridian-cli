@@ -702,11 +702,6 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
 
             register_report_commands(report_app)
 
-        def _register_migrate() -> None:
-            from meridian.cli.migrate_cmd import register_migrate_command
-
-            register_migrate_command(app)
-
         bucket_handlers: dict[str, Callable[[], None]] = {
             "spawn": _register_spawn,
             "session": _register_session,
@@ -729,7 +724,6 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
             "idle": _register_idle,
             "qi": _register_qi,
             "report": _register_report,
-            "migrate": _register_migrate,
         }
 
         registrations: dict[str, tuple[str, Callable[[], None]]] = {
