@@ -238,7 +238,7 @@ def render_context_lines(
         else:
             lines.append(f"kb: ${kb_env_key} ({kb_resolved})")
     else:
-        lines.append("kb: (unresolved — project has no identity)")
+        lines.append("kb: (unresolved — project state is not materialized)")
 
     for name in sorted(resolved.extra):
         path, _ = resolved.extra[name]

@@ -1,4 +1,4 @@
-"""User-level state root resolution and project ID management."""
+"""User-level state and context root paths."""
 
 from __future__ import annotations
 
