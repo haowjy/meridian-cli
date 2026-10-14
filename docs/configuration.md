@@ -236,7 +236,7 @@ Use `claude`, `codex`, `opencode`, or `pi` for `<harness>`.
 |---|---|---|
 | `enabled` | `true` | `MERIDIAN_HARNESS_IDLE_ENABLED_<H>` |
 | `compact` | `true` | `MERIDIAN_HARNESS_IDLE_COMPACT_<H>` |
-| `ttl_seconds` | Claude/Pi: sensed; Codex: `1800`; OpenCode: `300` | `MERIDIAN_HARNESS_IDLE_TTL_SECONDS_<H>` |
+| `ttl_seconds` | Claude/OpenCode/Pi: sensed; Codex: `1800` | `MERIDIAN_HARNESS_IDLE_TTL_SECONDS_<H>` |
 
 `<H>` is the uppercase harness name, for example
 `MERIDIAN_HARNESS_IDLE_TTL_SECONDS_CODEX`.
@@ -261,7 +261,7 @@ local config. Environment always beats every file, so a per-tmux
 | Claude | Push, warning, and compaction; the mod reads the cache TTL from the transcript |
 | Pi | Push, warning, and compaction: Meridian defaults `PI_CACHE_RETENTION=long` for interactive primaries when it is absent; `openai` is scheduled against 30 minutes, because OpenAI's `24h` retention typically lasts about that long. Set `PI_CACHE_RETENTION=short` to keep Pi's short-cache default. Unknown provider IDs remain push-only. |
 | Codex | Push, warning, and compaction with a conservative 1800-second TTL |
-| OpenCode | Push only with the 300-second default because the warning and compaction do not fit; raise `ttl_seconds` to schedule them |
+| OpenCode | OpenAI-provider models get push, warning, and compaction with an estimated 1800-second TTL; unknown providers remain push-only |
 
 The Pi cache-retention default is launch behavior, independent of whether
 `[idle]` is enabled: an interactive Pi session gets the longer provider cache

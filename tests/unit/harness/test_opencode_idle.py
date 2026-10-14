@@ -12,7 +12,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness import opencode_idle
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
 from meridian.lib.harness.connections.opencode_v2_http import OpenCodeV2Connection
-from meridian.lib.harness.idle_types import IdleEvent, IdleSensorContext
+from meridian.lib.harness.idle_types import CacheTtl, IdleEvent, IdleSensorContext
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "opencode_idle"
 SESSION_ID = "ses_ee21d9d97ffeN9m0VxoYy7qFQf"
@@ -277,8 +277,27 @@ async def test_facts_read_draft_from_recorded_pane(
 async def test_v2_recorded_normal_prompt_emits_return_and_parent_turn_end(
     tmp_path: Path,
 ) -> None:
+    async def request(
+        method: str,
+        path: str,
+        _payload: Mapping[str, object] | None,
+    ) -> tuple[int, str]:
+        assert method == "GET"
+        if path == f"/api/session/{V2_SESSION_ID}":
+            return 200, json.dumps(
+                {
+                    "data": {
+                        "id": V2_SESSION_ID,
+                        "model": {"providerID": "openai", "id": "gpt-6-astra"},
+                    }
+                }
+            )
+        assert path == f"/api/session/{V2_SESSION_ID}/message?limit=20&order=desc"
+        return 200, '{"data":[],"cursor":{"previous":null,"next":null}}'
+
     sensor = opencode_idle.OpenCodeV2IdleSensor(
-        _context(tmp_path, session_id=V2_SESSION_ID, version="v2")
+        _context(tmp_path, session_id=V2_SESSION_ID, version="v2"),
+        request=request,
     )
     iterator = sensor.events()
     events = _recorded_v2_events("events-v2-normal.sse")
@@ -298,6 +317,7 @@ async def test_v2_recorded_normal_prompt_emits_return_and_parent_turn_end(
     observed = await _take(iterator, 2)
     assert [event.kind for event in observed] == ["user_prompt", "turn_end"]
     assert observed[0].implies_return is True
+    assert observed[1].provider == "openai"
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(anext(iterator), timeout=0.01)
 
@@ -340,10 +360,17 @@ async def test_v2_turn_end_fetches_wrapped_descending_message_excerpts(
         path: str,
         _payload: Mapping[str, object] | None,
     ) -> tuple[int, str]:
-        assert (method, path) == (
-            "GET",
-            f"/api/session/{V2_SESSION_ID}/message?limit=20&order=desc",
-        )
+        assert method == "GET"
+        if path == f"/api/session/{V2_SESSION_ID}":
+            return 200, json.dumps(
+                {
+                    "data": {
+                        "id": V2_SESSION_ID,
+                        "model": {"providerID": "openai", "id": "gpt-6-astra"},
+                    }
+                }
+            )
+        assert path == f"/api/session/{V2_SESSION_ID}/message?limit=20&order=desc"
         return 200, json.dumps(
             {
                 "data": [
@@ -379,6 +406,7 @@ async def test_v2_turn_end_fetches_wrapped_descending_message_excerpts(
     turn_end = (await _take(iterator, 2))[-1]
     assert turn_end.last_user_text == "latest"
     assert turn_end.last_assistant_text == "answer one answer two"
+    assert turn_end.provider == "openai"
 
 
 async def test_v2_recorded_compaction_never_emits_user_return(tmp_path: Path) -> None:
@@ -468,3 +496,25 @@ def test_primary_idle_sensor_dispatches_by_projected_version(
     sensor = opencode_idle.primary_idle_sensor(_context(tmp_path, version=version))
 
     assert isinstance(sensor, expected_type)
+
+
+@pytest.mark.parametrize(
+    ("provider", "expected"),
+    [
+        ("openai", CacheTtl(1800, estimated=True)),
+        ("opencode-go", None),
+    ],
+)
+def test_detect_ttl_by_provider(
+    provider: str,
+    expected: CacheTtl | None,
+) -> None:
+    assert (
+        opencode_idle.detect_ttl(
+            session_id=V2_SESSION_ID,
+            native_store=None,
+            provider=provider,
+            env={},
+        )
+        == expected
+    )

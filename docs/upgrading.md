@@ -125,8 +125,8 @@ One-hour Anthropic cache writes cost more than five-minute writes. Export
 - Per-harness defaults: Claude senses its cache lifetime from the transcript
   (1 h or 5 min); Meridian gives interactive Pi primaries long cache retention;
   Codex assumes 30 minutes (`[harness.codex.idle] ttl_seconds = 1800`); OpenCode
-  is push-only (`ttl_seconds = 300`). Pi provider IDs other than `anthropic` and
-  `openai` remain push-only.
+  estimates 30 minutes for OpenAI models. Other OpenCode providers are push-only.
+  Pi provider IDs other than `anthropic` and `openai` remain push-only.
 - Idle and cache-warning titles show time until the cache goes cold when a TTL
   is known. Heuristic/configured TTLs are labelled `est.`. Idle state saves
   `ttl_estimated` alongside the TTL; existing development-build records without

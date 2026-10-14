@@ -7,6 +7,7 @@ import json
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import replace
+from pathlib import Path
 from typing import Literal, cast
 from urllib.parse import quote
 
@@ -14,6 +15,7 @@ import aiohttp
 
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.idle_types import (
+    CacheTtl,
     CompactResult,
     IdleEvent,
     IdleFacts,
@@ -27,6 +29,22 @@ BackendRequest = Callable[[str, str, Mapping[str, object] | None], Awaitable[tup
 
 _GET_TIMEOUT_SECONDS = 10.0
 _SUMMARIZE_TIMEOUT_SECONDS = 300.0
+
+# D5/D7: the backend TTL is unknown; mirror the Codex harness's estimate.
+_PROVIDER_TTLS = {"openai": CacheTtl(1800, estimated=True)}
+
+
+def detect_ttl(
+    *,
+    session_id: str,
+    native_store: Path | None,
+    provider: str | None,
+    env: Mapping[str, str],
+) -> CacheTtl | None:
+    """Resolve OpenCode cache retention from its current model provider."""
+
+    _ = session_id, native_store, env
+    return _PROVIDER_TTLS.get((provider or "").strip().lower())
 
 
 def _mapping(value: object) -> Mapping[str, object] | None:
@@ -314,13 +332,18 @@ class OpenCodeIdleSensor:
         while True:
             event = await self._events.get()
             if event.kind == "turn_end":
+                provider = await self._fetch_provider()
                 user, assistant = await self._fetch_message_excerpts()
                 event = replace(
                     event,
                     last_user_text=user,
                     last_assistant_text=assistant,
+                    provider=provider,
                 )
             yield event
+
+    async def _fetch_provider(self) -> str | None:
+        return None
 
     async def _fetch_message_excerpts(self) -> tuple[str | None, str | None]:
         session_id = quote(self._ctx.harness_session_id, safe="")
@@ -431,6 +454,21 @@ def _v2_response_data(payload: object) -> Mapping[str, object] | None:
     if response is None:
         return None
     return _mapping(response.get("data"))
+
+
+def _v2_session_model(payload: object) -> tuple[str, str] | None:
+    session = _v2_response_data(payload)
+    model = _mapping(session.get("model")) if session is not None else None
+    provider = model.get("providerID") if model is not None else None
+    model_id = model.get("id") if model is not None else None
+    if (
+        not isinstance(provider, str)
+        or not provider
+        or not isinstance(model_id, str)
+        or not model_id
+    ):
+        return None
+    return provider, model_id
 
 
 def _v2_message_excerpts(payload: object) -> tuple[str | None, str | None]:
@@ -552,6 +590,20 @@ class OpenCodeV2IdleSensor(OpenCodeIdleSensor):
         except (TimeoutError, OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError):
             return None, None
 
+    async def _fetch_provider(self) -> str | None:
+        session_id = quote(self._ctx.harness_session_id, safe="")
+        try:
+            status, body = await asyncio.wait_for(
+                self._request("GET", f"/api/session/{session_id}", None),
+                timeout=_GET_TIMEOUT_SECONDS,
+            )
+            if status != 200:
+                return None
+            model = _v2_session_model(json.loads(body))
+            return model[0] if model is not None else None
+        except (TimeoutError, OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError):
+            return None
+
     async def compact(self) -> CompactResult:
         if not self._ctx.tui_alive():
             return CompactResult("vetoed", "tui-exited")
@@ -567,16 +619,8 @@ class OpenCodeV2IdleSensor(OpenCodeIdleSensor):
             )
             if status != 200:
                 return CompactResult("failed", body)
-            session = _v2_response_data(json.loads(body))
-            model = _mapping(session.get("model")) if session is not None else None
-            provider = model.get("providerID") if model is not None else None
-            model_id = model.get("id") if model is not None else None
-            if (
-                not isinstance(provider, str)
-                or not provider
-                or not isinstance(model_id, str)
-                or not model_id
-            ):
+            model = _v2_session_model(json.loads(body))
+            if model is None:
                 return CompactResult("failed", "session model is unavailable")
             if not self._ctx.tui_alive():
                 return CompactResult("vetoed", "tui-exited")
@@ -635,6 +679,7 @@ __all__ = [
     "OpenCodeIdleSensor",
     "OpenCodeV2IdleSensor",
     "autocompact_off",
+    "detect_ttl",
     "message_excerpts",
     "primary_idle_sensor",
 ]
