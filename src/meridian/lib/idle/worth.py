@@ -58,7 +58,9 @@ def compact_worth(
         if baseline_tokens is None:
             need_tokens = None
         else:
-            need_tokens = math.ceil(
+            # Growth is integral and the economic inequality is strict, so an
+            # exact integer break-even still needs one more token to pay.
+            need_tokens = math.floor(
                 (
                     r * costs.w * delta
                     + costs.c * baseline_tokens
@@ -66,7 +68,7 @@ def compact_worth(
                     + costs.o * costs.summary_tokens
                 )
                 / (r * costs.w - costs.c)
-            )
+            ) + 1
 
     if context_tokens is None:
         verdict = "context-unknown"

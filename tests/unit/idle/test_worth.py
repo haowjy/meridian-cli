@@ -26,7 +26,7 @@ def test_compact_worth_table() -> None:
         baseline_source="compacted",
         costs=costs,
     )
-    assert (observed.need_tokens, compacted.need_tokens) == (64_700, 50_256)
+    assert (observed.need_tokens, compacted.need_tokens) == (64_701, 50_256)
 
     below = compact_worth(
         stretch=7,
