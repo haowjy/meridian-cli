@@ -6,12 +6,13 @@ import hashlib
 import os
 import re
 import time
+import tomllib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from meridian.lib.config.preserving_edit import (
     project_config_transaction,
@@ -60,6 +61,18 @@ class AdHocOrigin(BaseModel):
     created_at: str
 
 
+class _ProjectTable(BaseModel):
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    id: object | None = None
+
+
+class _CommittedConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    project: _ProjectTable | None = None
+
+
 def state_id(identity: ProjectIdentity) -> str | None:
     """Return the persisted state ID visible through an identity."""
 
@@ -90,27 +103,22 @@ def project_identity_was_created(
 def get_committed_project_id(project_root: Path) -> str | None:
     """Read and validate the committed ID from ``meridian.toml``."""
 
-    import tomllib
-    from typing import cast
-
     config_path = project_root / "meridian.toml"
     if not config_path.is_file():
         return None
     try:
-        payload = cast(
-            "dict[str, object]",
-            tomllib.loads(config_path.read_text(encoding="utf-8")),
+        document = _CommittedConfig.model_validate(
+            tomllib.loads(config_path.read_text(encoding="utf-8"))
         )
     except OSError:
         return None
     except tomllib.TOMLDecodeError as exc:
         raise ValueError(f"Invalid TOML in '{config_path.as_posix()}': {exc}") from exc
-    project = payload.get("project")
-    if project is None:
+    except ValidationError as exc:
+        raise ValueError(f"Invalid [project] table in '{config_path.as_posix()}'.") from exc
+    if document.project is None:
         return None
-    if not isinstance(project, dict):
-        raise ValueError(f"Invalid [project] table in '{config_path.as_posix()}'.")
-    raw_id = cast("dict[str, object]", project).get("id")
+    raw_id = document.project.id
     if raw_id is None:
         return None
     if not isinstance(raw_id, str) or not raw_id.strip():

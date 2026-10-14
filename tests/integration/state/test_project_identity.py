@@ -181,6 +181,20 @@ def test_committed_identity_rejects_reserved_adhoc_prefix(tmp_path: Path) -> Non
         resolve_project_identity(tmp_path)
 
 
+@pytest.mark.parametrize(
+    "content",
+    ['project = "not-a-table"\n', "[project]\nid = 42\n"],
+)
+def test_committed_identity_rejects_invalid_project_shape(
+    tmp_path: Path,
+    content: str,
+) -> None:
+    (tmp_path / "meridian.toml").write_text(content, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"Invalid \[project\]"):
+        resolve_project_identity(tmp_path)
+
+
 def test_legacy_dot_meridian_id_is_not_read(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
