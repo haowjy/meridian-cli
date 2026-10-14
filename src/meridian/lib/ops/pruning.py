@@ -22,6 +22,7 @@ from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.json_doc import read_model
 from meridian.lib.state.lock_gc import LockGcStats, gc_orphaned_locks
 from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state.project_identity import ADHOC_TOUCH_INTERVAL_SECONDS
 
 _SECONDS_PER_DAY = 24 * 60 * 60
 
@@ -133,13 +134,17 @@ def _tree_activity(path: Path) -> tuple[int, float]:
     return total_size, latest_mtime
 
 
-def _is_stale(latest_mtime: float, *, retention_days: int, now: float) -> bool:
+def _is_stale(
+    latest_mtime: float,
+    *,
+    retention_days: int,
+    now: float,
+    minimum_age_seconds: int = 0,
+) -> bool:
     if retention_days < 0:
         return False
-    if retention_days == 0:
-        return True
-    cutoff = now - (retention_days * _SECONDS_PER_DAY)
-    return latest_mtime < cutoff
+    retention_seconds = retention_days * _SECONDS_PER_DAY
+    return now - latest_mtime > max(retention_seconds, minimum_age_seconds)
 
 
 def _timestamp(value: str | None) -> float | None:
@@ -224,7 +229,12 @@ def _scan_adhoc_project_dir(
     size_bytes, latest_activity, origin = _adhoc_activity(runtime_root)
     reason, source_path = _adhoc_reason(origin)
     threshold = stale_retention_days if reason != "adhoc-idle" else retention_days
-    if not _is_stale(latest_activity, retention_days=threshold, now=now):
+    if not _is_stale(
+        latest_activity,
+        retention_days=threshold,
+        now=now,
+        minimum_age_seconds=ADHOC_TOUCH_INTERVAL_SECONDS,
+    ):
         return None
 
     context_root = runtime_root.parent.parent / "context" / runtime_root.name

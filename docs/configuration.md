@@ -83,8 +83,8 @@ days without recorded spawn or session activity. Roots whose source path is gone
 or now contains a marker use a 7-day window. Set `state.adhoc_retention_days` in
 `~/.meridian/config.toml` (not project config) or use
 `MERIDIAN_STATE_ADHOC_RETENTION_DAYS`; `-1` disables ad-hoc pruning and `0`
-reclaims as soon as the root is quiescent. Pruning removes the matching runtime
-and context roots together.
+reclaims as soon as the root is quiescent after a one-hour activity floor.
+Pruning removes the matching runtime and context roots together.
 
 ## `meridian.toml` Keys
 
@@ -121,7 +121,7 @@ One machine-wide key is intentionally not exposed through project-scoped
 
 | User config key | Type | Purpose |
 |---|---|---|
-| `state.adhoc_retention_days` | int | TTL for quiescent ad-hoc roots (`-1` = never, `0` = immediate, default `30`; gone/shadowed paths always use `7`) |
+| `state.adhoc_retention_days` | int | TTL for quiescent ad-hoc roots (`-1` = never, `0` = after the one-hour floor, default `30`; gone/shadowed paths always use `7`) |
 
 It is accepted only from `~/.meridian/config.toml` (or `MERIDIAN_CONFIG`) and
 `MERIDIAN_STATE_ADHOC_RETENTION_DAYS` for doctor retention decisions. A value

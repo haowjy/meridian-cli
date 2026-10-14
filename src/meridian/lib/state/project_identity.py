@@ -29,7 +29,7 @@ from meridian.lib.state.user_paths import (
 from meridian.lib.state.wordgen import generate_project_id
 
 _ADHOC_PREFIX = "adhoc."
-_ORIGIN_TOUCH_INTERVAL_SECONDS = 60 * 60
+ADHOC_TOUCH_INTERVAL_SECONDS = 60 * 60
 _SLUG_PATTERN = re.compile(r"[^a-z0-9]+")
 
 
@@ -187,7 +187,7 @@ def _materialize_adhoc_identity(project_root: Path, identity: AdHoc) -> AdHoc:
                 ),
             )
         else:
-            if time.time() - origin_path.stat().st_mtime >= _ORIGIN_TOUCH_INTERVAL_SECONDS:
+            if time.time() - origin_path.stat().st_mtime >= ADHOC_TOUCH_INTERVAL_SECONDS:
                 os.utime(origin_path, None)
     return AdHoc(id=identity.id, materialized=True)
 
@@ -205,6 +205,7 @@ def ensure_project_identity(project_root: Path) -> ProjectIdentity:
 
 
 __all__ = [
+    "ADHOC_TOUCH_INTERVAL_SECONDS",
     "AdHoc",
     "Committed",
     "ProjectIdentity",
