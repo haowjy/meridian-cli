@@ -13,6 +13,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Treat the first `--` as the CLI passthrough boundary, even when it follows a
   value-taking option.
 
+## [0.9.9] - 2026-10-14
+
+### Fixed
+- Idle push, warning, and compaction now work on OpenCode 2.x (before: never
+  armed). `openai`-provider sessions are scheduled against an estimated 30-minute
+  cache; other providers stay push-only. A prompt steered or queued into a running
+  turn counts as the user's return at once.
+
 ## [0.9.8] - 2026-10-14
 
 ### Upgrade notes

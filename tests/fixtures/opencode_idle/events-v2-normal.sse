@@ -1,0 +1,7 @@
+data: {"id":"evt_fixture_13","created":0,"type":"session.inbox.enqueued","location":{"directory":"/tmp"},"data":{"inboxID":"msg_v2_user","sessionID":"ses_v2_fixture_primary","item":{"type":"user","payload":{"text":"reply with the single word OK"},"delivery":"steer"}},"durable":{"aggregateID":"ses_v2_fixture_primary","seq":1,"version":1}}
+
+data: {"id":"evt_fixture_14","created":0,"type":"session.execution.started","data":{"sessionID":"ses_v2_fixture_primary"},"durable":{"aggregateID":"ses_v2_fixture_primary","seq":2,"version":1}}
+
+data: {"id":"evt_fixture_16","created":0,"type":"session.inbox.delivered","location":{"directory":"/tmp"},"data":{"sessionID":"ses_v2_fixture_primary","inboxID":"msg_v2_user"},"durable":{"aggregateID":"ses_v2_fixture_primary","seq":4,"version":1}}
+
+data: {"id":"evt_fixture_26","created":0,"type":"session.execution.succeeded","data":{"sessionID":"ses_v2_fixture_primary"},"durable":{"aggregateID":"ses_v2_fixture_primary","seq":12,"version":1}}
