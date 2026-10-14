@@ -116,6 +116,11 @@ dependency-neutral `lib/platform/atomic.py`. Never write state files with plain 
 - `append_text_line()` — binary mode so JSONL newline encoding and byte offsets
   remain stable.
 
+JSONL reads use `event_store.iter_jsonl()`: only newline-terminated rows are
+committed, empty rows are ignored, and malformed complete rows warn and skip by
+default. Callers such as the archive catalog that must fail closed select the
+strict malformed-row policy explicitly.
+
 A crash in the middle of a plain `open()` write leaves a partial file; partial
 `state.json` fails Pydantic validation on next read.
 
@@ -170,6 +175,7 @@ inverts accepted chat records without discarding aliases or doing I/O. Historica
 - `work_state.py` / `work_store.py` / `work_repository.py` — work-item models and
   codec, pure reads, and the single locked mutation repository, respectively.
 - `session_store.py` — Session event I/O and lease ownership.
+- `json_doc.py` — tolerant Pydantic reads plus locked atomic mutation for JSON sidecars.
 - `idle_store.py` — user-scoped idle stretch state, per-file locking, and seven-day lazy GC.
 - `session_fold.py` — Public event models, pure replay, and accepted-key inversion.
 - `atomic.py` — atomic write primitives. All state writes use these.

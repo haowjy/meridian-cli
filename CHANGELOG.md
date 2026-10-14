@@ -9,6 +9,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Stop advertising archived HTTP/app-server extension commands. Extension
   discovery now exposes only runnable CLI and MCP surfaces and no longer emits
   `requires_app_server` in JSON.
+- Treat only newline-terminated JSONL rows as committed across sessions, archive
+  catalogs, and telemetry. Interrupted tails wait for completion instead of
+  appearing early.
 
 ### Fixed
 - Skip malformed legacy native-session rows whose `chat_id` is not a string or
@@ -20,6 +23,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Keep runtime-read config on the same resolved project authority snapshot as
   runtime discovery.
 - Honor `--config` and `MERIDIAN_CONFIG` when resolving Git clone path overrides.
+- Repair incomplete telemetry JSONL tails before appending complete durable records.
 
 ## [0.9.8] - 2026-10-14
 
