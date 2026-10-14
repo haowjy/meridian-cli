@@ -46,9 +46,11 @@ Four independent mechanisms reduce startup latency and keep dependencies acyclic
    inside handler functions, not at module scope.
 
 4. **One-way invocation state** — `invocation.py` owns the typed global options
-   context and output routing. Both `main.py` and command modules depend on it;
-   command modules never import back into `main.py`. Registration functions
-   receive no invocation callbacks and return no metadata to the dispatcher.
+   context, its explicit `invocation_scope()` lifetime, and output routing.
+   Both `main.py` and command modules depend on it; command modules never import
+   back into `main.py`. Registration functions receive no invocation callbacks
+   and return no metadata to the dispatcher. In-process callers must supply a
+   scope; no default options are fabricated when the context is absent.
 
 Together these mechanisms keep startup and help paths from importing command
 implementations they do not need.

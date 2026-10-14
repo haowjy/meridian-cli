@@ -10,7 +10,7 @@ from typing import Annotated, Any, cast
 from cyclopts import App, Parameter
 
 from meridian.cli.app_tree import ext_app
-from meridian.cli.invocation import emit, get_global_options, has_global_options
+from meridian.cli.invocation import emit, get_global_options
 from meridian.cli.output import OutputFormat
 from meridian.cli.utils import require_established_project_root
 from meridian.lib.bootstrap.services import build_extension_entrypoint, prepare_for_runtime_read
@@ -81,18 +81,10 @@ def _resolve_effective_format(
         return "json"
     if requested == "json":
         return "json"
-    if has_global_options():
-        return get_global_options().output.format
-    return requested
+    return get_global_options().output.format
 
 
 def _emit_text_or_json(*, text_payload: str, json_payload: object, format: OutputFormat) -> None:
-    if not has_global_options():
-        if format == "json":
-            print(json.dumps(json_payload, indent=2))
-        else:
-            print(text_payload)
-        return
     emit(json_payload if format == "json" else text_payload)
 
 

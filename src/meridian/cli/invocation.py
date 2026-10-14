@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from contextvars import ContextVar, Token
+from collections.abc import Generator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Never, Protocol
 
@@ -31,9 +33,6 @@ class GlobalOptions(BaseModel):
     harness: str | None = None
     yes: bool = False
     no_input: bool = False
-    # Future cleanup: `output_explicit` may be removable now that
-    # `explicit_format` carries the resolved explicit output selection.
-    output_explicit: bool = False
     render_mode: RenderMode = "human"
     passthrough_args: tuple[str, ...] = ()
     sink: OutputSink | None = None
@@ -53,49 +52,39 @@ class Emitter(Protocol):
     ) -> None: ...
 
 
-_GLOBAL_OPTIONS: ContextVar[GlobalOptions | None] = ContextVar(
-    "_GLOBAL_OPTIONS",
-    default=None,
-)
-
-
-def has_global_options() -> bool:
-    """Return whether the current context has parsed invocation options."""
-
-    return _GLOBAL_OPTIONS.get() is not None
+_GLOBAL_OPTIONS: ContextVar[GlobalOptions] = ContextVar("_GLOBAL_OPTIONS")
 
 
 def get_global_options() -> GlobalOptions:
     """Return parsed global options for the current command."""
 
-    default = GlobalOptions(output=OutputConfig(format="text"))
-    return _GLOBAL_OPTIONS.get() or default
+    try:
+        return _GLOBAL_OPTIONS.get()
+    except LookupError:
+        raise RuntimeError("global CLI options accessed outside an invocation scope") from None
 
 
-def set_global_options(options: GlobalOptions) -> Token[GlobalOptions | None]:
-    """Install parsed options for the current invocation context."""
+@contextmanager
+def invocation_scope(options: GlobalOptions) -> Generator[None]:
+    """Install *options* for one CLI invocation and restore the prior context."""
 
-    return _GLOBAL_OPTIONS.set(options)
+    token = _GLOBAL_OPTIONS.set(options)
+    try:
+        yield
+    finally:
+        _GLOBAL_OPTIONS.reset(token)
 
 
-def reset_global_options(token: Token[GlobalOptions | None]) -> None:
-    """Restore the invocation options represented by *token*."""
-
-    _GLOBAL_OPTIONS.reset(token)
-
-
-def _resolve_sink(options: GlobalOptions | None) -> tuple[OutputSink, bool]:
-    if options is not None and options.sink is not None:
+def _resolve_sink(options: GlobalOptions) -> tuple[OutputSink, bool]:
+    if options.sink is not None:
         return options.sink, False
-    if options is None:
-        return create_sink(OutputConfig(format="text")), True
     return create_sink(options.output), True
 
 
 def current_output_sink() -> OutputSink:
     """Return the sink selected for the current invocation."""
 
-    sink, _ = _resolve_sink(_GLOBAL_OPTIONS.get())
+    sink, _ = _resolve_sink(get_global_options())
     return sink
 
 
@@ -129,7 +118,7 @@ def emit(payload: object, *, format_ctx: FormatContext | None = None) -> None:
 def emit_error(message: str, *, exit_code: int = 1, name: str | None = None) -> Never:
     """Write a command error through the current sink and exit."""
 
-    sink, flush_after = _resolve_sink(_GLOBAL_OPTIONS.get())
+    sink, flush_after = _resolve_sink(get_global_options())
     sink.error(message, exit_code=exit_code, name=name)
     if flush_after:
         flush_sink(sink)
@@ -143,8 +132,6 @@ __all__ = [
     "emit",
     "emit_error",
     "get_global_options",
-    "has_global_options",
+    "invocation_scope",
     "is_agent_mode",
-    "reset_global_options",
-    "set_global_options",
 ]
