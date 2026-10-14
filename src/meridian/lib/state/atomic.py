@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterable
 from pathlib import Path
 
 from meridian.lib.platform.atomic import atomic_replace, fsync_directory
@@ -112,8 +113,18 @@ def append_text_line(path: Path, line: str) -> None:
         fsync_directory(path.parent)
 
 
+def append_durable_jsonl_lines(path: Path, lines: Iterable[str]) -> None:
+    """Repair a torn JSONL tail, then append lines with one write and fsync."""
+
+    content = "".join(lines)
+    if not content:
+        return
+
+    repair_jsonl_tail(path)
+    append_text_line(path, content)
+
+
 def append_durable_jsonl_line(path: Path, line: str) -> None:
     """Repair a torn JSONL tail, then append one durable line."""
 
-    repair_jsonl_tail(path)
-    append_text_line(path, line)
+    append_durable_jsonl_lines(path, (line,))

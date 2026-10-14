@@ -7,7 +7,7 @@ import os
 from collections.abc import Sequence
 from pathlib import Path
 
-from meridian.lib.state.atomic import append_durable_jsonl_line
+from meridian.lib.state.atomic import append_durable_jsonl_lines
 from meridian.lib.telemetry.events import TelemetryEnvelope
 
 _DEFAULT_MAX_SEGMENT_BYTES = 10_000_000
@@ -41,12 +41,14 @@ class LocalJSONLSink:
         """Append compact JSON lines to the active segment."""
         if self._closed:
             return
+        lines: list[str] = []
         for event in events:
             try:
                 line = json.dumps(event.to_dict(), separators=(",", ":")) + "\n"
             except (TypeError, ValueError):
                 continue
-            append_durable_jsonl_line(self.active_path, line)
+            lines.append(line)
+        append_durable_jsonl_lines(self.active_path, lines)
         if self.active_path.stat().st_size > self._max_segment_bytes:
             self._rotate()
 
