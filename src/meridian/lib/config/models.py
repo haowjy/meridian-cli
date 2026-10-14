@@ -1,6 +1,6 @@
 """Typed models for Meridian operational configuration."""
 
-from typing import Annotated, ClassVar
+from typing import Annotated
 
 from pydantic import (
     ConfigDict,
@@ -408,8 +408,6 @@ class WorkConfig(ConfigModel):
 
 class PrimaryConfig(ConfigModel):
     """Primary-specific harness settings."""
-
-    config_ignored_keys: ClassVar[frozenset[str]] = frozenset({"model", "harness"})
 
     model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
 

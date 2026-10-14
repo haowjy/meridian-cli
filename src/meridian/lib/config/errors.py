@@ -4,39 +4,17 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from types import UnionType
-from typing import TYPE_CHECKING, Union, get_args, get_origin
 
-from pydantic import BaseModel
+from pydantic import BaseModel, RootModel, ValidationError
+from typing_extensions import TypeIs
 
 from meridian.lib.config.model_base import ConfigModel
-from meridian.lib.utils.json_shapes import is_json_object, json_list
-
-if TYPE_CHECKING:
-    from pydantic import ValidationError
+from meridian.lib.utils.json_shapes import is_json_object, is_object_sequence
 
 logger = logging.getLogger(__name__)
 
 ValidationPath = tuple[str | int, ...]
 ValidationPathFormatter = Callable[[ValidationPath], str]
-
-
-def _nested_model_type(annotation: object) -> type[BaseModel] | None:
-    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-        return annotation
-    origin = get_origin(annotation)
-    if origin in (Union, UnionType):
-        nested = {
-            model
-            for member in get_args(annotation)
-            if member is not type(None) and (model := _nested_model_type(member)) is not None
-        }
-        return next(iter(nested)) if len(nested) == 1 else None
-    if origin is tuple:
-        members = get_args(annotation)
-        if len(members) == 2 and members[1] is Ellipsis:
-            return _nested_model_type(members[0])
-    return None
 
 
 def validation_error_path(location: ValidationPath) -> str:
@@ -114,36 +92,39 @@ def warn_unknown_model_keys(
     model: type[BaseModel],
     source: str,
 ) -> None:
-    """Warn for ignored Pydantic extras without duplicating field validation."""
+    """Warn for keys Pydantic would ignore, using Pydantic's own traversal.
 
-    root_field = model.model_fields.get("root")
-    root_model = (
-        _nested_model_type(root_field.annotation) if root_field is not None else None
-    )
-    root_items = json_list(raw_value)
-    if root_model is not None and root_items is not None:
-        for index, item in enumerate(root_items, start=1):
-            warn_unknown_model_keys(item, model=root_model, source=f"{source}[{index}]")
+    Validates once with extras kept, then reports ``model_extra`` from the
+    validated tree. Invalid input warns nothing: the authoritative validation
+    that follows reports the real error.
+    """
+
+    try:
+        validated = model.model_validate(raw_value, extra="allow")
+    except ValidationError:
         return
+    _warn_extras(validated, source)
 
-    if not is_json_object(raw_value):
-        return
 
-    extra_behavior = model.model_config.get("extra")
-    ignored_keys: frozenset[str] = (
-        model.config_ignored_keys if issubclass(model, ConfigModel) else frozenset()
-    )
-    silences_extras = model.config_silences_extras if issubclass(model, ConfigModel) else False
-    for key, value in raw_value.items():
-        field = model.model_fields.get(key)
-        if field is not None:
-            nested_model = _nested_model_type(field.annotation)
-            if nested_model is not None:
-                warn_unknown_model_keys(
-                    value,
-                    model=nested_model,
-                    source=f"{source}.{key}",
-                )
-            continue
-        if key not in ignored_keys and not silences_extras and extra_behavior != "forbid":
-            logger.warning("Ignoring unknown Meridian config key '%s.%s'.", source, key)
+def _is_object_root_model(value: object) -> TypeIs[RootModel[object]]:
+    return isinstance(value, RootModel)
+
+
+def _warn_extras(value: object, path: str) -> None:
+    if _is_object_root_model(value):
+        _warn_extras(value.root, path)
+    elif isinstance(value, BaseModel):
+        model = type(value)
+        silenced = model.model_config.get("extra") == "forbid" or (
+            issubclass(model, ConfigModel) and model.config_silences_extras
+        )
+        for key in () if silenced else (value.model_extra or {}):
+            logger.warning("Ignoring unknown Meridian config key '%s.%s'.", path, key)
+        for name in model.model_fields:
+            _warn_extras(getattr(value, name), f"{path}.{name}")
+    elif is_object_sequence(value):
+        for index, item in enumerate(value, start=1):
+            _warn_extras(item, f"{path}[{index}]")
+    elif is_json_object(value):
+        for key, item in value.items():
+            _warn_extras(item, f"{path}.{key}")

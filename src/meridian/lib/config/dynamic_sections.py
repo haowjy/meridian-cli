@@ -10,7 +10,6 @@ from pydantic import (
     RootModel,
     StringConstraints,
     ValidationError,
-    model_validator,
 )
 
 from meridian.lib.config.errors import config_validation_error, warn_unknown_model_keys
@@ -37,19 +36,6 @@ class DynamicContextConfig(RootModel[dict[str, DynamicContextEntry]]):
     """Validated named context entries."""
 
     model_config = ConfigDict(frozen=True, strict=True)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _warn_unknown_keys(cls, value: object) -> object:
-        if not is_json_object(value):
-            return value
-        for context_name, context_value in value.items():
-            warn_unknown_model_keys(
-                context_value,
-                model=DynamicContextEntry,
-                source=f"context.{context_name}",
-            )
-        return value
 
 
 class DynamicConfigSections(BaseModel):

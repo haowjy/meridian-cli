@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.config.loader import load_config, load_user_config
+from meridian.lib.config.loader import load_config, load_config_with_sources, load_user_config
 from meridian.lib.config.project_config_state import resolve_project_config_state
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.project_root import resolve_project_root_resolution
@@ -280,6 +280,54 @@ def test_config_loader_owns_unknown_hook_key_warning(
     assert caplog.messages == [
         "Ignoring unknown Meridian config key 'hooks[1].bogus'."
     ]
+
+
+def test_config_loader_owns_unknown_context_key_warning(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "meridian.toml").write_text(
+        "[context.work]\n"
+        'source = "git"\n'
+        'path = ".meridian/work"\n'
+        'archive = ".meridian/archive/work"\n'
+        "[context.kb]\n"
+        'bogus = "warn once"\n',
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="meridian.lib.config.errors"):
+        loaded = load_config_with_sources(project_root)
+
+    assert caplog.messages == [
+        "Ignoring unknown Meridian config key 'context.kb.bogus'."
+    ]
+    assert loaded.dynamic.context is not None
+    assert set(loaded.dynamic.context) == {"work", "kb"}
+
+
+def test_malformed_hooks_table_logs_no_unknown_key_warning(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    config_path = project_root / "meridian.toml"
+    config_path.write_text("[hooks]\na = 1\n", encoding="utf-8")
+
+    with (
+        caplog.at_level(logging.WARNING, logger="meridian.lib.config.errors"),
+        pytest.raises(ValueError) as exc_info,
+    ):
+        load_config(project_root)
+
+    assert str(exc_info.value) == (
+        "Invalid value for 'hooks': expected array[table], got dict ({'a': 1}) "
+        f"in '{config_path}'."
+    )
+    assert caplog.messages == []
 
 
 def test_load_config_keeps_history_unknown_keys_forbidden(tmp_path: Path) -> None:

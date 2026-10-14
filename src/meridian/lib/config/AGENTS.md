@@ -47,11 +47,14 @@ Pydantic settings sources (no `pydantic-settings`) or ambient loader state.
 **The models are the only validation path.** Every config shape is a Pydantic model
 (`models.py`, `harness_models.py`, `history_models.py`) rooted at `MeridianConfig`,
 including `[env]` and the dynamic sections' descriptor models. Field types and
-validators carry the constraints; unknown-key policy is `ClassVar`s on `ConfigModel`
-(`config_ignored_keys`, `config_silences_extras`); file aliases and env-var names are
-`config_field()` metadata. Never add a hand-written normalizer that re-checks a shape
-a model already declares: two validators for one shape drift apart. Format
-validation failures through `errors.py` so every message names the key and file.
+validators carry the constraints. Unknown-key warnings come from one
+`extra="allow"` validation pass and its `model_extra` values, with Pydantic owning
+the traversal; never walk annotations separately. `config_silences_extras` is the
+only warning-policy `ClassVar`. The real validation pass still makes
+`extra="forbid"` models hard-fail. File aliases and env-var names are `config_field()`
+metadata. Never add a hand-written normalizer that re-checks a shape a model already
+declares: two validators for one shape drift apart. Format validation failures
+through `errors.py` so every message names the key and file.
 
 **A field without `config_field()` metadata has no env var and no `config get/set`.**
 `_env_alias_overrides()` reads env vars only from `OPTION_CATALOG`, built from that

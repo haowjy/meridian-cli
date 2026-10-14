@@ -9,9 +9,10 @@ nightly schedule.
 - Routine CI and the local pre-push hook run the same `scripts/preflight.sh fast`
   gate over default pytest paths, lint and typecheck; its 60-second budget is a
   warning target and never fails or stops the gate.
-- Full Python and compatibility jobs run only on dispatch/nightly. The explicit
-  `scripts/preflight.sh full` gate still builds extensions, runs every Python
-  test and builds packages; releases use it too.
+- PRs, manual dispatches and nightly schedules also run
+  `scripts/preflight.sh full`, which builds extensions, runs every Python test
+  and builds packages; releases use it too. The compatibility job remains
+  dispatch/nightly only.
 - Both gates clear inherited pytest selection filters. Focused developer test
   commands remain available separately.
 
