@@ -16,9 +16,7 @@ from meridian.lib.config.loader import OPTION_CATALOG
 from meridian.lib.config.models import MeridianConfig, PrimaryConfig
 from meridian.lib.config.preserving_edit import (
     mutate_project_config,
-    project_config_transaction,
     reset_scalar_option,
-    set_project_id,
     set_scalar_option,
 )
 from meridian.lib.config.project_config_state import (
@@ -42,7 +40,6 @@ from meridian.lib.ops.runtime import (
     async_from_sync,
     resolve_runtime_authority_for_read,
 )
-from meridian.lib.platform.atomic import atomic_write_text
 from meridian.lib.state.paths import (
     RuntimePaths,
     load_context_config,
@@ -51,8 +48,7 @@ from meridian.lib.state.paths import (
 )
 from meridian.lib.state.project_identity import (
     AdHoc,
-    generate_committed_project_id,
-    get_committed_project_id,
+    ensure_project_identity,
     resolve_project_identity,
 )
 from meridian.lib.state.user_paths import get_project_home, get_user_home
@@ -534,19 +530,9 @@ def ensure_state_bootstrap_sync(project_root: Path) -> ConfigInitOutput:
         if isinstance(prior_identity, AdHoc) and prior_identity.materialized
         else None
     )
-    user_home = get_user_home()
-    with project_config_transaction(project_root, user_home):
-        state = _resolve_project_config_state(project_root)
-        created = state.path is None
-        try:
-            original = state.write_path.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            original = _scaffold_template()
-
-        if get_committed_project_id(project_root) is None:
-            project_id = generate_committed_project_id(user_home)
-            updated = set_project_id(original, project_id, config_path=state.write_path)
-            atomic_write_text(state.write_path, updated)
+    state = _resolve_project_config_state(project_root)
+    created = state.path is None
+    ensure_project_identity(project_root, scaffold=_scaffold_template())
 
     ensure_runtime_state_bootstrap_sync(project_root)
     note = (

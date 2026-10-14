@@ -152,7 +152,11 @@ def generate_committed_project_id(user_home: Path) -> str:
     raise RuntimeError("Failed to generate a unique project ID after 10 attempts")
 
 
-def _mint_committed_project_id(project_root: Path) -> Committed:
+def _mint_committed_project_id(
+    project_root: Path,
+    *,
+    scaffold: str | None = None,
+) -> Committed:
     user_home = get_user_home()
     with project_config_transaction(project_root, user_home):
         existing = get_committed_project_id(project_root)
@@ -165,7 +169,7 @@ def _mint_committed_project_id(project_root: Path) -> Committed:
         try:
             original = config_path.read_text(encoding="utf-8")
         except FileNotFoundError:
-            original = ""
+            original = scaffold or ""
         updated = set_project_id(original, candidate, config_path=config_path)
         if updated != original:
             atomic_write_text(config_path, updated)
@@ -192,10 +196,16 @@ def _materialize_adhoc_identity(project_root: Path, identity: AdHoc) -> AdHoc:
     return AdHoc(id=identity.id, materialized=True)
 
 
-def ensure_project_identity(project_root: Path) -> ProjectIdentity:
+def ensure_project_identity(
+    project_root: Path,
+    *,
+    scaffold: str | None = None,
+) -> ProjectIdentity:
     """Ensure identity for a write path without littering an ad-hoc directory."""
 
     root = project_root.expanduser().resolve()
+    if scaffold is not None:
+        return _mint_committed_project_id(root, scaffold=scaffold)
     identity = resolve_project_identity(root)
     if isinstance(identity, Committed):
         if identity.id is not None:

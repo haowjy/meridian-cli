@@ -104,6 +104,18 @@ def test_mars_only_write_mints_committed_identity(tmp_path: Path) -> None:
     assert payload["project"]["id"] == identity.id
 
 
+def test_scaffold_and_committed_identity_are_written_together(tmp_path: Path) -> None:
+    identity = ensure_project_identity(
+        tmp_path,
+        scaffold="[defaults]\nmax_depth = 7\n",
+    )
+
+    assert isinstance(identity, Committed)
+    payload = tomllib.loads((tmp_path / "meridian.toml").read_text(encoding="utf-8"))
+    assert payload["defaults"]["max_depth"] == 7
+    assert payload["project"]["id"] == identity.id
+
+
 def test_ensure_committed_identity_preserves_existing_content_verbatim(
     tmp_path: Path,
 ) -> None:
