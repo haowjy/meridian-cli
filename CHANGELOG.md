@@ -17,6 +17,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   appearing early.
 
 ### Fixed
+- Preserve legacy autosync conflict fields when marking a conflict resolved.
 - Keep permanent malformed JSONL rows from repeating warnings on every state read.
 - Skip malformed legacy native-session rows whose `chat_id` is not a string or
   `harness_session_ids` is not a list.

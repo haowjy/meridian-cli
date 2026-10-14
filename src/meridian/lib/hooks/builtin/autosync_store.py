@@ -22,7 +22,9 @@ from typing import Protocol
 from pydantic import (
     BaseModel,
     ConfigDict,
+    RootModel,
     SerializerFunctionWrapHandler,
+    ValidationError,
     field_validator,
     model_serializer,
     model_validator,
@@ -40,9 +42,9 @@ _DEFAULT_LOCK_TIMEOUT_SECONDS = 60.0
 
 
 class ConflictRecord(BaseModel):
-    """One conflict, as stored on disk."""
+    """Public view of one stored conflict."""
 
-    model_config = ConfigDict(frozen=True, strict=True, extra="allow")
+    model_config = ConfigDict(frozen=True, strict=True, extra="ignore")
 
     id: str = ""
     context: str = "unknown"
@@ -119,6 +121,10 @@ class ConflictRecord(BaseModel):
         else:
             document.pop("resolved_at", None)
         return document
+
+
+class _ConflictDocument(RootModel[dict[str, object]]):
+    """Lossless conflict document used when mutating an existing file."""
 
 
 class SyncState(BaseModel):
@@ -274,14 +280,14 @@ def read_conflicts(sync_root: Path, *, runtime_root: Path) -> list[ConflictRecor
     for file_path in files:
         if file_path.suffix != ".json":
             continue
-        document = read_model(file_path, ConflictRecord)
-        if document is None:
+        record = _read_conflict_record(file_path)
+        if record is None:
             continue
         records.append(
-            document.model_copy(
+            record.model_copy(
                 update={
-                    "id": document.id or file_path.stem,
-                    "sync_root": document.sync_root or sync_root.as_posix(),
+                    "id": record.id or file_path.stem,
+                    "sync_root": record.sync_root or sync_root.as_posix(),
                 }
             )
         )
@@ -372,30 +378,46 @@ def _mark_resolved(sync_root: Path, conflict_id: str, *, runtime_root: Path) -> 
     if target is None:
         return False
 
-    expected: ConflictRecord | None = None
+    expected: _ConflictDocument | None = None
 
-    def resolve(document: ConflictRecord | None) -> tuple[ConflictRecord | None, bool]:
+    def resolve(
+        document: _ConflictDocument | None,
+    ) -> tuple[_ConflictDocument | None, bool]:
         nonlocal expected
         if document is None:
             return None, False
-        expected = document.model_copy(
-            update={"resolved": True, "resolved_at": datetime.now(UTC).isoformat()}
+        expected = _ConflictDocument.model_validate(
+            {
+                **document.root,
+                "resolved": True,
+                "resolved_at": datetime.now(UTC).isoformat(),
+            }
         )
         return expected, True
 
     try:
         _updated, resolved = mutate_model(
             target,
-            ConflictRecord,
+            _ConflictDocument,
             resolve,
             lock=lock_file(autosync_lock_path(sync_root), reentrant=True),
             indent=2,
         )
         return resolved
     except AtomicReplaceDurabilityError:
-        return expected is not None and read_model(target, ConflictRecord) == expected
+        return expected is not None and read_model(target, _ConflictDocument) == expected
     except OSError:
         return False
+
+
+def _read_conflict_record(path: Path) -> ConflictRecord | None:
+    document = read_model(path, _ConflictDocument)
+    if document is None:
+        return None
+    try:
+        return ConflictRecord.model_validate(document.root)
+    except ValidationError:
+        return None
 
 
 def _find_conflict_file(
@@ -406,15 +428,15 @@ def _find_conflict_file(
 ) -> Path | None:
     root = conflict_dir(sync_root, runtime_root=runtime_root)
     direct = root / f"{conflict_id}.json"
-    direct_document = read_model(direct, ConflictRecord)
-    if direct_document is not None:
+    direct_record = _read_conflict_record(direct)
+    if direct_record is not None:
         return direct
 
     for file_path in root.glob("*.json"):
-        document = read_model(file_path, ConflictRecord)
-        if document is None:
+        record = _read_conflict_record(file_path)
+        if record is None:
             continue
-        if (document.id or file_path.stem) == conflict_id:
+        if (record.id or file_path.stem) == conflict_id:
             return file_path
     return None
 
