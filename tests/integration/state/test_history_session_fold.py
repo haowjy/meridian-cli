@@ -109,43 +109,59 @@ def test_incremental_replay_survives_restart_and_matches_cold(tmp_path: Path):
 
 
 def test_incremental_replay_waits_for_and_repairs_a_torn_tail(tmp_path: Path) -> None:
-    _append(tmp_path, _start("g1"))
+    _append(
+        tmp_path,
+        _start("g1", chat_id="c1", harness_session_id="native-1"),
+        _start("g2", chat_id="c2", harness_session_id="native-2"),
+    )
     index = HistoryIndex(tmp_path)
     index.rebuild()
     sessions_path = tmp_path / "sessions.jsonl"
+    assert sorted(record.chat_id for record in index.sessions()) == ["c1", "c2"]
 
     uncommitted = _start(
-        "g2",
-        chat_id="c2",
-        harness_session_id="native-2",
+        "g3",
+        chat_id="c3",
+        harness_session_id="native-3",
     )
     with sessions_path.open("ab") as handle:
         handle.write(json.dumps(uncommitted).encode("utf-8"))
     HistoryChanges(tmp_path).mark(HistorySource(kind="sessions"))
 
-    assert {record.chat_id for record in index.sessions()} == {"c1"}
+    assert sorted(record.chat_id for record in index.sessions()) == ["c1", "c2"]
 
     next_event = _start(
-        "g3",
-        chat_id="c3",
-        harness_session_id="native-3",
+        "g4",
+        chat_id="c4",
+        harness_session_id="native-4",
     )
     append_durable_jsonl_line(sessions_path, json.dumps(next_event) + "\n")
     HistoryChanges(tmp_path).mark(HistorySource(kind="sessions"))
 
-    assert {record.chat_id for record in index.sessions()} == {"c1", "c2", "c3"}
+    assert sorted(record.chat_id for record in index.sessions()) == ["c1", "c2", "c3", "c4"]
 
     final_event = _start(
-        "g4",
-        chat_id="c4",
-        harness_session_id="native-4",
+        "g5",
+        chat_id="c5",
+        harness_session_id="native-5",
     )
     with sessions_path.open("ab") as handle:
         handle.write(b"{malformed middle row}\n")
         handle.write((json.dumps(final_event) + "\n").encode("utf-8"))
     HistoryChanges(tmp_path).mark(HistorySource(kind="sessions"))
 
-    assert {record.chat_id for record in index.sessions()} == {"c1", "c2", "c3", "c4"}
+    assert sorted(record.chat_id for record in index.sessions()) == [
+        "c1",
+        "c2",
+        "c3",
+        "c4",
+        "c5",
+    ]
+    with sqlite3.connect(index.path) as db:
+        cursor = db.execute(
+            "SELECT extent FROM cursors WHERE source = 'sessions'"
+        ).fetchone()
+    assert cursor == (sessions_path.stat().st_size,)
 
 
 def test_generated_histories_index_bindings_match_authority(tmp_path: Path, monkeypatch):
