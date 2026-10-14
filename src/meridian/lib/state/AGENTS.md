@@ -92,6 +92,14 @@ both scopes and released IDs, read under a single projection-lock acquisition.
 
 ## History discovery and retention
 
+Machine-wide retention has disjoint owners: committed-root scanning rejects
+`adhoc.*`, while ad-hoc scanning accepts only that prefix. Ad-hoc activity comes
+from `origin.json` mtime plus persisted spawn/session start and finish times, not
+from incidental file reads. Pruning rechecks eligibility under the exclusive
+project-lifetime gate and removes `projects/<id>/` with `context/<id>/`.
+`state.adhoc_retention_days` is user-config/environment-only; cwd project config
+must never control a machine-wide scan.
+
 Use `history_index.py` for filtered discovery, not repeated broad authority scans.
 Keep lifecycle/control decisions on direct authoritative reads. All new indexed
 writers must publish dirty intent before file mutation; SQLite is never a writer
@@ -205,7 +213,8 @@ v2 read upgrader, and pure transitions.
 **Don't read `state.json` without `read_state()`** — raw JSON reads bypass Pydantic
 validation and miss `SpawnRecord` reconstruction from `starting-prompt.md`.
 
-**Don't use `*_for_write()` on read paths** — creates project identity in clean checkouts.
+**Don't use `*_for_write()` on read paths** — mints committed identity or
+materializes ad-hoc user state during an otherwise pure read.
 
 **Don't write state files with `open()`** — use `atomic_write_text()` or `append_text_line()`.
 

@@ -31,6 +31,12 @@ argv
   under the user home; it never creates `meridian.toml` in a bare directory.
   Read-only preparation creates neither identity nor state.
 - **`root_source = RootSource.ARGV`** commands (e.g. `meridian init [path]`) defer bootstrap until after argument parsing. They call `prepare_for_project_write(arg_derived_root)` themselves — they don't receive a pre-prepared context.
+- **Init is the tier boundary.** `init` / `config init` atomically write the
+  scaffold and committed ID before bootstrap. They never move ad-hoc history;
+  output names a previously materialized `adhoc.*` root instead.
+- **Doctor is a pure observer when no runtime root exists.** Its project repairs
+  are gated on an existing root; `--global` may scan and explicitly prune state
+  but must not mint identity or initialize the user Mars root.
 - **`validate_fork_mode()` is the single place for fork/from/continue conflict checks.** `spawn.py` and `primary_launch.py` both call it and consume `ForkModeResolution`. Do not re-implement conflict logic or ref resolution in handlers.
 - **`canonicalize_argv()` runs before every classifier.** It normalizes bare `--fork`/`--fork-fresh`/`--from` values and routes bare `--continue` to `session browse`. Never classify or call Cyclopts on raw argv containing these flags.
 - **Session browse keeps process transfer outside the TUI.** `session_cmd.py` selects plain, interactive, or refused presentation before loading `cli/browse/`. The picker returns a typed re-entry decision; only the handler may `exec` it after the full-screen application has closed.

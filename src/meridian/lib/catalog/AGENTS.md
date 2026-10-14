@@ -10,10 +10,13 @@ Zero builtin aliases. All alias-to-model-id mappings come from mars packages
 
 `mars_roots.py` is the only package-root decider. Project content follows Mars's
 nearest-`mars.toml` walk-up; otherwise the primary root is the user package project
-at `~/.meridian/mars`. Project-scope read and launch subprocesses add the user root
-as `--fallback-root` when `mars_capabilities.py` confirms that the installed Mars
+at `~/.meridian/mars`. Direct agent and skill discovery layers project content over
+user content. Project-scope read and launch subprocesses add the user root as
+`--fallback-root` when `mars_capabilities.py` confirms that the installed Mars
 supports it. The primary root remains the sole configuration authority. Every Mars
-subprocess receives the resolved primary as `--root`.
+subprocess receives the resolved primary as `--root`. `ensure_user_mars_root()`
+belongs only on Mars operations that need a runnable root; read-pure diagnostics
+such as bare-directory `doctor` must report the resolved path without initializing it.
 
 ## Mental Model
 

@@ -48,11 +48,14 @@ class InitResult(BaseModel):
     targets_linked: list[str]
     content: dict[str, list[str]]
     primary_agent: PrimaryAgentAction | None = None
+    note: str | None = None
     next_step: str = "Run `meridian` to start."
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
         lines = [f"Initialized {self.project_root}", ""]
+        if self.note is not None:
+            lines.extend((f"note: {self.note}", ""))
         if self.packages_requested:
             pkg_str = ", ".join(self.packages_requested)
             lines.append(f"  Packages:   {pkg_str} ({len(self.packages_requested)} packages)")
@@ -316,6 +319,7 @@ def run_init_flow(
         targets_linked=targets,
         content=content,
         primary_agent=primary_action,
+        note=config_result.note,
     )
 
     if output_format == "json":

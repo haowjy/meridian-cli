@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.config.loader import load_config
+from meridian.lib.config.loader import load_config, load_user_config
 from meridian.lib.config.project_config_state import resolve_project_config_state
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.project_root import resolve_project_root_resolution
@@ -26,6 +26,30 @@ def test_resolve_project_root_uses_literal_cwd(
     assert resolution.project_root == project_root.resolve()
     assert resolution.execution_cwd == project_root.resolve()
     assert resolution.source == "cwd"
+
+
+def test_load_user_config_excludes_project_retention_layer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_home = tmp_path / "user-home"
+    user_home.mkdir()
+    monkeypatch.setenv("MERIDIAN_HOME", user_home.as_posix())
+    (user_home / "config.toml").write_text(
+        "[state]\nadhoc_retention_days = 12\n",
+        encoding="utf-8",
+    )
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "meridian.toml").write_text(
+        "[state]\nadhoc_retention_days = 1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(project_root)
+
+    assert load_user_config().state.adhoc_retention_days == 12
+    monkeypatch.setenv("MERIDIAN_STATE_ADHOC_RETENTION_DAYS", "3")
+    assert load_user_config().state.adhoc_retention_days == 3
 
 
 def test_resolve_project_root_nested_cwd_does_not_walk_to_ancestor(

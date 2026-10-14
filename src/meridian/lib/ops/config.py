@@ -16,7 +16,9 @@ from meridian.lib.config.loader import OPTION_CATALOG
 from meridian.lib.config.models import MeridianConfig, PrimaryConfig
 from meridian.lib.config.preserving_edit import (
     mutate_project_config,
+    project_config_transaction,
     reset_scalar_option,
+    set_project_id,
     set_scalar_option,
 )
 from meridian.lib.config.project_config_state import (
@@ -47,7 +49,13 @@ from meridian.lib.state.paths import (
     resolve_project_paths_for_write,
     resolve_project_runtime_root_for_write,
 )
-from meridian.lib.state.user_paths import get_user_home
+from meridian.lib.state.project_identity import (
+    AdHoc,
+    generate_committed_project_id,
+    get_committed_project_id,
+    resolve_project_identity,
+)
+from meridian.lib.state.user_paths import get_project_home, get_user_home
 
 _MISSING_PROJECT_CONFIG_MESSAGE = "no project config here; run 'meridian init'"
 logger = structlog.get_logger(__name__)
@@ -64,11 +72,15 @@ class ConfigInitOutput(BaseModel):
 
     path: str
     created: bool
+    note: str | None = None
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
         status = "created" if self.created else "exists"
-        return f"{status}: {self.path}"
+        result = f"{status}: {self.path}"
+        if self.note is not None:
+            result += f"\nnote: {self.note}"
+        return result
 
 
 class ConfigShowInput(BaseModel):
@@ -521,16 +533,36 @@ def ensure_runtime_state_bootstrap_sync(project_root: Path) -> None:
 
 
 def ensure_state_bootstrap_sync(project_root: Path) -> ConfigInitOutput:
-    """Ensure runtime state exists and scaffold project config when missing."""
+    """Atomically establish committed config identity, then bootstrap its state."""
 
-    state = _resolve_project_config_state(project_root)
-    if state.path is not None:
-        ensure_runtime_state_bootstrap_sync(project_root)
-        return ConfigInitOutput(path=state.path.as_posix(), created=False)
+    project_root = project_root.expanduser().resolve()
+    prior_identity = resolve_project_identity(project_root)
+    prior_adhoc_root = (
+        get_project_home(prior_identity.id)
+        if isinstance(prior_identity, AdHoc) and prior_identity.materialized
+        else None
+    )
+    user_home = get_user_home()
+    with project_config_transaction(project_root, user_home):
+        state = _resolve_project_config_state(project_root)
+        created = state.path is None
+        try:
+            original = state.write_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            original = _scaffold_template()
 
-    atomic_write_text(state.write_path, _scaffold_template())
+        if get_committed_project_id(project_root) is None:
+            project_id = generate_committed_project_id(user_home)
+            updated = set_project_id(original, project_id, config_path=state.write_path)
+            atomic_write_text(state.write_path, updated)
+
     ensure_runtime_state_bootstrap_sync(project_root)
-    return ConfigInitOutput(path=state.write_path.as_posix(), created=True)
+    note = (
+        f"earlier ad-hoc state at {prior_adhoc_root.as_posix()} is not carried over"
+        if prior_adhoc_root is not None
+        else None
+    )
+    return ConfigInitOutput(path=state.write_path.as_posix(), created=created, note=note)
 
 
 def config_init_sync(payload: ConfigInitInput) -> ConfigInitOutput:

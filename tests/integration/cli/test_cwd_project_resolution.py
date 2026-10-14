@@ -131,6 +131,25 @@ def test_context_observes_unmaterialized_adhoc_identity_without_writing(
 
 
 @pytest.mark.integration
+def test_doctor_observes_bare_directory_without_writing(
+    cwd_without_project_id: Path,
+    meridian_home: Path,
+) -> None:
+    result = _run_meridian(
+        ["doctor"],
+        cwd=cwd_without_project_id,
+        meridian_home=meridian_home,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "identity_tier: adhoc" in result.stdout
+    assert "project_state: no state here" in result.stdout
+    assert "mars_roots.scope: user" in result.stdout
+    assert list(cwd_without_project_id.iterdir()) == []
+    assert list(meridian_home.iterdir()) == []
+
+
+@pytest.mark.integration
 def test_hooks_run_is_noop_without_materialized_state(
     cwd_without_project_id: Path,
     meridian_home: Path,

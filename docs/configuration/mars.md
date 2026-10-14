@@ -4,6 +4,27 @@ Use Mars config for package materialization, project routing defaults, model
 aliases, and per-agent runtime policy. The generated `.mars/agents/` profiles
 are build output; do not edit them directly.
 
+## User packages and bare directories
+
+User packages live in the ordinary Mars project at `~/.meridian/mars`. Populate
+and compile it explicitly:
+
+```bash
+meridian mars --user add haowjy/meridian-base
+meridian mars --user sync
+```
+
+In a directory without a project `mars.toml`, Meridian uses this user root for
+agents, skills, aliases, models, and launch defaults. With no `targets` configured,
+the user root permits every installed harness. A project Mars root remains
+authoritative for routing config and package content takes precedence over user
+content.
+
+Package mutations without `--user` require a project Mars root. In a bare
+directory they fail before Mars can create a marker. `meridian mars init` is the
+explicit exception: it writes only `mars.toml`; the next Meridian runtime write
+mints the committed `[project] id` in `meridian.toml`.
+
 ## Project routing defaults
 
 ```toml
