@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Sequence
 from dataclasses import dataclass
+
+from meridian.lib.core.identity import current_run_id
 
 SELF_FORK_REF_SENTINEL = "__SELF__"
 SYNTHETIC_VALUE_TOKENS: frozenset[str] = frozenset({SELF_FORK_REF_SENTINEL})
@@ -126,7 +127,7 @@ def resolve_optional_ref(raw_ref: str | None, *, flag_name: str = "--fork") -> s
     if normalized != SELF_FORK_REF_SENTINEL:
         return normalized
 
-    spawn_id = os.environ.get("MERIDIAN_SPAWN_ID", "").strip()
+    spawn_id = current_run_id()
     if not spawn_id:
         if flag_name == "--fork":
             raise ValueError(FORK_INFERENCE_ERROR)

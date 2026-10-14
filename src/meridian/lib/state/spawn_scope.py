@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.state.json_doc import mutate_model, read_model
 from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
@@ -43,7 +43,7 @@ class _StoredSpawnScope(BaseModel):
         return value
 
 
-def _scope_path_for_read(project_root: Path, spawn_id: str) -> Path | None:
+def _scope_path_for_read(project_root: Path, spawn_id: RunId) -> Path | None:
     from meridian.lib.state.paths import resolve_project_runtime_root_or_none
 
     runtime_root = resolve_project_runtime_root_or_none(project_root)
@@ -55,7 +55,7 @@ def _scope_path_for_read(project_root: Path, spawn_id: str) -> Path | None:
     )
 
 
-def read_spawn_scope(project_root: Path, spawn_id: str) -> SpawnScope:
+def read_spawn_scope(project_root: Path, spawn_id: RunId) -> SpawnScope:
     """Read scope.json for a spawn. Tolerates missing, empty, or corrupt files."""
 
     path = _scope_path_for_read(project_root, spawn_id)
@@ -71,7 +71,7 @@ def read_spawn_scope(project_root: Path, spawn_id: str) -> SpawnScope:
 
 def write_spawn_scope_task_dir(
     project_root: Path,
-    spawn_id: str,
+    spawn_id: RunId,
     task_dir: Path | None,
 ) -> bool:
     """Write or tombstone task_dir in scope.json. Atomic tmp+rename."""
@@ -86,7 +86,7 @@ def write_spawn_scope_task_dir(
             path,
             _StoredSpawnScope,
             lambda _current: (stored, None),
-            lock=published_artifact_lock(runtime_root, SpawnId(spawn_id)),
+            lock=published_artifact_lock(runtime_root, spawn_id),
         )
     except PublishedArtifactUnavailable:
         return False

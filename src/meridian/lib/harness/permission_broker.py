@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import (
     HarnessConnection,
@@ -318,7 +319,7 @@ class PermissionBroker(ServerRequestHandler):
         line = json.dumps(_transition_to_json(transition), sort_keys=True, separators=(",", ":"))
         mutate_published_spawn_artifact(
             self._runtime_root,
-            self._spawn_id,
+            parse_ref(self._spawn_id, row_key=True),
             lambda: append_durable_jsonl_line(self._journal_path, line),
         )
         self._transitions.append(transition)
@@ -379,7 +380,7 @@ class PermissionBroker(ServerRequestHandler):
         }
         mutate_published_spawn_artifact(
             self._runtime_root,
-            self._spawn_id,
+            parse_ref(self._spawn_id, row_key=True),
             lambda: atomic_write_text(
                 self._cursor_path,
                 json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",

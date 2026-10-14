@@ -6,7 +6,7 @@ import { classifyWorkId } from "../../shared/ids";
 import { runMeridianCommand } from "../../shared/meridian_cli";
 import { admittedWorkIds, readDeliveryReceipts } from "../../shared/delivery_receipts";
 import {
-  currentSpawnIdFromEnv,
+  currentRunIdFromEnv,
   resolveBashLogsDir,
   resolveBashRecordsPath,
   resolveDeliveryReceiptsPath,
@@ -153,7 +153,7 @@ const scope = globalThis as typeof globalThis & { [ownersKey]?: Map<string, Bash
 const owners = scope[ownersKey] ??= new Map<string, BashRuntime>();
 
 export class BashRuntime {
-  private readonly spawnId = currentSpawnIdFromEnv();
+  private readonly spawnId = currentRunIdFromEnv();
   private readonly recordsPath = resolveBashRecordsPath(this.spawnId);
   private readonly receiptsPath = resolveDeliveryReceiptsPath(this.spawnId);
   private readonly logStore = new BashLogStore(resolveBashLogsDir(this.spawnId));

@@ -4,6 +4,8 @@ import os
 from collections.abc import Mapping
 from contextlib import suppress
 
+from meridian.lib.core.identity import current_spawn_id
+
 DEPTH_ENV = "_MERIDIAN_DEPTH"
 MERIDIAN_SPAWN_ID_ENV = "MERIDIAN_SPAWN_ID"
 
@@ -62,8 +64,7 @@ def is_managed_meridian_session(env: Mapping[str, str] | None = None) -> bool:
     ``MERIDIAN_SPAWN_ID`` rather than ``MERIDIAN_MANAGED``, which the entrypoint
     ``setdefault``s on every invocation (including a human's raw shell).
     """
-    source = os.environ if env is None else env
-    return bool((source.get(MERIDIAN_SPAWN_ID_ENV) or "").strip())
+    return current_spawn_id(env) is not None
 
 
 def is_root_side_effect_process(env: Mapping[str, str] | None = None) -> bool:

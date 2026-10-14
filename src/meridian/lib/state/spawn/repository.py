@@ -17,6 +17,8 @@ from uuid import uuid4
 from pydantic import ValidationError, model_validator
 
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
+from meridian.lib.core.refs import parse_ref
+from meridian.lib.core.types import RunId
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
@@ -115,19 +117,19 @@ class Missing:
 type LockedMutationResult = Applied | Declined | Missing
 
 
-def _spawn_dir(spawns_dir: Path, spawn_id: str) -> Path:
+def _spawn_dir(spawns_dir: Path, spawn_id: RunId) -> Path:
     return spawns_dir / spawn_id
 
 
-def _state_path(spawns_dir: Path, spawn_id: str) -> Path:
+def _state_path(spawns_dir: Path, spawn_id: RunId) -> Path:
     return _spawn_dir(spawns_dir, spawn_id) / "state.json"
 
 
-def _prompt_path(spawns_dir: Path, spawn_id: str) -> Path:
+def _prompt_path(spawns_dir: Path, spawn_id: RunId) -> Path:
     return _spawn_dir(spawns_dir, spawn_id) / "starting-prompt.md"
 
 
-def spawn_lock_path(spawns_dir: Path, spawn_id: str) -> Path:
+def spawn_lock_path(spawns_dir: Path, spawn_id: RunId) -> Path:
     """Return the stable external-writer lock for one published spawn."""
     return spawns_dir.parent / "locks" / "spawns" / f"{spawn_id}.lock"
 
@@ -157,7 +159,7 @@ def stored_state_to_record(
     )
 
 
-def read_prompt(spawns_dir: Path, spawn_id: str) -> str | None:
+def read_prompt(spawns_dir: Path, spawn_id: RunId) -> str | None:
     """Read a spawn's starting prompt body, if present."""
 
     path = _prompt_path(spawns_dir, spawn_id)
@@ -167,7 +169,7 @@ def read_prompt(spawns_dir: Path, spawn_id: str) -> str | None:
         return None
 
 
-def _read_stored_state(spawns_dir: Path, spawn_id: str) -> StoredSpawnState | None:
+def _read_stored_state(spawns_dir: Path, spawn_id: RunId) -> StoredSpawnState | None:
     path = _state_path(spawns_dir, spawn_id)
     try:
         try:
@@ -226,7 +228,7 @@ def _read_stored_state(spawns_dir: Path, spawn_id: str) -> StoredSpawnState | No
 
 def read_state(
     spawns_dir: Path,
-    spawn_id: str,
+    spawn_id: RunId,
     *,
     include_prompt: bool = True,
 ) -> SpawnRecord | None:
@@ -255,7 +257,7 @@ def _write_state(spawns_dir: Path, record: SpawnRecord) -> None:
 
 def write_state_locked(
     spawns_dir: Path,
-    spawn_id: str,
+    spawn_id: RunId,
     mutator: Callable[[SpawnRecord], SpawnRecord | Decline],
     *,
     allow_terminal_overwrite: bool = False,
@@ -310,8 +312,13 @@ def is_safe_spawn_dir_name(name: str) -> bool:
     )
 
 
-def scan_spawn_ids(spawns_dir: Path) -> list[str]:
-    """Return child directory names that contain a ``state.json`` file."""
+def scan_spawn_ids(spawns_dir: Path) -> list[RunId]:
+    """Return exact child row keys that contain a ``state.json`` file.
+
+    Scans are an authority boundary: legacy nonconforming names remain visible,
+    while callers cannot accidentally pass a stable spawn reference into a row
+    API without resolving it first.
+    """
 
     try:
         entries = os.scandir(spawns_dir)
@@ -320,9 +327,10 @@ def scan_spawn_ids(spawns_dir: Path) -> list[str]:
 
     with entries:
         return sorted(
-            entry.name
+            parse_ref(entry.name, row_key=True)
             for entry in entries
-            if entry.is_dir() and _state_path(spawns_dir, entry.name).is_file()
+            if entry.is_dir()
+            and (Path(entry.path) / "state.json").is_file()
         )
 
 

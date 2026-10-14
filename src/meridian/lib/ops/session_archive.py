@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from graphlib import TopologicalSorter
 from pathlib import Path
@@ -11,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from meridian.lib.config.history_models import HistoryArchiveConfig
 from meridian.lib.config.loader import load_config
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.refs import parse_ref, spawn_of
 from meridian.lib.ops.runner_history_prune import (
     PRUNE_AFTER_DAYS,
     RunnerHistoryPrune,
@@ -46,6 +47,12 @@ from meridian.lib.state.session_identity import (
 )
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import read_state, write_state_locked
+from meridian.lib.state.spawn.runs import (
+    group_runs,
+    retention_dependencies,
+    retention_run_ids,
+    runs_of,
+)
 from meridian.lib.state.spawn_aggregate import cleanup_retired_spawn, retire_published_spawn
 
 
@@ -136,6 +143,24 @@ class SessionArchiveOutput(BaseModel):
         return "\n".join(lines)
 
 
+def _retention_special_runs(records: Iterable[SpawnRecord]) -> set[str]:
+    """Latest rows and retained continuation sources for every stable spawn."""
+    return {key for runs in group_runs(records).values() for key in retention_run_ids(runs)}
+
+
+def _ref_matches(row: SpawnRecord, ref: str) -> bool:
+    parsed = parse_ref(ref)
+    if parsed.kind == "spawn":
+        return parsed.spawn_id == spawn_of(row.id)
+    if parsed.kind == "run":
+        return parsed.run_id == row.id
+    return ref in {
+        str(row.history_id),
+        row.chat_id,
+        row.owner_chat_id,
+    }
+
+
 def _protected(
     root: Path,
 ) -> tuple[dict[str, SpawnRecord], set[str], dict[str, set[str]]]:
@@ -145,7 +170,7 @@ def _protected(
             "Cannot establish retention safety while spawn records are quarantined: "
             + spawn_store.quarantine_hint([report.spawn_id for report in scan.quarantines])
         )
-    records = {record.id: record for record in scan.records}
+    records = {str(record.id): record for record in scan.records}
     sessions = session_store.list_all_session_records(root)
     active_chats = {
         record.chat_id
@@ -157,11 +182,15 @@ def _protected(
         )
     }
     by_history = {row.history_id: row.id for row in records.values() if row.history_id}
+    archived_spawns = {
+        entry.history_id: spawn_of(entry.state.id)
+        for receipt in read_receipts(root) for entry in receipt.records
+    }
     protected: set[str] = set()
     for record in records.values():
         if record.record_mode == "historical":
             continue
-        scopes = read_scope_projection(root, SpawnId(record.id))
+        scopes = read_scope_projection(root, record.id)
         if (
             record.status not in TERMINAL_SPAWN_STATUSES
             or record.chat_id in active_chats
@@ -176,6 +205,7 @@ def _protected(
     # All immutable dependency edges participate, not just local parent aliases.
     # Unknown targets and cycles are unsafe selection inputs, even when terminal.
     edges: dict[str, set[str]] = {}
+    runs_by_spawn = group_runs(records.values())
     for record in records.values():
         targets: set[str] = set()
         for dependency in (
@@ -188,12 +218,14 @@ def _protected(
                 continue
             target = by_history.get(dependency)
             if target is None:
-                protected.add(record.id)
-            else:
+                if archived_spawns.get(dependency) != spawn_of(record.id):
+                    protected.add(record.id)
+            elif spawn_of(target) != spawn_of(record.id):
                 targets.add(target)
         if record.parent_id:
-            if record.parent_id in records:
-                targets.add(record.parent_id)
+            parent_runs = runs_by_spawn.get(record.parent_id, ())
+            if parent_runs:
+                targets.update(str(parent.id) for parent in parent_runs)
             else:
                 protected.add(record.id)
         edges[record.id] = targets
@@ -222,6 +254,11 @@ def _protected(
         unsafe.update(key for key, targets in edges.items() if targets & unsafe)
         changed = len(unsafe) != before
     protected.update(unsafe)
+    special = _retention_special_runs(records.values())
+    for runs in runs_by_spawn.values():
+        ids = {str(row.id) for row in runs}
+        if ids & protected:
+            protected.update(ids & special)
     changed = True
     while changed:
         before = len(protected)
@@ -278,12 +315,7 @@ def archive_history(
         for candidate in candidates:
             if candidate.id in protected or candidate.status not in TERMINAL_SPAWN_STATUSES:
                 continue
-            if refs and not set(refs) & {
-                candidate.id,
-                str(candidate.history_id),
-                candidate.chat_id,
-                candidate.owner_chat_id,
-            }:
+            if refs and not any(_ref_matches(candidate, ref) for ref in refs):
                 continue
             if eligible:
                 activity = last_activity(candidate, None, "")
@@ -325,12 +357,18 @@ def archive_history(
             except (ValueError, OSError, RuntimeError) as exc:
                 capture_errors[candidate.id] = str(exc)
         all_candidates = candidates
-        by_id = {row.id: row for row in candidates if row.id not in protected}
+        by_id = {str(row.id): row for row in candidates if row.id not in protected}
         dependents: dict[str, set[str]] = {key: set() for key in by_id}
         for key, targets in edges.items():
             for target in targets:
                 if key in dependents and target in dependents:
                     dependents[target].add(key)
+        # Special runs leave last. The numerically latest run is last of all,
+        # so removing it cannot expose an older suffix to a concurrent reserve.
+        special = _retention_special_runs(all_candidates)
+        for runs in group_runs(by_id.values()).values():
+            for key, predecessors in retention_dependencies(runs).items():
+                dependents[key].update(predecessors)
         # Apply bundle limits after dependency ordering, so small passes still progress.
         candidates = [by_id[key] for key in TopologicalSorter(dependents).static_order()]
         selected: list[ArchivedRecord] = []
@@ -342,7 +380,7 @@ def archive_history(
             ref
             for ref in refs
             for row in all_candidates
-            if ref in {row.id, str(row.history_id), row.chat_id, row.owner_chat_id}
+            if _ref_matches(row, ref)
         }
         for receipt in read_receipts(root):
             if receipt.event in {"reclaim_prepared", "reclaimed", "imported"}:
@@ -350,23 +388,12 @@ def archive_history(
                     ref
                     for ref in refs
                     for row in receipt.records
-                    if ref
-                    in {
-                        row.state.id,
-                        str(row.history_id),
-                        row.state.chat_id,
-                        row.state.owner_chat_id,
-                    }
+                    if _ref_matches(row.state, ref)
                 )
         if refs and set(refs) - matched:
             raise ValueError(f"History references not found: {sorted(set(refs) - matched)}")
         for candidate in candidates:
-            if refs and not set(refs) & {
-                candidate.id,
-                str(candidate.history_id),
-                candidate.chat_id,
-                candidate.owner_chat_id,
-            }:
+            if refs and not any(_ref_matches(candidate, ref) for ref in refs):
                 continue
             if candidate.id in protected or candidate.status not in TERMINAL_SPAWN_STATUSES:
                 continue
@@ -409,6 +436,21 @@ def archive_history(
             selected.append(record)
             witnesses[record.state.id] = witness
             selected_bytes += size
+        # A protected run may retire only in a pass that captured every loose
+        # run of its spawn. Ordinary old runs can still age out independently.
+        selected_ids = {str(row.state.id) for row in selected} | set(preparation_required)
+        incomplete_special = {
+            key
+            for runs in group_runs(all_candidates).values()
+            if not {str(row.id) for row in runs} <= selected_ids
+            for key in {str(row.id) for row in runs} & special & selected_ids
+        }
+        if incomplete_special:
+            protected.update(incomplete_special)
+            preparation_required = [
+                key for key in preparation_required if key not in incomplete_special
+            ]
+            selected = [row for row in selected if str(row.state.id) not in incomplete_special]
         if not apply or not selected:
             return SessionArchiveOutput(
                 selected=tuple(str(row.history_id) for row in selected),
@@ -439,7 +481,7 @@ def archive_history(
                 current = records.get(captured.state.id)
                 if current is None or current.id in protected_now:
                     continue
-                source = HistorySource(kind="spawn", key=current.id)
+                source = HistorySource(kind="spawn", key=str(current.id))
                 with lock_file(source.lock_path(root)):
                     try:
                         unchanged = (
@@ -461,12 +503,23 @@ def archive_history(
                             }
                         ),
                     )
+                    siblings = group_runs(records.values())[spawn_of(current.id)]
+                    dependencies = retention_dependencies(siblings)
+                    special_now = current.id in dependencies
+                    predecessors = dependencies.get(current.id, set())
                     retired = retire_published_spawn(
                         root,
                         current.id,
-                        can_delete=lambda row, captured=captured: (
-                            row is not None and row.history_id == captured.history_id
+                        can_delete=lambda row, captured=captured, predecessors=predecessors: (
+                            row is not None
+                            and row.history_id == captured.history_id
+                            and (
+                                not predecessors.intersection(
+                                    runs_of(root, spawn_of(row.id))
+                                )
+                            )
                         ),
+                        guard_spawn_allocation=special_now,
                     )
             # No root, spawn or process-scope locks span recursive cleanup.
             if retired is not None and cleanup_retired_spawn(retired):
@@ -557,7 +610,11 @@ def session_restore_sync(payload: SessionRestoreInput) -> SessionArchiveOutput:
     HistoryIndex(roots.runtime_root).catch_up()
     mappings: list[RestoredHistory] = []
     for key in restored:
-        row = read_state(roots.runtime_root / "spawns", key, include_prompt=False)
+        row = read_state(
+            roots.runtime_root / "spawns",
+            parse_ref(key, row_key=True),
+            include_prompt=False,
+        )
         if row is not None:
             mappings.append(
                 RestoredHistory(history_id=str(row.history_id), spawn_id=key, chat_id=row.chat_id)
@@ -627,7 +684,7 @@ def _require_inactive_native_session(root: Path, harness: str | None, session_id
         harnesses, native_ids = native_identity_candidates(root, row, session)
         if harness not in harnesses or session_id not in native_ids:
             continue
-        scopes = read_scope_projection(root, SpawnId(row.id))
+        scopes = read_scope_projection(root, row.id)
         if (
             row.status not in TERMINAL_SPAWN_STATUSES
             or (
@@ -678,7 +735,11 @@ def materialize_native_history(project_root: Path, root: Path, spawn_id: str) ->
     from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
     def capture() -> None:
-        state = read_state(root / "spawns", spawn_id, include_prompt=False)
+        state = read_state(
+            root / "spawns",
+            parse_ref(spawn_id, row_key=True),
+            include_prompt=False,
+        )
         if state is None or state.history_id is None or state.status not in TERMINAL_SPAWN_STATUSES:
             raise ValueError("Native transcript capture requires an identified terminal record")
         snapshot = root / "spawns" / spawn_id / NATIVE_SNAPSHOT_FILENAME
@@ -727,7 +788,7 @@ def materialize_native_history(project_root: Path, root: Path, spawn_id: str) ->
 
             write_snapshot(handle, header, observation.records(), finish)
 
-    if not mutate_published_spawn_artifact(root, SpawnId(spawn_id), capture):
+    if not mutate_published_spawn_artifact(root, parse_ref(spawn_id, row_key=True), capture):
         raise ValueError(f"Native capture target is missing or historical: {spawn_id}")
 
 

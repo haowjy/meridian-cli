@@ -54,7 +54,7 @@ upgrading Pi; never infer exit from current/target session or the last-seen ID.
 
 | Extension | Owns | Writes / observes |
 |---|---|---|
-| `managed-bash` | `bash` / `bash_manage`, tracked vs detached bash records, `/ps*` slash commands, `_MERIDIAN_PI_BASH_ID` injection into child processes | `runtime_root/pi-bash/<spawn-id>/bash-records.json` and bash logs; terminal waits and terminal output reads mark their record's notification as consumed |
+| `managed-bash` | `bash` / `bash_manage`, tracked vs detached bash records, `/ps*` slash commands, `_MERIDIAN_PI_BASH_ID` injection into child processes | `runtime_root/pi-bash/<run-id>/bash-records.json` and bash logs; terminal waits and terminal output reads mark their record's notification as consumed |
 | `meridian-spawn-watch` | canonical direct-child discovery, `/spawn*` slash commands, boundary/idle completion notifications | observes scoped child rows, task consumption and wait leases; writes exact admission receipts and delivery faults |
 | `meridian-idle` | native idle and interactive-return sensing in primary TUIs | shells out to the hidden `meridian idle` API; owns only in-memory timers and calls `ctx.compact` after an `act` decision |
 

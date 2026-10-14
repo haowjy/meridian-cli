@@ -21,8 +21,8 @@ bare path
   sessions.jsonl.flock
   session-id-counter                — monotonic c1, c2, …
   sessions/                         — per-session lock + lease files
-  spawn-id-counter                  — monotonic p1, p2, …
-  locks/spawns/<id>.lock            — stable per-spawn mutation lock
+  spawn-id-counter                  — monotonic p1, p2, … (stable spawns only)
+  locks/spawns/<run_id>.lock        — stable per-run mutation lock
   locks/process-scopes/<id>.lock    — stable process-scope projection lock
   locks/reaper-cleanup/<id>.lock    — stable reaper cleanup lock
   locks/launch-boundary/<id>.lock   — stable launch-boundary append lock
@@ -186,7 +186,11 @@ an ad-hoc user-state root. Either is an unexpected read side effect.
 
 **Spawn IDs** (`spawn-id-counter`): incremented under `spawns_flock` at reservation
 time. IDs can be reserved before the spawn row exists (`reserve_spawn_id()`).
-Format: `p1`, `p2`, `p3`, …
+Format: `p1`, `p2`, `p3`, … The counter mints stable spawns only.
+Later-run allocation is not implemented. When the counter file is missing,
+recovery seeds from the numeric spawn prefix of every surviving row, dotted ones included (`p100.2` seeds 100).
+Ignoring dotted rows entirely would re-mint `p100` after retention retired its
+run 1.
 
 **Session IDs** (`session-id-counter`): incremented under `lock_file()`. Format:
 `c1`, `c2`, `c3`, …

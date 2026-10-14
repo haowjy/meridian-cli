@@ -5,6 +5,7 @@ from pathlib import Path
 
 import psutil
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.platform.process_scope.base import birth_time_unverified
 
 _PID_REUSE_GUARD_SECS = 30.0
@@ -66,7 +67,7 @@ def is_spawn_genuinely_active(runtime_root: Path, spawn_id: str) -> bool:
     from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
     from meridian.lib.state.spawn_store import get_spawn
 
-    record = get_spawn(runtime_root, spawn_id)
+    record = get_spawn(runtime_root, parse_ref(spawn_id, row_key=True))
     if record is None:
         return False
 

@@ -1,7 +1,12 @@
 # Pi result delivery
 
-All coordination files in the table live under `pi-bash/<parent>/`. Missing
-coordination files mean empty; present malformed or wrong-parent authority means
+Child-obligation ledgers (`observed-spawns.json`, `cleared-spawns.json`) live
+under `pi-bash/<spawn>/` and contain exact child run keys. Bash records/logs,
+delivery receipts/observations and delivery faults live under `pi-bash/<run>/`.
+`MERIDIAN_SPAWN_ID` supplies the stable parent; `MERIDIAN_RUN_ID` supplies the
+launch, falling back to the former for older launchers. The notification owner
+is keyed by the run path, even though it also watches the shared spawn ledger.
+Missing coordination files mean empty; present malformed or wrong-parent authority means
 unknown, never successful empty. Task logs are different: missing, unreadable or
 non-regular logs are unavailable, not empty output.
 Atomic writes use the shared JSON helper. One parent has one execution writer,

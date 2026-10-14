@@ -13,6 +13,7 @@ from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.native_identity import NativeIdentityError, NativeSessionUnavailable
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import (
     ForkMaterializationMode,
@@ -273,7 +274,7 @@ async def _prepare_execution_handoff(
         write_projection_artifacts(
             log_dir=resolve_spawn_log_dir(
                 project_paths.project_root,
-                spawn.spawn_id,
+                parse_ref(spawn.spawn_id, row_key=True),
                 runtime_root=runtime_root,
             ),
             launch_context=launch_context,
@@ -398,7 +399,7 @@ async def launch_prepared_spawn(
                 def _record_effective_config_dir(config_dir: str) -> None:
                     spawn_store.update_spawn(
                         runtime_root,
-                        spawn.spawn_id,
+                        parse_ref(spawn.spawn_id, row_key=True),
                         claude_config_dir=config_dir,
                     )
                     if handoff.session_context.chat_id:

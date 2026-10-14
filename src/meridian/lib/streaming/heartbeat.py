@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Callable
 from pathlib import Path
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state import paths
 
@@ -18,7 +19,7 @@ async def heartbeat_loop(
 ) -> None:
     """Touch the per-spawn heartbeat sentinel on a fixed interval."""
 
-    sentinel = paths.heartbeat_path(runtime_root, spawn_id)
+    sentinel = paths.heartbeat_path(runtime_root, parse_ref(spawn_id, row_key=True))
     while True:
         try:
             if touch is None:

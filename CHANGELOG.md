@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Separate spawn references from exact run keys; retain latest and bound runs safely.
+- Keep launch, continue, list, and show behavior unchanged.
+- Expose the exact launch as `MERIDIAN_RUN_ID`; keep existing launcher environments working.
+
 ## [0.10.2] - 2026-10-14
 
 ### Changed

@@ -26,6 +26,7 @@ from meridian.lib.core.spawn_start import SpawnStartMetadata
 if TYPE_CHECKING:
     from meridian.lib.core.clock import Clock
     from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+    from meridian.lib.core.types import RunId
     from meridian.lib.launch.types import PrimarySessionMetadata
     from meridian.lib.state.spawn.model import LaunchMode, SpawnKind
 
@@ -39,6 +40,7 @@ class SpawnReservation:
     prompt: str
     owner_chat_id: str | None = None
     parent_id: str | None = None
+    parent_run_id: RunId | None = None
     kind: SpawnKind = "child"
     metadata: SpawnStartMetadata | None = None
     desc: str | None = None

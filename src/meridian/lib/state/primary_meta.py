@@ -8,6 +8,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.constants import PRIMARY_META_FILENAME
 from meridian.lib.state.json_doc import mutate_model, read_model, write_model
@@ -165,7 +166,7 @@ def write_primary_metadata(
             path,
             PrimaryMetadata,
             lambda _current: (metadata, None),
-            lock=published_artifact_lock(runtime_root, SpawnId(spawn_id)),
+            lock=published_artifact_lock(runtime_root, parse_ref(SpawnId(spawn_id), row_key=True)),
         )
     except PublishedArtifactUnavailable:
         return False

@@ -208,6 +208,7 @@ ENV_VARS: tuple[EnvVar, ...] = (
     _public_handle("MERIDIAN_SESSION_ROLE", "Meridian launch role: primary or spawn."),
     _public_handle("MERIDIAN_SESSION_AGENT", "Resolved agent profile for this launch."),
     _public_handle("MERIDIAN_SPAWN_ID", "Current spawn identifier.", hook_field="spawn_id"),
+    _public_handle("MERIDIAN_RUN_ID", "Current launch run identifier.", hook_field="run_id"),
     _public_handle("MERIDIAN_TASK_DIR", "Logical task checkout directory."),
     # Public hook payload fields.
     _hook_payload("MERIDIAN_HOOK_EVENT", "Hook event name.", "event_name"),

@@ -7,7 +7,8 @@ This is the low-level substrate that `spawn_store.py` in the parent package buil
 
 **`model.py`** — in-memory types: `SpawnRecord`, `RunnerExitFacts`, `TerminalFacts`,
 `LaunchMode`, `SpawnOrigin`. `SpawnRecord` includes the starting prompt reconstructed
-from `starting-prompt.md`; the prompt is not stored in `state.json`.
+from `starting-prompt.md`; the prompt is not stored in `state.json`. Its `id` is the
+exact `RunId`; `parent_id` is the stable `SpawnId`.
 
 **`repository.py`** — `StoredSpawnState` (the strict on-disk v3 schema), validated
 read/write helpers, and the locked mutation result protocol. It is a persistence leaf;
@@ -19,6 +20,14 @@ legacy facts quarantine rather than bypassing the strict stored model.
 
 **`transitions.py`** — pure transitions such as `apply_mark_running()`,
 `apply_finalize()`, and `apply_record_exited()`. They do no I/O or locking.
+
+**`runs.py`** — run discovery (`runs_of`, `latest_run`) and sibling-run rules: `group_runs` (rows by stable
+spawn), `continue_target_run`, and the retention protected set and dependencies.
+Retention keeps a spawn's numeric latest run, latest bound run (has
+`session_instance_id`) and distinct continuation source until the whole spawn can
+retire. Surfaces, reference selection, archive and pruning call these; never
+re-derive "latest" locally. Every launch and continue still mints a new bare
+spawn; later-run allocation is not implemented.
 
 **`dogfood_migration.py`** — one-time migration of PR 1 dogfood rows, run by
 `meridian doctor` and primary-launch repairs. Delete this module once no dogfood
@@ -69,9 +78,9 @@ Finalize decides authority and applicability inside its locked transition.
 
 ## Entry Points
 
-- `read_state(spawns_dir, spawn_id)` → `SpawnRecord | None`
-- `write_state_locked(spawns_dir, spawn_id, mutator)` → `LockedMutationResult`
-- `scan_spawn_ids(spawns_dir)` — candidate directories containing `state.json`
+- `read_state(spawns_dir, run_id)` → `SpawnRecord | None`
+- `write_state_locked(spawns_dir, run_id, mutator)` → `LockedMutationResult`
+- `scan_spawn_ids(spawns_dir)` — exact `RunId` directories containing `state.json`
 
 ## Depth
 

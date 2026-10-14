@@ -15,6 +15,7 @@ from meridian.lib.bootstrap.services import build_spawn_lifecycle_service_from_r
 from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.launch.context import PreparedLaunchSurface
 from meridian.lib.launch.cwd import resolve_task_cwd
 from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
@@ -77,7 +78,7 @@ def _session_log_available_for_spawn(
 ) -> bool:
     return spawn_session_log_available(
         runtime_root,
-        spawn_id,
+        parse_ref(spawn_id, row_key=True),
         harness_session_id=harness_session_id,
     )
 
@@ -142,7 +143,7 @@ def _resolve_execution_contract(
         explicit_work_id = payload.work.strip() or None
         ambient_work_id = None if explicit_work_id else ctx.work_id
         project_state_dir = resolve_project_paths(project_paths.project_root).root_dir
-        spawn_id = str(ctx.spawn_id) if ctx.spawn_id is not None else None
+        spawn_id = ctx.run_key
         inherited_for_child = derive_inheritable_task_dir(
             project_root=project_paths.project_root,
             project_state_dir=project_state_dir,
@@ -210,7 +211,7 @@ def _persist_execution_contract(
     execution_cwd_str = execution_contract.execution_cwd.as_posix()
     spawn_store.update_spawn(
         context.runtime_root,
-        context.spawn.spawn_id,
+        parse_ref(context.spawn.spawn_id, row_key=True),
         control_root=execution_contract.control_root.as_posix(),
         task_cwd=_task_cwd_from_execution(
             control_root=execution_contract.control_root,
@@ -260,7 +261,9 @@ def _reserve_then_prepare(
         ctx=ctx,
     )
     if isinstance(preparation, SpawnActionOutput):
-        spawn_store.remove_spawn_events(context.runtime_root, context.spawn.spawn_id)
+        spawn_store.remove_spawn_events(
+            context.runtime_root, parse_ref(context.spawn.spawn_id, row_key=True)
+        )
         return preparation
 
     project_paths = preparation.project_paths
@@ -309,7 +312,7 @@ def execute_spawn_background(
     parent_launch_cwd_str = execution_contract.control_root.as_posix()
     log_dir = resolve_spawn_log_dir(
         project_paths.project_root,
-        context.spawn.spawn_id,
+        parse_ref(context.spawn.spawn_id, row_key=True),
         runtime_root=context.runtime_root,
     )
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -625,7 +628,9 @@ def execute_spawn_blocking(
             str(exc),
         )
         logger.exception("Foreground spawn crashed.", spawn_id=spawn_id_text)
-        failure_row = read_spawn_row(project_paths.project_root, spawn_id_text)
+        failure_row = read_spawn_row(
+            project_paths.project_root, parse_ref(spawn_id_text, row_key=True)
+        )
         return SpawnActionOutput(
             command="spawn.create",
             status="failed",
@@ -655,10 +660,10 @@ def execute_spawn_blocking(
         )
 
     duration = time.monotonic() - started
-    row = read_spawn_row(project_paths.project_root, str(spawn.spawn_id))
+    row = read_spawn_row(project_paths.project_root, parse_ref(str(spawn.spawn_id), row_key=True))
     _, report_body = read_report(
         project_paths.project_root,
-        str(spawn.spawn_id),
+        parse_ref(str(spawn.spawn_id), row_key=True),
         include_body=True,
         runtime_root=context.runtime_root,
     )

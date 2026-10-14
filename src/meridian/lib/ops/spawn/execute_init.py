@@ -14,6 +14,7 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import current_meridian_depth, max_depth_reached
 from meridian.lib.core.domain import Spawn, SpawnStatus
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
@@ -213,6 +214,7 @@ def build_spawn_reservation(
         chat_id=owner_chat_id,
         owner_chat_id=owner_chat_id,
         parent_id=str(resolved_context.spawn_id) if resolved_context.spawn_id else None,
+        parent_run_id=resolved_context.run_key,
         session_metadata=spawn_session_metadata,
         kind="child",
         prompt=request.prompt,
@@ -277,7 +279,7 @@ def _materialize_spawn_work_item(
         if final_work_id != context.work_id:
             spawn_store.update_spawn(
                 context.runtime_root,
-                context.spawn.spawn_id,
+                parse_ref(context.spawn.spawn_id, row_key=True),
                 work_id=final_work_id,
             )
     return context.model_copy(update={"work_id": final_work_id})
@@ -389,7 +391,7 @@ def _write_params_json(
     """Write resolved execution params to the spawn directory."""
     params_path = (
         resolve_spawn_log_dir(
-            project_paths.project_root, spawn_id, runtime_root=runtime_root
+            project_paths.project_root, parse_ref(spawn_id, row_key=True), runtime_root=runtime_root
         )
         / "params.json"
     )

@@ -456,3 +456,41 @@ def test_spawn_fork_uses_recovered_session_id(
         )
     assert (exc.value.ref, exc.value.reason) == ("p33", "unbound")
     assert not calls
+
+
+@pytest.mark.parametrize("switched_chat", [False, True], ids=["native-ref", "after-clear"])
+def test_continue_preserves_native_and_switched_chat_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, switched_chat: bool,
+) -> None:
+    from meridian.lib.core.refs import parse_ref
+
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    _seed_spawn(
+        runtime_root, spawn_id="p30", harness_session_id="session-30", chat_id="c1",
+        launch_policy_snapshot=LaunchPolicySnapshot(model="gpt-5.3-codex", harness="codex"),
+    )
+    expected_session = "session-30"
+    source = "session-30"
+    if switched_chat:
+        expected_session = "session-31"
+        source = "p30"
+        native_store = runtime_root / "native-store" / "sessions"
+        (native_store / "rollout-2026-01-01T00-00-00-session-31.jsonl").write_text(
+            json.dumps({"type": "session_meta", "payload": {"id": expected_session}}) + "\n",
+        )
+        session_store.start_session(
+            runtime_root, chat_id="c2", harness="codex", harness_session_id=expected_session,
+            native_store=str(native_store), model="gpt-5.3-codex", agent="coder",
+        )
+        session_store.stop_session(runtime_root, "c2")
+        spawn_store.update_spawn(runtime_root, parse_ref("p30", row_key=True), current_chat_id="c2")
+    calls = _record_spawn_create(monkeypatch)
+
+    result = spawn_api.spawn_continue_sync(
+        SpawnContinueInput(spawn_id=source, prompt="continue", project_root=str(project_root)),
+    )
+
+    assert result.status == "running"
+    assert calls[0][1].session.requested_harness_session_id == expected_session

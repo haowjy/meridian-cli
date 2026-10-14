@@ -18,6 +18,7 @@ from meridian.lib.core.native_identity import (
     Operation,
     PostExit,
 )
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     CLAUDE_SPAWN_USAGE_VARIANTS,
@@ -350,7 +351,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
         return HarnessPrelaunchState(env_overrides={
             "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_PATH": str(
-                (runtime_root / spawn_log_subpath(spawn_id)
+                (runtime_root / spawn_log_subpath(parse_ref(spawn_id, row_key=True))
                  / "claude-session-boundary.jsonl").resolve()
             ),
             "_MERIDIAN_CLAUDE_SESSION_BOUNDARY_NONCE": secrets.token_hex(32),

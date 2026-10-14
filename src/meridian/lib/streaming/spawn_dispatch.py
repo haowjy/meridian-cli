@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import HarnessId, TransportId
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.connections.base import (
@@ -61,7 +62,8 @@ async def dispatch_start(
         )
         request_handler = PermissionBroker(
             spawn_dir=resolve_spawn_log_dir(
-                config.control_root, config.spawn_id, runtime_root=runtime_root
+                config.control_root, parse_ref(config.spawn_id, row_key=True),
+                runtime_root=runtime_root
             ),
             event_sink=_runtime_event_sink,
             auto_reject_runtime_requests=True,

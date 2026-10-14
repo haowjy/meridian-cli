@@ -14,6 +14,7 @@ from meridian.cli.argv_normalization import validate_fork_mode
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
 from meridian.lib.harness.registry import get_default_harness_registry
@@ -385,7 +386,9 @@ def run_primary_launch(
     row = None
     if not dry_run and launch_result.primary_spawn_id:
         runtime_root = resolve_project_runtime_root(project_root)
-        row = spawn_store.get_spawn(runtime_root, launch_result.primary_spawn_id)
+        row = spawn_store.get_spawn(
+            runtime_root, parse_ref(launch_result.primary_spawn_id, row_key=True)
+        )
         if row is not None:
             continue_chat_id = row.continue_chat_id
     history_warning = None

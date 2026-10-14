@@ -18,6 +18,7 @@ from meridian.lib.context.resolver import (
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.formatting import relative_time
 from meridian.lib.core.resolved_context import ResolvedContext
+from meridian.lib.core.types import RunId
 from meridian.lib.core.util import FormatContext
 from meridian.lib.hooks.builtin.autosync_store import read_status
 from meridian.lib.launch.cwd import resolve_effective_task_dir
@@ -347,10 +348,10 @@ def _join_scope_path(scope_dir: Path, relpath: str) -> Path:
     return target
 
 
-def _require_session_spawn_id(ctx: RuntimeContext) -> str:
-    if ctx.spawn_id is None:
+def _require_session_spawn_id(ctx: RuntimeContext) -> RunId:
+    if ctx.run_key is None:
         raise ValueError("Not in a session (MERIDIAN_SPAWN_ID is unset).")
-    return str(ctx.spawn_id)
+    return ctx.run_key
 
 
 def _validated_task_dir_path(path: str) -> Path:
@@ -369,7 +370,7 @@ def _resolve_effective_task_dir_output() -> TaskDirOutput:
     effective = resolve_effective_task_dir(
         project_root=authority.project_root,
         project_state_dir=authority.project_state_dir,
-        spawn_id=str(runtime_ctx.spawn_id) if runtime_ctx.spawn_id is not None else None,
+        spawn_id=runtime_ctx.run_key,
         inherited_task_dir=resolved.inherited_task_dir,
         work_id=resolved.work_id,
     )

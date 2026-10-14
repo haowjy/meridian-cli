@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
+from meridian.lib.core.types import RunId
 from meridian.lib.launch.request import LaunchCompositionSurface
 from meridian.lib.state import work_store
 from meridian.lib.state.spawn_scope import read_spawn_scope
@@ -148,18 +149,17 @@ def resolve_effective_task_dir(
     *,
     project_root: Path,
     project_state_dir: Path,
-    spawn_id: str | None = None,
+    spawn_id: RunId | None = None,
     inherited_task_dir: Path | None = None,
     work_id: str | None = None,
 ) -> EffectiveTaskDir:
     """Resolve where the current process edits source code."""
 
     resolved_project_root = project_root.expanduser().resolve()
-    normalized_spawn_id = (spawn_id or "").strip() or None
     normalized_work_id = (work_id or "").strip() or None
 
-    if normalized_spawn_id is not None:
-        scope = read_spawn_scope(resolved_project_root, normalized_spawn_id)
+    if spawn_id is not None:
+        scope = read_spawn_scope(resolved_project_root, spawn_id)
         if scope.task_dir is not None:
             return EffectiveTaskDir(
                 task_dir=_validated_scope_task_dir(scope.task_dir),

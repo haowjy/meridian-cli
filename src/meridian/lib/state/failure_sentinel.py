@@ -7,6 +7,7 @@ import logging
 from collections.abc import Mapping
 from pathlib import Path
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import RuntimePaths
@@ -24,7 +25,7 @@ def write_failure_sentinel(
         path = RuntimePaths.from_root_dir(runtime_root).spawns_dir / spawn_id / "failure.json"
         mutate_published_spawn_artifact(
             runtime_root,
-            SpawnId(spawn_id),
+            parse_ref(SpawnId(spawn_id), row_key=True),
             lambda: atomic_write_text(path, json.dumps(payload, indent=2)),
             can_mutate=lambda record: record.status == "failed",
         )

@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state import spawn_store
@@ -102,7 +103,7 @@ class ReconciledDescendantEvidence:
         for spawn_id, _parent_id, archived in selected:
             if archived:
                 continue
-            row = spawn_store.get_spawn(self._runtime_root, spawn_id)
+            row = spawn_store.get_spawn(self._runtime_root, parse_ref(spawn_id, row_key=True))
             if row is None:
                 raise RuntimeError(f"indexed descendant state is missing: {spawn_id}")
             descendants.append(row)

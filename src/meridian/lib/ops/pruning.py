@@ -11,11 +11,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.config.models import ADHOC_STALE_RETENTION_DAYS
 from meridian.lib.config.project_root import has_project_marker
+from meridian.lib.core.refs import parse_ref, reference_sort_key, spawn_of
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
+from meridian.lib.core.types import RunId
 from meridian.lib.platform.locking import lock_file, try_lock_file
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.history_changes import HistoryChanges
@@ -26,6 +28,13 @@ from meridian.lib.state.project_identity import (
     ADHOC_PROJECT_ID_PREFIX,
     ADHOC_TOUCH_INTERVAL_SECONDS,
     AdHocOrigin,
+)
+from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.runs import (
+    group_runs,
+    retention_dependencies,
+    retention_run_ids,
+    runs_of,
 )
 from meridian.lib.state.user_paths import get_context_home
 
@@ -70,7 +79,8 @@ class AdHocProjectDir(BaseModel):
 class StaleSpawnArtifact(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    spawn_id: str
+    spawn_id: RunId
+    multi_run: bool = Field(default=False, exclude=True)
     project_uuid: str
     path: str
     size_bytes: int
@@ -360,12 +370,16 @@ def _scan_stale_spawn_artifacts(
 
     project_uuid = runtime_root.name
     results: list[StaleSpawnArtifact] = []
+    all_run_ids: dict[str, list[RunId]] = {}
     for spawn_dir in sorted(per_spawn_root.iterdir(), key=lambda path: path.name):
         if not spawn_dir.is_dir():
             continue
         spawn_id = spawn_dir.name
-        if not spawn_store.is_spawn_id_shape(spawn_id):
+        parsed = parse_ref(spawn_id)
+        if parsed.kind not in {"spawn", "run"}:
             continue
+        run_id = parse_ref(spawn_id, row_key=True)
+        all_run_ids.setdefault(str(parsed.spawn_id), []).append(run_id)
         if spawn_id in active_spawn_ids:
             continue
 
@@ -373,7 +387,7 @@ def _scan_stale_spawn_artifacts(
         if _is_stale(latest_mtime, retention_days=retention_days, now=now):
             results.append(
                 StaleSpawnArtifact(
-                    spawn_id=spawn_id,
+                    spawn_id=run_id,
                     project_uuid=project_uuid,
                     path=spawn_dir.as_posix(),
                     size_bytes=size_bytes,
@@ -381,7 +395,42 @@ def _scan_stale_spawn_artifacts(
                 )
             )
 
-    return results
+    stale_ids = {str(row.spawn_id) for row in results}
+    special: set[str] = set()
+    multi_run: set[str] = set()
+    for run_ids in all_run_ids.values():
+        if len(run_ids) == 1:
+            continue
+        group = {str(run_id) for run_id in run_ids}
+        multi_run.update(group)
+        # Even a quarantined latest row must not expose an older run number.
+        special.add(max(run_ids, key=reference_sort_key))
+        rows: list[SpawnRecord] = []
+        for run_id in run_ids:
+            try:
+                row = spawn_store.get_spawn(runtime_root, run_id)
+            except ValueError:
+                row = None
+            if row is not None:
+                rows.append(row)
+        for runs in group_runs(rows).values():
+            special.update(retention_run_ids(runs))
+        if group & active_spawn_ids or not group <= stale_ids:
+            stale_ids.difference_update(group & special)
+    if not multi_run:
+        return results
+    kept = [
+        row.model_copy(update={"multi_run": True}) if str(row.spawn_id) in multi_run else row
+        for row in results if str(row.spawn_id) in stale_ids
+    ]
+    # Delete ordinary runs, then latest-bound, and the numeric latest last.
+    return sorted(
+        kept,
+        key=lambda row: (
+            str(row.spawn_id) in special,
+            reference_sort_key(str(row.spawn_id)),
+        ),
+    )
 
 
 def _restore_and_retry(
@@ -490,7 +539,7 @@ def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> SpawnArtifac
         artifact_path = Path(artifact.path)
         if (
             not spawn_store.is_spawn_id_shape(artifact.spawn_id)
-            or artifact_path.name != artifact.spawn_id
+            or artifact_path.name != str(artifact.spawn_id)
             or artifact_path.parent.name != "spawns"
         ):
             continue
@@ -501,12 +550,22 @@ def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> SpawnArtifac
             lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
             lock_file(paths.spawns_flock),
         ):
-            legacy_artifact_dir = runtime_root / "artifacts" / artifact.spawn_id
+            run_id = parse_ref(str(artifact.spawn_id), row_key=True)
+            if artifact.multi_run:
+                run_ids = runs_of(runtime_root, spawn_of(run_id))
+                rows = [spawn_store.get_spawn(runtime_root, key) for key in run_ids]
+                dependencies = retention_dependencies([row for row in rows if row is not None])
+                if run_id in dependencies and (
+                    dependencies[run_id].intersection(run_ids)
+                    or any(row is None or is_active_spawn_status(row.status) for row in rows)
+                ):
+                    continue
+            legacy_artifact_dir = runtime_root / "artifacts" / str(artifact.spawn_id)
             if legacy_artifact_dir.exists() and not _prune_dir(legacy_artifact_dir):
                 continue
             if spawn_store.delete_published_spawn(
                 runtime_root,
-                artifact.spawn_id,
+                run_id,
                 can_delete=lambda record: record is None
                 or not is_active_spawn_status(record.status),
             ):

@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import spawn_log_subpath
@@ -27,7 +28,7 @@ class ResidentSignals:
 def spawn_signal_path(runtime_root: Path, spawn_id: SpawnId | str, kind: SpawnSignalKind) -> Path:
     """Return the authoritative path for a resident spawn signal file."""
 
-    return runtime_root / spawn_log_subpath(spawn_id) / f"{kind}.signal"
+    return runtime_root / spawn_log_subpath(parse_ref(spawn_id, row_key=True)) / f"{kind}.signal"
 
 
 def write_spawn_signal(
@@ -40,7 +41,7 @@ def write_spawn_signal(
     timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     return mutate_published_spawn_artifact(
         runtime_root,
-        SpawnId(spawn_id),
+        parse_ref(SpawnId(spawn_id), row_key=True),
         lambda: atomic_write_text(
             spawn_signal_path(runtime_root, spawn_id, kind),
             f"{timestamp}\n",

@@ -76,3 +76,28 @@ async def test_retired_marker_cannot_poison_or_authorize_completion(tmp_path: Pa
         assert watcher.evidence_failure() is None
     finally:
         await watcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_new_run_uses_shared_child_ledger_but_ignores_old_bash(tmp_path: Path) -> None:
+    import json
+
+    from meridian.lib.core.refs import parse_ref
+
+    write_pi_bash_record(tmp_path, SpawnId("p2"))
+    parent = tmp_path / "pi-bash" / "p2"
+    (parent / "cleared-spawns.json").write_text(json.dumps({
+        "v": 1, "spawn_id": "p2", "updated_at_ms": 0, "cleared_spawn_ids": ["p5"],
+    }))
+    watcher = PiDiskWatcher(tmp_path, parse_ref("p2.3", row_key=True))
+    await watcher.start()
+    try:
+        assert watcher.evidence_failure() is None
+        assert not watcher.has_tracked_bash_bg()
+        # A malformed shared ledger is visible to the new run, not silently
+        # replaced by an empty run-local ledger.
+        (parent / "cleared-spawns.json").write_text("{broken")
+        await watcher.force_rescan()
+        assert watcher.evidence_failure() is not None
+    finally:
+        await watcher.stop()

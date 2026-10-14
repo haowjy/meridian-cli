@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.native_identity import NativeKeyFields
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.legacy_native_stores import (
     InvalidNativeSession,
@@ -32,10 +33,12 @@ from meridian.lib.ops.legacy_native_import import (
     configured_archive_destination,
     retained_chat_facts,
 )
+from meridian.lib.ops.reference import resolve_continue_source_row
 from meridian.lib.ops.runtime import async_from_sync, resolve_runtime_root_for_read
-from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state import session_store
 from meridian.lib.state.native_binding import Conflict
 from meridian.lib.state.session_binding import session_bindings
+from meridian.lib.state.spawn.runs import runs_of
 
 MAX_LISTED = 20
 EXCERPT = 160
@@ -135,17 +138,29 @@ def _excerpt(text: str | None) -> str | None:
 
 
 def _chat_id_for(runtime_root: Path, ref: str) -> str:
-    if ref.startswith("c") and ref[1:].isdigit():
-        return ref
-    if ref.startswith("p") and ref[1:].isdigit():
-        spawn = spawn_store.get_spawn(runtime_root, ref)
+    parsed = parse_ref(ref)
+    if parsed.kind == "chat":
+        assert parsed.chat_id is not None
+        return parsed.chat_id
+    if parsed.kind in {"spawn", "run"}:
+        spawn = resolve_continue_source_row(runtime_root, parsed)
         if spawn is not None and spawn.chat_id:
             return str(spawn.chat_id)
+        if parsed.kind == "run":
+            assert parsed.run_id is not None
+            run_ids = (parsed.run_id,)
+        else:
+            assert parsed.spawn_id is not None
+            run_ids = runs_of(runtime_root, parsed.spawn_id)
         for record in session_store.list_all_session_records(runtime_root):
-            if record.spawn_id == ref:
+            if record.spawn_id is not None and parse_ref(
+                record.spawn_id, row_key=True
+            ) in run_ids:
                 return str(record.chat_id)
         raise ValueError(f"Spawn {ref} has no recorded chat.")
-    raise ValueError("session repair takes a chat (c123) or spawn (p123) reference.")
+    raise ValueError(
+        "session repair takes a chat (c123), spawn (p123), or run (p123.2) reference."
+    )
 
 
 def _candidate_dirs(record: session_store.SessionRecord, fact: RetainedChatFacts) -> list[Path]:

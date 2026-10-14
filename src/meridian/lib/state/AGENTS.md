@@ -21,7 +21,7 @@ bare path
 ~/.meridian/projects/<id>/          ← user runtime, never committed
   origin.json                       — ad-hoc path attribution and activity only
   sessions.jsonl                    — session events (append-only)
-  locks/spawns/<spawn_id>.lock      — stable per-spawn external-writer lock
+  locks/spawns/<run_id>.lock        — stable per-run external-writer lock
   locks/process-scopes/<spawn_id>.lock
                                     — stable process-scope sidecar mutation lock
   locks/reaper-cleanup/<spawn_id>.lock
@@ -30,7 +30,7 @@ bare path
                                     — stable launch-boundary append lock
   locks/gc.lock                     — lock-GC pass serialization
   spawns/.staging/<unique>/         — unpublished builds and verified-archive retirement buffers
-  spawns/<spawn_id>/
+  spawns/<run_id>/                  — pN for run 1; pN.K for K >= 2
     state.json                      — authoritative spawn state (schema v3)
     history.jsonl                   — legacy runner event stream (no longer written), never read
     attempt-N/                      — legacy retry evidence; new runs do not create it
@@ -62,9 +62,10 @@ context-path resolution.
 
 ## Spawn State: Per-Spawn Files
 
-Spawn state lives in individual `state.json` files (`spawns/<id>/state.json`),
-not a global event log, so status reads stay O(1) instead of replaying O(n) events.
-The layout originated in the v2 migration; published rows now use schema v3.
+Spawn state lives in individual immutable-run `state.json` files
+(`spawns/<run_id>/state.json`), not a global event log, so status reads stay O(1)
+instead of replaying O(n) events. A stable `pN` groups `pN` and `pN.K` rows; the
+layout originated in the v2 migration and published rows use schema v3.
 
 ## Spawn Mutation Seam
 
@@ -103,6 +104,9 @@ rechecks eligibility under the exclusive project-lifetime gate and removes
 must never control a machine-wide scan.
 
 Use `history_index.py` for filtered discovery, not repeated broad authority scans.
+Index rows are per run with stable `spawn_id` and numeric `run` columns.
+`spawns()` returns raw run rows; traversal and per-run filters must not hide
+older runs behind a newer row.
 Keep lifecycle/control decisions on direct authoritative reads. All new indexed
 writers must publish dirty intent before file mutation; SQLite is never a writer
 dependency. Restored `record_mode="historical"` aggregates are inert and immutable.
@@ -226,8 +230,9 @@ validated exclusive acquisition, immediately before release. Never unlink at ord
 release time or inside a reentrant context: leaving any lock held on the orphaned inode
 lets another contender validate against a recreated inode and causes split-brain.
 
-**Don't acquire `spawns_flock` for per-spawn mutations** — the global lock serializes
-spawn ID allocation, initial row publication, and abandoned-stage GC. Later mutations
+**Don't acquire `spawns_flock` for ordinary per-run mutations** — the global lock serializes
+spawn ID allocation, initial row publication, retention of a spawn's
+protected latest rows, and abandoned-stage GC. Later mutations
 use `write_state_locked()` (`locks/spawns/<id>.lock`, stable until orphan lock GC).
 Published-row deletion uses `delete_published_spawn()` under that same stable lock;
 when deletion also takes the process-scope projection lock, the order is spawn lock

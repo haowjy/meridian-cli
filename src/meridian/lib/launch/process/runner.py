@@ -22,6 +22,7 @@ from meridian.lib.core.native_identity import (
     NativeIdentityError,
     NativeKey,
 )
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     SpawnReservation,
@@ -458,7 +459,10 @@ def _finalize_lifecycle(
 
     resolved_exit_code = exit_code
     if primary_spawn_id is not None:
-        log_dir = resolve_spawn_log_dir(project_root, primary_spawn_id, runtime_root=runtime_root)
+        log_dir = resolve_spawn_log_dir(
+            project_root, parse_ref(primary_spawn_id, row_key=True),
+            runtime_root=runtime_root,
+        )
         extraction = enrich_finalize(
             artifacts=LocalStore(root_dir=runtime_root / "artifacts"),
             extractor=get_harness_bundle(harness_adapter.id).extractor,
@@ -475,7 +479,7 @@ def _finalize_lifecycle(
         usage = extraction.usage
         execution_outcome = asyncio.run(
             spawn_service.complete_execution(
-                primary_spawn_id,
+                parse_ref(primary_spawn_id, row_key=True),
                 ExecutionTerminalFacts(
                     exit_code=exit_code,
                     failure_reason=(
@@ -773,7 +777,8 @@ def run_harness_process(
                 if forked_session_id:
                     expected_harness_session_id = forked_session_id
                 log_dir = resolve_spawn_log_dir(
-                    config_root, primary_spawn_id, runtime_root=runtime_root
+                    config_root, parse_ref(primary_spawn_id, row_key=True),
+                    runtime_root=runtime_root
                 )
                 primary_started = time.monotonic()
                 primary_started_epoch = time.time()
@@ -834,7 +839,7 @@ def run_harness_process(
                     # Persist resolved launch contract for idempotent primary --continue.
                     spawn_store.update_spawn(
                         runtime_root,
-                        primary_spawn_id,
+                        parse_ref(primary_spawn_id, row_key=True),
                         launch_policy_snapshot=persisted_launch_policy_snapshot,
                     )
                 launch_child_cwd = runtime_context.binding.child_cwd
@@ -844,7 +849,7 @@ def run_harness_process(
                 selected_task_cwd = runtime_context.task_cwd
                 spawn_store.update_spawn(
                     runtime_root,
-                    primary_spawn_id,
+                    parse_ref(primary_spawn_id, row_key=True),
                     control_root=control_root.as_posix(),
                     task_cwd=(
                         selected_task_cwd.as_posix()
@@ -871,7 +876,7 @@ def run_harness_process(
                 def _record_effective_config_dir(config_dir: str) -> None:
                     spawn_store.update_spawn(
                         runtime_root,
-                        primary_spawn_id,
+                        parse_ref(primary_spawn_id, row_key=True),
                         claude_config_dir=config_dir,
                     )
                     if managed.chat_id:
@@ -1037,7 +1042,8 @@ def run_harness_process(
                             runtime_root=runtime_root,
                             spawn_id=primary_spawn_id,
                             spawn_dir=resolve_spawn_log_dir(
-                                config_root, primary_spawn_id, runtime_root=runtime_root
+                                config_root, parse_ref(primary_spawn_id, row_key=True),
+                                runtime_root=runtime_root
                             ),
                             command=native_primary_metadata_command,
                             launch_cwd=launch_child_cwd,

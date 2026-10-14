@@ -1,10 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, test } from "vitest";
+import { isSpawnLauncherCommand, isSpawnWaitCommand, parseRef, extractSpawnIdFromLauncherLog, extractMeridianSpawnIdsFromText } from "./meridian_spawn";
 
-import {
-  extractSpawnIdFromLauncherLog,
-  isSpawnLauncherCommand,
-  isSpawnWaitCommand,
-} from "./meridian_spawn";
+test.each([
+  ["p5", "spawn", "p5"], [" p5 ", "spawn", "p5"], ["p05", "spawn", "p05"],
+  ["p5.1", "run", "p5"], ["p5.01", "run", "p5"], ["p5.2", "run", "p5.2"],
+  ["p5.010", "run", "p5.10"], ["c05", "chat", undefined],
+  ...["P5", "p-x", "r5", "p5.0", "p5.-1", "p５", "p5.2.3", "", "native-uuid"].map(value => [value, "native", undefined]),
+])("reference corpus %s", (text, kind, runId) => {
+  expect(parseRef(text!)).toMatchObject({ kind });
+  expect(parseRef(text!).runId).toBe(runId);
+});
+
+test("launcher speaks spawn; observations keep exact run keys", () => {
+  expect(extractSpawnIdFromLauncherLog("Spawn id: p5")).toBe("p5");
+  expect(extractSpawnIdFromLauncherLog("Spawn id: p5.2")).toBe("p5");
+  expect(extractMeridianSpawnIdsFromText("p5.2 and p6 and p5.2")).toEqual(["p5.2", "p6"]);
+});
 
 describe("spawn command classification", () => {
   it("treats uv run meridian spawn as launcher", () => {

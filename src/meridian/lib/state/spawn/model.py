@@ -12,6 +12,8 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import (
     OptionalPersistedChatId,
     OptionalPersistedHarnessSessionId,
+    RunId,
+    SpawnId,
     normalize_optional_identity,
 )
 
@@ -110,7 +112,7 @@ class SpawnStateFields(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    id: str
+    id: RunId
     history_id: UUID | None = None
     record_mode: Literal["live", "historical"] = "live"
     session_instance_id: str | None = None
@@ -123,7 +125,7 @@ class SpawnStateFields(BaseModel):
     current_chat_id: OptionalPersistedChatId = None
     run_boundary: RunBoundaryOutcome | None = None
     owner_chat_id: OptionalPersistedChatId = None
-    parent_id: str | None = None
+    parent_id: SpawnId | None = None
     originating_bash_id: str | None = None
     model: str | None = None
     agent: str | None = None

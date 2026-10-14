@@ -12,6 +12,7 @@ from meridian.lib.ops.session_reentry import Blocked, Fork, Resume, resolve_sess
 from meridian.lib.ops.session_search import iter_session_subset_search
 from meridian.lib.state import primary_meta, session_store, spawn_store, work_repository
 from meridian.lib.state.paths import resolve_project_paths, resolve_project_runtime_root_for_write
+from tests.support.codex import write_codex_rollout
 
 
 def _project_roots(tmp_path: Path) -> tuple[Path, Path]:
@@ -24,36 +25,6 @@ def _project_roots(tmp_path: Path) -> tuple[Path, Path]:
     runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
     return project_root, runtime_root
-
-
-def _write_codex_rollout(*, home: Path, project_root: Path, session_id: str, text: str) -> None:
-    rollout_dir = home / ".codex" / "sessions" / "2026" / "08"
-    rollout_dir.mkdir(parents=True, exist_ok=True)
-    rollout = rollout_dir / f"rollout-2026-08-26T00-00-00-{session_id}.jsonl"
-    rollout.write_text(
-        "\n".join(
-            (
-                json.dumps(
-                    {
-                        "type": "session_meta",
-                        "payload": {"id": session_id, "cwd": project_root.as_posix()},
-                    }
-                ),
-                json.dumps(
-                    {
-                        "type": "response_item",
-                        "payload": {
-                            "type": "message",
-                            "role": "assistant",
-                            "content": [{"type": "output_text", "text": text}],
-                        },
-                    }
-                ),
-            )
-        )
-        + "\n",
-        encoding="utf-8",
-    )
 
 
 def test_session_list_is_primary_only_live_first_and_capped(tmp_path: Path) -> None:
@@ -413,17 +384,17 @@ def test_subset_search_is_ordered_and_failure_isolated(tmp_path: Path, monkeypat
     )
     session_store.stop_session(runtime_root, matching_chat)
     session_store.stop_session(runtime_root, other_chat)
-    _write_codex_rollout(
-        home=home,
+    write_codex_rollout(
+        sessions_root=home / ".codex" / "sessions",
         project_root=project_root,
         session_id=matching_id,
-        text="the session browse needle is here",
+        assistant_text="the session browse needle is here",
     )
-    _write_codex_rollout(
-        home=home,
+    write_codex_rollout(
+        sessions_root=home / ".codex" / "sessions",
         project_root=project_root,
         session_id=other_id,
-        text="something unrelated",
+        assistant_text="something unrelated",
     )
     record_scan_count = 0
     spawn_scan_count = 0
@@ -488,11 +459,11 @@ def test_subset_search_uses_recorded_primary_spawn_without_global_scan(
         prompt="primary",
         harness_session_id=harness_session_id,
     )
-    _write_codex_rollout(
-        home=home,
+    write_codex_rollout(
+        sessions_root=home / ".codex" / "sessions",
         project_root=project_root,
         session_id=harness_session_id,
-        text="direct relationship needle",
+        assistant_text="direct relationship needle",
     )
 
     def fail_global_scan(*_args, **_kwargs):
@@ -530,11 +501,11 @@ def test_subset_search_does_not_borrow_sibling_history_when_primary_spawn_is_mis
         spawn_id="p404",
     )
     session_store.stop_session(runtime_root, chat_id)
-    _write_codex_rollout(
-        home=home,
+    write_codex_rollout(
+        sessions_root=home / ".codex" / "sessions",
         project_root=project_root,
         session_id=harness_session_id,
-        text="",
+        assistant_text="",
     )
     spawn_store.start_spawn(
         runtime_root,
@@ -747,8 +718,9 @@ def test_native_preview_does_not_follow_reused_chat_generation(tmp_path, monkeyp
     monkeypatch.setenv("HOME", str(home))
     for number in (1, 2):
         native = "00000001-1111-4111-8111-111111111111"
-        _write_codex_rollout(
-            home=home, project_root=project, session_id=native, text=f"generation {number}"
+        write_codex_rollout(
+            sessions_root=home / ".codex" / "sessions", project_root=project,
+            session_id=native, assistant_text=f"generation {number}"
         )
         session_store.start_session(
             root,

@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import NamedTuple, cast
 
 from meridian.lib.core.depth import is_root_side_effect_process
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
+from meridian.lib.core.types import RunId
 from meridian.lib.ops.reference import resolve_spawn_ref
 from meridian.lib.ops.run_boundary import run_boundary_summary
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
@@ -183,16 +185,18 @@ def resolve_spawn_reference(
     ref: str,
     *,
     runtime_root: Path | None = None,
-) -> str:
+) -> RunId:
     normalized = ref.strip()
     if not normalized:
         raise ValueError("spawn_id is required")
     if not normalized.startswith("@"):
         resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
         if resolved_runtime_root is None:
-            return normalized
+            raise ValueError(f"Spawn '{normalized}' not found")
         resolved = resolve_spawn_ref(resolved_runtime_root, normalized)
-        return str(resolved) if resolved is not None else normalized
+        if resolved is None:
+            raise ValueError(f"Spawn '{normalized}' not found")
+        return resolved
 
     status_filter = _SPAWN_REFERENCE_STATUS_FILTERS.get(normalized)
     if normalized not in _SPAWN_REFERENCE_STATUS_FILTERS:
@@ -208,7 +212,7 @@ def resolve_spawn_reference(
     )
     if resolved is None:
         raise ValueError(f"No spawns found for reference '{normalized}'")
-    return resolved
+    return parse_ref(resolved, row_key=True)
 
 
 def resolve_spawn_references(
@@ -216,7 +220,7 @@ def resolve_spawn_references(
     refs: tuple[str, ...],
     *,
     runtime_root: Path | None = None,
-) -> tuple[str, ...]:
+) -> tuple[RunId, ...]:
     return tuple(
         dict.fromkeys(
             resolve_spawn_reference(project_root, ref, runtime_root=runtime_root) for ref in refs
@@ -226,7 +230,7 @@ def resolve_spawn_references(
 
 def read_spawn_row(
     project_root: Path,
-    spawn_id: str,
+    spawn_id: RunId,
     *,
     runtime_root: Path | None = None,
 ) -> SpawnRecord | None:
@@ -249,7 +253,7 @@ def read_spawn_row(
 
 def read_spawn_row_read_only(
     project_root: Path,
-    spawn_id: str,
+    spawn_id: RunId,
     *,
     runtime_root: Path | None = None,
 ) -> SpawnRecord | None:
@@ -263,7 +267,7 @@ def read_spawn_row_read_only(
 
 def read_report(
     project_root: Path,
-    spawn_id: str,
+    spawn_id: RunId,
     *,
     include_body: bool,
     runtime_root: Path | None = None,
@@ -282,7 +286,7 @@ def read_report(
 
 def read_report_summary(
     project_root: Path,
-    spawn_id: str,
+    spawn_id: RunId,
     *,
     runtime_root: Path | None = None,
 ) -> tuple[str | None, str | None]:
@@ -303,7 +307,7 @@ def read_report_summary(
 
 def read_report_text(
     project_root: Path,
-    spawn_id: str,
+    spawn_id: RunId,
     *,
     runtime_root: Path | None = None,
 ) -> tuple[str | None, str | None]:
@@ -402,7 +406,7 @@ def extract_last_assistant_message(stderr_text: str) -> str | None:
 
 def _read_running_log_details(
     project_root: Path,
-    spawn_id: str,
+    spawn_id: RunId,
     *,
     runtime_root: Path | None = None,
 ) -> tuple[str, str | None]:
@@ -418,7 +422,7 @@ def _read_running_log_details(
 
 def _latest_pi_lifecycle_phase(
     project_root: Path,
-    spawn_id: str,
+    spawn_id: RunId,
     *,
     runtime_root: Path | None = None,
 ) -> str | None:
@@ -431,7 +435,7 @@ def _latest_pi_lifecycle_phase(
 
 def _pi_cleanup_telemetry(
     project_root: Path,
-    spawn_id: str,
+    spawn_id: RunId,
     *,
     runtime_root: Path | None = None,
 ) -> _PiCleanupTelemetry:
@@ -449,11 +453,10 @@ def _pi_cleanup_telemetry(
 
 def read_written_files(
     project_root: Path,
-    spawn_id: str,
+    spawn_id: RunId,
     *,
     runtime_root: Path | None = None,
 ) -> tuple[str, ...]:
-    from meridian.lib.core.types import SpawnId
     from meridian.lib.launch.written_files import extract_written_files
     from meridian.lib.state.artifact_store import LocalStore
 
@@ -461,12 +464,12 @@ def read_written_files(
     if resolved_runtime_root is None:
         return ()
     artifacts = LocalStore(root_dir=resolved_runtime_root / "artifacts")
-    return extract_written_files(artifacts, SpawnId(spawn_id))
+    return extract_written_files(artifacts, spawn_id)
 
 
 def spawn_session_log_available(
     runtime_root: Path,
-    spawn_id: str,
+    spawn_id: RunId,
     *,
     harness_session_id: str | None = None,
 ) -> bool:

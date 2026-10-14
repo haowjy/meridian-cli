@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.event_hooks import run_event_hooks
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import (
@@ -383,7 +384,7 @@ class SpawnManager:
     ) -> InjectResult:
         """Record and route one user message injection to the target connection."""
 
-        record = spawn_store.get_spawn(self._runtime_root, spawn_id)
+        record = spawn_store.get_spawn(self._runtime_root, parse_ref(spawn_id, row_key=True))
         if record is not None and record.status in TERMINAL_SPAWN_STATUSES:
             result = InjectResult(
                 success=False,
@@ -723,7 +724,7 @@ class SpawnManager:
         """Best-effort recorded scope reap after transport stop attempts."""
 
         try:
-            record = spawn_store.get_spawn(self._runtime_root, spawn_id)
+            record = spawn_store.get_spawn(self._runtime_root, parse_ref(spawn_id, row_key=True))
             if record is None:
                 return
             terminate_recorded_spawn_scope(

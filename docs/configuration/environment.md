@@ -7,8 +7,8 @@ agents, hook scripts, and companion tools may set or read these names according
 to their role. Public names are stable and fall into four groups:
 
 - **config inputs** such as `MERIDIAN_MODEL` and `MERIDIAN_MAX_DEPTH`;
-- **injected handles** such as `MERIDIAN_PROJECT_DIR`, `MERIDIAN_TASK_DIR`, and
-  `MERIDIAN_SPAWN_ID`;
+- **injected handles** such as `MERIDIAN_PROJECT_DIR`, `MERIDIAN_TASK_DIR`,
+  `MERIDIAN_SPAWN_ID`, and `MERIDIAN_RUN_ID`;
 - **hook payload** names (`MERIDIAN_HOOK_*`, `MERIDIAN_SPAWN_STATUS`,
   `MERIDIAN_SPAWN_AGENT`, `MERIDIAN_SPAWN_MODEL`,
   `MERIDIAN_SPAWN_DURATION_SECS`, `MERIDIAN_SPAWN_COST_USD`, and
@@ -51,7 +51,8 @@ overrides — not `-C`, which retargets the entire project/control root.
 | `MERIDIAN_HOME` | Override user state root (default `~/.meridian/`) |
 | `MERIDIAN_ACTIVE_WORK_ID` | Active attached work item slug, when one exists |
 | `MERIDIAN_ACTIVE_WORK_DIR` | Active scope directory: named work item scratch dir when attached, else the run's ambient spawn scope (`spawns/p<N>/work`) |
-| `MERIDIAN_SPAWN_ID` | Current run/spawn ID for primary and delegated execution |
+| `MERIDIAN_SPAWN_ID` | Current spawn ID for primary and delegated execution; delegated children record it as their parent |
+| `MERIDIAN_RUN_ID` | Exact launch (run) key that self-targeting commands such as `spawn report`, `spawn done` and `task-dir` act on. Every launch currently starts a new spawn, so it equals `MERIDIAN_SPAWN_ID`; processes started by older launchers fall back to `MERIDIAN_SPAWN_ID` |
 | `MERIDIAN_CHAT_ID` | Top-level session id inherited across the spawn tree |
 | `MERIDIAN_MAX_DEPTH` | Max zero-based delegated spawn depth override |
 
@@ -99,7 +100,7 @@ archive keys, defaults and precedence. These do not control UI visibility archiv
 
 | Variable | Purpose |
 |---|---|
-| `_MERIDIAN_GUARDRAIL_RUN_ID` | Spawn id passed to guardrail scripts |
+| `_MERIDIAN_GUARDRAIL_RUN_ID` | Exact run key passed to guardrail scripts |
 | `_MERIDIAN_GUARDRAIL_CHAT_ID` | Chat id for `meridian session log` |
 | `_MERIDIAN_GUARDRAIL_REPORT` | Path to `report.md` when a report exists |
 | `MERIDIAN_SECRET_<KEY>` | Secret injection/redaction channel |

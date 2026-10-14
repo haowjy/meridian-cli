@@ -16,6 +16,7 @@ from meridian.lib.bootstrap.services import RuntimeWriteContext, prepare_for_run
 from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.domain import Spawn, SpawnStatus
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import HarnessSessionId, ModelId, SpawnId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
@@ -180,7 +181,7 @@ async def _execute_existing_spawn(
     else:
         runtime = build_runtime(str(project_paths.project_root), sink=sink)
         runtime_root = resolve_runtime_root(project_paths.project_root)
-    spawn_record = spawn_store.get_spawn(runtime_root, spawn_id)
+    spawn_record = spawn_store.get_spawn(runtime_root, parse_ref(spawn_id, row_key=True))
     if spawn_record is None:
         logger.error("Spawn not found for background execution.", spawn_id=str(spawn_id))
         return 1
@@ -334,7 +335,7 @@ def _background_worker_main(
         )
         register_spawn_telemetry_observer()
         log_dir = resolve_spawn_log_dir(
-            project_paths.project_root, spawn_id, runtime_root=runtime_root
+            project_paths.project_root, parse_ref(spawn_id, row_key=True), runtime_root=runtime_root
         )
 
         try:

@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from meridian.lib.config.context_config import ContextConfig
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.project_root import resolve_user_config_path
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.state.project_identity import (
     ProjectIdentity,
     ensure_project_identity,
@@ -365,7 +365,7 @@ def resolve_work_scratch_dir_for_project(
     return resolved_project_paths.work_dir / work_id
 
 
-def spawn_log_subpath(spawn_id: SpawnId | str) -> Path:
+def spawn_log_subpath(spawn_id: RunId) -> Path:
     """Return spawn log path relative to the Meridian state root."""
 
     return Path("spawns") / str(spawn_id)
@@ -373,7 +373,7 @@ def spawn_log_subpath(spawn_id: SpawnId | str) -> Path:
 
 def resolve_spawn_log_dir(
     project_root: Path,
-    spawn_id: SpawnId | str,
+    spawn_id: RunId,
     *,
     runtime_root: Path,
 ) -> Path:
@@ -385,7 +385,7 @@ def resolve_spawn_log_dir(
 
 def resolve_ambient_work_dir(
     project_root: Path,
-    spawn_id: SpawnId | str,
+    spawn_id: RunId,
     *,
     runtime_root: Path | None = None,
 ) -> Path:
@@ -397,11 +397,11 @@ def resolve_ambient_work_dir(
     ) / "work"
 
 
-def heartbeat_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
+def heartbeat_path(runtime_root: Path, spawn_id: RunId) -> Path:
     """Return heartbeat sentinel path for a spawn under a state root."""
 
     return RuntimePaths.from_root_dir(runtime_root).spawns_dir / str(spawn_id) / "heartbeat"
 
 
-def pi_lifecycle_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
+def pi_lifecycle_path(runtime_root: Path, spawn_id: RunId) -> Path:
     return runtime_root / "spawns" / str(spawn_id) / "pi-lifecycle.json"

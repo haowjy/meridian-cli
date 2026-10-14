@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { writeJsonAtomic } from "./json_file";
-import { currentSpawnIdFromEnv, resolveDeliveryReceiptsPath, resolveObservedSpawnsPath } from "./pi_state_paths";
+import { currentRunIdFromEnv, currentSpawnIdFromEnv, resolveDeliveryReceiptsPath, resolveObservedSpawnsPath } from "./pi_state_paths";
 import type { DeliveryReceiptsFile, ObservedSpawnsFile } from "./schemas";
 
 const execFileAsync = promisify(execFile);
@@ -30,14 +30,14 @@ export async function readPrivateJson(file: string): Promise<unknown | undefined
   }
 }
 
-export async function readDeliveryReceipts(spawnId = currentSpawnIdFromEnv(), file = resolveDeliveryReceiptsPath(spawnId)): Promise<DeliveryReceiptsFile> {
+export async function readDeliveryReceipts(spawnId = currentRunIdFromEnv(), file = resolveDeliveryReceiptsPath(spawnId)): Promise<DeliveryReceiptsFile> {
   const value = await readPrivateJson(file);
   if (value === undefined) return { v: 1, spawn_id: spawnId, messages: {} };
   if (!Value.Check(ReceiptsSchema, value) || value.spawn_id !== spawnId) throw Error("invalid delivery receipts");
   return value;
 }
 
-export async function admitDelivery(deliveryId: string, workIds: string[], spawnId = currentSpawnIdFromEnv(), file = resolveDeliveryReceiptsPath(spawnId)): Promise<void> {
+export async function admitDelivery(deliveryId: string, workIds: string[], spawnId = currentRunIdFromEnv(), file = resolveDeliveryReceiptsPath(spawnId)): Promise<void> {
   const next = (receiptQueues.get(file) ?? Promise.resolve()).catch(() => undefined).then(async () => {
     const value = await readDeliveryReceipts(spawnId, file);
     const prior = value.messages[deliveryId];

@@ -7,13 +7,14 @@ import errno
 import json
 import sys
 import time
-from typing import cast
+from typing import NoReturn, cast
 
 from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
 from meridian.lib.ops.runtime import (
     resolve_runtime_root,
     resolve_runtime_root_and_config,
 )
+from meridian.lib.ops.spawn.query import resolve_spawn_reference
 from meridian.lib.state import spawn_store
 from meridian.lib.streaming.control_socket import control_socket_path
 
@@ -22,7 +23,7 @@ _ENDPOINT_DISCOVERY_TIMEOUT_SECONDS = 30.0
 _ENDPOINT_DISCOVERY_POLL_SECONDS = 0.1
 
 
-def _fail(message: str) -> None:
+def _fail(message: str) -> NoReturn:
     print(f"Error: {message}", file=sys.stderr)
     raise SystemExit(1)
 
@@ -56,8 +57,16 @@ async def inject_message(
 
     project_root, _ = resolve_runtime_root_and_config(None)
     runtime_root = resolve_runtime_root(project_root)
-    spawn_dir = runtime_root / "spawns" / normalized_spawn_id
-    socket_path = control_socket_path(runtime_root, normalized_spawn_id)
+    try:
+        run_id = resolve_spawn_reference(
+            project_root,
+            normalized_spawn_id,
+            runtime_root=runtime_root,
+        )
+    except ValueError:
+        _fail(f"spawn not found: {normalized_spawn_id}")
+    spawn_dir = runtime_root / "spawns" / run_id
+    socket_path = control_socket_path(runtime_root, run_id)
 
     if not spawn_dir.exists():
         _fail(f"spawn not found: {normalized_spawn_id}")
@@ -68,14 +77,14 @@ async def inject_message(
 
     discovery_deadline = time.monotonic() + _ENDPOINT_DISCOVERY_TIMEOUT_SECONDS
     while True:
-        record = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
+        record = spawn_store.get_spawn(runtime_root, run_id)
         if record is None or record.status not in ACTIVE_SPAWN_STATUSES:
-            _fail(f"spawn not running: {normalized_spawn_id} has no control endpoint")
+            _fail(f"spawn not running: {run_id} has no control endpoint")
         if socket_path.exists():
             break
         remaining = discovery_deadline - time.monotonic()
         if remaining <= 0:
-            _fail(f"spawn not running: {normalized_spawn_id} has no control endpoint")
+            _fail(f"spawn not running: {run_id} has no control endpoint")
         await asyncio.sleep(min(_ENDPOINT_DISCOVERY_POLL_SECONDS, remaining))
 
     request: dict[str, str] = {"type": "user_message", "text": normalized_message}
@@ -85,33 +94,33 @@ async def inject_message(
         reader, writer = await asyncio.open_unix_connection(str(socket_path))
         response_data = await _send_and_receive(reader, writer, request)
     except TimeoutError:
-        _fail(f"timed out waiting for response from spawn {normalized_spawn_id}")
+        _fail(f"timed out waiting for response from spawn {run_id}")
     except ConnectionRefusedError:
-        _fail(f"connection refused: spawn {normalized_spawn_id} is not running")
+        _fail(f"connection refused: spawn {run_id} is not running")
     except FileNotFoundError:
-        _fail(f"spawn not running: {normalized_spawn_id} control socket disappeared")
+        _fail(f"spawn not running: {run_id} control socket disappeared")
     except OSError as exc:
         if exc.errno == errno.ENOENT:
-            _fail(f"spawn not running: {normalized_spawn_id} control socket disappeared")
+            _fail(f"spawn not running: {run_id} control socket disappeared")
         if exc.errno == errno.ECONNREFUSED:
-            _fail(f"connection refused: spawn {normalized_spawn_id} is not running")
+            _fail(f"connection refused: spawn {run_id} is not running")
         raise
 
     if not response_data:
-        _fail(f"spawn not running: {normalized_spawn_id} returned no response")
+        _fail(f"spawn not running: {run_id} returned no response")
 
     parsed_obj: object | None = None
     try:
         parsed_obj = json.loads(response_data.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
-        _fail(f"invalid response from spawn {normalized_spawn_id}")
+        _fail(f"invalid response from spawn {run_id}")
     if not isinstance(parsed_obj, dict):
-        _fail(f"invalid response from spawn {normalized_spawn_id}")
+        _fail(f"invalid response from spawn {run_id}")
     parsed = cast("dict[str, object]", parsed_obj)
 
     ok = parsed.get("ok")
     if ok is True:
-        print(f"Message delivered to spawn {normalized_spawn_id}")
+        print(f"Message delivered to spawn {run_id}")
         return
 
     error_value = parsed.get("error")

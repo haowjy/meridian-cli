@@ -21,6 +21,7 @@ from meridian.lib.core.native_identity import (
     NativeObservationBatch,
     PostExit,
 )
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.attempt_facts import AttemptFacts
 from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
@@ -384,7 +385,9 @@ def conclude_native_run(
         status=status,
         trampoline_successor_id=post.trampoline_successor_id if exit_chat_id is None else None,
     )
-    spawn_store.update_spawn(run.attempt.runtime_root, spawn_id, run_boundary=boundary)
+    spawn_store.update_spawn(
+        run.attempt.runtime_root, parse_ref(spawn_id, row_key=True), run_boundary=boundary
+    )
     if error is not None:
         record_identity_failure(
             error,

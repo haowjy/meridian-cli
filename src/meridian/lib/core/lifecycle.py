@@ -35,6 +35,7 @@ import psutil
 import structlog
 
 from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import (
     TERMINAL_SPAWN_STATUSES,
     SpawnReservation,
@@ -275,6 +276,7 @@ class SpawnLifecycleService:
                 chat_id=reservation.chat_id,
                 owner_chat_id=reservation.owner_chat_id,
                 parent_id=reservation.parent_id,
+                parent_run_id=reservation.parent_run_id,
                 model=session_metadata.model,
                 agent=session_metadata.agent,
                 agent_path=session_metadata.agent_path or None,
@@ -682,7 +684,10 @@ class SpawnLifecycleService:
         from meridian.lib.state.paths import RuntimePaths
         from meridian.lib.state.spawn.repository import read_state
 
-        return read_state(RuntimePaths.from_root_dir(self._runtime_root).spawns_dir, spawn_id)
+        return read_state(
+            RuntimePaths.from_root_dir(self._runtime_root).spawns_dir,
+            parse_ref(spawn_id, row_key=True),
+        )
 
     def _reconcile_failure_sentinel(
         self,

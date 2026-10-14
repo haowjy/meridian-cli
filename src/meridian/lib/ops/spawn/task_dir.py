@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from meridian.lib.core.types import RunId
 from meridian.lib.launch.cwd import resolve_effective_task_dir
 
 
@@ -19,7 +20,7 @@ def derive_inheritable_task_dir(
     *,
     project_root: Path,
     project_state_dir: Path,
-    spawn_id: str | None,
+    spawn_id: RunId | None,
     work_id: str | None,
 ) -> Path | None:
     """Parent's child-inheritable task-dir: the genuinely inheritable surface

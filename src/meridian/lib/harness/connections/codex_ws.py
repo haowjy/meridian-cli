@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, Final, cast
 
 from aiohttp import ClientSession, WSMsgType
 
+from meridian.lib.core.refs import parse_ref
+
 if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
@@ -378,7 +380,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         effective_cwd = self._effective_project_root()
         spawn_dir = resolve_spawn_log_dir(
             config.control_root,
-            config.spawn_id,
+            parse_ref(config.spawn_id, row_key=True),
             runtime_root=(
                 config.runtime_root
                 or resolve_project_runtime_root_for_write(config.control_root)

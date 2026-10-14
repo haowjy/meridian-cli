@@ -9,6 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.atomic import fsync_directory
@@ -77,9 +78,11 @@ def claim_active_spawn_scopes(
     spawns_dir = runtime_root / "spawns"
     with (
         lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
-        lock_file(spawn_lock_path(spawns_dir, spawn_id_text), reentrant=False),
+        lock_file(
+            spawn_lock_path(spawns_dir, parse_ref(spawn_id_text, row_key=True)), reentrant=False
+        ),
     ):
-        current = read_state(spawns_dir, spawn_id_text)
+        current = read_state(spawns_dir, parse_ref(spawn_id_text, row_key=True))
         if (
             current is None
             or current.record_mode == "historical"
@@ -115,9 +118,13 @@ def replace_cleanup_claim(
     spawns_dir = runtime_root / "spawns"
     with (
         lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
-        lock_file(spawn_lock_path(spawns_dir, str(spawn_id)), reentrant=False),
+        lock_file(
+            spawn_lock_path(spawns_dir, parse_ref(str(spawn_id), row_key=True)), reentrant=False
+        ),
     ):
-        current = read_state(spawns_dir, str(spawn_id), include_prompt=False)
+        current = read_state(
+            spawns_dir, parse_ref(str(spawn_id), row_key=True), include_prompt=False
+        )
         if current is None or current.record_mode == "historical":
             return
         path = cleanup_claim_path(runtime_root, spawn_id)

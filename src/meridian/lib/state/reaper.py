@@ -15,6 +15,7 @@ import structlog
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
 from meridian.lib.core.depth import is_root_side_effect_process
 from meridian.lib.core.domain import TerminalSpawnStatus
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import (
     is_active_spawn_status,
     is_terminal_spawn_status,
@@ -482,7 +483,7 @@ def _record_orphan_finalize_evidence(
     try:
         mutate_published_spawn_artifact(
             runtime_root,
-            SpawnId(record.id),
+            parse_ref(SpawnId(record.id), row_key=True),
             lambda: atomic_write_text(
                 evidence_path,
                 json.dumps(evidence, separators=(",", ":"), sort_keys=True) + "\n",
@@ -513,7 +514,7 @@ def _finalize_and_log(
     service = build_spawn_application_service_from_roots(project_root, runtime_root)
     outcome = asyncio.run(
         service.complete_spawn(
-            SpawnId(record.id),
+            record.id,
             status,
             exit_code,
             origin="reconciler",

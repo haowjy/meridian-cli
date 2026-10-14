@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.state import spawn_store
@@ -38,7 +39,7 @@ def materialize_fork(
     Returns the new (forked) harness session ID.
     """
 
-    row = spawn_store.get_spawn(runtime_root, spawn_id)
+    row = spawn_store.get_spawn(runtime_root, parse_ref(spawn_id, row_key=True))
     if row is None:
         raise RuntimeError(
             f"Fork precondition violated: no spawn row exists for {spawn_id!r}. "
@@ -54,7 +55,7 @@ def materialize_fork(
 
     spawn_store.update_spawn(
         runtime_root,
-        spawn_id,
+        parse_ref(spawn_id, row_key=True),
         harness_session_id=forked_session_id,
     )
     return forked_session_id

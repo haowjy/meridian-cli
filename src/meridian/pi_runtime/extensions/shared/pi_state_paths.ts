@@ -18,15 +18,19 @@ export function currentSpawnIdFromEnv(): string {
   return process.env.MERIDIAN_SPAWN_ID?.trim() || "unknown";
 }
 
+export function currentRunIdFromEnv(): string {
+  return process.env.MERIDIAN_RUN_ID?.trim() || currentSpawnIdFromEnv();
+}
+
 export function resolvePiBashDir(spawnId = currentSpawnIdFromEnv()): string {
   return path.join(resolveStateRoot(), "pi-bash", spawnId);
 }
 
-export function resolveBashRecordsPath(spawnId = currentSpawnIdFromEnv()): string {
+export function resolveBashRecordsPath(spawnId = currentRunIdFromEnv()): string {
   return path.join(resolvePiBashDir(spawnId), "bash-records.json");
 }
 
-export function resolveDeliveryReceiptsPath(spawnId = currentSpawnIdFromEnv()): string {
+export function resolveDeliveryReceiptsPath(spawnId = currentRunIdFromEnv()): string {
   return path.join(resolvePiBashDir(spawnId), "delivery-receipts.json");
 }
 
@@ -38,7 +42,7 @@ export function resolveClearedSpawnsPath(spawnId = currentSpawnIdFromEnv()): str
   return path.join(resolvePiBashDir(spawnId), "cleared-spawns.json");
 }
 
-export function resolveBashLogsDir(spawnId = currentSpawnIdFromEnv()): string {
+export function resolveBashLogsDir(spawnId = currentRunIdFromEnv()): string {
   return path.join(resolvePiBashDir(spawnId), "logs");
 }
 

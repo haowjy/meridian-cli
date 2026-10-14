@@ -7,6 +7,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.context import RuntimeContext
+from meridian.lib.core.refs import reference_sort_key, spawn_of
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.util import FormatContext
@@ -22,12 +23,6 @@ def _display_path(project_root: Path, path: Path) -> str:
         return path.relative_to(project_root).as_posix()
     except ValueError:
         return path.as_posix()
-
-
-def _spawn_id_sort_key(spawn_id: str) -> tuple[int, str]:
-    if len(spawn_id) >= 2 and spawn_id[0] in {"p", "r"} and spawn_id[1:].isdigit():
-        return (int(spawn_id[1:]), spawn_id)
-    return (10**9, spawn_id)
 
 
 def _spawn_label(spawn: SpawnRecord) -> str:
@@ -62,7 +57,7 @@ class WorkDashboardSpawn(BaseModel):
 
 def _dashboard_spawn(spawn: SpawnRecord) -> WorkDashboardSpawn:
     return WorkDashboardSpawn(
-        id=spawn.id,
+        id=str(spawn_of(spawn.id)),
         model=(spawn.model or "").strip() or "-",
         status=spawn.status,
         desc=_spawn_label(spawn),
@@ -478,11 +473,12 @@ def work_dashboard_sync(
 
     from meridian.lib.state.reaper import reconcile_spawns
 
-    for spawn in reconcile_spawns(
+    reconciled = reconcile_spawns(
         project_root,
         runtime_state_root,
         indexed_spawn_scan(runtime_state_root),
-    ).records:
+    ).records
+    for spawn in reconciled:
         if not is_active_spawn_status(spawn.status):
             continue
         row = _dashboard_spawn(spawn)
@@ -515,7 +511,7 @@ def work_dashboard_sync(
                 goal=item.goal if item is not None else None,
                 task_dir=item.task_dir if item is not None else None,
                 spawns=tuple(
-                    sorted(grouped[work_id], key=lambda spawn: _spawn_id_sort_key(spawn.id))
+                    sorted(grouped[work_id], key=lambda spawn: reference_sort_key(spawn.id))
                 ),
                 worktree_display=wt_display,
                 worktree_exists=wt_exists,
@@ -525,7 +521,7 @@ def work_dashboard_sync(
 
     return WorkDashboardOutput(
         items=tuple(items),
-        ungrouped_spawns=tuple(sorted(ungrouped, key=lambda spawn: _spawn_id_sort_key(spawn.id))),
+        ungrouped_spawns=tuple(sorted(ungrouped, key=lambda spawn: reference_sort_key(spawn.id))),
         warnings=tuple(work_warnings),
     )
 
@@ -581,20 +577,21 @@ def work_show_sync(
         raise ValueError(f"Work item '{payload.work_id}' not found")
 
     active_session_work_ids = _active_session_work_ids(runtime_state_root)
+    reconciled = reconcile_spawns(
+        project_root,
+        runtime_state_root,
+        indexed_spawn_scan(runtime_state_root),
+    ).records
     associated_spawns = [
         _dashboard_spawn(spawn)
-        for spawn in reconcile_spawns(
-            project_root,
-            runtime_state_root,
-            indexed_spawn_scan(runtime_state_root),
-        ).records
+        for spawn in reconciled
         if _associated_with_work_item(
             spawn,
             work_id=item.name,
             active_session_work_ids=active_session_work_ids,
         )
     ]
-    associated_spawns.sort(key=lambda spawn: _spawn_id_sort_key(spawn.id))
+    associated_spawns.sort(key=lambda spawn: reference_sort_key(spawn.id))
 
     wt_path = item.worktree_path
     wt_exists: bool | None = None

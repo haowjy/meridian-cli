@@ -16,6 +16,7 @@ from meridian.lib.core.native_identity import (
     NativeEntryMismatch,
     NativeKeyFields,
 )
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import (
     ChatId,
     HarnessSessionId,
@@ -224,7 +225,7 @@ def _records_by_session(
 
 
 def _session_sort_key(chat_id: str) -> tuple[int, str]:
-    if chat_id.startswith("c") and chat_id[1:].isdigit():
+    if parse_ref(chat_id).kind == "chat":
         return (int(chat_id[1:]), chat_id)
     return (10**9, chat_id)
 
@@ -358,7 +359,10 @@ def start_session(
                     )
 
                 binding = write_state_locked(
-                    paths.spawns_dir, spawn_id, bind_spawn, allow_terminal_overwrite=True
+                    paths.spawns_dir,
+                    parse_ref(spawn_id, row_key=True),
+                    bind_spawn,
+                    allow_terminal_overwrite=True,
                 )
                 if isinstance(binding, Applied):
                     event = event.model_copy(
@@ -452,7 +456,9 @@ def update_session_spawn_id(runtime_root: Path, chat_id: str, spawn_id: str) -> 
     paths = RuntimePaths.from_root_dir(runtime_root)
     from meridian.lib.state.spawn.repository import read_state
 
-    spawn = read_state(paths.spawns_dir, spawn_id.strip(), include_prompt=False)
+    spawn = read_state(
+        paths.spawns_dir, parse_ref(spawn_id.strip(), row_key=True), include_prompt=False
+    )
     event = SessionUpdateEvent(
         chat_id=ChatId(chat_id),
         harness_session_id=None,
@@ -1041,7 +1047,9 @@ def _linked_spawn_policy(runtime_root: Path, spawn_id: str | None) -> LaunchPoli
     """Bounded legacy read: an exact recorded link, never a newest-owner guess."""
     from meridian.lib.state import spawn_store
 
-    row = spawn_store.get_spawn(runtime_root, spawn_id) if spawn_id else None
+    row = (
+        spawn_store.get_spawn(runtime_root, parse_ref(spawn_id, row_key=True)) if spawn_id else None
+    )
     return row.launch_policy_snapshot if row is not None else None
 
 
@@ -1089,7 +1097,10 @@ def get_or_create_observed_chat(
             return row.model_copy(update={"current_chat_id": chat_id})
 
         result = write_state_locked(
-            paths.spawns_dir, spawn_id, observe, allow_terminal_overwrite=True,
+            paths.spawns_dir,
+            parse_ref(spawn_id, row_key=True),
+            observe,
+            allow_terminal_overwrite=True,
         )
         if isinstance(result, Applied):
             assert result.after.current_chat_id is not None

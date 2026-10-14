@@ -35,7 +35,7 @@ with all collected failures.
 boundary — repo scripts are untrusted. Do not weaken this.
 
 Injected env vars available to guardrail scripts:
-- `_MERIDIAN_GUARDRAIL_RUN_ID` — the spawn ID
+- `_MERIDIAN_GUARDRAIL_RUN_ID` — the exact run key of the finishing row
 - `_MERIDIAN_GUARDRAIL_CHAT_ID` — chat ID for `meridian session log`, when known
 - `_MERIDIAN_GUARDRAIL_REPORT` — optional path to `report.md`
 

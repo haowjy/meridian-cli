@@ -19,14 +19,16 @@ from pathlib import Path
 from typing import Literal, NamedTuple
 
 from pydantic import TypeAdapter, ValidationError
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.native_identity import NativeKey, NativeSessionUnavailable
-from meridian.lib.core.types import HarnessId
+from meridian.lib.core.refs import parse_ref
+from meridian.lib.core.types import HarnessId, RunId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
 from meridian.lib.harness.transcript import reject_runner_history
+from meridian.lib.ops.reference import resolve_continue_source_row
 from meridian.lib.ops.run_boundary import spawn_view_label
 from meridian.lib.ops.spawn.query import read_spawn_row_read_only
 from meridian.lib.state import session_identity, session_store, spawn_store
@@ -102,10 +104,6 @@ class SessionLogTarget(NamedTuple):
 
 def _is_chat_ref(runtime_root: Path, value: str) -> bool:
     return session_identity.is_tracked_chat_ref(runtime_root, value)
-
-
-def _is_spawn_ref(value: str) -> bool:
-    return value.startswith("p") and value[1:].isdigit()
 
 
 def _extract_session_id_from_path(path: Path) -> str:
@@ -193,7 +191,7 @@ def _resolve_from_chat_id(*, runtime_root: Path, chat_id: str) -> SessionLogTarg
     if record is None:
         raise ValueError(f"Chat '{chat_id}' not found")
     if record.record_mode == "historical" and record.spawn_id:
-        row = spawn_store.get_spawn(runtime_root, record.spawn_id)
+        row = spawn_store.get_spawn(runtime_root, parse_ref(record.spawn_id, row_key=True))
         if row is not None and row.history_id == record.history_id:
             return _restored_target(runtime_root, row, ref=chat_id)
     return _target_from_record(record)
@@ -238,12 +236,31 @@ class _IndexedRecord(NamedTuple):
 
 
 def _indexed_spawn(
-    runtime_root: Path, ref: str, *, deadline: float | None = None
+    runtime_root: Path, ref: str, *, deadline: float | None = None, exact_run: bool = False,
 ) -> _IndexedRecord | None:
     """Recover only the record, never a transcript location, from the projection."""
+    parsed = parse_ref(ref)
     with HistoryIndex(runtime_root).query(deadline=deadline) as db:
-        records = (
-            db.execute(
+        if exact_run:
+            statement = select(RECORDS.c.record_json, RECORDS.c.archive_id).where(
+                RECORDS.c.local_id == ref,
+            )
+        elif parsed.kind == "spawn":
+            assert parsed.spawn_id is not None
+            max_run = select(func.max(RECORDS.c.run)).where(
+                RECORDS.c.spawn_id == parsed.spawn_id,
+            ).scalar_subquery()
+            statement = select(RECORDS.c.record_json, RECORDS.c.archive_id).where(
+                RECORDS.c.spawn_id == parsed.spawn_id, RECORDS.c.run == max_run,
+            )
+        elif parsed.kind == "run":
+            assert parsed.spawn_id is not None and parsed.run is not None
+            statement = select(RECORDS.c.record_json, RECORDS.c.archive_id).where(
+                RECORDS.c.spawn_id == parsed.spawn_id,
+                RECORDS.c.run == parsed.run,
+            )
+        else:
+            statement = (
                 select(RECORDS.c.record_json, RECORDS.c.archive_id)
                 .where(
                     or_(
@@ -258,9 +275,7 @@ def _indexed_spawn(
                 )
                 .distinct()
             )
-            .tuples()
-            .all()
-        )
+        records = db.execute(statement).tuples().all()
     if len(records) > 1:
         raise ValueError("Ambiguous archive origin alias; use a portable history UUID")
     if not records:
@@ -330,13 +345,13 @@ def _resolve_from_spawn_id(
     *,
     project_root: Path,
     runtime_root: Path,
-    spawn_id: str,
+    spawn_id: RunId,
     purpose: Literal["display", "capture"] = "display",
     deadline: float | None = None,
 ) -> SessionLogTarget:
     row = read_spawn_row_read_only(project_root, spawn_id, runtime_root=runtime_root)
     if row is None and purpose == "display":
-        indexed = _indexed_spawn(runtime_root, spawn_id, deadline=deadline)
+        indexed = _indexed_spawn(runtime_root, spawn_id, deadline=deadline, exact_run=True)
         if indexed is not None:
             return _indexed_target(
                 runtime_root, indexed, ref=spawn_id, project_root=project_root, deadline=deadline
@@ -379,11 +394,14 @@ def _resolve_from_session_ref(
     if matches:
         if len({record.native_key() for record in matches}) > 1:
             raise NativeSessionUnavailable(session_ref, "ambiguous_native_file")
+        def chat_sort_key(record: session_store.SessionRecord) -> tuple[int, str]:
+            parsed_chat = parse_ref(record.chat_id)
+            if parsed_chat.chat_id is None:
+                return 10**9, record.chat_id
+            return int(parsed_chat.chat_id[1:]), record.chat_id
+
         matches.sort(
-            key=lambda record: (
-                int(record.chat_id[1:]) if record.chat_id[1:].isdigit() else float("inf"),
-                record.chat_id,
-            )
+            key=chat_sort_key
         )
         target = _target_from_record(matches[0])
         return target._replace(
@@ -426,12 +444,14 @@ def resolve_transcript_source(
     purpose: Literal["display", "capture"] = "display",
 ) -> SessionLogTarget:
     if purpose == "capture":
-        if runtime_root is None or file_path or not _is_spawn_ref(ref.strip()):
+        parsed_capture = parse_ref(ref.strip())
+        if runtime_root is None or file_path or parsed_capture.kind not in {"spawn", "run"}:
             raise ValueError("Native capture requires an exact local spawn reference")
+        exact_run = parse_ref(ref.strip(), row_key=True)
         return _resolve_from_spawn_id(
             project_root=project_root,
             runtime_root=runtime_root,
-            spawn_id=ref.strip(),
+            spawn_id=exact_run,
             purpose=purpose,
         )
     if file_path is not None and file_path.strip():
@@ -441,6 +461,7 @@ def resolve_transcript_source(
     if not normalized_ref:
         raise ValueError("Session reference is required unless --file is provided")
 
+    parsed = parse_ref(normalized_ref)
     if runtime_root is not None and _is_chat_ref(runtime_root, normalized_ref):
         return _resolve_from_chat_id(
             runtime_root=runtime_root,
@@ -448,19 +469,30 @@ def resolve_transcript_source(
         )
 
     if runtime_root is None:
-        is_chat_id = normalized_ref.startswith("c") and normalized_ref[1:].isdigit()
-        if _is_spawn_ref(normalized_ref) or is_chat_id:
+        if parsed.kind in {"spawn", "run", "chat"}:
             raise FileNotFoundError(f"Session reference '{normalized_ref}' not found")
         return _untracked_target(
             project_root=project_root,
             session_ref=normalized_ref,
         )
 
-    if _is_spawn_ref(normalized_ref):
+    if parsed.kind in {"spawn", "run"}:
+        local_row = resolve_continue_source_row(runtime_root, parsed)
+        if local_row is None:
+            indexed = _indexed_spawn(runtime_root, normalized_ref, deadline=deadline)
+            if indexed is None:
+                raise ValueError(f"Spawn '{normalized_ref}' not found")
+            return _indexed_target(
+                runtime_root,
+                indexed,
+                ref=normalized_ref,
+                project_root=project_root,
+                deadline=deadline,
+            )
         return _resolve_from_spawn_id(
             project_root=project_root,
             runtime_root=runtime_root,
-            spawn_id=normalized_ref,
+            spawn_id=local_row.id,
             deadline=deadline,
         )
 

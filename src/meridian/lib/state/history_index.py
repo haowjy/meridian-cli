@@ -46,6 +46,8 @@ from sqlalchemy.pool import NullPool
 from sqlalchemy.sql.elements import ColumnElement  # noqa: TC002
 
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
+from meridian.lib.core.refs import parse_ref, spawn_of
+from meridian.lib.core.types import RunId
 from meridian.lib.platform.atomic import fsync_directory
 from meridian.lib.platform.locking import FileLockTimeout, lock_file
 from meridian.lib.state.atomic import atomic_write_text
@@ -102,6 +104,8 @@ RECORDS = Table(
     INDEX_SCHEMA,
     Column("history_id", Text, primary_key=True),
     Column("local_id", Text),
+    Column("spawn_id", Text, nullable=False),
+    Column("run", Integer, nullable=False),
     Column("chat", Text),
     Column("owner", Text),
     Column("parent", Text),
@@ -115,6 +119,7 @@ RECORDS = Table(
     Column("record_json", Text, nullable=False),
 )
 Index("loose_alias", RECORDS.c.local_id, unique=True, sqlite_where=RECORDS.c.archive_id.is_(None))
+Index("spawn_runs", RECORDS.c.spawn_id, RECORDS.c.run.desc())
 Index("owner_records", RECORDS.c.owner, RECORDS.c.started)
 Index("chat_records", RECORDS.c.chat, RECORDS.c.started)
 Index("parent_records", RECORDS.c.parent)
@@ -410,6 +415,9 @@ class HistoryIndex:
         if location is None:
             return
         record = SpawnRecord.model_validate_json(location["record_json"])
+        parsed = parse_ref(str(record.id))
+        stable_spawn_id = spawn_of(record.id)
+        run = parsed.run if parsed.spawn_id is not None else 1
         receipt = json.loads(location["receipt_json"]) if location["receipt_json"] else None
         active = record.record_mode != "historical" and record.status not in TERMINAL_SPAWN_STATUSES
         activity = (
@@ -418,12 +426,14 @@ class HistoryIndex:
             else last_activity(record, None, location["activity"])
         )
         db.exec_driver_sql(
-            "INSERT INTO records (history_id, local_id, chat, owner, parent, work, status, "
-            "kind, started, activity, active, archive_id, record_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO records (history_id, local_id, spawn_id, run, chat, owner, parent, "
+            "work, status, kind, started, activity, active, archive_id, record_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 history_id,
                 record.id,
+                stable_spawn_id,
+                run,
                 record.chat_id,
                 record.owner_chat_id or record.chat_id,
                 record.parent_id,
@@ -438,7 +448,7 @@ class HistoryIndex:
             ),
         )
 
-    def _spawn(self, db: Connection, key: str) -> bool:
+    def _spawn(self, db: Connection, key: RunId) -> bool:
         source_id = f"spawn:{key}"
         old = db.exec_driver_sql(
             "SELECT history_id, record_json FROM locations WHERE source_id = ?", (source_id,)
@@ -606,7 +616,7 @@ class HistoryIndex:
 
     def _project(self, db: Connection, source: HistorySource) -> bool:
         if source.kind == "spawn":
-            return self._spawn(db, source.key)
+            return self._spawn(db, parse_ref(source.key, row_key=True))
         if source.kind == "sessions":
             self._sessions(db)
             return False
@@ -701,7 +711,7 @@ class HistoryIndex:
         """
         marked = {marker.source.name for marker in target}
         sources = [
-            HistorySource(kind="spawn", key=key)
+            HistorySource(kind="spawn", key=str(key))
             for (key,) in db.execute(
                 select(RECORDS.c.local_id).where(
                     RECORDS.c.active == 1, RECORDS.c.archive_id.is_(None)
@@ -718,7 +728,7 @@ class HistoryIndex:
                 with lock_file(source.lock_path(self.root), timeout=0):
                     if source.kind == "sessions":
                         self._sessions(db)  # Returns at once when nothing was appended.
-                    elif self._spawn(db, source.key):
+                    elif self._spawn(db, parse_ref(source.key, row_key=True)):
                         active.append(source.key)
             except FileLockTimeout:
                 continue
@@ -750,7 +760,7 @@ class HistoryIndex:
                 )
                 for key in scan_spawn_ids(self.root / "spawns"):
                     with lock_file(
-                        HistorySource(kind="spawn", key=key).lock_path(self.root),
+                        HistorySource(kind="spawn", key=str(key)).lock_path(self.root),
                         timeout=_remaining(deadline),
                     ):
                         self._spawn(db, key)
@@ -1297,7 +1307,8 @@ class HistoryIndex:
             "parent_id": RECORDS.c.parent,
             "work_id": RECORDS.c.work,
             "status": RECORDS.c.status,
-            "spawn_id": RECORDS.c.local_id,
+            "spawn_id": RECORDS.c.spawn_id,
+            "run_id": RECORDS.c.local_id,
         }
         conditions: list[ColumnElement[bool]] = [RECORDS.c.archive_id.is_(None)]
         if related_chat_ids is not None:
@@ -1329,21 +1340,21 @@ class HistoryIndex:
         """
         statement = text(
             """
-            WITH RECURSIVE subtree(local_id, parent, archived, path) AS (
-                SELECT local_id, parent, archive_id IS NOT NULL,
-                       ',' || local_id || ','
+            WITH RECURSIVE subtree(local_id, spawn_id, parent, archived, path) AS (
+                SELECT local_id, spawn_id, parent, archive_id IS NOT NULL,
+                       ',' || spawn_id || ','
                   FROM records
-                 WHERE parent = :root AND local_id != :root
+                 WHERE parent = :root AND spawn_id != :root
                 UNION ALL
-                SELECT child.local_id, child.parent,
+                SELECT child.local_id, child.spawn_id, child.parent,
                        child.archive_id IS NOT NULL,
-                       subtree.path || child.local_id || ','
+                       subtree.path || child.spawn_id || ','
                   FROM records AS child
-                  JOIN subtree ON child.parent = subtree.local_id
-                 WHERE child.local_id != :root
-                   AND instr(subtree.path, ',' || child.local_id || ',') = 0
+                  JOIN subtree ON child.parent = subtree.spawn_id
+                 WHERE child.spawn_id != :root
+                   AND instr(subtree.path, ',' || child.spawn_id || ',') = 0
             )
-            SELECT local_id, parent, archived
+            SELECT DISTINCT local_id, parent, archived
               FROM subtree
              ORDER BY local_id
             """
@@ -1430,6 +1441,7 @@ class HistoryIndex:
 def indexed_spawn_scan(
     runtime_root: Path,
     *,
+    spawn_id: str | set[str] | None = None,
     chat_id: str | None = None,
     related_chat_ids: set[str] | None = None,
     owner_chat_id: str | set[str] | None = None,
@@ -1438,6 +1450,7 @@ def indexed_spawn_scan(
 ) -> SpawnScan:
     """Discovery partition; corruption fails coverage rather than omitting a sibling."""
     records = HistoryIndex(runtime_root).spawns(
+        spawn_id=spawn_id,
         chat_id=chat_id,
         related_chat_ids=related_chat_ids,
         owner_chat_id=owner_chat_id,

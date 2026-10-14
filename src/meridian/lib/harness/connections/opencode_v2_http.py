@@ -26,6 +26,7 @@ from typing import ClassVar, cast
 
 import aiohttp
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.telemetry import StartupPhase
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.bundle import project_managed_primary_backend_command
@@ -184,7 +185,7 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             config.control_root
         )
         spawn_dir = resolve_spawn_log_dir(
-            config.control_root, config.spawn_id, runtime_root=runtime_root
+            config.control_root, parse_ref(config.spawn_id, row_key=True), runtime_root=runtime_root
         )
         self._instruction_path = materialize_system_prompt(config.system, env)
         self._stderr_log_path = spawn_dir / "stderr.log"

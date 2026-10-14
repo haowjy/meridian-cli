@@ -17,6 +17,7 @@ from meridian.lib.core.process_cleanup import (
     terminate_recorded_spawn_scopes,
     terminate_spawn_scopes,
 )
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import coerce_spawn_status, is_terminal_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform import IS_WINDOWS
@@ -59,7 +60,7 @@ class SignalCanceller:
         self._manager = manager
 
     async def cancel(self, spawn_id: SpawnId) -> CancelOutcome:
-        record = spawn_store.get_spawn(self._runtime_root, spawn_id)
+        record = spawn_store.get_spawn(self._runtime_root, parse_ref(spawn_id, row_key=True))
         if record is None:
             raise ValueError(f"Spawn '{spawn_id}' not found")
 
@@ -70,7 +71,10 @@ class SignalCanceller:
             terminal = await self._wait_for_terminal(spawn_id)
             if terminal is not None:
                 return _outcome_from_record(terminal, already_terminal=True)
-            latest = spawn_store.get_spawn(self._runtime_root, spawn_id) or record
+            latest = (
+                spawn_store.get_spawn(self._runtime_root, parse_ref(spawn_id, row_key=True))
+                or record
+            )
             return CancelOutcome(
                 status=SpawnStatus.FINALIZING,
                 origin="cancel",
@@ -102,12 +106,18 @@ class SignalCanceller:
             if terminal is not None:
                 return _outcome_from_record(terminal)
 
-            latest = spawn_store.get_spawn(self._runtime_root, spawn_id) or record
+            latest = (
+                spawn_store.get_spawn(self._runtime_root, parse_ref(spawn_id, row_key=True))
+                or record
+            )
             await self._cleanup_recorded_spawn_scopes(latest)
             terminal = await self._wait_for_terminal(spawn_id)
             if terminal is not None:
                 return _outcome_from_record(terminal)
-            latest = spawn_store.get_spawn(self._runtime_root, spawn_id) or latest
+            latest = (
+                spawn_store.get_spawn(self._runtime_root, parse_ref(spawn_id, row_key=True))
+                or latest
+            )
             return CancelOutcome(
                 status=SpawnStatus.FINALIZING,
                 origin="cancel",
@@ -121,7 +131,9 @@ class SignalCanceller:
         if terminal is not None:
             return _outcome_from_record(terminal)
 
-        latest = spawn_store.get_spawn(self._runtime_root, spawn_id) or record
+        latest = (
+            spawn_store.get_spawn(self._runtime_root, parse_ref(spawn_id, row_key=True)) or record
+        )
         return CancelOutcome(
             status=SpawnStatus.FINALIZING,
             origin="cancel",
@@ -166,7 +178,9 @@ class SignalCanceller:
         if terminal is not None:
             return _outcome_from_record(terminal)
 
-        latest = spawn_store.get_spawn(self._runtime_root, spawn_id) or record
+        latest = (
+            spawn_store.get_spawn(self._runtime_root, parse_ref(spawn_id, row_key=True)) or record
+        )
         return CancelOutcome(
             status=SpawnStatus.FINALIZING,
             origin="cancel",
@@ -212,7 +226,7 @@ class SignalCanceller:
         payload = loads_json_object(raw_body) or {}
         detail = payload.get("detail")
         detail_text = detail if isinstance(detail, str) else ""
-        latest = spawn_store.get_spawn(self._runtime_root, spawn_id)
+        latest = spawn_store.get_spawn(self._runtime_root, parse_ref(spawn_id, row_key=True))
 
         if status_code == 200:
             status_value = payload.get("status")
@@ -273,7 +287,7 @@ class SignalCanceller:
     async def _wait_for_terminal(self, spawn_id: SpawnId) -> SpawnRecord | None:
         deadline = time.monotonic() + max(0.0, self._grace_seconds)
         while True:
-            current = spawn_store.get_spawn(self._runtime_root, spawn_id)
+            current = spawn_store.get_spawn(self._runtime_root, parse_ref(spawn_id, row_key=True))
             if current is not None and _is_terminal(current.status):
                 return current
             now = time.monotonic()

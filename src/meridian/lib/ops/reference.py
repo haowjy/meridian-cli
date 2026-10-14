@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 from uuid import UUID
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.refs import ParsedRef, parse_ref
+from meridian.lib.core.types import RunId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
 from meridian.lib.ops.reference_recovery import (
@@ -20,9 +20,8 @@ from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.paths import resolve_spawn_log_dir
-
-_SPAWN_REF_RE = re.compile(r"^p\d+$")
-_CHAT_REF_RE = re.compile(r"^c\d+$")
+from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.runs import continue_target_run, latest_run, runs_of
 
 
 @dataclass(frozen=True)
@@ -79,21 +78,68 @@ def _normalize_optional(value: str | None) -> str | None:
     return normalized or None
 
 
-def resolve_spawn_ref(runtime_root: Path, ref: str) -> SpawnId | None:
-    """Resolve a spawn reference from spawn id first, then chat id."""
+def resolve_spawn_ref(runtime_root: Path, ref: str) -> RunId | None:
+    """Resolve a user reference to one exact local run row."""
 
-    spawn = spawn_store.get_spawn(runtime_root, ref)
-    if spawn is not None:
-        return SpawnId(spawn.id)
+    parsed = parse_ref(ref)
+    if parsed.kind == "spawn":
+        assert parsed.spawn_id is not None
+        return latest_run(runtime_root, parsed.spawn_id)
+    if parsed.kind == "run":
+        assert parsed.run_id is not None
+        return parsed.run_id if spawn_store.get_spawn(runtime_root, parsed.run_id) else None
 
-    matches = list(indexed_spawn_scan(runtime_root, owner_chat_id=ref).records)
+    # Preserve exact access to nonconforming historical rows without teaching
+    # another caller an ID predicate. This is not a bare spawn conversion.
+    if (parsed.kind == "native" and Path(parsed.value).name == parsed.value
+            and parsed.value not in {".", ".."}):
+        row = spawn_store.get_spawn(runtime_root, parse_ref(parsed.value, row_key=True))
+        if row is not None:
+            return row.id
+
+    matches = list(
+        indexed_spawn_scan(runtime_root, owner_chat_id=parsed.value).records
+    )
     if not matches:
-        matches = list(indexed_spawn_scan(runtime_root, chat_id=ref).records)
+        matches = list(
+            indexed_spawn_scan(runtime_root, chat_id=parsed.value).records
+        )
     if matches:
-        matches.sort(key=lambda item: item.started_at or "", reverse=True)
-        return SpawnId(matches[0].id)
+        matches.sort(key=lambda item: (item.started_at or "", item.id), reverse=True)
+        return matches[0].id
 
     return None
+
+
+def resolve_continue_source_row(
+    runtime_root: Path,
+    parsed: ParsedRef,
+) -> SpawnRecord | None:
+    """Select the exact row whose chat is the spawn's continue target."""
+
+    if parsed.kind == "run":
+        assert parsed.run_id is not None
+        return spawn_store.get_spawn(runtime_root, parsed.run_id)
+    if parsed.kind != "spawn":
+        return None
+
+    assert parsed.spawn_id is not None
+    run_ids = runs_of(runtime_root, parsed.spawn_id)
+    if not run_ids:
+        return None
+    rows = [
+        row
+        for run_id in reversed(run_ids)
+        if (row := spawn_store.get_spawn(runtime_root, run_id)) is not None
+    ]
+    if len(rows) == 1:
+        return rows[0]
+    target = continue_target_run(rows)
+    if target is not None:
+        return target
+    raise ValueError(
+        f"Spawn {parsed.spawn_id} never started a session; `--fork` is unavailable too."
+    )
 
 
 def _resolve_untracked_reference(
@@ -157,7 +203,8 @@ def _build_tracked_reference(
 def _resolve_spawn_reference(
     runtime_root: Path, ref: str, project_root: Path
 ) -> ResolvedSessionReference:
-    row = spawn_store.get_spawn(runtime_root, ref)
+    parsed = parse_ref(ref)
+    row = resolve_continue_source_row(runtime_root, parsed)
     if row is None:
         return _resolve_untracked_reference(project_root, ref)
     if row.record_mode == "historical":
@@ -187,7 +234,7 @@ def _resolve_spawn_reference(
     if source_execution_cwd is None and row.harness == "claude" and row.kind == "child":
         # Legacy Claude child spawns executed from the spawn log directory.
         source_execution_cwd = resolve_spawn_log_dir(
-            project_root, ref, runtime_root=runtime_root
+            project_root, row.id, runtime_root=runtime_root
         ).as_posix()
     elif source_execution_cwd is None:
         source_execution_cwd = project_root.as_posix()
@@ -219,7 +266,9 @@ def _reference_from_session(
         raise ValueError("Historical sessions are inert; read or export the transcript instead.")
     source_history_id = session.history_id
     if source_history_id is None and session.spawn_id:
-        linked = spawn_store.get_spawn(runtime_root, session.spawn_id)
+        linked = spawn_store.get_spawn(
+            runtime_root, parse_ref(session.spawn_id, row_key=True)
+        )
         if (
             linked is not None
             and linked.chat_id == session.chat_id
@@ -315,11 +364,12 @@ def resolve_session_reference(
         raise ValueError("Session reference is required.")
 
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+    parsed = parse_ref(normalized)
     if resolved_runtime_root is None:
-        if not _SPAWN_REF_RE.fullmatch(normalized) and not _CHAT_REF_RE.fullmatch(normalized):
+        if parsed.kind not in {"spawn", "run", "chat"}:
             return _resolve_untracked_reference(project_root, normalized, harness_hint)
         raise ValueError(f"Session reference '{normalized}' not found")
-    if _SPAWN_REF_RE.fullmatch(normalized):
+    if parsed.kind in {"spawn", "run"}:
         result = _resolve_spawn_reference(resolved_runtime_root, normalized, project_root)
         if result.missing_harness_session_id:
             recovery = _try_recover(
@@ -332,7 +382,7 @@ def resolve_session_reference(
             if recovery is not None:
                 return replace(result, recovery=recovery)
         return result
-    if _CHAT_REF_RE.fullmatch(normalized) or session_identity.is_tracked_chat_ref(
+    if parsed.kind == "chat" or session_identity.is_tracked_chat_ref(
         resolved_runtime_root, normalized
     ):
         result = _resolve_chat_reference(resolved_runtime_root, normalized, project_root)
@@ -354,6 +404,7 @@ def resolve_session_reference(
 
 __all__ = [
     "ResolvedSessionReference",
+    "resolve_continue_source_row",
     "resolve_session_reference",
     "resolve_spawn_ref",
 ]

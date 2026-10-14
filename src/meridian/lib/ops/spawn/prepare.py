@@ -142,7 +142,7 @@ def build_create_payload(
             except Exception:
                 ambient_work_id = None
         project_state_dir = resolve_project_paths(project_root).root_dir
-        spawn_id = str(resolved_context.spawn_id) if resolved_context.spawn_id is not None else None
+        spawn_id = resolved_context.run_key
         inherited_for_child = (
             None
             if _is_exact_continue(payload) or (payload.task_dir or "").strip()

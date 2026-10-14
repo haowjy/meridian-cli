@@ -4,6 +4,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.json_doc import mutate_model, read_model
 from meridian.lib.state.paths import pi_lifecycle_path
@@ -23,12 +24,14 @@ class PiLifecycle(BaseModel):
 
 
 def read(runtime_root: Path, spawn_id: SpawnId | str) -> PiLifecycle:
-    return read_model(pi_lifecycle_path(runtime_root, spawn_id), PiLifecycle) or PiLifecycle()
+    return read_model(
+        pi_lifecycle_path(runtime_root, parse_ref(spawn_id, row_key=True)), PiLifecycle
+    ) or PiLifecycle()
 
 
 def record(runtime_root: Path, spawn_id: SpawnId | str, event: PiLifecycle) -> None:
     resolved_spawn_id = SpawnId(str(spawn_id))
-    path = pi_lifecycle_path(runtime_root, resolved_spawn_id)
+    path = pi_lifecycle_path(runtime_root, parse_ref(resolved_spawn_id, row_key=True))
 
     def update(prior: PiLifecycle | None) -> tuple[PiLifecycle, None]:
         prior = prior or PiLifecycle()
@@ -51,7 +54,7 @@ def record(runtime_root: Path, spawn_id: SpawnId | str, event: PiLifecycle) -> N
             path,
             PiLifecycle,
             update,
-            lock=published_artifact_lock(runtime_root, resolved_spawn_id),
+            lock=published_artifact_lock(runtime_root, parse_ref(resolved_spawn_id, row_key=True)),
             exclude_none=True,
         )
     except PublishedArtifactUnavailable:

@@ -9,9 +9,11 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.context import RuntimeContext
+from meridian.lib.core.refs import parse_ref, reference_sort_key, spawn_of
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.transcript import TranscriptMessage
+from meridian.lib.ops.reference import resolve_spawn_ref
 from meridian.lib.ops.runtime import async_from_sync
 from meridian.lib.ops.session_transcript import read_session_transcript
 from meridian.lib.state import session_identity, session_store, spawn_store
@@ -196,7 +198,13 @@ def _format_duration(started_at: str | None, stopped_at: str | None) -> str | No
 
 def _session_metadata(runtime_root: Path, ref: str) -> list[str]:
     record = session_store.resolve_session_ref(runtime_root, ref)
-    spawn = spawn_store.get_spawn(runtime_root, ref) if ref.startswith("p") else None
+    parsed = parse_ref(ref)
+    run_id = (
+        resolve_spawn_ref(runtime_root, ref)
+        if parsed.kind in {"spawn", "run"}
+        else None
+    )
+    spawn = spawn_store.get_spawn(runtime_root, run_id) if run_id is not None else None
     if record is None and spawn is not None and spawn.chat_id is not None:
         record = session_store.resolve_session_ref(runtime_root, spawn.chat_id)
 
@@ -232,14 +240,17 @@ def _session_scope_for_ref(
         exact_chat_id = normalized
         owner_chat_id = session_identity.get_owner_chat_for_session(runtime_root, exact_chat_id)
         return exact_chat_id, owner_chat_id, None
-    if normalized.startswith("p") and normalized[1:].isdigit():
-        spawn = spawn_store.get_spawn(runtime_root, normalized)
+    parsed = parse_ref(normalized)
+    if parsed.kind in {"spawn", "run"}:
+        run_id = resolve_spawn_ref(runtime_root, normalized)
+        spawn = spawn_store.get_spawn(runtime_root, run_id) if run_id is not None else None
+        stable_spawn_id = str(parsed.spawn_id) if parsed.spawn_id is not None else normalized
         if spawn is None:
-            return None, None, normalized
+            return None, None, stable_spawn_id
         return (
             session_identity.spawn_exact_chat_id(spawn),
             session_identity.spawn_owner_chat_id(spawn),
-            normalized,
+            stable_spawn_id,
         )
     record = session_store.resolve_session_ref(runtime_root, normalized)
     if record is None:
@@ -261,9 +272,15 @@ def _spawn_appendices(
     if exact_chat_id is None and owner_chat_id is None and parent_id is None:
         return []
     sections: list[str] = []
+    rows = sorted(
+        indexed_spawn_scan(runtime_root).records,
+        key=lambda row: reference_sort_key(row.id),
+        reverse=True,
+    )
     seen: set[str] = set()
-    for spawn in indexed_spawn_scan(runtime_root).records:
-        if spawn.id in seen:
+    for spawn in rows:
+        stable_id = str(spawn_of(spawn.id))
+        if stable_id in seen:
             continue
         if spawn.kind == "primary":
             continue
@@ -280,12 +297,12 @@ def _spawn_appendices(
         report = report_path.read_text(encoding="utf-8", errors="ignore").strip()
         if not report:
             continue
-        seen.add(spawn.id)
+        seen.add(stable_id)
         desc_source = resolve_spawn_display_label(spawn.goal, spawn.desc, spawn.display_label) or ""
         desc = desc_source.splitlines()[0] if desc_source else ""
         suffix = f" — {desc}" if desc else ""
         sections.append("\n".join([f"## Spawn: {spawn.id}{suffix}", "", report]))
-    return sections
+    return list(reversed(sections))
 
 
 def _render_markdown(

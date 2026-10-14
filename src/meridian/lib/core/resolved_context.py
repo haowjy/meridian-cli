@@ -15,7 +15,9 @@ from meridian.lib.core.depth import (
     child_meridian_depth,
     parse_meridian_depth,
 )
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.identity import current_run_id, current_spawn_id
+from meridian.lib.core.refs import parse_ref, spawn_of
+from meridian.lib.core.types import RunId, SpawnId
 from meridian.lib.state import paths as state_paths
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.work_scope import WorkScope, resolve_work_scope_from_parts
@@ -28,7 +30,7 @@ class ContextBackend(Protocol):
         """Look up the active work ID for a session."""
         ...
 
-    def get_current_chat_id(self, runtime_root: Path, spawn_id: SpawnId) -> str | None:
+    def get_current_chat_id(self, runtime_root: Path, spawn_id: RunId) -> str | None:
         """Resolve a launch snapshot to its current observed conversation."""
         ...
 
@@ -39,7 +41,7 @@ class LocalFilesystemBackend:
     def get_session_active_work_id(self, runtime_root: Path, chat_id: str) -> str | None:
         return session_store.get_session_active_work_id(runtime_root, chat_id)
 
-    def get_current_chat_id(self, runtime_root: Path, spawn_id: SpawnId) -> str | None:
+    def get_current_chat_id(self, runtime_root: Path, spawn_id: RunId) -> str | None:
         row = spawn_store.get_spawn(runtime_root, spawn_id)
         return row.continue_chat_id if row is not None and row.current_chat_id else None
 
@@ -49,6 +51,7 @@ class ResolvedContext:
     """Canonical immutable runtime context resolved from ``MERIDIAN_*`` inputs."""
 
     spawn_id: SpawnId | None = None
+    run_id: RunId | None = None
     parent_spawn_id: SpawnId | None = None
     depth: int = 0
     project_root: Path | None = None
@@ -87,8 +90,8 @@ class ResolvedContext:
 
         backend_impl = backend or LocalFilesystemBackend()
 
-        spawn_id_raw = os.getenv("MERIDIAN_SPAWN_ID", "").strip()
-        spawn_id = SpawnId(spawn_id_raw) if spawn_id_raw else None
+        spawn_id = current_spawn_id()
+        run_id = current_run_id()
         parent_spawn_id_raw = os.getenv("_MERIDIAN_PARENT_SPAWN_ID", "").strip()
         depth_raw = os.getenv(DEPTH_ENV, "0").strip()
         project_root_raw = os.getenv("MERIDIAN_PROJECT_DIR", "").strip()
@@ -131,10 +134,10 @@ class ResolvedContext:
         # and work arguments retain their normal precedence.
         if (
             not explicit_chat_id_raw
-            and spawn_id is not None
+            and run_id is not None
             and runtime_root is not None
         ):
-            current_chat_id = backend_impl.get_current_chat_id(runtime_root, spawn_id)
+            current_chat_id = backend_impl.get_current_chat_id(runtime_root, run_id)
             if current_chat_id:
                 chat_id_raw = current_chat_id
                 work_id_raw = ""
@@ -180,7 +183,7 @@ class ResolvedContext:
 
         work_scope = resolve_work_scope_from_parts(
             project_root=project_root,
-            spawn_id=spawn_id,
+            spawn_id=run_id,
             work_id=work_id,
             bound_work_dir=bound_work_dir,
             project_work_dir=project_work_dir,
@@ -212,6 +215,7 @@ class ResolvedContext:
 
         return cls(
             spawn_id=spawn_id,
+            run_id=run_id,
             parent_spawn_id=SpawnId(parent_spawn_id_raw) if parent_spawn_id_raw else None,
             depth=depth,
             project_root=project_root,
@@ -233,9 +237,11 @@ class ResolvedContext:
         next_depth = child_meridian_depth(self.depth, increment_depth=increment_depth)
         overrides: dict[str, str] = {"_MERIDIAN_DEPTH": str(next_depth)}
         if child_spawn_id is not None:
-            overrides["MERIDIAN_SPAWN_ID"] = child_spawn_id
+            overrides["MERIDIAN_SPAWN_ID"] = str(spawn_of(child_spawn_id))
+            overrides["MERIDIAN_RUN_ID"] = str(parse_ref(child_spawn_id, row_key=True))
         elif self.spawn_id is not None:
             overrides["MERIDIAN_SPAWN_ID"] = str(self.spawn_id)
+            overrides["MERIDIAN_RUN_ID"] = str(self.run_id or self.spawn_id)
         if self.spawn_id is not None:
             overrides["_MERIDIAN_PARENT_SPAWN_ID"] = str(self.spawn_id)
         if self.project_root is not None:

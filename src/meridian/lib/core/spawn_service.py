@@ -15,6 +15,7 @@ import structlog
 from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus, TokenUsage
 from meridian.lib.core.lifecycle import SpawnLifecycleService
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     ExecutionTerminalOutcome,
@@ -32,7 +33,7 @@ from meridian.lib.core.telemetry import (
     SpawnFailureCategory,
     register_observer,
 )
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId, RunId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.launch.composition_spawn import (
     bind_spawn_launch_context,
@@ -188,7 +189,7 @@ class CompleteSpawnOutcome:
     entered_finalizing: bool
     already_terminal: bool
     snapshot: SpawnRecord | None
-    spawn_id: SpawnId
+    spawn_id: RunId
 
     @property
     def accepted(self) -> bool:
@@ -217,7 +218,7 @@ class PreparedSpawn:
     SEAM-3: connection_config is projected from launch_context.
     """
 
-    spawn_id: SpawnId
+    spawn_id: RunId
     launch_context: LaunchContext
     connection_config: ConnectionConfig
     resolved_model: str
@@ -321,11 +322,11 @@ class SpawnApplicationService:
 
     # ---- Query Helpers ----
 
-    def get_spawn(self, spawn_id: SpawnId | str) -> SpawnRecord | None:
+    def get_spawn(self, spawn_id: RunId) -> SpawnRecord | None:
         """Get spawn record by ID."""
         return spawn_store.get_spawn(self._runtime_root, spawn_id)
 
-    def require_spawn(self, spawn_id: SpawnId | str) -> SpawnRecord:
+    def require_spawn(self, spawn_id: RunId) -> SpawnRecord:
         """Get spawn or raise ValueError."""
         record = self.get_spawn(spawn_id)
         if record is None:
@@ -346,7 +347,7 @@ class SpawnApplicationService:
         if record.status == "finalizing":
             raise ValueError("Spawn is finalizing")
 
-    def get_spawn_failure(self, spawn_id: SpawnId) -> SpawnFailure | None:
+    def get_spawn_failure(self, spawn_id: RunId) -> SpawnFailure | None:
         """Read the failure sentinel for a spawn, if it exists."""
         record = self.get_spawn(spawn_id)
         if record is None or record.status != "failed":
@@ -448,7 +449,7 @@ class SpawnApplicationService:
             skills=resolved_request.skills,
             skill_paths=resolved_request.skill_paths,
         )
-        persisted_spawn_id = SpawnId(
+        persisted_spawn_id = parse_ref(
             await asyncio.to_thread(
                 self._lifecycle.start,
                 SpawnReservation(
@@ -473,7 +474,7 @@ class SpawnApplicationService:
                     launch_policy_snapshot=resolved_request.launch_policy_snapshot,
                     status=payload.initial_status,
                 ),
-            )
+            ), row_key=True,
         )
         if persisted_spawn_id != final_spawn_id:
             raise RuntimeError(
@@ -537,7 +538,7 @@ class SpawnApplicationService:
         )
 
         return PreparedSpawn(
-            spawn_id=final_spawn_id,
+            spawn_id=persisted_spawn_id,
             launch_context=launch_ctx,
             connection_config=connection_config,
             resolved_model=resolved_model,
@@ -585,7 +586,7 @@ class SpawnApplicationService:
 
     async def cancel(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         *,
         requested_by: Literal["user", "system"] = "user",
         force: bool = False,
@@ -685,7 +686,7 @@ class SpawnApplicationService:
                 return reaped_ids
             results = await asyncio.gather(
                 *(
-                    self.cancel(SpawnId(d.id), requested_by="system", force=False)
+                    self.cancel(d.id, requested_by="system", force=False)
                     for d in descendants
                 ),
                 return_exceptions=True,
@@ -712,7 +713,7 @@ class SpawnApplicationService:
 
     async def _force_cancel_convergence(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         record: SpawnRecord,
     ) -> SpawnRecord | None:
         if self.is_terminal(record.status):
@@ -747,7 +748,7 @@ class SpawnApplicationService:
 
     def _cleanup_orphan_managed_primary(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         record: SpawnRecord,
     ) -> None:
         """Best-effort cleanup for terminal managed orphan-primary spawns."""
@@ -759,7 +760,7 @@ class SpawnApplicationService:
 
     async def _wait_for_terminal(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         *,
         timeout: float,
     ) -> SpawnRecord | None:
@@ -775,7 +776,7 @@ class SpawnApplicationService:
 
     async def _cancel_managed_primary(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         record: SpawnRecord,
         primary_metadata: PrimaryMetadata,
     ) -> CancelOutcome:
@@ -861,7 +862,7 @@ class SpawnApplicationService:
 
     async def _wait_for_terminal_or_process_exit(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         *,
         pid: int,
         created_after_epoch: float | None,
@@ -881,7 +882,7 @@ class SpawnApplicationService:
 
     async def _wait_for_terminal_or_execution_exit(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         *,
         record: SpawnRecord,
         primary_metadata: PrimaryMetadata,
@@ -901,7 +902,7 @@ class SpawnApplicationService:
 
     async def complete_spawn(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         status: TerminalSpawnStatus,
         exit_code: int,
         *,
@@ -931,7 +932,7 @@ class SpawnApplicationService:
 
     async def complete_execution(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         facts: ExecutionTerminalFacts,
         *,
         origin: SpawnOrigin,
@@ -962,7 +963,7 @@ class SpawnApplicationService:
 
     async def _complete_spawn_unlocked(
         self,
-        spawn_id: SpawnId,
+        spawn_id: RunId,
         status: TerminalSpawnStatus,
         exit_code: int,
         *,
@@ -1041,7 +1042,7 @@ class SpawnApplicationService:
 
     def update_metadata(
         self,
-        spawn_id: SpawnId | str,
+        spawn_id: RunId,
         *,
         control_root: str | None = None,
         task_cwd: str | None = None,
@@ -1074,7 +1075,7 @@ class SpawnApplicationService:
 
         spawn_store.update_spawn(
             self._runtime_root,
-            spawn_id,
+            parse_ref(spawn_id, row_key=True),
             control_root=control_root,
             task_cwd=task_cwd,
             execution_cwd=execution_cwd,

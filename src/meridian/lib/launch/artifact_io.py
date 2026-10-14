@@ -13,6 +13,7 @@ import structlog
 
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.native_identity import NativeIdentityError
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId
 from meridian.lib.launch.composition import (
     ProjectionChannels,
@@ -55,7 +56,7 @@ def append_runner_lifecycle_event(
     try:
         mutate_published_spawn_artifact(
             runtime_root,
-            spawn_id,
+            parse_ref(spawn_id, row_key=True),
             lambda: append_text_line(
                 path,
                 json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n",
@@ -86,7 +87,10 @@ class LifecycleLog:
         return cls(
             runtime_root,
             spawn_id,
-            resolve_spawn_log_dir(project_root, spawn_id, runtime_root=runtime_root)
+            resolve_spawn_log_dir(
+                project_root, parse_ref(spawn_id, row_key=True),
+                runtime_root=runtime_root,
+            )
             / RUNNER_LIFECYCLE_FILENAME,
             clock if clock is not None else RealClock(),
         )

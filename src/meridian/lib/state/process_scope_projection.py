@@ -27,6 +27,7 @@ from pydantic import (
 )
 from typing_extensions import TypedDict
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import is_terminal_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.locking import lock_file
@@ -163,9 +164,13 @@ def record_scope(
     # This makes cleanup-claim snapshots and registration mutually exclusive.
     with (
         lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
-        lock_file(spawn_lock_path(spawns_dir, str(spawn_id)), reentrant=False),
+        lock_file(
+            spawn_lock_path(spawns_dir, parse_ref(str(spawn_id), row_key=True)), reentrant=False
+        ),
     ):
-        current = read_state(spawns_dir, str(spawn_id), include_prompt=False)
+        current = read_state(
+            spawns_dir, parse_ref(str(spawn_id), row_key=True), include_prompt=False
+        )
         claim_path = spawns_dir / str(spawn_id) / _CLEANUP_CLAIM_FILENAME
         if current is None:
             raise ValueError(
@@ -219,9 +224,13 @@ def mark_scope_released(
     # Global order when both locks are needed: spawn state, then scope projection.
     with (
         lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
-        lock_file(spawn_lock_path(spawns_dir, str(spawn_id)), reentrant=False),
+        lock_file(
+            spawn_lock_path(spawns_dir, parse_ref(str(spawn_id), row_key=True)), reentrant=False
+        ),
     ):
-        current = read_state(spawns_dir, str(spawn_id), include_prompt=False)
+        current = read_state(
+            spawns_dir, parse_ref(str(spawn_id), row_key=True), include_prompt=False
+        )
         if current is None or current.record_mode == "historical":
             return
         _mutate_scope_projection(runtime_root, spawn_id, mark_released)

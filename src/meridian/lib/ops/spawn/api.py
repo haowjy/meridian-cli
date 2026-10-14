@@ -4,7 +4,7 @@ import asyncio
 import os
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Set
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -21,7 +21,9 @@ from meridian.lib.config.loader import load_config
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import max_depth_reached
+from meridian.lib.core.identity import current_run_id
 from meridian.lib.core.native_identity import NativeSessionUnavailable
+from meridian.lib.core.refs import parse_ref, spawn_of
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.core.spawn_lifecycle import (
     ACTIVE_SPAWN_STATUSES,
@@ -34,7 +36,7 @@ from meridian.lib.core.spawn_lifecycle import (
 from meridian.lib.core.spawn_service import CancelOutcome
 from meridian.lib.core.spawn_start import resolve_spawn_display_label
 from meridian.lib.core.telemetry import register_debug_trace_observer
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.harness.pi_private_state import SpawnObservations, WaitReservation
 from meridian.lib.launch.continue_replay import (
     build_continue_replay_contract,
@@ -120,8 +122,19 @@ _WAIT_POLL_INTERVAL_SECS = 0.25
 
 
 def _looks_like_spawn_ref(ref: str) -> bool:
-    normalized = ref.strip()
-    return len(normalized) > 1 and normalized[0] == "p" and normalized[1:].isdigit()
+    return parse_ref(ref).kind in {"spawn", "run"}
+
+
+def _all_run_rows(project_root: Path, runtime_root: Path) -> tuple[SpawnRecord, ...]:
+    """Read and reconcile the raw run projection without grouping away old runs."""
+
+    from meridian.lib.state.reaper import reconcile_spawns
+
+    return reconcile_spawns(
+        project_root,
+        runtime_root,
+        indexed_spawn_scan(runtime_root),
+    ).records
 
 
 def _emit_usage_spawn_launched(*, harness: str | None, spawn_id: str | None = None) -> None:
@@ -137,7 +150,7 @@ def _emit_usage_spawn_launched(*, harness: str | None, spawn_id: str | None = No
     )
 
 
-def _build_wait_timeout_message(pending_spawn_ids: set[str], elapsed_secs: float) -> str:
+def _build_wait_timeout_message(pending_spawn_ids: Set[str], elapsed_secs: float) -> str:
     """Build actionable timeout message for LLM agents."""
     sorted_ids = sorted(pending_spawn_ids)
     ids_str = ", ".join(sorted_ids)
@@ -284,8 +297,8 @@ def _prepare_spawn_create(
     prepared_context = prepared
     register_debug_trace_observer()
     resolved_context = runtime_context(ctx)
-    spawn_env_id = os.environ.get("MERIDIAN_SPAWN_ID")
-    logical_owner = spawn_env_id if spawn_env_id else "cli"
+    ambient_run_id = current_run_id()
+    logical_owner = str(ambient_run_id) if ambient_run_id is not None else "cli"
     authority = None
     if prepared_context is not None:
         resolved_root = _project_root_from_prepared(prepared_context)
@@ -534,13 +547,7 @@ def spawn_list_sync(
     )
     if runtime_root is None:
         return SpawnListOutput(spawns=())
-    from meridian.lib.state.reaper import reconcile_spawns
-
-    spawns = list(
-        reversed(
-            reconcile_spawns(project_root, runtime_root, indexed_spawn_scan(runtime_root)).records
-        )
-    )
+    spawns = list(reversed(_all_run_rows(project_root, runtime_root)))
 
     # When statuses is empty tuple, show all statuses but cap intelligently:
     # always include all active spawns, pad with recent non-active up to limit.
@@ -641,10 +648,9 @@ def spawn_children_sync(
     normalized_ref = payload.spawn_id.strip()
     if not normalized_ref:
         raise ValueError("spawn_id is required")
-    spawn_id = resolve_spawn_reference(
-        project_root,
-        normalized_ref,
-        runtime_root=runtime_root,
+    parsed_parent = parse_ref(normalized_ref)
+    parent_id = parsed_parent.spawn_id or spawn_of(
+        resolve_spawn_reference(project_root, normalized_ref, runtime_root=runtime_root)
     )
 
     from meridian.lib.state.reaper import reconcile_spawns
@@ -656,7 +662,7 @@ def spawn_children_sync(
                 runtime_root,
                 indexed_spawn_scan(
                     runtime_root,
-                    parent_id=spawn_id,
+                    parent_id=parent_id,
                 ),
             ).records
         )
@@ -704,15 +710,7 @@ def spawn_stats_sync(
         project_root=payload.project_root,
         prepared=prepared,
     )
-    from meridian.lib.state.reaper import reconcile_spawns
-
-    all_spawns = (
-        []
-        if runtime_root is None
-        else list(
-            reconcile_spawns(project_root, runtime_root, indexed_spawn_scan(runtime_root)).records
-        )
-    )
+    all_spawns = [] if runtime_root is None else list(_all_run_rows(project_root, runtime_root))
 
     if payload.session is not None and payload.session.strip():
         from meridian.lib.state.session_identity import spawn_matches_exact_session
@@ -723,7 +721,12 @@ def spawn_stats_sync(
     if payload.spawn_id is not None:
         root_id = payload.spawn_id.strip()
         if payload.flat:
-            spawns = [s for s in all_spawns if s.id == root_id]
+            parsed_root = parse_ref(root_id)
+            if parsed_root.kind == "run":
+                assert parsed_root.run_id is not None
+                spawns = [s for s in all_spawns if s.id == parsed_root.run_id]
+            else:
+                spawns = [s for s in all_spawns if spawn_of(s.id) == spawn_of(root_id)]
         else:
             spawns = collect_descendants(root_id, all_spawns)
     else:
@@ -992,7 +995,7 @@ def spawn_subagents_sync(
         project_root=payload.project_root,
         prepared=prepared,
     )
-    spawn_id = (os.environ.get("MERIDIAN_SPAWN_ID") or "").strip() or None
+    spawn_id = current_run_id()
     agent: str | None = None
     if spawn_id is not None and runtime_root is not None:
         row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
@@ -1136,17 +1139,21 @@ def _resolve_signal_spawn_id(
     runtime_root: Path,
     spawn_id: str | None,
     ctx: RuntimeContext | None,
-) -> str:
+) -> RunId:
     candidate = (spawn_id or "").strip()
-    if not candidate:
-        candidate = str(runtime_context(ctx).spawn_id or "").strip()
-    if not candidate:
-        raise ValueError("Spawn ID is required. Pass spawn_id or set MERIDIAN_SPAWN_ID.")
-    resolved_spawn_id = resolve_spawn_reference(
-        project_root,
-        candidate,
-        runtime_root=runtime_root,
-    )
+    ambient_run_id = runtime_context(ctx).run_key if not candidate else None
+    if candidate:
+        resolved_spawn_id = resolve_spawn_reference(
+            project_root,
+            candidate,
+            runtime_root=runtime_root,
+        )
+    elif ambient_run_id is not None:
+        resolved_spawn_id = ambient_run_id
+    else:
+        raise ValueError(
+            "Spawn ID is required. Pass spawn_id or set MERIDIAN_SPAWN_ID."
+        )
     record = spawn_store.get_spawn(runtime_root, resolved_spawn_id)
     if record is None:
         raise ValueError(f"Spawn '{resolved_spawn_id}' not found")
@@ -1266,12 +1273,13 @@ async def _spawn_cancel_impl(
     if record is not None and record.record_mode == "historical":
         raise ValueError("Historical records cannot be cancelled")
     register_debug_trace_observer()
-    cancel_owner = os.environ.get("MERIDIAN_SPAWN_ID") or "cli"
+    ambient_run_id = current_run_id()
+    cancel_owner = str(ambient_run_id) if ambient_run_id is not None else "cli"
     if prepared is None:
         setup_telemetry(runtime_root=runtime_root, logical_owner=cancel_owner)
     register_spawn_telemetry_observer()
     try:
-        outcome = await spawn_service.cancel(SpawnId(spawn_id), force=payload.force)
+        outcome = await spawn_service.cancel(spawn_id, force=payload.force)
     except RuntimeError as exc:
         return SpawnActionOutput(
             command="spawn.cancel",
@@ -1448,7 +1456,7 @@ def _resolve_wait_targets(
     project_root: Path,
     runtime_root: Path,
     ctx: RuntimeContext,
-) -> tuple[str, ...]:
+) -> tuple[RunId, ...]:
     """Resolve explicit wait IDs or discover pending spawns for the current chat."""
     candidates: list[str] = []
     for spawn_id in payload.spawn_ids:
@@ -1460,7 +1468,11 @@ def _resolve_wait_targets(
         candidates.append(payload.spawn_id.strip())
 
     if candidates:
-        return tuple(dict.fromkeys(candidates))
+        return resolve_spawn_references(
+            project_root,
+            tuple(dict.fromkeys(candidates)),
+            runtime_root=runtime_root,
+        )
 
     chat_id = (ctx.chat_id or "").strip()
     if not chat_id:
@@ -1521,7 +1533,7 @@ def _discover_pending_spawns(
 
 
 def _emit_wait_set(
-    spawn_ids: tuple[str, ...],
+    spawn_ids: tuple[RunId, ...],
     project_root: Path,
     *,
     chat_id: str | None = None,
@@ -1601,7 +1613,7 @@ def _resolve_wait_progress_mode(*, verbose: bool, quiet: bool, config_verbosity:
     return "quiet"
 
 
-def _render_wait_progress(pending: set[str], *, elapsed_secs: float, mode: str) -> str | None:
+def _render_wait_progress(pending: Set[str], *, elapsed_secs: float, mode: str) -> str | None:
     if not pending or mode == "quiet":
         return None
     pending_count = len(pending)
@@ -1621,7 +1633,7 @@ def _emit_wait_progress(message: str, *, sink: OutputSink) -> None:
 def _resolve_wait_checkpoint_seconds(
     *,
     payload: SpawnWaitInput,
-    spawn_ids: tuple[str, ...],
+    spawn_ids: tuple[RunId, ...],
     project_root: Path,
     config: MeridianConfig,
 ) -> float:
@@ -1748,9 +1760,6 @@ def spawn_wait_sync(
             any_failed=False,
         )
 
-    if has_explicit_ids:
-        spawn_ids = resolve_spawn_references(project_root, spawn_ids, runtime_root=runtime_root)
-
     for spawn_id in spawn_ids:
         record = spawn_store.get_spawn(runtime_root, spawn_id)
         if record is not None and record.record_mode == "historical":
@@ -1790,8 +1799,8 @@ def spawn_wait_sync(
     if poll <= 0:
         poll = _WAIT_POLL_INTERVAL_SECS
 
-    completed_rows: dict[str, SpawnRecord] = {}
-    pending: set[str] = set(spawn_ids)
+    completed_rows: dict[RunId, SpawnRecord] = {}
+    pending: set[RunId] = set(spawn_ids)
     progress_mode = _resolve_wait_progress_mode(
         verbose=payload.verbose,
         quiet=payload.quiet,
@@ -1987,11 +1996,13 @@ def _source_spawn_for_follow_up(
     *,
     runtime_root: Path | None = None,
     harness_hint: str | None = None,
-) -> tuple[str, SpawnRecord, ResolvedSessionReference]:
-    resolved_spawn_id = resolve_spawn_reference(
-        project_root,
-        payload_spawn_id,
-        runtime_root=runtime_root,
+) -> tuple[RunId, SpawnRecord, ResolvedSessionReference]:
+    parsed_source = parse_ref(payload_spawn_id)
+    # Native session IDs need session provenance, not spawn-ID resolution.
+    resolved_spawn_id = (
+        resolve_spawn_reference(project_root, payload_spawn_id, runtime_root=runtime_root)
+        if parsed_source.kind != "native" or payload_spawn_id.startswith("@")
+        else None
     )
     try:
         # Resolve tracked chats in their native harness first. A requested
@@ -2023,13 +2034,21 @@ def _source_spawn_for_follow_up(
                 harness_hint,
             )
         )
-    row = read_spawn_row(project_root, resolved_spawn_id, runtime_root=runtime_root)
-    if row is None and resolved_reference.source_spawn_id is not None:
-        # Follow the native session's exact spawn provenance, never its owner's
-        # latest spawn. Keep the supplied native identity in resolved_reference.
-        resolved_spawn_id = resolved_reference.source_spawn_id
+    row = (
+        read_spawn_row(project_root, resolved_spawn_id, runtime_root=runtime_root)
+        if resolved_spawn_id is not None else None
+    )
+    follow_reference_provenance = (
+        parsed_source.kind == "spawn" or row is None
+    ) and resolved_reference.source_spawn_id is not None
+    if follow_reference_provenance:
+        # Bare spawn continuation skips reservations which never reached a
+        # session. Raw native refs keep their exact retained provenance.
+        source_spawn_id = resolved_reference.source_spawn_id
+        assert source_spawn_id is not None
+        resolved_spawn_id = parse_ref(source_spawn_id, row_key=True)
         row = read_spawn_row(project_root, resolved_spawn_id, runtime_root=runtime_root)
-        if row is not None and (
+        if row is not None and parsed_source.kind != "spawn" and (
             row.chat_id != resolved_reference.source_chat_id
             or row.harness != resolved_reference.harness
         ):
@@ -2038,7 +2057,7 @@ def _source_spawn_for_follow_up(
         raise ValueError(
             f"Spawn '{payload_spawn_id}' not found; continuation requires retained spawn metadata"
         )
-    return resolved_spawn_id, row, resolved_reference
+    return row.id, row, resolved_reference
 
 
 def _prompt_for_follow_up(
@@ -2094,7 +2113,7 @@ def _build_continue_create_input(
     *,
     payload: SpawnContinueInput,
     source_spawn: SpawnRecord,
-    source_spawn_id: str,
+    source_spawn_id: RunId,
     resolved_reference: ResolvedSessionReference,
     runtime_root: Path,
 ) -> SpawnCreateInput:
@@ -2258,9 +2277,14 @@ def spawn_fork_sync(
     requested_task_dir = (payload.task_dir or "").strip() or None
     requested_goal = payload.goal
     if requested_goal is None and _looks_like_spawn_ref(normalized_source_ref):
-        source_row = read_spawn_row(
+        source_run_id = resolve_spawn_reference(
             project_root,
             normalized_source_ref,
+            runtime_root=runtime_root,
+        )
+        source_row = read_spawn_row(
+            project_root,
+            source_run_id,
             runtime_root=runtime_root,
         )
         if source_row is not None:
@@ -2329,6 +2353,13 @@ def spawn_continue_sync(
 ) -> SpawnActionOutput:
     if payload.model is not None and not payload.model.strip():
         raise ValueError("--model must not be empty")
+    parsed_source = parse_ref(payload.spawn_id)
+    if parsed_source.kind == "run":
+        assert parsed_source.spawn_id is not None
+        raise ValueError(
+            f"Cannot continue run '{parsed_source.value}'; continue the spawn "
+            f"(`{parsed_source.spawn_id}`) or fork the run (`--fork {parsed_source.value}`)."
+        )
     project_root, runtime_root = _resolve_spawn_read_authority(
         project_root=payload.project_root,
         prepared=prepared,

@@ -6,12 +6,12 @@ import os
 import shutil
 import stat
 from collections.abc import Callable, Generator
-from contextlib import contextmanager, suppress
+from contextlib import ExitStack, contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.platform.atomic import fsync_directory
 from meridian.lib.state.event_store import lock_file
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
@@ -34,7 +34,7 @@ class PublishedArtifactUnavailable(RuntimeError):
 @contextmanager
 def published_artifact_lock(
     runtime_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     *,
     can_mutate: Callable[[SpawnRecord], bool] | None = None,
 ) -> Generator[None, None, None]:
@@ -47,9 +47,9 @@ def published_artifact_lock(
 
     with (
         lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
-        lock_file(spawn_lock_path(paths.spawns_dir, resolved_spawn_id), reentrant=False),
+        lock_file(spawn_lock_path(paths.spawns_dir, spawn_id), reentrant=False),
     ):
-        current = read_state(paths.spawns_dir, resolved_spawn_id, include_prompt=False)
+        current = read_state(paths.spawns_dir, spawn_id, include_prompt=False)
         if (
             current is None
             or current.record_mode == "historical"
@@ -61,7 +61,7 @@ def published_artifact_lock(
 
 def mutate_published_spawn_artifact(
     runtime_root: Path,
-    spawn_id: SpawnId,
+    spawn_id: RunId,
     mutate: Callable[[], None],
     *,
     can_mutate: Callable[[SpawnRecord], bool] | None = None,
@@ -123,10 +123,11 @@ def sync_retirement_parents(spawns_dir: Path) -> None:
 
 def _remove_published_spawn[T](
     runtime_root: Path,
-    spawn_id: SpawnId | str,
+    spawn_id: RunId,
     *,
     can_delete: SpawnDeletionPrecondition,
     remove: Callable[[Path], T],
+    guard_spawn_allocation: bool = False,
 ) -> T | None:
     """One ownership/lock seam for ordinary deletion and verified ZIP retirement."""
     paths = RuntimePaths.from_root_dir(runtime_root)
@@ -135,18 +136,19 @@ def _remove_published_spawn[T](
         raise ValueError(f"Invalid spawn ID: {resolved_spawn_id}")
     spawn_dir = paths.spawns_dir / resolved_spawn_id
 
-    # Global order: root mutation, spawn state, then process-scope projection.
-    # Callers needing spawns_flock acquire it first. A durable reaper cleanup
-    # claim must be completed or cleared before artifact retention can remove it.
+    # Global order: root mutation, optional allocation gate, run state, then
+    # process-scope projection. A durable reaper cleanup claim must be completed
+    # or cleared before artifact retention can remove it.
     changes = HistoryChanges(runtime_root)
-    with (
-        lock_file(changes.mutation_lock, mode="shared"),
-        lock_file(spawn_lock_path(paths.spawns_dir, resolved_spawn_id)),
-        lock_file(scope_projection_lock_path(runtime_root, resolved_spawn_id)),
-    ):
+    with ExitStack() as stack:
+        stack.enter_context(lock_file(changes.mutation_lock, mode="shared"))
+        if guard_spawn_allocation:
+            stack.enter_context(lock_file(paths.spawns_flock))
+        stack.enter_context(lock_file(spawn_lock_path(paths.spawns_dir, spawn_id)))
+        stack.enter_context(lock_file(scope_projection_lock_path(runtime_root, resolved_spawn_id)))
         claim_path = spawn_dir / "reaper_cleanup_claim.json"
         if claim_path.exists() or not can_delete(
-            read_state(paths.spawns_dir, resolved_spawn_id, include_prompt=False)
+            read_state(paths.spawns_dir, spawn_id, include_prompt=False)
         ):
             return None
         if not spawn_dir.exists():
@@ -169,7 +171,7 @@ def _remove_artifacts(directory: Path) -> bool:
 
 def delete_published_spawn(
     runtime_root: Path,
-    spawn_id: SpawnId | str,
+    spawn_id: RunId,
     *,
     can_delete: SpawnDeletionPrecondition,
 ) -> bool:
@@ -183,9 +185,10 @@ def delete_published_spawn(
 
 def retire_published_spawn(
     runtime_root: Path,
-    spawn_id: SpawnId | str,
+    spawn_id: RunId,
     *,
     can_delete: SpawnDeletionPrecondition,
+    guard_spawn_allocation: bool = False,
 ) -> RetiredSpawn | None:
     """Retire verified ZIP-backed authority; recursive cleanup belongs outside locks."""
 
@@ -196,7 +199,13 @@ def retire_published_spawn(
         sync_retirement_parents(directory.parent)
         return RetiredSpawn(destination)
 
-    return _remove_published_spawn(runtime_root, spawn_id, can_delete=can_delete, remove=retire)
+    return _remove_published_spawn(
+        runtime_root,
+        spawn_id,
+        can_delete=can_delete,
+        remove=retire,
+        guard_spawn_allocation=guard_spawn_allocation,
+    )
 
 
 def cleanup_retired_spawn(retired: RetiredSpawn) -> bool:

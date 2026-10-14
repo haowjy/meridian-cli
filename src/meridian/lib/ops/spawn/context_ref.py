@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.core.refs import parse_ref, spawn_of
+from meridian.lib.core.types import RunId
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_identity, session_store
 from meridian.lib.state.spawn.model import SpawnRecord
@@ -18,8 +20,6 @@ from .query import (
     resolve_spawn_reference,
 )
 
-_SESSION_REF_RE = re.compile(r"^c\d+$")
-_SPAWN_REF_RE = re.compile(r"^p\d+$")
 _WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 
@@ -29,7 +29,7 @@ def _is_filesystem_path_ref(value: str) -> bool:
     normalized = value.strip()
     if not normalized or normalized.startswith("@"):
         return False
-    if _SPAWN_REF_RE.fullmatch(normalized) or _SESSION_REF_RE.fullmatch(normalized):
+    if parse_ref(normalized).kind in {"spawn", "run", "chat"}:
         return False
     if normalized.startswith(("./", "../", "/", "~")):
         return True
@@ -116,12 +116,12 @@ def _is_tracked_session(project_root: Path, chat_id: str) -> bool:
     return bool(session_store.get_session_records(runtime_root, {chat_id}))
 
 
-def _load_report_text(project_root: Path, spawn_id: str) -> str | None:
+def _load_report_text(project_root: Path, spawn_id: RunId) -> str | None:
     _, report_text = read_report_text(project_root, spawn_id)
     return report_text
 
 
-def _load_written_files(project_root: Path, spawn_id: str) -> tuple[str, ...]:
+def _load_written_files(project_root: Path, spawn_id: RunId) -> tuple[str, ...]:
     try:
         return read_written_files(project_root, spawn_id)
     except (FileNotFoundError, OSError):
@@ -150,13 +150,14 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
 
     _reject_filesystem_path_context_ref(normalized)
 
-    if normalized.startswith("@") or _SPAWN_REF_RE.fullmatch(normalized):
+    parsed = parse_ref(normalized)
+    if normalized.startswith("@") or parsed.kind in {"spawn", "run"}:
         spawn_id = resolve_spawn_reference(project_root, normalized)
         spawn_row = read_spawn_row(project_root, spawn_id)
         if spawn_row is None:
             raise ValueError(f"Spawn '{spawn_id}' not found")
         return _spawn_context_ref(spawn_row, project_root)
-    if _SESSION_REF_RE.fullmatch(normalized) or _is_tracked_session(project_root, normalized):
+    if parsed.kind == "chat" or _is_tracked_session(project_root, normalized):
         runtime_root = resolve_runtime_root_for_read(project_root)
         session = (
             session_store.get_session_record(runtime_root, normalized)
@@ -222,7 +223,7 @@ def _session_context_ref(primary_row: SpawnRecord, project_root: Path) -> Sessio
     ).strip() or None
     return SessionContextRef(
         chat_id=chat_id,
-        primary_spawn_id=primary_row.id,
+        primary_spawn_id=str(spawn_of(primary_row.id)),
         status=primary_row.status,
         agent=primary_row.agent or "",
         model=primary_row.model or "",
@@ -278,7 +279,7 @@ def _render_context_ref(ref: ContextRef) -> str:
             tag_attrs += f' primary_spawn="{ref.primary_spawn_id}"'
         transcript_ref = (
             ref.chat_id
-            if _SESSION_REF_RE.fullmatch(ref.chat_id) or ref.primary_spawn_id is None
+            if parse_ref(ref.chat_id).kind == "chat" or ref.primary_spawn_id is None
             else ref.primary_spawn_id
         )
         lines = [

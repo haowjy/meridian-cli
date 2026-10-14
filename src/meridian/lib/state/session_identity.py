@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import SpawnId, normalize_optional_identity
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.primary_meta import read_primary_harness_session_id
@@ -48,7 +49,7 @@ def session_owner_chat_id(
 
     linked_spawn = spawn_row
     if linked_spawn is None and record.spawn_id:
-        linked_spawn = spawn_store.get_spawn(runtime_root, record.spawn_id)
+        linked_spawn = spawn_store.get_spawn(runtime_root, parse_ref(record.spawn_id, row_key=True))
     if linked_spawn is not None:
         return spawn_owner_chat_id(linked_spawn)
 
@@ -84,7 +85,7 @@ def get_recorded_primary_spawn_for_owner_chat(
     normalized_spawn_id = normalize_optional_identity(spawn_id)
     if normalized_owner_chat_id is None or normalized_spawn_id is None:
         return None
-    row = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
+    row = spawn_store.get_spawn(runtime_root, parse_ref(normalized_spawn_id, row_key=True))
     if (
         row is None
         or row.kind != "primary"
@@ -100,7 +101,7 @@ def is_tracked_chat_ref(runtime_root: Path, ref: str) -> bool:
     normalized = normalize_optional_identity(ref)
     if normalized is None or not normalized.startswith("c"):
         return False
-    if normalized[1:].isdigit():
+    if parse_ref(normalized).kind == "chat":
         return True
     return session_store.get_session_record(runtime_root, normalized) is not None
 
@@ -215,7 +216,7 @@ def get_session_record_for_spawn(
     if normalized_spawn_id is None:
         return None
 
-    row = spawn_store.get_spawn(runtime_root, normalized_spawn_id)
+    row = spawn_store.get_spawn(runtime_root, parse_ref(normalized_spawn_id, row_key=True))
     generations = session_store.list_session_generations(runtime_root)
     if row is not None and row.session_instance_id:
         return next((

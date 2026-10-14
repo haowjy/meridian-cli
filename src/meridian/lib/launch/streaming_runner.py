@@ -26,6 +26,7 @@ from meridian.lib.core.domain import Spawn, SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.native_identity import (
     NativeIdentityError,
 )
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts, parse_terminal_status
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
@@ -189,7 +190,7 @@ def _touch_heartbeat_file(
     clock: Clock | None = None,
 ) -> None:
     FileHeartbeat(
-        state_paths.heartbeat_path(runtime_root, spawn_id),
+        state_paths.heartbeat_path(runtime_root, parse_ref(spawn_id, row_key=True)),
         clock=clock,
     ).touch()
 
@@ -239,7 +240,7 @@ def _install_signal_handlers(
 
 
 def _read_cancel_intent(runtime_root: Path, spawn_id: SpawnId) -> CancelIntent | None:
-    record = spawn_store.get_spawn(runtime_root, spawn_id)
+    record = spawn_store.get_spawn(runtime_root, parse_ref(spawn_id, row_key=True))
     return None if record is None else record.cancel_intent
 
 
@@ -450,7 +451,7 @@ async def run_streaming_spawn(
     run_spec = spec
     spawn_store.update_spawn(
         runtime_root,
-        spawn_id,
+        parse_ref(spawn_id, row_key=True),
         runner_pid=os.getpid(),
     )
     resolved_lifecycle = lifecycle_service or build_spawn_lifecycle_service_from_roots(
@@ -874,7 +875,10 @@ async def execute_with_streaming(
     atexit_callback: Callable[[], None] | None = None
 
     try:
-        log_dir = resolve_spawn_log_dir(project_root, run.spawn_id, runtime_root=runtime_root)
+        log_dir = resolve_spawn_log_dir(
+            project_root, parse_ref(run.spawn_id, row_key=True),
+            runtime_root=runtime_root,
+        )
         lifecycle = LifecycleLog.for_spawn(
             runtime_root, project_root, run.spawn_id, clock=resolved_clock
         )
@@ -944,7 +948,7 @@ async def execute_with_streaming(
 
         spawn_store.update_spawn(
             runtime_root,
-            run.spawn_id,
+            parse_ref(run.spawn_id, row_key=True),
             control_root=control_root.as_posix(),
             task_cwd=(
                 launch_context.task_cwd.as_posix()
@@ -997,7 +1001,7 @@ async def execute_with_streaming(
 
         # I-10: spawn row MUST exist before execute_with_streaming is called.
         # Mid-flight row creation is forbidden — callers must call start_spawn first.
-        spawn_row = spawn_store.get_spawn(runtime_root, run.spawn_id)
+        spawn_row = spawn_store.get_spawn(runtime_root, parse_ref(run.spawn_id, row_key=True))
         if spawn_row is None:
             raise RuntimeError(
                 f"execute_with_streaming precondition violated: "
@@ -1006,7 +1010,7 @@ async def execute_with_streaming(
             )
         spawn_store.update_spawn(
             runtime_root,
-            run.spawn_id,
+            parse_ref(run.spawn_id, row_key=True),
             runner_pid=os.getpid(),
         )
         resolved_launch_mode: LaunchMode = (
@@ -1238,7 +1242,9 @@ async def execute_with_streaming(
                             conclusion.exit_code = 1
                             conclusion.failure_reason = "empty_output"
                         elif conclusion.exit_code == 0:
-                            guardrail_spawn = spawn_store.get_spawn(runtime_root, run.spawn_id)
+                            guardrail_spawn = spawn_store.get_spawn(
+                                runtime_root, parse_ref(run.spawn_id, row_key=True)
+                            )
                             guardrail_result = run_guardrails(
                                 guardrails,
                                 spawn_id=run.spawn_id,
@@ -1323,7 +1329,7 @@ async def execute_with_streaming(
                 spawn_manager=manager,
             )
             execution_outcome = await spawn_service.complete_execution(
-                run.spawn_id,
+                parse_ref(run.spawn_id, row_key=True),
                 terminal_facts,
                 origin="runner",
                 duration_secs=duration_seconds,

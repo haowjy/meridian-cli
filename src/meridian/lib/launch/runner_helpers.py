@@ -13,6 +13,7 @@ import structlog
 
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.domain import Spawn
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.launch.constants import STDERR_FILENAME
@@ -36,7 +37,7 @@ class SpawnTimeoutError(TimeoutError):
 
 
 def spawn_kind(runtime_root: Path, spawn_id: SpawnId) -> str:
-    row = spawn_store.get_spawn(runtime_root, spawn_id)
+    row = spawn_store.get_spawn(runtime_root, parse_ref(spawn_id, row_key=True))
     if row is None:
         return "child"
     normalized = row.kind.strip().lower()

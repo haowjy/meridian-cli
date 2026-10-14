@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.native_identity import NativeSessionUnavailable
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId
 from meridian.lib.launch.constants import RETIRED_RUNNER_STREAM_FILENAMES
 from meridian.lib.ops.session_target import resolve_run_sources
 from meridian.lib.platform.atomic import iter_atomic_temp_paths
@@ -84,10 +84,10 @@ def _megabytes(size: int) -> str:
     return f"{size / 1_000_000:.1f} MB"
 
 
-def runner_stream_files(root: Path, spawn_id: str) -> tuple[Path, ...]:
+def runner_stream_files(root: Path, spawn_id: RunId) -> tuple[Path, ...]:
     """Runner-stream files of one spawn, including legacy artifact and attempt copies."""
     files: list[Path] = []
-    for base in (root / "spawns" / spawn_id, root / "artifacts" / spawn_id):
+    for base in (root / "spawns" / str(spawn_id), root / "artifacts" / str(spawn_id)):
         if not base.is_dir() or base.is_symlink():
             continue
         attempts = sorted(
@@ -142,7 +142,7 @@ def _judge(
         return _Verdict(skip="recent")
     if row.run_boundary is not None and row.run_boundary.status != "verified":
         return _Verdict(skip="exit_unresolved")
-    scopes = read_scope_projection(root, SpawnId(row.id))
+    scopes = read_scope_projection(root, row.id)
     if any(
         scope_liveness(scope)["likely_serving"]
         for scope in scopes.scopes
@@ -221,7 +221,7 @@ def _unlink_if_unchanged(
 
     mutate_published_spawn_artifact(
         root,
-        SpawnId(row.id),
+        row.id,
         unlink,
         can_mutate=lambda current: (
             current.model_dump(exclude={"prompt"}) == planned

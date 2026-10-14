@@ -18,6 +18,7 @@ from meridian.lib.core.native_identity import (
     Operation,
     PostExit,
 )
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     BaseHarnessAdapter,
@@ -110,10 +111,13 @@ def _write_pi_runtime_metadata_sidecar(
 
     if payload.get("runtime_path") is None:
         return
-    metadata_path = runtime_root / spawn_log_subpath(spawn_id) / PI_RUNTIME_META_FILENAME
+    metadata_path = (
+        runtime_root / spawn_log_subpath(parse_ref(spawn_id, row_key=True))
+        / PI_RUNTIME_META_FILENAME
+    )
     mutate_published_spawn_artifact(
         runtime_root,
-        spawn_id,
+        parse_ref(spawn_id, row_key=True),
         lambda: atomic_write_text(
             metadata_path,
             json.dumps({"schema_version": 1, **payload}, separators=(",", ":")) + "\n",
@@ -334,7 +338,8 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         env_overrides: dict[str, str] = {
             "MERIDIAN_PI_BINARY": resolved_runtime.binary_path,
             "_MERIDIAN_PI_SESSION_BOUNDARY_PATH": str(
-                (runtime_root / spawn_log_subpath(spawn_id) / "pi-session-boundary.json").resolve()
+                (runtime_root / spawn_log_subpath(parse_ref(spawn_id, row_key=True))
+                 / "pi-session-boundary.json").resolve()
             ),
             "_MERIDIAN_PI_SESSION_BOUNDARY_NONCE": secrets.token_hex(32),
         }

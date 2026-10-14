@@ -19,47 +19,11 @@ from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.ops.session_transcript import read_session_transcript
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from tests.support.codex import write_codex_rollout
 from tests.support.opencode_db import (
     write_opencode_db_session,
     write_opencode_db_session_with_parts,
 )
-
-
-def _write_codex_rollout(
-    *,
-    sessions_root: Path,
-    project_root: Path,
-    session_id: str,
-    assistant_text: str,
-) -> Path:
-    rollout_dir = sessions_root / "2026" / "04"
-    rollout_dir.mkdir(parents=True, exist_ok=True)
-    rollout_path = rollout_dir / f"rollout-2026-04-22T00-00-00-{session_id}.jsonl"
-    rollout_path.write_text(
-        "\n".join(
-            [
-                json.dumps(
-                    {
-                        "type": "session_meta",
-                        "payload": {"id": session_id, "cwd": project_root.as_posix()},
-                    }
-                ),
-                json.dumps(
-                    {
-                        "type": "response_item",
-                        "payload": {
-                            "type": "message",
-                            "role": "assistant",
-                            "content": [{"type": "output_text", "text": assistant_text}],
-                        },
-                    }
-                ),
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    return rollout_path
 
 
 def _write_claude_session(
@@ -696,7 +660,7 @@ def test_session_log_resolves_codex_session_file_from_codex_home_env(
     codex_home = tmp_path / "codex-home"
     monkeypatch.setenv("CODEX_HOME", codex_home.as_posix())
     session_id = "78f02237-df5f-43fe-a6e5-929f98287877"
-    _write_codex_rollout(
+    write_codex_rollout(
         sessions_root=codex_home / "sessions",
         project_root=project_root,
         session_id=session_id,

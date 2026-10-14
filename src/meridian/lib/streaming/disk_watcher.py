@@ -12,6 +12,7 @@ from watchfiles import (
     awatch,  # pyright: ignore[reportUnknownVariableType]  # watchfiles exposes an incompletely typed async generator.
 )
 
+from meridian.lib.core.refs import spawn_of
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.pi_private_state import (
     BashEvidenceFile,
@@ -36,6 +37,8 @@ class PiDiskWatcher:
     ) -> None:
         self._spawn_id = str(current_spawn_id)
         self._bash_dir = runtime_root / "pi-bash" / self._spawn_id
+        self._ledger_owner = spawn_of(self._spawn_id)
+        self._ledger_dir = runtime_root / "pi-bash" / self._ledger_owner
         self._ledger = ledger or PiPrivateWorkLedger()
         self._tasks: list[asyncio.Task[None]] = []
         self._state_changed = asyncio.Event()
@@ -45,6 +48,7 @@ class PiDiskWatcher:
 
     async def start(self) -> None:
         self._bash_dir.mkdir(parents=True, exist_ok=True)
+        self._ledger_dir.mkdir(parents=True, exist_ok=True)
         await self.force_rescan()
         self._delivered_change_generation = self._change_generation
         self._state_changed = asyncio.Event()
@@ -80,8 +84,8 @@ class PiDiskWatcher:
         bash = self._read("bash-records.json", BashEvidenceFile)
         receipts = self._read("delivery-receipts.json", DeliveryReceipts)
         observed = self._read("delivery-observations.json", DeliveryObservations)
-        explicit = self._read("observed-spawns.json", SpawnObservations)
-        cleared = self._read("cleared-spawns.json", ClearedSpawns)
+        explicit = self._read("observed-spawns.json", SpawnObservations, spawn_scoped=True)
+        cleared = self._read("cleared-spawns.json", ClearedSpawns, spawn_scoped=True)
         fault = self._read("delivery-fault.json", DeliveryFault)
         if fault is not None and fault.error:
             self._ledger.record_read_failure(self._bash_dir / "delivery-fault.json", fault.error)
@@ -124,7 +128,7 @@ class PiDiskWatcher:
     async def _watch_bash_dir(self) -> None:
         try:
             async for _changes in awatch(
-                self._bash_dir,
+                *dict.fromkeys((self._bash_dir, self._ledger_dir)),
                 recursive=False,
                 stop_event=self._stop_event,
                 rust_timeout=100,
@@ -135,11 +139,14 @@ class PiDiskWatcher:
             self._change_generation += 1
             self._state_changed.set()
 
-    def _read(self, name: str, model: type[_Model], *, scoped: bool = True) -> _Model | None:
-        file = self._bash_dir / name
+    def _read(
+        self, name: str, model: type[_Model], *, spawn_scoped: bool = False
+    ) -> _Model | None:
+        file = (self._ledger_dir if spawn_scoped else self._bash_dir) / name
+        owner = self._ledger_owner if spawn_scoped else self._spawn_id
         try:
             value = model.model_validate_json(file.read_text(encoding="utf-8"))
-            if scoped and getattr(value, "spawn_id", None) != self._spawn_id:
+            if getattr(value, "spawn_id", None) != owner:
                 raise ValueError("private-file parent identity mismatch")
         except FileNotFoundError:
             self._ledger.clear_read_failure(file)

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.liveness import LivenessDecision
 from meridian.lib.harness.semantics import TerminalEventOutcome, TerminalOutcomeCause
@@ -144,7 +145,7 @@ class _ResidentCompletionProfile:
         self._resident_backend = resident_backend
         self._deadline_seconds = deadline_seconds
         self._rearm_budget = rearm_budget
-        spawn = spawn_store.get_spawn(runtime_root, spawn_id)
+        spawn = spawn_store.get_spawn(runtime_root, parse_ref(spawn_id, row_key=True))
         self._rearm_count = spawn.resident_rearm_count if spawn is not None else 0
         self._clock = clock
         self._explicit_hold = False
@@ -339,7 +340,7 @@ class _ResidentCompletionProfile:
         self._rearm_count += 1
         spawn_store.update_spawn(
             self._runtime_root,
-            self._spawn_id,
+            parse_ref(self._spawn_id, row_key=True),
             resident_rearm_count=self._rearm_count,
         )
         return True

@@ -22,6 +22,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.platform.atomic import fsync_directory, is_atomic_temp_name
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
@@ -158,7 +159,9 @@ def source_witness(directory: Path) -> SourceWitness:
         for path in paths
         for info in (path.lstat(),)
     )
-    current = read_state(directory.parent, directory.name, include_prompt=False)
+    current = read_state(
+        directory.parent, parse_ref(directory.name, row_key=True), include_prompt=False
+    )
     session = (
         session_records_for_spawns(directory.parent.parent, (current,)).get(current.id)
         if current is not None

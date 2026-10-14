@@ -24,11 +24,12 @@ from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.launch_policy_snapshot import (
     LaunchPolicySnapshot as LaunchPolicySnapshot,
 )
+from meridian.lib.core.refs import parse_ref, reference_sort_key
 from meridian.lib.core.spawn_lifecycle import (
     is_active_spawn_status as _is_active_spawn_status,
 )
 from meridian.lib.core.spawn_start import SpawnStartMetadata, derive_display_label
-from meridian.lib.core.types import ChatId, HarnessSessionId, SpawnId
+from meridian.lib.core.types import ChatId, HarnessSessionId, RunId, SpawnId
 from meridian.lib.state.atomic import atomic_publish_dir, atomic_write_text
 from meridian.lib.state.event_store import lock_file
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
@@ -89,19 +90,17 @@ logger = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _spawn_id_index(spawn_id: SpawnId | str) -> int:
-    value = str(spawn_id)
-    if is_spawn_id_shape(value):
-        return int(value[1:])
+def _spawn_id_index(run_id: RunId) -> int:
+    ref = parse_ref(str(run_id))
+    if ref.spawn_id is not None:
+        return int(ref.spawn_id[1:])
     return 0
 
 
-def is_spawn_id_shape(spawn_id: SpawnId | str) -> bool:
-    """Return whether *spawn_id* has Meridian's persisted spawn ID shape."""
+def is_spawn_id_shape(spawn_id: SpawnId | RunId | str) -> bool:
+    """Return whether *spawn_id* has a canonical persisted run-row shape."""
 
-    value = str(spawn_id)
-    suffix = value[1:]
-    return len(value) > 1 and value[0] == "p" and suffix.isascii() and suffix.isdigit()
+    return parse_ref(str(spawn_id)).kind in {"spawn", "run"}
 
 
 def _spawn_counter_path(paths: RuntimePaths) -> Path:
@@ -209,12 +208,32 @@ def gc_abandoned_stages(runtime_root: Path) -> None:
                     entry.unlink()
 
 
+def _publish_record(paths: RuntimePaths, record: SpawnRecord) -> None:
+    """Publish one complete queued/running row while allocation locks are held."""
+
+    spawn_dir = paths.spawns_dir / str(record.id)
+    staging_dir = ensure_spawn_staging_dir(paths)
+    stage_dir = staging_dir / f"{record.id}-{os.getpid()}-{secrets.token_hex(4)}"
+    stage_dir.mkdir()
+    atomic_write_text(stage_dir / "starting-prompt.md", record.prompt or "")
+    stored_state = record_to_stored_state(record)
+    atomic_write_text(
+        stage_dir / "state.json",
+        stored_state.model_dump_json(indent=2) + "\n",
+    )
+    source = HistorySource(kind="spawn", key=str(record.id))
+    with lock_file(source.lock_path(paths.root_dir)):
+        HistoryChanges(paths.root_dir).mark(source)
+        atomic_publish_dir(stage_dir, spawn_dir)
+
+
 def start_spawn(
     runtime_root: Path,
     *,
     chat_id: str,
     owner_chat_id: str | None = None,
-    parent_id: str | None = None,
+    parent_id: SpawnId | None = None,
+    parent_run_id: RunId | None = None,
     model: str,
     agent: str,
     agent_path: str | None = None,
@@ -227,7 +246,7 @@ def start_spawn(
     desc: str | None = None,
     work_id: str | None = None,
     goal: str | None = None,
-    spawn_id: SpawnId | str | None = None,
+    spawn_id: RunId | str | None = None,
     harness_session_id: str | None = None,
     control_root: str | None = None,
     task_cwd: str | None = None,
@@ -241,8 +260,8 @@ def start_spawn(
     status: SpawnStatus = SpawnStatus.RUNNING,
     started_at: str | None = None,
     clock: Clock | None = None,
-) -> SpawnId:
-    """Create a v2 spawn state directory and return the spawn ID."""
+) -> RunId:
+    """Create a spawn's first immutable run row and return its exact key."""
 
     resolved_clock = clock or RealClock()
     paths = RuntimePaths.from_root_dir(runtime_root)
@@ -274,18 +293,24 @@ def start_spawn(
             explicit_spawn_id = str(spawn_id)
             if not _is_safe_spawn_dir_name(explicit_spawn_id):
                 raise ValueError(f"Invalid spawn ID: {explicit_spawn_id}")
-            resolved_spawn_id = SpawnId(explicit_spawn_id)
+            resolved_run_id = parse_ref(explicit_spawn_id, row_key=True)
         else:
             current = _read_spawn_counter(paths)
             if current == 0 and not _spawn_counter_path(paths).is_file():
                 current = _seed_spawn_counter_from_dirs(paths)
             next_value = current + 1
             atomic_write_text(_spawn_counter_path(paths), f"{next_value}\n")
-            resolved_spawn_id = SpawnId(f"p{next_value}")
+            resolved_run_id = parse_ref(f"p{next_value}", row_key=True)
         from meridian.lib.state.session_store import get_session_record
 
         parent = (
-            _read_state(paths.spawns_dir, parent_id, include_prompt=False) if parent_id else None
+            _read_state(
+                paths.spawns_dir,
+                parent_run_id or parse_ref(str(parent_id), row_key=True),
+                include_prompt=False,
+            )
+            if parent_id
+            else None
         )
         owner = get_session_record(runtime_root, owner_chat_id or chat_id)
         record = SpawnRecord(
@@ -296,7 +321,7 @@ def start_spawn(
                 start_metadata.forked_from_history_id
                 or (owner.forked_from_history_id if owner and kind == "primary" else None)
             ),
-            id=str(resolved_spawn_id),
+            id=resolved_run_id,
             history_id=uuid4(),
             state_revision=1,
             chat_id=ChatId(chat_id),
@@ -343,26 +368,13 @@ def start_spawn(
             terminal=None,
             launch_policy_snapshot=resolved_launch_policy_snapshot,
         )
-        spawn_dir = paths.spawns_dir / str(resolved_spawn_id)
-        staging_dir = ensure_spawn_staging_dir(paths)
-        stage_dir = staging_dir / f"{resolved_spawn_id}-{os.getpid()}-{secrets.token_hex(4)}"
-        stage_dir.mkdir()
-        atomic_write_text(stage_dir / "starting-prompt.md", prompt)
-        stored_state = record_to_stored_state(record)
-        atomic_write_text(
-            stage_dir / "state.json",
-            stored_state.model_dump_json(indent=2) + "\n",
-        )
-        source = HistorySource(kind="spawn", key=str(resolved_spawn_id))
-        with lock_file(source.lock_path(runtime_root)):
-            changes.mark(source)
-            atomic_publish_dir(stage_dir, spawn_dir)
-        return resolved_spawn_id
+        _publish_record(paths, record)
+        return resolved_run_id
 
 
 def remove_spawn_events(
     runtime_root: Path,
-    spawn_id: SpawnId | str,
+    spawn_id: RunId,
 ) -> None:
     """Remove per-spawn state for one spawn.
 
@@ -379,7 +391,7 @@ def remove_spawn_events(
 
 def update_spawn(
     runtime_root: Path,
-    spawn_id: SpawnId | str,
+    spawn_id: RunId,
     *,
     chat_id: str | None = None,
     current_chat_id: str | None = None,
@@ -450,7 +462,7 @@ def update_spawn(
 
     outcome = _write_state_locked(
         paths.spawns_dir,
-        str(spawn_id),
+        spawn_id,
         merge,
         allow_terminal_overwrite=True,
     )
@@ -492,7 +504,7 @@ def update_spawn(
 
 def record_spawn_exited(
     runtime_root: Path,
-    spawn_id: SpawnId | str,
+    spawn_id: RunId,
     *,
     exit_code: int,
     exited_at: str | None = None,
@@ -512,7 +524,7 @@ def record_spawn_exited(
 
     outcome = _write_state_locked(
         paths.spawns_dir,
-        str(spawn_id),
+        spawn_id,
         merge_exit,
         allow_terminal_overwrite=True,
     )
@@ -521,7 +533,7 @@ def record_spawn_exited(
 
 def record_runner_exit(
     runtime_root: Path,
-    spawn_id: SpawnId | str,
+    spawn_id: RunId,
     *,
     status: TerminalSpawnStatus,
     exit_code: int,
@@ -548,7 +560,7 @@ def record_runner_exit(
 
     outcome = _write_state_locked(
         paths.spawns_dir,
-        str(spawn_id),
+        spawn_id,
         merge_exit,
     )
     return outcome.after if isinstance(outcome, Applied) else None
@@ -556,7 +568,7 @@ def record_runner_exit(
 
 def record_cancel_intent(
     runtime_root: Path,
-    spawn_id: SpawnId | str,
+    spawn_id: RunId,
     *,
     exit_code: int,
     error: str | None,
@@ -581,12 +593,12 @@ def record_cancel_intent(
     def merge_intent(current: SpawnRecord) -> SpawnRecord | Decline:
         return apply_cancel_intent(current, intent=intent)
 
-    return _write_state_locked(paths.spawns_dir, str(spawn_id), merge_intent)
+    return _write_state_locked(paths.spawns_dir, spawn_id, merge_intent)
 
 
 def finalize_spawn(
     runtime_root: Path,
-    spawn_id: SpawnId | str,
+    spawn_id: RunId,
     status: TerminalSpawnStatus,
     exit_code: int,
     *,
@@ -634,7 +646,7 @@ def finalize_spawn(
 
     return _write_state_locked(
         paths.spawns_dir,
-        str(spawn_id),
+        spawn_id,
         finalize,
         allow_terminal_overwrite=True,
     )
@@ -642,7 +654,7 @@ def finalize_spawn(
 
 def mark_finalizing(
     runtime_root: Path,
-    spawn_id: SpawnId | str,
+    spawn_id: RunId,
 ) -> LockedMutationResult:
     """CAS transition running -> finalizing under the per-spawn lock."""
 
@@ -653,12 +665,12 @@ def mark_finalizing(
             return Decline("spawn is not running")
         return apply_mark_finalizing(current)
 
-    return _write_state_locked(paths.spawns_dir, str(spawn_id), transition)
+    return _write_state_locked(paths.spawns_dir, spawn_id, transition)
 
 
 def mark_spawn_running(
     runtime_root: Path,
-    spawn_id: SpawnId | str,
+    spawn_id: RunId,
     *,
     launch_mode: LaunchMode | None = None,
     worker_pid: int | None = None,
@@ -684,13 +696,11 @@ def mark_spawn_running(
             runner_created_at_epoch=resolved_runner_created_at_epoch,
         )
 
-    return _write_state_locked(paths.spawns_dir, str(spawn_id), mark_running)
+    return _write_state_locked(paths.spawns_dir, spawn_id, mark_running)
 
 
-def _spawn_sort_key(spawn: SpawnRecord) -> tuple[int, str]:
-    if len(spawn.id) >= 2 and spawn.id[0] in {"p", "r"} and spawn.id[1:].isdigit():
-        return (int(spawn.id[1:]), spawn.id)
-    return (10**9, spawn.id)
+def _spawn_sort_key(spawn: SpawnRecord) -> tuple[int, int, str]:
+    return reference_sort_key(spawn.id)
 
 
 @dataclass(frozen=True)
@@ -753,7 +763,7 @@ def list_spawns(
 
 def get_spawn(
     runtime_root: Path,
-    spawn_id: SpawnId | str,
+    spawn_id: RunId,
 ) -> SpawnRecord | None:
     """Return one spawn by ID.
 
@@ -761,4 +771,4 @@ def get_spawn(
     """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    return _read_state(paths.spawns_dir, str(spawn_id))
+    return _read_state(paths.spawns_dir, spawn_id)

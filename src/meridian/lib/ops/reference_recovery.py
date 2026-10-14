@@ -12,7 +12,10 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+from meridian.lib.core.refs import parse_ref
+from meridian.lib.core.types import RunId
 from meridian.lib.state import session_identity, session_store, spawn_store
+from meridian.lib.state.spawn.runs import runs_of
 
 
 class RecoveryProvenance(StrEnum):
@@ -68,8 +71,8 @@ def _recover_from_session_record(
     )
 
 
-def _recover_from_spawn_row(runtime_root: Path, spawn_id: str) -> RecoveryResult | None:
-    row = spawn_store.get_spawn(runtime_root, spawn_id)
+def _recover_from_spawn_row(runtime_root: Path, run_id: RunId) -> RecoveryResult | None:
+    row = spawn_store.get_spawn(runtime_root, run_id)
     if row is None:
         return None
     session_id = _normalize(row.harness_session_id)
@@ -97,21 +100,27 @@ def recover_harness_session_id(
     if not normalized_ref:
         return None
 
-    # Chat reference
-    if normalized_ref.startswith("c") and normalized_ref[1:].isdigit():
+    parsed = parse_ref(normalized_ref)
+    if parsed.kind == "chat":
         return recover_recorded_chat_harness_session_id(runtime_root, normalized_ref)
 
-    # Spawn reference
-    if normalized_ref.startswith("p") and normalized_ref[1:].isdigit():
-        result = _recover_from_spawn_row(runtime_root, normalized_ref)
-        if result is not None:
-            return result
-
-        row = spawn_store.get_spawn(runtime_root, normalized_ref)
-        if row is not None:
+    if parsed.kind in {"spawn", "run"}:
+        if parsed.kind == "spawn":
+            assert parsed.spawn_id is not None
+            run_ids = tuple(reversed(runs_of(runtime_root, parsed.spawn_id)))
+        else:
+            assert parsed.run_id is not None
+            run_ids = (parsed.run_id,)
+        for run_id in run_ids:
+            result = _recover_from_spawn_row(runtime_root, run_id)
+            if result is not None:
+                return result
+            row = spawn_store.get_spawn(runtime_root, run_id)
+            if row is None:
+                continue
             linked_record = session_identity.get_session_record_for_spawn(
                 runtime_root,
-                normalized_ref,
+                run_id,
                 require_harness_session_id=True,
             )
             if linked_record is not None:
@@ -122,8 +131,6 @@ def recover_harness_session_id(
                         provenance=RecoveryProvenance.SESSION_STORE,
                         supporting_chat_id=linked_record.chat_id,
                     )
-
-        return None
 
     return None
 

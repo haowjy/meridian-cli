@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.context import RuntimeContext
+from meridian.lib.core.refs import parse_ref
+from meridian.lib.core.types import RunId
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.runtime import (
     async_from_sync,
@@ -22,13 +24,13 @@ def _resolve_target_spawn_id(
     spawn_id: str | None,
     *,
     current_spawn_id: str | None = None,
-) -> str:
+) -> RunId:
     candidate = (spawn_id or "").strip()
     if candidate:
         return resolve_spawn_reference(project_root, candidate)
     normalized_current_spawn = (current_spawn_id or "").strip()
     if normalized_current_spawn:
-        return resolve_spawn_reference(project_root, normalized_current_spawn)
+        return parse_ref(normalized_current_spawn, row_key=True)
     raise ValueError("Spawn ID is required. Pass --spawn or set MERIDIAN_SPAWN_ID.")
 
 
@@ -37,12 +39,12 @@ def _resolve_spawn(
     project_root: Path,
     spawn_id: str | None,
     ctx: RuntimeContext | None = None,
-) -> str:
+) -> RunId:
     resolved_ctx = runtime_context(ctx)
     resolved_spawn = _resolve_target_spawn_id(
         project_root,
         spawn_id,
-        current_spawn_id=str(resolved_ctx.spawn_id or ""),
+        current_spawn_id=resolved_ctx.run_key,
     )
     runtime_root = resolve_runtime_root_for_read(project_root)
     if runtime_root is None:
@@ -159,8 +161,8 @@ def report_search_sync(
 
     if payload.spawn_id is not None and payload.spawn_id.strip():
         spawn_ids = (resolve_spawn_reference(project_root, payload.spawn_id.strip()),)
-    elif resolved_ctx.spawn_id is not None:
-        spawn_ids = (resolve_spawn_reference(project_root, str(resolved_ctx.spawn_id)),)
+    elif resolved_ctx.run_key is not None:
+        spawn_ids = (resolved_ctx.run_key,)
     else:
         runtime_root = resolve_runtime_root_for_read(project_root)
         if runtime_root is None:

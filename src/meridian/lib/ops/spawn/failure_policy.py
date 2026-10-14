@@ -11,6 +11,7 @@ from pathlib import Path
 
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
 from meridian.lib.core.native_identity import NativeIdentityError
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_service import CompleteSpawnOutcome
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.artifact_io import LifecycleLog, record_identity_failure
@@ -31,7 +32,7 @@ async def finalize_launch_failure(
         )
     service = build_spawn_application_service_from_roots(project_root, runtime_root)
     return await service.complete_spawn(
-        spawn_id,
+        parse_ref(spawn_id, row_key=True),
         "failed",
         1,
         origin="launch_failure",

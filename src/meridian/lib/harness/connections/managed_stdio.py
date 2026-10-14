@@ -11,6 +11,7 @@ from io import BufferedWriter
 from pathlib import Path
 from typing import Final
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import (
     ConnectionConfig,
@@ -182,7 +183,7 @@ async def launch_managed_stdio(
 
     spawn_dir = resolve_spawn_log_dir(
         config.control_root,
-        config.spawn_id,
+        parse_ref(config.spawn_id, row_key=True),
         runtime_root=(
             config.runtime_root
             or resolve_project_runtime_root_for_write(config.control_root)

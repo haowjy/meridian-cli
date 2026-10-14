@@ -20,6 +20,7 @@ from meridian.lib.ops.spawn.query import detail_from_row
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.artifact_store import LocalStore, make_artifact_key
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from tests.support.codex import write_codex_rollout
 
 
 def _write_spawn_output(
@@ -33,42 +34,6 @@ def _write_spawn_output(
     output_path = runtime_root / base_dir / spawn_id / filename
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(json.dumps(event) for event in events) + "\n")
-
-
-def _write_codex_rollout(
-    *,
-    sessions_root: Path,
-    project_root: Path,
-    session_id: str,
-    assistant_text: str,
-) -> None:
-    rollout_dir = sessions_root / "2026" / "04"
-    rollout_dir.mkdir(parents=True, exist_ok=True)
-    rollout_path = rollout_dir / f"rollout-2026-04-22T00-00-00-{session_id}.jsonl"
-    rollout_path.write_text(
-        "\n".join(
-            [
-                json.dumps(
-                    {
-                        "type": "session_meta",
-                        "payload": {"id": session_id, "cwd": project_root.as_posix()},
-                    }
-                ),
-                json.dumps(
-                    {
-                        "type": "response_item",
-                        "payload": {
-                            "type": "message",
-                            "role": "assistant",
-                            "content": [{"type": "output_text", "text": assistant_text}],
-                        },
-                    }
-                ),
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
 
 
 def test_unbound_spawn_does_not_read_runner_history(
@@ -113,7 +78,7 @@ def test_session_log_child_spawn_without_harness_id_does_not_use_parent_chat(
     runtime_root.mkdir(parents=True, exist_ok=True)
     codex_home = tmp_path / "codex-home"
     monkeypatch.setenv("CODEX_HOME", codex_home.as_posix())
-    _write_codex_rollout(
+    write_codex_rollout(
         sessions_root=codex_home / "sessions",
         project_root=project_root,
         session_id="parent-session-id",
@@ -159,7 +124,7 @@ def test_session_log_child_spawn_uses_authoritative_child_chat_link(
     runtime_root.mkdir(parents=True, exist_ok=True)
     codex_home = tmp_path / "codex-home"
     monkeypatch.setenv("CODEX_HOME", codex_home.as_posix())
-    _write_codex_rollout(
+    write_codex_rollout(
         sessions_root=codex_home / "sessions",
         project_root=project_root,
         session_id="11111111-1111-4111-8111-111111111111",
@@ -387,7 +352,7 @@ def test_session_export_spawn_duration_uses_last_attempt_exited_at(
     )
 
     session_id = "11111111-1111-4111-8111-111111111111"
-    _write_codex_rollout(
+    write_codex_rollout(
         sessions_root=tmp_path / "native",
         project_root=project_root,
         session_id=session_id,
@@ -457,7 +422,7 @@ def test_session_export_include_spawns_groups_by_owner_chat(
             harness_session_id="thread-child",
         )
     )
-    _write_codex_rollout(
+    write_codex_rollout(
         sessions_root=codex_home / "sessions",
         project_root=project_root,
         session_id=primary_session_id,

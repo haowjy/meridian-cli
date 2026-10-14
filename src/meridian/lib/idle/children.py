@@ -9,6 +9,7 @@ from pathlib import Path
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.state import spawn_store
 from meridian.lib.state.runtime_root import derive_runtime_root_from_project
+from meridian.lib.state.spawn_tree import iter_descendants
 
 
 @dataclass(frozen=True)
@@ -24,27 +25,14 @@ SpawnStoreReader = Callable[[], Iterable[SpawnRow]]
 
 
 def active_child_count(parent_spawn_id: str | None, rows: Iterable[SpawnRow]) -> int:
-    """Count active transitive descendants, tolerating corrupt cycles."""
+    """Count active run rows in transitive child spawns, tolerating cycles."""
 
     if not parent_spawn_id:
         return 0
-    by_parent: dict[str | None, list[SpawnRow]] = {}
-    for row in rows:
-        by_parent.setdefault(row.parent_id, []).append(row)
-
-    active = 0
-    visited = {parent_spawn_id}
-    stack = [parent_spawn_id]
-    while stack:
-        parent_id = stack.pop()
-        for child in by_parent.get(parent_id, ()):
-            if child.id in visited:
-                continue
-            visited.add(child.id)
-            stack.append(child.id)
-            if is_active_spawn_status(child.status):
-                active += 1
-    return active
+    return sum(
+        is_active_spawn_status(row.status)
+        for row in iter_descendants(parent_spawn_id, rows)
+    )
 
 
 def spawn_store_reader(env: Mapping[str, str]) -> SpawnStoreReader:

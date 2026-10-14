@@ -73,6 +73,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
+      - name: Check reference boundaries
+        run: uv run python scripts/check-ref-boundaries.py
+
       - name: Run fast gate
         run: scripts/preflight.sh fast
 

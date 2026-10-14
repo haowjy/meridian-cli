@@ -15,6 +15,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.platform.locking import FileLockTimeout, lock_file
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
@@ -73,7 +74,7 @@ def _migrate_row(changes: HistoryChanges, spawns_dir: Path, spawn_id: str) -> bo
         return False
     with (
         lock_file(changes.mutation_lock, mode="shared"),
-        lock_file(spawn_lock_path(spawns_dir, spawn_id), reentrant=False),
+        lock_file(spawn_lock_path(spawns_dir, parse_ref(spawn_id, row_key=True)), reentrant=False),
     ):
         raw = json.loads(path.read_text(encoding="utf-8"))
         if not raw.keys() & set(DOGFOOD_BOUNDARY_FIELDS):

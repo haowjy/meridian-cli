@@ -1,3 +1,4 @@
+import { parseRef } from "../../shared/meridian_spawn";
 import { existsSync, mkdirSync, watch, type FSWatcher } from "node:fs";
 import { open, readdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
@@ -10,6 +11,7 @@ import { runMeridianCommand } from "../../shared/meridian_cli";
 import { admitDelivery, admittedWorkIds, readDeliveryReceipts, readPrivateJson, readSpawnObservations, reservedSpawnIds } from "../../shared/delivery_receipts";
 import {
   currentSpawnIdFromEnv,
+  currentRunIdFromEnv,
   resolveBashRecordsPath,
   resolveClearedSpawnsPath,
   resolvePiBashDir,
@@ -56,12 +58,13 @@ const NOTIFICATION_SEPARATOR = "\n\n";
 /** Launch-scoped owner: durable rows are obligations; queue claims are only mechanics. */
 export class SpawnWatchRuntime {
   private readonly currentSpawnId = currentSpawnIdFromEnv();
+  private readonly currentRunId = currentRunIdFromEnv();
   private readonly spawnsDir = resolveSpawnsDir();
-  private readonly bashDir = resolvePiBashDir(this.currentSpawnId);
-  private readonly bashRecordsPath = resolveBashRecordsPath(this.currentSpawnId);
+  private readonly bashDir = resolvePiBashDir(this.currentRunId);
+  private readonly bashRecordsPath = resolveBashRecordsPath(this.currentRunId);
   private readonly clearedPath = resolveClearedSpawnsPath(this.currentSpawnId);
   private readonly receiptsPath = path.join(this.bashDir, "delivery-receipts.json");
-  private readonly observationsPath = path.join(this.bashDir, "observed-spawns.json");
+  private readonly observationsPath = path.join(resolvePiBashDir(this.currentSpawnId), "observed-spawns.json");
   private readonly queued = new Map<string, string[]>();
   private candidateChildIds = new Set<string>();
   private watchers: FSWatcher[] = [];
@@ -95,10 +98,14 @@ export class SpawnWatchRuntime {
     this.running = true;
     mkdirSync(this.spawnsDir, { recursive: true });
     mkdirSync(this.bashDir, { recursive: true });
+    mkdirSync(resolvePiBashDir(this.currentSpawnId), { recursive: true });
     const watched: Array<[string, () => void]> = [
       [this.spawnsDir, () => { this.discoveryRevision++; this.requestIdleDelivery(); }],
       [this.bashDir, () => this.requestIdleDelivery()],
     ];
+    if (this.currentRunId !== this.currentSpawnId) {
+      watched.push([resolvePiBashDir(this.currentSpawnId), () => this.requestIdleDelivery()]);
+    }
     for (const [dir, onChange] of watched) {
       try {
         const watcher = watch(dir, { recursive: false }, onChange);
@@ -185,7 +192,7 @@ export class SpawnWatchRuntime {
     this.hostGeneration++;
     this.isIdle = () => false;
     try {
-      await admitDelivery(details.delivery_id, workIds, this.currentSpawnId, this.receiptsPath);
+      await admitDelivery(details.delivery_id, workIds, this.currentRunId, this.receiptsPath);
       await this.clearFault("admission");
     }
     catch (error) { await this.recordFault("admission", error); return; }
@@ -221,7 +228,7 @@ export class SpawnWatchRuntime {
 
   private async collectEligible(states: SpawnStateFile[]): Promise<NotificationItem[]> {
     const [bash, receipts, observed, cleared] = await Promise.all([
-      this.readBash(), readDeliveryReceipts(this.currentSpawnId, this.receiptsPath),
+      this.readBash(), readDeliveryReceipts(this.currentRunId, this.receiptsPath),
       readSpawnObservations(this.currentSpawnId, this.observationsPath), this.readCleared(),
     ]);
     const consumed = admittedWorkIds(receipts);
@@ -368,9 +375,9 @@ export class SpawnWatchRuntime {
 
   private async readBash(): Promise<BashRecordsFile> {
     const value = await readPrivateJson(this.bashRecordsPath);
-    if (value === undefined) return { v: 1, spawn_id: this.currentSpawnId, updated_at_ms: 0, records: {} };
+    if (value === undefined) return { v: 1, spawn_id: this.currentRunId, updated_at_ms: 0, records: {} };
     const file = parseBashRecordsFile(value);
-    if (!file || file.spawn_id !== this.currentSpawnId || file.runtime_error) throw Error("invalid or unresolved bash evidence");
+    if (!file || file.spawn_id !== this.currentRunId || file.runtime_error) throw Error("invalid or unresolved bash evidence");
     return file;
   }
 
@@ -395,7 +402,7 @@ export class SpawnWatchRuntime {
       if (existsSync(this.spawnsDir)) {
         for (const name of (await readdir(this.spawnsDir)).sort()) {
           if (!mayRead()) break;
-          if (!name.startsWith("p")) continue;
+          if (parseRef(name).runId === undefined) continue;
           const value = await readPrivateJson(path.join(this.spawnsDir, name, "state.json"));
           if (value === undefined) continue;
           const state = this.parseOwnedChild(name, value);
@@ -446,7 +453,7 @@ export class SpawnWatchRuntime {
   private async recordFault(operation: "scan" | "admission", error: unknown): Promise<void> {
     this.logWarning(error);
     try { await writeJsonAtomic(path.join(this.bashDir, "delivery-fault.json"), {
-      v: 1, spawn_id: this.currentSpawnId, operation, error: String(error),
+      v: 1, spawn_id: this.currentRunId, operation, error: String(error),
     }); } catch (writeError) { this.logWarning(writeError); }
   }
 
@@ -454,7 +461,7 @@ export class SpawnWatchRuntime {
     const file = path.join(this.bashDir, "delivery-fault.json");
     const value = await readPrivateJson(file) as { operation?: unknown; error?: unknown } | undefined;
     if (!value || !value.error || value.operation !== operation) return;
-    await writeJsonAtomic(file, { v: 1, spawn_id: this.currentSpawnId, operation: null, error: null });
+    await writeJsonAtomic(file, { v: 1, spawn_id: this.currentRunId, operation: null, error: null });
   }
 }
 
@@ -601,7 +608,7 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
   const key = Symbol.for("meridian.spawn-watch.runtimes");
   const registry = globalThis as typeof globalThis & { [key]: Map<string, SpawnWatchRuntime> | undefined };
   const owners = registry[key] ??= new Map();
-  const ownerPath = resolvePiBashDir();
+  const ownerPath = resolvePiBashDir(currentRunIdFromEnv());
   const runtime = owners.get(ownerPath) ?? new SpawnWatchRuntime(pi);
   owners.set(ownerPath, runtime);
   runtime.rebind(pi);

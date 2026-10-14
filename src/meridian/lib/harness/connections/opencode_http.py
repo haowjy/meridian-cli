@@ -20,6 +20,8 @@ from urllib.parse import urlparse
 
 import aiohttp
 
+from meridian.lib.core.refs import parse_ref
+
 if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
@@ -950,7 +952,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             config.control_root
         )
         spawn_dir = resolve_spawn_log_dir(
-            config.control_root, config.spawn_id, runtime_root=runtime_root
+            config.control_root, parse_ref(config.spawn_id, row_key=True), runtime_root=runtime_root
         )
         self._instruction_path = materialize_system_prompt(config.system, env)
         self._stderr_log_path = spawn_dir / "stderr.log"

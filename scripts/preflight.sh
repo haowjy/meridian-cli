@@ -20,14 +20,20 @@ case "$MODE" in
     run_step uv run --extra dev python -m meridian.dev.preflight "$@"
     ;;
   extended|full)
+    runner_history=on
+    if (( $# == 1 )) && [[ "$1" == --runner-history=on || "$1" == --runner-history=off ]]; then
+      runner_history="${1#--runner-history=}"
+      shift
+    fi
     if (( $# > 0 )); then
-      printf 'Usage: preflight.sh [fast [preflight arguments...]|extended|full]\n' >&2
+      printf 'Usage: preflight.sh [fast [preflight arguments...]|extended|full [--runner-history=on|off]]\n' >&2
       exit 1
     fi
     cd "$ROOT_DIR"
     printf 'preflight: extended gate (explicit tests/ collection)\n' >&2
     # A complete gate must not inherit a last-failed or filtered selection.
     unset PYTEST_ADDOPTS PYTESTS_LAST_FAILED
+    run_step uv run python scripts/check-ref-boundaries.py
     run_step uv run --extra dev ruff check .
     run_step uv run --extra dev python -m pyright --warnings
     (
@@ -38,11 +44,11 @@ case "$MODE" in
     )
     # Explicit tests/ bypasses the fast testpaths allowlist and retains the
     # complete automated regression suite for release/manual/nightly runs.
-    run_step uv run --extra dev pytest tests/
+    run_step uv run --extra dev pytest tests/ "--runner-history=$runner_history"
     run_step uv build --no-sources
     ;;
   *)
-    printf 'Usage: preflight.sh [fast [preflight arguments...]|extended|full]\n' >&2
+    printf 'Usage: preflight.sh [fast [preflight arguments...]|extended|full [--runner-history=on|off]]\n' >&2
     exit 1
     ;;
 esac

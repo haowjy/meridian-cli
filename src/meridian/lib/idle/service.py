@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.config.loader import OPTION_CATALOG, load_config
 from meridian.lib.config.models import MeridianConfig, NotifyConfig
 from meridian.lib.config.schema import ConfigOptionDescriptor, parse_env_scalar
+from meridian.lib.core.identity import current_spawn_id
 from meridian.lib.harness.idle_types import (
     DetectIdleTtl,
     IdleEvent,
@@ -509,7 +510,7 @@ class IdleService:
         return self.store.mutate(harness, session, transition)
 
     def _children_active(self) -> bool:
-        spawn_id = self.env.get("MERIDIAN_SPAWN_ID")
+        spawn_id = current_spawn_id(self.env)
         if not spawn_id:
             return False
         try:

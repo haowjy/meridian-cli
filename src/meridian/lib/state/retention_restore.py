@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import ChatId
 from meridian.lib.platform.atomic import atomic_replace
 from meridian.lib.platform.locking import lock_file
@@ -104,7 +105,9 @@ def _verify_existing(
     directory: Path, record: ArchivedRecord, *, pending_session: SessionRecord | None = None
 ) -> None:
     actual = inventory(directory)
-    current = read_state(directory.parent, directory.name, include_prompt=False)
+    current = read_state(
+        directory.parent, parse_ref(directory.name, row_key=True), include_prompt=False
+    )
     assert current is not None
     session = session_records_for_spawns(directory.parent.parent, (current,)).get(current.id)
     if current.record_mode != "historical":

@@ -33,6 +33,7 @@ from meridian.lib.context.resolver import resolve_context_paths
 from meridian.lib.core.child_env import validate_child_env_keys
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.overrides import RuntimeOverrides
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
@@ -221,7 +222,7 @@ class ChildEnvContext:
         if self.resolved.work_id is None and child_spawn_id is not None:
             work_dir = resolve_ambient_work_dir(
                 self.project_root,
-                child_spawn_id,
+                parse_ref(child_spawn_id, row_key=True),
                 runtime_root=self.runtime_root,
             )
         elif self.resolved.work_id is None:
@@ -1728,7 +1729,8 @@ def bind_launch_context(
     seed_harness_session_args = prepared.seed_session_args
     model_selection = prepared.model_selection
     spawn_log_dir = resolve_spawn_log_dir(
-        project_paths.project_root, bindings.spawn_id, runtime_root=runtime_root
+        project_paths.project_root, parse_ref(bindings.spawn_id, row_key=True),
+        runtime_root=runtime_root
     )
     report_artifact_path = spawn_log_dir / REPORT_FILENAME
     system_prompt_path = spawn_log_dir / SYSTEM_PROMPT_FILENAME

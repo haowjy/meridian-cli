@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
+from typing import Protocol
 
+from meridian.lib.core.refs import spawn_of
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.process_scope.base import CleanupResult
@@ -12,54 +14,55 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.spawn.model import SpawnRecord
 
 
-def iter_descendants_from_parent_map(
-    root_id: str,
-    by_parent: Mapping[str | None, Sequence[SpawnRecord]],
-) -> Iterator[SpawnRecord]:
-    """Yield transitive child rows below ``root_id`` once per spawn id.
+class DescendantRow(Protocol):
+    @property
+    def id(self) -> str: ...
 
-    Spawn parent links are persisted data and may be malformed. Treat cycles as
-    corrupt rows to walk past, not as a reason for readers to wedge forever.
-    The root id starts as visited so a cycle back to the root does not report
-    the root as its own descendant.
+    @property
+    def parent_id(self) -> str | None: ...
+
+    @property
+    def status(self) -> str: ...
+
+
+def iter_descendants[Row: DescendantRow](root_id: str, rows: Iterable[Row]) -> Iterator[Row]:
+    """Yield all runs of transitive child spawns, tolerating parent cycles.
+
+    Any run's parent edge makes a spawn reachable; keep every run of that
+    spawn so an older active row cannot disappear behind a terminal run.
     """
-
-    visited = {root_id}
-    stack = [root_id]
-    while stack:
-        parent_id = stack.pop()
-        for child in by_parent.get(parent_id, ()):
-            child_id = child.id
-            if child_id in visited:
-                continue
-            visited.add(child_id)
-            yield child
-            stack.append(child_id)
-
-
-def _by_parent(rows: Sequence[SpawnRecord]) -> dict[str | None, list[SpawnRecord]]:
-    by_parent: dict[str | None, list[SpawnRecord]] = {}
+    rows_by_spawn: dict[SpawnId, list[Row]] = {}
+    children_by_parent: dict[SpawnId, list[SpawnId]] = {}
     for row in rows:
-        by_parent.setdefault(row.parent_id, []).append(row)
-    return by_parent
+        child_spawn = spawn_of(row.id)
+        rows_by_spawn.setdefault(child_spawn, []).append(row)
+        if row.parent_id is not None:
+            children_by_parent.setdefault(spawn_of(row.parent_id), []).append(child_spawn)
+    root_spawn = spawn_of(root_id)
+    visited = {root_spawn}
+    stack = [root_spawn]
+    while stack:
+        for child_spawn in children_by_parent.get(stack.pop(), ()):
+            if child_spawn in visited:
+                continue
+            visited.add(child_spawn)
+            yield from rows_by_spawn[child_spawn]
+            stack.append(child_spawn)
 
 
 def collect_descendants(root_id: str, rows: Sequence[SpawnRecord]) -> list[SpawnRecord]:
-    """Return the root spawn, when present, followed by all descendants."""
+    """Return all root run rows, when present, followed by descendant run rows."""
 
-    result: list[SpawnRecord] = []
-    for row in rows:
-        if row.id == root_id:
-            result.append(row)
-            break
-    result.extend(iter_descendants_from_parent_map(root_id, _by_parent(rows)))
+    root_spawn = spawn_of(root_id)
+    result = [row for row in rows if spawn_of(row.id) == root_spawn]
+    result.extend(iter_descendants(root_id, rows))
     return result
 
 
 def descendant_id_set(root_id: str, rows: Sequence[SpawnRecord]) -> set[str]:
     """Return transitive descendant ids below ``root_id``, excluding the root."""
 
-    return {row.id for row in iter_descendants_from_parent_map(root_id, _by_parent(rows))}
+    return {row.id for row in iter_descendants(root_id, rows)}
 
 
 def has_outstanding_descendant_work(root_id: str, rows: Sequence[SpawnRecord]) -> bool:
@@ -72,7 +75,7 @@ def has_outstanding_descendant_work(root_id: str, rows: Sequence[SpawnRecord]) -
 
     return any(
         is_active_spawn_status(child.status)
-        for child in iter_descendants_from_parent_map(root_id, _by_parent(rows))
+        for child in iter_descendants(root_id, rows)
     )
 
 
@@ -85,7 +88,7 @@ def active_descendants(
     rows = spawn_store.list_spawns(runtime_root).records
     return [
         record
-        for record in iter_descendants_from_parent_map(str(root_id), _by_parent(rows))
+        for record in iter_descendants(str(root_id), rows)
         if is_active_spawn_status(record.status)
     ]
 
@@ -114,6 +117,6 @@ __all__ = [
     "collect_descendants",
     "descendant_id_set",
     "has_outstanding_descendant_work",
-    "iter_descendants_from_parent_map",
+    "iter_descendants",
     "terminate_recorded_spawn_scope",
 ]

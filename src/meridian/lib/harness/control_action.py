@@ -11,6 +11,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import cast
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import ConnectionNotReady
 from meridian.lib.state.jsonl import append_durable_jsonl_line
@@ -255,7 +256,7 @@ class ControlActionCoordinator:
         await asyncio.to_thread(
             mutate_published_spawn_artifact,
             self._runtime_root,
-            self._spawn_id,
+            parse_ref(self._spawn_id, row_key=True),
             lambda: append_durable_jsonl_line(self._actions_path, line),
         )
 

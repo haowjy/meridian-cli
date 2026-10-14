@@ -76,6 +76,7 @@ from meridian.cli.startup.help import render_root_help
 from meridian.cli.startup.policy import BootstrapPlan, StartupClass, StateRequirement
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.cli.utils import parse_csv_list
+from meridian.lib.core.identity import current_run_id
 from meridian.lib.launch.cwd import WorkTaskDirMissing
 from meridian.lib.telemetry import emit_telemetry
 
@@ -909,7 +910,7 @@ def _install_cli_telemetry(
         install(
             TelemetryPlan(
                 mode=mode,
-                logical_owner=os.environ.get("MERIDIAN_SPAWN_ID") or "cli",
+                logical_owner=current_run_id() or "cli",
                 runtime_root=runtime_root,
                 schedule_maintenance=schedule_maintenance,
             )

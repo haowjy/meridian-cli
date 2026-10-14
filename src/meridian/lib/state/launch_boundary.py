@@ -9,6 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import HarnessSessionId, SpawnId
 from meridian.lib.state.event_store import append_event, read_events, utc_now_iso
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
@@ -103,7 +104,9 @@ def record_launch_boundary_event(
             exclude_none=True,
         )
 
-    mutate_published_spawn_artifact(runtime_root, spawn_id, append_observation)
+    mutate_published_spawn_artifact(
+        runtime_root, parse_ref(spawn_id, row_key=True), append_observation
+    )
 
 
 def read_launch_boundary_events(

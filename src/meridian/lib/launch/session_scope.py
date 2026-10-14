@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Literal
 
 from meridian.lib.core.native_identity import BindSource, NativeKeyFields
 from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_chat
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import ChatId, HarnessSessionId, SpawnId
 from meridian.lib.launch.request import SessionRequest, is_exact_continue_session
 from meridian.lib.launch.types import PrimarySessionMetadata
@@ -58,7 +59,7 @@ class SessionAttempt:
         ):
             spawn_store.update_spawn(
                 self.runtime_root,
-                self.spawn_id,
+                parse_ref(self.spawn_id, row_key=True),
                 harness_session_id=outcome.key.session_id,
             )
         return outcome

@@ -12,42 +12,7 @@ from meridian.lib.ops.session_search import SessionSearchInput, session_search_s
 from meridian.lib.state import session_store
 from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.user_paths import get_project_home
-
-
-def _write_codex_rollout(
-    *,
-    home_root: Path,
-    project_root: Path,
-    session_id: str,
-    assistant_text: str,
-) -> None:
-    sessions_root = home_root / ".codex" / "sessions" / "2026" / "04"
-    sessions_root.mkdir(parents=True, exist_ok=True)
-    rollout_path = sessions_root / f"rollout-2026-04-22T00-00-00-{session_id}.jsonl"
-    rollout_path.write_text(
-        "\n".join(
-            [
-                json.dumps(
-                    {
-                        "type": "session_meta",
-                        "payload": {"id": session_id, "cwd": project_root.as_posix()},
-                    }
-                ),
-                json.dumps(
-                    {
-                        "type": "response_item",
-                        "payload": {
-                            "type": "message",
-                            "role": "assistant",
-                            "content": [{"type": "output_text", "text": assistant_text}],
-                        },
-                    }
-                ),
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+from tests.support.codex import write_codex_rollout
 
 
 def test_session_search_workspace_scope_uses_runtime_evidence_not_repo_markers(
@@ -93,14 +58,14 @@ def test_session_search_workspace_scope_uses_runtime_evidence_not_repo_markers(
         model="gpt-5.4-mini",
     )
     try:
-        _write_codex_rollout(
-            home_root=home_root,
+        write_codex_rollout(
+            sessions_root=home_root / ".codex" / "sessions",
             project_root=current_root,
             session_id="11111111-1111-1111-1111-111111111111",
             assistant_text="no match here",
         )
-        _write_codex_rollout(
-            home_root=home_root,
+        write_codex_rollout(
+            sessions_root=home_root / ".codex" / "sessions",
             project_root=workspace_root,
             session_id="22222222-2222-2222-2222-222222222222",
             assistant_text="workspace scope needle",
@@ -146,8 +111,8 @@ def test_session_search_global_scope_includes_runtime_root(tmp_path: Path, monke
         model="gpt-5.4-mini",
     )
     try:
-        _write_codex_rollout(
-            home_root=tmp_path / "home",
+        write_codex_rollout(
+            sessions_root=tmp_path / "home" / ".codex" / "sessions",
             project_root=runtime_root,
             session_id="33333333-3333-3333-3333-333333333333",
             assistant_text="global scope needle",
