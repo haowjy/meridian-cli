@@ -48,7 +48,7 @@ from meridian.lib.state.paths import (
 )
 from meridian.lib.state.project_identity import (
     AdHoc,
-    ensure_project_identity,
+    mint_committed_identity,
     resolve_project_identity,
 )
 from meridian.lib.state.user_paths import get_project_home, get_user_home
@@ -522,7 +522,7 @@ def ensure_state_bootstrap_sync(project_root: Path) -> ConfigInitOutput:
     )
     state = _resolve_project_config_state(project_root)
     created = state.path is None
-    ensure_project_identity(project_root, scaffold=_scaffold_template())
+    mint_committed_identity(project_root, _scaffold_template())
 
     ensure_runtime_state_bootstrap_sync(project_root)
     note = (

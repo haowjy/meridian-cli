@@ -46,13 +46,14 @@ bare path
   prompts/ handoffs/ …              — work artifacts
 ```
 
-`project_identity.py` is the only identity reader and writer. A root containing
-`meridian.toml` or `mars.toml` has committed identity; a marker-less root gets a
-stable `adhoc.<slug>.<hash>` ID derived from its canonical path. Ad-hoc state is
-materialized only on writes, under `~/.meridian/projects/<id>/`, and nothing is
-written into the source directory. Committed projects can move without losing
-runtime history; moving an ad-hoc directory changes its identity. Project lifetime
-gates sit outside the deletable project root and are never unlinked.
+`project_identity.py` is the only identity reader and writer. Its named minting
+seam atomically writes init scaffolds with their committed identity. A root
+containing `meridian.toml` or `mars.toml` has committed identity; a marker-less
+root gets a stable `adhoc.<slug>.<hash>` ID derived from its canonical path. Ad-hoc
+state is materialized only on writes, under `~/.meridian/projects/<id>/`, and
+nothing is written into the source directory. Committed projects can move without
+losing runtime history; moving an ad-hoc directory changes its identity. Project
+lifetime gates sit outside the deletable project root and are never unlinked.
 
 Work items live under the `[context.work]` root (default
 `{user_home}/context/<id>/work/<slug>/`), resolved by `work_scope.py` /

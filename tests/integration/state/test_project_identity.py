@@ -14,6 +14,7 @@ from meridian.lib.state.project_identity import (
     AdHoc,
     Committed,
     ensure_project_identity,
+    mint_committed_identity,
     nearest_ancestor_project_marker,
     resolve_project_identity,
     state_id,
@@ -119,9 +120,9 @@ def test_mars_only_write_mints_committed_identity(tmp_path: Path) -> None:
 
 
 def test_scaffold_and_committed_identity_are_written_together(tmp_path: Path) -> None:
-    identity = ensure_project_identity(
+    identity = mint_committed_identity(
         tmp_path,
-        scaffold="[defaults]\nmax_depth = 7\n",
+        "[defaults]\nmax_depth = 7\n",
     )
 
     assert isinstance(identity, Committed)
