@@ -141,6 +141,8 @@ def _is_stale(
 ) -> bool:
     if retention_days < 0:
         return False
+    if retention_days == 0 and minimum_age_seconds == 0:
+        return True
     retention_seconds = retention_days * _SECONDS_PER_DAY
     return now - latest_mtime > max(retention_seconds, minimum_age_seconds)
 
