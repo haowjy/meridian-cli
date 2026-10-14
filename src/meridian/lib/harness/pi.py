@@ -182,6 +182,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "agent",
             "adhoc_agent_payload",
             "context_from_payload",
+            "model_override_explicit",
             "reference_items",
             "task_cwd",
             "allow_builtin_agents",

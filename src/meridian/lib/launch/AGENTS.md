@@ -15,10 +15,8 @@ legacy snapshot replay when a persisted snapshot's `loaded_skills` field is empt
 ## The Composition Seam (Invariant I-1)
 
 All launch state assembly — argv, env, permissions, prompt, workspace roots — happens
-inside `build_launch_context()` in `context.py`. No driving adapter composes these
+through the prepare/bind pipeline in `context.py`. No driving adapter composes these
 independently. This is a hard invariant; violation means two code paths can diverge silently.
-
-`build_launch_context()` is a backward-compat wrapper over a two-phase pipeline:
 
 ```
 SpawnRequest + LaunchRuntime
@@ -98,7 +96,7 @@ Three concentric layers, each defined by function scope:
 
 | Code | Rule |
 |---|---|
-| I-1 | All composition inside `build_launch_context()` — no adapter composes independently |
+| I-1 | All composition uses the prepare/bind pipeline — no adapter composes independently |
 | I-2 | No driving adapter reconstructs argv, env, or permissions independently |
 | I-4 | `conclude_native_run()` once per turn after teardown joins: IDs → adapter → boundary → attribution |
 | I-5 | `SpawnRequest`/`LaunchRuntime` carry no derived state; `LaunchContext` complete at construction |

@@ -9,14 +9,13 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.claude_preflight import CLAUDE_PARENT_ALLOWED_TOOLS_FLAG
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.permissions import compute_nested_claude_deny_additions
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
 from meridian.lib.safety.permissions import PermissionConfig, ToolsPermissionResolver
 from meridian.lib.tools import ToolsField
 from tests.support.fixtures import allow_headless_claude
-from tests.support.launch import stub_bundle_request_and_resolve
+from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 
 if TYPE_CHECKING:
     from pytest import MonkeyPatch

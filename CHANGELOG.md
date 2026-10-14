@@ -12,6 +12,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `harness_session_ids` is not a list.
 - Treat the first `--` as the CLI passthrough boundary, even when it follows a
   value-taking option.
+- Keep streaming SIGTERM masked through connection teardown, then restore the
+  process handler without leaving a closed event loop behind.
 
 ## [0.9.8] - 2026-10-14
 

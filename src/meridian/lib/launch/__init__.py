@@ -19,7 +19,6 @@ if TYPE_CHECKING:
         PreparedPolicySurface,
         RuntimeBindings,
         bind_launch_context,
-        build_launch_context,
         compile_prepared_policy_surface,
         prepare_launch_surface,
     )
@@ -275,7 +274,6 @@ def __getattr__(name: str) -> Any:
         "SessionIntent": (".types", "SessionIntent"),
         "SessionMode": (".types", "SessionMode"),
         "bind_launch_context": (".context", "bind_launch_context"),
-        "build_launch_context": (".context", "build_launch_context"),
         "compile_prepared_policy_surface": (".context", "compile_prepared_policy_surface"),
         "build_primary_prompt": (".types", "build_primary_prompt"),
         "load_agent_profile_with_fallback": (".resolve", "load_agent_profile_with_fallback"),
@@ -320,7 +318,6 @@ __all__ = [
     "SessionMode",
     "SurfacePolicyInput",
     "bind_launch_context",
-    "build_launch_context",
     "build_primary_prompt",
     "compile_prepared_policy_surface",
     "launch_primary",

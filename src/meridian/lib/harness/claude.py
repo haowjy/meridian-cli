@@ -168,6 +168,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             "context_from_payload",
+            "model_override_explicit",
             "reference_items",
             "task_cwd",
             "pi_harness_profile",

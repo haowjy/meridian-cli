@@ -376,7 +376,7 @@ class SpawnApplicationService:
     async def prepare(self, payload: PrepareSpawnRequest) -> PreparedSpawn:
         """Resolve launch context, create spawn row, and project ConnectionConfig.
 
-        SEAM-1: No spawn row is created until build_launch_context() succeeds.
+        SEAM-1: No spawn row is created until launch preparation succeeds.
         SEAM-2: Row metadata always reflects resolved values (never "unknown").
         SEAM-3: ConnectionConfig is projected from LaunchContext.
         SEAM-ID.1: ID allocation happens atomically with row creation.

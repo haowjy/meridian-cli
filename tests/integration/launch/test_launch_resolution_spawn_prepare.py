@@ -12,7 +12,6 @@ from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.bundle_adapter import LoadedSkillEntry
-from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
@@ -21,7 +20,7 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from tests.support.fixtures import allow_headless_claude, write_agent
-from tests.support.launch import stub_bundle_request_and_resolve
+from tests.support.launch import build_launch_context, stub_bundle_request_and_resolve
 
 pytestmark = pytest.mark.slow
 
