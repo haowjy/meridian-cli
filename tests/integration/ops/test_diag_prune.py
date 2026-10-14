@@ -370,12 +370,14 @@ def test_project_retention_scans_own_disjoint_namespaces(tmp_path: Path) -> None
     committed_root = user_home / "projects" / "committed-id"
     _write_text(committed_root / "state.txt", "old\n")
     _set_tree_mtime(committed_root, 1_600_000_000.0)
+    origin_mtime = (adhoc_root / "origin.json").stat().st_mtime_ns
 
     orphans = scan_orphan_project_dirs(user_home, retention_days=30, now=2_000_000_000.0)
     adhoc = scan_adhoc_project_dirs(user_home, retention_days=30, now=2_000_000_000.0)
 
     assert [item.uuid for item in orphans] == ["committed-id"]
     assert [item.project_id for item in adhoc] == [adhoc_root.name]
+    assert (adhoc_root / "origin.json").stat().st_mtime_ns == origin_mtime
 
 
 def test_adhoc_scan_uses_session_record_activity_not_origin_mtime(
@@ -402,12 +404,16 @@ def test_adhoc_scan_uses_session_record_activity_not_origin_mtime(
         kind="primary",
     )
     session_store.stop_session(runtime_root, chat_id)
+    origin_mtime = (runtime_root / "origin.json").stat().st_mtime_ns
+    sessions_mtime = (runtime_root / "sessions.jsonl").stat().st_mtime_ns
 
     assert scan_adhoc_project_dirs(
         user_home,
         retention_days=30,
         now=now.timestamp(),
     ) == []
+    assert (runtime_root / "origin.json").stat().st_mtime_ns == origin_mtime
+    assert (runtime_root / "sessions.jsonl").stat().st_mtime_ns == sessions_mtime
 
 
 @pytest.mark.parametrize(
