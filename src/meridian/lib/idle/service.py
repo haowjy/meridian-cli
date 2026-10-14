@@ -730,6 +730,7 @@ class IdleService:
                 input_count=event.input_count,
                 last_user_text=event.last_user_text,
                 last_assistant_text=event.last_assistant_text,
+                provider=event.provider,
             )
         return self.return_(
             harness=harness,

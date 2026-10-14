@@ -475,6 +475,9 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         flat: dict[str, object] = (
             dict(cast("Mapping[str, object]", data)) if isinstance(data, Mapping) else {}
         )
+        envelope_id = envelope.get("id")
+        if "id" not in flat and isinstance(envelope_id, str):
+            flat["id"] = envelope_id
         durable = envelope.get("durable")
         if isinstance(durable, Mapping):
             aggregate = cast("Mapping[str, object]", durable).get("aggregateID")
