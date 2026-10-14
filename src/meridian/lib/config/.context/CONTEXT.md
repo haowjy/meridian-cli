@@ -52,6 +52,8 @@ user → project → local → environment
 Higher-precedence dictionaries replace or recursively overlay lower-precedence
 dictionaries. Lists replace. The final merged payload is validated into
 `MeridianConfig`; there is no ambient load context or re-entrant settings source.
+`layers.iter_config_layers()` is the single user/project/local discovery and TOML-read
+seam shared by the loader, hook registry, and config inspection.
 
 ### `resolve_project_root_resolution()` — `ignore_env` Parameter
 

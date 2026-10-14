@@ -2,7 +2,6 @@
 
 import logging
 import os
-import tomllib
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
@@ -15,6 +14,7 @@ from meridian.lib.config.dynamic_sections import (
     merge_nested_dict_values,
     normalize_dynamic_sections,
 )
+from meridian.lib.config.layers import iter_config_layers
 from meridian.lib.config.models import (
     ConfigModel,
     HarnessProfileConfig,
@@ -22,7 +22,6 @@ from meridian.lib.config.models import (
     MeridianConfigModel,
     PiHarnessProfileConfig,
 )
-from meridian.lib.config.project_config_state import resolve_project_config_state
 from meridian.lib.config.project_paths import (
     ProjectConfigPaths,
     resolve_project_config_paths,
@@ -132,24 +131,6 @@ def _warn_unknown_model_keys(
                 model=nested_model,
                 source=f"{source}.{key}",
             )
-
-
-def _read_toml(path: Path) -> dict[str, object]:
-    payload_obj = tomllib.loads(path.read_text(encoding="utf-8"))
-    return cast("dict[str, object]", payload_obj)
-
-
-def _resolve_project_toml(project_config_paths: ProjectConfigPaths) -> Path | None:
-    if project_config_paths.meridian_toml.is_file():
-        return project_config_paths.meridian_toml
-    return resolve_project_config_state(project_config_paths.project_root).path
-
-
-def _resolve_local_toml(project_config_paths: ProjectConfigPaths) -> Path | None:
-    local_config = project_config_paths.meridian_local_toml
-    if not local_config.is_file():
-        return None
-    return local_config
 
 
 def _legacy_agents_section_error(*, path: Path) -> ValueError:
@@ -355,16 +336,6 @@ def _config_validation_error(error: ValidationError) -> ValueError:
     return ValueError(f"Invalid value for '{path}': expected {message}, got {got}.")
 
 
-def _load_file(path: Path | None, *, project_root: Path) -> dict[str, object]:
-    if path is None:
-        return {}
-    return _normalize_toml_payload(
-        payload=_read_toml(path),
-        path=path,
-        project_root=project_root,
-    )
-
-
 def load_config(
     project_root: Path,
     *,
@@ -378,8 +349,6 @@ def load_config(
     from ENV here — they are read separately via RuntimeOverrides.from_env().
     """
 
-    from meridian.lib.config.project_root import resolve_user_config_path
-
     _ = resolve_models
     if authority is not None:
         resolved_project_root = authority.project_root.expanduser().resolve()
@@ -387,18 +356,19 @@ def load_config(
     else:
         resolved_project_root = project_root.expanduser().resolve()
         project_config_paths = resolve_project_config_paths(resolved_project_root)
-    resolved_user_config = resolve_user_config_path(user_config)
-
     values: dict[str, object] = {}
-    paths = (
-        resolved_user_config,
-        _resolve_project_toml(project_config_paths),
-        _resolve_local_toml(project_config_paths),
-    )
-    for path in paths:
+    for layer in iter_config_layers(
+        resolved_project_root,
+        project_config_paths=project_config_paths,
+        user_config=user_config,
+    ):
         values = merge_nested_dict_values(
             values,
-            _load_file(path, project_root=resolved_project_root),
+            _normalize_toml_payload(
+                payload=layer.payload,
+                path=layer.path,
+                project_root=resolved_project_root,
+            ),
         )
     values = merge_nested_dict_values(values, _env_alias_overrides())
 

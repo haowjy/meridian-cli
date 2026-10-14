@@ -6,6 +6,7 @@ from typing import cast
 
 from meridian.lib.config.models import normalize_required_string
 from meridian.lib.config.schema import DynamicSectionDescriptor
+from meridian.lib.hooks.schema import normalize_hooks_array
 
 logger = logging.getLogger(__name__)
 
@@ -244,8 +245,6 @@ def normalize_dynamic_sections(
             continue
         raw_value = payload[section_key]
         if section_key == "hooks":
-            from meridian.lib.config.settings import normalize_hooks_array
-
             value = normalize_hooks_array(raw_value, source=section_key)
         elif section_key == "work":
             value = _normalize_work_table(raw_value, source=section_key)

@@ -2,7 +2,6 @@
 
 import json
 import os
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
@@ -11,6 +10,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict, field_serializer
 
 from meridian.lib.config.context_config import ContextSourceType
+from meridian.lib.config.layers import iter_config_layers
 from meridian.lib.config.preserving_edit import (
     mutate_project_config,
     reset_scalar_option,
@@ -36,6 +36,7 @@ from meridian.lib.config.settings import (
 )
 from meridian.lib.config.workspace import WorkspaceFinding
 from meridian.lib.core.util import FormatContext, to_jsonable
+from meridian.lib.hooks.schema import HookSpec
 from meridian.lib.ops.config_surface import (
     ConfigSurface,
     ConfigSurfaceWorkspace,
@@ -57,7 +58,6 @@ from meridian.lib.state.user_paths import get_user_home
 from meridian.lib.utils.json_shapes import is_json_object
 
 _MISSING_PROJECT_CONFIG_MESSAGE = "no project config; run `meridian config init`"
-_LOCAL_CONFIG_FILENAME = "meridian.local.toml"
 logger = structlog.get_logger(__name__)
 
 
@@ -272,13 +272,6 @@ def _resolved_values(config: MeridianConfig) -> dict[str, object]:
     }
 
 
-def _read_file_payload(path: Path) -> dict[str, object]:
-    if not path.is_file():
-        return {}
-    payload_obj = tomllib.loads(path.read_text(encoding="utf-8"))
-    return cast("dict[str, object]", payload_obj)
-
-
 def _extract_file_overrides(payload: dict[str, object]) -> dict[str, object]:
     overrides: dict[str, object] = {}
 
@@ -344,31 +337,29 @@ def _build_config_inspection_state(
 ) -> _ConfigInspectionState:
     surface = build_config_surface(authority)
     project_root = surface.project_root
-    project_payload = _read_file_payload(surface.project_config.write_path)
-    project_overrides = _extract_file_overrides(project_payload)
-    project_dynamic_overrides = normalize_dynamic_sections(
-        payload=project_payload,
-        project_root=project_root,
-    )
-    local_config_path = project_root / _LOCAL_CONFIG_FILENAME
-    if local_config_path.is_file():
-        local_payload = _read_file_payload(local_config_path)
-        local_overrides = _extract_file_overrides(local_payload)
-        project_overrides = {**project_overrides, **local_overrides}
-        project_dynamic_overrides = merge_dynamic_sections(
-            project_dynamic_overrides,
-            normalize_dynamic_sections(payload=local_payload, project_root=project_root),
-        )
-    if surface.user_config_path is not None:
-        user_payload = _read_file_payload(surface.user_config_path)
-        user_overrides = _extract_file_overrides(user_payload)
-        user_dynamic_overrides = normalize_dynamic_sections(
-            payload=user_payload,
+    project_overrides: dict[str, object] = {}
+    project_dynamic_overrides: dict[str, object] = {}
+    user_overrides: dict[str, object] = {}
+    user_dynamic_overrides: dict[str, object] = {}
+    for layer in iter_config_layers(
+        project_root,
+        project_config_paths=surface.authority.project_config_paths,
+        user_config=surface.user_config_path,
+    ):
+        overrides = _extract_file_overrides(layer.payload)
+        dynamic = normalize_dynamic_sections(
+            payload=layer.payload,
             project_root=project_root,
         )
-    else:
-        user_overrides = {}
-        user_dynamic_overrides = {}
+        if layer.name == "user":
+            user_overrides = overrides
+            user_dynamic_overrides = dynamic
+            continue
+        project_overrides = {**project_overrides, **overrides}
+        project_dynamic_overrides = merge_dynamic_sections(
+            project_dynamic_overrides,
+            dynamic,
+        )
     resolved_values = _resolved_values(surface.resolved_config)
     resolved_dynamic_overrides = merge_dynamic_sections(
         user_dynamic_overrides,
@@ -574,11 +565,8 @@ def _dynamic_config_values(inspection: _ConfigInspectionState) -> list[ConfigRes
             else:
                 names: list[str] = []
                 for row_value in hook_rows:
-                    if not isinstance(row_value, dict):
-                        continue
-                    row = cast("dict[str, object]", row_value)
-                    label = row.get("name") or row.get("event") or row.get("builtin") or "hook"
-                    names.append(str(label))
+                    if isinstance(row_value, HookSpec):
+                        names.append(row_value.display_name)
                 rendered_hook_value = (
                     f"{len(hook_rows)} hooks ({', '.join(names)})" if names else len(hook_rows)
                 )

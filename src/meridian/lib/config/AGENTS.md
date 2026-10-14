@@ -59,9 +59,10 @@ module and run inside that transaction.
 
 ## Entry Points
 
-- `settings.py` — compatibility re-exports plus temporary hook normalization
+- `settings.py` — compatibility re-exports for the split config implementation
 - `models.py` — section models and the plain `MeridianConfigModel` schema root
 - `loader.py` — TOML/env validation, precedence merge, and `load_config()`
+- `layers.py` — shared user/project/local discovery and TOML reads
 - `dynamic_sections.py` — work, context, workspace, env normalization and merge policy
 - `schema.py` — `config_field()`, `ConfigOptionMeta`: field metadata and parse helpers
 - `project_root.py` — `resolve_project_root_resolution()`, `resolve_user_config_path()`
