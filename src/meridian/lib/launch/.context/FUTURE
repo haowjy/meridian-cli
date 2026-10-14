@@ -23,3 +23,8 @@
 - process/runner.py: replace the remaining `managed` local and post-scope spawn-ID
   injection when session-attempt construction is next revised; these names no
   longer describe a separate managed-session abstraction.
+- `request.py` and `tests/support/launch.py`: production rejects the `DIRECT`
+  composition surface, but `LaunchRuntime.composition_surface` still defaults to
+  `DIRECT` and 18 test/support files reference a facade that reimplements direct
+  preparation. In a test-architecture pass, remove the production-invalid default
+  and migrate those tests through the production prepare/bind pipeline.

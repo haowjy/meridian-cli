@@ -48,7 +48,7 @@ class ExtensionCommandSpec(BaseModel):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     extension_id: str = Field(
-        description="Extension namespace, e.g. 'meridian.sessions'",
+        description="Extension namespace, e.g. 'meridian.session'",
     )
     command_id: str = Field(
         description="Command name within extension, e.g. 'check'",
