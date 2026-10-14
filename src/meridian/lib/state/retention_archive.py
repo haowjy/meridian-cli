@@ -570,7 +570,7 @@ def append_receipt(root: Path, receipt: ArchiveReceipt) -> bool:
                 return False
         changes.mark(source)
         append_durable_jsonl_line(
-            root / "history-archives/catalog.jsonl", receipt.model_dump_json() + "\n"
+            root / "history-archives/catalog.jsonl", receipt.model_dump_json()
         )
         return True
 

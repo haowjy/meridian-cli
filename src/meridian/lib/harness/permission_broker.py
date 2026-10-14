@@ -319,7 +319,7 @@ class PermissionBroker(ServerRequestHandler):
         mutate_published_spawn_artifact(
             self._runtime_root,
             self._spawn_id,
-            lambda: append_durable_jsonl_line(self._journal_path, line + "\n"),
+            lambda: append_durable_jsonl_line(self._journal_path, line),
         )
         self._transitions.append(transition)
         self._apply_transition(transition)

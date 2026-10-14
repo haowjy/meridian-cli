@@ -29,7 +29,7 @@ def append_event(
     exclude_none: bool = False,
 ) -> None:
     payload = event.model_dump(mode="json", exclude_none=exclude_none)
-    line = json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n"
+    line = json.dumps(payload, separators=(",", ":"), sort_keys=True)
     with lock_file(lock_path):
         append_durable_jsonl_line(data_path, line)
 

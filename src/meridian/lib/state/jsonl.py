@@ -1,5 +1,9 @@
 """One JSONL commit rule: a row exists when its newline does.
 
+``append_durable_jsonl_line`` accepts exactly one row and owns its terminating
+newline. Callers may omit that delimiter, but embedded CR/LF characters are
+rejected so one call cannot commit multiple rows accidentally.
+
 Durable repair and append require the caller to hold the writer lock (or own a
 single-writer file). Repair is a read-then-replace operation, so concurrent
 writers without that exclusion can overwrite one another.
@@ -134,9 +138,12 @@ def append_durable_jsonl_lines(path: Path, lines: Iterable[str]) -> None:
 
 
 def append_durable_jsonl_line(path: Path, line: str) -> None:
-    """Repair a torn JSONL tail, then append one durable row."""
+    """Terminate one newline-free row, repair the tail, and append durably."""
 
-    append_durable_jsonl_lines(path, (line,))
+    row = line[:-1] if line.endswith("\n") else line
+    if "\n" in row or "\r" in row:
+        raise ValueError("JSONL row must not contain embedded newlines")
+    append_durable_jsonl_lines(path, (row + "\n",))
 
 
 __all__ = [

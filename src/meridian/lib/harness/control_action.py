@@ -251,7 +251,7 @@ class ControlActionCoordinator:
         if error is not None:
             record["error"] = error
         self._transition_seq += 1
-        line = json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n"
+        line = json.dumps(record, separators=(",", ":"), sort_keys=True)
         await asyncio.to_thread(
             mutate_published_spawn_artifact,
             self._runtime_root,
