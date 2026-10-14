@@ -31,10 +31,6 @@ _resolve_global_format: OutputFormatResolver | None = None
 
 # Exit codes for `meridian ext run`.
 EXIT_GENERAL_ERROR = 1
-EXIT_SERVER_NOT_RUNNING = 2
-EXIT_SERVER_STALE = 3
-EXIT_SERVER_WRONG_PROJECT = 4
-EXIT_SERVER_UNREACHABLE = 5
 EXIT_ARGS_ERROR = 7
 
 
@@ -177,7 +173,6 @@ def ext_show(
                 "command_id": spec.command_id,
                 "summary": spec.summary,
                 "surfaces": [surface.value for surface in sorted(spec.surfaces)],
-                "requires_app_server": spec.requires_app_server,
             }
             for spec in commands
         ],
@@ -190,7 +185,6 @@ def ext_show(
                 f"  {spec.command_id}",
                 f"    {spec.summary}",
                 f"    surfaces: {', '.join(surface.value for surface in sorted(spec.surfaces))}",
-                f"    requires_app_server: {spec.requires_app_server}",
             ]
         )
     _emit_text_or_json(
@@ -234,7 +228,6 @@ def ext_commands(
                 "command_id": spec.command_id,
                 "summary": spec.summary,
                 "surfaces": [surface.value for surface in sorted(spec.surfaces)],
-                "requires_app_server": spec.requires_app_server,
             }
             for spec in commands
         ],
@@ -290,10 +283,7 @@ def ext_run(
 ) -> None:
     """Run an extension command.
 
-    EB3.4: Locate server, authenticate with token, invoke command endpoint.
     EB3.5: Invalid JSON args exit with 7.
-    EB3.6: No server exits with 2.
-    EB3.7: Stale endpoint exits with 3.
     """
 
     effective_format = _resolve_effective_format(requested=format, json_output=json_output)
@@ -317,39 +307,30 @@ def ext_run(
         print(f"Command {fqid} is not available via CLI", file=sys.stderr)
         raise SystemExit(EXIT_GENERAL_ERROR)
 
-    if not spec.requires_app_server:
-        dispatcher = ExtensionCommandDispatcher(registry)
-        _, services, context_builder = _prepare_extension_runtime_read()
-        if request_id is not None:
-            context_builder = context_builder.with_request_id(request_id)
-        if work_id is not None:
-            context_builder = context_builder.with_work_id(work_id)
-        if spawn_id is not None:
-            context_builder = context_builder.with_spawn_id(spawn_id)
-        result = asyncio.run(
-            dispatcher.dispatch(
-                fqid=fqid,
-                args=parsed_args,
-                context=context_builder.build(),
-                services=services,
-            )
+    dispatcher = ExtensionCommandDispatcher(registry)
+    _, services, context_builder = _prepare_extension_runtime_read()
+    if request_id is not None:
+        context_builder = context_builder.with_request_id(request_id)
+    if work_id is not None:
+        context_builder = context_builder.with_work_id(work_id)
+    if spawn_id is not None:
+        context_builder = context_builder.with_spawn_id(spawn_id)
+    result = asyncio.run(
+        dispatcher.dispatch(
+            fqid=fqid,
+            args=parsed_args,
+            context=context_builder.build(),
+            services=services,
         )
-        if isinstance(result, ExtensionErrorResult):
-            _print_run_error(
-                format=effective_format,
-                code=result.code,
-                message=result.message,
-            )
-            raise SystemExit(EXIT_GENERAL_ERROR)
-        _print_run_success(format=effective_format, payload=result.payload)
-        return
-
-    _print_run_error(
-        format=effective_format,
-        code="app_server_required",
-        message="No app server running",
     )
-    raise SystemExit(EXIT_SERVER_NOT_RUNNING)
+    if isinstance(result, ExtensionErrorResult):
+        _print_run_error(
+            format=effective_format,
+            code=result.code,
+            message=result.message,
+        )
+        raise SystemExit(EXIT_GENERAL_ERROR)
+    _print_run_success(format=effective_format, payload=result.payload)
 
 
 def register_ext_commands(

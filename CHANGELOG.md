@@ -13,6 +13,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `--ignore-direnv` / `--no-ignore-direnv` overrides. Undo direnv exports before
   primary and spawned harness launches; carry the setting to descendants.
 
+### Changed
+- Stop advertising archived HTTP/app-server extension commands. Extension
+  discovery now exposes only runnable CLI and MCP surfaces.
+
 ### Fixed
 - Keep runtime-read config on the same resolved project authority snapshot as
   runtime discovery.

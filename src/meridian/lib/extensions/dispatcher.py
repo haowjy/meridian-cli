@@ -78,14 +78,6 @@ class ExtensionCommandDispatcher:
                 )
                 return result
 
-            if spec.requires_app_server and context.project_uuid is None:
-                error_code = "app_server_required"
-                result = ExtensionErrorResult(
-                    code=error_code,
-                    message=f"Command {fqid} requires app server",
-                )
-                return result
-
             try:
                 validated_args = spec.args_schema(**args)
             except ValidationError as error:

@@ -61,7 +61,7 @@ async def mermaid_check_handler(
     an error).
     """
 
-    _ = (context, services)  # no app server state needed
+    _ = (context, services)  # no invocation state needed
 
     from meridian.lib.mermaid.validator import (
         BundleNotFoundError,
@@ -127,11 +127,9 @@ MERMAID_CHECK_SPEC = ExtensionCommandSpec(
         {
             ExtensionSurface.CLI,
             ExtensionSurface.MCP,
-            ExtensionSurface.HTTP,
         }
     ),
     first_party=True,
-    requires_app_server=False,
     # No cli_group/cli_name — extension-only, no direct CLI routing (D26).
     # No sync_handler — direct CLI bypasses extension dispatch (D27).
 )
