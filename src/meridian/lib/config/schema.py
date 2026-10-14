@@ -82,7 +82,10 @@ def config_field(
 def parse_toml_scalar(*, value_kind: ValueKind, raw_value: object, source: str) -> object:
     if value_kind == "bool":
         if not isinstance(raw_value, bool):
-            raise ValueError(f"Invalid value for {source}: expected bool")
+            raise ValueError(
+                f"Invalid value for '{source}': expected bool, got "
+                f"{type(raw_value).__name__} ({raw_value!r})."
+            )
         return raw_value
     if value_kind == "int":
         if isinstance(raw_value, bool) or not isinstance(raw_value, int):

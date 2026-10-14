@@ -16,6 +16,11 @@ from meridian.lib.config.dynamic_sections import (
     merge_nested_dict_values,
     normalize_dynamic_sections,
 )
+from meridian.lib.config.errors import (
+    config_validation_error,
+    validation_error_path,
+    warn_unknown_model_keys,
+)
 from meridian.lib.config.layers import iter_config_layers
 from meridian.lib.config.models import (
     ConfigModel,
@@ -135,38 +140,6 @@ def _section_model(section: str) -> type[ConfigModel] | None:
     return _nested_model_type(field.annotation)
 
 
-def _warn_unknown_model_keys(
-    raw_value: object,
-    *,
-    model: type[ConfigModel],
-    source: str,
-) -> None:
-    """Warn for ignored Pydantic extras without duplicating field validation."""
-
-    if not is_json_object(raw_value):
-        return
-
-    extra_behavior = model.model_config.get("extra")
-    for key, value in raw_value.items():
-        field = model.model_fields.get(key)
-        if field is None:
-            if (
-                key not in model.config_ignored_keys()
-                and not model.config_silences_extras()
-                and extra_behavior != "forbid"
-            ):
-                logger.warning("Ignoring unknown Meridian config key '%s.%s'.", source, key)
-            continue
-
-        nested_model = _nested_model_type(field.annotation)
-        if nested_model is not None:
-            _warn_unknown_model_keys(
-                value,
-                model=nested_model,
-                source=f"{source}.{key}",
-            )
-
-
 def _legacy_agents_section_error(*, path: Path) -> ValueError:
     message = (
         f"Legacy section '[{_LEGACY_AGENTS_SECTION}]' is not supported in '{path}'. "
@@ -221,7 +194,7 @@ def _normalize_toml_payload_values(
 
         section_model = _section_model(key)
         if section_model is not None:
-            _warn_unknown_model_keys(raw_value, model=section_model, source=key)
+            warn_unknown_model_keys(raw_value, model=section_model, source=key)
             normalized[key] = raw_value
             continue
 
@@ -247,7 +220,9 @@ def _normalize_toml_payload_values(
     try:
         values = MeridianConfigModel.model_validate(normalized).model_dump(exclude_unset=True)
     except ValidationError as error:
-        raise _config_validation_error(error) from None
+        raise config_validation_error(
+            error, path_formatter=_catalog_validation_error_path
+        ) from None
     if validated_env is not None:
         values["env"] = validated_env
     return _NormalizedConfigLayer(values=values, dynamic=dynamic)
@@ -278,7 +253,7 @@ def _env_alias_overrides() -> tuple[dict[str, object], tuple[ConfigValueSource, 
     return values, tuple(sources)
 
 
-def _validation_error_path(location: tuple[str | int, ...]) -> str:
+def _catalog_validation_error_path(location: tuple[str | int, ...]) -> str:
     field_path = tuple(item for item in location if isinstance(item, str))
     option = OPTION_CATALOG.option_for_field_path(field_path)
     if (
@@ -288,70 +263,7 @@ def _validation_error_path(location: tuple[str | int, ...]) -> str:
     ):
         return option.canonical_key
 
-    parts: list[str] = []
-    for item in location:
-        if isinstance(item, int):
-            if parts:
-                parts[-1] = f"{parts[-1]}[{item + 1}]"
-            continue
-        parts.append(item)
-    return ".".join(parts) or "config"
-
-
-def _config_validation_error(error: ValidationError) -> ValueError:
-    """Translate one Pydantic failure into a concise config-key error."""
-
-    detail = error.errors(include_url=False)[0]
-    path = _validation_error_path(detail["loc"])
-    error_type = detail["type"]
-    raw_value = detail.get("input")
-    got = f"{type(raw_value).__name__} ({raw_value!r})"
-
-    expected_by_type = {
-        "bool_type": "bool",
-        "dict_type": "table",
-        "float_type": "float",
-        "int_type": "int",
-        "list_type": "array",
-        "model_type": "table",
-        "string_type": "str",
-        "tuple_type": "array",
-    }
-    expected = expected_by_type.get(error_type)
-    if expected is not None:
-        if error_type == "bool_type" and path.partition(".")[0] in {
-            "defaults",
-            "environment",
-            "idle",
-            "notify",
-            "spawn",
-            "timeouts",
-        }:
-            return ValueError(f"Invalid value for {path}: expected bool")
-        if error_type == "model_type" and path in {
-            "harness.claude",
-            "harness.codex",
-            "harness.opencode",
-            "harness.pi",
-        }:
-            expected = "str or table"
-        return ValueError(f"Invalid value for '{path}': expected {expected}, got {got}.")
-
-    if error_type == "extra_forbidden":
-        return ValueError(f"Invalid value for '{path}': unknown key.")
-    if error_type == "missing":
-        return ValueError(f"Invalid value for '{path}': required value is missing.")
-
-    context = detail.get("ctx")
-    cause = context.get("error") if context is not None else None
-    if cause is not None:
-        problem = str(cause).removesuffix(".")
-        if problem.startswith("Invalid value for "):
-            return ValueError(f"{problem}.")
-        return ValueError(f"Invalid value for '{path}': {problem}.")
-
-    message = detail["msg"].removeprefix("Input should be ").removesuffix(".")
-    return ValueError(f"Invalid value for '{path}': expected {message}, got {got}.")
+    return validation_error_path(location)
 
 
 def _path_is_present(values: dict[str, object], path: tuple[str, ...]) -> bool:
@@ -450,7 +362,9 @@ def load_config_with_sources(
         config = MeridianConfig.model_validate(config_values)
         dynamic = DynamicConfigSections.model_validate(dynamic_values)
     except ValidationError as error:
-        raise _config_validation_error(error) from None
+        raise config_validation_error(
+            error, path_formatter=_catalog_validation_error_path
+        ) from None
     if is_json_object(validated_env):
         config = config.model_copy(update={"env": validated_env})
     return LoadedConfig(

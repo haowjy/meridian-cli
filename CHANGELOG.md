@@ -8,6 +8,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Stop writing redundant spawn `inbound.jsonl` control-action journals.
 
 ### Changed
+- Report every invalid config value with the same key, expected type, and received value format.
 - Run the strict Pyright gate with warnings fatal and per-rule suppressions only.
 - Stop advertising archived HTTP/app-server extension commands. Extension
   discovery now exposes only runnable CLI and MCP surfaces and no longer emits

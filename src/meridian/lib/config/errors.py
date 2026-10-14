@@ -6,16 +6,24 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from pydantic import BaseModel
+
 from meridian.lib.config.models import ConfigModel
 from meridian.lib.utils.json_shapes import is_json_object
 
 if TYPE_CHECKING:
-    from pydantic import BaseModel, ValidationError
+    from pydantic import ValidationError
 
 logger = logging.getLogger(__name__)
 
 ValidationPath = tuple[str | int, ...]
 ValidationPathFormatter = Callable[[ValidationPath], str]
+
+
+def _nested_model_type(annotation: object) -> type[BaseModel] | None:
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return annotation
+    return None
 
 
 def validation_error_path(location: ValidationPath) -> str:
@@ -103,8 +111,16 @@ def warn_unknown_model_keys(
         model.config_ignored_keys() if issubclass(model, ConfigModel) else frozenset()
     )
     silences_extras = model.config_silences_extras() if issubclass(model, ConfigModel) else False
-    for key in raw_value:
-        if key in model.model_fields:
+    for key, value in raw_value.items():
+        field = model.model_fields.get(key)
+        if field is not None:
+            nested_model = _nested_model_type(field.annotation)
+            if nested_model is not None:
+                warn_unknown_model_keys(
+                    value,
+                    model=nested_model,
+                    source=f"{source}.{key}",
+                )
             continue
         if key not in ignored_keys and not silences_extras and extra_behavior != "forbid":
             logger.warning("Ignoring unknown Meridian config key '%s.%s'.", source, key)
