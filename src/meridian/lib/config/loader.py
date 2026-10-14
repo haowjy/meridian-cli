@@ -30,7 +30,6 @@ from meridian.lib.config.models import (
 )
 from meridian.lib.config.project_paths import (
     ProjectConfigPaths,
-    resolve_project_config_paths,
 )
 from meridian.lib.config.schema import parse_env_scalar, parse_toml_scalar
 from meridian.lib.utils.json_shapes import is_json_object
@@ -318,18 +317,17 @@ def load_config_with_sources(
     from ENV here — they are read separately via RuntimeOverrides.from_env().
     """
 
-    if authority is not None:
-        resolved_project_root = authority.project_root.expanduser().resolve()
-        project_config_paths = authority.project_config_paths
-    else:
-        resolved_project_root = project_root.expanduser().resolve()
-        project_config_paths = resolve_project_config_paths(resolved_project_root)
+    resolved_project_root = (
+        authority.project_root.expanduser().resolve()
+        if authority is not None
+        else project_root.expanduser().resolve()
+    )
     values: dict[str, object] = {}
     dynamic_values: dict[str, object] = {}
     sources: dict[tuple[str, ...], ConfigValueSource] = {}
     for layer in iter_config_layers(
         resolved_project_root,
-        project_config_paths=project_config_paths,
+        authority=authority,
         user_config=user_config,
     ):
         normalized = _normalize_toml_payload(

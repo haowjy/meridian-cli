@@ -45,7 +45,7 @@ A single hook row can register for multiple events. When a builtin supplies defa
 
 ## Configuring Hooks
 
-Hooks live in any Meridian config file. Precedence is: `builtin < context < user < project < local`.
+Hooks live in any Meridian config file. Precedence is: `builtin < user < project < local`.
 
 ```toml
 # meridian.toml (project) or ~/.meridian/config.toml (user)

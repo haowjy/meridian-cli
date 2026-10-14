@@ -6,7 +6,7 @@ import tomllib
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Protocol
 
 from meridian.lib.config.project_config_state import resolve_project_config_state
 from meridian.lib.config.project_paths import (
@@ -17,6 +17,13 @@ from meridian.lib.config.project_root import resolve_user_config_path
 from meridian.lib.utils.json_shapes import is_json_object
 
 ConfigLayerName = Literal["user", "project", "local"]
+
+
+class ConfigLayerAuthority(Protocol):
+    """Project authority fields needed for config-layer discovery."""
+
+    project_root: Path
+    project_config_paths: ProjectConfigPaths
 
 
 @dataclass(frozen=True)
@@ -38,13 +45,21 @@ def _read_toml(path: Path) -> dict[str, object]:
 def iter_config_layers(
     project_root: Path,
     *,
-    project_config_paths: ProjectConfigPaths | None = None,
+    authority: ConfigLayerAuthority | None = None,
     user_config: Path | None = None,
 ) -> Iterator[ConfigLayer]:
     """Yield user, project, and local config files from low to high precedence."""
 
-    resolved_root = project_root.expanduser().resolve()
-    paths = project_config_paths or resolve_project_config_paths(resolved_root)
+    resolved_root = (
+        authority.project_root.expanduser().resolve()
+        if authority is not None
+        else project_root.expanduser().resolve()
+    )
+    paths = (
+        authority.project_config_paths
+        if authority is not None
+        else resolve_project_config_paths(resolved_root)
+    )
     resolved_user = resolve_user_config_path(user_config)
     project_config = resolve_project_config_state(
         resolved_root,
