@@ -20,11 +20,8 @@ from meridian.lib.core.native_identity import (
 )
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
-    ApprovalContract,
     BaseHarnessAdapter,
-    BootstrapContract,
     BootstrapMode,
-    ExtractionContract,
     ForkMaterializationMode,
     HarnessCapabilities,
     HarnessContract,
@@ -32,12 +29,9 @@ from meridian.lib.harness.adapter import (
     McpConfig,
     NativePrimaryRuntimeMetadata,
     PermissionResolver,
-    ProjectionContract,
-    ProjectionMode,
     RecordConfigDirFn,
     SessionRequest,
     SpawnParams,
-    TransportContract,
 )
 from meridian.lib.harness.bundle import (
     HarnessBundle,
@@ -196,25 +190,11 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def contract(self) -> HarnessContract:
         return HarnessContract(
             capabilities=self.capabilities,
-            transport=TransportContract(
-                transport_ids=(TransportId.STREAMING,),
-                observer_controller_required=False,
-            ),
-            projection=ProjectionContract(
-                launch_spec_cls="ResolvedLaunchSpec",
-                mode=ProjectionMode.SYSTEM_FIELD_WITH_USER_TURN,
-            ),
-            extraction=ExtractionContract(
-                session_observation_order=("connection_session", "artifacts", "current_session"),
-            ),
-            approval=ApprovalContract(
-                subprocess_permission_flags_projected_by_shared_policy=False,
-            ),
-            bootstrap=BootstrapContract(
-                mode=BootstrapMode.SUBPROCESS_ONLY,
-                fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
-                primary_stderr_log=True,
-            ),
+            transport_ids=(TransportId.STREAMING,),
+            launch_spec_cls="ResolvedLaunchSpec",
+            bootstrap_mode=BootstrapMode.SUBPROCESS_ONLY,
+            fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
+            primary_stderr_log=True,
         )
 
     @property
@@ -228,7 +208,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     @property
     def capabilities(self) -> HarnessCapabilities:
         return HarnessCapabilities(
-            supports_stream_events=True,
             supports_stdin_prompt=True,
             supports_session_resume=True,
             supports_session_fork=True,
@@ -401,7 +380,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return read_boundary(Path(path), nonce=nonce, pid=pid) if path and nonce else PostExit()
 
     def uses_native_primary_metadata(self) -> bool:
-        return self.contract.bootstrap.mode is BootstrapMode.SUBPROCESS_ONLY
+        return self.contract.bootstrap_mode is BootstrapMode.SUBPROCESS_ONLY
 
     def native_primary_runtime_metadata(
         self,

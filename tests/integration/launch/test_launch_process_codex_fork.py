@@ -222,9 +222,7 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
     codex_adapter = harness_registry.get_subprocess_harness(HarnessId.CODEX)
     native_fork_contract = codex_adapter.contract.model_copy(
         update={
-            "bootstrap": codex_adapter.contract.bootstrap.model_copy(
-                update={"fork_materialization": ForkMaterializationMode.NATIVE_CONTINUE_FORK}
-            )
+            "fork_materialization": ForkMaterializationMode.NATIVE_CONTINUE_FORK,
         }
     )
     monkeypatch.setattr(
