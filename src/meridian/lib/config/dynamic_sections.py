@@ -53,18 +53,6 @@ class DynamicContextConfig(RootModel[dict[str, DynamicContextEntry]]):
         return value
 
 
-class DynamicEnvConfig(RootModel[dict[str, str]]):
-    """Validated environment variables passed to spawned harnesses."""
-
-    model_config = ConfigDict(frozen=True, strict=True)
-
-    @model_validator(mode="after")
-    def _non_empty_keys(self) -> DynamicEnvConfig:
-        if any(not key.strip() for key in self.root):
-            raise ValueError("expected non-empty key")
-        return self
-
-
 class DynamicConfigSections(BaseModel):
     """Resolved non-catalog config values after layer-specific merge rules."""
 
@@ -137,7 +125,7 @@ DYNAMIC_SECTION_DESCRIPTORS: dict[str, DynamicSectionDescriptor] = {
     "env": DynamicSectionDescriptor(
         section_key="env",
         merge_kind="nested_dict",
-        model=DynamicEnvConfig,
+        model=None,
         scaffold_lines=(
             "# -- Environment variables passed to spawned harnesses -----------------------",
             "# Flat key-value string map. Applied to every spawn from this project.",
@@ -161,9 +149,12 @@ def normalize_dynamic_sections(
     _ = project_root
     normalized: dict[str, object] = {}
     for section_key, descriptor in DYNAMIC_SECTION_DESCRIPTORS.items():
-        if section_key not in payload or descriptor.model is None:
+        if section_key not in payload or descriptor.merge_kind == "external":
             continue
         raw_value = payload[section_key]
+        if descriptor.model is None:
+            normalized[section_key] = raw_value
+            continue
         if descriptor.model is HookConfigSection:
             if json_list(raw_value) is None:
                 raise ValueError(

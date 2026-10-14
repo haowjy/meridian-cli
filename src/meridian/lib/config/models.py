@@ -634,6 +634,13 @@ class MeridianConfig(ConfigModel):
             empty_entries="items",
         )
 
+    @field_validator("env")
+    @classmethod
+    def _validate_env(cls, value: dict[str, str]) -> dict[str, str]:
+        if any(not key.strip() for key in value):
+            raise ValueError("expected non-empty key")
+        return value
+
     @field_validator("default_wait_yield_seconds", "min_wait_yield_seconds")
     @classmethod
     def _validate_wait_yield_settings(cls, value: float) -> float:

@@ -66,7 +66,7 @@ module and run inside that transaction.
 - `model_base.py` — shared model warning policy and value normalization
 - `loader.py` — TOML/env validation, precedence merge, provenance, and load entry points
 - `layers.py` — shared user/project/local discovery and TOML reads
-- `dynamic_sections.py` — typed work/context/hooks/env values, normalization, merge policy
+- `dynamic_sections.py` — typed work/context/hooks values plus dynamic-section merge policy
 - `schema.py` — `config_field()`, `ConfigOptionMeta`: field metadata and parse helpers
 - `project_root.py` — `resolve_project_root_resolution()`, `resolve_user_config_path()`
 - `context_config.py` — `ContextConfig`, `ContextSourceType`: context path schema

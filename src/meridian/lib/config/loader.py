@@ -213,15 +213,12 @@ def _normalize_toml_payload_values(
         )
         _assign_nested_value(normalized, option.field_path, coerced)
 
-    validated_env = normalized.pop("env", None)
     try:
         values = MeridianConfig.model_validate(normalized).model_dump(exclude_unset=True)
     except ValidationError as error:
         raise config_validation_error(
             error, path_formatter=_catalog_validation_error_path
         ) from None
-    if validated_env is not None:
-        values["env"] = validated_env
     return _NormalizedConfigLayer(values=values, dynamic=dynamic)
 
 
@@ -349,18 +346,13 @@ def load_config_with_sources(
     for entry in env_sources:
         sources[entry.path] = entry
 
-    validated_env = values.get("env")
-    config_values = dict(values)
-    config_values.pop("env", None)
     try:
-        config = MeridianConfig.model_validate(config_values)
+        config = MeridianConfig.model_validate(values)
         dynamic = DynamicConfigSections.model_validate(dynamic_values)
     except ValidationError as error:
         raise config_validation_error(
             error, path_formatter=_catalog_validation_error_path
         ) from None
-    if is_json_object(validated_env):
-        config = config.model_copy(update={"env": validated_env})
     return LoadedConfig(
         config=config,
         dynamic=dynamic,
