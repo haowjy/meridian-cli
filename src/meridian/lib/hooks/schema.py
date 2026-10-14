@@ -100,7 +100,12 @@ class HookConfigSection(RootModel[tuple[HookSpec, ...]]):
     @classmethod
     def _tuple_rows(cls, value: object) -> object:
         values = json_list(value)
-        return tuple(values) if values is not None else value
+        if values is None:
+            raise ValueError(
+                "expected array[table], "
+                f"got {type(value).__name__} ({value!r})"
+            )
+        return tuple(values)
 
 
 def warn_unknown_hook_keys(raw_value: object, *, source: str) -> None:
@@ -126,11 +131,6 @@ def warn_unknown_hook_keys(raw_value: object, *, source: str) -> None:
 def normalize_hooks_array(raw_value: object, *, source: str) -> tuple[HookSpec, ...]:
     """Validate and normalize one TOML hooks array into typed specifications."""
 
-    if json_list(raw_value) is None:
-        raise ValueError(
-            f"Invalid value for '{source}': expected array[table], "
-            f"got {type(raw_value).__name__} ({raw_value!r})."
-        )
     warn_unknown_hook_keys(raw_value, source=source)
     try:
         return HookConfigSection.model_validate(raw_value).root

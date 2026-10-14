@@ -15,10 +15,10 @@ from pydantic import (
 )
 
 from meridian.lib.config.errors import config_validation_error, warn_unknown_model_keys
-from meridian.lib.config.models import WorkArtifactsConfig, WorkConfig
+from meridian.lib.config.models import WorkConfig
 from meridian.lib.config.schema import DynamicSectionDescriptor
-from meridian.lib.hooks.schema import HookConfigSection, HookSpec, warn_unknown_hook_keys
-from meridian.lib.utils.json_shapes import is_json_object, json_list
+from meridian.lib.hooks.schema import HookConfigSection, HookSpec
+from meridian.lib.utils.json_shapes import is_json_object, is_object_sequence
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
@@ -139,6 +139,25 @@ DYNAMIC_SECTION_DESCRIPTORS: dict[str, DynamicSectionDescriptor] = {
 }
 
 
+def _dump_configured_value(value: object) -> object:
+    """Dump explicitly configured model fields, including excluded inspection fields."""
+
+    if isinstance(value, RootModel):
+        dumped: object = value.model_dump(exclude_unset=True)
+        return _dump_configured_value(dumped)
+    if isinstance(value, BaseModel):
+        configured: dict[str, object] = {}
+        for field_name in value.model_fields_set:
+            field_value: object = getattr(value, field_name)
+            configured[field_name] = _dump_configured_value(field_value)
+        return configured
+    if is_object_sequence(value):
+        return tuple(_dump_configured_value(item) for item in value)
+    if is_json_object(value):
+        return {key: _dump_configured_value(item) for key, item in value.items()}
+    return value
+
+
 def normalize_dynamic_sections(
     *,
     payload: dict[str, object],
@@ -155,29 +174,12 @@ def normalize_dynamic_sections(
         if descriptor.model is None:
             normalized[section_key] = raw_value
             continue
-        if descriptor.model is HookConfigSection:
-            if json_list(raw_value) is None:
-                raise ValueError(
-                    f"Invalid value for '{section_key}': expected array[table], "
-                    f"got {type(raw_value).__name__} ({raw_value!r})."
-                )
-            warn_unknown_hook_keys(raw_value, source=section_key)
-        elif descriptor.model is WorkConfig:
-            warn_unknown_model_keys(raw_value, model=WorkConfig, source=section_key)
-            if is_json_object(raw_value) and "artifacts" in raw_value:
-                warn_unknown_model_keys(
-                    raw_value["artifacts"],
-                    model=WorkArtifactsConfig,
-                    source=f"{section_key}.artifacts",
-                )
+        warn_unknown_model_keys(raw_value, model=descriptor.model, source=section_key)
         try:
             validated = descriptor.model.model_validate(raw_value)
         except ValidationError as error:
             raise config_validation_error(error, source=section_key) from None
-        section = validated.model_dump(exclude_unset=True)
-        if isinstance(validated, WorkConfig) and validated.artifacts is not None:
-            section["artifacts"] = validated.artifacts.model_dump(exclude_unset=True)
-        normalized[section_key] = section
+        normalized[section_key] = _dump_configured_value(validated)
     return normalized
 
 

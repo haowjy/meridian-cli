@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from types import UnionType
+from typing import TYPE_CHECKING, Union, get_args, get_origin
 
 from pydantic import BaseModel
 
 from meridian.lib.config.model_base import ConfigModel
-from meridian.lib.utils.json_shapes import is_json_object
+from meridian.lib.utils.json_shapes import is_json_object, json_list
 
 if TYPE_CHECKING:
     from pydantic import ValidationError
@@ -23,6 +24,18 @@ ValidationPathFormatter = Callable[[ValidationPath], str]
 def _nested_model_type(annotation: object) -> type[BaseModel] | None:
     if isinstance(annotation, type) and issubclass(annotation, BaseModel):
         return annotation
+    origin = get_origin(annotation)
+    if origin in (Union, UnionType):
+        nested = {
+            model
+            for member in get_args(annotation)
+            if member is not type(None) and (model := _nested_model_type(member)) is not None
+        }
+        return next(iter(nested)) if len(nested) == 1 else None
+    if origin is tuple:
+        members = get_args(annotation)
+        if len(members) == 2 and members[1] is Ellipsis:
+            return _nested_model_type(members[0])
     return None
 
 
@@ -102,6 +115,16 @@ def warn_unknown_model_keys(
     source: str,
 ) -> None:
     """Warn for ignored Pydantic extras without duplicating field validation."""
+
+    root_field = model.model_fields.get("root")
+    root_model = (
+        _nested_model_type(root_field.annotation) if root_field is not None else None
+    )
+    root_items = json_list(raw_value)
+    if root_model is not None and root_items is not None:
+        for index, item in enumerate(root_items, start=1):
+            warn_unknown_model_keys(item, model=root_model, source=f"{source}[{index}]")
+        return
 
     if not is_json_object(raw_value):
         return
