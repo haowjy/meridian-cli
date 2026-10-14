@@ -7,7 +7,7 @@ import subprocess
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, cast
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -55,7 +55,7 @@ class BundleRequest:
 
     agent: str | None
     project_root: Path
-    agent_scope: Literal["root", "fallback"] | None = None
+    agent_path: Path | None = None
     model_override: str | None = None
     literal_model: bool = False
     harness_override: str | None = None
@@ -228,7 +228,11 @@ def _parse_harness_id(
     return harness_id
 
 
-def _build_bundle_command(request: BundleRequest) -> list[str]:
+def _build_bundle_command(
+    request: BundleRequest,
+    *,
+    roots: MarsRoots | None = None,
+) -> list[str]:
     mars_binary = _resolve_mars_binary()
     if mars_binary is None:
         raise RuntimeError(
@@ -236,16 +240,16 @@ def _build_bundle_command(request: BundleRequest) -> list[str]:
             f"{_MARS_BUNDLE_MIN_VERSION}, but no mars binary was found."
         )
 
-    roots = resolve_mars_roots(request.project_root)
+    resolved_roots = roots or resolve_mars_roots(request.project_root)
     command = [
         mars_binary,
         "build",
         "launch-bundle",
         "--json",
         "--root",
-        roots.primary.as_posix(),
+        resolved_roots.primary.as_posix(),
     ]
-    command.extend(mars_fallback_args(roots, executable=mars_binary))
+    command.extend(mars_fallback_args(resolved_roots, executable=mars_binary))
 
     if request.no_refresh_models:
         command.append("--no-refresh-models")
@@ -386,7 +390,12 @@ def _raise_bundle_error(
 
 def _fallback_agent_error_note(request: BundleRequest, roots: MarsRoots) -> str | None:
     agent = (request.agent or "").strip()
-    if request.agent_scope != "fallback" or not agent or roots.user is None:
+    if (
+        request.agent_path is None
+        or not agent
+        or roots.user is None
+        or not request.agent_path.is_relative_to(roots.user)
+    ):
         return None
     return (
         f"note: '{agent}' comes from user packages ({roots.user}); "
@@ -477,8 +486,8 @@ def request_and_resolve(
 ) -> _BundleResult:
     """Resolve launch routing and execution policy through Mars launch-bundle."""
 
-    command = _build_bundle_command(request)
     roots = resolve_mars_roots(request.project_root)
+    command = _build_bundle_command(request, roots=roots)
     ensure_resolved_mars_root(roots, executable=command[0])
     try:
         result = subprocess.run(
