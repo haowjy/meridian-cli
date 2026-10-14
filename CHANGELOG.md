@@ -12,6 +12,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Give child tools their entry chat ID; no-argument wait works without a parent chat.
+- Clear stale TUI text before the quit hint. No native UUID stuck onto the spawn ID.
 
 ### Upgrade notes
 - First indexed read rebuilds history schema 8; no authority migration. See [upgrade notes](docs/upgrading.md#spawnrun-identity-boundary-unreleased).

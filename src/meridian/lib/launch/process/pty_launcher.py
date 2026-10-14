@@ -23,6 +23,7 @@ _TERMINAL_RESTORE_SEQUENCE = (
     b"\x1b[?1006l"
     b"\x1b[?1049l"
     b"\x1b[?25h"
+    b"\x1b[J"  # Clear stale TUI text below the restored cursor before the quit hint.
 )
 
 

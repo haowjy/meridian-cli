@@ -19,7 +19,7 @@ an exact run reference does not truncate that transcript.
 | `meridian --continue REF` | Reopen the same spawn (`p123`), or the owner of a chat (`c123`). Each launch gets a run key (`p123.2`). The quit hint uses the spawn ID. |
 | `meridian --fork [REF]` | Launch a new primary session by forking while preserving launch identity (agent/model/skills). `REF` accepts a spawn ref (`p123`), chat/session ref (`c123`), or raw harness session id. |
 | `meridian --fork-fresh [REF]` | Launch a new primary session by forking and allowing launch identity changes (`-m`, `-a`). |
-| `meridian --from [REF]` | Launch a fresh primary session with prior spawn or chat/session context as reference material only. `REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions. Does not fork transcript lineage. |
+| `meridian --from [REF]` | Launch a fresh primary session with prior spawn or chat/session context as reference material only. `REF` defaults to `$MERIDIAN_RUN_ID` inside Meridian sessions. Does not fork transcript lineage. |
 | `meridian bootstrap` | Launch a primary session with all installed bootstrap docs injected — guides first-time setup |
 | `meridian --task-dir PATH` | Override the source-edit directory for this primary launch only. Does not modify the work item's `task_dir` setting. Relative `-f` paths resolve against this directory. Rejected with `--continue` — use `--fork --task-dir` to diverge. |
 | `meridian spawn -a AGENT -p "task"` | Delegate work to a routed agent/model |
@@ -32,7 +32,7 @@ an exact run reference does not truncate that transcript.
 | `meridian spawn --continue ID -p "more"` | Reopen the same spawn with new input (or use `c123` for a particular chat segment) |
 | `meridian spawn --fork [REF] -p "next"` | Start a new spawn by forking while preserving launch identity (agent/model/skills) |
 | `meridian spawn --fork-fresh [REF] -p "next"` | Start a new spawn by forking and allowing launch identity changes (`-m`, `-a`, `--skills`) |
-| `meridian spawn --from [REF] -p "next"` | Start a new spawn with prior spawn or chat/session context (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |
+| `meridian spawn --from [REF] -p "next"` | Start a new spawn with prior spawn or chat/session context (`REF` defaults to `$MERIDIAN_RUN_ID` inside Meridian sessions) |
 | `meridian spawn cancel ID` | Cancel a running spawn |
 | `meridian spawn cancel-all` | Cancel all running spawns in the current chat (or subtree when called from a nested spawn) |
 | `meridian spawn inject ID --message "text"` | Inject a message into a running streaming spawn |
@@ -54,9 +54,9 @@ Common `spawn` flags:
 | `-p "prompt"` | Inline prompt |
 | `--prompt-file PATH` | Read prompt from file |
 | `-f FILE` | Attach context file (repeatable) |
-| `--fork [REF]` | Fork into a new session while preserving source agent/model/skills (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |
-| `--fork-fresh [REF]` | Fork into a new session and allow `-m`, `-a`, and `--skills` overrides (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |
-| `--from [REF]` | Start a new spawn seeded with prior context from a spawn ref (`p123`) or chat/session ref (`c123`). `REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions. Does not fork transcript lineage. Also inherits the source's work item as a fallback (see Work Precedence below). |
+| `--fork [REF]` | Fork into a new session while preserving source agent/model/skills (`REF` defaults to `$MERIDIAN_RUN_ID` inside Meridian sessions) |
+| `--fork-fresh [REF]` | Fork into a new session and allow `-m`, `-a`, and `--skills` overrides (`REF` defaults to `$MERIDIAN_RUN_ID` inside Meridian sessions) |
+| `--from [REF]` | Start a new spawn seeded with prior context from a spawn ref (`p123`) or chat/session ref (`c123`). `REF` defaults to `$MERIDIAN_RUN_ID` inside Meridian sessions. Does not fork transcript lineage. Also inherits the source's work item as a fallback (see Work Precedence below). |
 | `--desc "label"` | Human-readable label in dashboards |
 | `--work SLUG` | Attach to a specific work item (overrides ambient and --from inheritance) |
 | `--task-dir PATH` | Override source-edit directory for this spawn/fork (must exist) |
