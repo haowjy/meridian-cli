@@ -39,7 +39,7 @@ def resolve_mars_roots(project_root: Path) -> MarsRoots:
 
     # The user root is always user scope, even after it has been initialized.
     # This keeps authoring safeguards stable when invoked from inside that root.
-    if resolved_root == resolved_user_root or resolved_root.is_relative_to(resolved_user_root):
+    if resolved_root == resolved_user_root:
         return MarsRoots(primary=resolved_user_root, scope="user")
 
     for candidate in (resolved_root, *resolved_root.parents):
