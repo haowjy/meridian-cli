@@ -55,6 +55,10 @@ dictionaries. Lists replace. The final merged payload is validated into
 `layers.iter_config_layers()` is the single user/project/local discovery and TOML-read
 seam shared by the loader, hook registry, and config inspection.
 
+`load_config_with_sources()` also retains `DynamicConfigSections` plus one
+`ConfigValueSource` per explicitly set field. Inspection commands render those validated
+values and sources; they do not re-read or re-cast TOML.
+
 ### `resolve_project_root_resolution()` — `ignore_env` Parameter
 
 `project_root.py:resolve_project_root_resolution()` accepts an `ignore_env`

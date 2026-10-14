@@ -2,14 +2,16 @@
 
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from meridian.lib.config.catalog import build_option_catalog
 from meridian.lib.config.dynamic_sections import (
     DYNAMIC_SECTION_DESCRIPTORS,
+    DynamicConfigSections,
     merge_dynamic_sections,
     merge_nested_dict_values,
     normalize_dynamic_sections,
@@ -38,6 +40,38 @@ _FLATTENED_MODEL_SECTIONS = frozenset({"defaults", "spawn", "timeouts"})
 class _ProjectAuthorityLike(Protocol):
     project_root: Path
     project_config_paths: ProjectConfigPaths
+
+
+ConfigSourceName = Literal["builtin", "file", "user-config", "env var"]
+
+
+class ConfigValueSource(BaseModel):
+    """Provenance for one validated config field path."""
+
+    model_config = ConfigDict(frozen=True)
+
+    path: tuple[str, ...]
+    source: ConfigSourceName
+    env_var: str | None = None
+
+
+class LoadedConfig(BaseModel):
+    """Resolved config plus typed dynamic sections and field provenance."""
+
+    model_config = ConfigDict(frozen=True)
+
+    config: MeridianConfig
+    dynamic: DynamicConfigSections
+    sources: tuple[ConfigValueSource, ...] = ()
+
+    def source_for(self, path: tuple[str, ...]) -> ConfigValueSource | None:
+        return next((entry for entry in self.sources if entry.path == path), None)
+
+
+@dataclass(frozen=True)
+class _NormalizedConfigLayer:
+    values: dict[str, object]
+    dynamic: dict[str, object]
 
 
 OPTION_CATALOG = build_option_catalog(MeridianConfig)
@@ -148,7 +182,7 @@ def _normalize_toml_payload(
     payload: dict[str, object],
     path: Path,
     project_root: Path,
-) -> dict[str, object]:
+) -> _NormalizedConfigLayer:
     try:
         return _normalize_toml_payload_values(
             payload=payload,
@@ -167,8 +201,9 @@ def _normalize_toml_payload_values(
     payload: dict[str, object],
     path: Path,
     project_root: Path,
-) -> dict[str, object]:
+) -> _NormalizedConfigLayer:
     normalized: dict[str, object] = {}
+    dynamic: dict[str, object] = {}
     for key, raw_value in payload.items():
         if key == "project":
             # Identity is read by the precedence-exempt minimal loader.
@@ -176,13 +211,12 @@ def _normalize_toml_payload_values(
         if key == _LEGACY_AGENTS_SECTION:
             raise _legacy_agents_section_error(path=path)
         if key in DYNAMIC_SECTION_DESCRIPTORS:
-            normalized = merge_dynamic_sections(
-                normalized,
-                normalize_dynamic_sections(
-                    payload={key: raw_value},
-                    project_root=project_root,
-                ),
+            section = normalize_dynamic_sections(
+                payload={key: raw_value},
+                project_root=project_root,
             )
+            normalized = merge_dynamic_sections(normalized, section)
+            dynamic = merge_dynamic_sections(dynamic, section)
             continue
 
         section_model = _section_model(key)
@@ -210,13 +244,15 @@ def _normalize_toml_payload_values(
         _assign_nested_value(normalized, option.field_path, coerced)
 
     try:
-        return MeridianConfigModel.model_validate(normalized).model_dump(exclude_unset=True)
+        values = MeridianConfigModel.model_validate(normalized).model_dump(exclude_unset=True)
     except ValidationError as error:
         raise _config_validation_error(error) from None
+    return _NormalizedConfigLayer(values=values, dynamic=dynamic)
 
 
-def _env_alias_overrides() -> dict[str, object]:
+def _env_alias_overrides() -> tuple[dict[str, object], tuple[ConfigValueSource, ...]]:
     values: dict[str, object] = {}
+    sources: list[ConfigValueSource] = []
     for env_name, option in OPTION_CATALOG.env_options():
         raw_value = os.getenv(env_name)
         if raw_value is None:
@@ -228,6 +264,13 @@ def _env_alias_overrides() -> dict[str, object]:
             env_name=env_name,
         )
         _assign_nested_value(values, option.field_path, parsed)
+        sources.append(
+            ConfigValueSource(
+                path=option.field_path,
+                source="env var",
+                env_var=env_name,
+            )
+        )
 
     hidden_env_specs: tuple[tuple[str, tuple[str, ...], Literal["float", "str"]], ...] = (
         (
@@ -256,8 +299,15 @@ def _env_alias_overrides() -> dict[str, object]:
             env_name=env_name,
         )
         _assign_nested_value(values, field_path, parsed)
+        sources.append(
+            ConfigValueSource(
+                path=field_path,
+                source="env var",
+                env_var=env_name,
+            )
+        )
 
-    return values
+    return values, tuple(sources)
 
 
 def _validation_error_path(location: tuple[str | int, ...]) -> str:
@@ -336,14 +386,55 @@ def _config_validation_error(error: ValidationError) -> ValueError:
     return ValueError(f"Invalid value for '{path}': expected {message}, got {got}.")
 
 
-def load_config(
+def _path_is_present(values: dict[str, object], path: tuple[str, ...]) -> bool:
+    current: object = values
+    for part in path:
+        if not is_json_object(current) or part not in current:
+            return False
+        current = current[part]
+    return True
+
+
+def _iter_dynamic_source_paths(
+    values: dict[str, object],
+    prefix: tuple[str, ...] = (),
+) -> tuple[tuple[str, ...], ...]:
+    paths: list[tuple[str, ...]] = []
+    for key, value in values.items():
+        path = (*prefix, key)
+        if path == ("hooks",):
+            paths.append(path)
+        elif is_json_object(value):
+            paths.extend(_iter_dynamic_source_paths(value, path))
+        else:
+            paths.append(path)
+    return tuple(paths)
+
+
+def _record_layer_sources(
+    sources: dict[tuple[str, ...], ConfigValueSource],
+    layer: _NormalizedConfigLayer,
+    *,
+    source: Literal["file", "user-config"],
+) -> None:
+    for option in OPTION_CATALOG.options:
+        if _path_is_present(layer.values, option.field_path):
+            sources[option.field_path] = ConfigValueSource(
+                path=option.field_path,
+                source=source,
+            )
+    for path in _iter_dynamic_source_paths(layer.dynamic):
+        sources[path] = ConfigValueSource(path=path, source=source)
+
+
+def load_config_with_sources(
     project_root: Path,
     *,
     authority: _ProjectAuthorityLike | None = None,
     user_config: Path | None = None,
     resolve_models: bool = True,
-) -> MeridianConfig:
-    """Load config with precedence: defaults < user < project < local < environment.
+) -> LoadedConfig:
+    """Load validated config and provenance across all precedence layers.
 
     RuntimeOverrides fields (model, harness, effort, etc.) are NOT loaded
     from ENV here — they are read separately via RuntimeOverrides.from_env().
@@ -357,25 +448,60 @@ def load_config(
         resolved_project_root = project_root.expanduser().resolve()
         project_config_paths = resolve_project_config_paths(resolved_project_root)
     values: dict[str, object] = {}
+    dynamic_values: dict[str, object] = {}
+    sources: dict[tuple[str, ...], ConfigValueSource] = {}
     for layer in iter_config_layers(
         resolved_project_root,
         project_config_paths=project_config_paths,
         user_config=user_config,
     ):
+        normalized = _normalize_toml_payload(
+            payload=layer.payload,
+            path=layer.path,
+            project_root=resolved_project_root,
+        )
         values = merge_nested_dict_values(
             values,
-            _normalize_toml_payload(
-                payload=layer.payload,
-                path=layer.path,
-                project_root=resolved_project_root,
-            ),
+            normalized.values,
         )
-    values = merge_nested_dict_values(values, _env_alias_overrides())
+        dynamic_values = merge_dynamic_sections(dynamic_values, normalized.dynamic)
+        _record_layer_sources(
+            sources,
+            normalized,
+            source="user-config" if layer.name == "user" else "file",
+        )
+    env_values, env_sources = _env_alias_overrides()
+    values = merge_nested_dict_values(values, env_values)
+    for entry in env_sources:
+        sources[entry.path] = entry
 
     try:
-        return MeridianConfig.model_validate(values)
+        config = MeridianConfig.model_validate(values)
+        dynamic = DynamicConfigSections.model_validate(dynamic_values)
     except ValidationError as error:
         raise _config_validation_error(error) from None
+    return LoadedConfig(
+        config=config,
+        dynamic=dynamic,
+        sources=tuple(sources.values()),
+    )
+
+
+def load_config(
+    project_root: Path,
+    *,
+    authority: _ProjectAuthorityLike | None = None,
+    user_config: Path | None = None,
+    resolve_models: bool = True,
+) -> MeridianConfig:
+    """Load config with precedence: defaults < user < project < local < environment."""
+
+    return load_config_with_sources(
+        project_root,
+        authority=authority,
+        user_config=user_config,
+        resolve_models=resolve_models,
+    ).config
 
 
 def _truthy_env_value(raw_value: str) -> bool:

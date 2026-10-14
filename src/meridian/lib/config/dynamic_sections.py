@@ -4,11 +4,53 @@ import logging
 from pathlib import Path
 from typing import cast
 
+from pydantic import BaseModel, ConfigDict
+
 from meridian.lib.config.models import normalize_required_string
 from meridian.lib.config.schema import DynamicSectionDescriptor
-from meridian.lib.hooks.schema import normalize_hooks_array
+from meridian.lib.hooks.schema import HookSpec, normalize_hooks_array
 
 logger = logging.getLogger(__name__)
+
+
+class DynamicContextEntry(BaseModel):
+    """Validated fields explicitly configured for one named context."""
+
+    model_config = ConfigDict(frozen=True, strict=True)
+
+    source: str | None = None
+    path: str | None = None
+    archive: str | None = None
+    remote: str | None = None
+
+
+class DynamicWorkArtifacts(BaseModel):
+    """Validated dynamic fields under ``[work.artifacts]``."""
+
+    model_config = ConfigDict(frozen=True, strict=True)
+
+    sync: str | None = None
+
+
+class DynamicWorkConfig(BaseModel):
+    """Validated dynamic work section retained for config inspection."""
+
+    model_config = ConfigDict(frozen=True, strict=True)
+
+    default_worktree: bool | None = None
+    worktree_base: str | None = None
+    artifacts: DynamicWorkArtifacts | None = None
+
+
+class DynamicConfigSections(BaseModel):
+    """Resolved non-catalog config values after layer-specific merge rules."""
+
+    model_config = ConfigDict(frozen=True, strict=True)
+
+    hooks: tuple[HookSpec, ...] | None = None
+    work: DynamicWorkConfig | None = None
+    context: dict[str, DynamicContextEntry] | None = None
+    env: dict[str, str] | None = None
 
 
 def merge_nested_dict_values(
