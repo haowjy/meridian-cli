@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -27,8 +26,6 @@ from meridian.lib.harness.registry import get_harness_bundle
 from meridian.lib.harness.semantics import NormalizedHarnessEvent, normalize_event
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
-from meridian.lib.state.atomic import append_text_line
-from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 from meridian.lib.state.spawn_tree import terminate_recorded_spawn_scope
 from meridian.lib.streaming.completion_contracts import CompletionCleanupRequest
 from meridian.lib.streaming.control_socket import ControlSocketServer, control_socket_path
@@ -406,15 +403,8 @@ class SpawnManager:
                 on_result(result)
             return result
 
-        async def _send_message() -> int:
-            inbound_seq = await self._record_inbound(
-                spawn_id,
-                action="user_message",
-                data={"text": message},
-                source=source,
-            )
+        async def _send_message() -> None:
             await session.connection.send_user_message(message)
-            return inbound_seq
 
         outcome = await session.control_actions.run_action(
             action=ControlActionType.INJECT,
@@ -428,10 +418,9 @@ class SpawnManager:
                 on_result(result)
             return result
 
-        inbound_seq = outcome.value
         result = InjectResult(
             success=True,
-            inbound_seq=inbound_seq if isinstance(inbound_seq, int) else None,
+            inbound_seq=outcome.submission_seq,
         )
         if on_result is not None:
             on_result(result)
@@ -550,26 +539,6 @@ class SpawnManager:
                 request_id,
                 exc_info=True,
             )
-
-    async def _record_inbound(
-        self,
-        spawn_id: SpawnId,
-        action: str,
-        data: dict[str, object],
-        source: str,
-    ) -> int:
-        """Append one inbound action to the spawn write-ahead control log."""
-
-        log_path = self._inbound_log_path(spawn_id)
-        inbound_seq = await asyncio.to_thread(self._count_jsonl_lines, log_path)
-        payload = {
-            "action": action,
-            "data": data,
-            "ts": time.time(),
-            "source": source,
-        }
-        await self._append_jsonl(spawn_id, log_path, payload)
-        return inbound_seq
 
     def get_connection(self, spawn_id: SpawnId) -> HarnessConnection[Any] | None:
         """Return the active connection for one spawn, if present."""
@@ -868,28 +837,6 @@ class SpawnManager:
             if not session.terminal_published
         ]
 
-    async def _append_jsonl(
-        self,
-        spawn_id: SpawnId,
-        path: Path,
-        payload: dict[str, Any],
-    ) -> None:
-        """Append one JSON line to a JSONL file (used for inbound control log)."""
-
-        line = json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n"
-        await asyncio.to_thread(
-            mutate_published_spawn_artifact,
-            self._runtime_root,
-            spawn_id,
-            lambda: append_text_line(path, line),
-        )
-
-    def _count_jsonl_lines(self, path: Path) -> int:
-        if not path.exists():
-            return 0
-        with path.open("rb") as handle:
-            return sum(1 for _ in handle)
-
     def _fan_out_event(
         self,
         spawn_id: SpawnId,
@@ -940,9 +887,6 @@ class SpawnManager:
 
     def _spawn_dir(self, spawn_id: SpawnId) -> Path:
         return self._runtime_root / "spawns" / str(spawn_id)
-
-    def _inbound_log_path(self, spawn_id: SpawnId) -> Path:
-        return self._spawn_dir(spawn_id) / "inbound.jsonl"
 
     async def _cleanup_completed_session(
         self,
