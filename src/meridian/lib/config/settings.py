@@ -8,8 +8,18 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, cast
 
-from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    create_model,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
+from typing_extensions import TypeIs
 
 from meridian.lib.config.catalog import build_option_catalog, file_alias
 from meridian.lib.config.project_config_state import resolve_project_config_state
@@ -29,13 +39,11 @@ from meridian.lib.core.overrides import (
     AutocompactValue,
     EffortValue,
 )
+from meridian.lib.utils.json_shapes import is_json_object, json_list
 
 logger = logging.getLogger(__name__)
 
 _OUTPUT_VERBOSITY_PRESETS = frozenset({"quiet", "normal", "verbose", "debug"})
-_PRIMARY_AUTOCOMPACT_PCT_MIN = 1
-_PRIMARY_AUTOCOMPACT_PCT_MAX = 100
-_PRIMARY_AUTOCOMPACT_TOKEN_MIN = 1000
 _LOCAL_CONFIG_FILENAME = "meridian.local.toml"
 _LEGACY_AGENTS_SECTION = "agents"
 _HARNESS_TABLE_KEYS = frozenset({"claude", "codex", "opencode", "pi"})
@@ -61,13 +69,6 @@ _SETTINGS_CONTEXT: ContextVar[_SettingsLoadContext | None] = ContextVar(
 )
 
 
-def _current_project_root() -> Path | None:
-    context = _SETTINGS_CONTEXT.get()
-    if context is None:
-        return None
-    return context.project_root
-
-
 def _normalize_required_string(raw: str, *, source: str) -> str:
     normalized = raw.strip()
     if not normalized:
@@ -75,28 +76,31 @@ def _normalize_required_string(raw: str, *, source: str) -> str:
     return normalized
 
 
-def _normalize_optional_string(raw: str | None, *, source: str) -> str | None:
-    if raw is None:
-        return None
-    normalized = raw.strip()
-    if not normalized:
-        raise ValueError(f"Invalid value for '{source}': expected non-empty string.")
-    return normalized
+def _is_object_tuple(value: object) -> TypeIs[tuple[object, ...]]:
+    return isinstance(value, tuple)
 
 
-def _normalize_model_identifier(model: str, *, project_root: Path | None) -> str:
-    _ = project_root
-    normalized = model.strip()
-    return normalized
-
-
-def _normalize_string_tuple(
-    values: tuple[str, ...],
+def _normalize_string_sequence(
+    value: object,
     *,
     source: str,
 ) -> tuple[str, ...]:
+    values = json_list(value)
+    if values is None:
+        if not _is_object_tuple(value):
+            raise ValueError(
+                f"Invalid value for '{source}': expected array[str], "
+                f"got {type(value).__name__} ({value!r})."
+            )
+        values = value
+
     normalized: list[str] = []
     for item in values:
+        if not isinstance(item, str):
+            raise ValueError(
+                f"Invalid value for '{source}': expected array[str], "
+                f"got {type(item).__name__} ({item!r})."
+            )
         compact = item.strip()
         if not compact:
             raise ValueError(f"Invalid value for '{source}': expected non-empty entries.")
@@ -105,24 +109,12 @@ def _normalize_string_tuple(
 
 
 def _parse_toml_list(*, raw_value: object, source: str) -> tuple[str, ...]:
-    if not isinstance(raw_value, list):
+    if json_list(raw_value) is None:
         raise ValueError(
             f"Invalid value for '{source}': expected array[str], "
             f"got {type(raw_value).__name__} ({raw_value!r})."
         )
-
-    parsed: list[str] = []
-    for item in cast("list[object]", raw_value):
-        if not isinstance(item, str):
-            raise ValueError(
-                f"Invalid value for '{source}': expected array[str], "
-                f"got {type(item).__name__} ({item!r})."
-            )
-        normalized = item.strip()
-        if not normalized:
-            raise ValueError(f"Invalid value for '{source}': expected non-empty path entries.")
-        parsed.append(normalized)
-    return tuple(parsed)
+    return _normalize_string_sequence(raw_value, source=source)
 
 
 def _merge_nested_dicts(base: dict[str, object], overrides: dict[str, object]) -> dict[str, object]:
@@ -192,6 +184,42 @@ def _normalize_catalog_table(
         )
 
 
+def _nested_model_type(annotation: object) -> type[BaseModel] | None:
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return annotation
+    return None
+
+
+def _warn_unknown_model_keys(
+    raw_value: object,
+    *,
+    model: type[BaseModel],
+    source: str,
+) -> None:
+    """Warn for ignored Pydantic extras without duplicating field validation."""
+
+    if not is_json_object(raw_value):
+        return
+
+    ignored_keys = _IGNORED_MODEL_KEYS.get(model, frozenset())
+    silence_extras = model in _SILENT_EXTRA_MODELS
+    extra_behavior = model.model_config.get("extra")
+    for key, value in raw_value.items():
+        field = model.model_fields.get(key)
+        if field is None:
+            if key not in ignored_keys and not silence_extras and extra_behavior != "forbid":
+                logger.warning("Ignoring unknown Meridian config key '%s.%s'.", source, key)
+            continue
+
+        nested_model = _nested_model_type(field.annotation)
+        if nested_model is not None:
+            _warn_unknown_model_keys(
+                value,
+                model=nested_model,
+                source=f"{source}.{key}",
+            )
+
+
 def _read_toml(path: Path) -> dict[str, object]:
     payload_obj = tomllib.loads(path.read_text(encoding="utf-8"))
     return cast("dict[str, object]", payload_obj)
@@ -214,279 +242,12 @@ def _resolve_local_toml(project_config_paths: ProjectConfigPaths) -> Path | None
     return local_config
 
 
-def _normalize_output_table(raw_value: object, *, source: str) -> dict[str, object]:
-    if not isinstance(raw_value, dict):
-        raise ValueError(f"Invalid value for '{source}': expected table.")
-
-    values: dict[str, object] = {}
-    for key, value in cast("dict[str, object]", raw_value).items():
-        if key == "show":
-            values[key] = _parse_toml_list(raw_value=value, source=f"{source}.show")
-            continue
-        if key == "verbosity":
-            if not isinstance(value, str):
-                raise ValueError(
-                    f"Invalid value for '{source}.verbosity': expected str, got "
-                    f"{type(value).__name__} ({value!r})."
-                )
-            normalized = value.strip().lower()
-            if not normalized:
-                raise ValueError(
-                    f"Invalid value for '{source}.verbosity': expected non-empty string."
-                )
-            if normalized not in _OUTPUT_VERBOSITY_PRESETS:
-                raise ValueError(
-                    f"Invalid value for '{source}.verbosity': expected one of "
-                    f"{sorted(_OUTPUT_VERBOSITY_PRESETS)}, got {value!r}."
-                )
-            values[key] = normalized
-            continue
-        if key == "format":
-            if not isinstance(value, str):
-                raise ValueError(
-                    f"Invalid value for '{source}.format': expected str, got "
-                    f"{type(value).__name__} ({value!r})."
-                )
-            values[key] = _normalize_required_string(value, source=f"{source}.format")
-            continue
-
-        logger.warning("Ignoring unknown Meridian config key '%s.%s'.", source, key)
-
-    return values
 
 
-def _normalize_state_table(raw_value: object, *, source: str) -> dict[str, object]:
-    if not isinstance(raw_value, dict):
-        raise ValueError(f"Invalid value for '{source}': expected table.")
-
-    values: dict[str, object] = {}
-    for key, value in cast("dict[str, object]", raw_value).items():
-        if key == "retention_days":
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise ValueError(
-                    f"Invalid value for '{source}.retention_days': expected int, got "
-                    f"{type(value).__name__} ({value!r})."
-                )
-            if value < -1:
-                raise ValueError(
-                    f"Invalid value for '{source}.retention_days': expected int >= -1, got "
-                    f"{value!r}."
-                )
-            values[key] = value
-            continue
-
-        logger.warning("Ignoring unknown Meridian config key '%s.%s'.", source, key)
-
-    return values
 
 
-def _normalize_primary_table(raw_value: object, *, source: str) -> dict[str, object]:
-    if not isinstance(raw_value, dict):
-        raise ValueError(f"Invalid value for '{source}': expected table.")
-
-    values: dict[str, object] = {}
-    for key, value in cast("dict[str, object]", raw_value).items():
-        if key in {"model", "harness", "agent", "effort", "sandbox", "approval"}:
-            if not isinstance(value, str):
-                raise ValueError(
-                    f"Invalid value for '{source}.{key}': expected str, got "
-                    f"{type(value).__name__} ({value!r})."
-                )
-            values[key] = _normalize_required_string(value, source=f"{source}.{key}")
-            continue
-
-        if key == "autocompact":
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise ValueError(
-                    f"Invalid value for '{source}.autocompact': expected int, got "
-                    f"{type(value).__name__} ({value!r})."
-                )
-            if value < _PRIMARY_AUTOCOMPACT_TOKEN_MIN:
-                raise ValueError(
-                    f"Invalid value for '{source}.autocompact': expected int >= "
-                    f"{_PRIMARY_AUTOCOMPACT_TOKEN_MIN} (token count), got {value!r}."
-                )
-            values[key] = value
-            continue
-
-        if key == "autocompact_pct":
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise ValueError(
-                    f"Invalid value for '{source}.autocompact_pct': expected int, got "
-                    f"{type(value).__name__} ({value!r})."
-                )
-            if not (_PRIMARY_AUTOCOMPACT_PCT_MIN <= value <= _PRIMARY_AUTOCOMPACT_PCT_MAX):
-                raise ValueError(
-                    f"Invalid value for '{source}.autocompact_pct': expected int between "
-                    f"{_PRIMARY_AUTOCOMPACT_PCT_MIN} and "
-                    f"{_PRIMARY_AUTOCOMPACT_PCT_MAX}, got {value!r}."
-                )
-            values[key] = value
-            continue
-
-        if key == "timeout":
-            if isinstance(value, bool) or not isinstance(value, int | float):
-                raise ValueError(
-                    f"Invalid value for '{source}.timeout': expected float, got "
-                    f"{type(value).__name__} ({value!r})."
-                )
-            if float(value) <= 0:
-                raise ValueError(
-                    f"Invalid value for '{source}.timeout': expected float > 0, got {value!r}."
-                )
-            values[key] = float(value)
-            continue
-
-        logger.warning("Ignoring unknown Meridian config key '%s.%s'.", source, key)
-
-    return values
 
 
-def _normalize_harness_table(
-    raw_value: object,
-    *,
-    source: str,
-    project_root: Path,
-) -> dict[str, object]:
-    if not isinstance(raw_value, dict):
-        raise ValueError(f"Invalid value for '{source}': expected table.")
-
-    allowed = _HARNESS_TABLE_KEYS
-    values: dict[str, object] = {}
-    for key, value in cast("dict[str, object]", raw_value).items():
-        if key not in allowed:
-            logger.warning("Ignoring unknown Meridian config key '%s.%s'.", source, key)
-            continue
-        if isinstance(value, dict):
-            harness_values: dict[str, object] = {}
-            for harness_key, harness_value in cast("dict[str, object]", value).items():
-                if harness_key == "model":
-                    if not isinstance(harness_value, str):
-                        raise ValueError(
-                            f"Invalid value for '{source}.{key}.model': expected str, got "
-                            f"{type(harness_value).__name__} ({harness_value!r})."
-                        )
-                    normalized_model = harness_value.strip()
-                    if normalized_model:
-                        normalized_model = _normalize_model_identifier(
-                            normalized_model,
-                            project_root=project_root,
-                        )
-                    harness_values["model"] = normalized_model
-                    continue
-                if harness_key == "wait_yield_seconds":
-                    if isinstance(harness_value, bool) or not isinstance(
-                        harness_value,
-                        int | float,
-                    ):
-                        raise ValueError(
-                            f"Invalid value for '{source}.{key}.wait_yield_seconds': "
-                            f"expected float, got "
-                            f"{type(harness_value).__name__} ({harness_value!r})."
-                        )
-                    harness_values["wait_yield_seconds"] = float(harness_value)
-                    continue
-                if harness_key == "allow_builtin_agents":
-                    if not isinstance(harness_value, bool):
-                        raise ValueError(
-                            f"Invalid value for '{source}.{key}.allow_builtin_agents': "
-                            f"expected bool, got "
-                            f"{type(harness_value).__name__} ({harness_value!r})."
-                        )
-                    harness_values["allow_builtin_agents"] = harness_value
-                    continue
-                if key == "opencode" and harness_key == "version":
-                    if not isinstance(harness_value, str):
-                        raise ValueError(
-                            f"Invalid value for '{source}.{key}.version': expected str, got "
-                            f"{type(harness_value).__name__} ({harness_value!r})."
-                        )
-                    harness_values["version"] = harness_value.strip().lower()
-                    continue
-                if key == "pi" and harness_key == "disable_managed_bash":
-                    if not isinstance(harness_value, bool):
-                        raise ValueError(
-                            f"Invalid value for '{source}.{key}.disable_managed_bash': "
-                            f"expected bool, got "
-                            f"{type(harness_value).__name__} ({harness_value!r})."
-                        )
-                    harness_values["disable_managed_bash"] = harness_value
-                    continue
-                if key == "pi" and harness_key == "load_all_pi_extensions":
-                    if not isinstance(harness_value, bool):
-                        raise ValueError(
-                            f"Invalid value for '{source}.{key}.load_all_pi_extensions': "
-                            f"expected bool, got "
-                            f"{type(harness_value).__name__} ({harness_value!r})."
-                        )
-                    harness_values["load_all_pi_extensions"] = harness_value
-                    continue
-                if key == "pi" and harness_key == "extra_extension_paths":
-                    if not isinstance(harness_value, list):
-                        raise ValueError(
-                            f"Invalid value for '{source}.{key}.extra_extension_paths': "
-                            f"expected array, got "
-                            f"{type(harness_value).__name__} ({harness_value!r})."
-                        )
-                    items = cast("list[object]", harness_value)
-                    harness_values["extra_extension_paths"] = [
-                        str(item).strip()
-                        for item in items
-                        if str(item).strip()
-                    ]
-                    continue
-                if key == "pi" and harness_key in {"background_tasks", "spawn_watch"}:
-                    if not isinstance(harness_value, dict):
-                        raise ValueError(
-                            f"Invalid value for '{source}.{key}.{harness_key}': "
-                            f"expected table, got "
-                            f"{type(harness_value).__name__} ({harness_value!r})."
-                        )
-                    nested: dict[str, object] = {}
-                    table = cast("dict[str, object]", harness_value)
-                    enabled = table.get("enabled")
-                    if enabled is not None:
-                        if not isinstance(enabled, bool):
-                            raise ValueError(
-                                f"Invalid value for '{source}.{key}.{harness_key}.enabled': "
-                                f"expected bool, got "
-                                f"{type(enabled).__name__} ({enabled!r})."
-                            )
-                        nested["enabled"] = enabled
-                    harness_values[harness_key] = nested
-                    continue
-                if OPTION_CATALOG.has_file_alias_table_prefix((source, key, harness_key)):
-                    if not isinstance(harness_value, dict):
-                        raise ValueError(
-                            f"Invalid value for '{source}.{key}.{harness_key}': expected table."
-                        )
-                    _normalize_catalog_table(
-                        cast("dict[str, object]", harness_value),
-                        table_path=(source, key, harness_key),
-                        target=harness_values,
-                        field_path_prefix=(source, key),
-                    )
-                    continue
-                logger.warning(
-                    "Ignoring unknown Meridian config key '%s.%s.%s'.",
-                    source,
-                    key,
-                    harness_key,
-                )
-            values[key] = harness_values
-            continue
-        if not isinstance(value, str):
-            raise ValueError(
-                f"Invalid value for '{source}.{key}': expected str or table, got "
-                f"{type(value).__name__} ({value!r})."
-            )
-        normalized = value.strip()
-        if not normalized:
-            values[key] = {"model": normalized}
-            continue
-        values[key] = {"model": _normalize_model_identifier(normalized, project_root=project_root)}
-
-    return values
 
 
 def _normalize_env_table(raw_value: object, *, source: str) -> dict[str, str]:
@@ -506,25 +267,6 @@ def _normalize_env_table(raw_value: object, *, source: str) -> dict[str, str]:
     return values
 
 
-def _normalize_spawn_table(raw_value: object, *, source: str) -> dict[str, object]:
-    if not isinstance(raw_value, dict):
-        raise ValueError(f"Invalid value for '{source}': expected table.")
-
-    values: dict[str, object] = {}
-    for key, value in cast("dict[str, object]", raw_value).items():
-        if key == "deny_headless_harnesses":
-            values[key] = _parse_toml_list(raw_value=value, source=f"{source}.{key}")
-            continue
-        if key not in {"default_wait_yield_seconds", "min_wait_yield_seconds"}:
-            logger.warning("Ignoring unknown Meridian config key '%s.%s'.", source, key)
-            continue
-        if isinstance(value, bool) or not isinstance(value, int | float):
-            raise ValueError(
-                f"Invalid value for '{source}.{key}': expected float, got "
-                f"{type(value).__name__} ({value!r})."
-            )
-        values[key] = float(value)
-    return values
 
 
 def _legacy_agents_section_error(*, path: Path) -> ValueError:
@@ -926,42 +668,12 @@ def _normalize_toml_payload(
         if key == "project":
             # Identity is read by the precedence-exempt minimal loader.
             continue
-        if key == "history":
-            normalized["history"] = HistoryConfig.model_validate(raw_value).model_dump(
-                exclude_unset=True
-            )
-            continue
-        if key == "output":
-            normalized["output"] = _merge_nested_dicts(
-                cast("dict[str, object]", normalized.get("output", {})),
-                _normalize_output_table(raw_value, source="output"),
-            )
-            continue
-        if key == "state":
-            normalized["state"] = _merge_nested_dicts(
-                cast("dict[str, object]", normalized.get("state", {})),
-                _normalize_state_table(raw_value, source="state"),
-            )
-            continue
-        if key == "primary":
-            normalized["primary"] = _merge_nested_dicts(
-                cast("dict[str, object]", normalized.get("primary", {})),
-                _normalize_primary_table(raw_value, source="primary"),
-            )
-            continue
         if key == "agents":
             raise _legacy_agents_section_error(path=path)
-        if key == "harness":
-            normalized["harness"] = _merge_nested_dicts(
-                cast("dict[str, object]", normalized.get("harness", {})),
-                _normalize_harness_table(raw_value, source="harness", project_root=project_root),
-            )
-            continue
-        if key == "spawn":
-            normalized = _merge_nested_dicts(
-                normalized,
-                _normalize_spawn_table(raw_value, source="spawn"),
-            )
+        section_model = _TOML_MODEL_SECTIONS.get(key)
+        if section_model is not None:
+            _warn_unknown_model_keys(raw_value, model=section_model, source=key)
+            normalized[key] = raw_value
             continue
         if key == "env":
             normalized["env"] = _normalize_env_table(raw_value, source="env")
@@ -977,10 +689,10 @@ def _normalize_toml_payload(
             continue
 
         if OPTION_CATALOG.has_file_alias_table_prefix((key,)):
-            if not isinstance(raw_value, dict):
+            if not is_json_object(raw_value):
                 raise ValueError(f"Invalid value for '{key}' in '{path}': expected table.")
             _normalize_catalog_table(
-                cast("dict[str, object]", raw_value),
+                raw_value,
                 table_path=(key,),
                 target=normalized,
             )
@@ -998,10 +710,19 @@ def _normalize_toml_payload(
         )
         _assign_nested_value(normalized, option.field_path, coerced)
 
-    return normalized
+    # BaseSettings.model_validate still executes custom settings sources. Hide the
+    # active load context so this per-file validation cannot recursively reload itself.
+    validation_token = _SETTINGS_CONTEXT.set(None)
+    try:
+        try:
+            return MeridianConfig.model_validate(normalized).model_dump(exclude_unset=True)
+        except ValidationError as error:
+            raise _config_validation_error(error) from None
+    finally:
+        _SETTINGS_CONTEXT.reset(validation_token)
 
 
-def _env_alias_overrides(project_root: Path) -> dict[str, object]:
+def _env_alias_overrides() -> dict[str, object]:
     values: dict[str, object] = {}
     for env_name, option in OPTION_CATALOG.env_options():
         raw_value = os.getenv(env_name)
@@ -1013,14 +734,6 @@ def _env_alias_overrides(project_root: Path) -> dict[str, object]:
             raw_value=raw_value,
             env_name=env_name,
         )
-
-        if option.field_path in {
-            ("harness", "claude", "model"),
-            ("harness", "codex", "model"),
-            ("harness", "opencode", "model"),
-            ("primary", "model"),
-        }:
-            parsed = _normalize_model_identifier(cast("str", parsed), project_root=project_root)
 
         _assign_nested_value(values, option.field_path, parsed)
 
@@ -1058,7 +771,7 @@ def _env_alias_overrides(project_root: Path) -> dict[str, object]:
 class OutputConfig(BaseModel):
     """Terminal output filtering configuration for run streaming."""
 
-    model_config = ConfigDict(frozen=True, extra="ignore")
+    model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
 
     show: Annotated[
         tuple[str, ...],
@@ -1087,10 +800,10 @@ class OutputConfig(BaseModel):
         ),
     ] = "text"
 
-    @field_validator("show")
+    @field_validator("show", mode="before")
     @classmethod
-    def _validate_show(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        return _normalize_string_tuple(value, source="output.show")
+    def _validate_show(cls, value: object) -> tuple[str, ...]:
+        return _normalize_string_sequence(value, source="output.show")
 
     @field_validator("verbosity")
     @classmethod
@@ -1114,7 +827,7 @@ class OutputConfig(BaseModel):
 class StateConfig(BaseModel):
     """State retention settings for project and spawn artifacts."""
 
-    model_config = ConfigDict(frozen=True, extra="ignore")
+    model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
 
     retention_days: Annotated[
         int,
@@ -1142,7 +855,7 @@ class StateConfig(BaseModel):
 class IdleConfig(BaseModel):
     """Cross-harness idle behavior settings."""
 
-    model_config = ConfigDict(frozen=True, extra="ignore")
+    model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
 
     enabled: Annotated[
         bool,
@@ -1246,7 +959,7 @@ class IdleConfig(BaseModel):
 class NotifyConfig(BaseModel):
     """Notification delivery settings shared by manual and idle notices."""
 
-    model_config = ConfigDict(frozen=True, extra="ignore")
+    model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
 
     push_backend: Annotated[
         str,
@@ -1379,7 +1092,7 @@ class NotifyConfig(BaseModel):
 class WorkConfig(BaseModel):
     """Work-item behavior settings."""
 
-    model_config = ConfigDict(frozen=True, extra="ignore")
+    model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
 
     default_worktree: bool = False
     worktree_base: str | None = None
@@ -1388,7 +1101,7 @@ class WorkConfig(BaseModel):
 class PrimaryConfig(BaseModel):
     """Primary-specific harness settings."""
 
-    model_config = ConfigDict(frozen=True, extra="ignore")
+    model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
 
     autocompact: Annotated[
         AutocompactValue,
@@ -1444,10 +1157,31 @@ class PrimaryConfig(BaseModel):
     ] = None
     timeout: float | None = None
 
-    @field_validator("agent")
+    @model_validator(mode="before")
     @classmethod
-    def _validate_optional_string_fields(cls, value: str | None) -> str | None:
-        return _normalize_optional_string(value, source="primary")
+    def _discard_deprecated_routing_fields(cls, value: object) -> object:
+        if not is_json_object(value):
+            return value
+
+        normalized = dict(value)
+        for field_name in ("model", "harness"):
+            deprecated = normalized.pop(field_name, None)
+            if deprecated is None:
+                continue
+            if not isinstance(deprecated, str):
+                raise ValueError(
+                    f"Invalid value for 'primary.{field_name}': expected str, got "
+                    f"{type(deprecated).__name__} ({deprecated!r})."
+                )
+            _normalize_required_string(deprecated, source=f"primary.{field_name}")
+        return normalized
+
+    @field_validator("agent", "effort", "sandbox", "approval", mode="before")
+    @classmethod
+    def _validate_string_fields(cls, value: object, info: ValidationInfo) -> object:
+        if value is None or not isinstance(value, str):
+            return value
+        return _normalize_required_string(value, source=f"primary.{info.field_name}")
 
     @field_validator("timeout")
     @classmethod
@@ -1464,7 +1198,7 @@ class PrimaryConfig(BaseModel):
 class HarnessProfileConfig(BaseModel):
     """Per-harness model and wait-yield settings."""
 
-    model_config = ConfigDict(frozen=True, extra="ignore")
+    model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
 
     model: str = ""
     wait_yield_seconds: float | None = None
@@ -1474,7 +1208,7 @@ class HarnessProfileConfig(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _string_as_model(cls, values: Any) -> Any:
+    def _string_as_model(cls, values: object) -> object:
         if isinstance(values, str):
             return {"model": values}
         return values
@@ -1482,10 +1216,7 @@ class HarnessProfileConfig(BaseModel):
     @field_validator("model")
     @classmethod
     def _normalize_model(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            return normalized
-        return _normalize_model_identifier(normalized, project_root=_current_project_root())
+        return value.strip()
 
     @field_validator("wait_yield_seconds")
     @classmethod
@@ -1502,7 +1233,7 @@ class HarnessProfileConfig(BaseModel):
 class _HarnessIdleFields(BaseModel):
     """Shared typed fields for every harness-specific idle config."""
 
-    model_config = ConfigDict(frozen=True, extra="ignore")
+    model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
 
     enabled: bool = True
     compact: bool = True
@@ -1637,7 +1368,7 @@ class OpenCodeHarnessProfileConfig(HarnessProfileConfig):
 class PiBundleToggleConfig(BaseModel):
     """Per-bundle enable switch under ``[harness.pi]``."""
 
-    model_config = ConfigDict(frozen=True, extra="ignore")
+    model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
 
     enabled: bool = True
 
@@ -1650,6 +1381,19 @@ class PiHarnessProfileConfig(HarnessProfileConfig):
     spawn_watch: PiBundleToggleConfig = Field(default_factory=PiBundleToggleConfig)
     disable_managed_bash: bool = False
 
+    @field_validator("extra_extension_paths", mode="before")
+    @classmethod
+    def _normalize_extra_extension_paths(cls, value: object) -> tuple[str, ...]:
+        items = json_list(value)
+        if items is None:
+            if not _is_object_tuple(value):
+                raise ValueError(
+                    "Invalid value for 'harness.pi.extra_extension_paths': expected array, "
+                    f"got {type(value).__name__} ({value!r})."
+                )
+            items = value
+        return tuple(normalized for item in items if (normalized := str(item).strip()))
+
     def background_tasks_enabled(self) -> bool:
         if self.disable_managed_bash:
             return False
@@ -1659,7 +1403,7 @@ class PiHarnessProfileConfig(HarnessProfileConfig):
 class HarnessConfig(BaseModel):
     """Default model and wait-yield configuration for each harness adapter."""
 
-    model_config = ConfigDict(frozen=True, extra="ignore")
+    model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
 
     claude: ClaudeHarnessProfileConfig = Field(
         default_factory=lambda: ClaudeHarnessProfileConfig(wait_yield_seconds=3000.0)
@@ -1672,6 +1416,8 @@ class HarnessConfig(BaseModel):
 
 
 class HistoryArchiveConfig(BaseModel):
+    # This section predated the strict TOML normalizers and historically accepted
+    # Pydantic's scalar coercions. Keep that file behavior while still forbidding extras.
     model_config = ConfigDict(frozen=True, extra="forbid")
     automatic: Annotated[
         bool,
@@ -1732,7 +1478,7 @@ class HistoryConfig(BaseModel):
 
 
 class EnvironmentConfig(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, strict=True)
 
     ignore_direnv: Annotated[
         bool,
@@ -1751,8 +1497,7 @@ class MeridianConfig(BaseSettings):
     model_config = SettingsConfigDict(
         frozen=True,
         extra="ignore",
-        env_prefix="MERIDIAN_",
-        env_nested_delimiter="__",
+        strict=True,
     )
 
     max_depth: Annotated[
@@ -1925,6 +1670,11 @@ class MeridianConfig(BaseSettings):
     env: dict[str, str] = Field(default_factory=dict)
     environment: EnvironmentConfig = Field(default_factory=EnvironmentConfig)
 
+    @field_validator("deny_headless_harnesses", mode="before")
+    @classmethod
+    def _validate_deny_headless_harnesses(cls, value: object) -> tuple[str, ...]:
+        return _normalize_string_sequence(value, source="spawn.deny_headless_harnesses")
+
     @field_validator("default_wait_yield_seconds", "min_wait_yield_seconds")
     @classmethod
     def _validate_wait_yield_settings(cls, value: float) -> float:
@@ -2025,7 +1775,7 @@ class MeridianConfig(BaseSettings):
             if context is None:
                 return {}
             _ = env_settings
-            return _env_alias_overrides(context.project_root)
+            return _env_alias_overrides()
 
         return (
             init_settings,
@@ -2036,7 +1786,76 @@ class MeridianConfig(BaseSettings):
         )
 
 
+_TOML_MODEL_SECTIONS: dict[str, type[BaseModel]] = {
+    "harness": HarnessConfig,
+    "history": HistoryConfig,
+    "output": OutputConfig,
+    "primary": PrimaryConfig,
+    "state": StateConfig,
+}
+_IGNORED_MODEL_KEYS: dict[type[BaseModel], frozenset[str]] = {
+    PrimaryConfig: frozenset({"model", "harness"}),
+}
+_SILENT_EXTRA_MODELS = frozenset({PiBundleToggleConfig})
+
+
 OPTION_CATALOG = build_option_catalog(MeridianConfig)
+
+
+def _validation_error_path(location: tuple[str | int, ...]) -> str:
+    field_path = tuple(item for item in location if isinstance(item, str))
+    option = OPTION_CATALOG.option_for_field_path(field_path)
+    if option is not None:
+        return option.canonical_key
+
+    parts: list[str] = []
+    for item in location:
+        if isinstance(item, int):
+            if parts:
+                parts[-1] = f"{parts[-1]}[{item + 1}]"
+            continue
+        parts.append(item)
+    return ".".join(parts) or "config"
+
+
+def _config_validation_error(error: ValidationError) -> ValueError:
+    """Translate one Pydantic failure into a concise config-key error."""
+
+    detail = error.errors(include_url=False)[0]
+    path = _validation_error_path(detail["loc"])
+    error_type = detail["type"]
+    raw_value = detail.get("input")
+    got = f"{type(raw_value).__name__} ({raw_value!r})"
+
+    expected_by_type = {
+        "bool_type": "bool",
+        "dict_type": "table",
+        "float_type": "float",
+        "int_type": "int",
+        "list_type": "array",
+        "model_type": "table",
+        "string_type": "str",
+        "tuple_type": "array",
+    }
+    expected = expected_by_type.get(error_type)
+    if expected is not None:
+        return ValueError(f"Invalid value for '{path}': expected {expected}, got {got}.")
+
+    if error_type == "extra_forbidden":
+        return ValueError(f"Invalid value for '{path}': unknown key.")
+    if error_type == "missing":
+        return ValueError(f"Invalid value for '{path}': required value is missing.")
+
+    context = detail.get("ctx")
+    cause = context.get("error") if context is not None else None
+    if cause is not None:
+        problem = str(cause).removesuffix(".")
+        if problem.startswith("Invalid value for "):
+            return ValueError(f"{problem}.")
+        return ValueError(f"Invalid value for '{path}': {problem}.")
+
+    message = detail["msg"].removeprefix("Input should be ").removesuffix(".")
+    return ValueError(f"Invalid value for '{path}': expected {message}, got {got}.")
 
 
 def load_config(
@@ -2071,7 +1890,10 @@ def load_config(
         )
     )
     try:
-        return MeridianConfig()
+        try:
+            return MeridianConfig()
+        except ValidationError as error:
+            raise _config_validation_error(error) from None
     finally:
         _SETTINGS_CONTEXT.reset(token)
 

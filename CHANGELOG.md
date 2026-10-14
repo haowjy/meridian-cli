@@ -17,6 +17,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Keep cleaned environments authoritative for OpenCode workspace config and
   version probes, and Pi auth/session directory defaults. No ambient-env reinjection.
 - Keep OpenCode and Codex primary event-stream liveness timeout messages at debug level so quiet sessions do not print warnings.
+- Report invalid config values with the full config key and a concise expected-value
+  explanation instead of exposing raw Pydantic validation output.
 
 ## [0.9.7] - 2026-10-12
 

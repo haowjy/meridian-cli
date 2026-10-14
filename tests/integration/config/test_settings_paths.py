@@ -126,6 +126,94 @@ def test_load_config_ignores_deleted_defaults_model_and_harness_keys(tmp_path: P
     assert not hasattr(config.primary, "harness")
 
 
+@pytest.mark.parametrize(
+    ("toml", "message"),
+    [
+        (
+            "[output]\nverbosity = 7\n",
+            "Invalid value for 'output.verbosity': expected str, got int (7).",
+        ),
+        (
+            '[harness.pi.background_tasks]\nenabled = "yes"\n',
+            "Invalid value for 'harness.pi.background_tasks.enabled': "
+            "expected bool, got str ('yes').",
+        ),
+    ],
+)
+def test_load_config_reports_invalid_key_and_problem(
+    tmp_path: Path,
+    toml: str,
+    message: str,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "meridian.toml").write_text(toml, encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        load_config(project_root, resolve_models=False)
+
+    assert str(exc_info.value) == message
+
+
+def test_load_config_preserves_unknown_and_deprecated_key_policy(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "meridian.toml").write_text(
+        "[output]\n"
+        "unknown = true\n"
+        "[primary]\n"
+        'model = "legacy-model"\n'
+        'harness = "claude"\n'
+        "[harness.claude]\n"
+        "unknown = true\n"
+        "[harness.pi.background_tasks]\n"
+        "unknown = true\n",
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="meridian.lib.config.settings"):
+        config = load_config(project_root, resolve_models=False)
+
+    assert caplog.messages == [
+        "Ignoring unknown Meridian config key 'output.unknown'.",
+        "Ignoring unknown Meridian config key 'harness.claude.unknown'.",
+    ]
+    assert not hasattr(config.primary, "model")
+    assert not hasattr(config.primary, "harness")
+    assert config.harness.pi.background_tasks.enabled is True
+
+
+def test_load_config_keeps_history_unknown_keys_forbidden(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "meridian.toml").write_text(
+        "[history.archive]\nunknown = true\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"^Invalid value for 'history\.archive\.unknown': unknown key\.$",
+    ):
+        load_config(project_root, resolve_models=False)
+
+
+def test_load_config_preserves_pi_extension_path_normalization(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "meridian.toml").write_text(
+        '[harness.pi]\nextra_extension_paths = [1, true, " ./extension ", ""]\n',
+        encoding="utf-8",
+    )
+
+    config = load_config(project_root, resolve_models=False)
+
+    assert config.harness.pi.extra_extension_paths == ("1", "True", "./extension")
+
+
 def test_load_config_reads_harness_wait_yield_settings(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
