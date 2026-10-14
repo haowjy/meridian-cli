@@ -146,7 +146,7 @@ def _process_birth_epoch(pid: int) -> float | None:
 class _LauncherMetadata:
     """Mutable working copy for launcher writes."""
 
-    managed_backend: bool = True
+    managed_backend: bool
     launcher_pid: int = field(default_factory=os.getpid)
     launcher_birth_epoch: float | None = field(
         default_factory=lambda: _process_birth_epoch(os.getpid())
@@ -252,7 +252,7 @@ class PrimaryAttachLauncher:
             self._event_hooks += self._harness_bundle.event_sinks(runtime_root, spawn_id)
         self._facts = self._fold.facts
         self._session_id_observer = session_id_observer
-        self._metadata = _LauncherMetadata()
+        self._metadata = _LauncherMetadata(managed_backend=True)
         self._metadata_lock = Lock()
         self._event_consumer_task: asyncio.Task[None] | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
