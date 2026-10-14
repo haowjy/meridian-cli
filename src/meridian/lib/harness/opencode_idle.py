@@ -458,6 +458,13 @@ def _v2_inbox_item(event: RawHarnessEvent) -> tuple[str, str] | None:
     return inbox_id, item_type
 
 
+def _v2_delivered_inbox_id(event: RawHarnessEvent) -> str | None:
+    if event.event_type != "session.inbox.delivered":
+        return None
+    inbox_id = event.payload.get("inboxID")
+    return inbox_id if isinstance(inbox_id, str) and inbox_id else None
+
+
 def _v2_compaction_input_id(event: RawHarnessEvent) -> str | None:
     if event.event_type != "session.compaction.started":
         return None
@@ -519,12 +526,6 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
         self._compact_expected_id: str | None = None
         self._compact_waiter: asyncio.Future[tuple[bool, str | None]] | None = None
 
-    def _emit_user_returns(self) -> None:
-        for inbox_id in tuple(self._pending_user_inbox_ids):
-            self._pending_user_inbox_ids.discard(inbox_id)
-            self._seen_user_inbox_ids.add(inbox_id)
-            self._emit("user_prompt")
-
     def _maybe_finish_compaction(self) -> None:
         waiter = self._compact_waiter
         expected_id = self._compact_expected_id
@@ -557,12 +558,19 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
             if (
                 item_type == "user"
                 and inbox_id not in self._seen_user_inbox_ids
-                and inbox_id not in self._pending_user_inbox_ids
             ):
+                self._seen_user_inbox_ids.add(inbox_id)
                 self._pending_user_inbox_ids.add(inbox_id)
                 # Enqueue is the earliest reliable proof of a real user return.
                 # A steer-delivered prompt may not start a new execution.
-                self._emit_user_returns()
+                self._emit("user_prompt")
+
+        delivered_id = _v2_delivered_inbox_id(event)
+        if delivered_id in self._pending_user_inbox_ids:
+            self._pending_user_inbox_ids.remove(delivered_id)
+            # Queue delivery can begin after another execution armed an idle
+            # stretch. Close that stretch as the queued work begins.
+            self._emit("user_prompt")
 
         if event.event_type == "session.execution.started":
             self._busy = True
@@ -583,7 +591,6 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
             return
 
         self._busy = False
-        self._pending_user_inbox_ids.clear()
         self._last_terminal = (self._event_sequence, event.event_type)
         self._maybe_finish_compaction()
         self._emit("turn_end", turn_id=_event_id(event))

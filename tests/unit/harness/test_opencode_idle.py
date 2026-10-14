@@ -318,10 +318,14 @@ async def test_v2_recorded_normal_prompt_emits_return_and_parent_turn_end(
     for event in events:
         sensor.on_raw_event(event)
 
-    observed = await _take(iterator, 2)
-    assert [event.kind for event in observed] == ["user_prompt", "turn_end"]
-    assert observed[1].turn_id == "evt_fixture_26"
-    assert observed[1].provider == "openai"
+    observed = await _take(iterator, 3)
+    assert [event.kind for event in observed] == [
+        "user_prompt",
+        "user_prompt",
+        "turn_end",
+    ]
+    assert observed[2].turn_id == "evt_fixture_26"
+    assert observed[2].provider == "openai"
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(anext(iterator), timeout=0.01)
 
@@ -407,7 +411,7 @@ async def test_v2_turn_end_fetches_wrapped_descending_message_excerpts(
     for event in _recorded_v2_events("events-v2-normal.sse"):
         sensor.on_raw_event(event)
 
-    turn_end = (await _take(iterator, 2))[-1]
+    turn_end = (await _take(iterator, 3))[-1]
     assert turn_end.last_user_text == "latest"
     assert turn_end.last_assistant_text == "answer one answer two"
     assert turn_end.provider == "openai"
@@ -455,8 +459,9 @@ async def test_v2_steered_prompt_returns_before_terminal_and_does_not_leak_to_co
     for event in _recorded_v2_events("events-v2-compact.sse"):
         sensor.on_raw_event(event)
 
-    observed = await _take(iterator, 4)
+    observed = await _take(iterator, 5)
     assert [event.kind for event in observed] == [
+        "user_prompt",
         "user_prompt",
         "user_prompt",
         "turn_end",
@@ -464,6 +469,49 @@ async def test_v2_steered_prompt_returns_before_terminal_and_does_not_leak_to_co
     ]
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(anext(iterator), timeout=0.01)
+
+
+async def test_v2_queued_prompt_returns_when_delivered_for_second_execution(
+    tmp_path: Path,
+) -> None:
+    sensor = opencode_idle.OpenCodeV2IdleSensor(
+        _context(tmp_path, session_id=V2_SESSION_ID, version="v2")
+    )
+    iterator = sensor.events()
+
+    def raw(event_type: str, **payload: object) -> RawHarnessEvent:
+        return RawHarnessEvent(
+            event_type=event_type,
+            payload={"type": event_type, "sessionID": V2_SESSION_ID, **payload},
+            harness_id="opencode",
+        )
+
+    sensor.on_raw_event(raw("session.execution.started"))
+    sensor.on_raw_event(
+        raw(
+            "session.inbox.enqueued",
+            inboxID="msg_v2_user_queued",
+            item={
+                "type": "user",
+                "payload": {"text": "follow up after this turn"},
+                "delivery": "queue",
+            },
+        )
+    )
+    sensor.on_raw_event(raw("session.execution.succeeded"))
+    sensor.on_raw_event(raw("session.execution.started"))
+    sensor.on_raw_event(
+        raw("session.inbox.delivered", inboxID="msg_v2_user_queued")
+    )
+    sensor.on_raw_event(raw("session.execution.succeeded"))
+
+    observed = await asyncio.wait_for(_take(iterator, 4), timeout=0.1)
+    assert [event.kind for event in observed] == [
+        "user_prompt",
+        "turn_end",
+        "user_prompt",
+        "turn_end",
+    ]
 
 
 async def test_v2_compact_waits_for_matching_recorded_completion(tmp_path: Path) -> None:
