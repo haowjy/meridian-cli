@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import IO, Annotated, Literal, NamedTuple, cast
 
 import psutil
-from pydantic import BaseModel, BeforeValidator, ConfigDict
+from pydantic import BaseModel, BeforeValidator, ConfigDict, ValidationError
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import (
@@ -120,7 +120,10 @@ class StaleSessionCleanup(NamedTuple):
 def _parse_model_observation(payload: Mapping[str, object]) -> SessionModelObservationEvent | None:
     if payload.get("event") != "model_observation":
         return None
-    return SessionModelObservationEvent.model_validate(payload)
+    try:
+        return SessionModelObservationEvent.model_validate(payload)
+    except ValidationError:
+        return None
 
 
 def _session_lease_path(paths: RuntimePaths, chat_id: str) -> Path:

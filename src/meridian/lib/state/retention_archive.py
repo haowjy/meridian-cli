@@ -24,10 +24,11 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from meridian.lib.platform.atomic import fsync_directory, is_atomic_temp_name
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state.atomic import append_durable_jsonl_line, atomic_write_text
-from meridian.lib.state.event_store import iter_jsonl, utc_now_iso
+from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.history_codec import TranscriptHeader
+from meridian.lib.state.jsonl import append_durable_jsonl_line, iter_jsonl
 from meridian.lib.state.native_snapshot import (
     NATIVE_SNAPSHOT_FILENAME,
     SnapshotHeader,

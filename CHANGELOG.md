@@ -17,6 +17,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   appearing early.
 
 ### Fixed
+- Keep permanent malformed JSONL rows from repeating warnings on every state read.
 - Skip malformed legacy native-session rows whose `chat_id` is not a string or
   `harness_session_ids` is not a list.
 - Treat the first `--` as the CLI passthrough boundary, even when it follows a

@@ -13,7 +13,7 @@ from typing import cast
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import ConnectionNotReady
-from meridian.lib.state.atomic import append_durable_jsonl_line
+from meridian.lib.state.jsonl import append_durable_jsonl_line
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
 

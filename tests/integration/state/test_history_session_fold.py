@@ -8,6 +8,7 @@ import pytest
 
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.history_index import HistoryIndex
+from meridian.lib.state.jsonl import append_durable_jsonl_line
 from meridian.lib.state.session_store import list_session_generations
 
 
@@ -105,6 +106,46 @@ def test_incremental_replay_survives_restart_and_matches_cold(tmp_path: Path):
     incremental = _rows(HistoryIndex(tmp_path))
     HistoryIndex(tmp_path).rebuild()
     assert _rows(HistoryIndex(tmp_path)) == incremental
+
+
+def test_incremental_replay_waits_for_and_repairs_a_torn_tail(tmp_path: Path) -> None:
+    _append(tmp_path, _start("g1"))
+    index = HistoryIndex(tmp_path)
+    index.rebuild()
+    sessions_path = tmp_path / "sessions.jsonl"
+
+    uncommitted = _start(
+        "g2",
+        chat_id="c2",
+        harness_session_id="native-2",
+    )
+    with sessions_path.open("ab") as handle:
+        handle.write(json.dumps(uncommitted).encode("utf-8"))
+    HistoryChanges(tmp_path).mark(HistorySource(kind="sessions"))
+
+    assert {record.chat_id for record in index.sessions()} == {"c1"}
+
+    next_event = _start(
+        "g3",
+        chat_id="c3",
+        harness_session_id="native-3",
+    )
+    append_durable_jsonl_line(sessions_path, json.dumps(next_event) + "\n")
+    HistoryChanges(tmp_path).mark(HistorySource(kind="sessions"))
+
+    assert {record.chat_id for record in index.sessions()} == {"c1", "c2", "c3"}
+
+    final_event = _start(
+        "g4",
+        chat_id="c4",
+        harness_session_id="native-4",
+    )
+    with sessions_path.open("ab") as handle:
+        handle.write(b"{malformed middle row}\n")
+        handle.write((json.dumps(final_event) + "\n").encode("utf-8"))
+    HistoryChanges(tmp_path).mark(HistorySource(kind="sessions"))
+
+    assert {record.chat_id for record in index.sessions()} == {"c1", "c2", "c3", "c4"}
 
 
 def test_generated_histories_index_bindings_match_authority(tmp_path: Path, monkeypatch):

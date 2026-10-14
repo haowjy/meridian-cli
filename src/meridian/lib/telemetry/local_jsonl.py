@@ -7,7 +7,7 @@ import os
 from collections.abc import Sequence
 from pathlib import Path
 
-from meridian.lib.state.atomic import append_durable_jsonl_lines
+from meridian.lib.state.jsonl import append_durable_jsonl_lines
 from meridian.lib.telemetry.events import TelemetryEnvelope
 
 _DEFAULT_MAX_SEGMENT_BYTES = 10_000_000

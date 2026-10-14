@@ -49,7 +49,6 @@ from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.platform.atomic import fsync_directory
 from meridian.lib.platform.locking import FileLockTimeout, lock_file
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.event_store import iter_jsonl
 from meridian.lib.state.history_changes import (
     SCHEMA_VERSION,
     DirtySource,
@@ -59,6 +58,7 @@ from meridian.lib.state.history_changes import (
     versioned,
 )
 from meridian.lib.state.history_codec import canonical_time, last_activity
+from meridian.lib.state.jsonl import iter_jsonl
 from meridian.lib.state.session_fold import (
     SessionHistoricalEvent,
     SessionRecord,

@@ -117,10 +117,11 @@ dependency-neutral `lib/platform/atomic.py`. Never write state files with plain 
 - `append_text_line()` — binary mode so JSONL newline encoding and byte offsets
   remain stable.
 
-JSONL reads use `event_store.iter_jsonl()`: only newline-terminated rows are
-committed, empty rows are ignored, and malformed complete rows warn and skip by
-default. Callers such as the archive catalog that must fail closed select the
-strict malformed-row policy explicitly.
+JSONL reads, tail repair, and durable appends use `jsonl.py`: only newline-terminated
+rows are committed, empty rows are ignored, and malformed complete rows are skipped
+with debug diagnostics by default. Callers such as the archive catalog that must fail
+closed select the strict malformed-row policy explicitly. Repair is read-then-replace,
+so callers hold their writer lock or own a single-writer file.
 
 A crash in the middle of a plain `open()` write leaves a partial file; partial
 `state.json` fails Pydantic validation on next read.
@@ -180,6 +181,7 @@ inverts accepted chat records without discarding aliases or doing I/O. Historica
 - `idle_store.py` — user-scoped idle stretch state, per-file locking, and seven-day lazy GC.
 - `session_fold.py` — Public event models, pure replay, and accepted-key inversion.
 - `atomic.py` — atomic write primitives. All state writes use these.
+- `jsonl.py` — the shared newline-commit, tail-repair, and durable-append policy.
 - `reaper.py` — read-only `reconcile_spawns()` projection and root-only
   `reconcile_active_spawn()` repair.
 - `reconciliation.py` — shared reconciliation decisions and completion/cancel precedence.
