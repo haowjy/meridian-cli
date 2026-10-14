@@ -39,7 +39,7 @@ from meridian.lib.harness.bundle import (
     register_harness_bundle,
 )
 from meridian.lib.harness.claude_boundary import read_observations
-from meridian.lib.harness.claude_idle import autocompact_off, detect_ttl
+from meridian.lib.harness.claude_idle import autocompact_off, compact_costs, detect_ttl
 from meridian.lib.harness.claude_preflight import (
     build_claude_preflight_result,
     ensure_claude_session_accessible,
@@ -546,5 +546,6 @@ register_harness_bundle(
         semantics=CLAUDE_SEMANTICS,
         autocompact_off=autocompact_off,
         detect_ttl=detect_ttl,
+        compact_costs=compact_costs,
     )
 )

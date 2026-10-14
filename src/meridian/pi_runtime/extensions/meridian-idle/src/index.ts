@@ -123,6 +123,10 @@ export class IdleRuntime {
       if (provider) {
         args.push("--provider", provider);
       }
+      const tokens = contextTokens(ctx);
+      if (tokens !== null) {
+        args.push("--context-tokens", String(tokens));
+      }
       const excerpts = messageExcerpts(messages);
       if (excerpts.user !== null) this.lastUserText = excerpts.user;
       if (this.lastUserText !== null) {
@@ -426,7 +430,7 @@ function busyFact(ctx: ExtensionContext): boolean {
 function contextTokens(ctx: ExtensionContext): number | null {
   try {
     const tokens = ctx.getContextUsage()?.tokens;
-    return typeof tokens === "number" && Number.isSafeInteger(tokens) ? tokens : null;
+    return typeof tokens === "number" && Number.isSafeInteger(tokens) && tokens > 0 ? tokens : null;
   } catch {
     return null;
   }

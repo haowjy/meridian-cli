@@ -6,7 +6,7 @@ import json
 import os
 import re
 import stat
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Literal, cast
 
@@ -18,6 +18,72 @@ from meridian.lib.platform.atomic import atomic_replace
 CODEX_ROLLOUT_FILENAME_RE = re.compile(
     r"^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(?P<session_id>[0-9a-fA-F-]{36})\.jsonl$"
 )
+_TAIL_CHUNK_BYTES = 64 * 1024
+
+
+def _reverse_lines(path: Path) -> Iterator[bytes]:
+    """Yield complete rollout rows newest-first using bounded reads."""
+
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        position = handle.tell()
+        remainder = b""
+        while position:
+            read_size = min(position, _TAIL_CHUNK_BYTES)
+            position -= read_size
+            handle.seek(position)
+            block = handle.read(read_size) + remainder
+            lines = block.split(b"\n")
+            remainder = lines[0]
+            yield from reversed(lines[1:])
+        if remainder:
+            yield remainder
+
+
+def latest_context_tokens(path: Path) -> int | None:
+    """Read Codex's latest trustworthy main-context count from a rollout tail."""
+
+    try:
+        for raw_line in _reverse_lines(path):
+            if not raw_line.strip():
+                continue
+            try:
+                raw_record: object = json.loads(raw_line)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if not isinstance(raw_record, dict):
+                continue
+            record = cast("dict[str, object]", raw_record)
+            if record.get("type") == "compacted":
+                return None
+            if record.get("type") != "event_msg":
+                continue
+            payload = record.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            event = cast("dict[str, object]", payload)
+            if event.get("type") != "token_count":
+                continue
+            info = event.get("info")
+            if not isinstance(info, dict):
+                continue
+            usage = cast("dict[str, object]", info).get("last_token_usage")
+            if not isinstance(usage, dict):
+                continue
+            usage = cast("dict[str, object]", usage)
+            input_tokens = usage.get("input_tokens")
+            if not isinstance(input_tokens, bool) and input_tokens == 0:
+                return None
+            total_tokens = usage.get("total_tokens")
+            if (
+                not isinstance(total_tokens, bool)
+                and isinstance(total_tokens, int)
+                and total_tokens > 0
+            ):
+                return total_tokens
+    except OSError:
+        return None
+    return None
 
 
 class _SessionMetaPayload(BaseModel):

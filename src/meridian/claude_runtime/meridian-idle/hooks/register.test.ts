@@ -122,7 +122,7 @@ test('a completed turn arms every returned deadline and reports a successful com
   expect(calls(h, 'arm')).toEqual([
     [
       'arm', '--harness', 'claude', '--session', 'sess-1',
-      '--assistant-text=done', '--interactive',
+      '--context-tokens', '120000', '--assistant-text=done', '--interactive',
     ],
   ])
   expect(calls(h, 'fire').map(args => args[1])).toEqual(['push', 'warn', 'compact'])
@@ -212,7 +212,7 @@ test('reload recovery skips completed stages and an absorbed arm keeps its timer
   expect(calls(h, 'status')).toEqual([['status', '--json', '--interactive']])
   expect(calls(h, 'arm')).toEqual([[
     'arm', '--harness', 'claude', '--session', 'sess-1',
-    '--assistant-text=done', '--interactive',
+    '--context-tokens', '120000', '--assistant-text=done', '--interactive',
   ]])
   expect(calls(h, 'fire').map(args => args[1])).toEqual(['warn'])
   expect(calls(h, 'fire')[0]).toEqual([

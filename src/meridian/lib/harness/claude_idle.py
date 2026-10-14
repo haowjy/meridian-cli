@@ -10,7 +10,7 @@ from typing import Protocol, cast
 
 from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.harness.claude_sessions import resolve_claude_native_session_file
-from meridian.lib.harness.idle_types import CacheTtl
+from meridian.lib.harness.idle_types import CacheTtl, CompactCosts
 
 _TAIL_CHUNK_BYTES = 64 * 1024
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
@@ -113,4 +113,22 @@ def autocompact_off(env: Mapping[str, str]) -> bool:
     return raw.strip().lower() in _TRUTHY
 
 
-__all__ = ["autocompact_off", "detect_ttl"]
+def compact_costs(*, provider: str | None, ttl_seconds: int | None) -> CompactCosts:
+    """Return measured Claude compaction costs for the active cache TTL."""
+
+    _ = provider
+    # c/u: two Haiku 4.5 cache probes fit 0.1*C + 20k uncached input.
+    # S: median chars/4 across 231 journal compactions. R: paired median
+    # first-post-compaction request minus first request across 159 sessions.
+    # Anthropic's current output/input list-price ratio is 5 for these models.
+    return CompactCosts(
+        w=2.0 if ttl_seconds == 3600 else 1.25,
+        c=0.1,
+        u=20_000,
+        o=5.0,
+        summary_tokens=4_000,
+        residue_tokens=13_000,
+    )
+
+
+__all__ = ["autocompact_off", "compact_costs", "detect_ttl"]
