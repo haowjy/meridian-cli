@@ -148,10 +148,14 @@ class DoctorOutput(BaseModel):
         for warning in self.warnings:
             result += f"\nwarning: {warning.code}: {warning.message}"
         for candidate in self.adhoc_project_dirs:
-            display_path = candidate.path or candidate.runtime_root
             result += (
-                f"\nadhoc_project: {display_path} "
-                f"[{candidate.reason}] state={candidate.runtime_root}"
+                f"\nadhoc_project: {candidate.project_id}"
+                f"\n  origin_path: {candidate.path or '(unknown)'}"
+                f"\n  reason: {candidate.reason}"
+                f"\n  last_activity: {candidate.last_activity}"
+                f"\n  size_bytes: {candidate.size_bytes}"
+                f"\n  prunable: {'yes' if candidate.prunable else 'no'}"
+                f"\n  state: {candidate.runtime_root}"
             )
         return result
 
@@ -545,6 +549,9 @@ def _doctor_global(
     orphan_project_dirs = tuple(scan_orphan_project_dirs(user_home, retention_days, now))
     adhoc_retention_days = load_user_config().state.adhoc_retention_days
     adhoc_project_dirs = tuple(scan_adhoc_project_dirs(user_home, adhoc_retention_days, now))
+    prunable_adhoc_project_dirs = tuple(
+        candidate for candidate in adhoc_project_dirs if candidate.prunable
+    )
     warnings: list[DoctorWarning] = []
     repaired: list[str] = []
     pruned_orphan_dirs = 0
@@ -562,18 +569,25 @@ def _doctor_global(
         if pruned_adhoc_dirs > 0:
             repaired.append("adhoc_project_dirs")
     else:
-        if adhoc_project_dirs:
+        if prunable_adhoc_project_dirs:
             warnings.append(
                 DoctorWarning(
                     code="stale_adhoc_project_dirs",
                     message=(
-                        f"{len(adhoc_project_dirs)} ad-hoc project dir(s) would be pruned "
+                        f"{len(prunable_adhoc_project_dirs)} ad-hoc project dir(s) would be pruned "
                         "with --prune --global."
                     ),
                     payload={
-                        "project_ids": [item.project_id for item in adhoc_project_dirs],
-                        "paths": [item.path or item.runtime_root for item in adhoc_project_dirs],
-                        "reasons": [item.reason for item in adhoc_project_dirs],
+                        "project_ids": [
+                            item.project_id for item in prunable_adhoc_project_dirs
+                        ],
+                        "paths": [
+                            item.path or item.runtime_root
+                            for item in prunable_adhoc_project_dirs
+                        ],
+                        "reasons": [
+                            item.reason for item in prunable_adhoc_project_dirs
+                        ],
                     },
                 )
             )

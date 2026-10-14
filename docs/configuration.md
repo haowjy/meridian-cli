@@ -78,16 +78,18 @@ items from before init are not carried over.** The command names the old ad-hoc
 root, which remains untouched until retention reclaims it. No state or generated
 `.gitignore` lives in a repo-local `.meridian/` directory.
 
-Ad-hoc roots become eligible for `meridian doctor --global --prune` after 30
-days without a write under their runtime or context root or a later recorded
-spawn or session timestamp. Roots whose source path is gone or now contains a
-marker use the shorter of that window and 7 days. Set
-`state.adhoc_retention_days` in
+`meridian doctor --global` lists every materialized ad-hoc root with its ID,
+origin path, reason, last activity, size, and whether it is prunable. Ad-hoc
+roots become prunable after 30 days without a write under their runtime or
+context root or a later recorded spawn or session timestamp. Roots whose source
+path is gone or now contains a marker use the shorter of that window and 7 days.
+Set `state.adhoc_retention_days` in
 `~/.meridian/config.toml` (not project config) or use
 `MERIDIAN_STATE_ADHOC_RETENTION_DAYS`; `-1` disables ad-hoc pruning and `0`
 reclaims as soon as the root is quiescent and its latest activity is over an
 hour old.
-Pruning removes the matching runtime and context roots together.
+`--prune` removes only roots reported as prunable, deleting the matching runtime
+and context roots together.
 
 ## `meridian.toml` Keys
 

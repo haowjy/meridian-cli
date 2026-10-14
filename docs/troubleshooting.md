@@ -283,11 +283,11 @@ Over time, committed orphan roots, ad-hoc roots, old spawn artifacts, and expire
 telemetry segments accumulate under `~/.meridian/`. Per-project repairs run only
 when that project's runtime root exists. `doctor` never creates one.
 
-To inspect what's stale:
+To inspect accumulated state:
 
 ```bash
 meridian doctor           # per-project scan (cheap, run from anywhere)
-meridian doctor --global  # add committed-orphan and ad-hoc retention scans
+meridian doctor --global  # add committed-orphan scan and list every ad-hoc root
 ```
 
 `meridian doctor` reports telemetry cleanup candidates as `stale_telemetry_segments`. That warning can mean expired segments, total telemetry size above the cap, or both.
@@ -314,7 +314,9 @@ Ad-hoc roots use `state.adhoc_retention_days` from
 `~/.meridian/config.toml` or `MERIDIAN_STATE_ADHOC_RETENTION_DAYS`, never from
 the cwd project's config. The default is 30 idle days; a missing source path or
 one that now contains a project marker uses the shorter of that window and 7
-days. Every ad-hoc root also needs an hour without activity, even at `0`. Global
-pruning deletes both `projects/adhoc.*/` and its matching `context/adhoc.*/`.
+days. Every ad-hoc root also needs an hour without activity, even at `0`.
+`doctor --global` reports every root's ID, origin path, reason, last activity,
+size, and `prunable: yes|no`; global pruning deletes only `yes` roots, removing
+both `projects/adhoc.*/` and their matching `context/adhoc.*/` directories.
 
 Active spawns are always protected — pruning never deletes state for running spawns regardless of age.
