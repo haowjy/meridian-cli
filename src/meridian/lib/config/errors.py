@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
-from meridian.lib.config.models import ConfigModel
+from meridian.lib.config.model_base import ConfigModel
 from meridian.lib.utils.json_shapes import is_json_object
 
 if TYPE_CHECKING:
@@ -108,9 +108,9 @@ def warn_unknown_model_keys(
 
     extra_behavior = model.model_config.get("extra")
     ignored_keys: frozenset[str] = (
-        model.config_ignored_keys() if issubclass(model, ConfigModel) else frozenset()
+        model.config_ignored_keys if issubclass(model, ConfigModel) else frozenset()
     )
-    silences_extras = model.config_silences_extras() if issubclass(model, ConfigModel) else False
+    silences_extras = model.config_silences_extras if issubclass(model, ConfigModel) else False
     for key, value in raw_value.items():
         field = model.model_fields.get(key)
         if field is not None:

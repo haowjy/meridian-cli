@@ -5,6 +5,19 @@ from meridian.lib.config.dynamic_sections import (
     merge_dynamic_sections,
     normalize_dynamic_sections,
 )
+from meridian.lib.config.harness_models import (
+    ClaudeHarnessProfileConfig,
+    CodexHarnessProfileConfig,
+    HarnessConfig,
+    HarnessIdleConfig,
+    HarnessProfileConfig,
+    OpenCodeHarnessProfileConfig,
+    PiBundleToggleConfig,
+    PiHarnessProfileConfig,
+    harness_idle_model,
+    harness_profile_model,
+)
+from meridian.lib.config.history_models import HistoryArchiveConfig, HistoryConfig
 from meridian.lib.config.loader import (
     OPTION_CATALOG,
     load_config,
@@ -15,26 +28,14 @@ from meridian.lib.config.loader import (
     resolve_pi_harness_profile_for_launch,
 )
 from meridian.lib.config.models import (
-    ClaudeHarnessProfileConfig,
-    CodexHarnessProfileConfig,
     EnvironmentConfig,
-    HarnessConfig,
-    HarnessIdleConfig,
-    HarnessProfileConfig,
-    HistoryArchiveConfig,
-    HistoryConfig,
     IdleConfig,
     MeridianConfig,
     NotifyConfig,
-    OpenCodeHarnessProfileConfig,
     OutputConfig,
-    PiBundleToggleConfig,
-    PiHarnessProfileConfig,
     PrimaryConfig,
     StateConfig,
     WorkConfig,
-    harness_idle_model,
-    harness_profile_model,
 )
 
 __all__ = [

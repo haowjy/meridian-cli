@@ -61,7 +61,10 @@ module and run inside that transaction.
 ## Entry Points
 
 - `settings.py` — compatibility re-exports for the split config implementation
-- `models.py` — section models and the `MeridianConfig` schema root
+- `models.py` — core section models and the `MeridianConfig` schema root
+- `harness_models.py` — generated per-harness profiles and idle settings
+- `history_models.py` — history retention and archive settings
+- `model_base.py` — shared model warning policy and value normalization
 - `loader.py` — TOML/env validation, precedence merge, provenance, and load entry points
 - `layers.py` — shared user/project/local discovery and TOML reads
 - `dynamic_sections.py` — typed work/context/hooks/env values, normalization, merge policy

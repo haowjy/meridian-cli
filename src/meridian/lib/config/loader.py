@@ -21,12 +21,11 @@ from meridian.lib.config.errors import (
     validation_error_path,
     warn_unknown_model_keys,
 )
+from meridian.lib.config.harness_models import HarnessProfileConfig, PiHarnessProfileConfig
 from meridian.lib.config.layers import iter_config_layers
+from meridian.lib.config.model_base import ConfigModel
 from meridian.lib.config.models import (
-    ConfigModel,
-    HarnessProfileConfig,
     MeridianConfig,
-    PiHarnessProfileConfig,
 )
 from meridian.lib.config.project_paths import (
     ProjectConfigPaths,
