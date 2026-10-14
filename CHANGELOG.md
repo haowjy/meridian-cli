@@ -18,6 +18,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   root until pruned. If you relied on automatic creation to share state across
   worktrees, run `meridian init` once and commit `meridian.toml`.
 - Stop auto-creating `meridian.toml` on launch and other runtime writes.
+- Make `meridian init` report the earlier ad-hoc state root that its new,
+  committed project history does not carry over.
 - Make bare-directory `config set`, `config reset`, and `workspace init` fail
   with a prompt to run `meridian init`.
 - Store user-scoped packages in `~/.meridian/mars`; manage them with

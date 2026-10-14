@@ -120,6 +120,19 @@ def resolve_project_identity(project_root: Path) -> ProjectIdentity:
     )
 
 
+def generate_committed_project_id(user_home: Path) -> str:
+    """Generate an unused committed identity under one Meridian user home."""
+
+    for _ in range(10):
+        candidate = generate_project_id()
+        if (
+            not (user_home / "context" / candidate).exists()
+            and not (user_home / "projects" / candidate).exists()
+        ):
+            return candidate
+    raise RuntimeError("Failed to generate a unique project ID after 10 attempts")
+
+
 def _mint_committed_project_id(project_root: Path) -> Committed:
     user_home = get_user_home()
     with project_config_transaction(project_root, user_home):
@@ -127,15 +140,7 @@ def _mint_committed_project_id(project_root: Path) -> Committed:
         if existing is not None:
             return Committed(id=existing)
 
-        for _ in range(10):
-            candidate = generate_project_id()
-            if (
-                not (user_home / "context" / candidate).exists()
-                and not (user_home / "projects" / candidate).exists()
-            ):
-                break
-        else:
-            raise RuntimeError("Failed to generate a unique project ID after 10 attempts")
+        candidate = generate_committed_project_id(user_home)
 
         config_path = project_root / "meridian.toml"
         try:
@@ -185,6 +190,7 @@ __all__ = [
     "Committed",
     "ProjectIdentity",
     "ensure_project_identity",
+    "generate_committed_project_id",
     "get_committed_project_id",
     "resolve_project_identity",
 ]
