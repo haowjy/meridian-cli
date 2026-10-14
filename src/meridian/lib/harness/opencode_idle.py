@@ -22,7 +22,7 @@ from meridian.lib.harness.idle_types import (
     IdleSensor,
     IdleSensorContext,
 )
-from meridian.lib.harness.opencode_backend import DEFAULT_OPENCODE_VERSION
+from meridian.lib.harness.opencode_backend import OpenCodeVersion, resolve_opencode_version
 
 CapturePane = Callable[[str], Awaitable[str | None]]
 BackendRequest = Callable[[str, str, Mapping[str, object] | None], Awaitable[tuple[int, str]]]
@@ -663,8 +663,17 @@ class OpenCodeV2IdleSensor(OpenCodeIdleSensor):
 def primary_idle_sensor(ctx: IdleSensorContext) -> IdleSensor:
     """Create the sensor hosted by the managed-primary attach launcher."""
 
-    version = ctx.env.get("MERIDIAN_HARNESS_OPENCODE_VERSION")
-    if (version or DEFAULT_OPENCODE_VERSION) == "v1":
+    resolved = getattr(ctx.connection, "resolved_version", None)
+    version: OpenCodeVersion
+    if resolved in ("v1", "v2"):
+        version = cast("OpenCodeVersion", resolved)
+    else:
+        version = resolve_opencode_version(
+            ctx.env.get("MERIDIAN_HARNESS_OPENCODE_VERSION"),
+            binary="opencode",
+            env=ctx.env,
+        )
+    if version == "v1":
         return OpenCodeIdleSensor(ctx)
     return OpenCodeV2IdleSensor(ctx)
 

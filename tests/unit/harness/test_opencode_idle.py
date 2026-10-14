@@ -22,6 +22,9 @@ V2_SESSION_ID = "ses_v2_fixture_primary"
 class FakeConnection:
     observer_endpoint = None
 
+    def __init__(self, resolved_version: str | None = None) -> None:
+        self.resolved_version = resolved_version
+
 
 class FakeClock:
     def __init__(self, now: float) -> None:
@@ -36,10 +39,11 @@ def _context(
     *,
     session_id: str = SESSION_ID,
     version: str | None = None,
+    resolved_version: str | None = None,
 ) -> IdleSensorContext:
     env = {} if version is None else {"MERIDIAN_HARNESS_OPENCODE_VERSION": version}
     return IdleSensorContext(
-        connection=cast("HarnessConnection[Any]", FakeConnection()),
+        connection=cast("HarnessConnection[Any]", FakeConnection(resolved_version)),
         harness_id=HarnessId.OPENCODE,
         harness_session_id=session_id,
         env=env,
@@ -481,21 +485,49 @@ async def test_v2_compact_waits_for_matching_recorded_completion(tmp_path: Path)
 
 
 @pytest.mark.parametrize(
-    ("version", "expected_type"),
+    ("version", "resolved_version", "expected_type"),
     [
-        (None, opencode_idle.OpenCodeV2IdleSensor),
-        ("v2", opencode_idle.OpenCodeV2IdleSensor),
-        ("v1", opencode_idle.OpenCodeIdleSensor),
+        ("v1", "v1", opencode_idle.OpenCodeIdleSensor),
+        ("v2", "v2", opencode_idle.OpenCodeV2IdleSensor),
+        ("auto", "v1", opencode_idle.OpenCodeIdleSensor),
+        ("auto", "v2", opencode_idle.OpenCodeV2IdleSensor),
     ],
 )
-def test_primary_idle_sensor_dispatches_by_projected_version(
+def test_primary_idle_sensor_dispatches_by_resolved_connection_version(
     tmp_path: Path,
     version: str | None,
+    resolved_version: str,
     expected_type: type[object],
 ) -> None:
-    sensor = opencode_idle.primary_idle_sensor(_context(tmp_path, version=version))
+    sensor = opencode_idle.primary_idle_sensor(
+        _context(tmp_path, version=version, resolved_version=resolved_version)
+    )
 
-    assert isinstance(sensor, expected_type)
+    assert type(sensor) is expected_type
+
+
+def test_primary_idle_sensor_resolves_preference_when_connection_cannot_answer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[tuple[str | None, Mapping[str, str]]] = []
+
+    def resolve(
+        preference: str | None,
+        *,
+        binary: str,
+        env: Mapping[str, str],
+    ) -> str:
+        assert binary == "opencode"
+        observed.append((preference, env))
+        return "v1"
+
+    monkeypatch.setattr(opencode_idle, "resolve_opencode_version", resolve, raising=False)
+
+    sensor = opencode_idle.primary_idle_sensor(_context(tmp_path))
+
+    assert type(sensor) is opencode_idle.OpenCodeIdleSensor
+    assert observed == [(None, {})]
 
 
 @pytest.mark.parametrize(
