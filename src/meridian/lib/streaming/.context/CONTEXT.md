@@ -223,11 +223,11 @@ meridian spawn inject <id> --message "..."
     → connection.send_user_message(message)
 ```
 
-On POSIX, both the server and inject client derive the same bounded socket path from
+Both the server and inject client derive the same bounded POSIX socket path from
 the resolved runtime root and spawn ID. The socket lives in a mode-0700, UID-scoped
 directory under the system temp root, so runtime/project path depth cannot exceed
-`sockaddr_un.sun_path` and concurrent spawns remain isolated. The legacy
-native-Windows branch uses `control.sock.port` and is untested.
+`sockaddr_un.sun_path` and concurrent spawns remain isolated. Control injection is
+POSIX-only; the server's legacy native-Windows branch has no supported client.
 
 All control actions (inject, interrupt, permission reply, user input reply) are
 serialized through `ControlActionCoordinator`. Concurrent actions queue behind it —
