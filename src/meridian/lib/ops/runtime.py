@@ -24,8 +24,8 @@ from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.project_identity import (
     AdHoc,
-    Committed,
     ensure_project_identity,
+    project_identity_was_created,
     resolve_project_identity,
 )
 from meridian.lib.state.user_paths import get_project_home, get_user_home
@@ -40,20 +40,6 @@ RuntimeRootSource = Literal[
     "user-home-project",
     "unresolved",
 ]
-
-
-def _identity_was_created(before: Committed | AdHoc, after: Committed | AdHoc) -> bool:
-    return (
-        isinstance(before, Committed)
-        and before.id is None
-        and isinstance(after, Committed)
-        and after.id is not None
-    ) or (
-        isinstance(before, AdHoc)
-        and not before.materialized
-        and isinstance(after, AdHoc)
-        and after.materialized
-    )
 
 
 def _runtime_override_env_root(project_root: Path) -> Path | None:
@@ -258,7 +244,7 @@ def resolve_runtime_authority_for_write(
     else:
         prior = resolve_project_identity(authority.project_root)
         identity = ensure_project_identity(authority.project_root)
-        identity_created = _identity_was_created(prior, identity)
+        identity_created = project_identity_was_created(prior, identity)
         if identity.id is None:
             raise ValueError("Runtime write identity did not resolve a project ID.")
         ensured_project_id = identity.id

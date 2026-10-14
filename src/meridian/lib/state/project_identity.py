@@ -60,6 +60,25 @@ class _OriginDocument(BaseModel):
     created_at: str
 
 
+def project_identity_was_created(
+    before: ProjectIdentity,
+    after: ProjectIdentity,
+) -> bool:
+    """Return whether an ensure operation first persisted an identity."""
+
+    return (
+        isinstance(before, Committed)
+        and before.id is None
+        and isinstance(after, Committed)
+        and after.id is not None
+    ) or (
+        isinstance(before, AdHoc)
+        and not before.materialized
+        and isinstance(after, AdHoc)
+        and after.materialized
+    )
+
+
 def get_committed_project_id(project_root: Path) -> str | None:
     """Read and validate the committed ID from ``meridian.toml``."""
 
@@ -186,5 +205,6 @@ __all__ = [
     "ProjectIdentity",
     "ensure_project_identity",
     "get_committed_project_id",
+    "project_identity_was_created",
     "resolve_project_identity",
 ]
