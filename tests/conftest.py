@@ -10,7 +10,12 @@ import structlog
 from tests.support.git import is_git_env_key
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+PI_DIST_ROOT = PACKAGE_ROOT / "src" / "meridian" / "pi_runtime" / "dist"
+PI_DIST_BUILD_COMMAND = (
+    "cd src/meridian/pi_runtime && pnpm install && pnpm run build:extensions"
+)
 posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
+requires_pi_dist = pytest.mark.requires_pi_dist
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -20,10 +25,26 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "e2e: full CLI invocation")
     config.addinivalue_line("markers", "contract: parity/drift checks")
     config.addinivalue_line("markers", "slow: takes >1s")
+    config.addinivalue_line(
+        "markers", "requires_pi_dist: test requires built Pi extension bundles"
+    )
     if config.getoption("--runner-history") == "off":
         blind_dir = PACKAGE_ROOT / "tests" / "support" / "runner_history_blind"
         existing = os.environ.get("PYTHONPATH")
         os.environ["PYTHONPATH"] = str(blind_dir) + (os.pathsep + existing if existing else "")
+
+
+def pytest_runtest_call(item: pytest.Item) -> None:
+    if item.get_closest_marker("requires_pi_dist") is None or PI_DIST_ROOT.is_dir():
+        return
+
+    message = (
+        f"Pi extension bundles are missing at {PI_DIST_ROOT}; build them with "
+        f"`{PI_DIST_BUILD_COMMAND}`"
+    )
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        pytest.fail(message, pytrace=False)
+    pytest.skip(message)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

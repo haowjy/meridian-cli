@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Make PR CI run the full gate before merge (#576).
+
 ## [0.10.1] - 2026-10-14
 
 ### Fixed

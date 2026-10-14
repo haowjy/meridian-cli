@@ -25,6 +25,7 @@ from meridian.lib.ops.runtime import (
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.state import session_store, spawn_store, work_repository, work_store
 from meridian.lib.state.paths import resolve_project_paths
+from tests.conftest import requires_pi_dist
 from tests.support.executables import prepend_fake_executables
 from tests.support.launch import stub_bundle_request_and_resolve
 
@@ -670,6 +671,7 @@ def test_deleted_tracked_native_file_preserves_launch_failure_reason(
     assert "native_transcript_missing" in output.out + output.err
 
 
+@requires_pi_dist
 def test_tracked_pi_without_store_preserves_unbound_launch_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
 ) -> None:

@@ -8,8 +8,8 @@ decisions, security/env sanitization, algorithms, and parsing edges.
 ## Running
 
 ```bash
-uv run pytest-llm              # Risk-based default paths (prepared fast gate)
-uv run pytest tests/           # Complete automated suite, including extended/
+uv run pytest-llm              # Fast default subset (prepared fast gate)
+uv run pytest tests/           # Full suite; run before marking a PR ready
 uv run meridian                # Smoke test the CLI directly
 ```
 
@@ -23,6 +23,11 @@ override `testpaths`, including files under `tests/extended/`. Tests in
 `tests/smoke/` and `tests/e2e/` are not pytest-collected: they contain opt-in
 scripts and manual/runtime guides. The [smoke index](smoke/README.md) distinguishes
 cheap executable checks from live/network probes.
+
+PR CI runs the full gate, but agents should still run `uv run pytest tests/`
+before marking a PR ready. Tests marked `requires_pi_dist` skip locally when Pi
+bundles are absent and fail on GitHub Actions; build them with
+`cd src/meridian/pi_runtime && pnpm install && pnpm run build:extensions`.
 
 Runtime adapter changes also have local package gates:
 
