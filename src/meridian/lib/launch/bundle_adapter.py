@@ -177,7 +177,7 @@ def _parse_skills_available(raw: object) -> tuple[AvailableSkillEntry, ...]:
 def _bundle_schema_error(message: str) -> RuntimeError:
     return RuntimeError(
         f"Mars launch-bundle returned invalid schema: {message}. "
-        "Expected bundle schema 4 with routing report schema 2."
+        "Expected bundle schema 4 with routing report schema 3."
     )
 
 
