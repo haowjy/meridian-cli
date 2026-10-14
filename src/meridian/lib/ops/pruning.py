@@ -173,13 +173,18 @@ def _is_quiescent(runtime_root: Path) -> bool:
 
 def _adhoc_activity(runtime_root: Path) -> tuple[int, float, AdHocOrigin | None]:
     size_bytes, tree_mtime = _tree_activity(runtime_root)
+    context_root = get_context_home(
+        runtime_root.name,
+        user_home=runtime_root.parent.parent,
+    )
+    _, context_tree_mtime = _tree_activity(context_root)
     origin_path = runtime_root / "origin.json"
     try:
         origin_mtime: float | None = origin_path.stat().st_mtime
     except OSError:
         origin_mtime = None
     origin = read_model(origin_path, AdHocOrigin)
-    latest = origin_mtime if origin_mtime is not None else tree_mtime
+    latest = max(tree_mtime, context_tree_mtime, origin_mtime or 0.0)
 
     spawn_scan = spawn_store.list_spawns(runtime_root)
     for spawn in spawn_scan.records:

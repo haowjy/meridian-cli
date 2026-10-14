@@ -26,19 +26,15 @@ def test_config_show_reports_path_identity_without_materializing(
     project_root = _repo(tmp_path)
     home = tmp_path / "home"
     monkeypatch.setenv("MERIDIAN_HOME", home.as_posix())
-    monkeypatch.setattr(
-        "meridian.lib.ops.config.mars_supports_fallback_root",
-        lambda _executable: True,
-    )
 
     result = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
 
     assert result.project_identity is not None
     assert result.project_identity.startswith("adhoc.repo.")
     assert result.project_identity_source == "path"
-    assert result.mars_fallback == "supported"
+    assert result.mars_fallback == "unsupported"
     assert "project_identity_source: path" in result.format_text()
-    assert "mars_fallback: supported" in result.format_text()
+    assert "mars_fallback: unsupported" in result.format_text()
     assert not home.exists()
     assert list(project_root.iterdir()) == []
 

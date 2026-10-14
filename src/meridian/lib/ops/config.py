@@ -8,8 +8,7 @@ from typing import Literal, cast
 import structlog
 from pydantic import BaseModel, ConfigDict, field_serializer
 
-from meridian.lib.catalog.mars_capabilities import mars_supports_fallback_root
-from meridian.lib.catalog.mars_roots import resolve_mars_executable
+from meridian.lib.catalog.mars_roots import mars_fallback_active
 from meridian.lib.config.context_config import ContextSourceType
 from meridian.lib.config.dynamic_sections import DYNAMIC_SECTION_DESCRIPTORS
 from meridian.lib.config.loader import OPTION_CATALOG
@@ -48,7 +47,7 @@ from meridian.lib.state.paths import (
 )
 from meridian.lib.state.project_identity import (
     AdHoc,
-    ensure_project_identity,
+    mint_committed_identity,
     resolve_project_identity,
 )
 from meridian.lib.state.user_paths import get_project_home, get_user_home
@@ -522,7 +521,7 @@ def ensure_state_bootstrap_sync(project_root: Path) -> ConfigInitOutput:
     )
     state = _resolve_project_config_state(project_root)
     created = state.path is None
-    ensure_project_identity(project_root, scaffold=_scaffold_template())
+    mint_committed_identity(project_root, _scaffold_template())
 
     ensure_runtime_state_bootstrap_sync(project_root)
     note = (
@@ -573,7 +572,7 @@ def config_show_sync(payload: ConfigShowInput) -> ConfigShowOutput:
         mars_scope=surface.authority.mars_roots.scope,
         mars_fallback=(
             "supported"
-            if mars_supports_fallback_root(resolve_mars_executable())
+            if mars_fallback_active(surface.authority.mars_roots)
             else "unsupported"
         ),
         runtime_root=(

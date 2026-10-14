@@ -8,7 +8,14 @@ from typing import TYPE_CHECKING
 
 from meridian.lib.catalog import mars_capabilities
 from meridian.lib.catalog.mars_capabilities import mars_supports_fallback_root
-from meridian.lib.catalog.mars_roots import ensure_user_mars_root, resolve_mars_roots
+from meridian.lib.catalog.mars_roots import (
+    MarsRoots,
+    ensure_user_mars_root,
+    mars_content_roots,
+    mars_fallback_active,
+    mars_fallback_args,
+    resolve_mars_roots,
+)
 
 if TYPE_CHECKING:
     import pytest
@@ -62,6 +69,32 @@ def test_resolve_mars_roots_uses_user_root_for_bare_directory(
     assert roots.primary == (user_home / "mars").resolve()
     assert roots.scope == "user"
     assert roots.user is None
+
+
+def test_fallback_activation_is_shared_by_content_and_argv(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    primary = tmp_path / "project"
+    user = tmp_path / "user-home" / "mars"
+    calls: list[str | None] = []
+    monkeypatch.setattr(
+        "meridian.lib.catalog.mars_roots.mars_supports_fallback_root",
+        lambda executable: calls.append(executable) or True,
+    )
+    project_roots = MarsRoots(primary=primary, scope="project", user=user)
+    user_roots = MarsRoots(primary=user, scope="user")
+
+    assert mars_fallback_active(project_roots, executable="/fake/mars")
+    assert mars_content_roots(project_roots, executable="/fake/mars") == (primary, user)
+    assert mars_fallback_args(project_roots, executable="/fake/mars") == (
+        "--fallback-root",
+        user.as_posix(),
+    )
+    assert not mars_fallback_active(user_roots, executable="/fake/mars")
+    assert mars_content_roots(user_roots, executable="/fake/mars") == (user,)
+    assert mars_fallback_args(user_roots, executable="/fake/mars") == ()
+    assert calls == ["/fake/mars", "/fake/mars", "/fake/mars"]
 
 
 def test_ensure_user_mars_root_initializes_only_user_root(

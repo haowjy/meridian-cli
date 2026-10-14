@@ -444,6 +444,28 @@ def test_adhoc_retention_zero_has_touch_interval_floor(tmp_path: Path) -> None:
     assert recent_root.is_dir()
 
 
+def test_adhoc_retention_zero_counts_recent_context_activity(tmp_path: Path) -> None:
+    now = 2_000_000_000.0
+    user_home = tmp_path / "user-home"
+    source_path = tmp_path / "bare"
+    source_path.mkdir()
+    runtime_root = _seed_adhoc_root(
+        user_home,
+        "adhoc.bare.1123456789ab",
+        source_path,
+        mtime=now - 3597 - 5,
+    )
+    context_root = user_home / "context" / runtime_root.name
+    work_repository.create_work_item(context_root, "fresh-item")
+    _set_tree_mtime(context_root, now - 5)
+
+    candidates = scan_adhoc_project_dirs(user_home, retention_days=0, now=now)
+
+    assert candidates == []
+    assert runtime_root.is_dir()
+    assert context_root.is_dir()
+
+
 @pytest.mark.parametrize(
     ("path_state", "expected_reason"),
     [("gone", "adhoc-path-gone"), ("marker", "adhoc-shadowed")],

@@ -141,6 +141,7 @@ async def test_streaming_serve_prices_live_usage_with_resolved_default_model(
 
     from meridian.lib.harness.connections.base import RawHarnessEvent
 
+    (tmp_path / "mars.toml").write_text("", encoding="utf-8")
     cache = tmp_path / ".mars" / "models-cache.json"
     cache.parent.mkdir(exist_ok=True)
     cache.write_text(json.dumps({"models": [{"id": "gpt-5.4", "cost_input": 1, "cost_output": 2}]}))

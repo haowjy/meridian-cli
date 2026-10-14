@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Literal
 
 from meridian.lib.catalog.agent import AgentProfile
 from meridian.lib.catalog.catalog_session import CatalogSession
@@ -54,6 +55,19 @@ _LOGGER = logging.getLogger(__name__)
 _DEFAULT_EXECUTION_POLICY_FIELDS: frozenset[ExecutionPolicyField] = frozenset(
     EXECUTION_POLICY_FIELDS
 )
+
+
+def _bundle_agent_scope(
+    profile: AgentProfile | None,
+    *,
+    project_root: Path,
+) -> Literal["root", "fallback"] | None:
+    if profile is None:
+        return None
+    user_root = resolve_mars_roots(project_root).user
+    if user_root is not None and profile.path.is_relative_to(user_root):
+        return "fallback"
+    return "root"
 
 
 def _build_resolved_skills_from_bundle(
@@ -460,6 +474,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
     bundle_request = bundle_adapter.BundleRequest(
         agent=profile.name if profile is not None else requested_agent,
         project_root=project_root,
+        agent_scope=_bundle_agent_scope(profile, project_root=project_root),
         model_override=bundle_model_override,
         harness_override=bundle_harness_override,
         excluded_harnesses=_excluded_harnesses_for_surface(surface),
