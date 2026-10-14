@@ -75,6 +75,7 @@ def test_launch_skill_content_flows_from_bundle_to_composition(
     Meridian-cli consumes whatever mars resolved and sent in skills.loaded[].
     """
     _write_minimal_mars_config(tmp_path)
+    fallback_skill_path = tmp_path / "user-mars/.mars/skills/variant-skill/SKILL.md"
     _stub_bundle_resolution(
         monkeypatch,
         resolution=_BundleResolution(
@@ -87,6 +88,7 @@ def test_launch_skill_content_flows_from_bundle_to_composition(
                 name="variant-skill",
                 skill_type="reference",
                 body="Resolved variant body from mars",
+                source_path=fallback_skill_path.as_posix(),
             ),
         ),
     )
@@ -111,9 +113,7 @@ def test_launch_skill_content_flows_from_bundle_to_composition(
     # from the system prompt (it goes via native skill injection).
     system_prompt = preview.projected_content.system_prompt if preview.projected_content else ""
     assert "Resolved variant body from mars" not in system_prompt
-    # Skill path is synthetic (from bundle, not disk)
-    assert preview.resolved_request.skill_paths
-    assert ".mars/skills/variant-skill/SKILL.md" in preview.resolved_request.skill_paths[0]
+    assert preview.resolved_request.skill_paths == (fallback_skill_path.resolve().as_posix(),)
 
 
 def test_bundle_skill_content_renders_via_append_for_native_skill_harness(

@@ -10,8 +10,10 @@ Zero builtin aliases. All alias-to-model-id mappings come from mars packages
 
 `mars_roots.py` is the only package-root decider. Project content follows Mars's
 nearest-`mars.toml` walk-up; otherwise the primary root is the user package project
-at `~/.meridian/mars`. Direct agent and skill discovery layers project content over
-user content. Every Mars subprocess receives the resolved primary as `--root`.
+at `~/.meridian/mars`. Project-scope read and launch subprocesses add the user root
+as `--fallback-root` when `mars_capabilities.py` confirms that the installed Mars
+supports it. The primary root remains the sole configuration authority. Every Mars
+subprocess receives the resolved primary as `--root`.
 
 ## Mental Model
 
@@ -58,6 +60,7 @@ environments silently skip auto-resolve aliases.
 
 - `catalog_session.py` — `CatalogSession`: per-operation facade; start here
 - `mars_roots.py` — project/user package-root resolution and user-root initialization
+- `mars_capabilities.py` — cached help-surface probe for optional fallback lookup
 - `model_aliases.py` — `AliasEntry`, `MarsResultCache`, mars subprocess integration
 - `agent.py` — `AgentProfile`, agent frontmatter parsing for `.mars/agents/*.md`
 - `skill.py` — skill YAML/markdown parsing for `.mars/skills/*/SKILL.md` (legacy compat; primary path uses mars launch-bundle)

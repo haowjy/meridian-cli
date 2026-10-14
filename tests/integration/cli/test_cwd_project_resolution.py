@@ -125,6 +125,7 @@ def test_context_observes_unmaterialized_adhoc_identity_without_writing(
     assert result.returncode == 0, result.stderr
     assert "identity_tier: adhoc" in result.stdout
     assert "project_id: adhoc.no-project." in result.stdout
+    assert "mars_fallback:" in result.stdout
     _assert_project_not_initialized(cwd_without_project_id)
     assert list(meridian_home.iterdir()) == []
 

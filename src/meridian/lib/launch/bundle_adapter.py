@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from meridian.lib.catalog.mars_roots import (
     ensure_resolved_mars_root,
+    mars_fallback_args,
     resolve_mars_executable,
     resolve_mars_roots,
 )
@@ -71,10 +72,12 @@ class LoadedSkillEntry:
     name: str
     skill_type: str
     body: str
+    source_path: str | None = None
 
 
 @dataclass(frozen=True)
 class _BundleResult:
+    agent_source_path: str | None
     selection_report: dict[str, object]
     model: str
     model_token: str
@@ -138,7 +141,15 @@ def _parse_skills_loaded(raw: object) -> tuple[LoadedSkillEntry, ...]:
             if name:
                 skill_type = _normalize_str(item_dict.get("skill_type")) or "reference"
                 body = _normalize_str(item_dict.get("body"))
-                entries.append(LoadedSkillEntry(name=name, skill_type=skill_type, body=body))
+                source_path = _normalize_str(item_dict.get("source_path")) or None
+                entries.append(
+                    LoadedSkillEntry(
+                        name=name,
+                        skill_type=skill_type,
+                        body=body,
+                        source_path=source_path,
+                    )
+                )
     return tuple(entries)
 
 
@@ -153,14 +164,20 @@ def _parse_skills_available(raw: object) -> tuple[AvailableSkillEntry, ...]:
             name = _normalize_str(item_dict.get("name"))
             skill_type = _normalize_str(item_dict.get("skill_type")) or "reference"
             if name:
-                entries.append(AvailableSkillEntry(name=name, skill_type=skill_type))
+                entries.append(
+                    AvailableSkillEntry(
+                        name=name,
+                        skill_type=skill_type,
+                        source_path=_normalize_str(item_dict.get("source_path")) or None,
+                    )
+                )
     return tuple(entries)
 
 
 def _bundle_schema_error(message: str) -> RuntimeError:
     return RuntimeError(
         f"Mars launch-bundle returned invalid schema: {message}. "
-        "Expected bundle schema 4 with routing report schema 2."
+        "Expected bundle schema 4 with routing report schema 3."
     )
 
 
@@ -226,6 +243,7 @@ def _build_bundle_command(request: BundleRequest) -> list[str]:
         "--root",
         roots.primary.as_posix(),
     ]
+    command.extend(mars_fallback_args(roots, executable=mars_binary))
 
     if request.no_refresh_models:
         command.append("--no-refresh-models")
@@ -398,6 +416,7 @@ def _parse_bundle_payload(
     skills_available = _parse_skills_available(skills_obj.get("available"))
 
     return _BundleResult(
+        agent_source_path=_normalize_str(payload.get("agent_source_path")) or None,
         selection_report=report.model_dump(mode="json"),
         model=model,
         model_token=model_token,

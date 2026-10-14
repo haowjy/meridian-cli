@@ -47,6 +47,7 @@ class FakeBundleResult:
     harness_model: str | None
     execution_policy: ResolvedExecutionPolicy
     provenance: dict[str, str]
+    agent_source_path: str | None = None
     provider_constraint: str | None = None
     selection_report: dict[str, object] | None = None
     warnings: tuple[str, ...] = ()
