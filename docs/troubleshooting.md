@@ -313,7 +313,8 @@ Or via environment variable: `MERIDIAN_STATE_RETENTION_DAYS=30`.
 Ad-hoc roots use `state.adhoc_retention_days` from
 `~/.meridian/config.toml` or `MERIDIAN_STATE_ADHOC_RETENTION_DAYS`, never from
 the cwd project's config. The default is 30 idle days; a missing source path or
-one that now contains a project marker uses the fixed 7-day stale window. Global
+one that now contains a project marker uses the shorter of that window and 7
+days. Every ad-hoc root also needs an hour without activity, even at `0`. Global
 pruning deletes both `projects/adhoc.*/` and its matching `context/adhoc.*/`.
 
 Active spawns are always protected — pruning never deletes state for running spawns regardless of age.

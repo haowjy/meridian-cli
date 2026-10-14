@@ -13,7 +13,10 @@ nearest-`mars.toml` walk-up; otherwise the primary root is the user package proj
 at `~/.meridian/mars`. Project-scope discovery and launch subprocesses include user
 content through `--fallback-root` only when `mars_capabilities.py` confirms that the
 installed Mars supports it. The primary root remains the sole configuration
-authority. Every Mars subprocess receives the resolved primary as `--root`.
+authority. Every Mars subprocess that touches package content receives the resolved
+primary as `--root`. Two exceptions: `meridian mars init` / `init --link` target the
+literal project root, so a nested Mars project can still be created in a repository
+subdirectory, and the `--help` capability probe takes no root.
 `ensure_user_mars_root()`
 belongs only on Mars operations that need a runnable root; read-pure diagnostics
 such as bare-directory `doctor` must report the resolved path without initializing it.

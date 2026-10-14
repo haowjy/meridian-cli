@@ -87,8 +87,8 @@ state lives in the repository.
 
 If the directory already has ad-hoc state, init prints its location but starts the
 committed project clean. Earlier spawns, sessions, and work items are not carried
-over; the old files remain eligible for global doctor pruning after the 7-day
-shadowed-path window.
+over; the old files become eligible for global doctor pruning after 7 days (or
+sooner, if `state.adhoc_retention_days` is lower).
 
 Bare `meridian init` bootstraps Meridian config/runtime only. It does not initialize Mars packages on its own.
 
