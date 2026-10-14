@@ -6,10 +6,11 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
-from typing import Annotated
+from typing import Annotated, get_args
 
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     RootModel,
@@ -17,7 +18,6 @@ from pydantic import (
     ValidationError,
     field_validator,
 )
-from typing_extensions import TypeIs
 
 from meridian.lib.config.errors import config_validation_error
 from meridian.lib.hooks.builtin_registry import (
@@ -26,7 +26,6 @@ from meridian.lib.hooks.builtin_registry import (
     validate_builtin_options,
 )
 from meridian.lib.hooks.types import (
-    EVENT_CLASS,
     FailurePolicy,
     Hook,
     HookEventName,
@@ -38,9 +37,77 @@ from meridian.lib.utils.json_shapes import json_list
 _INTERVAL_PATTERN = re.compile(r"^\d+[smhd]$")
 _HOOK_NAME_COMPONENT_PATTERN = re.compile(r"[^a-z0-9._-]+")
 _HOOK_NAME_REPEATED_DASH_PATTERN = re.compile(r"-+")
-_KNOWN_FAILURE_POLICIES = frozenset({"fail", "warn", "ignore"})
-_KNOWN_SPAWN_STATUSES = frozenset({"success", "failure", "cancelled", "timeout", "skipped"})
+_KNOWN_HOOK_EVENTS = frozenset(get_args(HookEventName))
+_KNOWN_FAILURE_POLICIES = frozenset(get_args(FailurePolicy))
+_KNOWN_SPAWN_STATUSES = frozenset(get_args(SpawnStatus))
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+def _normalized_string(value: object) -> str | object:
+    return value.strip() if isinstance(value, str) else value
+
+
+def _hook_event(value: object) -> str | object:
+    normalized = _normalized_string(value)
+    if not isinstance(normalized, str):
+        return normalized
+    if not normalized:
+        raise ValueError("expected non-empty string")
+    if normalized not in _KNOWN_HOOK_EVENTS:
+        valid = ", ".join(sorted(_KNOWN_HOOK_EVENTS))
+        raise ValueError(f"expected one of [{valid}], got {normalized!r}")
+    return normalized
+
+
+def _hook_interval(value: object) -> str | object:
+    normalized = _normalized_string(value)
+    if not isinstance(normalized, str):
+        return normalized
+    if not normalized:
+        raise ValueError("expected non-empty string")
+    if not _INTERVAL_PATTERN.fullmatch(normalized):
+        raise ValueError(
+            f"expected interval format '\\d+[smhd]', got {normalized!r}"
+        )
+    return normalized
+
+
+def _failure_policy(value: object) -> str | object:
+    normalized = _normalized_string(value)
+    if not isinstance(normalized, str):
+        return normalized
+    if not normalized:
+        raise ValueError("expected non-empty string")
+    if normalized not in _KNOWN_FAILURE_POLICIES:
+        valid = ", ".join(sorted(_KNOWN_FAILURE_POLICIES))
+        raise ValueError(f"expected one of [{valid}], got {normalized!r}")
+    return normalized
+
+
+def _spawn_status(value: object) -> str | object:
+    normalized = _normalized_string(value)
+    if not isinstance(normalized, str):
+        return normalized
+    if not normalized:
+        raise ValueError("expected non-empty string")
+    return normalized
+
+
+def _positive_timeout(value: object) -> object:
+    if isinstance(value, int) and not isinstance(value, bool) and value <= 0:
+        raise ValueError(f"expected int > 0, got {value!r}")
+    return value
+
+
+type HookEventSpec = Annotated[HookEventName, BeforeValidator(_hook_event)]
+type HookIntervalSpec = Annotated[
+    str,
+    BeforeValidator(_hook_interval),
+    StringConstraints(pattern=r"^\d+[smhd]$"),
+]
+type FailurePolicySpec = Annotated[FailurePolicy, BeforeValidator(_failure_policy)]
+type SpawnStatusSpec = Annotated[SpawnStatus, BeforeValidator(_spawn_status)]
+type PositiveTimeoutSecs = Annotated[int, BeforeValidator(_positive_timeout), Field(gt=0)]
 
 
 class HookWhenSpec(BaseModel):
@@ -48,13 +115,25 @@ class HookWhenSpec(BaseModel):
 
     model_config = ConfigDict(frozen=True, strict=True, extra="ignore")
 
-    status: tuple[NonEmptyString, ...] | None = None
+    status: tuple[SpawnStatusSpec, ...] | None = None
     agent: NonEmptyString | None = None
 
     @field_validator("status", mode="before")
     @classmethod
     def _tuple_status(cls, value: object) -> object:
         values = json_list(value)
+        if values is not None:
+            for item in values:
+                normalized = _normalized_string(item)
+                if (
+                    isinstance(normalized, str)
+                    and normalized
+                    and normalized not in _KNOWN_SPAWN_STATUSES
+                ):
+                    valid = ", ".join(sorted(_KNOWN_SPAWN_STATUSES))
+                    raise ValueError(
+                        f"expected values in [{valid}], got {normalized!r}"
+                    )
         return tuple(values) if values is not None else value
 
 
@@ -66,12 +145,12 @@ class HookSpec(BaseModel):
     name: NonEmptyString | None = None
     builtin: NonEmptyString | None = None
     command: NonEmptyString | None = None
-    event: NonEmptyString | None = None
-    timeout_secs: int | None = None
-    interval: NonEmptyString | None = None
+    event: HookEventSpec | None = None
+    timeout_secs: PositiveTimeoutSecs | None = None
+    interval: HookIntervalSpec | None = None
     enabled: bool = True
     priority: int = 0
-    failure_policy: NonEmptyString | None = None
+    failure_policy: FailurePolicySpec | None = None
     require_serial: bool = False
     when: HookWhenSpec | None = None
     exclude: tuple[NonEmptyString, ...] = ()
@@ -155,57 +234,16 @@ def _synthesize_builtin_hook_name(
     return f"{builtin}:{slug}-{digest}" if slug else f"{builtin}:{digest}"
 
 
-def _is_hook_event(value: str) -> TypeIs[HookEventName]:
-    return value in EVENT_CLASS
-
-
-def _parse_event(raw: str, *, source: str) -> HookEventName:
-    if not _is_hook_event(raw):
-        valid = ", ".join(sorted(EVENT_CLASS.keys()))
-        raise ValueError(f"Invalid value for '{source}': expected one of [{valid}], got {raw!r}.")
-    return raw
-
-
-def _parse_interval(raw: str | None, *, source: str) -> str | None:
-    if raw is None:
-        return None
-    if not _INTERVAL_PATTERN.fullmatch(raw):
-        raise ValueError(
-            f"Invalid value for '{source}': expected interval format '\\d+[smhd]', got {raw!r}."
-        )
-    return raw
-
-
-def _is_spawn_status(value: str) -> TypeIs[SpawnStatus]:
-    return value in _KNOWN_SPAWN_STATUSES
-
-
-def _parse_when(spec: HookWhenSpec | None, *, source: str) -> HookWhen | None:
+def _parse_when(spec: HookWhenSpec | None) -> HookWhen | None:
     if spec is None:
         return None
 
-    statuses: list[SpawnStatus] | None = None
-    if spec.status is not None:
-        statuses = []
-        for value in spec.status:
-            if not _is_spawn_status(value):
-                valid = ", ".join(sorted(_KNOWN_SPAWN_STATUSES))
-                raise ValueError(
-                    f"Invalid value for '{source}.status': expected values in [{valid}], "
-                    f"got {value!r}."
-                )
-            statuses.append(value)
-
-    if statuses is None and spec.agent is None:
+    if spec.status is None and spec.agent is None:
         return None
     return HookWhen(
-        status=tuple(statuses) if statuses is not None else None,
+        status=spec.status,
         agent=spec.agent,
     )
-
-
-def _is_failure_policy(value: str) -> TypeIs[FailurePolicy]:
-    return value in _KNOWN_FAILURE_POLICIES
 
 
 def hooks_from_spec(
@@ -263,36 +301,16 @@ def hooks_from_spec(
     default_events = get_default_events(builtin) if builtin is not None else ()
     events: tuple[HookEventName, ...]
     if spec.event is not None:
-        events = (_parse_event(spec.event, source=f"{row_source}.event"),)
+        events = (spec.event,)
     elif default_events:
-        events = tuple(
-            _parse_event(event, source=f"{row_source}.event") for event in default_events
-        )
+        events = default_events
     else:
         raise ValueError(f"Invalid hook config '{row_source}': 'event' is required.")
 
     default_interval = BUILTIN_HOOK_REGISTRY[builtin].interval if builtin is not None else None
-    interval = _parse_interval(
-        spec.interval or default_interval,
-        source=f"{row_source}.interval",
-    )
-    if spec.timeout_secs is not None and spec.timeout_secs <= 0:
-        raise ValueError(
-            f"Invalid value for '{row_source}.timeout_secs': expected int > 0, "
-            f"got {spec.timeout_secs!r}."
-        )
+    interval = spec.interval or default_interval
 
-    failure_policy: FailurePolicy | None = None
-    if spec.failure_policy is not None:
-        if not _is_failure_policy(spec.failure_policy):
-            valid = ", ".join(sorted(_KNOWN_FAILURE_POLICIES))
-            raise ValueError(
-                f"Invalid value for '{row_source}.failure_policy': expected one of [{valid}], "
-                f"got {spec.failure_policy!r}."
-            )
-        failure_policy = spec.failure_policy
-
-    when = _parse_when(spec.when, source=f"{row_source}.when")
+    when = _parse_when(spec.when)
     return tuple(
         Hook(
             name=name,
@@ -304,7 +322,7 @@ def hooks_from_spec(
             interval=interval,
             enabled=spec.enabled,
             priority=spec.priority,
-            failure_policy=failure_policy,
+            failure_policy=spec.failure_policy,
             require_serial=spec.require_serial,
             when=when,
             exclude=spec.exclude,

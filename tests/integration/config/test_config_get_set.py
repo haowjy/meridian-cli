@@ -320,7 +320,7 @@ def test_config_set_preserves_dynamic_sections_comments_and_unknown_content(tmp_
         'value = "keep-me"\n'
         "\n"
         "[[hooks]]\n"
-        'event = "spawn"\n'
+        'event = "spawn.start"\n'
         'run = "echo hi"\n'
     )
     config_path.write_text(original, encoding="utf-8")
