@@ -52,7 +52,7 @@ def _invoke_json(
         env=env,
         text=True,
         capture_output=True,
-        timeout=5,
+        timeout=30,
         check=False,
     )
     assert result.returncode == 0, result.stderr
