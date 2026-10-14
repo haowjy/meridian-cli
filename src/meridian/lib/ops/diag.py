@@ -418,26 +418,12 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     pruned_orphan_dirs = 0
     pruned_adhoc_dirs = 0
     pruned_spawn_artifacts = 0
-    if payload.prune:
-        if payload.global_:
-            pruned_orphan_dirs = prune_orphan_project_dirs(orphan_project_dirs)
-            if adhoc_retention_days is None:
-                raise AssertionError("Global ad-hoc retention was not resolved.")
-            pruned_adhoc_dirs = prune_adhoc_project_dirs(
-                adhoc_project_dirs,
-                retention_days=adhoc_retention_days,
-                now=now,
-            )
-            if pruned_orphan_dirs > 0:
-                repaired.append("orphan_project_dirs")
-            if pruned_adhoc_dirs > 0:
-                repaired.append("adhoc_project_dirs")
-        if runtime_root is not None:
-            spawn_prune = prune_stale_spawn_artifacts(stale_spawn_artifacts)
-            pruned_spawn_artifacts = spawn_prune.removed
-            lock_gc = lock_gc.combine(spawn_prune.lock_gc)
-            if pruned_spawn_artifacts > 0:
-                repaired.append("spawn_artifacts")
+    if payload.prune and runtime_root is not None:
+        spawn_prune = prune_stale_spawn_artifacts(stale_spawn_artifacts)
+        pruned_spawn_artifacts = spawn_prune.removed
+        lock_gc = lock_gc.combine(spawn_prune.lock_gc)
+        if pruned_spawn_artifacts > 0:
+            repaired.append("spawn_artifacts")
     if lock_gc.files_removed > 0:
         repaired.append("orphaned_locks")
 
@@ -459,6 +445,22 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         telemetry_cleanup = _telemetry_cleanup_stats(telemetry_retention)
         if telemetry_cleanup.deleted_segments > 0:
             repaired.append("telemetry_segments")
+
+    # Global root deletion is last: local prune/telemetry helpers may create
+    # coordination directories inside the current runtime root.
+    if payload.prune and payload.global_:
+        pruned_orphan_dirs = prune_orphan_project_dirs(orphan_project_dirs)
+        if adhoc_retention_days is None:
+            raise AssertionError("Global ad-hoc retention was not resolved.")
+        pruned_adhoc_dirs = prune_adhoc_project_dirs(
+            adhoc_project_dirs,
+            retention_days=adhoc_retention_days,
+            now=now,
+        )
+        if pruned_orphan_dirs > 0:
+            repaired.append("orphan_project_dirs")
+        if pruned_adhoc_dirs > 0:
+            repaired.append("adhoc_project_dirs")
 
     mars_roots = authority.mars_roots
     agents_dir = mars_roots.primary / ".mars" / "agents"

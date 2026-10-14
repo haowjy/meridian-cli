@@ -25,6 +25,8 @@ from meridian.lib.ops.pruning import (
 )
 from meridian.lib.platform.locking import try_lock_file
 from meridian.lib.state import session_store, work_repository, work_store
+from meridian.lib.state.project_identity import ensure_project_identity
+from meridian.lib.state.user_paths import get_project_home
 
 
 def _create_project_root(tmp_path: Path) -> Path:
@@ -570,3 +572,28 @@ def test_doctor_adhoc_retention_ignores_cwd_project_config(
         DoctorInput(project_root=project_root.as_posix(), global_=True)
     )
     assert len(env_value_applied.adhoc_project_dirs) == 1
+
+
+def test_doctor_global_prune_does_not_recreate_current_adhoc_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = 2_000_000_000.0
+    user_home = tmp_path / "user-home"
+    project_root = _create_project_root(tmp_path)
+    monkeypatch.setenv("MERIDIAN_HOME", user_home.as_posix())
+    monkeypatch.setenv("_MERIDIAN_DEPTH", "0")
+    monkeypatch.setenv("MERIDIAN_STATE_ADHOC_RETENTION_DAYS", "0")
+    monkeypatch.setattr(diag.time, "time", lambda: now)
+    identity = ensure_project_identity(project_root)
+    runtime_root = get_project_home(str(identity.id))
+    context_root = user_home / "context" / str(identity.id)
+    _write_text(context_root / "work" / "old.md", "old context\n")
+
+    result = doctor_sync(
+        DoctorInput(project_root=project_root.as_posix(), global_=True, prune=True)
+    )
+
+    assert result.pruned_adhoc_dirs == 1
+    assert not runtime_root.exists()
+    assert not context_root.exists()
