@@ -77,9 +77,12 @@ def test_read_events_skips_and_logs_malformed_complete_rows(
         ],
     )
 
+    rows = read_events(data_path, _parse_read_event)
+    assert [row.id for row in rows] == [1, 2]
+    assert "Skipping malformed JSONL row" not in caplog.text
+
     with caplog.at_level(logging.DEBUG, logger="meridian.lib.state.jsonl"):
         rows = read_events(data_path, _parse_read_event)
-
     assert [row.id for row in rows] == [1, 2]
     assert "Skipping malformed JSONL row" in caplog.text
 
