@@ -1,0 +1,11 @@
+data: {"id":"evt_fixture_27","created":0,"type":"session.inbox.enqueued","location":{"directory":"/tmp"},"data":{"inboxID":"msg_v2_compaction","sessionID":"ses_v2_fixture_primary","item":{"type":"compaction","payload":{},"delivery":"steer"}},"durable":{"aggregateID":"ses_v2_fixture_primary","seq":13,"version":1}}
+
+data: {"id":"evt_fixture_28","created":0,"type":"session.execution.started","data":{"sessionID":"ses_v2_fixture_primary"},"durable":{"aggregateID":"ses_v2_fixture_primary","seq":14,"version":1}}
+
+data: {"id":"evt_fixture_29","created":0,"type":"session.inbox.delivered","location":{"directory":"/tmp"},"data":{"sessionID":"ses_v2_fixture_primary","inboxID":"msg_v2_compaction"},"durable":{"aggregateID":"ses_v2_fixture_primary","seq":15,"version":1}}
+
+data: {"id":"evt_fixture_30","created":0,"type":"session.compaction.started","location":{"directory":"/tmp"},"data":{"sessionID":"ses_v2_fixture_primary","reason":"manual","recent":"","inputID":"msg_v2_compaction"},"durable":{"aggregateID":"ses_v2_fixture_primary","seq":16,"version":1}}
+
+data: {"id":"evt_fixture_59","created":0,"type":"session.compaction.ended","location":{"directory":"/tmp"},"data":{"sessionID":"ses_v2_fixture_primary","reason":"manual","model":{"id":"deepseek-v4.1-flash","providerID":"opencode-go","variant":"default"},"text":"## Objective\n- (none) \u2014 the user only asked the assistant to reply with the single word \"OK\".\n\n## Requirements\n- Reply with the single word \"OK\".\n\n## Decisions\n- (none)\n\n## Work State\n### Completed\n- Replied \"OK\" as requested.\n\n### Active\n- (none)\n\n### Blocked\n- (none)\n\n## Next Move\n1. (none)\n\n## Relevant Files\n- (none)\n\n## Important Context\n- (none)","recent":"","tokens":{"input":692,"output":100,"reasoning":0,"cache":{"read":7680,"write":0}},"cost":0.00018684},"durable":{"aggregateID":"ses_v2_fixture_primary","seq":18,"version":1}}
+
+data: {"id":"evt_fixture_60","created":0,"type":"session.execution.succeeded","data":{"sessionID":"ses_v2_fixture_primary"},"durable":{"aggregateID":"ses_v2_fixture_primary","seq":19,"version":1}}

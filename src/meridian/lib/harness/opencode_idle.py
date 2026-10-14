@@ -17,8 +17,10 @@ from meridian.lib.harness.idle_types import (
     CompactResult,
     IdleEvent,
     IdleFacts,
+    IdleSensor,
     IdleSensorContext,
 )
+from meridian.lib.harness.opencode_backend import DEFAULT_OPENCODE_VERSION
 
 CapturePane = Callable[[str], Awaitable[str | None]]
 BackendRequest = Callable[[str, str, Mapping[str, object] | None], Awaitable[tuple[int, str]]]
@@ -143,8 +145,12 @@ def message_excerpts(payload: object) -> tuple[str | None, str | None]:
         if message is None:
             continue
         info = _mapping(message.get("info"))
-        role = info.get("role") if info is not None else message.get("role")
-        text = _text_content(message.get("parts")) or _text_content(message.get("content"))
+        role = info.get("role") if info is not None else message.get("role") or message.get("type")
+        text = (
+            _text_content(message.get("parts"))
+            or _text_content(message.get("content"))
+            or _text_content(message.get("text"))
+        )
         if text is None:
             continue
         if role == "user":
@@ -200,7 +206,7 @@ async def _backend_request(
 
 
 class OpenCodeIdleSensor:
-    """Translate a managed OpenCode session's raw stream into idle facts."""
+    """Translate a managed OpenCode 1.x session's raw stream into idle facts."""
 
     def __init__(
         self,
@@ -393,10 +399,230 @@ class OpenCodeIdleSensor:
         return CompactResult("failed", body)
 
 
-def primary_idle_sensor(ctx: IdleSensorContext) -> OpenCodeIdleSensor:
+_V2_TERMINAL_EVENTS = frozenset(
+    {
+        "session.execution.succeeded",
+        "session.execution.failed",
+        "session.execution.interrupted",
+    }
+)
+
+
+def _v2_inbox_item(event: RawHarnessEvent) -> tuple[str, str] | None:
+    if event.event_type != "session.inbox.enqueued":
+        return None
+    inbox_id = event.payload.get("inboxID")
+    item = _mapping(event.payload.get("item"))
+    item_type = item.get("type") if item is not None else None
+    if not isinstance(inbox_id, str) or not isinstance(item_type, str):
+        return None
+    return inbox_id, item_type
+
+
+def _v2_compaction_input_id(event: RawHarnessEvent) -> str | None:
+    if event.event_type != "session.compaction.started":
+        return None
+    value = event.payload.get("inputID")
+    return value if isinstance(value, str) and value else None
+
+
+def _v2_response_data(payload: object) -> Mapping[str, object] | None:
+    response = _mapping(payload)
+    if response is None:
+        return None
+    return _mapping(response.get("data"))
+
+
+def _v2_message_excerpts(payload: object) -> tuple[str | None, str | None]:
+    response = _mapping(payload)
+    messages = response.get("data") if response is not None else None
+    if not isinstance(messages, list):
+        return None, None
+    # The V2 request explicitly asks for newest-first results. The shared
+    # extractor retains the last text for each role, so restore timeline order.
+    return message_excerpts(list(reversed(cast("list[object]", messages))))
+
+
+class OpenCodeV2IdleSensor(OpenCodeIdleSensor):
+    """Translate OpenCode 2.x execution and inbox events into idle facts."""
+
+    def __init__(
+        self,
+        ctx: IdleSensorContext,
+        *,
+        capture_pane: CapturePane = _capture_tmux_pane,
+        request: BackendRequest | None = None,
+        compact_timeout_seconds: float = _SUMMARIZE_TIMEOUT_SECONDS,
+    ) -> None:
+        super().__init__(ctx, capture_pane=capture_pane, request=request)
+        self._compact_timeout_seconds = compact_timeout_seconds
+        self._seen_user_inbox_ids: set[str] = set()
+        self._pending_user_inbox_ids: set[str] = set()
+        self._event_sequence = 0
+        self._compaction_started_at: dict[str, int] = {}
+        self._last_compaction_ended_at: int | None = None
+        self._last_terminal_at: int | None = None
+        self._compact_expected_id: str | None = None
+        self._compact_waiter: asyncio.Future[None] | None = None
+
+    def _emit_user_returns(self) -> None:
+        for inbox_id in tuple(self._pending_user_inbox_ids):
+            self._pending_user_inbox_ids.discard(inbox_id)
+            self._seen_user_inbox_ids.add(inbox_id)
+            self._events.put_nowait(
+                IdleEvent(
+                    kind="user_prompt",
+                    harness_session_id=self._ctx.harness_session_id,
+                    turn_id=None,
+                    implies_return=True,
+                )
+            )
+
+    def _maybe_finish_compaction(self) -> None:
+        waiter = self._compact_waiter
+        expected_id = self._compact_expected_id
+        if waiter is None or waiter.done() or expected_id is None:
+            return
+        started_at = self._compaction_started_at.get(expected_id)
+        ended_at = self._last_compaction_ended_at
+        terminal_at = self._last_terminal_at
+        if (
+            started_at is not None
+            and ended_at is not None
+            and terminal_at is not None
+            and started_at < ended_at < terminal_at
+        ):
+            waiter.set_result(None)
+
+    def on_raw_event(self, event: RawHarnessEvent) -> None:
+        if event.harness_id != self._ctx.harness_id.value:
+            return
+        if _session_id(event) != self._ctx.harness_session_id:
+            return
+
+        self._event_sequence += 1
+        inbox_item = _v2_inbox_item(event)
+        if inbox_item is not None:
+            inbox_id, item_type = inbox_item
+            if (
+                item_type == "user"
+                and inbox_id not in self._seen_user_inbox_ids
+                and inbox_id not in self._pending_user_inbox_ids
+            ):
+                self._pending_user_inbox_ids.add(inbox_id)
+
+        if event.event_type == "session.execution.started":
+            self._busy = True
+            self._emit_user_returns()
+            return
+
+        compaction_input_id = _v2_compaction_input_id(event)
+        if compaction_input_id is not None:
+            self._compaction_started_at[compaction_input_id] = self._event_sequence
+            self._maybe_finish_compaction()
+            return
+
+        if event.event_type == "session.compaction.ended":
+            self._last_compaction_ended_at = self._event_sequence
+            self._maybe_finish_compaction()
+            return
+
+        if event.event_type not in _V2_TERMINAL_EVENTS:
+            return
+
+        self._busy = False
+        self._last_terminal_at = self._event_sequence
+        self._maybe_finish_compaction()
+        self._emit("turn_end", turn_id=_event_id(event))
+
+    async def _fetch_message_excerpts(self) -> tuple[str | None, str | None]:
+        session_id = quote(self._ctx.harness_session_id, safe="")
+        try:
+            status, body = await asyncio.wait_for(
+                self._request(
+                    "GET",
+                    f"/api/session/{session_id}/message?limit=20&order=desc",
+                    None,
+                ),
+                timeout=_GET_TIMEOUT_SECONDS,
+            )
+            if status != 200:
+                return None, None
+            return _v2_message_excerpts(json.loads(body))
+        except (TimeoutError, OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError):
+            return None, None
+
+    async def compact(self) -> CompactResult:
+        if not self._ctx.tui_alive():
+            return CompactResult("vetoed", "tui-exited")
+        if self._compact_waiter is not None and not self._compact_waiter.done():
+            return CompactResult("failed", "compaction already in progress")
+
+        session_id = quote(self._ctx.harness_session_id, safe="")
+        session_path = f"/api/session/{session_id}"
+        try:
+            status, body = await asyncio.wait_for(
+                self._request("GET", session_path, None),
+                timeout=_GET_TIMEOUT_SECONDS,
+            )
+            if status != 200:
+                return CompactResult("failed", body)
+            session = _v2_response_data(json.loads(body))
+            model = _mapping(session.get("model")) if session is not None else None
+            provider = model.get("providerID") if model is not None else None
+            model_id = model.get("id") if model is not None else None
+            if (
+                not isinstance(provider, str)
+                or not provider
+                or not isinstance(model_id, str)
+                or not model_id
+            ):
+                return CompactResult("failed", "session model is unavailable")
+            if not self._ctx.tui_alive():
+                return CompactResult("vetoed", "tui-exited")
+
+            waiter = asyncio.get_running_loop().create_future()
+            self._compact_waiter = waiter
+            self._compact_expected_id = None
+            self._compacting = True
+            status, body = await asyncio.wait_for(
+                self._request("POST", f"{session_path}/compact", {}),
+                timeout=self._compact_timeout_seconds,
+            )
+            if status != 200:
+                return CompactResult("failed", body)
+            admitted = _v2_response_data(json.loads(body))
+            inbox_id = admitted.get("id") if admitted is not None else None
+            admitted_session_id = admitted.get("sessionID") if admitted is not None else None
+            if (
+                admitted is None
+                or admitted.get("type") != "compaction"
+                or not isinstance(inbox_id, str)
+                or not inbox_id
+                or admitted_session_id != self._ctx.harness_session_id
+            ):
+                return CompactResult("failed", "invalid compaction response")
+            self._compact_expected_id = inbox_id
+            self._maybe_finish_compaction()
+            await asyncio.wait_for(waiter, timeout=self._compact_timeout_seconds)
+        except TimeoutError:
+            return CompactResult("failed", "timeout")
+        except (OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError) as exc:
+            return CompactResult("failed", str(exc))
+        finally:
+            self._compacting = False
+            self._compact_expected_id = None
+            self._compact_waiter = None
+        return CompactResult("ok")
+
+
+def primary_idle_sensor(ctx: IdleSensorContext) -> IdleSensor:
     """Create the sensor hosted by the managed-primary attach launcher."""
 
-    return OpenCodeIdleSensor(ctx)
+    version = ctx.env.get("MERIDIAN_HARNESS_OPENCODE_VERSION")
+    if (version or DEFAULT_OPENCODE_VERSION) == "v1":
+        return OpenCodeIdleSensor(ctx)
+    return OpenCodeV2IdleSensor(ctx)
 
 
 def autocompact_off(env: Mapping[str, str]) -> bool:
@@ -407,6 +633,7 @@ def autocompact_off(env: Mapping[str, str]) -> bool:
 
 __all__ = [
     "OpenCodeIdleSensor",
+    "OpenCodeV2IdleSensor",
     "autocompact_off",
     "message_excerpts",
     "primary_idle_sensor",

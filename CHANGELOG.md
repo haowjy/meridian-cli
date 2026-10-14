@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Arm idle tracking for interactive OpenCode 2.x sessions from execution and
+  inbox events, and use the V2 API for message excerpts and compaction.
+
 ## [0.9.8] - 2026-10-14
 
 ### Upgrade notes
