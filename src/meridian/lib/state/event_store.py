@@ -6,12 +6,13 @@ import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, TypeVar
 
-from pydantic import BaseModel, ValidationError
+if TYPE_CHECKING:
+    from pydantic import BaseModel
 
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state.atomic import append_durable_jsonl_line
+from meridian.lib.state.jsonl import append_durable_jsonl_line, iter_jsonl
 
 T = TypeVar("T")
 
@@ -28,35 +29,13 @@ def append_event(
     exclude_none: bool = False,
 ) -> None:
     payload = event.model_dump(mode="json", exclude_none=exclude_none)
-    line = json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n"
+    line = json.dumps(payload, separators=(",", ":"), sort_keys=True)
     with lock_file(lock_path):
         append_durable_jsonl_line(data_path, line)
 
 
 def read_events(
     data_path: Path,
-    parse_event: Callable[[dict[str, Any]], T | None],
+    parse_event: Callable[[dict[str, object]], T | None],
 ) -> list[T]:
-    if not data_path.exists():
-        return []
-
-    rows: list[T] = []
-    with data_path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            stripped = line.strip()
-            if not stripped:
-                continue
-            try:
-                payload = json.loads(stripped)
-            except json.JSONDecodeError:
-                # Self-healing: ignore malformed/truncated lines.
-                continue
-            if not isinstance(payload, dict):
-                continue
-            try:
-                parsed = parse_event(cast("dict[str, Any]", payload))
-            except ValidationError:
-                continue
-            if parsed is not None:
-                rows.append(parsed)
-    return rows
+    return [row for row, _offset in iter_jsonl(data_path, parse_event) if row is not None]

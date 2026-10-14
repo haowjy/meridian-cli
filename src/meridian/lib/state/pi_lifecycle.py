@@ -2,12 +2,15 @@
 
 from pathlib import Path
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from meridian.lib.core.types import SpawnId
-from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.json_doc import mutate_model, read_model
 from meridian.lib.state.paths import pi_lifecycle_path
-from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
+from meridian.lib.state.spawn_aggregate import (
+    PublishedArtifactUnavailable,
+    published_artifact_lock,
+)
 
 
 class PiLifecycle(BaseModel):
@@ -20,17 +23,15 @@ class PiLifecycle(BaseModel):
 
 
 def read(runtime_root: Path, spawn_id: SpawnId | str) -> PiLifecycle:
-    try:
-        return PiLifecycle.model_validate_json(
-            pi_lifecycle_path(runtime_root, spawn_id).read_bytes()
-        )
-    except (OSError, ValidationError):
-        return PiLifecycle()
+    return read_model(pi_lifecycle_path(runtime_root, spawn_id), PiLifecycle) or PiLifecycle()
 
 
 def record(runtime_root: Path, spawn_id: SpawnId | str, event: PiLifecycle) -> None:
-    def update() -> None:
-        prior = read(runtime_root, spawn_id)
+    resolved_spawn_id = SpawnId(str(spawn_id))
+    path = pi_lifecycle_path(runtime_root, resolved_spawn_id)
+
+    def update(prior: PiLifecycle | None) -> tuple[PiLifecycle, None]:
+        prior = prior or PiLifecycle()
         status_rank = {"running": 0, "completed": 1, "escalated": 2, "failed": 3}
         updated = event.model_dump(exclude_none=True)
         if status_rank.get(event.cleanup_status or "", -1) < status_rank.get(
@@ -43,10 +44,15 @@ def record(runtime_root: Path, spawn_id: SpawnId | str, event: PiLifecycle) -> N
             updated["cleanup_status"] = "failed"
         if event.phase and event.phase.startswith("cleanup_"):
             updated["cleanup_phase"] = event.phase
-        value = prior.model_copy(update=updated)
-        atomic_write_text(
-            pi_lifecycle_path(runtime_root, spawn_id),
-            value.model_dump_json(exclude_none=True) + "\n",
-        )
+        return prior.model_copy(update=updated), None
 
-    mutate_published_spawn_artifact(runtime_root, SpawnId(str(spawn_id)), update)
+    try:
+        mutate_model(
+            path,
+            PiLifecycle,
+            update,
+            lock=published_artifact_lock(runtime_root, resolved_spawn_id),
+            exclude_none=True,
+        )
+    except PublishedArtifactUnavailable:
+        return

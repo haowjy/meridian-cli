@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from meridian.lib.config.settings import OpenCodeHarnessProfileConfig
+from meridian.lib.config.harness_models import OpenCodeHarnessProfileConfig
 from meridian.lib.harness.opencode_backend import (
     normalize_version_preference,
     parse_opencode_version,

@@ -2,44 +2,96 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, BeforeValidator, ConfigDict
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.constants import PRIMARY_META_FILENAME
-from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
+from meridian.lib.state.json_doc import mutate_model, read_model, write_model
+from meridian.lib.state.spawn_aggregate import (
+    PublishedArtifactUnavailable,
+    published_artifact_lock,
+)
+from meridian.lib.utils.json_shapes import is_object_sequence
 
 ActivityState = Literal["starting", "idle", "turn_active", "finalizing"]
 
 
-@dataclass(frozen=True)
-class PrimaryMetadata:
+def _positive_int_or_none(value: object) -> object:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+
+
+def _int_or_none(value: object) -> object:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _nonnegative_float_or_none(value: object) -> object:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    normalized = float(value)
+    return normalized if normalized >= 0.0 else None
+
+
+def _activity_or_none(value: object) -> object:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    return normalized if normalized in {"starting", "idle", "turn_active", "finalizing"} else None
+
+
+def _text_or_none(value: object) -> object:
+    if not isinstance(value, str):
+        return None
+    return value.strip() or None
+
+
+def _command_or_none(value: object) -> object:
+    if not is_object_sequence(value):
+        return None
+    command: list[str] = []
+    for token in value:
+        if not isinstance(token, str) or not token.strip():
+            return None
+        command.append(token.strip())
+    return tuple(command) or None
+
+
+type _PositiveInt = Annotated[int | None, BeforeValidator(_positive_int_or_none)]
+type _OptionalInt = Annotated[int | None, BeforeValidator(_int_or_none)]
+type _NonnegativeFloat = Annotated[float | None, BeforeValidator(_nonnegative_float_or_none)]
+type _OptionalActivity = Annotated[ActivityState | None, BeforeValidator(_activity_or_none)]
+type _OptionalText = Annotated[str | None, BeforeValidator(_text_or_none)]
+type _OptionalCommand = Annotated[tuple[str, ...] | None, BeforeValidator(_command_or_none)]
+
+
+class PrimaryMetadata(BaseModel):
     """Canonical schema for primary_meta.json."""
 
-    managed_backend: bool = True
-    launcher_pid: int | None = None
-    launcher_birth_epoch: float | None = None
-    backend_pid: int | None = None
-    backend_birth_epoch: float | None = None
-    tui_pid: int | None = None
-    tui_birth_epoch: float | None = None
-    backend_port: int | None = None
-    activity: ActivityState | None = None
-    harness_session_id: str | None = None
-    command: tuple[str, ...] | None = None
-    launch_cwd: str | None = None
-    started_at_epoch: float | None = None
-    ended_at_epoch: float | None = None
-    exit_code: int | None = None
-    runtime_kind: str | None = None
-    runtime_path: str | None = None
-    runtime_version: str | None = None
-    session_dir: str | None = None
-    auth_policy: str | None = None
+    model_config = ConfigDict(frozen=True, strict=True, extra="ignore")
 
+    managed_backend: bool
+    launcher_pid: _PositiveInt = None
+    launcher_birth_epoch: _NonnegativeFloat = None
+    backend_pid: _PositiveInt = None
+    backend_birth_epoch: _NonnegativeFloat = None
+    tui_pid: _PositiveInt = None
+    tui_birth_epoch: _NonnegativeFloat = None
+    backend_port: _PositiveInt = None
+    activity: _OptionalActivity = None
+    harness_session_id: _OptionalText = None
+    command: _OptionalCommand = None
+    launch_cwd: _OptionalText = None
+    started_at_epoch: _NonnegativeFloat = None
+    ended_at_epoch: _NonnegativeFloat = None
+    exit_code: _OptionalInt = None
+    runtime_kind: _OptionalText = None
+    runtime_path: _OptionalText = None
+    runtime_version: _OptionalText = None
+    session_dir: _OptionalText = None
+    auth_policy: _OptionalText = None
 
 @dataclass(frozen=True)
 class PrimarySurfaceMetadata:
@@ -84,98 +136,12 @@ def primary_meta_path(
         raise ValueError("runtime_root and spawn_id are required when spawn_dir is not provided")
     return runtime_root / "spawns" / spawn_id / PRIMARY_META_FILENAME
 
-def _coerce_positive_int(value: object) -> int | None:
-    if not isinstance(value, int):
-        return None
-    if value <= 0:
-        return None
-    return value
-
-def _coerce_int(value: object) -> int | None:
-    if not isinstance(value, int):
-        return None
-    return value
-
-def _coerce_nonnegative_float(value: object) -> float | None:
-    if not isinstance(value, (int, float)):
-        return None
-    normalized = float(value)
-    if normalized < 0.0:
-        return None
-    return normalized
-
-def _coerce_activity_state(value: object) -> ActivityState | None:
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip().lower()
-    if normalized not in {"starting", "idle", "turn_active", "finalizing"}:
-        return None
-    return cast("ActivityState", normalized)
-
-
-def _coerce_optional_text(value: object) -> str | None:
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip()
-    if not normalized:
-        return None
-    return normalized
-
-def _coerce_command(value: object) -> tuple[str, ...] | None:
-    if not isinstance(value, list):
-        return None
-    raw_tokens = cast("list[object]", value)
-    command: list[str] = []
-    for token in raw_tokens:
-        if not isinstance(token, str):
-            return None
-        normalized = token.strip()
-        if not normalized:
-            return None
-        command.append(normalized)
-    if not command:
-        return None
-    return tuple(command)
-
 def read_primary_metadata(runtime_root: Path, spawn_id: str) -> PrimaryMetadata | None:
     """Tolerant read with crash-only semantics. Returns None for missing/corrupt file."""
 
-    metadata_path = primary_meta_path(runtime_root=runtime_root, spawn_id=spawn_id)
-    if not metadata_path.is_file():
-        return None
-    try:
-        payload_obj = json.loads(metadata_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload_obj, dict):
-        return None
-
-    payload = cast("dict[str, object]", payload_obj)
-    managed_backend = payload.get("managed_backend")
-    if not isinstance(managed_backend, bool):
-        return None
-
-    return PrimaryMetadata(
-        managed_backend=managed_backend,
-        launcher_pid=_coerce_positive_int(payload.get("launcher_pid")),
-        launcher_birth_epoch=_coerce_nonnegative_float(payload.get("launcher_birth_epoch")),
-        backend_pid=_coerce_positive_int(payload.get("backend_pid")),
-        backend_birth_epoch=_coerce_nonnegative_float(payload.get("backend_birth_epoch")),
-        tui_pid=_coerce_positive_int(payload.get("tui_pid")),
-        tui_birth_epoch=_coerce_nonnegative_float(payload.get("tui_birth_epoch")),
-        backend_port=_coerce_positive_int(payload.get("backend_port")),
-        activity=_coerce_activity_state(payload.get("activity")),
-        harness_session_id=_coerce_optional_text(payload.get("harness_session_id")),
-        command=_coerce_command(payload.get("command")),
-        launch_cwd=_coerce_optional_text(payload.get("launch_cwd")),
-        started_at_epoch=_coerce_nonnegative_float(payload.get("started_at_epoch")),
-        ended_at_epoch=_coerce_nonnegative_float(payload.get("ended_at_epoch")),
-        exit_code=_coerce_int(payload.get("exit_code")),
-        runtime_kind=_coerce_optional_text(payload.get("runtime_kind")),
-        runtime_path=_coerce_optional_text(payload.get("runtime_path")),
-        runtime_version=_coerce_optional_text(payload.get("runtime_version")),
-        session_dir=_coerce_optional_text(payload.get("session_dir")),
-        auth_policy=_coerce_optional_text(payload.get("auth_policy")),
+    return read_model(
+        primary_meta_path(runtime_root=runtime_root, spawn_id=spawn_id),
+        PrimaryMetadata,
     )
 
 def write_primary_metadata(
@@ -190,38 +156,20 @@ def write_primary_metadata(
     if (runtime_root is None) is not (spawn_id is None):
         raise ValueError("runtime_root and spawn_id must be provided together")
 
-    payload = {
-        "managed_backend": metadata.managed_backend,
-        "launcher_pid": metadata.launcher_pid,
-        "launcher_birth_epoch": metadata.launcher_birth_epoch,
-        "backend_pid": metadata.backend_pid,
-        "backend_birth_epoch": metadata.backend_birth_epoch,
-        "tui_pid": metadata.tui_pid,
-        "tui_birth_epoch": metadata.tui_birth_epoch,
-        "backend_port": metadata.backend_port,
-        "activity": metadata.activity,
-        "harness_session_id": metadata.harness_session_id,
-        "command": list(metadata.command) if metadata.command is not None else None,
-        "launch_cwd": metadata.launch_cwd,
-        "started_at_epoch": metadata.started_at_epoch,
-        "ended_at_epoch": metadata.ended_at_epoch,
-        "exit_code": metadata.exit_code,
-        "runtime_kind": metadata.runtime_kind,
-        "runtime_path": metadata.runtime_path,
-        "runtime_version": metadata.runtime_version,
-        "session_dir": metadata.session_dir,
-        "auth_policy": metadata.auth_policy,
-    }
     path = primary_meta_path(spawn_dir=spawn_dir)
-    content = json.dumps(payload, separators=(",", ":")) + "\n"
     if runtime_root is None or spawn_id is None:
-        atomic_write_text(path, content)
+        write_model(path, metadata)
         return True
-    return mutate_published_spawn_artifact(
-        runtime_root,
-        SpawnId(spawn_id),
-        lambda: atomic_write_text(path, content),
-    )
+    try:
+        mutate_model(
+            path,
+            PrimaryMetadata,
+            lambda _current: (metadata, None),
+            lock=published_artifact_lock(runtime_root, SpawnId(spawn_id)),
+        )
+    except PublishedArtifactUnavailable:
+        return False
+    return True
 
 def read_primary_surface_metadata(runtime_root: Path, spawn_id: str) -> PrimarySurfaceMetadata:
     """Read projection for CLI surfaces. Returns defaults if file missing."""

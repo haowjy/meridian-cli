@@ -6,12 +6,14 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.config.dynamic_sections import DynamicConfigSections
+from meridian.lib.config.loader import ConfigValueSource, load_config_with_sources
+from meridian.lib.config.models import MeridianConfig
 from meridian.lib.config.project_config_state import (
     ProjectConfigState,
     resolve_project_config_state,
 )
 from meridian.lib.config.project_root import resolve_user_config_path
-from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.config.workspace import (
     WorkspaceFinding,
     WorkspaceSnapshot,
@@ -108,6 +110,8 @@ class ConfigSurface(BaseModel):
     project_config: ProjectConfigState
     user_config_path: Path | None
     resolved_config: MeridianConfig
+    resolved_dynamic_config: DynamicConfigSections
+    config_sources: tuple[ConfigValueSource, ...]
     workspace: ConfigSurfaceWorkspace
     workspace_findings: tuple[WorkspaceFinding, ...] = ()
     warning: str | None = None
@@ -132,6 +136,11 @@ def build_config_surface(project_root: Path | RuntimeAuthoritySnapshot) -> Confi
         config_paths=project_config_paths,
     )
 
+    loaded = load_config_with_sources(
+        resolved_root,
+        authority=authority,
+        user_config=user_config_path,
+    )
     return ConfigSurface(
         authority=authority,
         project_root=resolved_root,
@@ -140,12 +149,9 @@ def build_config_surface(project_root: Path | RuntimeAuthoritySnapshot) -> Confi
             project_paths=project_config_paths,
         ),
         user_config_path=user_config_path,
-        resolved_config=load_config(
-            resolved_root,
-            authority=authority,
-            user_config=user_config_path,
-            resolve_models=False,
-        ),
+        resolved_config=loaded.config,
+        resolved_dynamic_config=loaded.dynamic,
+        config_sources=loaded.sources,
         workspace=ConfigSurfaceWorkspace.from_snapshot(workspace_snapshot),
         workspace_findings=workspace_snapshot.findings,
         warning=warning,

@@ -11,7 +11,7 @@ from typing import cast
 
 import structlog
 
-from meridian.lib.config.settings import MeridianConfig
+from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import StreamEvent

@@ -6,8 +6,8 @@ import json
 import os
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TextIO
 
+from meridian.lib.state.jsonl import append_durable_jsonl_lines
 from meridian.lib.telemetry.events import TelemetryEnvelope
 
 _DEFAULT_MAX_SEGMENT_BYTES = 10_000_000
@@ -29,9 +29,8 @@ class LocalJSONLSink:
         self._pid = os.getpid()
         self._seq = self._next_sequence()
         self._max_segment_bytes = max_segment_bytes
-        self._file: TextIO | None = None
         self._closed = False
-        self._open_segment()
+        self._create_segment()
 
     @property
     def active_path(self) -> Path:
@@ -39,30 +38,29 @@ class LocalJSONLSink:
         return self.telemetry_dir / (f"{self._logical_owner}.{self._pid}-{self._seq:04d}.jsonl")
 
     def write_batch(self, events: Sequence[TelemetryEnvelope]) -> None:
-        """Append compact JSON lines to the active segment."""
+        """Append compact JSON lines to the active segment.
+
+        The batch is the durability unit: one tail repair, one write and one fsync
+        through ``append_durable_jsonl_lines``. Do not append or fsync per event.
+        """
         if self._closed:
             return
-        file = self._ensure_open()
+        lines: list[str] = []
         for event in events:
             try:
-                line = json.dumps(event.to_dict(), separators=(",", ":"))
+                line = json.dumps(event.to_dict(), separators=(",", ":")) + "\n"
             except (TypeError, ValueError):
                 continue
-            file.write(line)
-            file.write("\n")
-        file.flush()
+            lines.append(line)
+        append_durable_jsonl_lines(self.active_path, lines)
         if self.active_path.stat().st_size > self._max_segment_bytes:
             self._rotate()
 
     def close(self) -> None:
-        """Flush and close the active segment. Idempotent."""
+        """Close the sink. Idempotent."""
         if self._closed:
             return
         self._closed = True
-        if self._file is not None:
-            self._file.flush()
-            self._file.close()
-            self._file = None
 
     def _next_sequence(self) -> int:
         seqs: list[int] = []
@@ -74,19 +72,9 @@ class LocalJSONLSink:
                 continue
         return max(seqs, default=0) + 1
 
-    def _open_segment(self) -> None:
-        self._file = self.active_path.open("a", encoding="utf-8")
-
-    def _ensure_open(self) -> TextIO:
-        if self._file is None:
-            self._open_segment()
-        assert self._file is not None
-        return self._file
+    def _create_segment(self) -> None:
+        self.active_path.touch()
 
     def _rotate(self) -> None:
-        if self._file is not None:
-            self._file.flush()
-            self._file.close()
-            self._file = None
         self._seq += 1
-        self._open_segment()
+        self._create_segment()

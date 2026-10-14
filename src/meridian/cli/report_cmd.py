@@ -7,6 +7,7 @@ from typing import Annotated, Any
 from cyclopts import Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
+from meridian.cli.invocation import Emitter, emit
 from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.ops.report import (
     ReportSearchInput,
@@ -14,8 +15,6 @@ from meridian.lib.ops.report import (
     report_search_sync,
     report_show_sync,
 )
-
-Emitter = Callable[[Any], None]
 
 
 def _report_show(
@@ -60,12 +59,12 @@ def _report_search(
     )
 
 
-def register_report_commands(app: Any, emit: Emitter) -> tuple[set[str], dict[str, str]]:
+def register_report_commands(app: Any) -> None:
     handlers: dict[str, Callable[[], Callable[..., None]]] = {
         "meridian.report.show": lambda: partial(_report_show, emit),
         "meridian.report.search": lambda: partial(_report_search, emit),
     }
-    return register_extension_cli_group(
+    register_extension_cli_group(
         app,
         registry=get_first_party_registry(),
         group="report",
@@ -74,5 +73,4 @@ def register_report_commands(app: Any, emit: Emitter) -> tuple[set[str], dict[st
             "meridian.report.show": ("Example:\n\n  meridian spawn report show p107\n"),
             "meridian.report.search": ('Example:\n\n  meridian spawn report search "auth bug"\n'),
         },
-        emit=emit,
     )

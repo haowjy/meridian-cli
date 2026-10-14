@@ -3,7 +3,7 @@
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
 from cyclopts import App, Parameter
 
@@ -12,6 +12,7 @@ from meridian.cli.hooks_authority import (
     manual_hook_authority_scope,
     should_suppress_manual_hook_authority,
 )
+from meridian.cli.invocation import Emitter, emit
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.hooks.types import HookEventName
@@ -23,8 +24,6 @@ from meridian.lib.ops.hooks import (
     hooks_list_sync,
     hooks_run_sync,
 )
-
-Emitter = Callable[[Any], None]
 
 
 def _resolved_project_root() -> str:
@@ -82,7 +81,7 @@ def _hooks_run(
         )
 
 
-def register_hooks_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str, str]]:
+def register_hooks_commands(app: App) -> None:
     """Register hooks CLI commands using registry metadata as source of truth."""
 
     handlers: dict[str, Callable[[], Callable[..., None]]] = {
@@ -90,7 +89,7 @@ def register_hooks_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
         "meridian.hooks.check": lambda: partial(_hooks_check, emit),
         "meridian.hooks.run": lambda: partial(_hooks_run, emit),
     }
-    return register_extension_cli_group(
+    register_extension_cli_group(
         app,
         registry=get_first_party_registry(),
         group="hooks",
@@ -102,6 +101,5 @@ def register_hooks_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
                 "  meridian hooks run git-autosync --event spawn.finalized\n"
             )
         },
-        emit=emit,
         default_handler=partial(_hooks_list, emit),
     )

@@ -19,15 +19,15 @@ from meridian.lib.config.context_config import (
     ContextConfig,
     ContextSourceType,
 )
-from meridian.lib.config.project_paths import ProjectConfigPaths
-from meridian.lib.config.settings import (
-    MeridianConfig,
-    PiHarnessProfileConfig,
+from meridian.lib.config.harness_models import PiHarnessProfileConfig
+from meridian.lib.config.loader import (
     load_config,
     resolve_allow_builtin_agents_for_launch,
     resolve_opencode_version_for_launch,
     resolve_pi_harness_profile_for_launch,
 )
+from meridian.lib.config.models import MeridianConfig
+from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.workspace import get_projectable_roots
 from meridian.lib.context.resolver import resolve_context_paths
 from meridian.lib.core.child_env import validate_child_env_keys

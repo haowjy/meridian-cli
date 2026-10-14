@@ -604,10 +604,11 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
         inject_result = await inject_task
         await interrupt_task
         assert inject_result.success is True
-        assert inject_result.inbound_seq == 0
 
-        control_actions_path = runtime_root / "spawns" / str(spawn_id) / "control_actions.jsonl"
+        spawn_dir = runtime_root / "spawns" / str(spawn_id)
+        control_actions_path = spawn_dir / "control_actions.jsonl"
         assert control_actions_path.exists()
+        assert not (spawn_dir / "inbound.jsonl").exists()
         records = [
             cast("dict[str, object]", json.loads(line))
             for line in control_actions_path.read_text(encoding="utf-8").splitlines()
@@ -631,6 +632,12 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
         )
         recorded_actions = {cast("str", record["action"]) for record in records}
         assert recorded_actions == {"inject", "interrupt"}
+        inject_requested = next(
+            record
+            for record in records
+            if record["action"] == "inject" and record["status"] == "requested"
+        )
+        assert inject_result.inbound_seq == inject_requested["submission_seq"] == 0
         assert inject_ack_index is not None
         assert interrupt_requested_index is not None
         assert inject_ack_index < interrupt_requested_index

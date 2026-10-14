@@ -6,6 +6,8 @@ import os
 import sys
 from pathlib import Path
 
+from meridian.cli.invocation import get_global_options
+
 # Maps bare alias names to the env-var that holds their resolved directory.
 _CONTEXT_ALIASES: dict[str, str] = {
     "kb": "MERIDIAN_CONTEXT_KB_DIR",
@@ -16,8 +18,6 @@ _CONTEXT_ALIASES: dict[str, str] = {
 
 def resolve_fmt(fmt: str) -> str:
     """Return 'json' if the global --json flag is active, else the per-command fmt."""
-    from meridian.cli.main import get_global_options
-
     return "json" if get_global_options().output.format == "json" else fmt
 
 

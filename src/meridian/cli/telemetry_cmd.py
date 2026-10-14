@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any
 
 from cyclopts import App, Parameter
 
+from meridian.cli.invocation import Emitter, emit
 from meridian.cli.utils import require_established_project_root
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state.user_paths import get_user_home
@@ -21,8 +21,6 @@ from meridian.lib.telemetry.status import (
     format_status_dict,
     status_to_dict,
 )
-
-Emitter = Callable[[Any], None]
 
 
 class _TelemetryStatusResult(dict[str, Any]):
@@ -202,7 +200,7 @@ def _telemetry_status(
     emit(_TelemetryStatusResult(status_to_dict(status)))
 
 
-def register_telemetry_commands(app: App, emit: Emitter) -> None:
+def register_telemetry_commands(app: App) -> None:
     """Register telemetry CLI commands."""
     app.command(_telemetry_tail, name="tail")
     app.command(_telemetry_query, name="query")

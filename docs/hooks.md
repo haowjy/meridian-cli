@@ -45,7 +45,7 @@ A single hook row can register for multiple events. When a builtin supplies defa
 
 ## Configuring Hooks
 
-Hooks live in any Meridian config file. Precedence is: `builtin < context < user < project < local`.
+Hooks live in any Meridian config file. Precedence is: `user < project < local`.
 
 ```toml
 # meridian.toml (project) or ~/.meridian/config.toml (user)
@@ -98,22 +98,6 @@ event   = "spawn.finalized"
 ```
 
 Inline commands are fine when they remain short and readable.
-
-### `repo` → `remote` Migration
-
-`repo` is accepted as a deprecated alias for `remote`. Meridian emits a warning when it sees `repo`. Update your config:
-
-```toml
-# Before (deprecated)
-[[hooks]]
-builtin = "git-autosync"
-repo = "git@github.com:team/docs.git"
-
-# After
-[[hooks]]
-builtin = "git-autosync"
-remote = "git@github.com:team/docs.git"
-```
 
 ## Builtin: `git-autosync`
 

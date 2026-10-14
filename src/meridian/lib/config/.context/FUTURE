@@ -1,35 +1,18 @@
-- `../idle/service.py` (`effective`) and `settings.py`: `effective()` re-derives
-  catalog metadata by hand: f-string env names (`MERIDIAN_HARNESS_IDLE_{FIELD}_{H}`,
-  `MERIDIAN_IDLE_{FIELD}`) that `config_field(env_vars=…)` already declares, a
-  parallel `_FIELD_KINDS` table of `value_kind`, and `getattr(config.harness, h)`
-  + `isinstance(BaseModel)` to find the harness model. It also reads `self.env`
-  after `load_config` has already applied process env through
-  `layered_env_source`, so one value has two env readers. Keep the level-first
-  rule (that is the designed part) but drive it from `OPTION_CATALOG` as
-  `lib/config/idle.py::resolve_idle_policy(config, harness, env)`, and delete
-  `_FIELD_KINDS`, `_HARNESS_FIELDS` and the six `cast("int", …)` calls in
-  `resolve_policy` (thermo F6).
-- `settings.py`: `IdleConfig`, `NotifyConfig` and the per-harness idle factory
-  (about 340 lines; `create_model` plus four `TYPE_CHECKING` aliases) would sit
-  better in `lib/config/idle.py` and `lib/config/notify.py`, imported by
-  `settings.py` the way the catalog already pulls annotated models. Keep the
-  factory: the unique canonical keys and env names per harness are its point
-  (thermo F6).
+- `models.py`: `IdleConfig` and `NotifyConfig` could move into focused modules
+  if either concern grows. Harness profiles and their idle factory already live
+  in `harness_models.py`; keep the factory because its unique canonical keys and
+  environment names are load-bearing (thermo F6).
 - Config-framework audit (2026-10-13): 17 non-dictionary leaf fields on
   `MeridianConfig` lack catalog metadata. Migrate the existing TOML settings:
-  `harness.<id>.wait_yield_seconds`, `harness.<id>.allow_builtin_agents`,
-  `harness.pi.model`, Pi extension fields (`load_all_pi_extensions`,
+  `harness.<id>.allow_builtin_agents`, `harness.pi.model`, Pi extension fields (`load_all_pi_extensions`,
   `extra_extension_paths`, `background_tasks.enabled`, `spawn_watch.enabled`,
   `disable_managed_bash`), `primary.timeout`, `work.default_worktree`, and
-  `work.worktree_base`. They load through hand-written normalizers but
+  `work.worktree_base`. They validate through their models but
   `OPTION_CATALOG.resolve_key()` cannot find them, so generic config get/set/reset
-  is incomplete. Pi extension keys are documented as TOML-only in
-  `docs/configuration.md`. Declare metadata, route scalar normalization
-  through the catalog, and retain intentional validation/visibility rules.
-- `settings.py:_env_alias_overrides` maintains `hidden_env_specs` for three
-  harness wait-yield variables outside the catalog. Move those names into the
-  per-harness descriptors rather than preserving a second env schema.
-- `settings.py:resolve_pi_harness_profile` rereads three Pi env toggles after a
+  is incomplete and they have no env var. Pi extension keys are documented as
+  TOML-only in `docs/configuration.md`. Declare `config_field()` metadata and
+  retain intentional validation/visibility rules.
+- `loader.py:resolve_pi_harness_profile` rereads three Pi env toggles after a
   launch config snapshot has been selected. `_truthy_env_value` also accepts
   arbitrary nonempty strings, unlike the shared boolean codec. Resolve these
   inputs when loading config and make captured launch snapshots authoritative.

@@ -13,7 +13,7 @@ from typing import cast
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import ConnectionNotReady
-from meridian.lib.state.atomic import append_durable_jsonl_line
+from meridian.lib.state.jsonl import append_durable_jsonl_line
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
 
@@ -41,7 +41,7 @@ class ControlActionResult:
 
     success: bool
     action_id: str
-    value: object | None = None
+    submission_seq: int
     error: str | None = None
 
 
@@ -134,7 +134,12 @@ class ControlActionCoordinator:
                     attempt=0,
                     error=error_text,
                 )
-                return ControlActionResult(success=False, action_id=action_id, error=error_text)
+                return ControlActionResult(
+                    success=False,
+                    action_id=action_id,
+                    submission_seq=submission_seq,
+                    error=error_text,
+                )
 
             attempts = self._resolved_attempts(max_attempts)
             last_error: str | None = None
@@ -150,7 +155,7 @@ class ControlActionCoordinator:
                     attempt=attempt,
                 )
                 try:
-                    send_result = await send()
+                    await send()
                 except Exception as exc:
                     last_error = str(exc)
                     retryable = attempt < attempts and self._is_retryable(exc)
@@ -171,6 +176,7 @@ class ControlActionCoordinator:
                     return ControlActionResult(
                         success=False,
                         action_id=action_id,
+                        submission_seq=submission_seq,
                         error=last_error,
                     )
 
@@ -187,10 +193,15 @@ class ControlActionCoordinator:
                 return ControlActionResult(
                     success=True,
                     action_id=action_id,
-                    value=send_result,
+                    submission_seq=submission_seq,
                 )
 
-            return ControlActionResult(success=False, action_id=action_id, error=last_error)
+            return ControlActionResult(
+                success=False,
+                action_id=action_id,
+                submission_seq=submission_seq,
+                error=last_error,
+            )
 
     def _reserve_submission_seq(self) -> int:
         submission_seq = self._submission_seq
@@ -240,7 +251,7 @@ class ControlActionCoordinator:
         if error is not None:
             record["error"] = error
         self._transition_seq += 1
-        line = json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n"
+        line = json.dumps(record, separators=(",", ":"), sort_keys=True)
         await asyncio.to_thread(
             mutate_published_spawn_artifact,
             self._runtime_root,

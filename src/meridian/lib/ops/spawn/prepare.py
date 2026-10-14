@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import structlog
 
-from meridian.lib.config.settings import load_config
+from meridian.lib.config.loader import load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.diagnostics import capture_library_diagnostics

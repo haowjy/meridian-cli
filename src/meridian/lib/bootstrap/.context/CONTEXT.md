@@ -14,6 +14,10 @@ to silently create filesystem state (UUIDs, directories, `.gitignore` entries).
 `resolve_*` helpers. `prepare_for_project_write()` and
 `prepare_for_runtime_write()` call `ensure_*` helpers.
 
+Every cwd is eligible as a project root. Write preparation creates
+`meridian.toml` and its project ID on first use; read-only preparation leaves a
+bare directory unchanged.
+
 `ensure_runtime_dirs()` also performs crash recovery for spawn publication: under
 `spawns_flock`, it removes only abandoned entries beneath `spawns/.staging/`.
 Runtime-read preparation does not mutate or collect this state.
@@ -29,7 +33,7 @@ Pick based on the `StartupClass` of the command (from `cli/startup/policy.py`):
 | `READ_RUNTIME` | `prepare_for_runtime_read()` |
 | `WRITE_PROJECT` | `prepare_for_project_write()` |
 | `WRITE_RUNTIME`, `SERVICE_RUNTIME` | `prepare_for_runtime_write()` |
-| `PRIMARY_LAUNCH` | `prepare_for_runtime_write()`; inert `bootstrap_plan.auto_init_cwd` flag |
+| `PRIMARY_LAUNCH` | `prepare_for_runtime_write()` |
 | `SERVICE_ROOTLESS` | None (or minimal manual setup) |
 
 ## Context Hierarchy

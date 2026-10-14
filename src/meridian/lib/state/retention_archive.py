@@ -24,10 +24,11 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from meridian.lib.platform.atomic import fsync_directory, is_atomic_temp_name
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state.atomic import append_durable_jsonl_line, atomic_write_text
+from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.history_codec import TranscriptHeader
+from meridian.lib.state.jsonl import append_durable_jsonl_line, iter_jsonl
 from meridian.lib.state.native_snapshot import (
     NATIVE_SNAPSHOT_FILENAME,
     SnapshotHeader,
@@ -569,22 +570,15 @@ def append_receipt(root: Path, receipt: ArchiveReceipt) -> bool:
                 return False
         changes.mark(source)
         append_durable_jsonl_line(
-            root / "history-archives/catalog.jsonl", receipt.model_dump_json() + "\n"
+            root / "history-archives/catalog.jsonl", receipt.model_dump_json()
         )
         return True
 
 
 def read_receipts(root: Path) -> tuple[ArchiveReceipt, ...]:
     path = root / "history-archives/catalog.jsonl"
-    if not path.exists():
-        return ()
-    receipts: list[ArchiveReceipt] = []
-    with path.open("rb") as handle:
-        for line in handle:
-            if not line.endswith(b"\n"):
-                break
-            receipts.append(ArchiveReceipt.model_validate_json(line))
-    return tuple(receipts)
+    rows = iter_jsonl(path, ArchiveReceipt.model_validate, on_malformed="raise")
+    return tuple(receipt for receipt, _offset in rows if receipt is not None)
 
 
 def catalog_heads(receipts: tuple[ArchiveReceipt, ...]) -> dict[str, str]:

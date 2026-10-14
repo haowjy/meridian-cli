@@ -6,6 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from meridian.lib.hooks.types import HookEventName
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -15,7 +17,7 @@ class BuiltinHookMeta:
     """Metadata for a builtin hook."""
 
     name: str
-    default_events: tuple[str, ...]
+    default_events: tuple[HookEventName, ...]
     interval: str | None
     required_options: tuple[str, ...]
     validate: Callable[[Mapping[str, object]], None] | None = None
@@ -58,7 +60,7 @@ def get_builtin_meta(name: str) -> BuiltinHookMeta | None:
     return BUILTIN_HOOK_REGISTRY.get(name)
 
 
-def get_default_events(name: str) -> tuple[str, ...]:
+def get_default_events(name: str) -> tuple[HookEventName, ...]:
     """Get default events for a builtin hook."""
 
     meta = get_builtin_meta(name)

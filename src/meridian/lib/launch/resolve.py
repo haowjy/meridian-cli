@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.catalog.agent import AgentProfile, load_agent_profile
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.catalog.skill import SkillRegistry
-from meridian.lib.config.settings import MeridianConfig
+from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import HarnessRegistry

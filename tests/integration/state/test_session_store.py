@@ -383,14 +383,12 @@ def test_cleanup_cannot_delete_concurrently_restarted_session(
     try:
         assert cleanup.cleaned_ids == (chat_id,)
         assert session_store._SESSION_LOCK_HANDLES.get(registry_key) is restarted[0]
-        lease_exists, lease_generation, _owner_pid, owner_birth = (
-            session_store._read_session_lease_data(
-                session_store.RuntimePaths.from_root_dir(runtime_root), chat_id
-            )
+        lease = session_store._read_session_lease_data(
+            session_store.RuntimePaths.from_root_dir(runtime_root), chat_id
         )
-        assert lease_exists
-        assert lease_generation == restarted[0].session_instance_id
-        assert owner_birth is not None
+        assert lease is not None
+        assert lease.session_instance_id == restarted[0].session_instance_id
+        assert lease.owner_created_at_epoch is not None
     finally:
         session_store._SESSION_LOCK_HANDLES.pop(registry_key, None)
         session_store.release_file_lock(restarted[0].session)

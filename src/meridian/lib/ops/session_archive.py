@@ -8,7 +8,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from meridian.lib.config.settings import HistoryArchiveConfig, load_config
+from meridian.lib.config.history_models import HistoryArchiveConfig
+from meridian.lib.config.loader import load_config
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
 from meridian.lib.ops.runner_history_prune import (

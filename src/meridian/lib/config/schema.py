@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import tomllib
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
 
 _OUTPUT_VERBOSITY_PRESETS = frozenset({"quiet", "normal", "verbose", "debug"})
 
@@ -53,6 +56,7 @@ class DynamicSectionDescriptor:
 
     section_key: str
     merge_kind: DynamicMergeKind
+    model: type[BaseModel] | None
     scaffold_lines: tuple[str, ...] = ()
 
 
@@ -78,7 +82,10 @@ def config_field(
 def parse_toml_scalar(*, value_kind: ValueKind, raw_value: object, source: str) -> object:
     if value_kind == "bool":
         if not isinstance(raw_value, bool):
-            raise ValueError(f"Invalid value for {source}: expected bool")
+            raise ValueError(
+                f"Invalid value for '{source}': expected bool, got "
+                f"{type(raw_value).__name__} ({raw_value!r})."
+            )
         return raw_value
     if value_kind == "int":
         if isinstance(raw_value, bool) or not isinstance(raw_value, int):

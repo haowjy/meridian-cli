@@ -12,22 +12,29 @@ into the main spawn projection in a future phase.
 from __future__ import annotations
 
 import dataclasses
-import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import NotRequired, cast
+from typing import Annotated, NotRequired
 
-from pydantic import ConfigDict, TypeAdapter, ValidationError, with_config
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    TypeAdapter,
+    ValidationError,
+    with_config,
+)
 from typing_extensions import TypedDict
 
 from meridian.lib.core.spawn_lifecycle import is_terminal_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
-from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges
+from meridian.lib.state.json_doc import mutate_model, read_model
 from meridian.lib.state.spawn.repository import read_state, spawn_lock_path
+from meridian.lib.utils.json_shapes import json_object, tuple_or_empty
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +43,16 @@ _CLEANUP_CLAIM_FILENAME = "reaper_cleanup_claim.json"
 _FIRST_WRITER_WAIT_SECONDS = 2.0
 
 
-class ScopeProjection(TypedDict):
-    scopes: list[object]
-    released: list[object]
+type _TolerantTuple = Annotated[tuple[object, ...], BeforeValidator(tuple_or_empty)]
+
+
+class ScopeProjection(BaseModel):
+    """Versionless process-scope sidecar document."""
+
+    model_config = ConfigDict(frozen=True, strict=True, extra="ignore")
+
+    scopes: _TolerantTuple = ()
+    released: _TolerantTuple = ()
 
 
 @with_config(ConfigDict(strict=True, extra="forbid"))
@@ -77,30 +91,9 @@ def _sidecar_path(runtime_root: Path, spawn_id: SpawnId) -> Path:
     return runtime_root / "spawns" / str(spawn_id) / _SIDECAR_FILENAME
 
 
-def _default_payload() -> ScopeProjection:
-    return {"scopes": [], "released": []}
-
-
 def _read_raw(path: Path) -> ScopeProjection:
     """Read sidecar JSON; return default payload on any error."""
-    try:
-        text = path.read_text(encoding="utf-8")
-        parsed: object = json.loads(text)
-        if not isinstance(parsed, dict):
-            return _default_payload()
-        raw = cast("dict[str, object]", parsed)
-        # Ensure expected keys exist with correct types
-        if not isinstance(raw.get("scopes"), list):
-            raw["scopes"] = []
-        if not isinstance(raw.get("released"), list):
-            raw["released"] = []
-        return cast("ScopeProjection", raw)
-    except Exception:
-        return _default_payload()
-
-
-def _snapshot_to_dict(snapshot: ProcessScopeSnapshot) -> dict[str, object]:
-    return dataclasses.asdict(snapshot)
+    return read_model(path, ScopeProjection) or ScopeProjection()
 
 
 def scope_projection_lock_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
@@ -115,10 +108,16 @@ def _mutate_scope_projection(
 ) -> ScopeProjection:
     """Apply one sidecar RMW under its stable per-spawn lock."""
     path = _sidecar_path(runtime_root, spawn_id)
-    with lock_file(scope_projection_lock_path(runtime_root, spawn_id), reentrant=False):
-        updated = mutator(_read_raw(path))
-        atomic_write_text(path, json.dumps(updated, separators=(",", ":")))
-        return updated
+    updated, _ = mutate_model(
+        path,
+        ScopeProjection,
+        lambda current: (mutator(current or ScopeProjection()), None),
+        lock=lock_file(
+            scope_projection_lock_path(runtime_root, spawn_id),
+            reentrant=False,
+        ),
+    )
+    return updated or ScopeProjection()
 
 
 def scope_snapshot_from_dict(data: object) -> ProcessScopeSnapshot | None:
@@ -131,7 +130,7 @@ def scope_snapshot_from_dict(data: object) -> ProcessScopeSnapshot | None:
         return None
 
 
-def parse_scope_entries(entries: list[object]) -> list[ProcessScopeSnapshot]:
+def parse_scope_entries(entries: Iterable[object]) -> list[ProcessScopeSnapshot]:
     """Deserialize the valid process scopes in one persisted entry list."""
     scopes: list[ProcessScopeSnapshot] = []
     for entry in entries:
@@ -180,22 +179,21 @@ def record_scope(
             raise ValueError(f"Refusing process-scope registration after cleanup began: {spawn_id}")
 
         def upsert(payload: ScopeProjection) -> ScopeProjection:
-            snapshot_dict = _snapshot_to_dict(snapshot)
+            snapshot_dict = dataclasses.asdict(snapshot)
             scopes: list[object] = []
             replaced = False
-            for entry in payload["scopes"]:
-                existing = cast("dict[str, object]", entry) if isinstance(entry, dict) else None
+            for entry in payload.scopes:
+                existing = json_object(entry)
                 existing_release_id = existing.get("release_id") if existing is not None else None
                 if existing_release_id == snapshot.release_id:
                     if not replaced:
                         scopes.append(snapshot_dict)
                         replaced = True
                     continue
-                scopes.append(cast("object", entry))
+                scopes.append(entry)
             if not replaced:
                 scopes.append(snapshot_dict)
-            payload["scopes"] = scopes
-            return payload
+            return payload.model_copy(update={"scopes": tuple(scopes)})
 
         _mutate_scope_projection(runtime_root, spawn_id, upsert)
 
@@ -213,9 +211,9 @@ def mark_scope_released(
     """
 
     def mark_released(payload: ScopeProjection) -> ScopeProjection:
-        if release_id not in payload["released"]:
-            payload["released"].append(release_id)
-        return payload
+        if release_id in payload.released:
+            return payload
+        return payload.model_copy(update={"released": (*payload.released, release_id)})
 
     spawns_dir = runtime_root / "spawns"
     # Global order when both locks are needed: spawn state, then scope projection.
@@ -257,8 +255,8 @@ def read_scope_projection(
     except TimeoutError:
         payload = _read_raw(path)
 
-    scopes = parse_scope_entries(payload["scopes"])
-    released_ids = frozenset(entry for entry in payload["released"] if isinstance(entry, str))
+    scopes = parse_scope_entries(payload.scopes)
+    released_ids = frozenset(entry for entry in payload.released if isinstance(entry, str))
     return ScopeProjectionSnapshot(scopes=tuple(scopes), released_ids=released_ids)
 
 

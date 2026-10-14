@@ -11,7 +11,7 @@ import pytest
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.control_action import ControlActionCoordinator, ControlActionType
 from meridian.lib.harness.permission_broker import PermissionBroker
-from meridian.lib.state.atomic import (
+from meridian.lib.state.jsonl import (
     _jsonl_tail_needs_repair,
     append_durable_jsonl_line,
     repair_jsonl_tail,
@@ -148,10 +148,19 @@ def test_append_durable_jsonl_line_preserves_complete_row_missing_newline(tmp_pa
     complete = '{"id":1,"kind":"complete"}'
     path.write_bytes(complete.encode())
 
-    append_durable_jsonl_line(path, '{"id":2,"kind":"new"}\n')
+    append_durable_jsonl_line(path, '{"id":2,"kind":"new"}')
 
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     assert rows == [{"id": 1, "kind": "complete"}, {"id": 2, "kind": "new"}]
+
+
+def test_append_durable_jsonl_line_rejects_embedded_newlines(tmp_path: Path) -> None:
+    path = tmp_path / "journal.jsonl"
+
+    with pytest.raises(ValueError, match="must not contain embedded newlines"):
+        append_durable_jsonl_line(path, '{"id":1}\n{"id":2}')
+
+    assert not path.exists()
 
 
 def test_jsonl_tail_needs_repair_is_false_for_clean_tail(tmp_path: Path) -> None:

@@ -71,9 +71,10 @@ scope-sidecar lock. Registration is refused after the spawn becomes terminal or 
 cleanup claim exists, so a process scope cannot appear after cleanup targets are fixed.
 Any writer into a destructible `spawns/<id>/` directory that can outlive deletion must
 not recreate its owner. Parent-creating mutations take the spawn-state lock and refuse
-a missing published row through `mutate_published_spawn_artifact()`; signals, scope,
-history, launch/reaper diagnostics, failure sentinels, and harness journals use this
-seam. Heartbeats never create a missing parent directory and stop after deletion.
+a missing published row through `published_artifact_lock()`; callback-only writers use
+`mutate_published_spawn_artifact()` on the same seam. Signals, scope, history,
+launch/reaper diagnostics, failure sentinels, and harness journals all use it.
+Heartbeats never create a missing parent directory and stop after deletion.
 The spawn repository and process-scope projection are persistence leaves with a
 one-way dependency: the projection may use repository reads and lock paths, while
 the repository never imports the projection. Cross-leaf operations belong in
@@ -115,6 +116,12 @@ dependency-neutral `lib/platform/atomic.py`. Never write state files with plain 
   that must not exist, then fsync the publication parent.
 - `append_text_line()` — binary mode so JSONL newline encoding and byte offsets
   remain stable.
+
+JSONL reads, tail repair, and durable appends use `jsonl.py`: only newline-terminated
+rows are committed, empty rows are ignored, and malformed complete rows are skipped
+with debug diagnostics by default. Callers such as the archive catalog that must fail
+closed select the strict malformed-row policy explicitly. Repair is read-then-replace,
+so callers hold their writer lock or own a single-writer file.
 
 A crash in the middle of a plain `open()` write leaves a partial file; partial
 `state.json` fails Pydantic validation on next read.
@@ -170,9 +177,11 @@ inverts accepted chat records without discarding aliases or doing I/O. Historica
 - `work_state.py` / `work_store.py` / `work_repository.py` — work-item models and
   codec, pure reads, and the single locked mutation repository, respectively.
 - `session_store.py` — Session event I/O and lease ownership.
+- `json_doc.py` — tolerant Pydantic reads plus locked atomic mutation for JSON sidecars.
 - `idle_store.py` — user-scoped idle stretch state, per-file locking, and seven-day lazy GC.
 - `session_fold.py` — Public event models, pure replay, and accepted-key inversion.
 - `atomic.py` — atomic write primitives. All state writes use these.
+- `jsonl.py` — the shared newline-commit, tail-repair, and durable-append policy.
 - `reaper.py` — read-only `reconcile_spawns()` projection and root-only
   `reconcile_active_spawn()` repair.
 - `reconciliation.py` — shared reconciliation decisions and completion/cancel precedence.

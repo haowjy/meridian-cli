@@ -2,32 +2,45 @@
 
 from __future__ import annotations
 
-import json
-import logging
-from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from meridian.lib.core.types import SpawnId
-from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.json_doc import mutate_model, read_model
 from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
     resolve_spawn_log_dir,
     spawn_log_subpath,
 )
-from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
-
-logger = logging.getLogger(__name__)
+from meridian.lib.state.spawn_aggregate import (
+    PublishedArtifactUnavailable,
+    published_artifact_lock,
+)
 
 _SCOPE_FILENAME = "scope.json"
 
 
-@dataclass(frozen=True)
-class SpawnScope:
+class SpawnScope(BaseModel):
     """Mutable scope snapshot for one spawn."""
+
+    model_config = ConfigDict(frozen=True, strict=True)
 
     task_dir: Path | None = None
     task_dir_cleared: bool = False
+
+
+class _StoredSpawnScope(BaseModel):
+    model_config = ConfigDict(frozen=True, strict=True, extra="ignore")
+
+    task_dir: str | None
+
+    @field_validator("task_dir")
+    @classmethod
+    def _require_nonempty_path(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("task_dir must not be empty")
+        return value
 
 
 def _scope_path_for_read(project_root: Path, spawn_id: str) -> Path | None:
@@ -46,30 +59,14 @@ def read_spawn_scope(project_root: Path, spawn_id: str) -> SpawnScope:
     """Read scope.json for a spawn. Tolerates missing, empty, or corrupt files."""
 
     path = _scope_path_for_read(project_root, spawn_id)
-    if path is None or not path.is_file():
+    if path is None:
         return SpawnScope()
-    try:
-        text = path.read_text(encoding="utf-8").strip()
-        if not text:
-            return SpawnScope()
-        parsed: object = json.loads(text)
-        if not isinstance(parsed, dict):
-            return SpawnScope()
-        raw = cast("dict[str, object]", parsed)
-        if "task_dir" not in raw:
-            return SpawnScope()
-        task_dir_value = raw["task_dir"]
-        if task_dir_value is None:
-            return SpawnScope(task_dir=None, task_dir_cleared=True)
-        if not isinstance(task_dir_value, str) or not task_dir_value.strip():
-            return SpawnScope()
-        return SpawnScope(
-            task_dir=Path(task_dir_value).expanduser().resolve(),
-            task_dir_cleared=False,
-        )
-    except Exception:
-        logger.debug("spawn_scope: failed to read %s", path, exc_info=True)
+    stored = read_model(path, _StoredSpawnScope)
+    if stored is None:
         return SpawnScope()
+    if stored.task_dir is None:
+        return SpawnScope(task_dir_cleared=True)
+    return SpawnScope(task_dir=Path(stored.task_dir).expanduser().resolve())
 
 
 def write_spawn_scope_task_dir(
@@ -81,15 +78,19 @@ def write_spawn_scope_task_dir(
 
     runtime_root = resolve_project_runtime_root_for_write(project_root)
     path = runtime_root / spawn_log_subpath(spawn_id) / _SCOPE_FILENAME
-    if task_dir is None:
-        payload = {"task_dir": None}
-    else:
-        payload = {"task_dir": task_dir.expanduser().resolve().as_posix()}
-    return mutate_published_spawn_artifact(
-        runtime_root,
-        SpawnId(spawn_id),
-        lambda: atomic_write_text(path, json.dumps(payload, separators=(",", ":"))),
+    stored = _StoredSpawnScope(
+        task_dir=task_dir.expanduser().resolve().as_posix() if task_dir is not None else None
     )
+    try:
+        mutate_model(
+            path,
+            _StoredSpawnScope,
+            lambda _current: (stored, None),
+            lock=published_artifact_lock(runtime_root, SpawnId(spawn_id)),
+        )
+    except PublishedArtifactUnavailable:
+        return False
+    return True
 
 
 __all__ = [

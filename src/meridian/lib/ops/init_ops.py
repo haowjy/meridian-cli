@@ -178,8 +178,8 @@ def maybe_set_primary_agent(
                 ),
             )
 
+    from meridian.lib.config.loader import OPTION_CATALOG
     from meridian.lib.config.preserving_edit import set_scalar_option
-    from meridian.lib.config.settings import OPTION_CATALOG
     from meridian.lib.platform.atomic import atomic_write_text
 
     option = OPTION_CATALOG.resolve_key("primary.agent")

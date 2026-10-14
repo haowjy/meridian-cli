@@ -4,13 +4,11 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable, Generator, Sequence
-from contextlib import contextmanager
-from contextvars import ContextVar
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, cast
 
 from cyclopts import Parameter
-from pydantic import BaseModel, ConfigDict
 
 from meridian.cli.app_tree import (
     app,
@@ -55,24 +53,29 @@ from meridian.cli.hooks_authority import (
     manual_hook_authority_scope,
     should_suppress_manual_hook_authority,
 )
+from meridian.cli.invocation import (
+    GlobalOptions,
+    emit,
+    get_global_options,
+    invocation_scope,
+)
+from meridian.cli.invocation import (
+    emit_error as _emit_error,
+)
 from meridian.cli.mode import RenderMode, is_agent_render_mode, resolve_render_mode
 from meridian.cli.output import (
-    CLIOutputProtocol,
     OutputConfig,
     OutputFormat,
     create_sink,
     flush_sink,
     normalize_output_format,
 )
-from meridian.cli.output import emit as emit_output
 from meridian.cli.startup.catalog import COMMAND_CATALOG
 from meridian.cli.startup.classify import classify_invocation
 from meridian.cli.startup.help import render_root_help
 from meridian.cli.startup.policy import StartupClass
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.cli.utils import parse_csv_list
-from meridian.lib.core.sink import OutputSink
-from meridian.lib.core.util import FormatContext
 from meridian.lib.launch.cwd import WorkTaskDirMissing
 from meridian.lib.telemetry import emit_telemetry
 
@@ -80,77 +83,8 @@ if TYPE_CHECKING:
     from meridian.cli.mars_passthrough import MarsPassthroughRequest, MarsPassthroughResult
 
 
-class GlobalOptions(BaseModel):
-    """Top-level options that apply to all commands."""
-
-    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
-
-    output: OutputConfig
-    config_file: str | None = None
-    harness: str | None = None
-    yes: bool = False
-    no_input: bool = False
-    # Future cleanup: `output_explicit` may be removable now that
-    # `explicit_format` carries the resolved explicit output selection.
-    output_explicit: bool = False
-    render_mode: RenderMode = "human"
-    passthrough_args: tuple[str, ...] = ()
-    sink: OutputSink | None = None
-    explicit_format: OutputFormat | None = None
-    project_root: Path | None = None
-    directory_explicit: bool = False
-
-
-_GLOBAL_OPTIONS: ContextVar[GlobalOptions | None] = ContextVar("_GLOBAL_OPTIONS", default=None)
 _registered_command_groups: set[str] = set()
 _group_commands_registered = False
-
-
-def get_global_options() -> GlobalOptions:
-    """Return parsed global options for current command."""
-
-    default = GlobalOptions(output=OutputConfig(format="text"))
-    return _GLOBAL_OPTIONS.get() or default
-
-
-def _resolve_sink(opts: GlobalOptions | None) -> tuple[OutputSink, bool]:
-    if opts is not None and opts.sink is not None:
-        return opts.sink, False
-    if opts is None:
-        return create_sink(OutputConfig(format="text")), True
-    return create_sink(opts.output), True
-
-
-def current_output_sink() -> OutputSink:
-    sink, _ = _resolve_sink(_GLOBAL_OPTIONS.get())
-    return sink
-
-
-def is_agent_mode() -> bool:
-    """Return whether the current invocation renders in agent mode."""
-
-    return is_agent_render_mode(get_global_options().render_mode)
-
-
-def emit(payload: object, *, format_ctx: FormatContext | None = None) -> None:
-    """Write command output using current output format settings."""
-
-    options = get_global_options()
-    sink, flush_after = _resolve_sink(options)
-    if isinstance(payload, CLIOutputProtocol):
-        emit_output(
-            payload.to_cli_output(
-                format=options.output.format,
-                explicit_format=options.explicit_format,
-                agent_mode=is_agent_mode(),
-            ),
-            sink=sink,
-            format_ctx=format_ctx,
-        )
-    else:
-        emit_output(payload, sink=sink, format_ctx=format_ctx)
-    if flush_after:
-        flush_sink(sink)
 
 
 def _extract_global_options(argv: Sequence[str]) -> tuple[list[str], GlobalOptions]:
@@ -181,7 +115,6 @@ def _extract_global_options(argv: Sequence[str]) -> tuple[list[str], GlobalOptio
         harness=parsed.harness,
         yes=parsed.yes,
         no_input=parsed.no_input,
-        output_explicit=parsed.output_explicit,
         render_mode=render_mode,
         explicit_format=explicit_format,
         project_root=project_root,
@@ -478,65 +411,66 @@ def root(
     for token in skills:
         parsed_skills.extend(parse_csv_list(token, field_name="skills"))
 
-    if _GLOBAL_OPTIONS.get() is None:
+    try:
+        options = get_global_options()
+    except RuntimeError:
         from meridian.cli.mode import parse_render_mode
 
         resolved = normalize_output_format(requested=output_format, json_mode=json_mode)
         forced_mode = parse_render_mode(mode) if mode is not None else None
-        _GLOBAL_OPTIONS.set(
-            GlobalOptions(
-                output=OutputConfig(format=resolved),
-                config_file=config_file,
-                harness=harness,
-                yes=yes,
-                no_input=no_input,
-                render_mode=resolve_render_mode(
-                    forced=forced_mode,
-                    stdin_isatty=sys.stdin.isatty(),
-                    stdout_isatty=sys.stdout.isatty(),
-                ),
+        options = GlobalOptions(
+            output=OutputConfig(format=resolved),
+            config_file=config_file,
+            harness=harness,
+            yes=yes,
+            no_input=no_input,
+            render_mode=resolve_render_mode(
+                forced=forced_mode,
+                stdin_isatty=sys.stdin.isatty(),
+                stdout_isatty=sys.stdout.isatty(),
+            ),
+        )
+
+    with invocation_scope(options):
+        global_harness = options.harness
+        explicit_harness = harness.strip() if harness is not None and harness.strip() else None
+        if global_harness and explicit_harness and global_harness != explicit_harness:
+            raise ValueError(
+                f"Conflicting harness selections: '{global_harness}' and '{explicit_harness}'."
+            )
+
+        normalized_task_dir = (task_dir or "").strip() or None
+
+        from meridian.cli import primary_launch
+
+        emit(
+            primary_launch.run_primary_launch(
+                project_root=options.project_root,
+                continue_ref=continue_ref,
+                fork_ref=fork_ref,
+                fork_fresh_ref=fork_fresh_ref,
+                from_ref=from_ref,
+                model=model,
+                harness=global_harness or explicit_harness,
+                agent=agent,
+                work=work,
+                task_dir=normalized_task_dir,
+                yolo=yolo,
+                approval=approval,
+                autocompact=autocompact,
+                autocompact_pct=autocompact_pct,
+                effort=effort,
+                sandbox=sandbox,
+                timeout=timeout,
+                dry_run=dry_run,
+                ignore_direnv=ignore_direnv,
+                passthrough=options.passthrough_args,
+                reference_files=tuple(references),
+                prompt=resolved_prompt,
+                skills=tuple(parsed_skills),
+                goal=goal,
             )
         )
-
-    global_harness = get_global_options().harness
-    explicit_harness = harness.strip() if harness is not None and harness.strip() else None
-    if global_harness and explicit_harness and global_harness != explicit_harness:
-        raise ValueError(
-            f"Conflicting harness selections: '{global_harness}' and '{explicit_harness}'."
-        )
-
-    normalized_task_dir = (task_dir or "").strip() or None
-
-    from meridian.cli import primary_launch
-
-    emit(
-        primary_launch.run_primary_launch(
-            project_root=get_global_options().project_root,
-            continue_ref=continue_ref,
-            fork_ref=fork_ref,
-            fork_fresh_ref=fork_fresh_ref,
-            from_ref=from_ref,
-            model=model,
-            harness=global_harness or explicit_harness,
-            agent=agent,
-            work=work,
-            task_dir=normalized_task_dir,
-            yolo=yolo,
-            approval=approval,
-            autocompact=autocompact,
-            autocompact_pct=autocompact_pct,
-            effort=effort,
-            sandbox=sandbox,
-            timeout=timeout,
-            dry_run=dry_run,
-            ignore_direnv=ignore_direnv,
-            passthrough=get_global_options().passthrough_args,
-            reference_files=tuple(references),
-            prompt=resolved_prompt,
-            skills=tuple(parsed_skills),
-            goal=goal,
-        )
-    )
 
 
 @app.command(name="serve")
@@ -660,71 +594,62 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
         def _register_spawn() -> None:
             from meridian.cli.spawn import register_spawn_commands
 
-            register_spawn_commands(spawn_app, emit)
+            register_spawn_commands(spawn_app)
 
         def _register_session() -> None:
             from meridian.cli.session_cmd import register_session_commands
 
-            register_session_commands(session_app, emit)
+            register_session_commands(session_app)
 
         def _register_work() -> None:
             from meridian.cli.work_cmd import register_work_commands
 
-            register_work_commands(work_app, emit)
+            register_work_commands(work_app)
 
         def _register_config() -> None:
             from meridian.cli.config_cmd import register_config_commands
 
-            register_config_commands(config_app, emit)
+            register_config_commands(config_app)
 
         def _register_hooks() -> None:
             from meridian.cli.hooks_commands import register_hooks_commands
 
-            register_hooks_commands(hooks_app, emit)
+            register_hooks_commands(hooks_app)
 
         def _register_task_dir() -> None:
             from meridian.cli.task_dir_cmd import register_task_dir_commands
 
-            register_task_dir_commands(task_dir_app, emit)
+            register_task_dir_commands(task_dir_app)
 
         def _register_models() -> None:
             from meridian.cli.models_cmd import register_models_commands
 
-            register_models_commands(models_app, emit)
+            register_models_commands(models_app)
 
         def _register_ext() -> None:
             from meridian.cli.ext_cmd import register_ext_commands
 
-            register_ext_commands(
-                app,
-                emit=emit,
-                resolve_global_format=lambda: get_global_options().output.format,
-            )
+            register_ext_commands(app)
 
         def _register_telemetry() -> None:
             from meridian.cli.telemetry_cmd import register_telemetry_commands
 
-            register_telemetry_commands(telemetry_app, emit)
+            register_telemetry_commands(telemetry_app)
 
         def _register_workspace() -> None:
             from meridian.cli.workspace_cmd import register_workspace_commands
 
-            register_workspace_commands(workspace_app, emit)
+            register_workspace_commands(workspace_app)
 
         def _register_doctor() -> None:
             from meridian.cli.doctor_cmd import register_doctor_command
 
-            register_doctor_command(app, emit)
+            register_doctor_command(app)
 
         def _register_bootstrap() -> None:
             from meridian.cli.bootstrap_cmd import register_bootstrap_command
 
-            register_bootstrap_command(
-                app,
-                emit,
-                get_passthrough_args=lambda: get_global_options().passthrough_args,
-                get_global_harness=lambda: get_global_options().harness,
-            )
+            register_bootstrap_command(app)
 
         def _register_misc() -> None:
             from meridian.cli.misc_commands import register_misc_commands
@@ -735,14 +660,12 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
                 context_app=context_app,
                 streaming_app=streaming_app,
                 test_app=test_app,
-                emit=emit,
-                get_global_options=get_global_options,
             )
 
         def _register_sync() -> None:
             from meridian.cli.sync_cmd import register_sync_commands
 
-            register_sync_commands(app, emit)
+            register_sync_commands(app)
 
         def _register_kg() -> None:
             import meridian.cli.kg_cmd as _kg_cmd
@@ -777,12 +700,12 @@ def _register_commands_for_invocation(argv: Sequence[str]) -> None:
         def _register_report() -> None:
             from meridian.cli.report_cmd import register_report_commands
 
-            register_report_commands(report_app, emit)
+            register_report_commands(report_app)
 
         def _register_migrate() -> None:
             from meridian.cli.migrate_cmd import register_migrate_command
 
-            register_migrate_command(app, emit)
+            register_migrate_command(app)
 
         bucket_handlers: dict[str, Callable[[], None]] = {
             "spawn": _register_spawn,
@@ -852,18 +775,6 @@ def _emit_idle_error(message: str) -> None:
     import json
 
     print(json.dumps({"error": message}, separators=(",", ":")))
-
-
-def _emit_error(
-    message: str, *, exit_code: int = 1, name: str | None = None
-) -> None:
-    """Emit an error via the active sink and exit."""
-
-    sink, flush_after = _resolve_sink(_GLOBAL_OPTIONS.get())
-    sink.error(message, exit_code=exit_code, name=name)
-    if flush_after:
-        flush_sink(sink)
-    raise SystemExit(exit_code)
 
 
 def _top_level_command_names() -> set[str]:
@@ -1138,17 +1049,18 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
         bootstrap_plan = None
     # Install options early so resolve_cli_project_root() sees project_root
     # from -C / --directory during bootstrap resolution.
-    _pre_bootstrap_token = _GLOBAL_OPTIONS.set(options)
     bootstrap_project_root = None
-    with manual_hook_authority_scope(
-        suppress=should_suppress_manual_hook_authority(argv=cleaned_args)
+    with (
+        invocation_scope(options),
+        manual_hook_authority_scope(
+            suppress=should_suppress_manual_hook_authority(argv=cleaned_args)
+        ),
     ):
         if not bootstrap_skipped:
             bootstrap_project_root = maybe_bootstrap_runtime_state(
                 render_mode=options.render_mode,
                 plan=bootstrap_plan,
             )
-    _GLOBAL_OPTIONS.reset(_pre_bootstrap_token)
     # Prefer bootstrap's resolved root; fall back to -C path if bootstrap was skipped/no-op.
     project_root = (
         bootstrap_project_root if bootstrap_project_root is not None else options.project_root
@@ -1168,8 +1080,9 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
 
         active_sink = create_sink(options.output)
         options = options.model_copy(update={"project_root": project_root, "sink": active_sink})
-        token = _GLOBAL_OPTIONS.set(options)
-        try:
+        with ExitStack() as invocation_stack:
+            invocation_stack.enter_context(invocation_scope(options))
+            invocation_stack.callback(flush_sink, active_sink)
             from meridian.cli.agent_help import (
                 leaf_help_rendering_scope,
                 try_render_curated_group_help,
@@ -1214,6 +1127,3 @@ def _main_impl(argv: Sequence[str] | None = None) -> None:
                     )
                 except (KeyError, ValueError, FileNotFoundError, OSError, RuntimeError) as exc:
                     _emit_error(_operation_error_message(exc))
-        finally:
-            flush_sink(active_sink)
-            _GLOBAL_OPTIONS.reset(token)

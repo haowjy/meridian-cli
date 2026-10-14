@@ -29,8 +29,8 @@ in this order:
 2. `MERIDIAN_PROJECT_DIR` (inherited across spawns)
 3. Literal process CWD (no marker walk-up)
 
-Commands that require an established project error when only bare CWD applies —
-run from the project root, pass `-C <path>`, or set `MERIDIAN_PROJECT_DIR`.
+A bare CWD is eligible as a project root: the first durable write creates
+`meridian.toml` and `[project] id` there, while read-only commands create nothing.
 
 Task directory (where source reads, edits, git, builds, and tests run) is separate.
 `MERIDIAN_TASK_DIR` is inherited across spawns. Precedence within a session:
@@ -83,6 +83,7 @@ These override spawn-level runtime policy. They sit above project config but bel
 - `MERIDIAN_HARNESS_MODEL_CLAUDE`
 - `MERIDIAN_HARNESS_MODEL_CODEX`
 - `MERIDIAN_HARNESS_MODEL_OPENCODE`
+- `MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_CLAUDE`, `_CODEX`, `_OPENCODE`, `_PI`
 - `MERIDIAN_STATE_RETENTION_DAYS`
 - `MERIDIAN_HISTORY_ARCHIVE_AUTOMATIC`
 - `MERIDIAN_HISTORY_ARCHIVE_AFTER_DAYS`

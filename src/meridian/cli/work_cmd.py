@@ -2,11 +2,12 @@
 
 from collections.abc import Callable
 from functools import partial
-from typing import Annotated, Any
+from typing import Annotated
 
 from cyclopts import App, Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
+from meridian.cli.invocation import Emitter, emit
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.ops.context import (
@@ -48,8 +49,6 @@ from meridian.lib.ops.work_lifecycle import (
     work_task_dir_sync,
     work_update_sync,
 )
-
-Emitter = Callable[[Any], None]
 
 
 def _runtime_chat_id() -> str:
@@ -142,10 +141,7 @@ def _work_sessions(
     work_id: Annotated[
         str,
         Parameter(
-            help=(
-                "Work item id. Defaults to the active work item "
-                "attached to this session."
-            )
+            help=("Work item id. Defaults to the active work item attached to this session.")
         ),
     ] = "",
     all: Annotated[
@@ -313,7 +309,7 @@ def _work_path(
     emit(work_path_sync(WorkPathInput(relpath=relpath)))
 
 
-def register_work_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str, str]]:
+def register_work_commands(app: App) -> None:
     """Register work CLI commands using registry metadata as source of truth."""
 
     handlers: dict[str, Callable[[], Callable[..., None]]] = {
@@ -333,11 +329,10 @@ def register_work_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str,
         "meridian.work.clear": lambda: partial(_work_clear, emit),
         "meridian.work.task-dir": lambda: partial(_work_task_dir, emit),
     }
-    return register_extension_cli_group(
+    register_extension_cli_group(
         app,
         registry=get_first_party_registry(),
         group="work",
         handlers=handlers,
-        emit=emit,
         default_handler=partial(_work_dashboard, emit),
     )

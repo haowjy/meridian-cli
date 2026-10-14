@@ -2,8 +2,6 @@
 
 import json
 import os
-import tomllib
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
 
@@ -11,6 +9,9 @@ import structlog
 from pydantic import BaseModel, ConfigDict, field_serializer
 
 from meridian.lib.config.context_config import ContextSourceType
+from meridian.lib.config.dynamic_sections import DYNAMIC_SECTION_DESCRIPTORS
+from meridian.lib.config.loader import OPTION_CATALOG
+from meridian.lib.config.models import MeridianConfig, PrimaryConfig
 from meridian.lib.config.preserving_edit import (
     mutate_project_config,
     reset_scalar_option,
@@ -24,15 +25,6 @@ from meridian.lib.config.schema import (
     ConfigOptionDescriptor,
     normalize_runtime_scalar,
     parse_cli_scalar,
-    parse_toml_scalar,
-)
-from meridian.lib.config.settings import (
-    DYNAMIC_SECTION_DESCRIPTORS,
-    OPTION_CATALOG,
-    MeridianConfig,
-    PrimaryConfig,
-    merge_dynamic_sections,
-    normalize_dynamic_sections,
 )
 from meridian.lib.config.workspace import WorkspaceFinding
 from meridian.lib.core.util import FormatContext, to_jsonable
@@ -54,10 +46,8 @@ from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
 )
 from meridian.lib.state.user_paths import get_user_home
-from meridian.lib.utils.json_shapes import is_json_object
 
 _MISSING_PROJECT_CONFIG_MESSAGE = "no project config; run `meridian config init`"
-_LOCAL_CONFIG_FILENAME = "meridian.local.toml"
 logger = structlog.get_logger(__name__)
 
 
@@ -214,17 +204,6 @@ class ConfigResetOutput(BaseModel):
         return f"reset {self.key} ({status}) in {self.path}"
 
 
-@dataclass(frozen=True)
-class _ConfigInspectionState:
-    surface: ConfigSurface
-    project_overrides: dict[str, object]
-    user_overrides: dict[str, object]
-    resolved_values: dict[str, object]
-    project_dynamic_overrides: dict[str, object]
-    user_dynamic_overrides: dict[str, object]
-    resolved_dynamic_overrides: dict[str, object]
-
-
 def _resolve_project_config_state(project_root: Path) -> ProjectConfigState:
     return resolve_project_config_state(project_root)
 
@@ -265,44 +244,6 @@ def _default_values() -> dict[str, object]:
     }
 
 
-def _resolved_values(config: MeridianConfig) -> dict[str, object]:
-    return {
-        option.canonical_key: normalize_runtime_scalar(_get_field_value(config, option.field_path))
-        for option in OPTION_CATALOG.visible_options
-    }
-
-
-def _read_file_payload(path: Path) -> dict[str, object]:
-    if not path.is_file():
-        return {}
-    payload_obj = tomllib.loads(path.read_text(encoding="utf-8"))
-    return cast("dict[str, object]", payload_obj)
-
-
-def _extract_file_overrides(payload: dict[str, object]) -> dict[str, object]:
-    overrides: dict[str, object] = {}
-
-    def visit(table_path: tuple[str, ...], table: dict[str, object]) -> None:
-        for key, raw_value in table.items():
-            if isinstance(raw_value, dict):
-                visit((*table_path, key), cast("dict[str, object]", raw_value))
-                continue
-
-            option = OPTION_CATALOG.find_file_alias(table_path=table_path, key=key)
-            if option is None or not option.command_visible:
-                continue
-
-            source = ".".join((*table_path, key)) if table_path else key
-            overrides[option.canonical_key] = parse_toml_scalar(
-                value_kind=option.value_kind,
-                raw_value=raw_value,
-                source=source,
-            )
-
-    visit((), payload)
-    return overrides
-
-
 def _toml_string(value: str) -> str:
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'
@@ -323,66 +264,14 @@ def _toml_literal(value: object) -> str:
     raise ValueError(f"Unsupported config value type: {type(value).__name__}")
 
 
-def _source_for_key(
-    option: ConfigOptionDescriptor,
-    *,
-    project_overrides: dict[str, object],
-    user_overrides: dict[str, object],
+def _source_for_path(
+    surface: ConfigSurface,
+    path: tuple[str, ...],
 ) -> tuple[Literal["builtin", "file", "user-config", "env var"], str | None]:
-    for env_var in option.env_vars:
-        if os.getenv(env_var) is not None:
-            return "env var", env_var
-    if option.canonical_key in project_overrides:
-        return "file", None
-    if option.canonical_key in user_overrides:
-        return "user-config", None
-    return "builtin", None
-
-
-def _build_config_inspection_state(
-    authority: RuntimeAuthoritySnapshot | Path,
-) -> _ConfigInspectionState:
-    surface = build_config_surface(authority)
-    project_root = surface.project_root
-    project_payload = _read_file_payload(surface.project_config.write_path)
-    project_overrides = _extract_file_overrides(project_payload)
-    project_dynamic_overrides = normalize_dynamic_sections(
-        payload=project_payload,
-        project_root=project_root,
-    )
-    local_config_path = project_root / _LOCAL_CONFIG_FILENAME
-    if local_config_path.is_file():
-        local_payload = _read_file_payload(local_config_path)
-        local_overrides = _extract_file_overrides(local_payload)
-        project_overrides = {**project_overrides, **local_overrides}
-        project_dynamic_overrides = merge_dynamic_sections(
-            project_dynamic_overrides,
-            normalize_dynamic_sections(payload=local_payload, project_root=project_root),
-        )
-    if surface.user_config_path is not None:
-        user_payload = _read_file_payload(surface.user_config_path)
-        user_overrides = _extract_file_overrides(user_payload)
-        user_dynamic_overrides = normalize_dynamic_sections(
-            payload=user_payload,
-            project_root=project_root,
-        )
-    else:
-        user_overrides = {}
-        user_dynamic_overrides = {}
-    resolved_values = _resolved_values(surface.resolved_config)
-    resolved_dynamic_overrides = merge_dynamic_sections(
-        user_dynamic_overrides,
-        project_dynamic_overrides,
-    )
-    return _ConfigInspectionState(
-        surface=surface,
-        project_overrides=project_overrides,
-        user_overrides=user_overrides,
-        resolved_values=resolved_values,
-        project_dynamic_overrides=project_dynamic_overrides,
-        user_dynamic_overrides=user_dynamic_overrides,
-        resolved_dynamic_overrides=resolved_dynamic_overrides,
-    )
+    source = next((entry for entry in surface.config_sources if entry.path == path), None)
+    if source is None:
+        return "builtin", None
+    return source.source, source.env_var
 
 
 def _format_value_for_text(value: object) -> str:
@@ -477,46 +366,6 @@ def _scaffold_template() -> str:
     return "\n".join(line for section in sections for line in section)
 
 
-def _dynamic_value_source(
-    *,
-    path: tuple[str, ...],
-    project_dynamic_overrides: dict[str, object],
-    user_dynamic_overrides: dict[str, object],
-) -> Literal["builtin", "file", "user-config", "env var"]:
-    current: object = project_dynamic_overrides
-    for part in path:
-        if not is_json_object(current) or part not in current:
-            break
-        current = current[part]
-    else:
-        return "file"
-
-    current = user_dynamic_overrides
-    for part in path:
-        if not is_json_object(current) or part not in current:
-            break
-        current = current[part]
-    else:
-        return "user-config"
-
-    return "builtin"
-
-
-def _resolve_env_config_source(
-    *,
-    env_key: str,
-    project_dynamic_overrides: dict[str, object],
-    user_dynamic_overrides: dict[str, object],
-) -> Literal["file", "user-config", "builtin"]:
-    project_env = project_dynamic_overrides.get("env")
-    if isinstance(project_env, dict) and env_key in project_env:
-        return "file"
-    user_env = user_dynamic_overrides.get("env")
-    if isinstance(user_env, dict) and env_key in user_env:
-        return "user-config"
-    return "builtin"
-
-
 _SECRET_ENV_KEY_SUFFIXES = ("_TOKEN", "_KEY", "_SECRET")
 
 
@@ -525,76 +374,54 @@ def _looks_like_secret_env_key(key: str) -> bool:
     return any(normalized.endswith(suffix) for suffix in _SECRET_ENV_KEY_SUFFIXES)
 
 
-def _dynamic_config_values(inspection: _ConfigInspectionState) -> list[ConfigResolvedValue]:
+def _dynamic_config_values(surface: ConfigSurface) -> list[ConfigResolvedValue]:
     values: list[ConfigResolvedValue] = []
-    resolved = inspection.resolved_dynamic_overrides
+    resolved = surface.resolved_dynamic_config
 
-    context_section = resolved.get("context")
-    if isinstance(context_section, dict):
-        context_items = sorted(cast("dict[str, object]", context_section).items())
-        for context_name, context_value in context_items:
-            if not isinstance(context_value, dict):
-                continue
-            for field_name, field_value in sorted(cast("dict[str, object]", context_value).items()):
+    if resolved.context is not None:
+        for context_name, context_value in sorted(resolved.context.items()):
+            for field_name in sorted(context_value.model_fields_set):
                 values.append(
                     ConfigResolvedValue(
                         key=f"context.{context_name}.{field_name}",
-                        value=field_value,
-                        source=_dynamic_value_source(
-                            path=("context", context_name, field_name),
-                            project_dynamic_overrides=inspection.project_dynamic_overrides,
-                            user_dynamic_overrides=inspection.user_dynamic_overrides,
-                        ),
+                        value=getattr(context_value, field_name),
+                        source=_source_for_path(
+                            surface,
+                            ("context", context_name, field_name),
+                        )[0],
                     )
                 )
 
-    work_section = resolved.get("work")
-    if isinstance(work_section, dict):
-        artifacts = cast("dict[str, object]", work_section).get("artifacts")
-        if isinstance(artifacts, dict):
-            for field_name, field_value in sorted(cast("dict[str, object]", artifacts).items()):
-                values.append(
-                    ConfigResolvedValue(
-                        key=f"work.artifacts.{field_name}",
-                        value=field_value,
-                        source=_dynamic_value_source(
-                            path=("work", "artifacts", field_name),
-                            project_dynamic_overrides=inspection.project_dynamic_overrides,
-                            user_dynamic_overrides=inspection.user_dynamic_overrides,
-                        ),
-                    )
-                )
-
-    if "hooks" in resolved:
-        hooks_section = resolved.get("hooks")
-        if isinstance(hooks_section, list | tuple):
-            hook_rows = cast("list[object] | tuple[object, ...]", hooks_section)
-            if len(hook_rows) == 0:
-                rendered_hook_value: object = "[] (suppressed)"
-            else:
-                names: list[str] = []
-                for row_value in hook_rows:
-                    if not isinstance(row_value, dict):
-                        continue
-                    row = cast("dict[str, object]", row_value)
-                    label = row.get("name") or row.get("event") or row.get("builtin") or "hook"
-                    names.append(str(label))
-                rendered_hook_value = (
-                    f"{len(hook_rows)} hooks ({', '.join(names)})" if names else len(hook_rows)
-                )
+    if resolved.work is not None and resolved.work.artifacts is not None:
+        artifacts = resolved.work.artifacts
+        for field_name in sorted(artifacts.model_fields_set):
             values.append(
                 ConfigResolvedValue(
-                    key="hooks",
-                    value=rendered_hook_value,
-                    source=_dynamic_value_source(
-                        path=("hooks",),
-                        project_dynamic_overrides=inspection.project_dynamic_overrides,
-                        user_dynamic_overrides=inspection.user_dynamic_overrides,
-                    ),
+                    key=f"work.artifacts.{field_name}",
+                    value=getattr(artifacts, field_name),
+                    source=_source_for_path(
+                        surface,
+                        ("work", "artifacts", field_name),
+                    )[0],
                 )
             )
 
-    env_config = inspection.surface.resolved_config.env
+    if resolved.hooks is not None:
+        rendered_hook_value: object
+        if not resolved.hooks:
+            rendered_hook_value = "[] (suppressed)"
+        else:
+            names = ", ".join(spec.display_name for spec in resolved.hooks)
+            rendered_hook_value = f"{len(resolved.hooks)} hooks ({names})"
+        values.append(
+            ConfigResolvedValue(
+                key="hooks",
+                value=rendered_hook_value,
+                source=_source_for_path(surface, ("hooks",))[0],
+            )
+        )
+
+    env_config = surface.resolved_config.env
     if env_config:
         for env_key, env_value in sorted(env_config.items()):
             display_value: object = env_value
@@ -604,11 +431,7 @@ def _dynamic_config_values(inspection: _ConfigInspectionState) -> list[ConfigRes
                 ConfigResolvedValue(
                     key=f"env.{env_key}",
                     value=display_value,
-                    source=_resolve_env_config_source(
-                        env_key=env_key,
-                        project_dynamic_overrides=inspection.project_dynamic_overrides,
-                        user_dynamic_overrides=inspection.user_dynamic_overrides,
-                    ),
+                    source=_source_for_path(surface, ("env", env_key))[0],
                 )
             )
 
@@ -692,40 +515,38 @@ def config_init_sync(payload: ConfigInitInput) -> ConfigInitOutput:
 
 def config_show_sync(payload: ConfigShowInput) -> ConfigShowOutput:
     authority = _resolve_project_authority(payload.project_root)
-    inspection = _build_config_inspection_state(authority)
+    surface = build_config_surface(authority)
 
     values: list[ConfigResolvedValue] = []
     for option in OPTION_CATALOG.visible_options:
-        source, env_var = _source_for_key(
-            option,
-            project_overrides=inspection.project_overrides,
-            user_overrides=inspection.user_overrides,
-        )
+        source, env_var = _source_for_path(surface, option.field_path)
         values.append(
             ConfigResolvedValue(
                 key=option.canonical_key,
-                value=inspection.resolved_values[option.canonical_key],
+                value=normalize_runtime_scalar(
+                    _get_field_value(surface.resolved_config, option.field_path)
+                ),
                 source=source,
                 env_var=env_var,
             )
         )
 
-    values.extend(_dynamic_config_values(inspection))
+    values.extend(_dynamic_config_values(surface))
 
     return ConfigShowOutput(
-        path=inspection.surface.project_config.write_path.as_posix(),
-        project_root=inspection.surface.project_root.as_posix(),
-        project_root_source=inspection.surface.authority.project_root_source,
+        path=surface.project_config.write_path.as_posix(),
+        project_root=surface.project_root.as_posix(),
+        project_root_source=surface.authority.project_root_source,
         runtime_root=(
-            inspection.surface.authority.runtime_root.as_posix()
-            if inspection.surface.authority.runtime_root is not None
+            surface.authority.runtime_root.as_posix()
+            if surface.authority.runtime_root is not None
             else None
         ),
-        runtime_root_source=inspection.surface.authority.runtime_root_source,
-        workspace=inspection.surface.workspace,
+        runtime_root_source=surface.authority.runtime_root_source,
+        workspace=surface.workspace,
         values=tuple(values),
-        workspace_findings=inspection.surface.workspace_findings,
-        warning=inspection.surface.warning,
+        workspace_findings=surface.workspace_findings,
+        warning=surface.warning,
     )
 
 
@@ -760,16 +581,14 @@ def config_set_sync(payload: ConfigSetInput) -> ConfigSetOutput:
 def config_get_sync(payload: ConfigGetInput) -> ConfigGetOutput:
     project_root = _resolve_project_root(payload.project_root)
     option = _resolve_option(payload.key)
-    inspection = _build_config_inspection_state(project_root)
-    source, env_var = _source_for_key(
-        option,
-        project_overrides=inspection.project_overrides,
-        user_overrides=inspection.user_overrides,
-    )
+    surface = build_config_surface(project_root)
+    source, env_var = _source_for_path(surface, option.field_path)
 
     return ConfigGetOutput(
         key=option.canonical_key,
-        value=inspection.resolved_values[option.canonical_key],
+        value=normalize_runtime_scalar(
+            _get_field_value(surface.resolved_config, option.field_path)
+        ),
         source=source,
         env_var=env_var,
     )

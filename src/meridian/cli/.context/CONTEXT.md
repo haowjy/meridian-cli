@@ -6,7 +6,7 @@ Every CLI invocation is classified against `COMMAND_CATALOG` before any
 heavy module loads. `CommandDescriptor` carries all routing information:
 
 - `startup_class` — drives telemetry mode + primary-launch background repairs (TRIVIAL, READ_ROOTLESS, READ_PROJECT, READ_RUNTIME, WRITE_PROJECT, WRITE_RUNTIME, PRIMARY_LAUNCH, SERVICE_ROOTLESS, SERVICE_RUNTIME)
-- `bootstrap_plan` — state preparation plus cwd auto-init policy
+- `bootstrap_plan` — state preparation requirement
 - `telemetry_mode` — `none | stderr | segment`
 - `root_source` — `"cwd"` (default) or `"argv"` (post-parse root resolution)
 
@@ -23,7 +23,7 @@ never queries the extension registry for routing answers.
 | `READ_RUNTIME` | `spawn list`, `session log` | runtime-read | none |
 | `WRITE_PROJECT` | `config init` | project-write | optional |
 | `WRITE_RUNTIME` | `spawn`, `work start` | runtime-write | segment |
-| `PRIMARY_LAUNCH` | bare `meridian` | runtime-write; inert `bootstrap_plan.auto_init_cwd` flag | segment |
+| `PRIMARY_LAUNCH` | bare `meridian` | runtime-write | segment |
 | `SERVICE_ROOTLESS` | `serve` | none | stderr |
 | `SERVICE_RUNTIME` | `streaming serve` | runtime-write | segment |
 
@@ -32,7 +32,7 @@ telemetry, spawn no writer thread, create no UUID, and make no filesystem mutati
 
 ## Lazy Import Strategy
 
-Three independent mechanisms reduce startup latency:
+Four independent mechanisms reduce startup latency and keep dependencies acyclic:
 
 1. **Selective command registration** — `_register_commands_for_invocation()`
    imports only the module group matching the first positional token.
@@ -44,6 +44,13 @@ Three independent mechanisms reduce startup latency:
 
 3. **Heavy module deferral** — `primary_launch` and `mars_passthrough` imported
    inside handler functions, not at module scope.
+
+4. **One-way invocation state** — `invocation.py` owns the typed global options
+   context, its explicit `invocation_scope()` lifetime, and output routing.
+   Both `main.py` and command modules depend on it; command modules never import
+   back into `main.py`. Registration functions receive no invocation callbacks
+   and return no metadata to the dispatcher. In-process callers must supply a
+   scope; no default options are fabricated when the context is absent.
 
 Together these mechanisms keep startup and help paths from importing command
 implementations they do not need.
@@ -72,9 +79,9 @@ first use. The established/not-established distinction below is shape without
 behavior. `cwd_has_project_id()` (a literal `meridian.toml`/`mars.toml` check) still
 exists in `lib/config/project_root.py`, but nothing calls it.
 
-Consequences: `bootstrap_plan.auto_init_cwd` is unreachable, and the no-project
-exit never fires from cwd resolution. `.context/TODO` tracks deleting the flag or
-restoring a real check — decide that before relying on either.
+Consequently, the no-project exit never fires from cwd resolution. Durable write
+preparation creates project identity on first use; read-only preparation leaves a
+bare directory unchanged.
 
 ### Adapters
 

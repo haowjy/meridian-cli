@@ -28,8 +28,8 @@ hardcoded defaults
         < environment variables
 ```
 
-First-wins. Env vars beat local beats project beats user. `load_config()` is the
-public entry point.
+Merged low to high: each later layer overrides the earlier ones, so env vars beat
+local beats project beats user. `load_config()` is the public entry point.
 
 ## Key Rules
 
@@ -38,18 +38,33 @@ boundary (`capture_library_diagnostics()`) captures stdlib warnings during spawn
 Structlog bypasses it and leaks to stderr. This rule applies to both `lib/config/`
 and `lib/catalog/`.
 
-**`_SETTINGS_CONTEXT` ContextVar is only valid during `MeridianConfig()` construction.**
-It carries load context into field validators. Never read it outside `settings.py` field
-validators or the source callables. Misuse causes `AttributeError` or silently wrong
-paths depending on timing.
+**File validation and source merging are explicit.** `loader.py` validates each file
+against `MeridianConfig`, then merges user → project → local → env.
+`load_config_with_sources()` retains typed dynamic sections and field provenance for
+inspection; `load_config()` returns its final `MeridianConfig`. Do not add implicit
+Pydantic settings sources (no `pydantic-settings`) or ambient loader state.
+
+**The models are the only validation path.** Every config shape is a Pydantic model
+(`models.py`, `harness_models.py`, `history_models.py`) rooted at `MeridianConfig`,
+including `[env]` and the dynamic sections' descriptor models. Field types and
+validators carry the constraints; unknown-key policy is `ClassVar`s on `ConfigModel`
+(`config_ignored_keys`, `config_silences_extras`); file aliases and env-var names are
+`config_field()` metadata. Never add a hand-written normalizer that re-checks a shape
+a model already declares: two validators for one shape drift apart. Format
+validation failures through `errors.py` so every message names the key and file.
+
+**A field without `config_field()` metadata has no env var and no `config get/set`.**
+`_env_alias_overrides()` reads env vars only from `OPTION_CATALOG`, built from that
+metadata, so a field or harness profile built outside the catalog silently loses
+its env vars.
 
 **Dynamic section merge strategies vary by section** — don't assume they all deep-merge:
 
 | Section | Strategy | Effect |
 |---|---|---|
-| `agents`, `work`, `context` | `nested_dict` | Keys in higher-precedence file overwrite matching keys; others inherited |
-| `hooks` | `replace` | Entire section from higher-precedence file wins |
-| `workspace` | `external` | Not merged by settings |
+| `work`, `context`, `env` | `nested_dict` | Keys in higher-precedence file overwrite matching keys; others inherited |
+| `hooks` | `replace` | Entire section from higher-precedence file wins (inspection only; the hook runtime layers by `(name, event)` in `lib/hooks/config.py`, a known disagreement tracked in #569) |
+| `workspace` | `external` | Not merged here; workspace config owns it |
 
 **`preserving_edit.py` for in-place config edits.** Direct TOML writes lose comments
 and formatting. Use `mutate_project_config()` when editing `meridian.toml`; it
@@ -59,7 +74,14 @@ module and run inside that transaction.
 
 ## Entry Points
 
-- `settings.py` — `MeridianConfig`, `load_config()`: start here
+- `models.py` — core section models and the `MeridianConfig` schema root
+- `harness_models.py` — generated per-harness profiles and idle settings
+- `history_models.py` — history retention and archive settings
+- `model_base.py` — shared model warning policy and value normalization
+- `loader.py` — TOML/env validation, precedence merge, provenance, and load entry points
+- `layers.py` — shared user/project/local discovery and TOML reads
+- `dynamic_sections.py` — descriptor models for hooks/work/context/workspace/env plus their merge policy
+- `errors.py` — the one validation-error format (key path and file)
 - `schema.py` — `config_field()`, `ConfigOptionMeta`: field metadata and parse helpers
 - `project_root.py` — `resolve_project_root_resolution()`, `resolve_user_config_path()`
 - `context_config.py` — `ContextConfig`, `ContextSourceType`: context path schema
@@ -88,7 +110,7 @@ Claude profile includes:
 
 ## Depth
 
-→ [.context/CONTEXT.md](.context/CONTEXT.md) — ContextVar thread-local pattern,
+→ [.context/CONTEXT.md](.context/CONTEXT.md) — project-config mutation transaction,
 precedence chain implementation, dynamic section merge strategies, `MeridianConfig`
 vs `RuntimeOverrides` separation
 

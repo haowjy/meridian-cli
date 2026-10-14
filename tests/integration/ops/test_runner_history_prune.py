@@ -368,7 +368,7 @@ def test_archive_after_prune_captures_native_and_ships_no_runner_members(
 ) -> None:
     import zipfile
 
-    from meridian.lib.config.settings import HistoryArchiveConfig
+    from meridian.lib.config.history_models import HistoryArchiveConfig
     from meridian.lib.launch.constants import RETIRED_RUNNER_STREAM_FILENAMES
     from meridian.lib.ops.session_archive import archive_history, materialize_native_history
     from meridian.lib.state.native_snapshot import NATIVE_SNAPSHOT_FILENAME

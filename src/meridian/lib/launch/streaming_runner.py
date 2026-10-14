@@ -20,7 +20,7 @@ from meridian.lib.bootstrap.services import (
     build_spawn_application_service_from_roots,
     build_spawn_lifecycle_service_from_roots,
 )
-from meridian.lib.config.settings import MeridianConfig
+from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.domain import Spawn, SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.native_identity import (

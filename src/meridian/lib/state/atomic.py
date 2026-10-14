@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 
@@ -32,69 +31,6 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
         handle.write(data)
 
 
-def _jsonl_tail_needs_repair(path: Path) -> bool:
-    """Return True when an existing JSONL file lacks a trailing newline."""
-
-    try:
-        with path.open("rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            end = handle.tell()
-            if end == 0:
-                return False
-            handle.seek(-1, os.SEEK_END)
-            return handle.read(1) != b"\n"
-    except FileNotFoundError:
-        return False
-
-
-def _repaired_jsonl_bytes(content: bytes) -> bytes | None:
-    """Return repaired JSONL bytes, or None when no repair is needed.
-
-    Callers write JSON object rows only (events, permission transitions,
-    control actions). A complete tail must parse as a JSON object; torn tails are
-    dropped to the last newline.
-    """
-
-    if not content or content.endswith(b"\n"):
-        return None
-
-    last_newline = content.rfind(b"\n")
-    if last_newline < 0:
-        prefix = b""
-        tail = content
-    else:
-        prefix = content[: last_newline + 1]
-        tail = content[last_newline + 1 :]
-
-    try:
-        parsed = json.loads(tail.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        parsed = None
-
-    if isinstance(parsed, dict):
-        return prefix + tail + b"\n"
-    return prefix
-
-
-def repair_jsonl_tail(path: Path) -> None:
-    """Repair a torn or delimiter-less tail before acknowledging another append.
-
-    Repair errors propagate: appending onto an unrepaired tail can make the new
-    event unreadable even when its write and fsync succeed.
-    """
-
-    if not _jsonl_tail_needs_repair(path):
-        return
-
-    content = path.read_bytes()
-    repaired = _repaired_jsonl_bytes(content)
-    if repaired is None:
-        return
-
-    with atomic_replace(path, mode="wb", encoding=None, permissions="preserve") as handle:
-        handle.write(repaired)
-
-
 def append_text_line(path: Path, line: str) -> None:
     """Append one line and fsync before returning.
 
@@ -110,10 +46,3 @@ def append_text_line(path: Path, line: str) -> None:
         os.fsync(handle.fileno())
     if not file_existed:
         fsync_directory(path.parent)
-
-
-def append_durable_jsonl_line(path: Path, line: str) -> None:
-    """Repair a torn JSONL tail, then append one durable line."""
-
-    repair_jsonl_tail(path)
-    append_text_line(path, line)

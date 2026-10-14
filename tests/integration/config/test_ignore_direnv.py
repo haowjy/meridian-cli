@@ -2,7 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.config.settings import OPTION_CATALOG, MeridianConfig, load_config
+from meridian.lib.config.loader import OPTION_CATALOG, load_config
+from meridian.lib.config.models import MeridianConfig
 
 
 def test_ignore_direnv_config_layers_and_snapshot(

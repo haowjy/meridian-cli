@@ -2,35 +2,16 @@
 
 from __future__ import annotations
 
-import json
 import time
 from collections.abc import Generator
 from pathlib import Path
-from typing import Any, cast
+
+from meridian.lib.state.jsonl import iter_jsonl
+from meridian.lib.utils.json_shapes import json_object
 
 
-def _as_string_key_dict(value: object) -> dict[str, Any] | None:
-    if not isinstance(value, dict):
-        return None
-    raw_dict = cast("dict[object, object]", value)
-    keys = list(raw_dict)
-    for key in keys:
-        if not isinstance(key, str):
-            return None
-    return cast("dict[str, Any]", value)
-
-
-def _parse_jsonl_line(line: str | bytes) -> dict[str, Any] | None:
-    if isinstance(line, bytes):
-        line = line.decode("utf-8", errors="replace")
-    line = line.strip()
-    if not line:
-        return None
-    try:
-        loaded = json.loads(line)
-    except (json.JSONDecodeError, ValueError):
-        return None
-    return _as_string_key_dict(loaded)
+def _envelope(payload: dict[str, object]) -> dict[str, object]:
+    return payload
 
 
 def discover_segments(telemetry_dir: Path) -> list[Path]:
@@ -48,18 +29,20 @@ def discover_segments(telemetry_dir: Path) -> list[Path]:
 
 
 def _matches_filters(
-    envelope: dict[str, Any],
+    envelope: dict[str, object],
     *,
     since_ts: str | None = None,
     domain: str | None = None,
     ids_filter: dict[str, str] | None = None,
 ) -> bool:
-    if since_ts and envelope.get("ts", "") < since_ts:
-        return False
+    if since_ts:
+        timestamp = envelope.get("ts")
+        if not isinstance(timestamp, str) or timestamp < since_ts:
+            return False
     if domain and envelope.get("domain") != domain:
         return False
     if ids_filter:
-        event_ids = _as_string_key_dict(envelope.get("ids"))
+        event_ids = json_object(envelope.get("ids"))
         if event_ids is None:
             return False
         return all(event_ids.get(key) == value for key, value in ids_filter.items())
@@ -72,24 +55,20 @@ def read_events(
     since_ts: str | None = None,
     domain: str | None = None,
     ids_filter: dict[str, str] | None = None,
-) -> Generator[dict[str, Any], None, None]:
+) -> Generator[dict[str, object], None, None]:
     """Yield parsed telemetry envelopes from a segment, applying optional filters.
 
-    Truncation-tolerant: silently skips lines that fail JSON parsing.
+    Truncation-tolerant: an incomplete tail is left for a later read.
     """
     try:
-        with path.open("r", encoding="utf-8") as file:
-            for line in file:
-                envelope = _parse_jsonl_line(line)
-                if envelope is None:
-                    continue
-                if _matches_filters(
-                    envelope,
-                    since_ts=since_ts,
-                    domain=domain,
-                    ids_filter=ids_filter,
-                ):
-                    yield envelope
+        for envelope, _offset in iter_jsonl(path, _envelope):
+            if envelope is not None and _matches_filters(
+                envelope,
+                since_ts=since_ts,
+                domain=domain,
+                ids_filter=ids_filter,
+            ):
+                yield envelope
     except OSError:
         return
 
@@ -113,7 +92,7 @@ def tail_events(
     domain: str | None = None,
     ids_filter: dict[str, str] | None = None,
     poll_interval: float = 1.0,
-) -> Generator[dict[str, Any], None, None]:
+) -> Generator[dict[str, object], None, None]:
     """Follow telemetry segments, yielding new events as they arrive.
 
     Watches for new lines in existing segments and new segments appearing.
@@ -139,7 +118,7 @@ def _tail_events_from_offsets(
     domain: str | None = None,
     ids_filter: dict[str, str] | None = None,
     poll_interval: float = 1.0,
-) -> Generator[dict[str, Any], None, None]:
+) -> Generator[dict[str, object], None, None]:
     dirs = telemetry_dir if isinstance(telemetry_dir, list) else [telemetry_dir]
     seen_files = dict(start_offsets)
 
@@ -155,16 +134,13 @@ def _tail_events_from_offsets(
                 if size <= offset:
                     continue
                 try:
-                    with segment.open("rb") as file:
-                        file.seek(offset)
-                        for raw_line in file:
-                            envelope = _parse_jsonl_line(raw_line)
-                            if envelope is None:
-                                continue
-                            if _matches_filters(envelope, domain=domain, ids_filter=ids_filter):
-                                found_new = True
-                                yield envelope
-                        seen_files[segment] = file.tell()
+                    for envelope, end_offset in iter_jsonl(segment, _envelope, offset=offset):
+                        seen_files[segment] = end_offset
+                        if envelope is not None and _matches_filters(
+                            envelope, domain=domain, ids_filter=ids_filter
+                        ):
+                            found_new = True
+                            yield envelope
                 except OSError:
                     continue
         if not found_new:

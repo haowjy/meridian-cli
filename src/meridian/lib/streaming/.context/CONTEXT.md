@@ -218,8 +218,7 @@ meridian spawn inject <id> --message "..."
   → per-user temp directory / hashed control socket
   → ControlSocketServer._handle_client()
   → SpawnManager.inject()
-    → ControlActionCoordinator.run_action()  — serializes concurrent actions
-    → _record_inbound()                       — appends to inbound.jsonl
+    → ControlActionCoordinator.run_action()  — journals and serializes the action
     → connection.send_user_message(message)
 ```
 

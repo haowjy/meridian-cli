@@ -11,18 +11,29 @@ complete autosync workflow for a sync root.
 from __future__ import annotations
 
 import hashlib
-import json
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Protocol
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    RootModel,
+    SerializerFunctionWrapHandler,
+    ValidationError,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.utils.json_shapes import json_list, json_object, loads_json_object
-from meridian.plugin_api.fs import AtomicReplaceDurabilityError, atomic_write_text
+from meridian.lib.state.json_doc import mutate_model, read_model, write_model
+from meridian.lib.utils.json_shapes import is_object_sequence, json_object
+from meridian.plugin_api.fs import AtomicReplaceDurabilityError
 from meridian.plugin_api.state import get_user_home
 
 AUTOSYNC_IGNORE_PATTERNS: tuple[str, ...] = (".git", "**/.git")
@@ -30,32 +41,114 @@ AUTOSYNC_IGNORE_PATTERNS: tuple[str, ...] = (".git", "**/.git")
 _DEFAULT_LOCK_TIMEOUT_SECONDS = 60.0
 
 
-@dataclass(frozen=True)
-class ConflictRecord:
-    """One conflict, as stored on disk."""
+class ConflictRecord(BaseModel):
+    """Public view of one stored conflict."""
 
-    id: str
-    context: str
-    sync_root: str
-    conflict_type: str
-    paths: tuple[str, ...]
-    local_sha: str
-    remote_sha: str
-    remote_branch: str
-    event_name: str
-    spawn_id: str | None
-    created_at: str
-    resolved: bool
+    model_config = ConfigDict(frozen=True, strict=True, extra="ignore")
+
+    id: str = ""
+    context: str = "unknown"
+    sync_root: str = ""
+    conflict_type: str = "unknown"
+    paths: tuple[str, ...] = ()
+    local_sha: str = "unknown"
+    remote_sha: str = "unknown"
+    remote_branch: str = "main"
+    event_name: str = "unknown"
+    spawn_id: str | None = None
+    created_at: str = "unknown"
+    resolved: bool = False
     resolved_at: str | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _flatten_trigger(cls, value: object) -> object:
+        raw = json_object(value)
+        if raw is None or "trigger" not in raw:
+            return value
+        trigger = json_object(raw.get("trigger")) or {}
+        return {
+            **{key: item for key, item in raw.items() if key != "trigger"},
+            "event_name": trigger.get("event", "unknown"),
+            "spawn_id": trigger.get("spawn_id"),
+        }
 
-@dataclass(frozen=True)
-class SyncState:
+    @field_validator("id", mode="before")
+    @classmethod
+    def _valid_id_or_empty(cls, value: object) -> object:
+        return value if isinstance(value, str) and value else ""
+
+    @field_validator(
+        "context",
+        "sync_root",
+        "conflict_type",
+        "local_sha",
+        "remote_sha",
+        "remote_branch",
+        "event_name",
+        "created_at",
+        mode="before",
+    )
+    @classmethod
+    def _stringify(cls, value: object) -> object:
+        return str(value)
+
+    @field_validator("paths", mode="before")
+    @classmethod
+    def _stringify_paths(cls, value: object) -> object:
+        return tuple(str(item) for item in value) if is_object_sequence(value) else ()
+
+    @field_validator("spawn_id", "resolved_at", mode="before")
+    @classmethod
+    def _optional_string(cls, value: object) -> object:
+        return None if value is None else str(value)
+
+    @field_validator("resolved", mode="before")
+    @classmethod
+    def _truthy_bool(cls, value: object) -> object:
+        return bool(value)
+
+    @model_serializer(mode="wrap", when_used="json")
+    def _serialize_document(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, object]:
+        document = json_object(handler(self)) or {}
+        document.pop("event_name", None)
+        document.pop("spawn_id", None)
+        document["trigger"] = {"event": self.event_name, "spawn_id": self.spawn_id}
+        if self.resolved_at is not None:
+            document["resolved_at"] = self.resolved_at
+        else:
+            document.pop("resolved_at", None)
+        return document
+
+
+class _ConflictDocument(RootModel[dict[str, object]]):
+    """Lossless conflict document used when mutating an existing file."""
+
+
+class SyncState(BaseModel):
     """Last sync outcome for a sync root."""
 
-    last_sync: str
-    outcome: str
+    model_config = ConfigDict(frozen=True, strict=True, extra="ignore")
+
+    last_sync: str = ""
+    outcome: str = "unknown"
     conflict_id: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_document(cls, value: object) -> object:
+        raw = json_object(value)
+        if raw is None:
+            return value
+        last_sync = raw.get("last_sync")
+        conflict_id = raw.get("conflict_id")
+        return {
+            "last_sync": last_sync if isinstance(last_sync, str) and last_sync.strip() else "",
+            "outcome": str(raw.get("outcome", "unknown")),
+            "conflict_id": None if conflict_id is None else str(conflict_id),
+        }
 
 
 @dataclass(frozen=True)
@@ -168,22 +261,7 @@ def transaction(
 
 def read_sync_state(sync_root: Path, *, runtime_root: Path) -> SyncState | None:
     """Read sync state for one root."""
-
-    target = state_file(sync_root, runtime_root=runtime_root)
-    if not target.exists():
-        return None
-    data = loads_json_object(_read_text(target) or "")
-    if data is None:
-        return None
-
-    last_sync_raw = data.get("last_sync")
-    last_sync = last_sync_raw if isinstance(last_sync_raw, str) and last_sync_raw.strip() else ""
-
-    return SyncState(
-        last_sync=last_sync,
-        outcome=str(data.get("outcome", "unknown")),
-        conflict_id=_to_optional_str(data.get("conflict_id")),
-    )
+    return read_model(state_file(sync_root, runtime_root=runtime_root), SyncState)
 
 
 def read_conflicts(sync_root: Path, *, runtime_root: Path) -> list[ConflictRecord]:
@@ -202,38 +280,15 @@ def read_conflicts(sync_root: Path, *, runtime_root: Path) -> list[ConflictRecor
     for file_path in files:
         if file_path.suffix != ".json":
             continue
-        data = loads_json_object(_read_text(file_path) or "")
-        if data is None:
+        record = _read_conflict_record(file_path)
+        if record is None:
             continue
-
-        conflict_id_raw = data.get("id")
-        conflict_id = (
-            conflict_id_raw
-            if isinstance(conflict_id_raw, str) and conflict_id_raw
-            else file_path.stem
-        )
-
-        trigger_obj = json_object(data.get("trigger")) or {}
-        event_name = str(trigger_obj.get("event", "unknown"))
-        spawn_id = _to_optional_str(trigger_obj.get("spawn_id"))
-
-        paths = _to_string_tuple(data.get("paths"))
-
         records.append(
-            ConflictRecord(
-                id=conflict_id,
-                context=str(data.get("context", "unknown")),
-                sync_root=str(data.get("sync_root", sync_root.as_posix())),
-                conflict_type=str(data.get("conflict_type", "unknown")),
-                paths=paths,
-                local_sha=str(data.get("local_sha", "unknown")),
-                remote_sha=str(data.get("remote_sha", "unknown")),
-                remote_branch=str(data.get("remote_branch", "main")),
-                event_name=event_name,
-                spawn_id=spawn_id,
-                created_at=str(data.get("created_at", "unknown")),
-                resolved=bool(data.get("resolved", False)),
-                resolved_at=_to_optional_str(data.get("resolved_at")),
+            record.model_copy(
+                update={
+                    "id": record.id or file_path.stem,
+                    "sync_root": record.sync_root or sync_root.as_posix(),
+                }
             )
         )
 
@@ -242,11 +297,8 @@ def read_conflicts(sync_root: Path, *, runtime_root: Path) -> list[ConflictRecor
 
 def read_unresolved_conflicts(sync_root: Path, *, runtime_root: Path) -> list[ConflictRecord]:
     """Read unresolved conflict records for one sync root."""
-
-    return [
-        record for record in read_conflicts(sync_root, runtime_root=runtime_root)
-        if not record.resolved
-    ]
+    records = read_conflicts(sync_root, runtime_root=runtime_root)
+    return [record for record in records if not record.resolved]
 
 
 def find_conflict_by_id(
@@ -276,10 +328,8 @@ def read_status(sync_root: Path, *, runtime_root: Path) -> SyncRootStatus:
 
 def has_unresolved_conflict(sync_root: Path, *, runtime_root: Path) -> bool:
     """Return whether any unresolved conflict exists for this root."""
-
-    return any(
-        not record.resolved for record in read_conflicts(sync_root, runtime_root=runtime_root)
-    )
+    records = read_conflicts(sync_root, runtime_root=runtime_root)
+    return any(not record.resolved for record in records)
 
 
 def generate_conflict_id() -> str:
@@ -292,31 +342,8 @@ def generate_conflict_id() -> str:
 
 def _write_conflict(sync_root: Path, record: ConflictRecord, *, runtime_root: Path) -> None:
     """Write one conflict metadata JSON atomically."""
-
-    target_dir = conflict_dir(sync_root, runtime_root=runtime_root)
-    target_dir.mkdir(parents=True, exist_ok=True)
-
-    payload: dict[str, Any] = {
-        "id": record.id,
-        "context": record.context,
-        "sync_root": record.sync_root,
-        "conflict_type": record.conflict_type,
-        "paths": list(record.paths),
-        "local_sha": record.local_sha,
-        "remote_sha": record.remote_sha,
-        "remote_branch": record.remote_branch,
-        "trigger": {
-            "event": record.event_name,
-            "spawn_id": record.spawn_id,
-        },
-        "created_at": record.created_at,
-        "resolved": record.resolved,
-    }
-    if record.resolved_at is not None:
-        payload["resolved_at"] = record.resolved_at
-
-    target = target_dir / f"{record.id}.json"
-    atomic_write_text(target, json.dumps(payload, indent=2))
+    target = conflict_dir(sync_root, runtime_root=runtime_root) / f"{record.id}.json"
+    write_model(target, record, indent=2)
 
 
 def _write_sync_state(
@@ -328,16 +355,14 @@ def _write_sync_state(
 ) -> None:
     """Write autosync state JSON atomically."""
 
-    target_dir = _autosync_root(sync_root, runtime_root)
-    target_dir.mkdir(parents=True, exist_ok=True)
-
-    payload = {
-        "last_sync": datetime.now(UTC).isoformat(),
-        "outcome": outcome,
-        "conflict_id": conflict_id,
-    }
-    atomic_write_text(
-        state_file(sync_root, runtime_root=runtime_root), json.dumps(payload, indent=2)
+    write_model(
+        state_file(sync_root, runtime_root=runtime_root),
+        SyncState(
+            last_sync=datetime.now(UTC).isoformat(),
+            outcome=outcome,
+            conflict_id=conflict_id,
+        ),
+        indent=2,
     )
 
 
@@ -345,51 +370,54 @@ def _mark_resolved(sync_root: Path, conflict_id: str, *, runtime_root: Path) -> 
     """Mark one conflict as resolved. Returns True when metadata was updated."""
 
     try:
-        target, data = _find_conflict_file(sync_root, conflict_id, runtime_root=runtime_root)
+        target = _find_conflict_file(
+            sync_root, conflict_id, runtime_root=runtime_root
+        )
     except OSError:
         return False
-    if target is None or data is None:
+    if target is None:
         return False
 
-    data["resolved"] = True
-    data["resolved_at"] = datetime.now(UTC).isoformat()
-    content = json.dumps(data, indent=2)
+    expected: _ConflictDocument | None = None
+
+    def resolve(
+        document: _ConflictDocument | None,
+    ) -> tuple[_ConflictDocument | None, bool]:
+        nonlocal expected
+        if document is None:
+            return None, False
+        expected = _ConflictDocument.model_validate(
+            {
+                **document.root,
+                "resolved": True,
+                "resolved_at": datetime.now(UTC).isoformat(),
+            }
+        )
+        return expected, True
+
     try:
-        return _write_text_reconciled(target, content)
-    except OSError:
-        return False
-
-
-def _write_text_reconciled(path: Path, content: str) -> bool:
-    """Write content, verifying visibility after a post-commit durability error."""
-
-    try:
-        atomic_write_text(path, content)
+        _updated, resolved = mutate_model(
+            target,
+            _ConflictDocument,
+            resolve,
+            lock=lock_file(autosync_lock_path(sync_root), reentrant=True),
+            indent=2,
+        )
+        return resolved
     except AtomicReplaceDurabilityError:
-        try:
-            return path.read_text(encoding="utf-8") == content
-        except OSError:
-            return False
-    return True
-
-
-def _read_text(path: Path) -> str | None:
-    try:
-        return path.read_text(encoding="utf-8")
+        return expected is not None and read_model(target, _ConflictDocument) == expected
     except OSError:
+        return False
+
+
+def _read_conflict_record(path: Path) -> ConflictRecord | None:
+    document = read_model(path, _ConflictDocument)
+    if document is None:
         return None
-
-
-def _to_string_tuple(value: object) -> tuple[str, ...]:
-    return tuple(str(item) for item in json_list(value) or [])
-
-
-def _to_optional_str(value: object) -> str | None:
-    if value is None:
+    try:
+        return ConflictRecord.model_validate(document.root)
+    except ValidationError:
         return None
-    if isinstance(value, str):
-        return value
-    return str(value)
 
 
 def _find_conflict_file(
@@ -397,20 +425,20 @@ def _find_conflict_file(
     conflict_id: str,
     *,
     runtime_root: Path,
-) -> tuple[Path | None, dict[str, Any] | None]:
+) -> Path | None:
     root = conflict_dir(sync_root, runtime_root=runtime_root)
     direct = root / f"{conflict_id}.json"
-    direct_data = loads_json_object(_read_text(direct) or "") if direct.exists() else None
-    if direct_data is not None:
-        return direct, direct_data
+    direct_record = _read_conflict_record(direct)
+    if direct_record is not None:
+        return direct
 
     for file_path in root.glob("*.json"):
-        data = loads_json_object(_read_text(file_path) or "")
-        if data is None:
+        record = _read_conflict_record(file_path)
+        if record is None:
             continue
-        if str(data.get("id", file_path.stem)) == conflict_id:
-            return file_path, data
-    return None, None
+        if (record.id or file_path.stem) == conflict_id:
+            return file_path
+    return None
 
 
 __all__ = [

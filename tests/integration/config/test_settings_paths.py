@@ -3,10 +3,11 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.config.loader import load_config
 from meridian.lib.config.project_config_state import resolve_project_config_state
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.project_root import resolve_project_root_resolution
-from meridian.lib.config.settings import load_config
+from meridian.lib.hooks.config import load_hooks_config
 from meridian.lib.ops.config import ConfigShowInput, config_show_sync
 from meridian.lib.ops.config_surface import build_config_surface
 from meridian.lib.ops.runtime import resolve_project_authority, resolve_runtime_authority_for_read
@@ -120,10 +121,171 @@ def test_load_config_ignores_deleted_defaults_model_and_harness_keys(tmp_path: P
         encoding="utf-8",
     )
 
-    config = load_config(project_root, resolve_models=False)
+    config = load_config(project_root)
 
     assert not hasattr(config.primary, "model")
     assert not hasattr(config.primary, "harness")
+
+
+@pytest.mark.parametrize(
+    ("toml", "message"),
+    [
+        (
+            "[output]\nverbosity = 7\n",
+            "Invalid value for 'output.verbosity': expected str, got int (7).",
+        ),
+        (
+            '[harness.pi.background_tasks]\nenabled = "yes"\n',
+            "Invalid value for 'harness.pi.background_tasks.enabled': "
+            "expected bool, got str ('yes').",
+        ),
+        (
+            '[idle]\nenabled = "yes"\n',
+            "Invalid value for 'idle.enabled': expected bool, got str ('yes').",
+        ),
+        (
+            "[harness.claude]\nmodel = 3\n",
+            "Invalid value for 'harness.claude.model': expected str, got int (3).",
+        ),
+        (
+            "harness = { claude = 3 }\n",
+            "Invalid value for 'harness.claude': expected table, got int (3).",
+        ),
+        (
+            "[primary]\nautocompact_pct = 50.0\n",
+            "Invalid value for 'primary.autocompact_pct': expected int, got float (50.0).",
+        ),
+        (
+            "[primary]\nautocompact = 50000.0\n",
+            "Invalid value for 'primary.autocompact': expected int, got float (50000.0).",
+        ),
+        (
+            '[spawn]\ndeny_headless_harnesses = ["claude", ""]\n',
+            "Invalid value for 'spawn.deny_headless_harnesses': expected non-empty items.",
+        ),
+        (
+            'hooks = "invalid"\n',
+            "Invalid value for 'hooks': expected array[table], got str ('invalid').",
+        ),
+    ],
+)
+def test_load_config_reports_invalid_key_and_problem(
+    tmp_path: Path,
+    toml: str,
+    message: str,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    config_path = project_root / "meridian.toml"
+    config_path.write_text(toml, encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        load_config(project_root)
+
+    assert str(exc_info.value) == f"{message.removesuffix('.')} in '{config_path}'."
+
+
+def test_load_config_preserves_unknown_and_deprecated_key_policy(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "meridian.toml").write_text(
+        "[output]\n"
+        "unknown = true\n"
+        "[primary]\n"
+        'model = "legacy-model"\n'
+        'harness = "claude"\n'
+        "[harness.claude]\n"
+        "unknown = true\n"
+        "[harness.pi.background_tasks]\n"
+        "unknown = true\n"
+        "[idle]\n"
+        "unknown = true\n"
+        "[notify]\n"
+        "unknown = true\n"
+        "[environment]\n"
+        "unknown = true\n"
+        "[defaults]\n"
+        "unknown = true\n"
+        "[spawn]\n"
+        "unknown = true\n"
+        "[timeouts]\n"
+        "unknown = true\n",
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="meridian.lib.config.errors"):
+        config = load_config(project_root)
+
+    assert caplog.messages == [
+        "Ignoring unknown Meridian config key 'output.unknown'.",
+        "Ignoring unknown Meridian config key 'harness.claude.unknown'.",
+        "Ignoring unknown Meridian config key 'idle.unknown'.",
+        "Ignoring unknown Meridian config key 'notify.unknown'.",
+        "Ignoring unknown Meridian config key 'environment.unknown'.",
+        "Ignoring unknown Meridian config key 'defaults.unknown'.",
+        "Ignoring unknown Meridian config key 'spawn.unknown'.",
+        "Ignoring unknown Meridian config key 'timeouts.unknown'.",
+    ]
+    assert not hasattr(config.primary, "model")
+    assert not hasattr(config.primary, "harness")
+    assert config.harness.pi.background_tasks.enabled is True
+
+
+def test_config_loader_owns_unknown_hook_key_warning(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "meridian.toml").write_text(
+        "[[hooks]]\n"
+        'name = "project-hook"\n'
+        'event = "spawn.start"\n'
+        'command = "echo project"\n'
+        'bogus = "warn once"\n',
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="meridian.lib.config.errors"):
+        load_config(project_root)
+        load_hooks_config(project_root)
+
+    assert caplog.messages == [
+        "Ignoring unknown Meridian config key 'hooks[1].bogus'."
+    ]
+
+
+def test_load_config_keeps_history_unknown_keys_forbidden(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "meridian.toml").write_text(
+        "[history.archive]\nunknown = true\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        load_config(project_root)
+
+    assert str(exc_info.value) == (
+        "Invalid value for 'history.archive.unknown': unknown key "
+        f"in '{project_root / 'meridian.toml'}'."
+    )
+
+
+def test_load_config_preserves_pi_extension_path_normalization(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "meridian.toml").write_text(
+        '[harness.pi]\nextra_extension_paths = [1, true, " ./extension ", ""]\n',
+        encoding="utf-8",
+    )
+
+    config = load_config(project_root)
+
+    assert config.harness.pi.extra_extension_paths == ("1", "True", "./extension")
 
 
 def test_load_config_reads_harness_wait_yield_settings(tmp_path: Path) -> None:
@@ -148,7 +310,7 @@ def test_load_config_reads_harness_wait_yield_settings(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    config = load_config(project_root, resolve_models=False)
+    config = load_config(project_root)
 
     assert config.default_wait_yield_seconds == 120.0
     assert config.min_wait_yield_seconds == 45.0
@@ -156,6 +318,19 @@ def test_load_config_reads_harness_wait_yield_settings(tmp_path: Path) -> None:
     assert config.wait_yield_seconds_for_harness("codex") == 45.0
     assert config.wait_yield_seconds_for_harness("unknown") == 120.0
     assert config.default_model_for_harness("codex") == "gpt-5.4"
+
+
+def test_load_config_reads_pi_wait_yield_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    monkeypatch.setenv("MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_PI", "75")
+
+    config = load_config(project_root)
+
+    assert config.harness.pi.wait_yield_seconds == 75.0
 
 
 def test_load_config_reads_idle_tables_with_env_precedence(
@@ -169,14 +344,14 @@ def test_load_config_reads_idle_tables_with_env_precedence(
         encoding="utf-8",
     )
 
-    file_config = load_config(project_root, resolve_models=False)
+    file_config = load_config(project_root)
     assert file_config.idle.push_seconds == 12
     assert file_config.harness.codex.idle.ttl_seconds == 900
 
     monkeypatch.setenv("MERIDIAN_IDLE_PUSH_SECONDS", "90")
     monkeypatch.setenv("MERIDIAN_HARNESS_IDLE_TTL_SECONDS_CODEX", "1800")
 
-    env_config = load_config(project_root, resolve_models=False)
+    env_config = load_config(project_root)
     assert env_config.idle.push_seconds == 90
     assert env_config.harness.codex.idle.ttl_seconds == 1800
 
@@ -192,7 +367,7 @@ def test_load_config_reads_notify_table_with_env_precedence(
         encoding="utf-8",
     )
 
-    file_config = load_config(project_root, resolve_models=False)
+    file_config = load_config(project_root)
     assert file_config.notify.ntfy_topic == "file-topic"
     assert file_config.notify.smtp_port == 2525
 
@@ -200,7 +375,7 @@ def test_load_config_reads_notify_table_with_env_precedence(
     monkeypatch.setenv("MERIDIAN_NOTIFY_SMTP_PORT", "465")
     monkeypatch.setenv("MERIDIAN_NOTIFY_INCLUDE_MESSAGES", "false")
 
-    env_config = load_config(project_root, resolve_models=False)
+    env_config = load_config(project_root)
     assert env_config.notify.ntfy_topic == "env-topic"
     assert env_config.notify.include_messages is False
     assert env_config.notify.smtp_port == 465
@@ -220,7 +395,7 @@ def test_load_config_reads_spawn_deny_headless_harnesses(tmp_path: Path) -> None
         encoding="utf-8",
     )
 
-    config = load_config(project_root, resolve_models=False)
+    config = load_config(project_root)
 
     assert config.deny_headless_harnesses == ("claude", "pi")
 
@@ -239,7 +414,7 @@ def test_load_config_reads_pi_disable_managed_bash(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    config = load_config(project_root, resolve_models=False)
+    config = load_config(project_root)
 
     assert config.harness.pi.disable_managed_bash is True
     assert config.default_model_for_harness("pi") == ""
@@ -256,7 +431,7 @@ def test_load_config_rejects_legacy_agents_table_with_migration_error(tmp_path: 
         ValueError,
         match=r"Legacy section '\[agents\]' is not supported",
     ) as exc_info:
-        load_config(project_root, resolve_models=False)
+        load_config(project_root)
 
     message = str(exc_info.value)
     assert str(config_path) in message

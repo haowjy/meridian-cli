@@ -13,7 +13,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Protocol, cast
 
-from meridian.lib.config.settings import NotifyConfig
+from meridian.lib.config.models import NotifyConfig
 from meridian.lib.notify.channels.base import SendResult
 from meridian.lib.notify.notice import Notice
 from meridian.lib.platform import get_home_path

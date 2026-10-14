@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from meridian.cli import spawn_inject as spawn_inject_module
-from meridian.lib.config.settings import load_config
+from meridian.lib.config.loader import load_config
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent, StopResult
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection

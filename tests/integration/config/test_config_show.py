@@ -149,7 +149,7 @@ def test_config_show_attributes_dynamic_sections_from_file_and_user_config(
         'source = "git"\n'
         "\n"
         "[[hooks]]\n"
-        'event = "spawn"\n'
+        'event = "spawn.start"\n'
         'command = "echo project"\n',
         encoding="utf-8",
     )
@@ -195,7 +195,7 @@ def test_config_show_attributes_dynamic_sections_from_file_and_user_config(
         (None, "hooks = []\n", "user-config"),
         (
             "hooks = []\n",
-            '[[hooks]]\nname = "user-hook"\nevent = "spawn"\ncommand = "echo user"\n',
+            '[[hooks]]\nname = "user-hook"\nevent = "spawn.start"\ncommand = "echo user"\n',
             "file",
         ),
     ],

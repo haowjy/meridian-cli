@@ -110,6 +110,14 @@ def test_truncated_lines_are_skipped_gracefully(tmp_path: Path) -> None:
     assert list(read_events(path)) == [event]
 
 
+def test_valid_unterminated_telemetry_tail_is_not_committed(tmp_path: Path) -> None:
+    path = tmp_path / "segment.jsonl"
+    event = _event(datetime.now(UTC), "chat.ws.connected")
+    path.write_text(json.dumps(event), encoding="utf-8")
+
+    assert list(read_events(path)) == []
+
+
 def test_query_events_merges_multiple_directories_in_mtime_order(tmp_path: Path) -> None:
     first_dir = tmp_path / "project-a" / "telemetry"
     second_dir = tmp_path / "project-b" / "telemetry"

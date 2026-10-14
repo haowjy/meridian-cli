@@ -6,6 +6,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from meridian.cli.invocation import Emitter, emit
 from meridian.lib.extensions.types import ExtensionCommandSpec, ExtensionSurface
 
 if TYPE_CHECKING:
@@ -22,7 +23,7 @@ _IMPLICIT_INPUT_FIELDS: frozenset[str] = frozenset({"project_root"})
 
 def _make_auto_handler_from_spec(
     spec: ExtensionCommandSpec,
-    emit: Callable[[Any], None],
+    emitter: Emitter,
 ) -> Callable[..., None] | None:
     """Generate a no-arg CLI handler when args_schema has no required fields."""
     sync_handler = spec.sync_handler
@@ -48,7 +49,7 @@ def _make_auto_handler_from_spec(
         payload: dict[str, object] = {}
         if "project_root" in spec.args_schema.model_fields:
             payload["project_root"] = optional_cli_project_root_posix()
-        emit(sync_handler(payload))
+        emitter(sync_handler(payload))
 
     return auto_handler
 
@@ -60,18 +61,13 @@ def register_extension_cli_group(
     group: str,
     handlers: dict[str, HandlerFactory] | None = None,
     command_help_epilogues: dict[str, str] | None = None,
-    emit: Callable[[Any], None] | None = None,
     default_handler: Callable[..., None] | None = None,
-) -> tuple[set[str], dict[str, str]]:
+) -> set[str]:
     """Register CLI commands for one extension group.
-
-    Same contract as register_manifest_cli_group() but reads from
-    ExtensionCommandRegistry instead of the operation manifest.
 
     Handler keys are fqids (e.g. "meridian.work.start"), not op names.
     """
     registered: set[str] = set()
-    descriptions: dict[str, str] = {}
     resolved_handlers = handlers or {}
     resolved_epilogues = command_help_epilogues or {}
 
@@ -83,7 +79,7 @@ def register_extension_cli_group(
 
         if handler_factory is not None:
             handler = handler_factory()
-        elif emit is not None:
+        else:
             auto = _make_auto_handler_from_spec(spec, emit)
             if auto is None:
                 raise ValueError(
@@ -91,8 +87,6 @@ def register_extension_cli_group(
                     f"(args_schema has required fields). Add an explicit handler."
                 )
             handler = auto
-        else:
-            raise ValueError(f"No CLI handler registered for '{fqid}'")
 
         handler.__name__ = f"cmd_{spec.cli_group}_{spec.cli_name}"
         epilogue = resolved_epilogues.get(fqid)
@@ -101,12 +95,11 @@ def register_extension_cli_group(
             kwargs["help_epilogue"] = epilogue
         app.command(handler, **kwargs)
         registered.add(f"{spec.cli_group}.{spec.cli_name}")
-        descriptions[fqid] = spec.summary
 
     if default_handler is not None:
         app.default(default_handler)
 
-    return registered, descriptions
+    return registered
 
 
 __all__ = [

@@ -199,7 +199,7 @@ def test_capture_uses_bound_generation_not_sidecar_identity(tmp_path: Path, monk
     project, root, key, _ = _capture_fixture(tmp_path, monkeypatch)
     write_primary_metadata(
         root / "spawns" / key,
-        PrimaryMetadata(harness_session_id="other-native"),
+        PrimaryMetadata(managed_backend=True, harness_session_id="other-native"),
         runtime_root=root,
         spawn_id=key,
     )
@@ -374,7 +374,7 @@ def test_capture_joins_native_identity_to_exact_linked_live_lease(
     if binding == "sidecar":
         write_primary_metadata(
             root / "spawns" / owner,
-            PrimaryMetadata(harness_session_id="exact-native"),
+            PrimaryMetadata(managed_backend=True, harness_session_id="exact-native"),
             runtime_root=root,
             spawn_id=owner,
         )

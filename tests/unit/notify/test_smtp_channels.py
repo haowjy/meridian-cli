@@ -6,7 +6,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING
 
-from meridian.lib.config.settings import NotifyConfig
+from meridian.lib.config.models import NotifyConfig
 from meridian.lib.notify.channels.smtp import SMTPChannel
 from meridian.lib.notify.notice import Notice
 

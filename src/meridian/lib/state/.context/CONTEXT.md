@@ -122,9 +122,39 @@ All state files are written through `atomic.py`:
 - `atomic_publish_dir()`: require a nonexistent destination, rename a complete
   same-volume directory into place, then fsync the destination parent.
 - `append_text_line()`: opens in binary mode so JSONL newline encoding and byte
-  offsets remain stable.
-- `append_durable_jsonl_line()`: repair a torn or delimiter-less tail before append.
-  Repair failure propagates; never acknowledge a new event appended onto invalid JSON.
+  offsets remain stable. It is the raw primitive; durable appends go through
+  `jsonl.py` (below).
+
+### JSON Sidecar Contract (`json_doc.py`)
+
+Small JSON sidecars (session leases, primary metadata, process scopes, cleanup
+claims, spawn scopes, idle state, Pi lifecycle, autosync state and conflicts) are
+Pydantic models persisted only through `read_model()` / `write_model()` /
+`mutate_model()`. `read_model()` returns `None` for a missing, truncated or invalid
+file, so a corrupt sidecar loads as absent and the next write repairs it.
+`mutate_model()` requires the caller's lock and re-reads under it; there is no
+unlocked read-modify-write. A new sidecar adopts this seam rather than hand-rolling
+read, validate, lock and replace.
+
+### JSONL Commit Contract (`jsonl.py`)
+
+One rule for every JSONL file: **a row exists when its newline does.**
+
+- `iter_jsonl()` yields only newline-terminated rows. A torn final row is withheld,
+  not parsed, until a later append commits or repairs it.
+- `append_durable_jsonl_line()` takes exactly one row, owns its newline, and rejects
+  embedded CR/LF. Before appending it repairs the tail: a delimiter-less tail that
+  parses as a JSON object gets its newline; a partial one is dropped. Repair failure
+  propagates; never acknowledge an event appended onto invalid JSON.
+  `append_durable_jsonl_lines()` is the batch form: one repair, one write, one
+  `fsync` for the batch (telemetry's durability unit).
+- Malformed complete rows are skipped with a debug-level diagnostic. Readers that
+  must fail closed (the archive receipt catalog) pass `on_malformed="raise"`.
+- Repair is read-then-replace, so callers hold the writer lock or own a
+  single-writer file.
+
+Terminal status, liveness and `spawn wait` read `state.json`, not JSONL, so a
+withheld torn tail can delay an event's visibility but never hides a completion.
 
 Never write state files with plain `open()` + `write()`. Crash in the middle of a
 plain write leaves a partial file; partial state.json will fail Pydantic validation

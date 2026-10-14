@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, NoReturn, cast
+from typing import Literal, NoReturn
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -58,6 +58,7 @@ from meridian.lib.state.history_changes import (
     versioned,
 )
 from meridian.lib.state.history_codec import canonical_time, last_activity
+from meridian.lib.state.jsonl import iter_jsonl
 from meridian.lib.state.session_fold import (
     SessionHistoricalEvent,
     SessionRecord,
@@ -523,40 +524,26 @@ class HistoryIndex:
         dirty: set[tuple[str, str]] = set()
         dirty_chats: set[str] = set()
         work_chats: set[tuple[str, str]] = set()
-        with path.open("rb") as handle:
-            handle.seek(offset)
-            while line := handle.readline():
-                if not line.endswith(b"\n"):
-                    break
-                end = handle.tell()
-                try:
-                    payload = json.loads(line)
-                    # Match the authoritative event reader's tolerant line policy.
-                    event = (
-                        parse_event(cast("dict[str, Any]", payload))
-                        if isinstance(payload, dict)
-                        else None
-                    )
-                except (ValueError, UnicodeDecodeError):
-                    offset = end
-                    continue
-                if isinstance(event, SessionUpdateEvent) and event.active_work_id:
-                    work_chats.add((event.active_work_id.strip(), event.chat_id))
-                if event is not None:
-                    prior = records.get(event.chat_id)
-                    key = project_session_generation(
-                        records, generations, latest_blank, event, ordinal=offset
-                    )
-                    started = isinstance(event, (SessionStartEvent, SessionHistoricalEvent))
-                    if records.get(event.chat_id) is not prior:
-                        dirty_chats.add(event.chat_id)
-                        if started:
-                            chat_ordinals[event.chat_id] = offset
-                    if key is not None:
-                        dirty.add(key)
-                        if started:
-                            ordinals[key] = offset
-                offset = end
+        for parsed_event, end in iter_jsonl(path, parse_event, offset=offset):
+            if isinstance(parsed_event, SessionUpdateEvent) and parsed_event.active_work_id:
+                work_chats.add((parsed_event.active_work_id.strip(), parsed_event.chat_id))
+            if parsed_event is not None:
+                prior = records.get(parsed_event.chat_id)
+                key = project_session_generation(
+                    records, generations, latest_blank, parsed_event, ordinal=offset
+                )
+                started = isinstance(
+                    parsed_event, (SessionStartEvent, SessionHistoricalEvent)
+                )
+                if records.get(parsed_event.chat_id) is not prior:
+                    dirty_chats.add(parsed_event.chat_id)
+                    if started:
+                        chat_ordinals[parsed_event.chat_id] = offset
+                if key is not None:
+                    dirty.add(key)
+                    if started:
+                        ordinals[key] = offset
+            offset = end
         for chat, generation in dirty:
             record = generations[(chat, generation)][chat]
             history_id = str(record.history_id) if record.history_id else None

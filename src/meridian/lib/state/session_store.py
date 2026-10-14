@@ -1,15 +1,14 @@
 """File-backed session tracking for a Meridian state root's `sessions.jsonl`."""
 
-import json
 import os
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import ExitStack
 from pathlib import Path
-from typing import IO, Any, Literal, NamedTuple, cast
+from typing import IO, Annotated, Literal, NamedTuple, cast
 
 import psutil
-from pydantic import BaseModel
+from pydantic import BaseModel, BeforeValidator, ConfigDict, ValidationError
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import (
@@ -31,6 +30,7 @@ from meridian.lib.platform.locking import (
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import append_event, read_events, utc_now_iso
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
+from meridian.lib.state.json_doc import read_model, write_model
 from meridian.lib.state.liveness import is_process_alive_with_birth
 from meridian.lib.state.native_binding import BindOutcome, Conflict, bind, report_conflict
 from meridian.lib.state.paths import RuntimePaths, normalize_path_for_write
@@ -73,6 +73,7 @@ from meridian.lib.state.session_fold import (
 from meridian.lib.state.session_fold import (
     project_session_event as project_session_event,
 )
+from meridian.lib.utils.json_shapes import float_or_none, int_or_none, string_or_empty
 
 
 def _append_session_event(
@@ -116,50 +117,40 @@ class StaleSessionCleanup(NamedTuple):
     materialized_scopes: tuple[MaterializedCleanupScope, ...]
 
 
-def _parse_model_observation(payload: dict[str, Any]) -> SessionModelObservationEvent | None:
+def _parse_model_observation(payload: Mapping[str, object]) -> SessionModelObservationEvent | None:
     if payload.get("event") != "model_observation":
         return None
-    return SessionModelObservationEvent.model_validate(payload)
+    try:
+        return SessionModelObservationEvent.model_validate(payload)
+    except ValidationError:
+        return None
 
 
 def _session_lease_path(paths: RuntimePaths, chat_id: str) -> Path:
     return paths.sessions_dir / f"{chat_id}.lease.json"
 
 
+class SessionLease(BaseModel):
+    """Best-effort ownership metadata for one active chat lock."""
+
+    model_config = ConfigDict(frozen=True, strict=True, extra="ignore")
+
+    chat_id: Annotated[str, BeforeValidator(string_or_empty)] = ""
+    owner_created_at_epoch: Annotated[float | None, BeforeValidator(float_or_none)] = None
+    owner_pid: Annotated[int | None, BeforeValidator(int_or_none)] = None
+    session_instance_id: Annotated[str, BeforeValidator(string_or_empty)] = ""
+
+
 def _read_session_lease_data(
     paths: RuntimePaths,
     chat_id: str,
-) -> tuple[bool, str, int | None, float | None]:
-    lease_path = _session_lease_path(paths, chat_id)
-    if not lease_path.is_file():
-        return (False, "", None, None)
-    try:
-        payload = json.loads(lease_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return (False, "", None, None)
-    if not isinstance(payload, dict):
-        return (False, "", None, None)
-    payload_dict = cast("dict[str, Any]", payload)
-    generation = payload_dict.get("session_instance_id")
-    owner_pid = payload_dict.get("owner_pid")
-    owner_created_at_epoch = payload_dict.get("owner_created_at_epoch")
-    parsed_owner_pid = (
-        owner_pid if isinstance(owner_pid, int) and not isinstance(owner_pid, bool) else None
-    )
-    parsed_owner_created_at_epoch = (
-        float(owner_created_at_epoch)
-        if isinstance(owner_created_at_epoch, int | float)
-        and not isinstance(owner_created_at_epoch, bool)
-        else None
-    )
-    if isinstance(generation, str):
-        return (True, generation, parsed_owner_pid, parsed_owner_created_at_epoch)
-    return (True, "", parsed_owner_pid, parsed_owner_created_at_epoch)
+) -> SessionLease | None:
+    return read_model(_session_lease_path(paths, chat_id), SessionLease)
 
 
 def _read_session_lease(paths: RuntimePaths, chat_id: str) -> tuple[bool, str]:
-    lease_exists, generation, _owner_pid, _owner_birth = _read_session_lease_data(paths, chat_id)
-    return (lease_exists, generation)
+    lease = _read_session_lease_data(paths, chat_id)
+    return (lease is not None, lease.session_instance_id if lease is not None else "")
 
 
 def _write_session_lease(paths: RuntimePaths, chat_id: str, session_instance_id: str) -> None:
@@ -167,15 +158,14 @@ def _write_session_lease(paths: RuntimePaths, chat_id: str, session_instance_id:
         owner_created_at_epoch: float | None = psutil.Process(os.getpid()).create_time()
     except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
         owner_created_at_epoch = None
-    payload = {
-        "chat_id": chat_id,
-        "owner_pid": os.getpid(),
-        "owner_created_at_epoch": owner_created_at_epoch,
-        "session_instance_id": session_instance_id,
-    }
-    atomic_write_text(
+    write_model(
         _session_lease_path(paths, chat_id),
-        json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n",
+        SessionLease(
+            chat_id=chat_id,
+            owner_pid=os.getpid(),
+            owner_created_at_epoch=owner_created_at_epoch,
+            session_instance_id=session_instance_id,
+        ),
     )
 
 
@@ -214,7 +204,7 @@ def _records_by_session(
 ) -> dict[str, SessionRecord]:
     paths = RuntimePaths.from_root_dir(runtime_root)
 
-    def selected_event(payload: dict[str, Any]) -> SessionEvent | None:
+    def selected_event(payload: Mapping[str, object]) -> SessionEvent | None:
         if chat_ids is not None:
             record = (
                 payload.get("record") if payload.get("event") == "historical_import" else payload
@@ -539,8 +529,12 @@ def has_live_session_leases(runtime_root: Path) -> bool:
         return False
     for lease_path in paths.sessions_dir.glob("*.lease.json"):
         chat_id = lease_path.name.removesuffix(".lease.json")
-        _exists, _generation, owner_pid, owner_birth = _read_session_lease_data(paths, chat_id)
-        if owner_pid is not None and is_process_alive_with_birth(owner_pid, owner_birth):
+        lease = _read_session_lease_data(paths, chat_id)
+        if (
+            lease is not None
+            and lease.owner_pid is not None
+            and is_process_alive_with_birth(lease.owner_pid, lease.owner_created_at_epoch)
+        ):
             return True
     return False
 
@@ -551,10 +545,15 @@ def is_session_lease_owner_alive(
     """Check a live lease, optionally requiring the exact session generation."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    _exists, generation, owner_pid, owner_birth = _read_session_lease_data(paths, chat_id)
-    if session_instance_id is not None and generation != session_instance_id:
+    lease = _read_session_lease_data(paths, chat_id)
+    if lease is None:
         return False
-    return owner_pid is not None and is_process_alive_with_birth(owner_pid, owner_birth)
+    if session_instance_id is not None and lease.session_instance_id != session_instance_id:
+        return False
+    return lease.owner_pid is not None and is_process_alive_with_birth(
+        lease.owner_pid,
+        lease.owner_created_at_epoch,
+    )
 
 
 def list_active_session_records(runtime_root: Path) -> list[SessionRecord]:
@@ -942,31 +941,29 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
             stopped_at = utc_now_iso()
             for chat_id, _lock_path, _ in stale:
                 existing = records.get(chat_id)
-                (
-                    lease_exists,
-                    lease_session_instance_id,
-                    lease_owner_pid,
-                    lease_owner_birth,
-                ) = _read_session_lease_data(paths, chat_id)
+                lease = _read_session_lease_data(paths, chat_id)
                 if (
                     existing is not None
                     and existing.kind == "primary"
-                    and lease_exists
-                    and lease_owner_pid is not None
-                    and is_process_alive_with_birth(lease_owner_pid, lease_owner_birth)
+                    and lease is not None
+                    and lease.owner_pid is not None
+                    and is_process_alive_with_birth(
+                        lease.owner_pid,
+                        lease.owner_created_at_epoch,
+                    )
                 ):
                     continue
-                stop_session_instance_id = lease_session_instance_id
-                if not lease_exists and existing is not None:
+                stop_session_instance_id = lease.session_instance_id if lease is not None else ""
+                if lease is None and existing is not None:
                     stop_session_instance_id = existing.session_instance_id
                 if (
                     existing is not None
                     and existing.stopped_at is None
                     and (
-                        not lease_exists
+                        lease is None
                         or generation_matches(
                             existing.session_instance_id,
-                            lease_session_instance_id,
+                            lease.session_instance_id,
                         )
                     )
                 ):
@@ -983,11 +980,12 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
                     records[chat_id] = existing.model_copy(update={"stopped_at": stopped_at})
 
                 should_clean = (
-                    existing is None or existing.stopped_at is not None or not lease_exists
+                    existing is None or existing.stopped_at is not None or lease is None
                 )
                 if existing is not None and existing.stopped_at is None:
-                    should_clean = not lease_exists or generation_matches(
-                        existing.session_instance_id, lease_session_instance_id
+                    should_clean = lease is None or generation_matches(
+                        existing.session_instance_id,
+                        lease.session_instance_id,
                     )
                 if not should_clean:
                     continue
@@ -996,8 +994,8 @@ def cleanup_stale_sessions(runtime_root: Path) -> StaleSessionCleanup:
                     stale_cleanup_scopes.append(existing.harness.strip())
                 cleaned_ids.append(chat_id)
                 cleaned_generation = (
-                    lease_session_instance_id
-                    if lease_exists
+                    lease.session_instance_id
+                    if lease is not None
                     else existing.session_instance_id
                     if existing is not None
                     else ""

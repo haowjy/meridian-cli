@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from meridian.lib.config.settings import NotifyConfig
+from meridian.lib.config.models import NotifyConfig
 from meridian.lib.notify.channels import resolve_channel
 from meridian.lib.notify.channels.base import SendResult
 from meridian.lib.notify.notice import Notice, SessionLabel

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, overload
 
+from meridian.cli.invocation import get_global_options
 from meridian.lib.config.project_root import ProjectRootSource
 
 NO_ESTABLISHED_PROJECT_MSG = (
@@ -24,7 +25,6 @@ class CliProjectRoot:
 def resolve_cli_project_root() -> CliProjectRoot:
     """Resolve project root from GlobalOptions and env/CWD without raising."""
 
-    from meridian.cli.main import get_global_options
     from meridian.lib.config.project_root import resolve_project_root_resolution
 
     opts = get_global_options()

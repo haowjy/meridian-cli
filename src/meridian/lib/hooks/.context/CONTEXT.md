@@ -6,7 +6,8 @@
 HookDispatcher.fire(context: HookContext)
   └── HookRegistry.get_hooks_for_event(event)
         ← load_hooks_config(project_root)  [config.py]
-              layered: builtin < user < project < local
+              validates each row once as HookSpec  [schema.py]
+              layered: user < project < local
               override key: (name, event)
   └── for each Hook (ordered by source rank, priority, declaration order):
         _check_conditions(hook, context)     when.status / when.agent filters
@@ -21,12 +22,14 @@ HookDispatcher.fire(context: HookContext)
 Hook sources in ascending precedence:
 
 ```
-builtin defaults
-  ↑ context config
-  ↑ user config  (~/.meridian/config.toml)
+user config  (~/.meridian/config.toml)
   ↑ project config  (meridian.toml)
   ↑ local config  (meridian.local.toml)   ← highest
 ```
+
+There is no builtin layer. `builtin_registry.py` supplies a builtin hook's default
+events, interval and options, which apply only when some config row names that
+builtin.
 
 Override key is `(name, event)`. A higher-priority source row with the same key replaces the lower-priority row entirely. Use `meridian.local.toml` for machine-specific overrides without committing them.
 
@@ -51,7 +54,7 @@ The dispatcher bridges internal `HookContext` to plugin `PluginHookContext` via 
 ## Hook Execution Order
 
 Within an event, hooks are sorted by:
-1. Source rank (`builtin` → `context` → `user` → `project` → `local`, lower = earlier)
+1. Source rank (`user` → `project` → `local`, lower = earlier; `HOOK_SOURCE_PRECEDENCE` in `config.py`)
 2. Negative priority (higher `priority` value = earlier execution)
 3. Declaration order (stable sort)
 

@@ -6,7 +6,6 @@ import threading
 from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from dataclasses import asdict
 from pathlib import Path
 from typing import cast
 from uuid import uuid4
@@ -141,7 +140,7 @@ def _read_conflicts(work: Path) -> list[dict[str, object]]:
     """Read all conflict metadata files from a sync root."""
 
     return [
-        cast("dict[str, object]", asdict(record))
+        cast("dict[str, object]", record.model_dump())
         for record in autosync_store.read_conflicts(
             work, runtime_root=work.parent / "runtime"
         )

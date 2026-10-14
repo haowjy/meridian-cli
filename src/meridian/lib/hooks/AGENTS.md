@@ -10,7 +10,7 @@ The dispatcher is **fail-open** for `observe` and `post` event classes. A failin
 
 Config layers in ascending precedence:
 ```
-builtin defaults < context config < user (~/.meridian/config.toml) < project (meridian.toml) < local (meridian.local.toml)
+user (~/.meridian/config.toml) < project (meridian.toml) < local (meridian.local.toml)
 ```
 Override key is `(name, event)` — a higher-priority row with the same key replaces the lower-priority one entirely.
 
@@ -19,7 +19,8 @@ Override key is `(name, event)` — a higher-priority row with the same key repl
 - **Fire `HookDispatcher.fire(context)` — don't instantiate the registry or runner directly.** `HookDispatcher.from_application_context(ctx)` is the preferred constructor.
 - **Built-in hooks must import only from `meridian.plugin_api`.** Zero `meridian.lib.*` imports. This keeps built-ins usable as reference implementations for external plugins. If a built-in needs something not in the API, extend the plugin API.
 - **`HookContext.to_env()` and `HookContext.to_json()` are the only correct serialization paths.** External subprocess hooks receive both env vars and JSON stdin. `None` values are omitted — no empty-string env vars.
-- **Hook execution order within an event:** source rank (builtin first) → negative priority → declaration order. This is stable and deterministic.
+- **Hook execution order within an event:** source rank (user → project → local) → negative priority → declaration order. This is stable and deterministic. Built-in hooks have no source of their own; a configured builtin row ranks by the file it came from.
+- **Hook rows validate through `schema.py` models.** `HookConfigSection.model_validate` is the production path; single-field constraints (event, interval, timeout, failure policy, status) live on `HookSpec` / `HookWhenSpec` fields. Hand checks after the model are only for multi-field rules (command vs builtin, conditional name/event, builtin defaults and options). Don't add per-field checks outside the model, and don't warn about unknown keys here: config loading already warns once.
 - **`when.status` and `when.agent` conditions** are checked before interval throttling.
 
 ## Entry Points
@@ -27,6 +28,7 @@ Override key is `(name, event)` — a higher-priority row with the same key repl
 - `dispatch.py` — `HookDispatcher.fire(context)`, `HookDispatcher.from_application_context(ctx)`
 - `registry.py` — `HookRegistry` (loads config, serves event-scoped hook lists)
 - `config.py` — `load_hooks_config(project_root, ...)` with source layering
+- `schema.py` — `HookSpec` parsing, validation, and runtime `Hook` construction
 - `types.py` — `Hook`, `HookContext`, `HookResult`, `HookEventName`
 - `builtin/` — built-in hook implementations (`git_autosync.py` is the primary one)
 

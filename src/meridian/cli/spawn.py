@@ -15,6 +15,7 @@ from cyclopts import App, Parameter
 from meridian.cli.argv_normalization import validate_fork_mode
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.help_tiers import ADVANCED_PARAMS
+from meridian.cli.invocation import Emitter, current_output_sink, emit, get_global_options
 from meridian.cli.spawn_inject import inject_message
 from meridian.cli.utils import (
     parse_csv_list,
@@ -67,7 +68,6 @@ from meridian.lib.ops.spawn.api import (
 )
 from meridian.lib.ops.spawn.models import SpawnLaunchOptionUpdates, normalize_goal
 
-Emitter = Callable[[Any], None]
 logger = structlog.get_logger(__name__)
 _SPAWN_STATUS_VALUES = tuple(ALL_SPAWN_STATUSES)
 _ACTIVE_VIEW_STATUSES: tuple[SpawnStatus, ...] = tuple(
@@ -94,18 +94,6 @@ _SPAWN_WAIT_HELP_EPILOGUE = (
 )
 
 
-def _get_global_options() -> Any:
-    from meridian.cli.main import get_global_options
-
-    return get_global_options()
-
-
-def _current_output_sink() -> Any:
-    from meridian.cli.main import current_output_sink
-
-    return current_output_sink()
-
-
 def _prepare_spawn_runtime_read() -> RuntimeReadContext:
     return prepare_for_runtime_read(require_established_project_root())
 
@@ -122,9 +110,9 @@ def _prepare_spawn_runtime_write() -> RuntimeWriteContext:
 
 
 def _foreground_spawn_id_notifier(*, quiet: bool) -> Callable[[str], None] | None:
-    if quiet or _get_global_options().output.format == "json":
+    if quiet or get_global_options().output.format == "json":
         return None
-    sink = _current_output_sink()
+    sink = current_output_sink()
 
     def _notify(spawn_id: str) -> None:
         sink.status(f"Spawn id: {spawn_id}")
@@ -150,9 +138,9 @@ def _emit_spawn_warnings(*results: SpawnActionOutput) -> None:
     unstructured warning text to stderr.
     """
 
-    if _get_global_options().output.format == "json":
+    if get_global_options().output.format == "json":
         return
-    sink = _current_output_sink()
+    sink = current_output_sink()
     for result in results:
         if result.warning:
             sink.warning(result.warning)
@@ -218,8 +206,7 @@ def _edit_distance(left: str, right: str) -> int:
             distances[left_index][right_index] = min(
                 distances[left_index - 1][right_index] + 1,
                 distances[left_index][right_index - 1] + 1,
-                distances[left_index - 1][right_index - 1]
-                + (left_char != right_char),
+                distances[left_index - 1][right_index - 1] + (left_char != right_char),
             )
             if (
                 left_index > 1
@@ -239,11 +226,7 @@ def _validate_positional_spawn_prompt(
     *,
     subcommands: frozenset[str],
 ) -> None:
-    if (
-        prompt is None
-        or prompt in subcommands
-        or re.fullmatch(r"[a-z][a-z-]*", prompt) is None
-    ):
+    if prompt is None or prompt in subcommands or re.fullmatch(r"[a-z][a-z-]*", prompt) is None:
         return
     closest = min(subcommands, key=lambda command: (_edit_distance(prompt, command), command))
     suggestion = (
@@ -306,7 +289,7 @@ def _shared_launch_input_kwargs(
 
 def _spawn_create(
     subcommands: frozenset[str],
-    emit: Any,
+    emit: Emitter,
     positional_prompt: Annotated[
         str | None,
         Parameter(
@@ -401,9 +384,7 @@ def _spawn_create(
         str | None,
         Parameter(
             name="--goal",
-            help=(
-                "Completion goal for this spawn. Injected as a bounded completion contract."
-            ),
+            help=("Completion goal for this spawn. Injected as a bounded completion contract."),
         ),
     ] = None,
     work: Annotated[
@@ -622,12 +603,12 @@ def _spawn_create(
 ) -> None:
     # Passthrough lives on GlobalOptions, not a function parameter — see
     # _split_passthrough_args() for why cyclopts can't handle ``--`` correctly.
-    passthrough = _get_global_options().passthrough_args
-    global_harness = _get_global_options().harness
+    passthrough = get_global_options().passthrough_args
+    global_harness = get_global_options().harness
     caller_cwd = Path.cwd().as_posix()
     resolved_continue_from = (continue_from or "").strip() or None
     if resolved_continue_from is not None and model is not None:
-        _current_output_sink().warning(MODEL_OVERRIDE_WARNING)
+        current_output_sink().warning(MODEL_OVERRIDE_WARNING)
     raw_fork_from = (fork_from or "").strip() or None
     raw_fork_fresh_from = (fork_fresh_from or "").strip() or None
 
@@ -716,7 +697,7 @@ def _spawn_create(
                 caller_cwd=caller_cwd,
                 **shared_launch_kwargs,
             ),
-            sink=_current_output_sink(),
+            sink=current_output_sink(),
             prepared=_prepare_spawn_runtime_write(),
         )
     elif resolved_continue_from is not None:
@@ -737,7 +718,7 @@ def _spawn_create(
                 caller_cwd=caller_cwd,
                 **shared_launch_kwargs,
             ),
-            sink=_current_output_sink(),
+            sink=current_output_sink(),
             prepared=_prepare_spawn_runtime_write(),
         )
     else:
@@ -758,11 +739,11 @@ def _spawn_create(
                 caller_cwd=caller_cwd,
                 **shared_launch_kwargs,
             ),
-            sink=_current_output_sink(),
+            sink=current_output_sink(),
             prepared=_prepare_spawn_runtime_write(),
             on_spawn_id=_foreground_spawn_id_notifier(quiet=quiet),
         )
-    output_format = _get_global_options().output.format
+    output_format = get_global_options().output.format
     _emit_spawn_warnings(result)
     if output_format != "json" and metadata:
         detailed_output = _spawn_create_metadata_output(result)
@@ -780,7 +761,7 @@ def _spawn_create(
 
 
 def _spawn_list(
-    emit: Any,
+    emit: Emitter,
     status: Annotated[
         str | None,
         Parameter(
@@ -869,14 +850,14 @@ def _spawn_list(
             limit=limit,
             failed=False,
         ),
-        sink=_current_output_sink(),
+        sink=current_output_sink(),
         prepared=_prepare_spawn_runtime_read(),
     )
     emit(result)
 
 
 def _spawn_children(
-    emit: Any,
+    emit: Emitter,
     spawn_id: Annotated[
         str,
         Parameter(name="spawn_id", help="Parent spawn ID."),
@@ -885,14 +866,14 @@ def _spawn_children(
     emit(
         spawn_children_sync(
             SpawnChildrenInput(spawn_id=spawn_id),
-            sink=_current_output_sink(),
+            sink=current_output_sink(),
             prepared=_prepare_spawn_runtime_read(),
         )
     )
 
 
 def _spawn_show(
-    emit: Any,
+    emit: Emitter,
     spawn_ids: Annotated[
         tuple[str, ...],
         Parameter(name="spawn_id", help="One or more spawn IDs to show."),
@@ -909,7 +890,7 @@ def _spawn_show(
         ),
     ] = None,
 ) -> None:
-    output_format = _get_global_options().output.format
+    output_format = get_global_options().output.format
     include_report_body = full if full is not None else output_format != "json"
     _spawn_show_like(
         emit,
@@ -924,7 +905,7 @@ def _spawn_show(
 
 
 def _spawn_status(
-    emit: Any,
+    emit: Emitter,
     spawn_ids: Annotated[
         tuple[str, ...],
         Parameter(name="spawn_id", help="One or more spawn IDs to show."),
@@ -954,14 +935,14 @@ def _spawn_status(
 
 
 def _spawn_show_like(
-    emit: Any,
+    emit: Emitter,
     *,
     spawn_ids: tuple[str, ...],
     verbose: bool,
     build_input: Callable[[str], SpawnShowInput | SpawnStatusInput],
     handler: Callable[..., Any],
 ) -> None:
-    sink = _current_output_sink()
+    sink = current_output_sink()
     prepared = _prepare_spawn_runtime_read()
     results = tuple(
         handler(
@@ -972,7 +953,7 @@ def _spawn_show_like(
         for spawn_id in spawn_ids
     )
 
-    output_format = _get_global_options().output.format
+    output_format = get_global_options().output.format
     if len(results) == 1:
         if output_format != "json" and verbose:
             emit(results[0].format_text(FormatContext(verbosity=1)))
@@ -989,7 +970,7 @@ def _spawn_show_like(
 
 
 def _spawn_stats(
-    emit: Any,
+    emit: Emitter,
     spawn_id: Annotated[
         str | None,
         Parameter(name="spawn_id", help="Spawn ID to get stats for (includes descendants)."),
@@ -1010,14 +991,14 @@ def _spawn_stats(
                 session=session,
                 flat=flat,
             ),
-            sink=_current_output_sink(),
+            sink=current_output_sink(),
             prepared=_prepare_spawn_runtime_read(),
         )
     )
 
 
 def _spawn_cancel(
-    emit: Any,
+    emit: Emitter,
     spawn_id: str,
     force: Annotated[
         bool,
@@ -1032,7 +1013,7 @@ def _spawn_cancel(
             spawn_id=spawn_id,
             force=force,
         ),
-        sink=_current_output_sink(),
+        sink=current_output_sink(),
         prepared=_prepare_spawn_runtime_write(),
     )
     _emit_spawn_warnings(result)
@@ -1042,7 +1023,7 @@ def _spawn_cancel(
 
 
 def _spawn_wait(
-    emit: Any,
+    emit: Emitter,
     spawn_ids: Annotated[
         tuple[str, ...],
         Parameter(
@@ -1113,7 +1094,7 @@ def _spawn_wait(
         ),
     ] = True,
 ) -> None:
-    output_format = _get_global_options().output.format
+    output_format = get_global_options().output.format
     include_report_body = full if full is not None else output_format != "json"
     result = spawn_wait_sync(
         SpawnWaitInput(
@@ -1127,7 +1108,7 @@ def _spawn_wait(
             include_report_body=include_report_body,
             observe=observe,
         ),
-        sink=_current_output_sink(),
+        sink=current_output_sink(),
         prepared=_prepare_spawn_runtime_read(),
     )
     if output_format != "json" and (metadata or verbose):
@@ -1149,7 +1130,7 @@ def _spawn_create_metadata_output(result: SpawnActionOutput) -> Any | None:
                 spawn_id=result.spawn_id,
                 include_report_body=True,
             ),
-            sink=_current_output_sink(),
+            sink=current_output_sink(),
             prepared=_prepare_spawn_runtime_read(),
         )
     except (KeyError, RuntimeError, ValueError, FileNotFoundError, OSError):
@@ -1157,13 +1138,11 @@ def _spawn_create_metadata_output(result: SpawnActionOutput) -> Any | None:
 
 
 def _spawn_files(
-    emit: Any,
+    emit: Emitter,
     spawn_id: Annotated[
         str,
         Parameter(
-            help=(
-                "Spawn ID. Lists the files this spawn changed, one per line."
-            ),
+            help=("Spawn ID. Lists the files this spawn changed, one per line."),
         ),
     ],
     null: Annotated[
@@ -1173,7 +1152,7 @@ def _spawn_files(
 ) -> None:
     result = spawn_files_sync(
         SpawnWrittenFilesInput(spawn_id=spawn_id),
-        sink=_current_output_sink(),
+        sink=current_output_sink(),
         prepared=_prepare_spawn_runtime_read(),
     )
     if null and result.written_files:
@@ -1185,18 +1164,18 @@ def _spawn_files(
         emit(result)
 
 
-def _spawn_subagents(emit: Any) -> None:
+def _spawn_subagents(emit: Emitter) -> None:
     emit(
         spawn_subagents_sync(
             SpawnSubagentsInput(),
-            sink=_current_output_sink(),
+            sink=current_output_sink(),
             prepared=_prepare_spawn_runtime_read(),
         )
     )
 
 
 def _spawn_cancel_all(
-    emit: Any,
+    emit: Emitter,
     work: Annotated[
         str | None,
         Parameter(name="--work", help="Only cancel running spawns for this work item."),
@@ -1220,7 +1199,7 @@ def _spawn_cancel_all(
             include_others=include_others,
         ),
         ctx=RuntimeContext.from_environment(),
-        sink=_current_output_sink(),
+        sink=current_output_sink(),
         prepared=_prepare_spawn_runtime_write(),
     )
     _emit_spawn_warnings(*result.results)
@@ -1230,7 +1209,7 @@ def _spawn_cancel_all(
 
 
 def _spawn_done(
-    emit: Any,
+    emit: Emitter,
     spawn_id: Annotated[
         str | None,
         Parameter(help="Spawn ID to finish (defaults to MERIDIAN_SPAWN_ID)."),
@@ -1239,7 +1218,7 @@ def _spawn_done(
     result = spawn_done_sync(
         SpawnSignalInput(spawn_id=spawn_id),
         ctx=RuntimeContext.from_environment(),
-        sink=_current_output_sink(),
+        sink=current_output_sink(),
         prepared=_prepare_spawn_runtime_write(),
     )
     _emit_spawn_warnings(result)
@@ -1249,7 +1228,7 @@ def _spawn_done(
 
 
 def _spawn_rearm(
-    emit: Any,
+    emit: Emitter,
     spawn_id: Annotated[
         str | None,
         Parameter(help="Spawn ID to keep resident (defaults to MERIDIAN_SPAWN_ID)."),
@@ -1258,7 +1237,7 @@ def _spawn_rearm(
     result = spawn_rearm_sync(
         SpawnSignalInput(spawn_id=spawn_id),
         ctx=RuntimeContext.from_environment(),
-        sink=_current_output_sink(),
+        sink=current_output_sink(),
         prepared=_prepare_spawn_runtime_write(),
     )
     _emit_spawn_warnings(result)
@@ -1275,9 +1254,7 @@ def _spawn_inject(
     message: Annotated[
         str,
         Parameter(
-            help=(
-                "Real user direction to forward mid-run."
-            ),
+            help=("Real user direction to forward mid-run."),
         ),
     ] = "",
 ) -> None:
@@ -1308,7 +1285,7 @@ def _append_spawn_help_epilogue(app: App) -> None:
     app.help_epilogue = existing + "\n" + _SPAWN_USAGE_EPILOGUE
 
 
-def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str, str]]:
+def register_spawn_commands(app: App) -> None:
     """Register spawn CLI commands using registry metadata as source of truth."""
 
     _append_spawn_help_epilogue(app)
@@ -1325,7 +1302,7 @@ def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
         "meridian.spawn.cancelAll": lambda: partial(_spawn_cancel_all, emit),
         "meridian.spawn.wait": lambda: partial(_spawn_wait, emit),
     }
-    registered, descriptions = register_extension_cli_group(
+    registered = register_extension_cli_group(
         app,
         registry=get_first_party_registry(),
         group="spawn",
@@ -1333,7 +1310,6 @@ def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
         command_help_epilogues={
             "meridian.spawn.wait": _SPAWN_WAIT_HELP_EPILOGUE,
         },
-        emit=emit,
     )
     app.command(
         partial(_spawn_done, emit),
@@ -1341,14 +1317,12 @@ def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
         help="Signal a resident spawn to finish successfully.",
     )
     registered.add("spawn.done")
-    descriptions["meridian.spawn.done"] = "Signal a resident spawn to finish successfully."
     app.command(
         partial(_spawn_rearm, emit),
         name="rearm",
         help="Signal a resident spawn to keep running.",
     )
     registered.add("spawn.rearm")
-    descriptions["meridian.spawn.rearm"] = "Signal a resident spawn to keep running."
     app.command(
         _spawn_inject,
         name="inject",
@@ -1358,9 +1332,6 @@ def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
         ),
     )
     registered.add("spawn.inject")
-    descriptions["meridian.spawn.inject"] = (
-        "Forward real user direction to a running spawn; self-generated nudges waste its attention."
-    )
     app.command(
         _spawn_log_removed,
         name="log",
@@ -1368,7 +1339,5 @@ def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
         show=False,
     )
     registered.add("spawn.log")
-    descriptions["meridian.spawn.log"] = "Removed. Use `meridian session log ID`."
     subcommands = frozenset(command.removeprefix("spawn.") for command in registered)
     app.default(partial(_spawn_create, subcommands, emit))
-    return registered, descriptions

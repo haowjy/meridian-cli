@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import time
 from collections.abc import Callable
@@ -10,10 +9,10 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Literal, Protocol, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.json_doc import mutate_model, read_model
 from meridian.lib.state.user_paths import get_user_home
 
 Stage = Literal["push", "warn", "compact"]
@@ -131,17 +130,7 @@ class IdleStore:
 
     @staticmethod
     def _read_path(path: Path) -> IdleState | None:
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            return IdleState.model_validate(payload)
-        except (
-            FileNotFoundError,
-            OSError,
-            UnicodeDecodeError,
-            json.JSONDecodeError,
-            ValidationError,
-        ):
-            return None
+        return read_model(path, IdleState)
 
     def mutate(
         self,
@@ -150,13 +139,19 @@ class IdleStore:
         mutation: Callable[[IdleState | None], tuple[IdleState | None, T]],
     ) -> T:
         path = self.path_for(harness, session)
-        with lock_file(self._lock_path(path)):
-            current = self._read_path(path)
+        def stamp(current: IdleState | None) -> tuple[IdleState | None, T]:
             next_state, result = mutation(current)
             if next_state is not None:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                stamped = next_state.model_copy(update={"updated_at_ms": self._now_ms()})
-                atomic_write_text(path, stamped.model_dump_json(indent=2) + "\n")
+                next_state = next_state.model_copy(update={"updated_at_ms": self._now_ms()})
+            return next_state, result
+
+        next_state, result = mutate_model(
+            path,
+            IdleState,
+            stamp,
+            lock=lock_file(self._lock_path(path)),
+            indent=2,
+        )
         if next_state is not None:
             self.gc()
         return result

@@ -11,7 +11,7 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, field_validator
 if TYPE_CHECKING:
     from meridian.lib.catalog.agent import AgentProfile
     from meridian.lib.catalog.model_aliases import AliasEntry
-    from meridian.lib.config.settings import MeridianConfig
+    from meridian.lib.config.models import MeridianConfig
     from meridian.lib.ops.spawn.models import SpawnCreateInput
 
 _AUTOCOMPACT_TOKEN_MIN = 1000
@@ -47,7 +47,9 @@ def _validate_autocompact_value(v: object) -> object:
         raise ValueError("autocompact must be an integer, not a boolean")
     if v is None:
         return None
-    if not isinstance(v, int) or v < _AUTOCOMPACT_TOKEN_MIN:
+    if not isinstance(v, int):
+        raise ValueError(f"expected int, got {type(v).__name__} ({v!r})")
+    if v < _AUTOCOMPACT_TOKEN_MIN:
         raise ValueError(f"expected int >= {_AUTOCOMPACT_TOKEN_MIN} (token count), got {v!r}.")
     return v
 
@@ -58,7 +60,9 @@ def _validate_autocompact_pct_value(v: object) -> object:
         raise ValueError("autocompact_pct must be an integer, not a boolean")
     if v is None:
         return None
-    if not isinstance(v, int) or not (_AUTOCOMPACT_PCT_MIN <= v <= _AUTOCOMPACT_PCT_MAX):
+    if not isinstance(v, int):
+        raise ValueError(f"expected int, got {type(v).__name__} ({v!r})")
+    if not (_AUTOCOMPACT_PCT_MIN <= v <= _AUTOCOMPACT_PCT_MAX):
         raise ValueError(
             f"expected int between {_AUTOCOMPACT_PCT_MIN} and {_AUTOCOMPACT_PCT_MAX}, got {v!r}."
         )

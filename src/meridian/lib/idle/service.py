@@ -8,12 +8,13 @@ from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol, cast
+from typing import Literal, Protocol
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.config.schema import parse_env_scalar
-from meridian.lib.config.settings import MeridianConfig, NotifyConfig, load_config
+from meridian.lib.config.loader import OPTION_CATALOG, load_config
+from meridian.lib.config.models import MeridianConfig, NotifyConfig
+from meridian.lib.config.schema import ConfigOptionDescriptor, parse_env_scalar
 from meridian.lib.harness.idle_types import (
     DetectIdleTtl,
     IdleEvent,
@@ -76,8 +77,11 @@ def _recorded_native_store(
     return native_store if native_store.is_absolute() else None
 
 
-@dataclass(frozen=True)
-class IdlePolicyConfig:
+class IdlePolicyConfig(BaseModel):
+    """Fully resolved idle policy for one harness operation."""
+
+    model_config = ConfigDict(frozen=True, strict=True)
+
     enabled: bool
     push_seconds: int
     long_turn_seconds: int
@@ -163,33 +167,34 @@ def _default_now_ms() -> int:
     return int(time.time() * 1000)
 
 
-_FIELD_KINDS: dict[str, Literal["bool", "int"]] = {
-    "enabled": "bool",
-    "push_seconds": "int",
-    "long_turn_seconds": "int",
-    "quick_turn_push_seconds": "int",
-    "warn_minutes": "int",
-    "warn_email": "bool",
-    "compact_minutes": "int",
-    "compact": "bool",
-    "min_compact_tokens": "int",
-    "late_fire_tolerance_seconds": "int",
-    "ttl_seconds": "int",
-}
-_HARNESS_FIELDS = frozenset({"enabled", "compact", "ttl_seconds"})
+def _idle_policy_options() -> dict[str, ConfigOptionDescriptor]:
+    options: dict[str, ConfigOptionDescriptor] = {}
+    for option in OPTION_CATALOG.options:
+        path = option.field_path
+        if path[:1] == ("idle",):
+            options[path[-1]] = option
+        elif len(path) == 4 and path[0] == "harness" and path[2] == "idle":
+            options.setdefault(path[-1], option)
+    return options
 
 
-def _env_value(env: Mapping[str, str], name: str, field: str) -> object | None:
-    raw = env.get(name)
+_IDLE_POLICY_OPTIONS = _idle_policy_options()
+
+
+def _env_value(
+    env: Mapping[str, str],
+    option: ConfigOptionDescriptor | None,
+) -> object | None:
+    if option is None or option.primary_env_var is None:
+        return None
+    raw = env.get(option.primary_env_var)
     if raw is None:
         return None
-    return parse_env_scalar(value_kind=_FIELD_KINDS[field], raw_value=raw, env_name=name)
-
-
-def _harness_idle_config(config: MeridianConfig, harness: str) -> BaseModel | None:
-    profile = getattr(config.harness, harness.strip().lower(), None)
-    idle = getattr(profile, "idle", None)
-    return idle if isinstance(idle, BaseModel) else None
+    return parse_env_scalar(
+        value_kind=option.value_kind,
+        raw_value=raw,
+        env_name=option.primary_env_var,
+    )
 
 
 def effective(
@@ -200,34 +205,34 @@ def effective(
 ) -> object:
     """Resolve level-first, then most-specific idle precedence."""
 
-    if field not in _FIELD_KINDS:
+    policy_option = _IDLE_POLICY_OPTIONS.get(field)
+    if policy_option is None:
         raise ValueError(f"Unknown idle config field: {field!r}")
     values = os.environ if env is None else env
     normalized_harness = harness.strip().lower()
-    harness_idle = _harness_idle_config(config, normalized_harness)
+    profile = config.harness_profile(normalized_harness)
+    specific_option = OPTION_CATALOG.option_for_field_path(
+        ("harness", normalized_harness, "idle", field)
+    )
+    global_option = OPTION_CATALOG.option_for_field_path(("idle", field))
 
-    if field in _HARNESS_FIELDS:
-        specific_env = f"MERIDIAN_HARNESS_IDLE_{field.upper()}_{normalized_harness.upper()}"
-        value = _env_value(values, specific_env, field)
-        if value is not None:
-            return value
-
-    if hasattr(config.idle, field):
-        global_env = f"MERIDIAN_IDLE_{field.upper()}"
-        value = _env_value(values, global_env, field)
-        if value is not None:
-            return value
+    value = _env_value(values, specific_option)
+    if value is not None:
+        return value
+    value = _env_value(values, global_option)
+    if value is not None:
+        return value
 
     if (
-        field in _HARNESS_FIELDS
-        and harness_idle is not None
-        and field in harness_idle.model_fields_set
+        specific_option is not None
+        and profile is not None
+        and field in profile.idle.model_fields_set
     ):
-        return getattr(harness_idle, field)
-    if hasattr(config.idle, field):
+        return getattr(profile.idle, field)
+    if global_option is not None:
         return getattr(config.idle, field)
-    if harness_idle is not None and hasattr(harness_idle, field):
-        return getattr(harness_idle, field)
+    if specific_option is not None and profile is not None:
+        return getattr(profile.idle, field)
     return None
 
 
@@ -238,22 +243,8 @@ def resolve_policy(
 ) -> IdlePolicyConfig:
     """Resolve all policy fields once for an operation."""
 
-    values = {field: effective(field, harness, config, env) for field in _FIELD_KINDS}
-    return IdlePolicyConfig(
-        enabled=bool(values["enabled"]),
-        push_seconds=int(cast("int", values["push_seconds"])),
-        long_turn_seconds=int(cast("int", values["long_turn_seconds"])),
-        quick_turn_push_seconds=int(cast("int", values["quick_turn_push_seconds"])),
-        warn_minutes=int(cast("int", values["warn_minutes"])),
-        warn_email=bool(values["warn_email"]),
-        compact_minutes=int(cast("int", values["compact_minutes"])),
-        compact=bool(values["compact"]),
-        min_compact_tokens=int(cast("int", values["min_compact_tokens"])),
-        late_fire_tolerance_seconds=int(cast("int", values["late_fire_tolerance_seconds"])),
-        ttl_seconds=(
-            int(cast("int", values["ttl_seconds"])) if values["ttl_seconds"] is not None else None
-        ),
-    )
+    values = {field: effective(field, harness, config, env) for field in _IDLE_POLICY_OPTIONS}
+    return IdlePolicyConfig.model_validate(values)
 
 
 def _result_for_state(state: IdleState, *, reason: str | None = None) -> ArmResult:
@@ -298,9 +289,7 @@ class IdleService:
         configured_role = self.env.get("MERIDIAN_SESSION_ROLE")
         self.role = "primary" if configured_role is None and interactive else configured_role
         self.project_root = project_root or Path(self.env.get("MERIDIAN_PROJECT_DIR", Path.cwd()))
-        self.config = (
-            config if config is not None else load_config(self.project_root, resolve_models=False)
-        )
+        self.config = config if config is not None else load_config(self.project_root)
         self._now_ms = now_ms
         self.store = store if store is not None else IdleStore(now_ms=now_ms)
         self._notify_sender = notify_sender if notify_sender is not None else send

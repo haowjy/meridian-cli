@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+
+from meridian.cli.invocation import emit
 
 if TYPE_CHECKING:
     from cyclopts import App
 
-Emitter = Callable[[Any], None]
 
-
-def register_migrate_command(app: App, emit: Emitter) -> None:
+def register_migrate_command(app: App) -> None:
     def migrate() -> None:
         """Move legacy repo-local identity into meridian.toml."""
         from meridian.cli.utils import require_established_project_root

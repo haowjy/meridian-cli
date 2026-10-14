@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from meridian.lib.config.settings import MeridianConfig
+from meridian.lib.config.models import MeridianConfig
 from meridian.lib.launch.resolve import (
     AgentLaunchInput,
     parse_duration_seconds,

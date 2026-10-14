@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.config.settings import resolve_allow_builtin_agents_for_launch
+from meridian.lib.config.loader import resolve_allow_builtin_agents_for_launch
 from meridian.lib.harness.adapter import SpawnParams
 from meridian.lib.harness.codex import CodexAdapter
 from meridian.lib.harness.projections.project_codex_streaming import (

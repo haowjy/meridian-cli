@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from meridian.lib.catalog.catalog_session import CatalogSession
-from meridian.lib.config.settings import MeridianConfig, PrimaryConfig
+from meridian.lib.config.models import MeridianConfig, PrimaryConfig
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import HarnessId

@@ -12,6 +12,7 @@ from typing import Annotated, Never
 from cyclopts import Parameter
 
 from meridian.cli.app_tree import artifact_app
+from meridian.cli.invocation import current_output_sink, get_global_options
 from meridian.lib.artifact import service
 from meridian.lib.artifact.store import Serve, load_serves
 
@@ -99,21 +100,15 @@ def cmd_artifact_serve(
         _fail(str(exc))
     ttl_hint = "persistent" if serve.ttl_seconds is None else _duration(serve.ttl_seconds)
     print(url)
-    print(
-        f"pid {serve.pid} · TTL {ttl_hint} · stop with: meridian artifact stop {serve.slug}"
-    )
+    print(f"pid {serve.pid} · TTL {ttl_hint} · stop with: meridian artifact stop {serve.slug}")
 
 
 @artifact_app.command(name="list")
 def cmd_artifact_list(
     *,
-    fmt: Annotated[
-        str, Parameter(name="--format", help="Output format: text or json.")
-    ] = "text",
+    fmt: Annotated[str, Parameter(name="--format", help="Output format: text or json.")] = "text",
 ) -> None:
     """List recorded artifact serves without changing state."""
-    from meridian.cli.main import current_output_sink, get_global_options
-
     serves = load_serves()
     effective_fmt = "json" if get_global_options().output.format == "json" else fmt
     if effective_fmt == "json":
@@ -140,16 +135,8 @@ def cmd_artifact_list(
             else _duration(serve.ttl_seconds - (now - created).total_seconds())
         )
         public_port = service.tailnet_port(serve.local_port, funnel=serve.funnel)
-        url = (
-            f"https://{dns_name}:{public_port}/{serve.slug}/"
-            if dns_name
-            else "unavailable"
-        )
-        alive = (
-            "yes"
-            if service.pid_alive(serve.pid, serve.process_created_at)
-            else "no"
-        )
+        url = f"https://{dns_name}:{public_port}/{serve.slug}/" if dns_name else "unavailable"
+        alive = "yes" if service.pid_alive(serve.pid, serve.process_created_at) else "no"
         print(
             f"{serve.slug:<22} {serve.local_port:<7} {alive:<6} {age:<8} "
             f"{ttl:<11} {serve.dir:<30} {url}"

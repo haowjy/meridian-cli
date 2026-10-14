@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.config.settings import MeridianConfig
+from meridian.lib.config.models import MeridianConfig
 from meridian.lib.harness.claude_idle import detect_ttl
 from meridian.lib.idle.service import IdleService
 from meridian.lib.state import session_store

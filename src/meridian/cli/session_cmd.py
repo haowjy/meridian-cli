@@ -7,11 +7,12 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
-from typing import Annotated, Any, Protocol
+from typing import Annotated, Any
 
 from cyclopts import App, Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
+from meridian.cli.invocation import Emitter, emit
 from meridian.cli.utils import cli_project_root_posix
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import is_managed_meridian_session
@@ -39,10 +40,6 @@ def _session_project_root(file_path: str | None) -> str | None:
     if file_path and file_path.strip():
         return None
     return cli_project_root_posix()
-
-
-class Emitter(Protocol):
-    def __call__(self, payload: Any, *, format_ctx: FormatContext | None = None) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -486,7 +483,7 @@ def _session_index(
     )
 
 
-def register_session_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str, str]]:
+def register_session_commands(app: App) -> None:
     """Register session CLI commands using registry metadata as source of truth."""
 
     handlers: dict[str, Callable[[], Callable[..., None]]] = {
@@ -500,7 +497,7 @@ def register_session_commands(app: App, emit: Emitter) -> tuple[set[str], dict[s
         "meridian.session.search": lambda: partial(_session_search, emit),
         "meridian.session.repair": lambda: partial(_session_repair, emit),
     }
-    return register_extension_cli_group(
+    register_extension_cli_group(
         app,
         registry=get_first_party_registry(),
         group="session",
@@ -541,6 +538,5 @@ def register_session_commands(app: App, emit: Emitter) -> tuple[set[str], dict[s
                 "their evidence and the exact bind command. A bound chat is never rebound.\n"
             ),
         },
-        emit=emit,
         default_handler=None,
     )

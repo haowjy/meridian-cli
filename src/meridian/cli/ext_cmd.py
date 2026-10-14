@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from collections.abc import Callable
 from typing import Annotated, Any, cast
 
 from cyclopts import App, Parameter
 
 from meridian.cli.app_tree import ext_app
+from meridian.cli.invocation import emit, get_global_options
 from meridian.cli.output import OutputFormat
 from meridian.cli.utils import require_established_project_root
 from meridian.lib.bootstrap.services import build_extension_entrypoint, prepare_for_runtime_read
@@ -22,12 +22,6 @@ from meridian.lib.extensions.context import (
 from meridian.lib.extensions.dispatcher import ExtensionCommandDispatcher
 from meridian.lib.extensions.registry import build_first_party_registry, compute_manifest_hash
 from meridian.lib.extensions.types import ExtensionErrorResult, ExtensionSurface
-
-type Emitter = Callable[[object], None]
-type OutputFormatResolver = Callable[[], OutputFormat]
-
-_emit: Emitter | None = None
-_resolve_global_format: OutputFormatResolver | None = None
 
 # Exit codes for `meridian ext run`.
 EXIT_GENERAL_ERROR = 1
@@ -87,19 +81,11 @@ def _resolve_effective_format(
         return "json"
     if requested == "json":
         return "json"
-    if _resolve_global_format is not None:
-        return _resolve_global_format()
-    return requested
+    return get_global_options().output.format
 
 
 def _emit_text_or_json(*, text_payload: str, json_payload: object, format: OutputFormat) -> None:
-    if _emit is None:
-        if format == "json":
-            print(json.dumps(json_payload, indent=2))
-        else:
-            print(text_payload)
-        return
-    _emit(json_payload if format == "json" else text_payload)
+    emit(json_payload if format == "json" else text_payload)
 
 
 @ext_app.command(name="list")
@@ -333,15 +319,7 @@ def ext_run(
     _print_run_success(format=effective_format, payload=result.payload)
 
 
-def register_ext_commands(
-    parent: App,
-    *,
-    emit: Emitter,
-    resolve_global_format: OutputFormatResolver,
-) -> None:
+def register_ext_commands(parent: App) -> None:
     """Register ext subcommands on the parent app."""
 
-    global _emit, _resolve_global_format
-    _emit = emit
-    _resolve_global_format = resolve_global_format
     parent.command(ext_app)

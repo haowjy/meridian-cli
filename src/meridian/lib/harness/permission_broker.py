@@ -18,7 +18,8 @@ from meridian.lib.harness.connections.base import (
     RawHarnessEvent,
     ServerRequestHandler,
 )
-from meridian.lib.state.atomic import append_durable_jsonl_line, atomic_write_text
+from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.jsonl import append_durable_jsonl_line
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
 PermissionRequestType = Literal["approval", "user_input"]
@@ -318,7 +319,7 @@ class PermissionBroker(ServerRequestHandler):
         mutate_published_spawn_artifact(
             self._runtime_root,
             self._spawn_id,
-            lambda: append_durable_jsonl_line(self._journal_path, line + "\n"),
+            lambda: append_durable_jsonl_line(self._journal_path, line),
         )
         self._transitions.append(transition)
         self._apply_transition(transition)

@@ -7,6 +7,7 @@ import multiprocessing
 import os
 import subprocess
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 from uuid import uuid4
 
@@ -617,19 +618,19 @@ def test_torn_batch_recovers_only_uncommitted_bindings(
     for number in (1, 2):
         _chat(root, number, "claude", f"native-{number}")
         _claude(home, root, f"native-{number}")
-    append = session_binding.append_durable_jsonl_line
+    append = session_binding.append_durable_jsonl_lines
 
-    def torn_append(path: Path, lines: str) -> None:
-        first, second = lines.splitlines(keepends=True)
+    def torn_append(path: Path, lines: Iterable[str]) -> None:
+        first, second = lines
         with path.open("ab") as handle:
             handle.write((first + second[: len(second) // 2]).encode())
         raise OSError("interrupted append")
 
-    monkeypatch.setattr(session_binding, "append_durable_jsonl_line", torn_append)
+    monkeypatch.setattr(session_binding, "append_durable_jsonl_lines", torn_append)
     with pytest.raises(OSError, match="interrupted"):
         legacy.import_legacy_native_sessions(root)
     assert not (root / legacy.MARKER).exists()
-    monkeypatch.setattr(session_binding, "append_durable_jsonl_line", append)
+    monkeypatch.setattr(session_binding, "append_durable_jsonl_lines", append)
     report = legacy.import_legacy_native_sessions(root)
     assert report is not None and report.counts["claude"]["imported"] == 2
     events = [json.loads(line) for line in (root / "sessions.jsonl").read_text().splitlines()]

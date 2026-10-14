@@ -76,11 +76,9 @@ def _descriptor(
     summary: str,
     *,
     root_source: RootSource = RootSource.CWD,
-    auto_init_cwd: bool = False,
 ) -> CommandDescriptor:
     bootstrap_plan = BootstrapPlan(
-        StateRequirement.NONE if root_source == RootSource.ARGV else state_requirement,
-        auto_init_cwd=auto_init_cwd,
+        StateRequirement.NONE if root_source == RootSource.ARGV else state_requirement
     )
     return CommandDescriptor(
         command_path=path,
@@ -146,7 +144,6 @@ def _write_project(
     summary: str,
     *,
     root_source: RootSource = RootSource.CWD,
-    auto_init_cwd: bool = False,
 ) -> CommandDescriptor:
     return _descriptor(
         path,
@@ -156,7 +153,6 @@ def _write_project(
         "text",
         summary,
         root_source=root_source,
-        auto_init_cwd=auto_init_cwd,
     )
 
 
@@ -181,7 +177,6 @@ def _write_runtime(
     summary: str,
     *,
     default_output_mode: str = "text",
-    auto_init_cwd: bool = False,
 ) -> CommandDescriptor:
     return _descriptor(
         path,
@@ -190,7 +185,6 @@ def _write_runtime(
         TelemetryMode.SEGMENT,
         default_output_mode,
         summary,
-        auto_init_cwd=auto_init_cwd,
     )
 
 
@@ -202,7 +196,6 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         TelemetryMode.SEGMENT,
         "text",
         "Launch or resume the primary harness.",
-        auto_init_cwd=True,
     ),
     _descriptor(
         ("serve",),
@@ -264,7 +257,6 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         ("spawn",),
         "Create a spawn via spawn default route.",
         default_output_mode="text",
-        auto_init_cwd=True,
     ),
     _read_runtime(
         ("spawn", "list"),
@@ -357,7 +349,6 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _write_runtime(
         ("work", "start"),
         "Start work item.",
-        auto_init_cwd=True,
     ),
     _write_runtime(
         ("work", "switch"), "Switch current work."
@@ -384,7 +375,6 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _write_project(
         ("config", "set"),
         "Set config value.",
-        auto_init_cwd=True,
     ),
     _write_project(
         ("config", "reset"), "Reset config value."
@@ -434,7 +424,6 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _write_project(
         ("workspace", "init"),
         "Initialize workspace config.",
-        auto_init_cwd=True,
     ),
     _read_rootless(("kg", "graph"), "Render knowledge graph."),
     _read_rootless(("kg", "check"), "Check knowledge graph links."),
@@ -474,7 +463,6 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         TelemetryMode.SEGMENT,
         "text",
         "Bootstrap an agent runtime.",
-        auto_init_cwd=True,
     ),
 )
 

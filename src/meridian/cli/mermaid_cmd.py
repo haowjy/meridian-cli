@@ -9,6 +9,7 @@ from typing import Annotated
 from cyclopts import Parameter
 
 from meridian.cli.app_tree import mermaid_app
+from meridian.cli.invocation import get_global_options
 from meridian.lib.mermaid.validator import ScanOptions, detect_tier, validate_path
 
 
@@ -72,7 +73,6 @@ def cmd_mermaid_check(
     ] = None,
 ) -> None:
     """Check mermaid diagram syntax. Exit 0 if clean, exit 1 if errors found."""
-    from meridian.cli.main import get_global_options
     from meridian.lib.mermaid.report import format_check_output
     from meridian.lib.mermaid.scanner import collect_targets
     from meridian.lib.mermaid.serializer import serialize_check

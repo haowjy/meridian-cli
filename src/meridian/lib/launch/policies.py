@@ -9,7 +9,7 @@ from pathlib import Path
 from meridian.lib.catalog.agent import AgentProfile
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
-from meridian.lib.config.settings import MeridianConfig
+from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.overrides import (
     EXECUTION_POLICY_FIELDS,

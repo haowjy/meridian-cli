@@ -4,7 +4,6 @@ import asyncio
 import json
 import os
 import shutil
-import threading
 import time
 from pathlib import Path
 from typing import Any, cast
@@ -34,7 +33,6 @@ from meridian.lib.state.spawn_scope import write_spawn_scope_task_dir
 from meridian.lib.state.spawn_signals import write_spawn_signal
 from meridian.lib.state.spawn_store import finalize_spawn, get_spawn, start_spawn
 from meridian.lib.streaming.heartbeat import heartbeat_loop
-from meridian.lib.streaming.spawn_manager import SpawnManager
 
 
 def _start_test_spawn(
@@ -254,46 +252,6 @@ async def test_late_permission_transition_does_not_recreate_deleted_spawn(
     assert not spawn_dir.exists()
 
 
-@pytest.mark.asyncio
-async def test_late_inbound_append_does_not_recreate_deleted_spawn(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root = tmp_path / "runtime"
-    project_root = tmp_path / "repo"
-    spawn_id = SpawnId("p1")
-    spawn_dir = runtime_root / "spawns" / str(spawn_id)
-    _start_test_spawn(runtime_root, str(spawn_id), status="running")
-    manager = SpawnManager(runtime_root=runtime_root, project_root=project_root)
-    count_started = threading.Event()
-    finish_count = threading.Event()
-
-    def _paused_count(_path: Path) -> int:
-        count_started.set()
-        assert finish_count.wait(timeout=5)
-        return 0
-
-    monkeypatch.setattr(manager, "_count_jsonl_lines", _paused_count)
-    record = asyncio.create_task(
-        manager._record_inbound(
-            spawn_id,
-            action="user_message",
-            data={"text": "late"},
-            source="test",
-        )
-    )
-    assert await asyncio.to_thread(count_started.wait, 5)
-    assert delete_published_spawn(
-        runtime_root,
-        spawn_id,
-        can_delete=lambda row: row is not None,
-    )
-    finish_count.set()
-
-    assert await record == 0
-    assert not spawn_dir.exists()
-
-
 def test_late_runner_lifecycle_write_does_not_recreate_deleted_spawn(
     tmp_path: Path,
 ) -> None:
@@ -476,6 +434,7 @@ def test_orphan_primary_diagnostics_use_scope_liveness(
         _collect_artifact_snapshot(runtime_root, record, now),
         ManagedPrimarySnapshot(
             metadata=PrimaryMetadata(
+                managed_backend=True,
                 launcher_pid=42001,
                 backend_pid=41001,
                 activity="idle",

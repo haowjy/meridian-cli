@@ -20,7 +20,7 @@ from typing import (
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from meridian.lib.config.settings import PiHarnessProfileConfig
+from meridian.lib.config.harness_models import PiHarnessProfileConfig
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.native_identity import (
     LaunchIntent,

@@ -19,6 +19,8 @@ from meridian.cli.app_tree import artifact_app
 from meridian.cli.artifact_cmd import (
     cmd_artifact_gc,  # noqa: F401 -- imports register commands on artifact_app
 )
+from meridian.cli.invocation import GlobalOptions, invocation_scope
+from meridian.cli.output import OutputConfig
 from meridian.lib.artifact import service, store
 from meridian.lib.artifact.store import Serve
 
@@ -176,7 +178,8 @@ class _FakeProcess:
 
 
 def _invoke_artifact(args: list[str]) -> None:
-    with pytest.raises(SystemExit) as exit_info:
+    options = GlobalOptions(output=OutputConfig(format="text"))
+    with invocation_scope(options), pytest.raises(SystemExit) as exit_info:
         artifact_app(args)
     assert exit_info.value.code == 0
 

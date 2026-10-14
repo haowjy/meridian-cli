@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from meridian.lib.config.settings import NotifyConfig
+from meridian.lib.config.models import NotifyConfig
 from meridian.lib.notify.channels import REGISTRY
 from meridian.lib.notify.channels.base import SendResult
 from meridian.lib.notify.notice import Notice
