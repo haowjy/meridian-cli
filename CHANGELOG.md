@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-14
+
 ### Fixed
 - Keep the app-lane cancel socket under the Unix path limit for deep runtime roots.
 
