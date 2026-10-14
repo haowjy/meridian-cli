@@ -291,6 +291,19 @@ def test_load_config_reads_harness_wait_yield_settings(tmp_path: Path) -> None:
     assert config.default_model_for_harness("codex") == "gpt-5.4"
 
 
+def test_load_config_reads_pi_wait_yield_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    monkeypatch.setenv("MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_PI", "75")
+
+    config = load_config(project_root)
+
+    assert config.harness.pi.wait_yield_seconds == 75.0
+
+
 def test_load_config_reads_idle_tables_with_env_precedence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

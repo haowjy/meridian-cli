@@ -275,41 +275,6 @@ def _env_alias_overrides() -> tuple[dict[str, object], tuple[ConfigValueSource, 
             )
         )
 
-    hidden_env_specs: tuple[tuple[str, tuple[str, ...], Literal["float", "str"]], ...] = (
-        (
-            "MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_CLAUDE",
-            ("harness", "claude", "wait_yield_seconds"),
-            "float",
-        ),
-        (
-            "MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_CODEX",
-            ("harness", "codex", "wait_yield_seconds"),
-            "float",
-        ),
-        (
-            "MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_OPENCODE",
-            ("harness", "opencode", "wait_yield_seconds"),
-            "float",
-        ),
-    )
-    for env_name, field_path, value_kind in hidden_env_specs:
-        raw_value = os.getenv(env_name)
-        if raw_value is None:
-            continue
-        parsed = parse_env_scalar(
-            value_kind=value_kind,
-            raw_value=raw_value,
-            env_name=env_name,
-        )
-        _assign_nested_value(values, field_path, parsed)
-        sources.append(
-            ConfigValueSource(
-                path=field_path,
-                source="env var",
-                env_var=env_name,
-            )
-        )
-
     return values, tuple(sources)
 
 

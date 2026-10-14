@@ -620,67 +620,9 @@ def harness_idle_model(
     )
 
 
-if TYPE_CHECKING:
-    ClaudeHarnessIdleConfig = HarnessIdleConfig
-    CodexHarnessIdleConfig = HarnessIdleConfig
-    OpenCodeHarnessIdleConfig = HarnessIdleConfig
-    PiHarnessIdleConfig = HarnessIdleConfig
-else:
-    ClaudeHarnessIdleConfig = harness_idle_model("claude")
-    CodexHarnessIdleConfig = harness_idle_model("codex", defaults={"ttl_seconds": 1800})
-    OpenCodeHarnessIdleConfig = harness_idle_model(
-        "opencode",
-        defaults={"ttl_seconds": 300},
-    )
-    PiHarnessIdleConfig = harness_idle_model("pi")
+class OpenCodeHarnessProfileBase(HarnessProfileConfig):
+    """OpenCode-only profile fields used by the generated harness model."""
 
-
-class ClaudeHarnessProfileConfig(HarnessProfileConfig):
-    idle: ClaudeHarnessIdleConfig = Field(default_factory=ClaudeHarnessIdleConfig)
-    model: Annotated[
-        str,
-        config_field(
-            "harness.claude",
-            value_kind="str",
-            file_aliases=(
-                file_alias("harness", "claude"),
-                file_alias(("harness", "claude"), "model"),
-            ),
-            env_vars=("MERIDIAN_HARNESS_MODEL_CLAUDE",),
-        ),
-    ] = ""
-
-
-class CodexHarnessProfileConfig(HarnessProfileConfig):
-    idle: CodexHarnessIdleConfig = Field(default_factory=CodexHarnessIdleConfig)
-    model: Annotated[
-        str,
-        config_field(
-            "harness.codex",
-            value_kind="str",
-            file_aliases=(
-                file_alias("harness", "codex"),
-                file_alias(("harness", "codex"), "model"),
-            ),
-            env_vars=("MERIDIAN_HARNESS_MODEL_CODEX",),
-        ),
-    ] = ""
-
-
-class OpenCodeHarnessProfileConfig(HarnessProfileConfig):
-    idle: OpenCodeHarnessIdleConfig = Field(default_factory=OpenCodeHarnessIdleConfig)
-    model: Annotated[
-        str,
-        config_field(
-            "harness.opencode",
-            value_kind="str",
-            file_aliases=(
-                file_alias("harness", "opencode"),
-                file_alias(("harness", "opencode"), "model"),
-            ),
-            env_vars=("MERIDIAN_HARNESS_MODEL_OPENCODE",),
-        ),
-    ] = "opencode-go/kimi-k2.6"
     version: Annotated[
         str,
         config_field(
@@ -713,8 +655,9 @@ class PiBundleToggleConfig(ConfigModel):
     enabled: bool = True
 
 
-class PiHarnessProfileConfig(HarnessProfileConfig):
-    idle: PiHarnessIdleConfig = Field(default_factory=PiHarnessIdleConfig)
+class PiHarnessProfileBase(HarnessProfileConfig):
+    """Pi-only profile fields used by the generated harness model."""
+
     load_all_pi_extensions: bool = False
     extra_extension_paths: tuple[str, ...] = ()
     background_tasks: PiBundleToggleConfig = Field(default_factory=PiBundleToggleConfig)
@@ -740,17 +683,93 @@ class PiHarnessProfileConfig(HarnessProfileConfig):
         return self.background_tasks.enabled
 
 
+def harness_profile_model(
+    harness_id: str,
+    *,
+    base: type[HarnessProfileConfig] = HarnessProfileConfig,
+    model_default: str = "",
+    wait_yield_default: float | None = None,
+    idle_defaults: Mapping[str, object] | None = None,
+) -> type[HarnessProfileConfig]:
+    """Build one metadata-backed harness profile and its idle settings."""
+
+    normalized = harness_id.strip().lower()
+    if normalized not in _HARNESS_TABLE_KEYS:
+        raise ValueError(f"Unsupported harness ID for profile config: {harness_id!r}.")
+
+    idle_model = harness_idle_model(normalized, defaults=idle_defaults)
+    fields: dict[str, Any] = {
+        "idle": (idle_model, Field(default_factory=idle_model)),
+        "wait_yield_seconds": (
+            Annotated[
+                float | None,
+                config_field(
+                    f"harness.{normalized}.wait_yield_seconds",
+                    value_kind="float",
+                    file_aliases=(file_alias(("harness", normalized), "wait_yield_seconds"),),
+                    env_vars=(f"MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_{normalized.upper()}",),
+                ),
+            ],
+            wait_yield_default,
+        ),
+    }
+    if normalized != "pi":
+        fields["model"] = (
+            Annotated[
+                str,
+                config_field(
+                    f"harness.{normalized}",
+                    value_kind="str",
+                    file_aliases=(
+                        file_alias("harness", normalized),
+                        file_alias(("harness", normalized), "model"),
+                    ),
+                    env_vars=(f"MERIDIAN_HARNESS_MODEL_{normalized.upper()}",),
+                ),
+            ],
+            model_default,
+        )
+
+    display_name = "OpenCode" if normalized == "opencode" else normalized.title()
+    return create_model(
+        f"{display_name}HarnessProfileConfig",
+        __base__=base,
+        __module__=__name__,
+        **fields,
+    )
+
+
+if TYPE_CHECKING:
+    ClaudeHarnessProfileConfig = HarnessProfileConfig
+    CodexHarnessProfileConfig = HarnessProfileConfig
+    OpenCodeHarnessProfileConfig = OpenCodeHarnessProfileBase
+    PiHarnessProfileConfig = PiHarnessProfileBase
+else:
+    ClaudeHarnessProfileConfig = harness_profile_model(
+        "claude",
+        wait_yield_default=3000.0,
+    )
+    CodexHarnessProfileConfig = harness_profile_model(
+        "codex",
+        wait_yield_default=3000.0,
+        idle_defaults={"ttl_seconds": 1800},
+    )
+    OpenCodeHarnessProfileConfig = harness_profile_model(
+        "opencode",
+        base=OpenCodeHarnessProfileBase,
+        model_default="opencode-go/kimi-k2.6",
+        idle_defaults={"ttl_seconds": 300},
+    )
+    PiHarnessProfileConfig = harness_profile_model("pi", base=PiHarnessProfileBase)
+
+
 class HarnessConfig(ConfigModel):
     """Default model and wait-yield configuration for each harness adapter."""
 
     model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
 
-    claude: ClaudeHarnessProfileConfig = Field(
-        default_factory=lambda: ClaudeHarnessProfileConfig(wait_yield_seconds=3000.0)
-    )
-    codex: CodexHarnessProfileConfig = Field(
-        default_factory=lambda: CodexHarnessProfileConfig(wait_yield_seconds=3000.0)
-    )
+    claude: ClaudeHarnessProfileConfig = Field(default_factory=ClaudeHarnessProfileConfig)
+    codex: CodexHarnessProfileConfig = Field(default_factory=CodexHarnessProfileConfig)
     opencode: OpenCodeHarnessProfileConfig = Field(default_factory=OpenCodeHarnessProfileConfig)
     pi: PiHarnessProfileConfig = Field(default_factory=PiHarnessProfileConfig)
 

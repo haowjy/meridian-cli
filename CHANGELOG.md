@@ -17,6 +17,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   appearing early.
 
 ### Fixed
+- Honor `MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_PI` like the other harness overrides.
 - Skip malformed legacy native-session rows whose `chat_id` is not a string or
   `harness_session_ids` is not a list.
 - Treat the first `--` as the CLI passthrough boundary, even when it follows a

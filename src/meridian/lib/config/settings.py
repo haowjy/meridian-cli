@@ -35,6 +35,7 @@ from meridian.lib.config.models import (
     StateConfig,
     WorkConfig,
     harness_idle_model,
+    harness_profile_model,
 )
 
 __all__ = [
@@ -60,6 +61,7 @@ __all__ = [
     "StateConfig",
     "WorkConfig",
     "harness_idle_model",
+    "harness_profile_model",
     "load_config",
     "merge_dynamic_sections",
     "normalize_dynamic_sections",
