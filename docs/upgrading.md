@@ -1,5 +1,14 @@
 # Upgrade notes
 
+## OpenCode 2.x idle (unreleased)
+
+Idle push, warning, and compaction now work on OpenCode 2.x; before, no OpenCode
+session ever armed. Sessions on the `openai` provider are scheduled against an
+estimated 30-minute cache (GPT-5.6 or later; per provider, not per model, so set
+`[harness.opencode.idle] ttl_seconds` for older models). Other providers and
+OpenCode 1.x stay push-only. A configured `ttl_seconds` always wins. See
+[OpenCode versions](configuration.md#opencode-versions).
+
 ## Ignoring direnv (unreleased)
 
 `[environment] ignore_direnv = true` opts harness launches out of inherited

@@ -23,6 +23,7 @@ class IdleEvent:
     ttl_seconds: int | None = None
     last_user_text: str | None = None
     last_assistant_text: str | None = None
+    provider: str | None = None
 
 
 @dataclass(frozen=True)

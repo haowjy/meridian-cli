@@ -1559,10 +1559,7 @@ if TYPE_CHECKING:
 else:
     ClaudeHarnessIdleConfig = harness_idle_model("claude")
     CodexHarnessIdleConfig = harness_idle_model("codex", defaults={"ttl_seconds": 1800})
-    OpenCodeHarnessIdleConfig = harness_idle_model(
-        "opencode",
-        defaults={"ttl_seconds": 300},
-    )
+    OpenCodeHarnessIdleConfig = harness_idle_model("opencode")
     PiHarnessIdleConfig = harness_idle_model("pi")
 
 

@@ -167,7 +167,10 @@ Key mappings:
 - Codex: main-thread `turn/completed` resolves nested `turn.status` — `completed`/absent
   → succeeded/0, `failed` → failed/1 with upstream error, `interrupted` → cancelled/130,
   unknown → failed/1 diagnostic; `meridian/error/connectionClosed` → failed
-- OpenCode: parent-session `session.idle` → succeeded; parent-session `session.error` → failed
+- OpenCode V2 (2.x): parent-session `session.execution.succeeded` → succeeded;
+  `session.execution.failed` → failed/1 with upstream error; an unpaired
+  `session.execution.interrupted` → failed/1
+- OpenCode V1 (1.x): parent-session `session.idle` → succeeded; parent-session `session.error` → failed
 - Cursor: `meridian/error/connectionClosed` → failed; no explicit success event — stdout EOF
   + process exit code 0 is the success boundary (see `CursorSubprocessConnection.events()`).
 - Pi: `agent_end` decodes one low-level attempt outcome but is not a session-level
@@ -477,8 +480,11 @@ guards make omissions loud.
 Direct path access bypasses the abstraction and breaks tests that mock artifacts.
 
 **Don't assume `event_type` is globally unique** — always check `event.harness_id`
-first. `turn/completed` is a Codex event; OpenCode uses `session.idle` for the same
-semantic.
+first. `turn/completed` is a Codex event; OpenCode V1 uses `session.idle` and V2
+uses `session.execution.{succeeded,failed,interrupted}` for the same semantic. Any
+consumer that matches OpenCode event names itself (the idle sensor does) must
+handle both dialects, selected by the connection's `resolved_version`; the shared
+`OPENCODE_SEMANTICS` table covers only consumers that read it.
 
 **Don't call adapter methods before `ensure_bootstrap()`** — the SpawnParams
 accounting guard runs on a partial adapter set and will raise false `ImportError`.

@@ -12,12 +12,14 @@ The Meridian OpenCode adapter targets current opencode.ai CLI releases.
 `connections/opencode_connection.py` is the dispatcher: one registered transport
 resolves the version at `start()` and delegates to the V2 session + `/api/event`
 transport (`opencode_v2_http.py`) or the frozen V1 JSON + SSE transport
-(`opencode_http.py`). The launch bind seam projects the resolved preference into
-`MERIDIAN_HARNESS_OPENCODE_VERSION` so connection and preview agree instead of
-probing independently. Capture and storage/transcript reads select their OpenCode
-dialect by DB schema (`session_v2` → V2, `session` → V1) through
+(`opencode_http.py`). The launch bind seam projects the version preference into
+`MERIDIAN_HARNESS_OPENCODE_VERSION`; the dispatcher resolves it once and exposes
+`resolved_version` to consumers such as the idle sensor. Capture and
+storage/transcript reads select their OpenCode dialect by DB schema (`session_v2`
+→ V2, `session` → V1) through
 `detect_opencode_db_schema` in `opencode_transcript.py`, never by the installed
-binary or the env var. **OpenCode 1.x is legacy and frozen** — registered as
+binary or the env var. V2's session model populates `IdleEvent.provider` for the
+harness `detect_ttl` port. **OpenCode 1.x is legacy and frozen** — registered as
 fallback, no investment; new work targets V2.
 
 ## Translation Pipeline
@@ -150,12 +152,13 @@ validate the native file. See
 
 **Terminal event classification is harness- and parent-scope-aware.** `event_type`
 is NOT globally unique — always check `event.harness_id`. `turn/completed` is Codex;
-OpenCode uses `session.idle` for the same semantic. Some harness streams also
-multiplex child work on the same connection, so `connection.primary_event_scope` is
-part of the contract: Codex scopes completion to the main `threadId`; OpenCode scopes
-completion to the launched parent `sessionID`. Child Codex threads and child OpenCode
-task sessions reach subscribers, but do not complete/fail the parent, clear
-parent signals, or supply the parent report.
+OpenCode V1 uses `session.idle`, while V2 uses `session.execution.succeeded`,
+`.failed`, or `.interrupted`. Some harness streams also multiplex child work on the
+same connection, so `connection.primary_event_scope` is part of the contract: Codex
+scopes completion to the main `threadId`; OpenCode scopes completion to the launched
+parent `sessionID`. Child Codex threads and child OpenCode task sessions reach
+subscribers, but do not complete/fail the parent, clear parent signals, or supply the
+parent report.
 
 ## Entry Points
 
