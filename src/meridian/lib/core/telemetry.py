@@ -195,7 +195,6 @@ CORE_EVENTS = frozenset(
         "spawn.process_exited",
         "spawn.finalizing",
         *(f"spawn.{status}" for status in TERMINAL_SPAWN_STATUSES),
-        "spawn.archived",
     }
 )
 
