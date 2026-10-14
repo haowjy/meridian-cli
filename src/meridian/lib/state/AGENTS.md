@@ -93,10 +93,11 @@ both scopes and released IDs, read under a single projection-lock acquisition.
 ## History discovery and retention
 
 Machine-wide retention has disjoint owners: committed-root scanning rejects
-`adhoc.*`, while ad-hoc scanning accepts only that prefix. Ad-hoc activity comes
-from `origin.json` mtime plus persisted spawn/session start and finish times, not
-from incidental file reads. Pruning rechecks eligibility under the exclusive
-project-lifetime gate and removes `projects/<id>/` with `context/<id>/`.
+`adhoc.*`, while ad-hoc scanning accepts only that prefix. Ad-hoc activity is the
+latest tree mtime under `projects/<id>/` or `context/<id>/`, including
+`origin.json`, plus persisted spawn/session start and finish times. Pruning
+rechecks eligibility under the exclusive project-lifetime gate and removes
+`projects/<id>/` with `context/<id>/`.
 `state.adhoc_retention_days` is user-config/environment-only; cwd project config
 must never control a machine-wide scan.
 
