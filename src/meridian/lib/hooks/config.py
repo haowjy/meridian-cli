@@ -14,7 +14,7 @@ from meridian.lib.hooks.types import Hook, HookEventName
 if TYPE_CHECKING:
     from meridian.lib.ops.runtime import RuntimeAuthoritySnapshot
 
-HOOK_SOURCE_PRECEDENCE: tuple[str, ...] = ("builtin", "user", "project", "local")
+HOOK_SOURCE_PRECEDENCE: tuple[str, ...] = ("user", "project", "local")
 
 
 @dataclass(frozen=True)
@@ -77,7 +77,7 @@ def load_hooks_config(
     user_config: Path | None = None,
     authority: RuntimeAuthoritySnapshot | None = None,
 ) -> HooksConfig:
-    """Load hook config with precedence: builtin < user < project < local."""
+    """Load hook config with precedence: user < project < local."""
 
     hooks: list[Hook] = []
     for layer in iter_config_layers(
