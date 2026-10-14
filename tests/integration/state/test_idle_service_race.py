@@ -12,12 +12,16 @@ def test_two_compaction_claims_racing_have_one_winner(tmp_path: Path) -> None:
     store = IdleStore(tmp_path / "idle", now_ms=lambda: now[0])
     service = IdleService(
         store=store,
-        config=MeridianConfig(),
+        config=MeridianConfig.model_validate(
+            {"idle": {"compact_min_growth_tokens": 0}}
+        ),
         env={"MERIDIAN_SESSION_ROLE": "primary"},
         now_ms=lambda: now[0],
         spawn_reader=lambda: (),
     )
-    armed = service.arm(harness="example", session="s1", ttl_seconds=3600)
+    armed = service.arm(
+        harness="example", session="s1", ttl_seconds=3600, context_tokens=1
+    )
     now[0] = armed.compact_at or 0
     facts = IdleFacts("no", False, 0, 100_000, False)
 
