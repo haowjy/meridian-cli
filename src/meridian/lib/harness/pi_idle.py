@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
-from meridian.lib.harness.idle_types import CacheTtl, CompactCosts
+from meridian.lib.harness.idle_types import CacheTtl
 
 # OpenAI's "24h" retention typically lasts 30 minutes, so schedule conservatively.
 _OPENAI_LONG_RETENTION_TTL_SECONDS = 1800
@@ -41,35 +41,4 @@ def detect_ttl(
     return _PROVIDER_TTLS.get(normalized_provider, {}).get(long_retention)
 
 
-def compact_costs(
-    *, provider: str | None, ttl_seconds: int | None
-) -> CompactCosts | None:
-    """Return Pi route economics when its provider has a known TTL."""
-
-    normalized = (provider or "").strip().lower()
-    if normalized == "anthropic":
-        # Pi's own summary prompt uses cacheRetention="none", so its input is
-        # cold. R is keepRecentTokens (20k) plus the measured summary estimate.
-        return CompactCosts(
-            w=2.0 if ttl_seconds == 3600 else 1.25,
-            c=1.0,
-            u=0,
-            o=5.0,
-            summary_tokens=4_000,
-            residue_tokens=22_000,
-        )
-    if normalized in {"openai", "openai-codex"}:
-        # Two openai-codex probes had cacheRead=0. GPT-5.x output is priced at
-        # roughly 8x input; the same 20k recent-token retention applies.
-        return CompactCosts(
-            w=1.0,
-            c=1.0,
-            u=0,
-            o=8.0,
-            summary_tokens=4_000,
-            residue_tokens=22_000,
-        )
-    return None
-
-
-__all__ = ["compact_costs", "detect_ttl"]
+__all__ = ["detect_ttl"]

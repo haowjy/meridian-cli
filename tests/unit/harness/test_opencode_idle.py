@@ -426,6 +426,8 @@ def test_v2_turn_end_parses_wrapped_descending_message_facts() -> None:
         ]
     }
     assert opencode_idle.v2_message_context_tokens(compaction) is None
+    compaction["data"][0]["info"]["tokens"]["input"] = 0
+    assert opencode_idle.v2_message_context_tokens(compaction) is None
 
 
 async def test_v2_steered_prompt_returns_before_terminal_and_does_not_leak_to_compaction(

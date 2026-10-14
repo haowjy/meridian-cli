@@ -1,5 +1,25 @@
 # Upgrade notes
 
+## Idle compaction growth floor (unreleased)
+
+Replace `idle.min_compact_tokens` (and per-harness equivalents) with
+`idle.compact_min_growth_tokens`, or remove it to use the calculated break-even.
+The environment override is `MERIDIAN_IDLE_COMPACT_MIN_GROWTH_TOKENS`.
+The value now measures growth beyond a baseline, not total context size.
+
+Stop active Meridian primaries before changing versions. Idle files under
+`MERIDIAN_HOME/idle/` gain a nested `context` baseline and a stretch-local
+`compact_eval`. Existing released files acquire the baseline on the next
+trustworthy turn; experimental flat-baseline files are discarded by validation
+and re-created on the next arm. No migration or index rebuild is required.
+Provider transcripts, chats, and spawn authority are unchanged.
+
+Rollback requires restoring the old config/environment key and restarting
+primaries. Released 0.10.0 cannot read the new idle rows: its status returned
+an empty list against scratch copies of these rows. It will start fresh idle
+stretches rather than preserve baselines or evaluations. Do not run both
+versions against the same idle directory.
+
 ## OpenCode 2.x idle (unreleased)
 
 Idle push, warning, and compaction now work on OpenCode 2.x; before, no OpenCode

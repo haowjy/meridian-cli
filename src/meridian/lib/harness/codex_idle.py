@@ -10,6 +10,7 @@ import time
 import tomllib
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import suppress
+from dataclasses import replace
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
@@ -40,13 +41,11 @@ IDLE_NOTIFY_COMMAND = ("meridian", "idle", "event", "--harness", "codex")
 
 
 def compact_costs(
-    *, provider: str | None, ttl_seconds: int | None
+    *, ttl_seconds: int | None
 ) -> CompactCosts | None:
     """Return measured remote-compaction economics for Codex's OpenAI route."""
 
     _ = ttl_seconds
-    if provider is not None and provider.strip().lower() != "openai":
-        return None
     # 160 rollout compactions put cached input at median 0.114*C and summary
     # output at 4.5k tokens. R=3.5k is the cross-session post-minus-prefix
     # median; GPT-5.x output is priced at roughly 8x input.
@@ -150,7 +149,7 @@ def _has_appended_compaction(path: Path, offset: int) -> bool:
     return False
 
 
-def pane_facts(capture: str, context_tokens: int | None = None) -> IdleFacts:
+def pane_facts(capture: str) -> IdleFacts:
     """Map one Codex pane capture to the facts visible in its TUI."""
 
     prompt = _prompt_text(capture)
@@ -164,7 +163,7 @@ def pane_facts(capture: str, context_tokens: int | None = None) -> IdleFacts:
         draft=draft,
         busy="Working (" in capture,
         agents_running=0,
-        context_tokens=context_tokens,
+        context_tokens=None,
         harness_autocompact_off=False,
     )
 
@@ -307,9 +306,9 @@ class CodexIdleSensor:
         context_tokens = latest_context_tokens(rollout) if rollout is not None else None
         pane = self._ctx.tmux_pane
         if pane is None or not self._ctx.tui_alive():
-            return pane_facts("", context_tokens)
+            return replace(pane_facts(""), context_tokens=context_tokens)
         capture = await self._tmux.capture(pane)
-        return pane_facts(capture or "", context_tokens)
+        return replace(pane_facts(capture or ""), context_tokens=context_tokens)
 
     async def _erase_compact_text(self, pane: str) -> None:
         await self._tmux.send_keys(pane, *("BSpace",) * len(_COMPACT_COMMAND))

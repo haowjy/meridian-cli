@@ -197,9 +197,7 @@ async def test_sidecar_drives_idle_push_warn_compact_and_done(tmp_path: Path) ->
     clock = Clock()
     sender = Sender()
     service, store = policy(tmp_path, clock, sender)
-    sensor = Sensor(
-        (IdleEvent("turn_end", "session-1", "turn-1", context_tokens=1),), alive
-    )
+    sensor = Sensor((IdleEvent("turn_end", "session-1", "turn-1", context_tokens=1),), alive)
 
     task = asyncio.create_task(
         run(
@@ -255,15 +253,7 @@ async def test_sidecar_forwards_event_provider_to_ttl_detection(tmp_path: Path) 
 
     service, store = policy(tmp_path, clock, sender, detect_ttl=detect_ttl)
     sensor = Sensor(
-        (
-            IdleEvent(
-                "turn_end",
-                "session-1",
-                "turn-1",
-                provider="openai",
-                context_tokens=1,
-            ),
-        ),
+        (IdleEvent("turn_end", "session-1", "turn-1", provider="openai"),),
         alive,
     )
 
@@ -297,7 +287,7 @@ async def test_sidecar_user_return_cancels_pending_schedule(tmp_path: Path) -> N
     sender = Sender()
     service, store = policy(tmp_path, clock, sender)
     events = (
-        IdleEvent("turn_end", "session-1", "turn-1", context_tokens=1),
+        IdleEvent("turn_end", "session-1", "turn-1"),
         IdleEvent("user_prompt", "session-1", None),
     )
     sensor = Sensor(events, alive)
@@ -457,7 +447,7 @@ async def test_external_event_sensor_skips_push_and_warn_while_busy(tmp_path: Pa
     sender = Sender()
     service, store = policy(tmp_path, clock, sender)
     sensor = BusyExternalSensor(
-        (IdleEvent("turn_end", "session-1", "turn-1", context_tokens=1),),
+        (IdleEvent("turn_end", "session-1", "turn-1"),),
         alive,
     )
 
@@ -496,8 +486,8 @@ async def test_sidecar_continues_after_one_event_handler_failure(tmp_path: Path)
     faulty = FailingOnceService(service)
     sensor = Sensor(
         (
-            IdleEvent("turn_end", "session-1", "turn-1", context_tokens=1),
-            IdleEvent("turn_end", "session-1", "turn-2", context_tokens=2),
+            IdleEvent("turn_end", "session-1", "turn-1"),
+            IdleEvent("turn_end", "session-1", "turn-2"),
         ),
         alive,
     )
@@ -534,9 +524,9 @@ async def test_sidecar_drops_events_for_another_session_and_records_once(tmp_pat
     service, store = policy(tmp_path, clock, sender)
     sensor = Sensor(
         (
-            IdleEvent("turn_end", "other-session", "other-turn-1", context_tokens=1),
-            IdleEvent("turn_end", "other-session", "other-turn-2", context_tokens=2),
-            IdleEvent("turn_end", "session-1", "turn-1", context_tokens=1),
+            IdleEvent("turn_end", "other-session", "other-turn-1"),
+            IdleEvent("turn_end", "other-session", "other-turn-2"),
+            IdleEvent("turn_end", "session-1", "turn-1"),
         ),
         alive,
     )

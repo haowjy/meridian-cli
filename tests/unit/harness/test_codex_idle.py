@@ -132,26 +132,7 @@ def _probe_payloads() -> list[str]:
 def test_parse_idle_event_pins_main_thread_and_tracks_input_growth(tmp_path: Path) -> None:
     counts: dict[str, int | None] = {MAIN_THREAD: None}
     rollout = _write_rollout(tmp_path)
-    _append(
-        rollout,
-        (
-            json.dumps(
-                {
-                    "type": "event_msg",
-                    "payload": {
-                        "type": "token_count",
-                        "info": {
-                            "last_token_usage": {
-                                "input_tokens": 12_000,
-                                "total_tokens": 12_345,
-                            }
-                        },
-                    },
-                }
-            )
-            + "\n"
-        ).encode(),
-    )
+    _append(rollout, _token_count(12_000, 12_345))
     env = {"CODEX_HOME": str(tmp_path / "codex")}
 
     def read_session(session: str) -> PinnedIdleSession | None:
@@ -180,40 +161,24 @@ def test_parse_idle_event_pins_main_thread_and_tracks_input_growth(tmp_path: Pat
     assert repeated.implies_return is False
 
 
+def _token_count(input_tokens: int, total_tokens: int) -> bytes:
+    return (json.dumps({
+        "type": "event_msg", "payload": {
+            "type": "token_count", "info": {"last_token_usage": {
+                "input_tokens": input_tokens, "total_tokens": total_tokens,
+            }},
+        },
+    }) + "\n").encode()
+
+
 def test_latest_context_tokens_stops_at_compaction_boundaries(tmp_path: Path) -> None:
     rollout = tmp_path / "rollout.jsonl"
-    token_count = {
-        "type": "event_msg",
-        "payload": {
-            "type": "token_count",
-            "info": {
-                "last_token_usage": {
-                    "input_tokens": 40_000,
-                    "total_tokens": 41_234,
-                }
-            },
-        },
-    }
-    rollout.write_text(json.dumps(token_count) + "\n", encoding="utf-8")
+    usage = _token_count(40_000, 41_234)
+    rollout.write_bytes(usage)
     assert latest_context_tokens(rollout) == 41_234
-
-    post_compaction = {
-        **token_count,
-        "payload": {
-            **token_count["payload"],
-            "info": {
-                "last_token_usage": {"input_tokens": 0, "total_tokens": 9_000}
-            },
-        },
-    }
-    with rollout.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(post_compaction) + "\n")
+    _append(rollout, _token_count(0, 9_000))
     assert latest_context_tokens(rollout) is None
-
-    rollout.write_text(
-        json.dumps(token_count) + "\n" + json.dumps({"type": "compacted", "payload": {}}) + "\n",
-        encoding="utf-8",
-    )
+    rollout.write_bytes(usage + b'{"type": "compacted", "payload": {}}\n')
     assert latest_context_tokens(rollout) is None
 
 

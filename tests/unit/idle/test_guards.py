@@ -22,8 +22,7 @@ def state(**updates: object) -> IdleState:
         "anchor": 1,
         "idle_since_ms": 0,
         "ttl_seconds": 3600,
-        "context_tokens": 50_000,
-        "baseline_tokens": 50_000,
+        "context": {"context_tokens": 50_000, "baseline_tokens": 50_000},
         "schedule": IdleSchedule(
             push_at=60_000,
             warn_at=2_700_000,

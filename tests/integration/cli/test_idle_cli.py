@@ -124,10 +124,11 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
         "returned_at_ms": returned_at_ms,
         "ttl_seconds": 61,
         "ttl_estimated": True,
-        "provider": None,
-        "context_tokens": 50_000,
-        "baseline_tokens": 50_000,
-        "baseline_source": "observed",
+        "context": {
+            "context_tokens": 50_000,
+            "baseline_tokens": 50_000,
+            "baseline_source": "observed",
+        },
         "compact_eval": None,
         "schedule": {
             "push_at": armed["push_at"],
@@ -183,9 +184,9 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
         "reason": "guards-passed",
         "detail": "growth 1k >= need 0k (configured)",
     }
-    evaluated = _json_success(tmp_path, env, "idle", "status", "--json")
-    assert isinstance(evaluated, list)
-    assert evaluated[0]["compact_eval"]["verdict"] == "worth-it"
+    assert _json_success(
+        tmp_path, env, "idle", "status", "--json"
+    )[0]["compact_eval"]["verdict"] == "worth-it"
     assert (
         _json_success(
             tmp_path,

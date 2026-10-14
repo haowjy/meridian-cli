@@ -1,95 +1,33 @@
-from meridian.lib.harness.idle_types import CompactCosts
+import pytest
+
+from meridian.lib.harness.idle_types import BaselineSource, CompactCosts
 from meridian.lib.idle.worth import compact_worth
 
+COSTS = CompactCosts(w=2.0, c=0.1, u=20_000, o=5.0, summary_tokens=4_000, residue_tokens=13_000)
+NEVER = COSTS.model_copy(update={"c": 1.0, "w": 1.0})
 
-def test_compact_worth_table() -> None:
-    costs = CompactCosts(
-        w=2.0,
-        c=0.1,
-        u=20_000,
-        o=5.0,
-        summary_tokens=4_000,
-        residue_tokens=13_000,
-    )
 
-    observed = compact_worth(
-        stretch=7,
-        context_tokens=52_300,
-        baseline_tokens=52_300,
-        baseline_source="observed",
-        costs=costs,
+@pytest.mark.parametrize(
+    ("ctx", "base", "source", "costs", "override", "expected"),
+    [
+        (52_300, 52_300, "observed", COSTS, None, ("break-even", 64_701, "not-worth-it")),
+        (52_300, 52_300, "compacted", COSTS, None, ("break-even", 50_256, "not-worth-it")),
+        (102_555, 52_300, "compacted", COSTS, None, ("break-even", 50_256, "not-worth-it")),
+        (102_556, 52_300, "compacted", COSTS, None, ("break-even", 50_256, "worth-it")),
+        (200_000, 50_000, "observed", NEVER, None, ("never", None, "not-worth-it")),
+        (200_000, 50_000, "observed", None, None, ("never", None, "not-worth-it")),
+        (50_001, 50_000, "observed", NEVER, 1, ("configured", 1, "worth-it")),
+        (None, 50_000, "observed", COSTS, None, ("break-even", 64_445, "context-unknown")),
+        (80_000, None, "observed", COSTS, None, ("break-even", None, "baseline-unknown")),
+    ],
+)
+def test_compact_worth_table(
+    ctx: int | None, base: int | None, source: BaselineSource,
+    costs: CompactCosts | None, override: int | None,
+    expected: tuple[str, int | None, str],
+) -> None:
+    result = compact_worth(
+        context_tokens=ctx, baseline_tokens=base, baseline_source=source,
+        costs=costs, override_tokens=override,
     )
-    compacted = compact_worth(
-        stretch=7,
-        context_tokens=52_300,
-        baseline_tokens=52_300,
-        baseline_source="compacted",
-        costs=costs,
-    )
-    assert (observed.need_tokens, compacted.need_tokens) == (64_701, 50_256)
-
-    below = compact_worth(
-        stretch=7,
-        context_tokens=52_300 + 50_255,
-        baseline_tokens=52_300,
-        baseline_source="compacted",
-        costs=costs,
-    )
-    above = compact_worth(
-        stretch=7,
-        context_tokens=52_300 + 50_256,
-        baseline_tokens=52_300,
-        baseline_source="compacted",
-        costs=costs,
-    )
-    assert (below.verdict, above.verdict) == ("not-worth-it", "worth-it")
-
-    never_costs = costs.model_copy(update={"c": 1.0, "w": 1.0})
-    never = compact_worth(
-        stretch=7,
-        context_tokens=200_000,
-        baseline_tokens=50_000,
-        baseline_source="observed",
-        costs=never_costs,
-    )
-    unknown_costs = compact_worth(
-        stretch=7,
-        context_tokens=200_000,
-        baseline_tokens=50_000,
-        baseline_source="observed",
-        costs=None,
-    )
-    overridden = compact_worth(
-        stretch=7,
-        context_tokens=50_001,
-        baseline_tokens=50_000,
-        baseline_source="observed",
-        costs=never_costs,
-        override_tokens=1,
-    )
-    assert (never.basis, never.verdict, never.need_tokens) == (
-        "never",
-        "not-worth-it",
-        None,
-    )
-    assert unknown_costs.basis == "never"
-    assert (overridden.basis, overridden.verdict) == ("configured", "worth-it")
-
-    context_unknown = compact_worth(
-        stretch=7,
-        context_tokens=None,
-        baseline_tokens=50_000,
-        baseline_source="observed",
-        costs=costs,
-    )
-    baseline_unknown = compact_worth(
-        stretch=7,
-        context_tokens=80_000,
-        baseline_tokens=None,
-        baseline_source="observed",
-        costs=costs,
-    )
-    assert (context_unknown.verdict, baseline_unknown.verdict) == (
-        "context-unknown",
-        "baseline-unknown",
-    )
+    assert (result.basis, result.need_tokens, result.verdict) == expected

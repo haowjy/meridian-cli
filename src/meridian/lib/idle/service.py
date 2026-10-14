@@ -38,6 +38,7 @@ from meridian.lib.notify import Notice, SendReport, send
 from meridian.lib.notify.label import build_session_label
 from meridian.lib.state.idle_store import (
     CompactResultValue,
+    ContextBaseline,
     IdleSchedule,
     IdleState,
     IdleStore,
@@ -287,22 +288,6 @@ def _close_open_stretch(state: IdleState, *, returned_at_ms: int) -> IdleState:
     )
 
 
-def observe_context(state: IdleState, context_tokens: int | None) -> IdleState:
-    """Apply one trustworthy turn-end context observation."""
-
-    if context_tokens is None or context_tokens <= 0:
-        return state
-    updates: dict[str, object] = {"context_tokens": context_tokens}
-    if state.baseline_tokens is None:
-        updates["baseline_tokens"] = context_tokens
-    elif state.context_tokens is not None and context_tokens < state.context_tokens:
-        updates.update(
-            baseline_tokens=context_tokens,
-            baseline_source="observed",
-        )
-    return state.model_copy(update=updates)
-
-
 class IdleService:
     """Synchronous policy API shared by the CLI and launcher sidecar."""
 
@@ -391,6 +376,15 @@ class IdleService:
         now_ms = self._now_ms()
 
         def transition(current: IdleState | None) -> tuple[IdleState, ArmResult]:
+            kept_input = input_count if input_count is not None else (
+                current.last_input_count if current is not None else None
+            )
+            untrusted = (
+                current is not None and not current.stretch_open
+                and current.done.get("compact") in {"claimed", "ok"}
+            )
+            context = current.context if current is not None else ContextBaseline()
+            observed_context = context if untrusted else context.observe(context_tokens)
             if (
                 implies_return
                 and turn_id is not None
@@ -399,13 +393,10 @@ class IdleService:
             ):
                 next_state = current.model_copy(
                     update={
-                        "last_input_count": (
-                            input_count if input_count is not None else current.last_input_count
-                        ),
-                        "provider": provider if provider is not None else current.provider,
+                        "last_input_count": kept_input,
+                        "context": observed_context,
                     }
                 )
-                next_state = observe_context(next_state, context_tokens)
                 return next_state, _result_for_state(
                     next_state,
                     reason="duplicate-turn",
@@ -420,9 +411,7 @@ class IdleService:
                     next_state = current.model_copy(
                         update={
                             "expect_compaction_turn": False,
-                            "last_input_count": (
-                                input_count if input_count is not None else current.last_input_count
-                            ),
+                            "last_input_count": kept_input,
                         }
                     )
                     return next_state, _result_for_state(next_state, reason="compact-window")
@@ -430,9 +419,7 @@ class IdleService:
                     next_state = current.model_copy(
                         update={
                             "expect_compaction_turn": False,
-                            "last_input_count": (
-                                input_count if input_count is not None else current.last_input_count
-                            ),
+                            "last_input_count": kept_input,
                         }
                     )
                     return next_state, _result_for_state(
@@ -442,13 +429,10 @@ class IdleService:
                 if current.stretch_open and current.done.get("compact") == "ok":
                     next_state = current.model_copy(
                         update={
-                            "last_input_count": (
-                                input_count if input_count is not None else current.last_input_count
-                            ),
-                            "provider": provider if provider is not None else current.provider,
+                            "last_input_count": kept_input,
+                            "context": observed_context,
                         }
                     )
-                    next_state = observe_context(next_state, context_tokens)
                     return next_state, _result_for_state(
                         next_state,
                         reason="already-compacted",
@@ -489,11 +473,7 @@ class IdleService:
                     if implies_return
                     else (current.last_turn_id if current is not None and not opens_new else None)
                 ),
-                last_input_count=(
-                    input_count
-                    if input_count is not None
-                    else (current.last_input_count if current is not None else None)
-                ),
+                last_input_count=kept_input,
                 last_user_text=user_excerpt,
                 last_assistant_text=assistant_excerpt,
                 anchor=anchor,
@@ -501,24 +481,16 @@ class IdleService:
                 returned_at_ms=returned_at_ms,
                 ttl_seconds=resolved_ttl,
                 ttl_estimated=ttl_estimated,
-                provider=(
-                    provider
-                    if provider is not None
-                    else (current.provider if current is not None else None)
+                context=observed_context,
+                compact_eval=(
+                    current.compact_eval if current is not None and not opens_new else None
                 ),
-                context_tokens=current.context_tokens if current is not None else None,
-                baseline_tokens=current.baseline_tokens if current is not None else None,
-                baseline_source=(
-                    current.baseline_source if current is not None else "observed"
-                ),
-                compact_eval=current.compact_eval if current is not None else None,
                 schedule=_persisted_schedule(placed),
                 done=done,
                 compact_window_until_ms=None,
                 expect_compaction_turn=False,
                 updated_at_ms=now_ms,
             )
-            next_state = observe_context(next_state, context_tokens)
             return next_state, _result_for_state(next_state)
 
         return self.store.mutate(harness, session, transition)
@@ -622,7 +594,6 @@ class IdleService:
             costs = None
             if stage == "compact" and current is not None and self._compact_costs is not None:
                 costs = self._compact_costs(
-                    provider=current.provider,
                     ttl_seconds=current.ttl_seconds,
                 )
             decision = decide(
@@ -771,10 +742,7 @@ class IdleService:
                     expect_compaction_turn=False,
                 )
             if result == "ok":
-                updates.update(
-                    baseline_tokens=None,
-                    baseline_source="compacted",
-                )
+                updates["context"] = current.context.after_compaction()
             return current.model_copy(update=updates), DoneResult(recorded=True)
 
         done_result = self.store.mutate(harness, session, transition)

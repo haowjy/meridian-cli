@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from meridian.lib.harness.idle_types import CompactCosts, CompactEval
-from meridian.lib.idle.worth import RETURN_PROBABILITY, compact_worth
+from meridian.lib.idle.worth import compact_worth
 from meridian.lib.state.idle_store import IdleState, Stage
 
 DecisionKind = Literal["act", "skip"]
@@ -68,7 +68,6 @@ def decide(
     now_ms: int,
     *,
     compact_costs: CompactCosts | None = None,
-    return_probability: float = RETURN_PROBABILITY,
 ) -> Decision:
     """Return the first matching guard, in architecture section 4.2 order."""
 
@@ -107,12 +106,10 @@ def decide(
     if facts.child_spawns_active:
         return Decision.skip("child-spawns-running")
     evaluation = compact_worth(
-        stretch=state.stretch,
         context_tokens=facts.context_tokens,
-        baseline_tokens=state.baseline_tokens,
-        baseline_source=state.baseline_source,
+        baseline_tokens=state.context.baseline_tokens,
+        baseline_source=state.context.baseline_source,
         costs=compact_costs,
-        r=return_probability,
         override_tokens=cfg.compact_min_growth_tokens,
     )
     if evaluation.verdict != "worth-it":

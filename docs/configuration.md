@@ -307,7 +307,7 @@ local config. Environment always beats every file, so a per-tmux
 |---|---|
 | Claude | Push and warning; compact after roughly 50k–63k tokens of growth for a one-hour cache (higher for shorter caches) |
 | Pi | Push and warning. Compaction does not pay at measured prices, so the compact stage records `skipped:not-worth-it`. Meridian still sets `PI_CACHE_RETENTION=long` for interactive primaries unless you set it; unsupported providers remain push-only. |
-| Codex | Push and warning with a fixed 1800-second TTL; compact after roughly 100k tokens of growth on the OpenAI/ChatGPT route |
+| Codex | Push and warning with a fixed 1800-second TTL; compact after roughly 100k tokens of growth, assuming the OpenAI/ChatGPT route |
 | OpenCode | 2.x `openai`: push and warning; measured cold compaction does not pay, so the compact stage records `skipped:not-worth-it`. Other providers are push-only. 1.x remains push-only ([OpenCode versions](#opencode-versions)). |
 
 The OpenAI estimates (Pi `openai-codex`, OpenCode `openai`) are per provider, not
@@ -332,13 +332,18 @@ growth needed = (return_probability × cold_read_cost × residue
 
 The baseline survives user returns and new idle stretches. It resets when the
 context shrinks, and the first real turn after a Meridian compaction establishes
-a new baseline. `meridian idle status --json` exposes the baseline and the last
-`compact_eval`; the table shows a skipped comparison such as
+a new baseline. `meridian idle status --json` exposes the baseline in `context`
+and the current stretch's `compact_eval`; the table shows a skipped comparison such as
 `skipped:not-worth-it (19k/50k)`.
 
 Set `compact_min_growth_tokens` to replace the calculated threshold. This also
 opts routes whose measured economics say "never" back into compaction. The
 override still requires a known current context and baseline.
+
+Pi and OpenCode register no cost constants: at the fixed return probability of
+0.5 their measured compactions never pay. Their evaluations report `basis: never`
+and `costs: null` unless a growth override is set. Codex uses OpenAI-route costs
+without detecting custom model providers; use a growth override for other routes.
 
 A compaction is skipped when the timer is stale or late, idle or compaction is
 disabled, the cache is already cold, the harness is busy, a draft is present or

@@ -5,6 +5,8 @@ from pathlib import Path
 from threading import Lock
 from typing import TypeVar
 
+import pytest
+
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.harness.idle_types import CacheTtl, DetectIdleTtl, IdleFacts
 from meridian.lib.idle.service import (
@@ -16,7 +18,7 @@ from meridian.lib.idle.service import (
 )
 from meridian.lib.notify import Notice, SendReport
 from meridian.lib.notify.channels.base import SendResult
-from meridian.lib.state.idle_store import IdleSchedule, IdleState, IdleStore
+from meridian.lib.state.idle_store import ContextBaseline, IdleSchedule, IdleState, IdleStore
 
 T = TypeVar("T")
 
@@ -200,71 +202,52 @@ def test_return_then_long_turn_uses_the_short_push_delay() -> None:
     assert store.read("example", "s1").returned_at_ms == 1_000  # type: ignore[union-attr]
 
 
+@pytest.mark.parametrize(
+    ("before", "tokens", "expected"),
+    [
+        (ContextBaseline(), None, ContextBaseline()),
+        (ContextBaseline(), 0, ContextBaseline()),
+        (ContextBaseline(), 40, ContextBaseline(context_tokens=40, baseline_tokens=40)),
+        (ContextBaseline(context_tokens=40, baseline_tokens=40), 55,
+         ContextBaseline(context_tokens=55, baseline_tokens=40)),
+        (ContextBaseline(context_tokens=55, baseline_tokens=40), 35,
+         ContextBaseline(context_tokens=35, baseline_tokens=35)),
+        (ContextBaseline(context_tokens=55).after_compaction(), 20,
+         ContextBaseline(context_tokens=20, baseline_tokens=20, baseline_source="compacted")),
+    ],
+)
+def test_context_baseline_observation(
+    before: ContextBaseline, tokens: int | None, expected: ContextBaseline
+) -> None:
+    assert before.observe(tokens) == expected
+
+
 def test_context_baseline_lifecycle_across_compaction_and_stretches() -> None:
     idle, clock, store, _ = service()
-    idle.arm(
-        harness="example", session="s1", ttl_seconds=3600, context_tokens=40_000
-    )
-    idle.arm(
-        harness="example", session="s1", ttl_seconds=3600, context_tokens=55_000
-    )
-    grown = store.read("example", "s1")
-    assert grown is not None
-    assert (grown.context_tokens, grown.baseline_tokens, grown.baseline_source) == (
-        55_000,
-        40_000,
-        "observed",
-    )
-
-    idle.arm(
-        harness="example", session="s1", ttl_seconds=3600, context_tokens=35_000
-    )
+    idle.arm(harness="example", session="s1", ttl_seconds=3600, context_tokens=40_000)
     idle.return_(harness="example", session="s1")
-    opened = idle.arm(
-        harness="example", session="s1", ttl_seconds=3600, context_tokens=36_000
-    )
-    carried = store.read("example", "s1")
-    assert opened.stretch == 2
-    assert carried is not None
-    assert (carried.baseline_tokens, carried.baseline_source) == (35_000, "observed")
-
+    opened = idle.arm(harness="example", session="s1", ttl_seconds=3600, context_tokens=55_000)
+    carried = store.states[("example", "s1")]
+    assert opened.stretch == 2 and carried.context.baseline_tokens == 40_000
     clock.value = opened.compact_at or 0
     assert idle.fire(
-        "compact",
-        harness="example",
-        session="s1",
-        stretch=2,
-        anchor=1,
-        facts=SAFE_FACTS,
+        "compact", harness="example", session="s1", stretch=2, anchor=1, facts=SAFE_FACTS,
     ).decision == "act"
-    assert idle.done(
-        "compact", harness="example", session="s1", stretch=2, result="ok"
-    ).recorded
-    pending = store.read("example", "s1")
-    assert pending is not None
-    assert (pending.baseline_tokens, pending.baseline_source) == (None, "compacted")
-
+    idle.done("compact", harness="example", session="s1", stretch=2, result="ok")
+    pending = store.states[("example", "s1")].context
+    assert pending == carried.context.after_compaction()
     assert idle.arm(
         harness="example", session="s1", context_tokens=1_000
     ).reason == "compact-window"
+    assert store.states[("example", "s1")].context == pending
     clock.value += 31_000
-    assert idle.arm(
-        harness="example", session="s1", context_tokens=2_000
-    ).reason == "already-compacted"
-    compacted = store.read("example", "s1")
-    assert compacted is not None
-    assert (compacted.context_tokens, compacted.baseline_tokens, compacted.baseline_source) == (
-        2_000,
-        2_000,
-        "compacted",
+    idle.arm(harness="example", session="s1", context_tokens=2_000)
+    assert store.states[("example", "s1")].context == ContextBaseline(
+        context_tokens=2_000, baseline_tokens=2_000, baseline_source="compacted"
     )
-
     idle.return_(harness="example", session="s1")
     idle.arm(harness="example", session="s1", context_tokens=3_000)
-    idle.arm(harness="example", session="s1", context_tokens=1_500)
-    shrunk = store.read("example", "s1")
-    assert shrunk is not None and shrunk.stretch == 3
-    assert (shrunk.baseline_tokens, shrunk.baseline_source) == (1_500, "observed")
+    assert store.states[("example", "s1")].compact_eval is None
 
 
 def test_close_on_launch_closes_open_row_without_creating_missing_file(tmp_path: Path) -> None:
@@ -278,8 +261,7 @@ def test_close_on_launch_closes_open_row_without_creating_missing_file(tmp_path:
             stretch_open=True,
             anchor=1,
             idle_since_ms=1,
-            context_tokens=80_000,
-            baseline_tokens=40_000,
+            context=ContextBaseline(context_tokens=80_000, baseline_tokens=40_000),
             schedule=IdleSchedule(push_at=2),
             updated_at_ms=1,
         )
@@ -290,7 +272,7 @@ def test_close_on_launch_closes_open_row_without_creating_missing_file(tmp_path:
 
     current = store.read("example", "open")
     assert current is not None and current.stretch_open is False
-    assert (current.context_tokens, current.baseline_tokens) == (80_000, 40_000)
+    assert (current.context.context_tokens, current.context.baseline_tokens) == (80_000, 40_000)
     assert IdleService(store=store, config=MeridianConfig(), env=env).status() == ()
     assert not store.path_for("example", "missing").exists()
 
@@ -394,11 +376,6 @@ def test_compaction_claim_window_done_ok_and_compacted_state() -> None:
     assert done.recorded is True
     assert still_compacted.reason == "already-compacted"
     assert current is not None and current.done["compact"] == "ok"
-    assert (current.context_tokens, current.baseline_tokens, current.baseline_source) == (
-        50_000,
-        None,
-        "compacted",
-    )
     assert (current.last_user_text, current.last_assistant_text) == (
         "original prompt",
         "original answer",
@@ -448,9 +425,7 @@ def test_arm_does_not_store_excerpts_when_notifications_exclude_messages() -> No
 
 def test_closed_compacted_stretch_opens_a_new_stretch_on_arm() -> None:
     idle, clock, store, _ = service()
-    armed = idle.arm(
-        harness="example", session="s1", ttl_seconds=3600, context_tokens=50_000
-    )
+    armed = idle.arm(harness="example", session="s1", ttl_seconds=3600, context_tokens=50_000)
     clock.value = armed.compact_at or 0
     idle.fire(
         "compact",
@@ -475,9 +450,7 @@ def test_closed_compacted_stretch_opens_a_new_stretch_on_arm() -> None:
 
 def test_implies_return_opens_new_stretch_inside_claimed_window() -> None:
     idle, clock, store, _ = service()
-    armed = idle.arm(
-        harness="example", session="s1", ttl_seconds=3600, context_tokens=50_000
-    )
+    armed = idle.arm(harness="example", session="s1", ttl_seconds=3600, context_tokens=50_000)
     clock.value = armed.compact_at or 0
     idle.fire(
         "compact",
@@ -520,9 +493,7 @@ def test_implies_return_opens_new_stretch_inside_claimed_window() -> None:
 
 def test_harness_autocompact_env_fact_is_merged_before_compaction_guard() -> None:
     idle, clock, store, _ = service(autocompact_off=lambda env: True)
-    armed = idle.arm(
-        harness="example", session="s1", ttl_seconds=3600, context_tokens=50_000
-    )
+    armed = idle.arm(harness="example", session="s1", ttl_seconds=3600, context_tokens=50_000)
     clock.value = armed.compact_at or 0
 
     skipped = idle.fire(
@@ -542,9 +513,7 @@ def test_harness_autocompact_env_fact_is_merged_before_compaction_guard() -> Non
 
 def test_failed_compaction_clears_the_window_and_allows_reanchor() -> None:
     idle, clock, store, _ = service()
-    armed = idle.arm(
-        harness="example", session="s1", ttl_seconds=3600, context_tokens=50_000
-    )
+    armed = idle.arm(harness="example", session="s1", ttl_seconds=3600, context_tokens=50_000)
     clock.value = armed.compact_at or 0
     idle.fire(
         "compact",
@@ -568,9 +537,7 @@ def test_failed_compaction_clears_the_window_and_allows_reanchor() -> None:
 
 def test_return_always_closes_during_compaction_and_late_done_records_same_stretch() -> None:
     idle, clock, store, _ = service()
-    armed = idle.arm(
-        harness="example", session="s1", ttl_seconds=3600, context_tokens=50_000
-    )
+    armed = idle.arm(harness="example", session="s1", ttl_seconds=3600, context_tokens=50_000)
     clock.value = armed.compact_at or 0
     idle.fire(
         "compact",
@@ -626,16 +593,15 @@ def test_expected_compaction_turn_is_absorbed_after_window() -> None:
 
     assert absorbed.reason == "expected-compaction-turn"
     assert store.read("example", "s1").anchor == 1  # type: ignore[union-attr]
-    assert store.read("example", "s1").context_tokens == 50_000  # type: ignore[union-attr]
-    assert store.read("example", "s1").baseline_tokens == 50_000  # type: ignore[union-attr]
+    assert store.states[("example", "s1")].context == ContextBaseline(
+        context_tokens=50_000, baseline_tokens=50_000
+    )
     assert store.read("example", "s1").last_user_text == "original prompt"  # type: ignore[union-attr]
 
 
 def test_late_done_for_previous_stretch_never_touches_new_stretch() -> None:
     idle, clock, store, _ = service()
-    armed = idle.arm(
-        harness="example", session="s1", ttl_seconds=3600, context_tokens=50_000
-    )
+    armed = idle.arm(harness="example", session="s1", ttl_seconds=3600, context_tokens=50_000)
     clock.value = armed.compact_at or 0
     idle.fire(
         "compact",
@@ -676,3 +642,18 @@ def test_closed_stretch_ignores_stale_expected_compaction_turn_on_arm() -> None:
     assert current is not None
     assert current.stretch_open is True
     assert current.expect_compaction_turn is False
+
+@pytest.mark.parametrize("completion", ["claimed", "ok"])
+def test_return_during_compaction_does_not_observe_compaction_turn(completion: str) -> None:
+    idle, clock, store, _ = service()
+    armed = idle.arm(harness="example", session="s1", ttl_seconds=3600, context_tokens=40_000)
+    clock.value = armed.compact_at or 0
+    idle.fire("compact", harness="example", session="s1", stretch=1, anchor=1, facts=SAFE_FACTS)
+    idle.return_(harness="example", session="s1")
+    if completion == "ok":
+        idle.done("compact", harness="example", session="s1", stretch=1, result="ok")
+    before = store.states[("example", "s1")]
+    idle.arm(harness="example", session="s1", context_tokens=1_200)
+    after = store.states[("example", "s1")]
+    assert after.context == before.context
+    assert after.stretch == 2 and after.compact_eval is None

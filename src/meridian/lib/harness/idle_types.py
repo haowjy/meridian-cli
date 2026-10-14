@@ -33,7 +33,6 @@ class CompactEval(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
-    stretch: int = Field(ge=1)
     context_tokens: int | None = Field(default=None, ge=0)
     baseline_tokens: int | None = Field(default=None, ge=0)
     baseline_source: BaselineSource = "observed"
@@ -151,12 +150,11 @@ class DetectIdleTtl(Protocol):
 
 
 class ResolveCompactCosts(Protocol):
-    """Resolve economics for one harness provider and cache lifetime."""
+    """Resolve economics for one harness and cache lifetime."""
 
     def __call__(
         self,
         *,
-        provider: str | None,
         ttl_seconds: int | None,
     ) -> CompactCosts | None: ...
 

@@ -113,10 +113,9 @@ def autocompact_off(env: Mapping[str, str]) -> bool:
     return raw.strip().lower() in _TRUTHY
 
 
-def compact_costs(*, provider: str | None, ttl_seconds: int | None) -> CompactCosts:
+def compact_costs(*, ttl_seconds: int | None) -> CompactCosts:
     """Return measured Claude compaction costs for the active cache TTL."""
 
-    _ = provider
     # c/u: two Haiku 4.5 cache probes fit 0.1*C + 20k uncached input.
     # S: median chars/4 across 231 journal compactions. R: paired median
     # first-post-compaction request minus first request across 159 sessions.

@@ -17,7 +17,6 @@ from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.opencode_v2_http import v2_session_idle_marker
 from meridian.lib.harness.idle_types import (
     CacheTtl,
-    CompactCosts,
     CompactResult,
     IdleEvent,
     IdleFacts,
@@ -48,26 +47,6 @@ def detect_ttl(
 
     _ = session_id, native_store, env
     return _PROVIDER_TTLS.get((provider or "").strip().lower())
-
-
-def compact_costs(
-    *, provider: str | None, ttl_seconds: int | None
-) -> CompactCosts | None:
-    """Return measured OpenCode V2 economics for OpenAI."""
-
-    _ = ttl_seconds
-    if (provider or "").strip().lower() != "openai":
-        return None
-    # Across 109 native compactions, cache.read was 0 and summary output had
-    # median 1.6k tokens. R=15k is the measured cross-session residue delta.
-    return CompactCosts(
-        w=1.0,
-        c=1.0,
-        u=0,
-        o=8.0,
-        summary_tokens=1_600,
-        residue_tokens=15_000,
-    )
 
 
 def _properties(event: RawHarnessEvent) -> Mapping[str, object]:
@@ -552,10 +531,12 @@ def v2_message_context_tokens(payload: object) -> int | None:
         role = facts.get("role") or message.get("role") or message.get("type")
         if role != "assistant":
             continue
+        if facts.get("mode") == "compaction" or facts.get("summary") is True:
+            return None
         tokens = json_object(facts.get("tokens"))
-        cache = json_object(tokens.get("cache")) if tokens is not None else None
         if tokens is None:
             continue
+        cache = json_object(tokens.get("cache"))
         values = (
             tokens.get("input"),
             cache.get("read") if cache is not None else None,
@@ -568,8 +549,6 @@ def v2_message_context_tokens(payload: object) -> int | None:
         )
         if total <= 0:
             continue
-        if facts.get("mode") == "compaction" or facts.get("summary") is True:
-            return None
         return total
     return None
 
@@ -884,7 +863,6 @@ __all__ = [
     "OpenCodeIdleSensor",
     "OpenCodeV2IdleSensor",
     "autocompact_off",
-    "compact_costs",
     "detect_ttl",
     "message_excerpts",
     "primary_idle_sensor",

@@ -47,7 +47,6 @@ from meridian.lib.harness.opencode_backend import (
 )
 from meridian.lib.harness.opencode_idle import (
     autocompact_off,
-    compact_costs,
     detect_ttl,
     primary_idle_sensor,
 )
@@ -662,6 +661,5 @@ register_harness_bundle(
         primary_idle_sensor=primary_idle_sensor,
         autocompact_off=autocompact_off,
         detect_ttl=detect_ttl,
-        compact_costs=compact_costs,
     )
 )
