@@ -14,7 +14,9 @@ from meridian.lib.state.project_identity import (
     AdHoc,
     Committed,
     ensure_project_identity,
+    nearest_ancestor_project_marker,
     resolve_project_identity,
+    state_id,
 )
 
 
@@ -35,6 +37,16 @@ def test_project_predicate_recognizes_markers_except_user_mars_root(
     assert isinstance(resolve_project_identity(user_mars_root), AdHoc)
 
 
+def test_nearest_ancestor_marker_is_notice_only(tmp_path: Path) -> None:
+    ancestor = tmp_path / "project"
+    child = ancestor / "nested" / "scratch"
+    child.mkdir(parents=True)
+    (ancestor / "meridian.toml").write_text("", encoding="utf-8")
+
+    assert nearest_ancestor_project_marker(child) == ancestor
+    assert isinstance(resolve_project_identity(child), AdHoc)
+
+
 def test_bare_identity_read_is_pure_and_deterministic(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -50,6 +62,7 @@ def test_bare_identity_read_is_pure_and_deterministic(
     assert identity == AdHoc(id=f"adhoc.my-scratch.{digest}", materialized=False)
     assert not home.exists()
     assert list(project_root.iterdir()) == []
+    assert state_id(identity) is None
 
 
 def test_ensure_adhoc_identity_writes_origin_only_under_user_home(
@@ -65,6 +78,7 @@ def test_ensure_adhoc_identity_writes_origin_only_under_user_home(
 
     assert isinstance(identity, AdHoc)
     assert identity.materialized
+    assert state_id(identity) == identity.id
     origin_path = home / "projects" / identity.id / "origin.json"
     original_bytes = origin_path.read_bytes()
     original_mtime = origin_path.stat().st_mtime_ns
@@ -101,6 +115,18 @@ def test_mars_only_write_mints_committed_identity(tmp_path: Path) -> None:
     assert isinstance(identity, Committed)
     assert identity.id is not None
     payload = tomllib.loads((tmp_path / "meridian.toml").read_text(encoding="utf-8"))
+    assert payload["project"]["id"] == identity.id
+
+
+def test_scaffold_and_committed_identity_are_written_together(tmp_path: Path) -> None:
+    identity = ensure_project_identity(
+        tmp_path,
+        scaffold="[defaults]\nmax_depth = 7\n",
+    )
+
+    assert isinstance(identity, Committed)
+    payload = tomllib.loads((tmp_path / "meridian.toml").read_text(encoding="utf-8"))
+    assert payload["defaults"]["max_depth"] == 7
     assert payload["project"]["id"] == identity.id
 
 
@@ -152,6 +178,20 @@ def test_committed_identity_rejects_reserved_adhoc_prefix(tmp_path: Path) -> Non
     )
 
     with pytest.raises(ValueError, match="reserved"):
+        resolve_project_identity(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "content",
+    ['project = "not-a-table"\n', "[project]\nid = 42\n"],
+)
+def test_committed_identity_rejects_invalid_project_shape(
+    tmp_path: Path,
+    content: str,
+) -> None:
+    (tmp_path / "meridian.toml").write_text(content, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"Invalid \[project\]"):
         resolve_project_identity(tmp_path)
 
 

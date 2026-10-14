@@ -418,11 +418,37 @@ def test_adhoc_scan_uses_session_record_activity_not_origin_mtime(
     assert (runtime_root / "sessions.jsonl").stat().st_mtime_ns == sessions_mtime
 
 
+def test_adhoc_retention_zero_has_touch_interval_floor(tmp_path: Path) -> None:
+    now = 2_000_000_000.0
+    user_home = tmp_path / "user-home"
+    recent_path = tmp_path / "recent"
+    recent_path.mkdir()
+    recent_root = _seed_adhoc_root(
+        user_home,
+        "adhoc.recent.0123456789ab",
+        recent_path,
+        mtime=now - (10 * 60),
+    )
+    old_path = tmp_path / "old"
+    old_path.mkdir()
+    old_root = _seed_adhoc_root(
+        user_home,
+        "adhoc.old.0123456789ab",
+        old_path,
+        mtime=now - (2 * 60 * 60),
+    )
+
+    candidates = scan_adhoc_project_dirs(user_home, retention_days=0, now=now)
+
+    assert [candidate.project_id for candidate in candidates] == [old_root.name]
+    assert recent_root.is_dir()
+
+
 @pytest.mark.parametrize(
     ("path_state", "expected_reason"),
     [("gone", "adhoc-path-gone"), ("marker", "adhoc-shadowed")],
 )
-def test_adhoc_gone_and_shadowed_paths_use_seven_day_retention(
+def test_adhoc_gone_and_shadowed_paths_use_shorter_retention(
     tmp_path: Path,
     path_state: str,
     expected_reason: str,
@@ -435,7 +461,7 @@ def test_adhoc_gone_and_shadowed_paths_use_seven_day_retention(
         user_home,
         f"adhoc.{path_state}.2123456789ab",
         source_path,
-        mtime=now - (8 * 24 * 60 * 60),
+        mtime=now - (4 * 24 * 60 * 60),
     )
     if path_state == "gone":
         source_path.rmdir()
@@ -444,7 +470,7 @@ def test_adhoc_gone_and_shadowed_paths_use_seven_day_retention(
             '[project]\nid = "committed"\n', encoding="utf-8"
         )
 
-    candidates = scan_adhoc_project_dirs(user_home, retention_days=30, now=now)
+    candidates = scan_adhoc_project_dirs(user_home, retention_days=3, now=now)
 
     assert len(candidates) == 1
     assert candidates[0].project_id == runtime_root.name
@@ -604,6 +630,8 @@ def test_doctor_global_prune_does_not_recreate_current_adhoc_root(
     monkeypatch.setattr(diag.time, "time", lambda: now)
     identity = ensure_project_identity(project_root)
     runtime_root = get_project_home(str(identity.id))
+    old = now - (2 * 60 * 60)
+    os.utime(runtime_root / "origin.json", (old, old))
     context_root = user_home / "context" / str(identity.id)
     _write_text(context_root / "work" / "old.md", "old context\n")
 

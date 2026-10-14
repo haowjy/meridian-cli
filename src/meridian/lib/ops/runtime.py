@@ -23,10 +23,10 @@ from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.project_identity import (
-    AdHoc,
     ensure_project_identity,
     project_identity_was_created,
     resolve_project_identity,
+    state_id,
 )
 from meridian.lib.state.user_paths import get_project_home, get_user_home
 
@@ -121,6 +121,7 @@ class RuntimeAuthoritySnapshot(BaseModel):
     user_home: Path
     identity_tier: Literal["committed", "adhoc"]
     project_id: str | None
+    project_identity_source: Literal["meridian.toml", "path", "unminted"]
     identity_created: bool = False
     mars_roots: MarsRoots
     runtime_root: Path | None = None
@@ -162,6 +163,13 @@ def resolve_project_authority(
     )
     identity = resolve_project_identity(root_resolution.project_root)
     project_paths = resolve_project_paths(root_resolution.project_root)
+    project_identity_source: Literal["meridian.toml", "path", "unminted"] = (
+        "path"
+        if identity.tier == "adhoc"
+        else "unminted"
+        if identity.id is None
+        else "meridian.toml"
+    )
     return RuntimeAuthoritySnapshot(
         execution_cwd=root_resolution.execution_cwd,
         project_root=root_resolution.project_root,
@@ -174,6 +182,7 @@ def resolve_project_authority(
         user_home=get_user_home(),
         identity_tier=identity.tier,
         project_id=identity.id,
+        project_identity_source=project_identity_source,
         mars_roots=resolve_mars_roots(root_resolution.project_root),
     )
 
@@ -195,12 +204,11 @@ def resolve_runtime_authority_for_read(
         else None
     )
     identity = resolve_project_identity(authority.project_root)
+    project_id = state_id(identity)
     if override_root is not None:
         runtime_root = override_root
-    elif authority.project_id is not None and not (
-        isinstance(identity, AdHoc) and not identity.materialized
-    ):
-        runtime_root = get_project_home(authority.project_id)
+    elif project_id is not None:
+        runtime_root = get_project_home(project_id)
     else:
         runtime_root = None
     if runtime_root is None:

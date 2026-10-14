@@ -9,7 +9,7 @@ from typing import Literal, cast
 from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.catalog.mars_capabilities import mars_supports_fallback_root
-from meridian.lib.catalog.mars_roots import resolve_mars_executable, resolve_mars_roots
+from meridian.lib.catalog.mars_roots import resolve_mars_executable
 from meridian.lib.config.context_config import ArbitraryContextConfig, ContextConfig
 from meridian.lib.context.resolver import (
     ResolvedContextPaths,
@@ -517,18 +517,12 @@ def context_sync(input: ContextInput) -> ContextOutput:
         if extra_sync is not None:
             sync_status[normalized] = extra_sync
 
-    mars_roots = resolve_mars_roots(authority.project_root)
+    mars_roots = authority.mars_roots
     fallback_supported = mars_supports_fallback_root(resolve_mars_executable())
     return ContextOutput(
         identity_tier=authority.identity_tier,
         project_id=authority.project_id,
-        project_identity_source=(
-            "path"
-            if authority.identity_tier == "adhoc"
-            else "unminted"
-            if authority.project_id is None
-            else "meridian.toml"
-        ),
+        project_identity_source=authority.project_identity_source,
         work_path=context_config.work.path,
         work_resolved=(
             resolved_paths.work_root.as_posix()

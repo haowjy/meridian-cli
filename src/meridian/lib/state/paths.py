@@ -12,10 +12,10 @@ from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.project_root import resolve_user_config_path
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.project_identity import (
-    AdHoc,
     ProjectIdentity,
     ensure_project_identity,
     resolve_project_identity,
+    state_id,
 )
 from meridian.lib.state.user_paths import get_user_home, project_lifetime_lock_path
 
@@ -275,9 +275,7 @@ def resolve_project_paths_from_context(
         if create_project_uuid
         else resolve_project_identity(project_root)
     )
-    project_id: str | None = resolved_identity.id
-    if isinstance(resolved_identity, AdHoc) and not resolved_identity.materialized:
-        project_id = None
+    project_id = state_id(resolved_identity)
     if context_uses_project_placeholder(effective_config) and project_id is None:
         return ProjectPaths(
             root_dir=project_state_dir,

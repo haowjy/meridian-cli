@@ -46,7 +46,8 @@ ProjectReadContext
   ├── authority: RuntimeAuthoritySnapshot
   ├── project_root: Path
   ├── layout: ProjectLayoutSnapshot
-  └── config: MeridianConfig | None
+  ├── config: MeridianConfig | None
+  └── notice: str | None              ← human-facing first-materialization notice
 
 RuntimeReadContext(ProjectReadContext)
   └── runtime_root: Path | None   ← None for unminted or unmaterialized identity

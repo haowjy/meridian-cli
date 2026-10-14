@@ -32,8 +32,12 @@ _MUTATING_COMMANDS = frozenset(
         "rename",
         "override",
         "adopt",
+        "version",
+        "repair",
+        "resolve",
     }
 )
+_MUTATING_COMMAND_PAIRS = frozenset({("models", "alias")})
 _USER_MUTATION_ERROR = (
     "no project Mars root here; run 'meridian init --link', or use "
     "'meridian mars --user …'"
@@ -45,7 +49,6 @@ class MarsPassthroughRequest:
     command: tuple[str, ...]
     mars_args: tuple[str, ...]
     wants_json: bool
-    root_override: Path | None
     user_scope: bool = False
 
 
@@ -59,24 +62,6 @@ class MarsPassthroughResult:
 
 def mars_requested_json(args: Sequence[str]) -> bool:
     return any(token == "--json" for token in args)
-
-
-def mars_requested_root(args: Sequence[str]) -> Path | None:
-    index = 0
-    while index < len(args):
-        token = args[index]
-        if token == "--root":
-            next_value = args[index + 1].strip() if index + 1 < len(args) else ""
-            if next_value:
-                return Path(next_value)
-            index += 2
-            continue
-        if token.startswith("--root="):
-            candidate = token.partition("=")[2].strip()
-            if candidate:
-                return Path(candidate)
-        index += 1
-    return None
 
 
 def _strip_meridian_mars_options(
@@ -114,6 +99,17 @@ def _mars_subcommand(args: Sequence[str]) -> str | None:
     return next((token for token in args if not token.startswith("-")), None)
 
 
+def _is_mars_mutation(args: Sequence[str]) -> bool:
+    commands = tuple(token for token in args if not token.startswith("-"))
+    return bool(
+        commands
+        and (
+            commands[0] in _MUTATING_COMMANDS
+            or commands[:2] in _MUTATING_COMMAND_PAIRS
+        )
+    )
+
+
 def decode_json_values(raw_stdout: str) -> list[object] | None:
     decoder = json.JSONDecoder()
     parsed_values: list[object] = []
@@ -147,7 +143,7 @@ def parse_mars_passthrough(
 
     # Gate before root injection so Mars's add/link auto-init can never write a
     # mars.toml into a bare project directory.
-    if not user_scope and roots.scope == "user" and subcommand in _MUTATING_COMMANDS:
+    if not user_scope and roots.scope == "user" and _is_mars_mutation(mars_args):
         raise ValueError(_USER_MUTATION_ERROR)
     if user_scope and subcommand == "init" and any(
         token == "--link" or token.startswith("--link=") for token in mars_args
@@ -167,7 +163,6 @@ def parse_mars_passthrough(
         command=(executable, *mars_args),
         mars_args=tuple(mars_args),
         wants_json=wants_json,
-        root_override=mars_requested_root(mars_args),
         user_scope=selected_root == user_mars_root(),
     )
 

@@ -38,7 +38,7 @@ def test_project_agent_wins_over_user_agent(
     (project / "mars.toml").write_text("", encoding="utf-8")
     monkeypatch.setenv("MERIDIAN_HOME", user_home.as_posix())
     monkeypatch.setattr(
-        "meridian.lib.catalog.agent.mars_supports_fallback_root",
+        "meridian.lib.catalog.mars_roots.mars_supports_fallback_root",
         lambda _executable: False,
     )
     _write_agent(user_home / "mars", "reviewer")
@@ -59,7 +59,7 @@ def test_user_agent_inside_project_reports_install_here_message(
     (project / "mars.toml").write_text("", encoding="utf-8")
     monkeypatch.setenv("MERIDIAN_HOME", user_home.as_posix())
     monkeypatch.setattr(
-        "meridian.lib.catalog.agent.mars_supports_fallback_root",
+        "meridian.lib.catalog.mars_roots.mars_supports_fallback_root",
         lambda _executable: False,
     )
     _write_agent(user_home / "mars", "reviewer")
@@ -68,7 +68,7 @@ def test_user_agent_inside_project_reports_install_here_message(
         load_agent_profile("reviewer", project_root=project)
 
     assert str(exc_info.value) == (
-        "Agent 'reviewer' found in user packages (~/.meridian/mars); "
+        f"Agent 'reviewer' found in user packages ({user_home / 'mars'}); "
         "add it here: meridian mars add <source>"
     )
 
@@ -83,7 +83,7 @@ def test_user_agent_inside_project_loads_when_mars_supports_fallback(
     (project / "mars.toml").write_text("", encoding="utf-8")
     monkeypatch.setenv("MERIDIAN_HOME", user_home.as_posix())
     monkeypatch.setattr(
-        "meridian.lib.catalog.agent.mars_supports_fallback_root",
+        "meridian.lib.catalog.mars_roots.mars_supports_fallback_root",
         lambda _executable: True,
     )
     _write_agent(user_home / "mars", "reviewer")
@@ -106,7 +106,7 @@ def test_missing_user_agent_reports_user_install_command(
         load_agent_profile("reviewer", project_root=bare)
 
     assert str(exc_info.value) == (
-        "Agent 'reviewer' not found in user packages (~/.meridian/mars). "
+        f"Agent 'reviewer' not found in user packages ({user_home / 'mars'}). "
         "Run 'meridian mars --user add <source>'."
     )
 
@@ -120,6 +120,10 @@ def test_skills_discover_project_then_user(
     project.mkdir()
     (project / "mars.toml").write_text("", encoding="utf-8")
     monkeypatch.setenv("MERIDIAN_HOME", user_home.as_posix())
+    monkeypatch.setattr(
+        "meridian.lib.catalog.mars_roots.mars_supports_fallback_root",
+        lambda _executable: True,
+    )
     _write_skill(user_home / "mars", "shared", "user")
     _write_skill(user_home / "mars", "user-only", "user-only")
     _write_skill(project, "shared", "project")

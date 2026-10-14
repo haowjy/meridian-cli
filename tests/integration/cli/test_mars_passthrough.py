@@ -228,3 +228,29 @@ def test_mutation_gate_uses_meridian_project_dir_before_root_injection(
         "'meridian mars --user …'"
     )
     assert not any(bare.iterdir())
+
+
+def test_nested_mutation_gate_requires_user_scope_in_bare_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.cli.mars_passthrough import parse_mars_passthrough
+
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    user_root = tmp_path / "user-home" / "mars"
+    monkeypatch.chdir(bare)
+    monkeypatch.delenv("MERIDIAN_PROJECT_DIR", raising=False)
+    monkeypatch.setenv("MERIDIAN_HOME", user_root.parent.as_posix())
+
+    with pytest.raises(ValueError, match="no project Mars root here"):
+        parse_mars_passthrough(
+            ["models", "alias", "fast", "gpt-5"], executable="/fake/mars"
+        )
+
+    request = parse_mars_passthrough(
+        ["--user", "models", "alias", "fast", "gpt-5"], executable="/fake/mars"
+    )
+    assert request.mars_args[-2:] == ("--root", user_root.as_posix())
+    assert request.user_scope
+    assert not any(bare.iterdir())

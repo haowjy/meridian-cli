@@ -56,28 +56,24 @@ def resolve_mars_roots(project_root: Path) -> MarsRoots:
     return MarsRoots(primary=resolved_user_root, scope="user")
 
 
-def resolve_mars_fallback_root(roots: MarsRoots) -> Path | None:
-    """Return the lower-precedence content root for future Mars fallback flags.
+def mars_content_roots(
+    roots: MarsRoots,
+    *,
+    executable: str | None = None,
+) -> tuple[Path, ...]:
+    """Return content roots that the installed Mars can launch from."""
 
-    Meridian uses this today for its own agent and skill discovery. Once Mars
-    supports layered content, this is the root to pass as ``--fallback-root``
-    to ``launch-bundle`` and ``agents show/list``.
-    """
-
-    return roots.user
-
-
-def mars_content_roots(roots: MarsRoots) -> tuple[Path, ...]:
-    """Return package-content roots in highest-to-lowest precedence order."""
-
-    fallback = resolve_mars_fallback_root(roots)
-    return (roots.primary,) if fallback is None else (roots.primary, fallback)
+    if roots.user is None or not mars_supports_fallback_root(
+        executable or resolve_mars_executable()
+    ):
+        return (roots.primary,)
+    return (roots.primary, roots.user)
 
 
 def mars_fallback_args(roots: MarsRoots, *, executable: str) -> tuple[str, ...]:
     """Build the optional Mars content-fallback arguments for *roots*."""
 
-    fallback = resolve_mars_fallback_root(roots)
+    fallback = roots.user
     if fallback is None or not mars_supports_fallback_root(executable):
         return ()
     return ("--fallback-root", fallback.as_posix())
@@ -158,7 +154,6 @@ __all__ = [
     "mars_content_roots",
     "mars_fallback_args",
     "resolve_mars_executable",
-    "resolve_mars_fallback_root",
     "resolve_mars_roots",
     "user_mars_root",
 ]

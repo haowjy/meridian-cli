@@ -16,6 +16,7 @@ from meridian.lib.state.project_identity import (
     AdHoc,
     ProjectIdentity,
     resolve_project_identity,
+    state_id,
 )
 from meridian.plugin_api.git import resolve_clone_path
 
@@ -111,10 +112,8 @@ def resolve_context_paths(
     """
 
     resolved_identity = identity or resolve_project_identity(project_root)
-    if project_id is None and (
-        not isinstance(resolved_identity, AdHoc) or resolved_identity.materialized
-    ):
-        project_id = resolved_identity.id
+    if project_id is None:
+        project_id = state_id(resolved_identity)
     allow_project_relative = not isinstance(resolved_identity, AdHoc)
 
     work_root_resolved = _resolve_path(

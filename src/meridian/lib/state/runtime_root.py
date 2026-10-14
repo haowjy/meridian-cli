@@ -5,9 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from meridian.lib.state.project_identity import (
-    AdHoc,
     ensure_project_identity,
     resolve_project_identity,
+    state_id,
 )
 from meridian.lib.state.user_paths import get_project_home
 
@@ -34,16 +34,16 @@ def derive_runtime_root_from_project(
 
     if for_write:
         identity = ensure_project_identity(project_root)
-        if identity.id is None:
+        project_id = state_id(identity)
+        if project_id is None:
             raise ValueError("Runtime write identity did not resolve a project ID.")
-        return get_project_home(identity.id)
+        return get_project_home(project_id)
 
     identity = resolve_project_identity(project_root)
-    if isinstance(identity, AdHoc) and not identity.materialized:
+    project_id = state_id(identity)
+    if project_id is None:
         return None
-    if identity.id is None:
-        return None
-    return get_project_home(identity.id)
+    return get_project_home(project_id)
 
 
 __all__ = ["derive_runtime_root_from_project", "root_has_runtime_state"]

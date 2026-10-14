@@ -48,16 +48,22 @@ def get_project_home(project_id: str) -> Path:
     return get_user_home() / "projects" / project_id
 
 
+def get_dry_run_preview_root(*, user_home: Path | None = None) -> Path:
+    """Return the unmaterialized path used only to compose dry-run previews."""
+
+    return (user_home or get_user_home()) / "cache" / "dry-run"
+
+
 def project_lifetime_lock_path(runtime_root: Path) -> Path:
     """Return the stable gate coordinating use and deletion of a runtime root."""
 
     return runtime_root.parent / ".locks" / f"{runtime_root.name}.lock"
 
 
-def get_context_home(project_id: str) -> Path:
+def get_context_home(project_id: str, *, user_home: Path | None = None) -> Path:
     """Return the user-level context directory.
 
     Returns: get_user_home() / "context" / project_id
     """
 
-    return get_user_home() / "context" / project_id
+    return (user_home or get_user_home()) / "context" / project_id

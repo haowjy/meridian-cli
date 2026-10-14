@@ -10,6 +10,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.ops.runtime import OperationRuntime
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.user_paths import get_dry_run_preview_root
 
 from .request import (
     LaunchArgvIntent,
@@ -121,7 +122,9 @@ def build_primary_launch_runtime(
         from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
 
         authority = resolve_runtime_authority_for_read(resolved_root)
-        runtime_root = authority.runtime_root or authority.user_home / "cache" / "dry-run"
+        runtime_root = authority.runtime_root or get_dry_run_preview_root(
+            user_home=authority.user_home
+        )
     else:
         runtime_root = resolve_project_runtime_root_for_write(resolved_root)
 
