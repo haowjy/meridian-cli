@@ -272,6 +272,12 @@ local config. Environment always beats every file, so a per-tmux
 | Codex | Push, warning, and compaction with a conservative 1800-second TTL |
 | OpenCode | OpenAI-provider models on OpenCode 2.x get push, warning, and compaction with an estimated 1800-second TTL; OpenCode 1.x and unknown providers remain push-only. See [OpenCode versions](#opencode-versions). |
 
+Limitation: the sensed TTL for OpenAI providers (Pi `openai-codex`, OpenCode
+`openai`) is chosen by provider, not by model. It assumes a GPT-5.6-or-later
+model, whose prompt cache lives 30 minutes; a pre-5.6 model on the same route
+inherits the same 1800-second estimate. Set `[harness.<name>.idle] ttl_seconds`
+explicitly when you run older models there.
+
 The Pi cache-retention default is launch behavior, independent of whether
 `[idle]` is enabled: an interactive Pi session gets the longer provider cache
 even when idle notifications and compaction are off.

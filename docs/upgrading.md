@@ -5,7 +5,9 @@
 OpenCode 2.x sessions using an OpenAI model provider now schedule cache warnings
 and guarded compaction against an estimated 30-minute TTL. OpenCode 1.x and
 other OpenCode providers remain push-only by default. An explicitly configured
-`[harness.opencode.idle] ttl_seconds` still takes precedence. See the
+`[harness.opencode.idle] ttl_seconds` still takes precedence. The 30-minute
+estimate assumes a GPT-5.6-or-later model; it is chosen per provider, not per
+model, so set `ttl_seconds` yourself for older models. See the
 [OpenCode versions policy](configuration.md#opencode-versions) for version
 selection and the frozen 1.x fallback.
 
