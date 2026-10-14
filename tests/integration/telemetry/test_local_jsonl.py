@@ -5,6 +5,7 @@ import os
 
 from meridian.lib.telemetry.events import TelemetryEnvelope
 from meridian.lib.telemetry.local_jsonl import LocalJSONLSink
+from meridian.lib.telemetry.reader import read_events
 
 
 def envelope(event: str = "chat.ws.connected") -> TelemetryEnvelope:
@@ -61,6 +62,26 @@ def test_write_batch_skips_non_serializable_events(tmp_path) -> None:
     lines = segment.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
     assert json.loads(lines[0])["event"] == "chat.ws.disconnected"
+
+
+def test_write_batch_repairs_valid_tail_missing_newline(tmp_path, caplog) -> None:
+    sink = LocalJSONLSink(tmp_path)
+    sink.write_batch([envelope("event.one"), envelope("event.two")])
+    segment = sink.active_path
+    content = segment.read_bytes()
+    assert content.endswith(b"\n")
+    segment.write_bytes(content[:-1])
+
+    sink.write_batch([envelope("event.three")])
+    sink.close()
+
+    events = list(read_events(segment))
+    assert [event["event"] for event in events] == ["event.one", "event.two", "event.three"]
+    assert not [
+        record
+        for record in caplog.records
+        if "Skipping malformed JSONL row" in record.getMessage()
+    ]
 
 
 def test_custom_logical_owner_in_segment_filename(tmp_path) -> None:
