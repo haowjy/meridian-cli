@@ -23,10 +23,10 @@ from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.project_identity import (
-    AdHoc,
     ensure_project_identity,
     project_identity_was_created,
     resolve_project_identity,
+    state_id,
 )
 from meridian.lib.state.user_paths import get_project_home, get_user_home
 
@@ -195,12 +195,11 @@ def resolve_runtime_authority_for_read(
         else None
     )
     identity = resolve_project_identity(authority.project_root)
+    project_id = state_id(identity)
     if override_root is not None:
         runtime_root = override_root
-    elif authority.project_id is not None and not (
-        isinstance(identity, AdHoc) and not identity.materialized
-    ):
-        runtime_root = get_project_home(authority.project_id)
+    elif project_id is not None:
+        runtime_root = get_project_home(project_id)
     else:
         runtime_root = None
     if runtime_root is None:

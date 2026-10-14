@@ -15,6 +15,7 @@ from meridian.lib.state.project_identity import (
     Committed,
     ensure_project_identity,
     resolve_project_identity,
+    state_id,
 )
 
 
@@ -50,6 +51,7 @@ def test_bare_identity_read_is_pure_and_deterministic(
     assert identity == AdHoc(id=f"adhoc.my-scratch.{digest}", materialized=False)
     assert not home.exists()
     assert list(project_root.iterdir()) == []
+    assert state_id(identity) is None
 
 
 def test_ensure_adhoc_identity_writes_origin_only_under_user_home(
@@ -65,6 +67,7 @@ def test_ensure_adhoc_identity_writes_origin_only_under_user_home(
 
     assert isinstance(identity, AdHoc)
     assert identity.materialized
+    assert state_id(identity) == identity.id
     origin_path = home / "projects" / identity.id / "origin.json"
     original_bytes = origin_path.read_bytes()
     original_mtime = origin_path.stat().st_mtime_ns

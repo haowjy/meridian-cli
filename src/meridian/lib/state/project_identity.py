@@ -60,6 +60,14 @@ class _OriginDocument(BaseModel):
     created_at: str
 
 
+def state_id(identity: ProjectIdentity) -> str | None:
+    """Return the persisted state ID visible through an identity."""
+
+    if isinstance(identity, AdHoc) and not identity.materialized:
+        return None
+    return identity.id
+
+
 def project_identity_was_created(
     before: ProjectIdentity,
     after: ProjectIdentity,
@@ -224,4 +232,5 @@ __all__ = [
     "get_committed_project_id",
     "project_identity_was_created",
     "resolve_project_identity",
+    "state_id",
 ]
