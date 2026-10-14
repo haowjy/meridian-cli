@@ -30,6 +30,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   built-in defaults.
 - Refuse `meridian mars` package mutations without a project Mars root unless
   `--user` is explicit.
+- Make `meridian doctor` inspect bare directories without creating project or
+  user state.
+- Add user-scoped `state.adhoc_retention_days` (default 30 days); ad-hoc state
+  whose source path is gone or now initialized becomes eligible after 7 days.
+- Let `meridian doctor --global --prune` reclaim eligible ad-hoc runtime roots
+  together with their matching `context/` directories.
 - Report every invalid config value with the same key, expected type, and received value format.
 - Run the strict Pyright gate with warnings fatal and per-rule suppressions only.
 - Stop advertising archived HTTP/app-server extension commands. Extension

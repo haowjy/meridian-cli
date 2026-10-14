@@ -13,10 +13,13 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.config.models import ADHOC_STALE_RETENTION_DAYS
+from meridian.lib.config.project_root import has_project_marker
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.platform.locking import lock_file, try_lock_file
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.history_changes import HistoryChanges
+from meridian.lib.state.json_doc import read_model
 from meridian.lib.state.lock_gc import LockGcStats, gc_orphaned_locks
 from meridian.lib.state.paths import RuntimePaths
 
@@ -27,6 +30,14 @@ def _is_project_dir_name(name: str) -> bool:
     return bool(name) and not name.startswith(".")
 
 
+def _is_adhoc_project_dir_name(name: str) -> bool:
+    return _is_project_dir_name(name) and name.startswith("adhoc.")
+
+
+def _is_committed_project_dir_name(name: str) -> bool:
+    return _is_project_dir_name(name) and not name.startswith("adhoc.")
+
+
 class OrphanProjectDir(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -35,6 +46,25 @@ class OrphanProjectDir(BaseModel):
     size_bytes: int
     last_activity: str
     reason: str
+
+
+class AdHocProjectDir(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    project_id: str
+    path: str | None
+    runtime_root: str
+    context_root: str
+    size_bytes: int
+    last_activity: str
+    reason: str
+
+
+class _AdHocOrigin(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    path: str
+    created_at: str
 
 
 class StaleSpawnArtifact(BaseModel):
@@ -112,6 +142,103 @@ def _is_stale(latest_mtime: float, *, retention_days: int, now: float) -> bool:
     return latest_mtime < cutoff
 
 
+def _timestamp(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.timestamp()
+
+
+def _is_quiescent(runtime_root: Path) -> bool:
+    spawn_scan = spawn_store.list_spawns(runtime_root)
+    if spawn_scan.quarantines:
+        return False
+    if any(is_active_spawn_status(spawn.status) for spawn in spawn_scan.records):
+        return False
+    return not (
+        session_store.list_active_sessions(runtime_root)
+        or session_store.has_live_session_leases(runtime_root)
+    )
+
+
+def _adhoc_activity(runtime_root: Path) -> tuple[int, float, _AdHocOrigin | None]:
+    size_bytes, tree_mtime = _tree_activity(runtime_root)
+    origin_path = runtime_root / "origin.json"
+    try:
+        origin_mtime: float | None = origin_path.stat().st_mtime
+    except OSError:
+        origin_mtime = None
+    origin = read_model(origin_path, _AdHocOrigin)
+    latest = origin_mtime if origin_mtime is not None else tree_mtime
+
+    spawn_scan = spawn_store.list_spawns(runtime_root)
+    for spawn in spawn_scan.records:
+        timestamps = [spawn.started_at]
+        if spawn.terminal is not None:
+            timestamps.append(spawn.terminal.finished_at)
+        for value in timestamps:
+            observed = _timestamp(value)
+            if observed is not None:
+                latest = max(latest, observed)
+
+    for session in session_store.list_session_generations(runtime_root):
+        for value in (session.started_at, session.stopped_at):
+            observed = _timestamp(value)
+            if observed is not None:
+                latest = max(latest, observed)
+
+    return size_bytes, latest, origin
+
+
+def _adhoc_reason(origin: _AdHocOrigin | None) -> tuple[str, str | None]:
+    if origin is None:
+        return "adhoc-path-gone", None
+    source_path = Path(origin.path).expanduser()
+    try:
+        if not source_path.is_dir():
+            return "adhoc-path-gone", source_path.as_posix()
+        if has_project_marker(source_path):
+            return "adhoc-shadowed", source_path.as_posix()
+    except OSError:
+        return "adhoc-path-gone", source_path.as_posix()
+    return "adhoc-idle", source_path.as_posix()
+
+
+def _scan_adhoc_project_dir(
+    runtime_root: Path,
+    *,
+    retention_days: int,
+    stale_retention_days: int,
+    now: float,
+) -> AdHocProjectDir | None:
+    if not _is_adhoc_project_dir_name(runtime_root.name) or not runtime_root.is_dir():
+        return None
+    if not _is_quiescent(runtime_root):
+        return None
+
+    size_bytes, latest_activity, origin = _adhoc_activity(runtime_root)
+    reason, source_path = _adhoc_reason(origin)
+    threshold = stale_retention_days if reason != "adhoc-idle" else retention_days
+    if not _is_stale(latest_activity, retention_days=threshold, now=now):
+        return None
+
+    context_root = runtime_root.parent.parent / "context" / runtime_root.name
+    return AdHocProjectDir(
+        project_id=runtime_root.name,
+        path=source_path,
+        runtime_root=runtime_root.as_posix(),
+        context_root=context_root.as_posix(),
+        size_bytes=size_bytes,
+        last_activity=_iso_from_mtime(latest_activity),
+        reason=reason,
+    )
+
+
 def scan_orphan_project_dirs(
     user_home: Path,
     retention_days: int,
@@ -128,7 +255,7 @@ def scan_orphan_project_dirs(
 
     results: list[OrphanProjectDir] = []
     for project_dir in sorted(projects_root.iterdir(), key=lambda path: path.name):
-        if not _is_project_dir_name(project_dir.name) or not project_dir.is_dir():
+        if not _is_committed_project_dir_name(project_dir.name) or not project_dir.is_dir():
             continue
 
         size_bytes, latest_mtime = _tree_activity(project_dir)
@@ -158,6 +285,34 @@ def scan_orphan_project_dirs(
                 )
             )
 
+    return results
+
+
+def scan_adhoc_project_dirs(
+    user_home: Path,
+    retention_days: int,
+    now: float,
+    *,
+    stale_retention_days: int = ADHOC_STALE_RETENTION_DAYS,
+) -> list[AdHocProjectDir]:
+    """Find quiescent ad-hoc roots eligible for machine-wide reclamation."""
+
+    if retention_days < 0:
+        return []
+    projects_root = user_home / "projects"
+    if not projects_root.is_dir():
+        return []
+
+    results: list[AdHocProjectDir] = []
+    for runtime_root in sorted(projects_root.iterdir(), key=lambda path: path.name):
+        candidate = _scan_adhoc_project_dir(
+            runtime_root,
+            retention_days=retention_days,
+            stale_retention_days=stale_retention_days,
+            now=now,
+        )
+        if candidate is not None:
+            results.append(candidate)
     return results
 
 
@@ -255,7 +410,7 @@ def prune_orphan_project_dirs(orphans: list[OrphanProjectDir]) -> int:
     for orphan in orphans:
         runtime_root = Path(orphan.path)
         if (
-            not _is_project_dir_name(orphan.uuid)
+            not _is_committed_project_dir_name(orphan.uuid)
             or runtime_root.name != orphan.uuid
             or runtime_root.parent.name != "projects"
         ):
@@ -280,6 +435,51 @@ def prune_orphan_project_dirs(orphans: list[OrphanProjectDir]) -> int:
                 continue
             if _prune_dir(runtime_root):
                 removed += 1
+    return removed
+
+
+def prune_adhoc_project_dirs(
+    candidates: list[AdHocProjectDir],
+    *,
+    retention_days: int,
+    now: float,
+    stale_retention_days: int = ADHOC_STALE_RETENTION_DAYS,
+) -> int:
+    """Delete eligible ad-hoc runtime and context roots under the lifetime gate."""
+
+    if retention_days < 0:
+        return 0
+    removed = 0
+    for candidate in candidates:
+        runtime_root = Path(candidate.runtime_root)
+        if (
+            not _is_adhoc_project_dir_name(candidate.project_id)
+            or runtime_root.name != candidate.project_id
+            or runtime_root.parent.name != "projects"
+        ):
+            continue
+        paths = RuntimePaths.from_root_dir(runtime_root)
+        with try_lock_file(
+            paths.project_lifetime_flock,
+            mode="exclusive",
+            reentrant=False,
+        ) as lifetime_handle:
+            if lifetime_handle is None:
+                continue
+            refreshed = _scan_adhoc_project_dir(
+                runtime_root,
+                retention_days=retention_days,
+                stale_retention_days=stale_retention_days,
+                now=now,
+            )
+            if refreshed is None:
+                continue
+            if not _prune_dir(runtime_root):
+                continue
+            context_root = Path(refreshed.context_root)
+            if context_root.exists() and not _prune_dir(context_root):
+                continue
+            removed += 1
     return removed
 
 
@@ -320,11 +520,14 @@ def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> SpawnArtifac
 
 
 __all__ = [
+    "AdHocProjectDir",
     "OrphanProjectDir",
     "SpawnArtifactPruneResult",
     "StaleSpawnArtifact",
+    "prune_adhoc_project_dirs",
     "prune_orphan_project_dirs",
     "prune_stale_spawn_artifacts",
+    "scan_adhoc_project_dirs",
     "scan_orphan_project_dirs",
     "scan_stale_spawn_artifacts",
 ]

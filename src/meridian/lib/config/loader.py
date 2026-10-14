@@ -22,7 +22,7 @@ from meridian.lib.config.errors import (
     warn_unknown_model_keys,
 )
 from meridian.lib.config.harness_models import HarnessProfileConfig, PiHarnessProfileConfig
-from meridian.lib.config.layers import iter_config_layers
+from meridian.lib.config.layers import iter_config_layers, read_config_payload
 from meridian.lib.config.model_base import ConfigModel
 from meridian.lib.config.models import (
     MeridianConfig,
@@ -30,6 +30,7 @@ from meridian.lib.config.models import (
 from meridian.lib.config.project_paths import (
     ProjectConfigPaths,
 )
+from meridian.lib.config.project_root import resolve_user_config_path
 from meridian.lib.config.schema import parse_env_scalar, parse_toml_scalar
 from meridian.lib.utils.json_shapes import is_json_object
 
@@ -368,6 +369,28 @@ def load_config(
         authority=authority,
         user_config=user_config,
     ).config
+
+
+def load_user_config(*, user_config: Path | None = None) -> MeridianConfig:
+    """Load defaults, user config, and environment without cwd project layers."""
+
+    values: dict[str, object] = {}
+    resolved_user_config = resolve_user_config_path(user_config)
+    if resolved_user_config is not None:
+        normalized = _normalize_toml_payload(
+            payload=read_config_payload(resolved_user_config),
+            path=resolved_user_config,
+        )
+        values = normalized.values
+
+    env_values, _ = _env_alias_overrides()
+    values = merge_nested_dict_values(values, env_values)
+    try:
+        return MeridianConfig.model_validate(values)
+    except ValidationError as error:
+        raise config_validation_error(
+            error, path_formatter=_catalog_validation_error_path
+        ) from None
 
 
 def _truthy_env_value(raw_value: str) -> bool:
