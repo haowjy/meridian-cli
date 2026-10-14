@@ -146,6 +146,14 @@ def test_load_config_ignores_deleted_defaults_model_and_harness_keys(tmp_path: P
             "harness = { claude = 3 }\n",
             "Invalid value for 'harness.claude': expected str or table, got int (3).",
         ),
+        (
+            "[primary]\nautocompact_pct = 50.0\n",
+            "Invalid value for 'primary.autocompact_pct': expected int, got float (50.0).",
+        ),
+        (
+            "[primary]\nautocompact = 50000.0\n",
+            "Invalid value for 'primary.autocompact': expected int, got float (50000.0).",
+        ),
     ],
 )
 def test_load_config_reports_invalid_key_and_problem(
