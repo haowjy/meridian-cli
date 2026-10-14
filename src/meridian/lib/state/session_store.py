@@ -1,15 +1,14 @@
 """File-backed session tracking for a Meridian state root's `sessions.jsonl`."""
 
-import json
 import os
 import uuid
 from collections.abc import Callable
 from contextlib import ExitStack
 from pathlib import Path
-from typing import IO, Any, Literal, NamedTuple, cast
+from typing import IO, Annotated, Any, Literal, NamedTuple, cast
 
 import psutil
-from pydantic import BaseModel
+from pydantic import BaseModel, BeforeValidator, ConfigDict
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import (
@@ -31,6 +30,7 @@ from meridian.lib.platform.locking import (
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import append_event, read_events, utc_now_iso
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
+from meridian.lib.state.json_doc import read_model, write_model
 from meridian.lib.state.liveness import is_process_alive_with_birth
 from meridian.lib.state.native_binding import BindOutcome, Conflict, bind, report_conflict
 from meridian.lib.state.paths import RuntimePaths, normalize_path_for_write
@@ -73,6 +73,7 @@ from meridian.lib.state.session_fold import (
 from meridian.lib.state.session_fold import (
     project_session_event as project_session_event,
 )
+from meridian.lib.utils.json_shapes import float_or_none, int_or_none, string_or_empty
 
 
 def _append_session_event(
@@ -126,35 +127,30 @@ def _session_lease_path(paths: RuntimePaths, chat_id: str) -> Path:
     return paths.sessions_dir / f"{chat_id}.lease.json"
 
 
+class SessionLease(BaseModel):
+    """Best-effort ownership metadata for one active chat lock."""
+
+    model_config = ConfigDict(frozen=True, strict=True, extra="ignore")
+
+    chat_id: Annotated[str, BeforeValidator(string_or_empty)] = ""
+    owner_created_at_epoch: Annotated[float | None, BeforeValidator(float_or_none)] = None
+    owner_pid: Annotated[int | None, BeforeValidator(int_or_none)] = None
+    session_instance_id: Annotated[str, BeforeValidator(string_or_empty)] = ""
+
+
 def _read_session_lease_data(
     paths: RuntimePaths,
     chat_id: str,
 ) -> tuple[bool, str, int | None, float | None]:
-    lease_path = _session_lease_path(paths, chat_id)
-    if not lease_path.is_file():
+    lease = read_model(_session_lease_path(paths, chat_id), SessionLease)
+    if lease is None:
         return (False, "", None, None)
-    try:
-        payload = json.loads(lease_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return (False, "", None, None)
-    if not isinstance(payload, dict):
-        return (False, "", None, None)
-    payload_dict = cast("dict[str, Any]", payload)
-    generation = payload_dict.get("session_instance_id")
-    owner_pid = payload_dict.get("owner_pid")
-    owner_created_at_epoch = payload_dict.get("owner_created_at_epoch")
-    parsed_owner_pid = (
-        owner_pid if isinstance(owner_pid, int) and not isinstance(owner_pid, bool) else None
+    return (
+        True,
+        lease.session_instance_id,
+        lease.owner_pid,
+        lease.owner_created_at_epoch,
     )
-    parsed_owner_created_at_epoch = (
-        float(owner_created_at_epoch)
-        if isinstance(owner_created_at_epoch, int | float)
-        and not isinstance(owner_created_at_epoch, bool)
-        else None
-    )
-    if isinstance(generation, str):
-        return (True, generation, parsed_owner_pid, parsed_owner_created_at_epoch)
-    return (True, "", parsed_owner_pid, parsed_owner_created_at_epoch)
 
 
 def _read_session_lease(paths: RuntimePaths, chat_id: str) -> tuple[bool, str]:
@@ -167,15 +163,14 @@ def _write_session_lease(paths: RuntimePaths, chat_id: str, session_instance_id:
         owner_created_at_epoch: float | None = psutil.Process(os.getpid()).create_time()
     except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
         owner_created_at_epoch = None
-    payload = {
-        "chat_id": chat_id,
-        "owner_pid": os.getpid(),
-        "owner_created_at_epoch": owner_created_at_epoch,
-        "session_instance_id": session_instance_id,
-    }
-    atomic_write_text(
+    write_model(
         _session_lease_path(paths, chat_id),
-        json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n",
+        SessionLease(
+            chat_id=chat_id,
+            owner_pid=os.getpid(),
+            owner_created_at_epoch=owner_created_at_epoch,
+            session_instance_id=session_instance_id,
+        ),
     )
 
 

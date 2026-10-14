@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import dataclasses
-import json
 import os
 from pathlib import Path
-from typing import cast
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.atomic import fsync_directory
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
-from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges
+from meridian.lib.state.json_doc import read_model, write_model
 from meridian.lib.state.process_scope_projection import (
     parse_scope_entries,
     read_scope_projection,
@@ -23,6 +24,15 @@ from meridian.lib.state.spawn.repository import read_state, spawn_lock_path
 
 _CLAIM_FILENAME = "reaper_cleanup_claim.json"
 _CLAIM_VERSION = 1
+
+
+class CleanupClaim(BaseModel):
+    """Versioned cleanup targets fixed before terminal publication."""
+
+    model_config = ConfigDict(frozen=True, strict=True, extra="ignore")
+
+    v: Literal[1] = 1
+    scopes: tuple[object, ...]
 
 
 def cleanup_claim_path(runtime_root: Path, spawn_id: SpawnId | str) -> Path:
@@ -37,28 +47,15 @@ def read_cleanup_claim(
     runtime_root: Path,
     spawn_id: SpawnId | str,
 ) -> list[ProcessScopeSnapshot]:
-    path = cleanup_claim_path(runtime_root, spawn_id)
-    try:
-        raw: object = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    if not isinstance(raw, dict):
-        return []
-    payload = cast("dict[str, object]", raw)
-    if payload.get("v") != _CLAIM_VERSION:
-        return []
-    entries = payload.get("scopes")
-    if not isinstance(entries, list):
-        return []
-    return parse_scope_entries(cast("list[object]", entries))
+    claim = read_model(cleanup_claim_path(runtime_root, spawn_id), CleanupClaim)
+    return parse_scope_entries(claim.scopes) if claim is not None else []
 
 
 def _write_claim(path: Path, scopes: list[ProcessScopeSnapshot]) -> None:
-    payload = {
-        "v": _CLAIM_VERSION,
-        "scopes": [dataclasses.asdict(scope) for scope in scopes],
-    }
-    atomic_write_text(path, json.dumps(payload, separators=(",", ":")) + "\n")
+    write_model(
+        path,
+        CleanupClaim(scopes=tuple(dataclasses.asdict(scope) for scope in scopes)),
+    )
 
 
 def _delete_claim(path: Path) -> None:

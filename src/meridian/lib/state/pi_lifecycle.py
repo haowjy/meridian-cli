@@ -2,10 +2,10 @@
 
 from pathlib import Path
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from meridian.lib.core.types import SpawnId
-from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.json_doc import read_model, write_model
 from meridian.lib.state.paths import pi_lifecycle_path
 from meridian.lib.state.spawn_aggregate import mutate_published_spawn_artifact
 
@@ -20,12 +20,7 @@ class PiLifecycle(BaseModel):
 
 
 def read(runtime_root: Path, spawn_id: SpawnId | str) -> PiLifecycle:
-    try:
-        return PiLifecycle.model_validate_json(
-            pi_lifecycle_path(runtime_root, spawn_id).read_bytes()
-        )
-    except (OSError, ValidationError):
-        return PiLifecycle()
+    return read_model(pi_lifecycle_path(runtime_root, spawn_id), PiLifecycle) or PiLifecycle()
 
 
 def record(runtime_root: Path, spawn_id: SpawnId | str, event: PiLifecycle) -> None:
@@ -44,9 +39,6 @@ def record(runtime_root: Path, spawn_id: SpawnId | str, event: PiLifecycle) -> N
         if event.phase and event.phase.startswith("cleanup_"):
             updated["cleanup_phase"] = event.phase
         value = prior.model_copy(update=updated)
-        atomic_write_text(
-            pi_lifecycle_path(runtime_root, spawn_id),
-            value.model_dump_json(exclude_none=True) + "\n",
-        )
+        write_model(pi_lifecycle_path(runtime_root, spawn_id), value, exclude_none=True)
 
     mutate_published_spawn_artifact(runtime_root, SpawnId(str(spawn_id)), update)
