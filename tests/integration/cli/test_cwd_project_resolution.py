@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.executables import prepend_fake_executables
+
 NO_PROJECT_MSG = "No Meridian project found. Run from the project root or pass -C <path>."
 
 
@@ -229,6 +231,80 @@ def test_primary_launch_materializes_adhoc_state_without_litter(
     assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
     _assert_adhoc_materialized(cwd_without_project_id, meridian_home)
     assert "state is kept for this path only" in result.stderr
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--mode", "human", "--harness", "opencode", "--agent", "", "--dry-run"],
+        [
+            "--mode",
+            "human",
+            "--harness",
+            "opencode",
+            "spawn",
+            "preview run",
+            "--dry-run",
+        ],
+    ],
+    ids=["launch", "spawn"],
+)
+def test_dry_run_does_not_materialize_adhoc_state(
+    args: list[str],
+    cwd_without_project_id: Path,
+    meridian_home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepend_fake_executables(monkeypatch, tmp_path, "opencode")
+
+    result = _run_meridian(
+        args,
+        cwd=cwd_without_project_id,
+        meridian_home=meridian_home,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    _assert_project_not_initialized(cwd_without_project_id)
+    assert not list((meridian_home / "projects").glob("adhoc.*"))
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--mode", "human", "--harness", "opencode", "--agent", "", "--dry-run"],
+        [
+            "--mode",
+            "human",
+            "--harness",
+            "opencode",
+            "spawn",
+            "preview run",
+            "--dry-run",
+        ],
+    ],
+    ids=["launch", "spawn"],
+)
+def test_dry_run_does_not_mint_committed_identity(
+    args: list[str],
+    cwd_with_mars_only: Path,
+    meridian_home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepend_fake_executables(monkeypatch, tmp_path, "opencode")
+
+    result = _run_meridian(
+        args,
+        cwd=cwd_with_mars_only,
+        meridian_home=meridian_home,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert not (cwd_with_mars_only / "meridian.toml").exists()
+    assert not (meridian_home / "projects").exists()
 
 
 @pytest.mark.integration
