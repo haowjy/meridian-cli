@@ -38,7 +38,11 @@ class LocalJSONLSink:
         return self.telemetry_dir / (f"{self._logical_owner}.{self._pid}-{self._seq:04d}.jsonl")
 
     def write_batch(self, events: Sequence[TelemetryEnvelope]) -> None:
-        """Append compact JSON lines to the active segment."""
+        """Append compact JSON lines to the active segment.
+
+        The batch is the durability unit: one tail repair, one write and one fsync
+        through ``append_durable_jsonl_lines``. Do not append or fsync per event.
+        """
         if self._closed:
             return
         lines: list[str] = []

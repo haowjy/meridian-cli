@@ -7,11 +7,11 @@
   `harness.<id>.allow_builtin_agents`, `harness.pi.model`, Pi extension fields (`load_all_pi_extensions`,
   `extra_extension_paths`, `background_tasks.enabled`, `spawn_watch.enabled`,
   `disable_managed_bash`), `primary.timeout`, `work.default_worktree`, and
-  `work.worktree_base`. They load through hand-written normalizers but
+  `work.worktree_base`. They validate through their models but
   `OPTION_CATALOG.resolve_key()` cannot find them, so generic config get/set/reset
-  is incomplete. Pi extension keys are documented as TOML-only in
-  `docs/configuration.md`. Declare metadata, route scalar normalization
-  through the catalog, and retain intentional validation/visibility rules.
+  is incomplete and they have no env var. Pi extension keys are documented as
+  TOML-only in `docs/configuration.md`. Declare `config_field()` metadata and
+  retain intentional validation/visibility rules.
 - `loader.py:resolve_pi_harness_profile` rereads three Pi env toggles after a
   launch config snapshot has been selected. `_truthy_env_value` also accepts
   arbitrary nonempty strings, unlike the shared boolean codec. Resolve these

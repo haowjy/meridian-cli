@@ -42,8 +42,8 @@ hardcoded defaults (MeridianConfig field defaults)
         < environment variables
 ```
 
-`load_config()` validates each TOML file against `MeridianConfig`,
-then deep-merges normalized payloads from lowest to highest precedence:
+`load_config()` validates each TOML file against `MeridianConfig` (so an error names
+the file), then deep-merges the validated payloads from lowest to highest precedence:
 
 ```python
 user → project → local → environment
@@ -82,10 +82,10 @@ Sections in `DYNAMIC_SECTION_DESCRIPTORS` use one of three merge strategies:
 
 | Section | Strategy | Behavior |
 |---|---|---|
-| `hooks` | `replace` | Later source entirely replaces earlier source |
+| `hooks` | `replace` | Later source entirely replaces earlier source (what `config show` reports; the hook runtime instead layers rows by `(name, event)`, see `lib/hooks/`; #569) |
 | `work` | `nested_dict` | Deep merge: worktree_base etc. overwrite per-key |
 | `context` | `nested_dict` | Deep merge: named contexts overwrite per-context-name |
-| `workspace` | `external` | Not merged by settings — handled externally |
+| `workspace` | `external` | Not merged by the loader — workspace config owns it |
 | `env` | `nested_dict` | Deep merge: higher-precedence values overwrite per variable |
 
 For `nested_dict`, keys in the local config overlay keys in the project config;
@@ -119,7 +119,9 @@ follows Mars `[settings.meridian.agent_copy]` via `project_has_claude_agent_copy
 
 `config_field(canonical_key, value_kind=..., file_aliases=..., env_vars=...)` attaches
 metadata to `MeridianConfig` fields. The metadata is introspected by `build_option_catalog()`
-to generate the CLI `meridian config` commands and documentation.
+into `OPTION_CATALOG`, which drives `meridian config` get/set/reset, the docs, and the
+env-var overlay: `loader._env_alias_overrides()` reads only catalog env names. A field
+with no metadata validates from TOML but has no env var and no generic CLI access.
 
 `ValueKind` types: `"int"`, `"float"`, `"str"`, `"str_list"`, `"verbosity"`.
 
