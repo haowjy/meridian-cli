@@ -140,7 +140,7 @@ Individual checks:
 ```bash
 uv run ruff check .
 uv run pytest-llm
-uv run --extra dev python -m pyright
+uv run --extra dev python -m pyright --warnings
 ```
 
 ## Release
