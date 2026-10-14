@@ -24,7 +24,7 @@ def _make_doctor_handler(emit: Emitter) -> Callable[..., None]:
             bool,
             Parameter(
                 name="--global",
-                help="Include stale orphan project directories under the user state root.",
+                help="Include committed-orphan and ad-hoc roots under the user state root.",
             ),
         ] = False,
         kill_orphans: Annotated[

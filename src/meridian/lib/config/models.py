@@ -112,6 +112,7 @@ class StateConfig(ConfigModel):
             value_kind="int",
             file_aliases=(file_alias("state", "adhoc_retention_days"),),
             env_vars=("MERIDIAN_STATE_ADHOC_RETENTION_DAYS",),
+            command_visible=False,
         ),
     ] = 30
 

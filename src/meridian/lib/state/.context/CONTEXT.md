@@ -10,9 +10,13 @@ State splits across two roots:
 meridian.toml
   [project] id                      — committed machine-managed project identity
 
+bare path
+  sha256(canonical path)            — ad-hoc identity; no file written there
+
 ~/.meridian/projects/.locks/<id>.lock
                                     — project-lifetime gate outside deletable root
 ~/.meridian/projects/<id>/          ← user runtime, never committed
+  origin.json                       — ad-hoc attribution/activity only
   sessions.jsonl                    — all session events, append-only
   sessions.jsonl.flock
   session-id-counter                — monotonic c1, c2, …
@@ -43,9 +47,9 @@ meridian.toml
   prompts/ handoffs/ …              — work artifacts
 ```
 
-The project ID in `meridian.toml` `[project] id` is the key that maps to
-`~/.meridian/projects/<id>/`. Projects can be moved or renamed without losing
-runtime history.
+Committed project IDs map `meridian.toml` to `~/.meridian/projects/<id>/` and
+survive moves. Marker-less roots use a deterministic `adhoc.<slug>.<hash>` key;
+their state follows the canonical path and the source directory stays untouched.
 
 ### Spawn State: Per-Spawn Files
 
@@ -173,10 +177,10 @@ directory rename while holding `spawns_flock`. Runtime-write startup removes aba
 |---|---|---|
 | `resolve_project_runtime_root()` | No | Read paths (list, show, status) |
 | `resolve_project_runtime_root_or_none()` | No | Read paths where caller needs to know if uninitialized |
-| `resolve_project_runtime_root_for_write()` | Yes (under lock) | Write paths (start spawn, record session) |
+| `resolve_project_runtime_root_for_write()` | Materializes/mints | Write paths (start spawn, record session) |
 
-Using `*_for_write()` on a read path creates `meridian.toml` identity in untouched checkouts
-(CI, first-time runs). This triggers project setup side effects unexpectedly.
+Using `*_for_write()` on a read path mints a marked project's ID or materializes
+an ad-hoc user-state root. Either is an unexpected read side effect.
 
 ### Monotonic ID Generation
 
@@ -187,10 +191,16 @@ Format: `p1`, `p2`, `p3`, …
 **Session IDs** (`session-id-counter`): incremented under `lock_file()`. Format:
 `c1`, `c2`, `c3`, …
 
-**Project ID** (`meridian.toml` `[project] id`): generated under a transient adjacent creation lock with
-double-checked locking. Collision-checked against existing
+**Committed project ID** (`meridian.toml` `[project] id`): generated under the
+user-home project-config lock. Collision-checked against existing
 `~/.meridian/context/<id>/` and `~/.meridian/projects/<id>/` directories.
 Up to 10 retries; raises `RuntimeError` if exhausted.
+
+**Ad-hoc project ID**: deterministic from the canonical source path. The
+`adhoc.` prefix is reserved and its project-lifetime lock sits outside the
+deletable root. Machine-wide retention scans only this namespace, rechecks
+activity under the exclusive lifetime lock, and deletes matching runtime and
+context roots together.
 
 ### Terminal Write Authority
 
@@ -292,8 +302,8 @@ new OS-specific home-directory branches.
 **Don't read `state.json` without `read_state()`** — raw JSON reads bypass Pydantic
 validation and miss the `SpawnRecord` reconstruction from `starting-prompt.md`.
 
-**Don't use `*_for_write()` on read paths** — it creates project identity in clean
-checkouts, triggering project setup side effects in CI.
+**Don't use `*_for_write()` on read paths** — it mints or materializes identity,
+triggering setup side effects in CI and bare directories.
 
 **Don't use `open()` for state file writes** — use `atomic_write_text()` or
 `append_text_line()`. Plain writes don't survive crashes.

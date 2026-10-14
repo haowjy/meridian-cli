@@ -12,6 +12,9 @@ Zero builtin aliases. All alias-to-model-id mappings come from mars packages
 nearest-`mars.toml` walk-up; otherwise the primary root is the user package project
 at `~/.meridian/mars`. Direct agent and skill discovery layers project content over
 user content. Every Mars subprocess receives the resolved primary as `--root`.
+`ensure_user_mars_root()` belongs only on Mars operations that need a runnable
+root; read-pure diagnostics such as bare-directory `doctor` must report the
+resolved path without initializing it.
 
 ## Mental Model
 
