@@ -302,6 +302,36 @@ async def test_v2_recorded_normal_prompt_emits_return_and_parent_turn_end(
         await asyncio.wait_for(anext(iterator), timeout=0.01)
 
 
+@pytest.mark.parametrize(
+    "terminal_type",
+    [
+        "session.execution.succeeded",
+        "session.execution.failed",
+        "session.execution.interrupted",
+    ],
+)
+async def test_v2_all_parent_execution_outcomes_end_the_turn(
+    tmp_path: Path,
+    terminal_type: str,
+) -> None:
+    sensor = opencode_idle.OpenCodeV2IdleSensor(
+        _context(tmp_path, session_id=V2_SESSION_ID, version="v2")
+    )
+    iterator = sensor.events()
+    terminal = _recorded_v2_events("events-v2-normal.sse")[-1]
+
+    sensor.on_raw_event(
+        RawHarnessEvent(
+            event_type=terminal_type,
+            payload={**terminal.payload, "type": terminal_type},
+            harness_id=terminal.harness_id,
+            raw_text=terminal.raw_text,
+        )
+    )
+
+    assert (await anext(iterator)).kind == "turn_end"
+
+
 async def test_v2_turn_end_fetches_wrapped_descending_message_excerpts(
     tmp_path: Path,
 ) -> None:
