@@ -17,6 +17,7 @@ from meridian.lib.ops.reference import resolve_session_reference
 from meridian.lib.ops.session_target import resolve_transcript_source
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from tests.conftest import requires_pi_dist
 from tests.integration.launch.test_pi_identity_launch import (
     context,
     install_shim,
@@ -67,6 +68,7 @@ def test_reader_final_quit_only(tmp_path: Path, shape: str) -> None:
         assert result.exit is not None and result.exit.session_id == "exit"
 
 
+@requires_pi_dist
 @pytest.mark.parametrize("shape", ["quit", "restart", "eof", "exit", "eof-race"])
 def test_reader_consumes_built_bundle_record(tmp_path: Path, shape: str) -> None:
     runtime = Path(__file__).resolve().parents[3] / "src/meridian/pi_runtime"
