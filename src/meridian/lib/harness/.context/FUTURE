@@ -11,3 +11,12 @@
   `tmux` subprocess helpers, only OpenCode's with a timeout. One
   `capture_pane(pane, timeout)` in `lib/platform/` (or a harness-level
   `tmux.py`) serves both sensors and the label (thermo F10).
+- `opencode_idle.py`: the V2 sensor leaves `IdleFacts.context_tokens` as
+  `None`, so `idle.min_compact_tokens` never vetoes an OpenCode compaction.
+  OpenCode 2.x exposes `session.usage.updated` on the stream and
+  `GET /api/session/{id}/context`; feed one of them once a live compaction
+  shows the guard matters (work item `idle-ttl-detection`, phase 2).
+- `opencode_idle.py`: two dialects (frozen V1, V2) now share
+  `_OpenCodeIdleSensorBase` in one ~700-line module. When V2 grows again,
+  move it to `opencode_idle_v2.py` with the base in `opencode_idle.py`,
+  mirroring the `connections/opencode_http.py` / `opencode_v2_http.py` split.
