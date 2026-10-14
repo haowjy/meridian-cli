@@ -31,6 +31,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Repair incomplete telemetry JSONL tails before appending complete durable records.
 - Preserve legacy autosync conflict fields when marking a conflict resolved.
 - Keep permanent malformed JSONL rows from repeating warnings on every state read.
+- Warn once for an unknown hook config key instead of repeating the warning during
+  hook loading.
 
 ## [0.9.8] - 2026-10-14
 

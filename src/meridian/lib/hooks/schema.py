@@ -19,7 +19,7 @@ from pydantic import (
 )
 from typing_extensions import TypeIs
 
-from meridian.lib.config.errors import config_validation_error, warn_unknown_model_keys
+from meridian.lib.config.errors import config_validation_error
 from meridian.lib.hooks.builtin_registry import (
     BUILTIN_HOOK_REGISTRY,
     get_default_events,
@@ -33,7 +33,7 @@ from meridian.lib.hooks.types import (
     HookWhen,
     SpawnStatus,
 )
-from meridian.lib.utils.json_shapes import is_json_object, json_list
+from meridian.lib.utils.json_shapes import json_list
 
 _INTERVAL_PATTERN = re.compile(r"^\d+[smhd]$")
 _HOOK_NAME_COMPONENT_PATTERN = re.compile(r"[^a-z0-9._-]+")
@@ -108,30 +108,9 @@ class HookConfigSection(RootModel[tuple[HookSpec, ...]]):
         return tuple(values)
 
 
-def warn_unknown_hook_keys(raw_value: object, *, source: str) -> None:
-    """Warn for ignored keys in one configured hooks array."""
-
-    values = json_list(raw_value)
-    if values is None:
-        return
-    for index, item in enumerate(values, start=1):
-        if not is_json_object(item):
-            continue
-        row_source = f"{source}[{index}]"
-        warn_unknown_model_keys(item, model=HookSpec, source=row_source)
-        raw_when = item.get("when")
-        if raw_when is not None:
-            warn_unknown_model_keys(
-                raw_when,
-                model=HookWhenSpec,
-                source=f"{row_source}.when",
-            )
-
-
 def normalize_hooks_array(raw_value: object, *, source: str) -> tuple[HookSpec, ...]:
-    """Validate and normalize one TOML hooks array into typed specifications."""
+    """Parse hooks without re-emitting config-loader unknown-key diagnostics."""
 
-    warn_unknown_hook_keys(raw_value, source=source)
     try:
         return HookConfigSection.model_validate(raw_value).root
     except ValidationError as error:

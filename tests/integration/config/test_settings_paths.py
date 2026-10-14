@@ -7,6 +7,7 @@ from meridian.lib.config.loader import load_config
 from meridian.lib.config.project_config_state import resolve_project_config_state
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.project_root import resolve_project_root_resolution
+from meridian.lib.hooks.config import load_hooks_config
 from meridian.lib.ops.config import ConfigShowInput, config_show_sync
 from meridian.lib.ops.config_surface import build_config_surface
 from meridian.lib.ops.runtime import resolve_project_authority, resolve_runtime_authority_for_read
@@ -231,6 +232,30 @@ def test_load_config_preserves_unknown_and_deprecated_key_policy(
     assert not hasattr(config.primary, "model")
     assert not hasattr(config.primary, "harness")
     assert config.harness.pi.background_tasks.enabled is True
+
+
+def test_config_loader_owns_unknown_hook_key_warning(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "meridian.toml").write_text(
+        "[[hooks]]\n"
+        'name = "project-hook"\n'
+        'event = "spawn.start"\n'
+        'command = "echo project"\n'
+        'bogus = "warn once"\n',
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="meridian.lib.config.errors"):
+        load_config(project_root)
+        load_hooks_config(project_root)
+
+    assert caplog.messages == [
+        "Ignoring unknown Meridian config key 'hooks[1].bogus'."
+    ]
 
 
 def test_load_config_keeps_history_unknown_keys_forbidden(tmp_path: Path) -> None:
