@@ -104,6 +104,48 @@ def test_mars_only_write_mints_committed_identity(tmp_path: Path) -> None:
     assert payload["project"]["id"] == identity.id
 
 
+def test_ensure_committed_identity_preserves_existing_content_verbatim(
+    tmp_path: Path,
+) -> None:
+    original = "# user formatting\n[defaults]\nmax_depth=7 # keep this\n"
+    config_path = tmp_path / "meridian.toml"
+    config_path.write_text(original, encoding="utf-8")
+
+    identity = ensure_project_identity(tmp_path)
+
+    assert isinstance(identity, Committed)
+    assert identity.id is not None
+    updated = config_path.read_text(encoding="utf-8")
+    assert updated.startswith(original)
+    assert updated.removeprefix(original) == (
+        "\n# managed by meridian — do not edit\n"
+        "[project]\n"
+        f'id = "{identity.id}"\n'
+    )
+
+
+def test_failed_atomic_identity_write_leaves_existing_toml_usable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = "[defaults]\nmax_depth = 4\n"
+    config_path = tmp_path / "meridian.toml"
+    config_path.write_text(original, encoding="utf-8")
+
+    def interrupted(_path: Path, _content: str) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        "meridian.lib.state.project_identity.atomic_write_text",
+        interrupted,
+    )
+    with pytest.raises(KeyboardInterrupt):
+        ensure_project_identity(tmp_path)
+
+    assert config_path.read_text(encoding="utf-8") == original
+    assert tomllib.loads(config_path.read_text(encoding="utf-8"))["defaults"]["max_depth"] == 4
+
+
 def test_committed_identity_rejects_reserved_adhoc_prefix(tmp_path: Path) -> None:
     (tmp_path / "meridian.toml").write_text(
         '[project]\nid = "adhoc.repo.0123456789ab"\n', encoding="utf-8"
