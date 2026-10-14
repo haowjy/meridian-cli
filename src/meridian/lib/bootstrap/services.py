@@ -89,7 +89,7 @@ def prepare_for_runtime_read(
         authority=authority,
         project_root=authority.project_root,
         layout=project_state.resolve_layout(authority.project_root),
-        config=bootstrap_config.load_config(authority.project_root),
+        config=bootstrap_config.load_config(authority.project_root, authority=authority),
     )
     return RuntimeReadContext(
         authority=authority,
