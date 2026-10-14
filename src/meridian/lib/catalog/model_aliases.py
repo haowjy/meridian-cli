@@ -11,15 +11,19 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import shutil
 import subprocess
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from meridian.lib.catalog.mars_roots import (
+    ensure_resolved_mars_root,
+    resolve_mars_executable,
+    resolve_mars_roots,
+)
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.types import HarnessId, ModelId
 
 logger = logging.getLogger(__name__)
@@ -166,9 +170,8 @@ def _normalize_project_root_key(project_root: Path | None) -> str:
 
     Returns empty string for None, otherwise the resolved posix path.
     """
-    if project_root is None:
-        return ""
-    return project_root.resolve().as_posix()
+    root = resolve_project_root_resolution(project_root).project_root
+    return resolve_mars_roots(root).primary.as_posix()
 
 
 def _resolve_cache_key(name: str, project_root: Path | None) -> tuple[str, str]:
@@ -257,12 +260,7 @@ class MarsResultCache:
 
 def _resolve_mars_binary() -> str | None:
     """Find the mars binary, preferring the one from the same install environment."""
-    scripts_dir = Path(sys.executable).parent
-    for name in ("mars", "mars.exe"):
-        candidate = scripts_dir / name
-        if candidate.is_file():
-            return str(candidate)
-    return shutil.which("mars")
+    return resolve_mars_executable()
 
 
 def _run_mars_model_inventory(
@@ -278,9 +276,14 @@ def _run_mars_model_inventory(
     mars_bin = _resolve_mars_binary()
     if mars_bin is None:
         return None
-    cmd = [mars_bin, "models", *arguments]
-    if project_root is not None:
-        cmd.extend(["--root", str(project_root)])
+    project = resolve_project_root_resolution(project_root).project_root
+    roots = resolve_mars_roots(project)
+    try:
+        ensure_resolved_mars_root(roots, executable=mars_bin)
+    except RuntimeError:
+        logger.debug("user Mars root unavailable", exc_info=True)
+        return None
+    cmd = [mars_bin, "models", *arguments, "--root", roots.primary.as_posix()]
     try:
         # Cold models.dev refresh can take ~45s; leave headroom, as resolve does.
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -397,9 +400,18 @@ def run_mars_models_resolve(
             "Mars binary not found. Mars is required for model resolution. "
             "Run 'meridian doctor' to diagnose."
         )
-    cmd = [mars_bin, "models", "resolve", name, "--json"]
-    if project_root is not None:
-        cmd.extend(["--root", str(project_root)])
+    project = resolve_project_root_resolution(project_root).project_root
+    roots = resolve_mars_roots(project)
+    ensure_resolved_mars_root(roots, executable=mars_bin)
+    cmd = [
+        mars_bin,
+        "models",
+        "resolve",
+        name,
+        "--json",
+        "--root",
+        roots.primary.as_posix(),
+    ]
     try:
         # mars may do a cold models.dev fetch in ensure_fresh(Auto); mars caps each HTTP
         # phase at 15s (connect + recv-response + recv-body), so worst-case cold fetch is
@@ -501,10 +513,9 @@ def _read_mars_merged_file(project_root: Path | None = None) -> dict[str, object
 
     Falls back to empty dict if the file doesn't exist or is invalid.
     """
-    if project_root is None:
-        return {}
-
-    merged_path = project_root / ".mars" / "models-merged.json"
+    project = resolve_project_root_resolution(project_root).project_root
+    roots = resolve_mars_roots(project)
+    merged_path = roots.primary / ".mars" / "models-merged.json"
     if merged_path.is_file():
         try:
             raw = json.loads(merged_path.read_text(encoding="utf-8"))

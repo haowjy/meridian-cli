@@ -8,6 +8,7 @@ from pathlib import Path
 
 from meridian.lib.catalog.agent import AgentProfile
 from meridian.lib.catalog.catalog_session import CatalogSession
+from meridian.lib.catalog.mars_roots import resolve_mars_roots
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.domain import SkillContent
@@ -66,12 +67,13 @@ def _build_resolved_skills_from_bundle(
     Mars owns the .mars/ directory schema and skill loading. Meridian consumes
     the structured bundle output without reaching into .mars/skills/ on disk.
     """
+    mars_root = resolve_mars_roots(project_root).primary
     loaded_skills: list[SkillContent] = []
     for entry in loaded_entries:
         if not entry.body:
             continue
         # Synthetic path for downstream heading rendering and snapshot persistence.
-        synthetic_path = (project_root / ".mars" / "skills" / entry.name / "SKILL.md").as_posix()
+        synthetic_path = (mars_root / ".mars" / "skills" / entry.name / "SKILL.md").as_posix()
         loaded_skills.append(
             SkillContent(
                 name=entry.name,

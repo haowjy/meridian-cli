@@ -92,6 +92,8 @@ class ConfigShowOutput(BaseModel):
     project_root_source: str
     project_identity: str | None
     project_identity_source: Literal["meridian.toml", "path", "unminted"]
+    mars_root: str
+    mars_scope: Literal["project", "user"]
     runtime_root: str | None = None
     runtime_root_source: str | None = None
     workspace: ConfigSurfaceWorkspace
@@ -110,6 +112,8 @@ class ConfigShowOutput(BaseModel):
         lines.append(f"project_root.source = {self.project_root_source}")
         lines.append(f"project_identity: {self.project_identity or '(unminted)'}")
         lines.append(f"project_identity_source: {self.project_identity_source}")
+        lines.append(f"mars_root: {self.mars_root}")
+        lines.append(f"mars_scope: {self.mars_scope}")
         if self.runtime_root is not None:
             lines.append(f"runtime_root: {self.runtime_root}")
         if self.runtime_root_source is not None:
@@ -561,6 +565,8 @@ def config_show_sync(payload: ConfigShowInput) -> ConfigShowOutput:
         project_root_source=surface.authority.project_root_source,
         project_identity=surface.authority.project_id,
         project_identity_source=_project_identity_source(surface.authority),
+        mars_root=surface.authority.mars_roots.primary.as_posix(),
+        mars_scope=surface.authority.mars_roots.scope,
         runtime_root=(
             surface.authority.runtime_root.as_posix()
             if surface.authority.runtime_root is not None

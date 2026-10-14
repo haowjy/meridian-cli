@@ -8,6 +8,11 @@ layer needs to build a command.
 Zero builtin aliases. All alias-to-model-id mappings come from mars packages
 (`.mars/models-merged.json`). Do not add hardcoded aliases to this module.
 
+`mars_roots.py` is the only package-root decider. Project content follows Mars's
+nearest-`mars.toml` walk-up; otherwise the primary root is the user package project
+at `~/.meridian/mars`. Direct agent and skill discovery layers project content over
+user content. Every Mars subprocess receives the resolved primary as `--root`.
+
 ## Mental Model
 
 Every launch operation creates a `CatalogSession`, uses it for all lookups in that
@@ -52,6 +57,7 @@ environments silently skip auto-resolve aliases.
 ## Entry Points
 
 - `catalog_session.py` — `CatalogSession`: per-operation facade; start here
+- `mars_roots.py` — project/user package-root resolution and user-root initialization
 - `model_aliases.py` — `AliasEntry`, `MarsResultCache`, mars subprocess integration
 - `agent.py` — `AgentProfile`, agent frontmatter parsing for `.mars/agents/*.md`
 - `skill.py` — skill YAML/markdown parsing for `.mars/skills/*/SKILL.md` (legacy compat; primary path uses mars launch-bundle)

@@ -33,6 +33,11 @@ def _completed(
 
 def _patch_mars_binary(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mars_module, "resolve_mars_executable", lambda: _FAKE_MARS)
+    monkeypatch.setattr(
+        mars_module,
+        "_prepare_mars_root",
+        lambda _project_root, *, executable: _PROJECT_ROOT,
+    )
 
 
 def test_mars_agent_subagents_parses_show_envelope(

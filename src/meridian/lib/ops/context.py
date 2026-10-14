@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import cast
+from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from meridian.lib.catalog.mars_roots import resolve_mars_roots
 from meridian.lib.config.context_config import ArbitraryContextConfig, ContextConfig
 from meridian.lib.context.resolver import (
     ResolvedContextPaths,
@@ -62,6 +63,9 @@ class ContextOutput(BaseModel):
     kb_path: str
     kb_resolved: str | None
     kb_source: str
+    mars_root: str
+    mars_scope: Literal["project", "user"]
+    mars_user_root: str | None = None
     extra_contexts: dict[str, ContextEntryOutput] = Field(default_factory=dict)
     sync_status: dict[str, str] = Field(default_factory=dict)
     render_verbose: bool = Field(default=False, exclude=True, repr=False)
@@ -133,6 +137,11 @@ class ContextOutput(BaseModel):
                     active_work_dir=active_work_dir,
                 ),
             ]
+
+        user_root = self.mars_user_root or "(same as primary)"
+        lines.append(
+            f"Mars roots: primary={self.mars_root} scope={self.mars_scope} user={user_root}"
+        )
 
         if self.sync_status:
             lines.append("")
@@ -502,6 +511,7 @@ def context_sync(input: ContextInput) -> ContextOutput:
         if extra_sync is not None:
             sync_status[normalized] = extra_sync
 
+    mars_roots = resolve_mars_roots(authority.project_root)
     return ContextOutput(
         identity_tier=authority.identity_tier,
         project_id=authority.project_id,
@@ -531,6 +541,9 @@ def context_sync(input: ContextInput) -> ContextOutput:
             else None
         ),
         kb_source=context_config.kb.source.value,
+        mars_root=mars_roots.primary.as_posix(),
+        mars_scope=mars_roots.scope,
+        mars_user_root=(mars_roots.user.as_posix() if mars_roots.user is not None else None),
         extra_contexts=extra_contexts,
         sync_status=sync_status,
         render_verbose=input.verbose,

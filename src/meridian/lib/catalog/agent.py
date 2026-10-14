@@ -4,6 +4,11 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.catalog.mars_roots import (
+    mars_content_roots,
+    resolve_mars_fallback_root,
+    resolve_mars_roots,
+)
 from meridian.lib.catalog.skill import files_have_equal_text, split_markdown_frontmatter
 from meridian.lib.config.project_root import resolve_project_root_resolution
 
@@ -104,7 +109,8 @@ def parse_agent_profile(path: Path) -> AgentProfile:
 
 
 def _agent_search_dirs(project_root: Path) -> list[Path]:
-    return [project_root / ".mars" / "agents"]
+    roots = resolve_mars_roots(project_root)
+    return [root / ".mars" / "agents" for root in mars_content_roots(roots)]
 
 
 def scan_agent_profiles(
@@ -153,9 +159,25 @@ def load_agent_profile(
 
     root = resolve_project_root_resolution(project_root).project_root
 
+    roots = resolve_mars_roots(root)
+    fallback_root = resolve_mars_fallback_root(roots)
     for profile in scan_agent_profiles(project_root=root, search_paths=search_paths):
         if profile.path.stem == normalized or profile.name == normalized:
+            if (
+                fallback_root is not None
+                and profile.path.is_relative_to(fallback_root / ".mars" / "agents")
+            ):
+                raise FileNotFoundError(
+                    f"Agent '{normalized}' found in user packages (~/.meridian/mars); "
+                    "add it here: meridian mars add <source>"
+                )
             return profile
+
+    if roots.scope == "user":
+        raise FileNotFoundError(
+            f"Agent '{normalized}' not found in user packages (~/.meridian/mars). "
+            "Run 'meridian mars --user add <source>'."
+        )
 
     expected_path = Path(".mars") / "agents" / f"{normalized}.md"
     raise FileNotFoundError(

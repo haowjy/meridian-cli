@@ -51,6 +51,7 @@ def test_caller_exclusions_reach_mars_before_selection(
 def test_exclusions_are_transported_as_repeated_harness_flags(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    (tmp_path / "mars.toml").write_text("", encoding="utf-8")
     fake_mars = tmp_path / "mars"
     argv_log = tmp_path / "argv.log"
     fake_mars.write_text(

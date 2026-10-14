@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, ParamSpec, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from meridian.lib.catalog.mars_roots import MarsRoots, resolve_mars_roots
 from meridian.lib.config.loader import load_config
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.config.project_paths import ProjectConfigPaths, resolve_project_config_paths
@@ -135,6 +136,7 @@ class RuntimeAuthoritySnapshot(BaseModel):
     identity_tier: Literal["committed", "adhoc"]
     project_id: str | None
     identity_created: bool = False
+    mars_roots: MarsRoots
     runtime_root: Path | None = None
     runtime_root_source: RuntimeRootSource | None = None
 
@@ -186,6 +188,7 @@ def resolve_project_authority(
         user_home=get_user_home(),
         identity_tier=identity.tier,
         project_id=identity.id,
+        mars_roots=resolve_mars_roots(root_resolution.project_root),
     )
 
 
