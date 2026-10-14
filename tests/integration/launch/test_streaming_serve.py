@@ -1,11 +1,14 @@
 # qa-validated: test-suite-redesign
 from __future__ import annotations
 
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
 
 from meridian.cli import streaming_serve as streaming_serve_module
+from meridian.cli.invocation import GlobalOptions, invocation_scope
+from meridian.cli.output import OutputConfig
 from meridian.lib.core.types import HarnessId
 from meridian.lib.ops.runtime import resolve_runtime_root
 from meridian.lib.state.spawn_store import get_spawn
@@ -14,13 +17,15 @@ from tests.support.launch import stub_bundle_request_and_resolve
 
 
 @pytest.fixture(autouse=True)
-def _stub_launch_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
+def _streaming_serve_cli_context(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="gpt-5.4",
         harness=HarnessId.CODEX,
         harness_model="gpt-5.4",
     )
+    with invocation_scope(GlobalOptions(output=OutputConfig(format="text"))):
+        yield
 
 
 @pytest.mark.asyncio
