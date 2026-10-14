@@ -672,6 +672,7 @@ def _spawn_create(
         phase="prompt_resolution_complete",
         launcher_pid=os.getpid(),
     )
+    prepared = None if dry_run else _prepare_spawn_runtime_write()
     normalized_task_dir = (task_dir or "").strip() or None
     if resolved_continue_from is not None and normalized_task_dir is not None:
         raise ValueError("--continue does not accept --task-dir. Use --fork --task-dir to diverge.")
@@ -698,7 +699,7 @@ def _spawn_create(
                 **shared_launch_kwargs,
             ),
             sink=current_output_sink(),
-            prepared=_prepare_spawn_runtime_write(),
+            prepared=prepared,
         )
     elif resolved_continue_from is not None:
         result = spawn_continue_sync(
@@ -719,7 +720,7 @@ def _spawn_create(
                 **shared_launch_kwargs,
             ),
             sink=current_output_sink(),
-            prepared=_prepare_spawn_runtime_write(),
+            prepared=prepared,
         )
     else:
         result = spawn_create_sync(
@@ -740,7 +741,7 @@ def _spawn_create(
                 **shared_launch_kwargs,
             ),
             sink=current_output_sink(),
-            prepared=_prepare_spawn_runtime_write(),
+            prepared=prepared,
             on_spawn_id=_foreground_spawn_id_notifier(quiet=quiet),
         )
     output_format = get_global_options().output.format

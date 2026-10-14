@@ -137,7 +137,6 @@ class HookRunOutput(BaseModel):
     event: HookEventName
     result: HookRunResult
     include_output: bool = False
-    identity_created: bool = False
 
     def to_cli_wire(self) -> dict[str, object]:
         """Project hook outcome, optionally including captured process output."""
@@ -151,7 +150,6 @@ class HookRunOutput(BaseModel):
             "error": self.result.error,
             "exit_code": self.result.exit_code,
             "duration_ms": self.result.duration_ms,
-            "identity_created": self.identity_created,
         }
         if self.include_output:
             wire["stdout"] = self.result.stdout

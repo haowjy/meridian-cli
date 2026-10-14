@@ -158,7 +158,7 @@ def parse_mars_passthrough(
     if wants_json and not mars_requested_json(mars_args):
         mars_args = ["--json", *mars_args]
     selected_root = user_mars_root() if user_scope else roots.primary
-    if not user_scope and subcommand == "init" and roots.scope == "user":
+    if not user_scope and subcommand == "init":
         selected_root = project_root
     mars_args = [*mars_args, "--root", selected_root.as_posix()]
     if not user_scope and subcommand in {"agents", "skills"}:

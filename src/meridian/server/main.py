@@ -51,7 +51,6 @@ _IDENTITY_WRITING_TOOLS = frozenset(
     {
         "meridian.spawn.create",
         "meridian.spawn.continue",
-        "meridian.hooks.run",
     }
 )
 

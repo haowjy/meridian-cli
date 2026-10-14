@@ -10,6 +10,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Stop reading project identity from the legacy `.meridian/id` file.
 
 ### Changed
+- Make launch and spawn dry runs create no state.
 - Meridian no longer writes `meridian.toml` into directories that lack one.
   Their state is kept in `~/.meridian/projects/adhoc.*` and becomes eligible for
   `meridian doctor --global --prune` after 30 idle days. Running `meridian init`

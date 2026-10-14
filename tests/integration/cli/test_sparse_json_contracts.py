@@ -335,6 +335,7 @@ def test_hooks_run_json_contract(
         "exit_code",
         "duration_ms",
     } <= payload.keys()
+    assert "identity_created" not in payload
     _assert_noisy_keys_absent(payload)
 
     with_output = _run_json(

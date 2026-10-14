@@ -54,8 +54,9 @@ class ContextOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     work_path: str
-    identity_tier: str
+    identity_tier: Literal["committed", "adhoc"]
     project_id: str | None
+    project_identity_source: Literal["meridian.toml", "path", "unminted"]
     work_resolved: str | None
     work_source: str
     active_work_dir: str | None = None
@@ -106,6 +107,7 @@ class ContextOutput(BaseModel):
             lines = [
                 f"identity_tier: {self.identity_tier}",
                 f"project_id: {self.project_id or '(unminted)'}",
+                f"project_identity_source: {self.project_identity_source}",
             ]
             lines.append("work:")
             lines.append(f"  source: {self.work_source}")
@@ -133,6 +135,7 @@ class ContextOutput(BaseModel):
             lines = [
                 f"identity_tier: {self.identity_tier}",
                 f"project_id: {self.project_id or '(unminted)'}",
+                f"project_identity_source: {self.project_identity_source}",
                 *render_context_lines(
                     self._to_resolved_paths(),
                     check_env=True,
@@ -141,9 +144,9 @@ class ContextOutput(BaseModel):
             ]
 
         user_root = self.mars_user_root or "(same as primary)"
-        lines.append(
-            f"Mars roots: primary={self.mars_root} scope={self.mars_scope} user={user_root}"
-        )
+        lines.append(f"mars_root: {self.mars_root}")
+        lines.append(f"mars_scope: {self.mars_scope}")
+        lines.append(f"mars_user_root: {user_root}")
         lines.append(f"mars_fallback: {self.mars_fallback}")
 
         if self.sync_status:
@@ -519,6 +522,13 @@ def context_sync(input: ContextInput) -> ContextOutput:
     return ContextOutput(
         identity_tier=authority.identity_tier,
         project_id=authority.project_id,
+        project_identity_source=(
+            "path"
+            if authority.identity_tier == "adhoc"
+            else "unminted"
+            if authority.project_id is None
+            else "meridian.toml"
+        ),
         work_path=context_config.work.path,
         work_resolved=(
             resolved_paths.work_root.as_posix()
