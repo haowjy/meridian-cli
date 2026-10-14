@@ -28,7 +28,7 @@ from meridian.lib.state.user_paths import (
 )
 from meridian.lib.state.wordgen import generate_project_id
 
-_ADHOC_PREFIX = "adhoc."
+ADHOC_PROJECT_ID_PREFIX = "adhoc."
 ADHOC_TOUCH_INTERVAL_SECONDS = 60 * 60
 _SLUG_PATTERN = re.compile(r"[^a-z0-9]+")
 
@@ -53,7 +53,7 @@ class AdHoc:
 type ProjectIdentity = Committed | AdHoc
 
 
-class _OriginDocument(BaseModel):
+class AdHocOrigin(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     path: str
@@ -116,10 +116,10 @@ def get_committed_project_id(project_root: Path) -> str | None:
     if not isinstance(raw_id, str) or not raw_id.strip():
         raise ValueError(f"Invalid [project] id in '{config_path.as_posix()}'.")
     project_id = raw_id.strip()
-    if project_id.startswith(_ADHOC_PREFIX):
+    if project_id.startswith(ADHOC_PROJECT_ID_PREFIX):
         raise ValueError(
             f"Invalid [project] id in '{config_path.as_posix()}': "
-            f"'{_ADHOC_PREFIX}' is reserved for path-local state."
+            f"'{ADHOC_PROJECT_ID_PREFIX}' is reserved for path-local state."
         )
     return project_id
 
@@ -130,7 +130,7 @@ def _adhoc_project_id(project_root: Path) -> str:
     slug = _SLUG_PATTERN.sub("-", canonical.name.lower()).strip("-")[:24].rstrip("-")
     if not slug:
         slug = "root"
-    return f"{_ADHOC_PREFIX}{slug}.{digest}"
+    return f"{ADHOC_PROJECT_ID_PREFIX}{slug}.{digest}"
 
 
 def resolve_project_identity(project_root: Path) -> ProjectIdentity:
@@ -193,7 +193,7 @@ def _materialize_adhoc_identity(project_root: Path, identity: AdHoc) -> AdHoc:
             runtime_root.mkdir(parents=True, exist_ok=True)
             write_model_once(
                 origin_path,
-                _OriginDocument(
+                AdHocOrigin(
                     path=project_root.as_posix(),
                     created_at=datetime.now(UTC).isoformat(),
                 ),
@@ -223,8 +223,10 @@ def ensure_project_identity(
 
 
 __all__ = [
+    "ADHOC_PROJECT_ID_PREFIX",
     "ADHOC_TOUCH_INTERVAL_SECONDS",
     "AdHoc",
+    "AdHocOrigin",
     "Committed",
     "ProjectIdentity",
     "ensure_project_identity",

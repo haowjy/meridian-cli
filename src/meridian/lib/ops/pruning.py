@@ -22,7 +22,12 @@ from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.json_doc import read_model
 from meridian.lib.state.lock_gc import LockGcStats, gc_orphaned_locks
 from meridian.lib.state.paths import RuntimePaths
-from meridian.lib.state.project_identity import ADHOC_TOUCH_INTERVAL_SECONDS
+from meridian.lib.state.project_identity import (
+    ADHOC_PROJECT_ID_PREFIX,
+    ADHOC_TOUCH_INTERVAL_SECONDS,
+    AdHocOrigin,
+)
+from meridian.lib.state.user_paths import get_context_home
 
 _SECONDS_PER_DAY = 24 * 60 * 60
 
@@ -32,11 +37,11 @@ def _is_project_dir_name(name: str) -> bool:
 
 
 def _is_adhoc_project_dir_name(name: str) -> bool:
-    return _is_project_dir_name(name) and name.startswith("adhoc.")
+    return _is_project_dir_name(name) and name.startswith(ADHOC_PROJECT_ID_PREFIX)
 
 
 def _is_committed_project_dir_name(name: str) -> bool:
-    return _is_project_dir_name(name) and not name.startswith("adhoc.")
+    return _is_project_dir_name(name) and not name.startswith(ADHOC_PROJECT_ID_PREFIX)
 
 
 class OrphanProjectDir(BaseModel):
@@ -59,13 +64,6 @@ class AdHocProjectDir(BaseModel):
     size_bytes: int
     last_activity: str
     reason: str
-
-
-class _AdHocOrigin(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    path: str
-    created_at: str
 
 
 class StaleSpawnArtifact(BaseModel):
@@ -171,14 +169,14 @@ def _is_quiescent(runtime_root: Path) -> bool:
     )
 
 
-def _adhoc_activity(runtime_root: Path) -> tuple[int, float, _AdHocOrigin | None]:
+def _adhoc_activity(runtime_root: Path) -> tuple[int, float, AdHocOrigin | None]:
     size_bytes, tree_mtime = _tree_activity(runtime_root)
     origin_path = runtime_root / "origin.json"
     try:
         origin_mtime: float | None = origin_path.stat().st_mtime
     except OSError:
         origin_mtime = None
-    origin = read_model(origin_path, _AdHocOrigin)
+    origin = read_model(origin_path, AdHocOrigin)
     latest = origin_mtime if origin_mtime is not None else tree_mtime
 
     spawn_scan = spawn_store.list_spawns(runtime_root)
@@ -200,7 +198,7 @@ def _adhoc_activity(runtime_root: Path) -> tuple[int, float, _AdHocOrigin | None
     return size_bytes, latest, origin
 
 
-def _adhoc_reason(origin: _AdHocOrigin | None) -> tuple[str, str | None]:
+def _adhoc_reason(origin: AdHocOrigin | None) -> tuple[str, str | None]:
     if origin is None:
         return "adhoc-path-gone", None
     source_path = Path(origin.path).expanduser()
@@ -241,7 +239,10 @@ def _scan_adhoc_project_dir(
     ):
         return None
 
-    context_root = runtime_root.parent.parent / "context" / runtime_root.name
+    context_root = get_context_home(
+        runtime_root.name,
+        user_home=runtime_root.parent.parent,
+    )
     return AdHocProjectDir(
         project_id=runtime_root.name,
         path=source_path,
@@ -273,19 +274,7 @@ def scan_orphan_project_dirs(
             continue
 
         size_bytes, latest_mtime = _tree_activity(project_dir)
-        spawn_scan = spawn_store.list_spawns(project_dir)
-        if spawn_scan.quarantines:
-            continue
-        active_spawns = [
-            spawn
-            for spawn in spawn_scan.records
-            if is_active_spawn_status(spawn.status)
-        ]
-        if active_spawns:
-            continue
-        if session_store.list_active_sessions(project_dir) or session_store.has_live_session_leases(
-            project_dir
-        ):
+        if not _is_quiescent(project_dir):
             continue
 
         if _is_stale(latest_mtime, retention_days=retention_days, now=now):
@@ -433,19 +422,7 @@ def prune_orphan_project_dirs(orphans: list[OrphanProjectDir]) -> int:
         with try_lock_file(paths.project_lifetime_flock, reentrant=False) as lifetime_handle:
             if lifetime_handle is None:
                 continue
-            spawn_scan = spawn_store.list_spawns(runtime_root)
-            if spawn_scan.quarantines:
-                continue
-            active_spawns = [
-                spawn
-                for spawn in spawn_scan.records
-                if is_active_spawn_status(spawn.status)
-            ]
-            if active_spawns:
-                continue
-            if session_store.list_active_sessions(
-                runtime_root
-            ) or session_store.has_live_session_leases(runtime_root):
+            if not _is_quiescent(runtime_root):
                 continue
             if _prune_dir(runtime_root):
                 removed += 1

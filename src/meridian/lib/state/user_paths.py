@@ -54,10 +54,10 @@ def project_lifetime_lock_path(runtime_root: Path) -> Path:
     return runtime_root.parent / ".locks" / f"{runtime_root.name}.lock"
 
 
-def get_context_home(project_id: str) -> Path:
+def get_context_home(project_id: str, *, user_home: Path | None = None) -> Path:
     """Return the user-level context directory.
 
     Returns: get_user_home() / "context" / project_id
     """
 
-    return get_user_home() / "context" / project_id
+    return (user_home or get_user_home()) / "context" / project_id
