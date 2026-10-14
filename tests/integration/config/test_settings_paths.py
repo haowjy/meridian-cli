@@ -154,6 +154,14 @@ def test_load_config_ignores_deleted_defaults_model_and_harness_keys(tmp_path: P
             "[primary]\nautocompact = 50000.0\n",
             "Invalid value for 'primary.autocompact': expected int, got float (50000.0).",
         ),
+        (
+            '[spawn]\ndeny_headless_harnesses = ["claude", ""]\n',
+            "Invalid value for 'spawn.deny_headless_harnesses': expected non-empty items.",
+        ),
+        (
+            'hooks = "invalid"\n',
+            "Invalid value for 'hooks': expected array[table], got str ('invalid').",
+        ),
     ],
 )
 def test_load_config_reports_invalid_key_and_problem(
@@ -187,6 +195,18 @@ def test_load_config_preserves_unknown_and_deprecated_key_policy(
         "[harness.claude]\n"
         "unknown = true\n"
         "[harness.pi.background_tasks]\n"
+        "unknown = true\n"
+        "[idle]\n"
+        "unknown = true\n"
+        "[notify]\n"
+        "unknown = true\n"
+        "[environment]\n"
+        "unknown = true\n"
+        "[defaults]\n"
+        "unknown = true\n"
+        "[spawn]\n"
+        "unknown = true\n"
+        "[timeouts]\n"
         "unknown = true\n",
         encoding="utf-8",
     )
@@ -197,6 +217,12 @@ def test_load_config_preserves_unknown_and_deprecated_key_policy(
     assert caplog.messages == [
         "Ignoring unknown Meridian config key 'output.unknown'.",
         "Ignoring unknown Meridian config key 'harness.claude.unknown'.",
+        "Ignoring unknown Meridian config key 'idle.unknown'.",
+        "Ignoring unknown Meridian config key 'notify.unknown'.",
+        "Ignoring unknown Meridian config key 'environment.unknown'.",
+        "Ignoring unknown Meridian config key 'defaults.unknown'.",
+        "Ignoring unknown Meridian config key 'spawn.unknown'.",
+        "Ignoring unknown Meridian config key 'timeouts.unknown'.",
     ]
     assert not hasattr(config.primary, "model")
     assert not hasattr(config.primary, "harness")
