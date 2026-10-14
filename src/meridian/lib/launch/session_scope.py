@@ -164,7 +164,7 @@ def session_scope(
         kind=kind,
         spawn_id=spawn_id,
         model_selection_protocol=1 if startup_attempt_id is not None else None,
-        **({"reopen": True} if is_exact_continue_session(request) else {}),
+        reopen=is_exact_continue_session(request),
     )
     record = get_session_record(runtime_root, resolved_chat_id)
     generation = record.session_instance_id if record is not None else ""

@@ -101,7 +101,10 @@ def check_spawn_available(
 
     latest = latest_run(runtime_root, spawn_id)
     if latest is None:
-        raise ValueError(f"{spawn_id} is archived; restore it, or `--fork {spawn_id}`")
+        raise ValueError(
+            f"Spawn {spawn_id} has no live runs (not found, or archived: "
+            f"restore it or `--fork {spawn_id}`)"
+        )
     row = read_state(
         RuntimePaths.from_root_dir(runtime_root).spawns_dir, latest, include_prompt=False,
     )

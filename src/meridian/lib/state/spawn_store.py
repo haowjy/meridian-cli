@@ -13,7 +13,7 @@ from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 import psutil
@@ -449,6 +449,39 @@ def start_spawn(
         return resolved_run_id
 
 
+def reservation_kwargs(reservation: SpawnReservation) -> dict[str, Any]:
+    """Translate creation metadata once for both initial and reopened runs."""
+    return dict(
+        chat_id=reservation.chat_id,
+        owner_chat_id=reservation.owner_chat_id,
+        parent_run_id=reservation.parent_run_id,
+        kind=reservation.kind,
+        prompt=reservation.prompt,
+        metadata=reservation.metadata,
+        desc=reservation.desc,
+        work_id=reservation.work_id,
+        goal=reservation.goal,
+        harness_session_id=reservation.harness_session_id,
+        control_root=reservation.control_root,
+        task_cwd=reservation.task_cwd,
+        execution_cwd=reservation.execution_cwd,
+        launch_mode=reservation.launch_mode,
+        worker_pid=reservation.worker_pid,
+        runner_pid=reservation.runner_pid,
+        launch_policy_snapshot=reservation.launch_policy_snapshot,
+        status=reservation.status,
+        started_at=reservation.started_at,
+        clock=reservation.clock,
+        parent_id=SpawnId(reservation.parent_id) if reservation.parent_id else None,
+        model=reservation.session_metadata.model,
+        agent=reservation.session_metadata.agent,
+        agent_path=reservation.session_metadata.agent_path or None,
+        skills=reservation.session_metadata.skills,
+        skill_paths=reservation.session_metadata.skill_paths,
+        harness=reservation.session_metadata.harness,
+    )
+
+
 def reserve_run(runtime_root: Path, spawn_id: SpawnId, reservation: SpawnReservation) -> RunId:
     """Publish max-K+1 under the allocation gate; never copy a generation."""
     paths = RuntimePaths.from_root_dir(runtime_root)
@@ -468,33 +501,7 @@ def reserve_run(runtime_root: Path, spawn_id: SpawnId, reservation: SpawnReserva
         run_id = parse_ref(f"{spawn_id}.{(parse_ref(latest).run or 1) + 1}", row_key=True)
         record = _build_record(
             paths, run_id, bind_existing_generation=False,
-            chat_id=reservation.chat_id,
-            owner_chat_id=reservation.owner_chat_id,
-            parent_run_id=reservation.parent_run_id,
-            kind=reservation.kind,
-            prompt=reservation.prompt,
-            metadata=reservation.metadata,
-            desc=reservation.desc,
-            work_id=reservation.work_id,
-            goal=reservation.goal,
-            harness_session_id=reservation.harness_session_id,
-            control_root=reservation.control_root,
-            task_cwd=reservation.task_cwd,
-            execution_cwd=reservation.execution_cwd,
-            launch_mode=reservation.launch_mode,
-            worker_pid=reservation.worker_pid,
-            runner_pid=reservation.runner_pid,
-            launch_policy_snapshot=reservation.launch_policy_snapshot,
-            status=reservation.status,
-            started_at=reservation.started_at,
-            clock=reservation.clock,
-            parent_id=SpawnId(reservation.parent_id) if reservation.parent_id else None,
-            model=reservation.session_metadata.model,
-            agent=reservation.session_metadata.agent,
-            agent_path=reservation.session_metadata.agent_path,
-            skills=reservation.session_metadata.skills,
-            skill_paths=reservation.session_metadata.skill_paths,
-            harness=reservation.session_metadata.harness,
+            **reservation_kwargs(reservation),
         )
         _publish_record(paths, record)
         return run_id

@@ -1065,7 +1065,9 @@ class SpawnDetailOutput(BaseModel):
     def _format_moderate_text(self) -> str:
         status_str = self._status_for_compact_or_moderate()
 
-        lines = [f"Spawn: {self.spawn_id}"]
+        lines = [f"Spawn: {spawn_of(self.spawn_id)}"]
+        if spawn_of(self.spawn_id) != self.spawn_id:
+            lines.append(f"Run: {self.spawn_id}")
         lines.append(f"Status: {status_str}")
         lines.append(f"Model: {self.model} ({self.harness})")
         if self.duration_secs is not None:

@@ -105,7 +105,7 @@ def resolve_session_target(
     if not normalized:
         raise ValueError("--continue requires a non-empty session reference.")
     from meridian.lib.ops.reference import validate_continue_reference
-    validate_continue_reference(resolve_project_runtime_root(project_root), normalized)
+    validate_continue_reference(normalized)
     return resolve_session_reference(project_root, normalized, harness_hint=harness_hint)
 
 

@@ -2399,7 +2399,7 @@ def spawn_continue_sync(
     from meridian.lib.ops.reference import validate_continue_reference
     from meridian.lib.state.session_identity import owner_spawn_for_chat
     from meridian.lib.state.spawn.runs import latest_run
-    validate_continue_reference(runtime_root, payload.spawn_id)
+    validate_continue_reference(payload.spawn_id)
     if parse_ref(payload.spawn_id).kind == "chat":
         resolved_reference = resolve_session_reference(
             project_root, payload.spawn_id, runtime_root=runtime_root,

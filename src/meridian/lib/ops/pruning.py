@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.models import ADHOC_STALE_RETENTION_DAYS
 from meridian.lib.config.project_root import has_project_marker
@@ -80,7 +80,6 @@ class StaleSpawnArtifact(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     spawn_id: RunId
-    multi_run: bool = Field(default=False, exclude=True)
     project_uuid: str
     path: str
     size_bytes: int
@@ -397,32 +396,22 @@ def _scan_stale_spawn_artifacts(
 
     stale_ids = {str(row.spawn_id) for row in results}
     special: set[str] = set()
-    multi_run: set[str] = set()
     for run_ids in all_run_ids.values():
         if len(run_ids) == 1:
             continue
         group = {str(run_id) for run_id in run_ids}
-        multi_run.update(group)
         # Even a quarantined latest row must not expose an older run number.
         special.add(max(run_ids, key=reference_sort_key))
         rows: list[SpawnRecord] = []
         for run_id in run_ids:
-            try:
-                row = spawn_store.get_spawn(runtime_root, run_id)
-            except ValueError:
-                row = None
+            row = _read_prune_sibling(runtime_root, run_id)
             if row is not None:
                 rows.append(row)
         for runs in group_runs(rows).values():
             special.update(retention_run_ids(runs))
         if group & active_spawn_ids or not group <= stale_ids:
             stale_ids.difference_update(group & special)
-    if not multi_run:
-        return results
-    kept = [
-        row.model_copy(update={"multi_run": True}) if str(row.spawn_id) in multi_run else row
-        for row in results if str(row.spawn_id) in stale_ids
-    ]
+    kept = [row for row in results if str(row.spawn_id) in stale_ids]
     # Delete ordinary runs, then latest-bound, and the numeric latest last.
     return sorted(
         kept,
@@ -530,6 +519,13 @@ def prune_adhoc_project_dirs(
     return removed
 
 
+def _read_prune_sibling(runtime_root: Path, run_id: RunId) -> SpawnRecord | None:
+    try:
+        return spawn_store.get_spawn(runtime_root, run_id)
+    except ValueError:
+        return None
+
+
 def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> SpawnArtifactPruneResult:
     """Delete stale spawn artifacts and collect their newly orphaned locks."""
 
@@ -551,15 +547,16 @@ def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> SpawnArtifac
             lock_file(paths.spawns_flock),
         ):
             run_id = parse_ref(str(artifact.spawn_id), row_key=True)
-            if artifact.multi_run:
-                run_ids = runs_of(runtime_root, spawn_of(run_id))
-                rows = [spawn_store.get_spawn(runtime_root, key) for key in run_ids]
-                dependencies = retention_dependencies([row for row in rows if row is not None])
-                if run_id in dependencies and (
+            run_ids = runs_of(runtime_root, spawn_of(run_id))
+            rows = [_read_prune_sibling(runtime_root, key) for key in run_ids]
+            dependencies = retention_dependencies([row for row in rows if row is not None])
+            if any(row is None for row in rows) or (
+                run_id in dependencies and (
                     dependencies[run_id].intersection(run_ids)
-                    or any(row is None or is_active_spawn_status(row.status) for row in rows)
-                ):
-                    continue
+                    or any(is_active_spawn_status(row.status) for row in rows if row is not None)
+                )
+            ):
+                continue
             legacy_artifact_dir = runtime_root / "artifacts" / str(artifact.spawn_id)
             if legacy_artifact_dir.exists() and not _prune_dir(legacy_artifact_dir):
                 continue

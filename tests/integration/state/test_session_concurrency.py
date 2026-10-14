@@ -13,11 +13,13 @@ import multiprocessing
 import os
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from meridian.lib.platform.locking import try_lock_file
+from meridian.lib.platform.locking import acquire_file_lock, release_file_lock, try_lock_file
 from meridian.lib.state import session_store
+from meridian.lib.state.paths import RuntimePaths
 from tests.conftest import posix_only
 from tests.support.process_race import run_spawn_race_or_skip
 
@@ -197,3 +199,28 @@ def test_fork_child_closes_inherited_direct_session_handles(tmp_path: Path) -> N
     finally:
         child_exit.set()
         parent.join(5)
+
+
+@pytest.mark.parametrize("live_owner", [True, False])
+def test_reopen_chat_lock_refuses_live_owner_and_retries_transient_holder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, live_owner: bool,
+) -> None:
+    lock_path = tmp_path / "sessions" / "c1.lock"
+    holder = acquire_file_lock(lock_path)
+    # Release only after the first failed acquisition, without a scheduling race.
+    monkeypatch.setattr(session_store, "time", SimpleNamespace(
+        monotonic=lambda: time.monotonic() * 10,
+        sleep=lambda _: release_file_lock(holder),
+    ))
+    try:
+        if live_owner:
+            session_store._write_session_lease(RuntimePaths.from_root_dir(tmp_path), "c1", "live")
+            with pytest.raises(session_store.ChatBusy, match="chat_busy"):
+                session_store._acquire_reopen_lock(tmp_path, "c1", lock_path)
+        else:
+            acquired = session_store._acquire_reopen_lock(tmp_path, "c1", lock_path)
+            assert holder.closed
+            release_file_lock(acquired)
+    finally:
+        if not holder.closed:
+            release_file_lock(holder)

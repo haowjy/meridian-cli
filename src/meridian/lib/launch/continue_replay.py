@@ -452,7 +452,7 @@ def build_continue_replay_contract(
                         owner_spawn_for_chat(runtime_root, source.source_chat_id)
                         if source.source_chat_id else None)
         if reopen_spawn is not None:
-            check_spawn_available(runtime_root, reopen_spawn, source.source_chat_id or "")
+            check_spawn_available(runtime_root, reopen_spawn, source.source_chat_id)
             predecessor = latest_run(runtime_root, reopen_spawn)
         if predecessor and source.source_control_root:
             scope = read_spawn_scope(

@@ -206,7 +206,7 @@ def _resolve_spawn_reference(
     parsed = parse_ref(ref)
     row = resolve_continue_source_row(runtime_root, parsed)
     if row is None:
-        return _resolve_untracked_reference(project_root, ref)
+        raise ValueError(f"Spawn '{ref}' not found")
     if row.record_mode == "historical":
         raise ValueError("Historical sessions are inert; read or export the transcript instead.")
 
@@ -410,7 +410,7 @@ __all__ = [
 ]
 
 
-def validate_continue_reference(runtime_root: Path, ref: str) -> None:
+def validate_continue_reference(ref: str) -> None:
     """Exact continues name a spawn or a segment, never an immutable run."""
     parsed = parse_ref(ref)
     if parsed.kind == "run":
@@ -418,6 +418,3 @@ def validate_continue_reference(runtime_root: Path, ref: str) -> None:
             f"Cannot continue run '{parsed.value}'; continue the spawn "
             f"(`{parsed.spawn_id}`) or fork the run (`--fork {parsed.value}`)."
         )
-    if parsed.kind == "spawn" and parsed.spawn_id is not None:
-        from meridian.lib.state.spawn.runs import check_spawn_available
-        check_spawn_available(runtime_root, parsed.spawn_id)

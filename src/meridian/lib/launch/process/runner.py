@@ -777,7 +777,6 @@ def run_harness_process(
                     )
                 spawn_store.update_spawn(
                     runtime_root, parse_ref(primary_spawn_id, row_key=True),
-                    session_instance_id=managed.session_instance_id,
                     work_id=attached_work_id,
                 )
                 update_session_spawn_id_fn(

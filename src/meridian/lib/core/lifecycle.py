@@ -269,7 +269,6 @@ class SpawnLifecycleService:
         with bind_lifecycle_correlation(
             self._correlation(operation="start", spawn_id=reservation.spawn_id)
         ):
-            session_metadata = reservation.session_metadata
             # Authoritative transition write still happens in _spawn_store().
             if reservation.reopen_spawn_id is not None:
                 from meridian.lib.core.types import SpawnId
@@ -279,34 +278,8 @@ class SpawnLifecycleService:
             else:
                 result_id = _spawn_store().start_spawn(
                     self._runtime_root,
-                    chat_id=reservation.chat_id,
-                    owner_chat_id=reservation.owner_chat_id,
-                    parent_id=reservation.parent_id,
-                    parent_run_id=reservation.parent_run_id,
-                    model=session_metadata.model,
-                    agent=session_metadata.agent,
-                    agent_path=session_metadata.agent_path or None,
-                    skills=session_metadata.skills,
-                    skill_paths=session_metadata.skill_paths,
-                    harness=session_metadata.harness,
-                    kind=reservation.kind,
-                    prompt=reservation.prompt,
-                    metadata=reservation.metadata,
-                    desc=reservation.desc,
-                    work_id=reservation.work_id,
-                    goal=reservation.goal,
                     spawn_id=reservation.spawn_id,
-                    harness_session_id=reservation.harness_session_id,
-                    control_root=reservation.control_root,
-                    task_cwd=reservation.task_cwd,
-                    execution_cwd=reservation.execution_cwd,
-                    launch_mode=reservation.launch_mode,
-                    worker_pid=reservation.worker_pid,
-                    runner_pid=reservation.runner_pid,
-                    launch_policy_snapshot=reservation.launch_policy_snapshot,
-                    status=reservation.status,
-                    started_at=reservation.started_at,
-                    clock=reservation.clock,
+                    **_spawn_store().reservation_kwargs(reservation),
                 )
             allocate_spawn_sequence(str(result_id))
             record = _spawn_store().get_spawn(self._runtime_root, result_id)

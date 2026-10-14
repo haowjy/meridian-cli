@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.refs import parse_ref
+from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.core.types import RunId, SpawnId
+from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.ops.pruning import prune_stale_spawn_artifacts, scan_stale_spawn_artifacts
 from meridian.lib.ops.session_archive import archive_history
 from meridian.lib.state import session_store, spawn_store
@@ -186,8 +188,6 @@ def test_stale_artifact_pruning_retires_latest_run_last(tmp_path: Path) -> None:
         now=10**10,
     )
     assert [row.spawn_id for row in stale] == ["p1", "p1.2"]
-    assert all(row.multi_run for row in stale)
-    assert "multi_run" not in stale[0].model_dump()  # Internal hint, not doctor JSON.
     assert prune_stale_spawn_artifacts(stale).removed == 2
     assert runs_of(tmp_path, SpawnId("p1")) == ()
 
@@ -243,3 +243,17 @@ def test_archive_apply_preserves_continuation_source_on_partial_retirement(
     else:
         assert not result.reclaimed
         assert remaining == ("p1", "p1.2", "p1.3")
+
+
+def test_prune_rechecks_siblings_published_after_scan(tmp_path: Path) -> None:
+    first = _bound(tmp_path, "p1")
+    stale = scan_stale_spawn_artifacts(
+        tmp_path, retention_days=0, active_spawn_ids=set(), now=10**10,
+    )
+    spawn_store.reserve_run(tmp_path, SpawnId("p1"), SpawnReservation(
+        chat_id="c1", prompt="again", session_metadata=PrimarySessionMetadata(
+            harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=(),
+        ),
+    ))
+    assert prune_stale_spawn_artifacts(stale).removed == 0
+    assert spawn_store.get_spawn(tmp_path, first) is not None

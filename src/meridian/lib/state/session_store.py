@@ -378,7 +378,10 @@ def start_session(
                     return current.model_copy(
                         update={
                             "chat_id": event.chat_id,
-                            "session_instance_id": event.session_instance_id,
+                            **(
+                                {} if reopen
+                                else {"session_instance_id": event.session_instance_id}
+                            ),
                             "forked_from_history_id": event.forked_from_history_id
                             or current.forked_from_history_id,
                         }

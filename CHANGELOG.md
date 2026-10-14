@@ -11,6 +11,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Expose the exact launch as `MERIDIAN_RUN_ID`; hooks carry both IDs too.
 
 ### Fixed
+- Recheck run siblings before pruning; keep continuation sources during reopen.
+- Report missing continue targets honestly; show stable spawn and exact run separately.
 - Give child tools their entry chat ID; no-argument wait works without a parent chat.
 - Clear stale TUI text before the quit hint. No native UUID stuck onto the spawn ID.
 
