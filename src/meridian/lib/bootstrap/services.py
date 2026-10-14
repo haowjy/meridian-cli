@@ -22,6 +22,12 @@ from meridian.lib.service_context import (
     ExtensionEntryPoint,
     SpawnEntryPoint,
 )
+from meridian.lib.state.project_identity import (
+    AdHoc,
+    Committed,
+    ensure_project_identity,
+    resolve_project_identity,
+)
 
 if TYPE_CHECKING:
     from meridian.lib.core.lifecycle import SpawnLifecycleService
@@ -104,6 +110,25 @@ def prepare_for_project_write(project_root: Path) -> ProjectWriteContext:
     """Prepare project write context and ensure project directories exist."""
 
     authority = resolve_project_authority(project_root)
+    prior = resolve_project_identity(authority.project_root)
+    identity = ensure_project_identity(authority.project_root)
+    identity_created = (
+        isinstance(prior, Committed)
+        and prior.id is None
+        and isinstance(identity, Committed)
+        and identity.id is not None
+    ) or (
+        isinstance(prior, AdHoc)
+        and not prior.materialized
+        and isinstance(identity, AdHoc)
+        and identity.materialized
+    )
+    authority = authority.model_copy(
+        update={
+            "project_id": identity.id,
+            "identity_created": identity_created,
+        }
+    )
     project_state.ensure_project_dirs(authority.project_root)
     return ProjectWriteContext(
         authority=authority,

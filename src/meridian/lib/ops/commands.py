@@ -366,7 +366,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=HookRunOutput,
         cli_group="hooks",
         cli_name="run",
-        surfaces=frozenset({ExtensionSurface.CLI}),
+        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.MCP}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian",

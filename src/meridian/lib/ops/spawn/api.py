@@ -493,9 +493,12 @@ def spawn_create_sync(
         harness=result.harness_id or prepared_request.harness,
         spawn_id=result.spawn_id,
     )
-    if forked_from is None:
-        return result
-    return result.model_copy(update={"forked_from": forked_from})
+    updates: dict[str, object] = {
+        "identity_created": bool(authority.identity_created),
+    }
+    if forked_from is not None:
+        updates["forked_from"] = forked_from
+    return result.model_copy(update=updates)
 
 
 async def spawn_create(

@@ -44,6 +44,13 @@ def _assert_project_not_initialized(project_root: Path) -> None:
     assert not (project_root / ".meridian").exists()
 
 
+def _assert_adhoc_materialized(project_root: Path, meridian_home: Path) -> None:
+    _assert_project_not_initialized(project_root)
+    origins = list((meridian_home / "projects").glob("adhoc.*/origin.json"))
+    assert len(origins) == 1
+    assert project_root.resolve().as_posix() in origins[0].read_text(encoding="utf-8")
+
+
 @pytest.fixture
 def meridian_home(tmp_path: Path) -> Path:
     home = tmp_path / "meridian-home"
@@ -101,6 +108,50 @@ def test_spawn_list_succeeds_without_project_id_and_creates_nothing(
     assert result.returncode == 0, result.stderr or result.stdout
     assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
     _assert_project_not_initialized(cwd_without_project_id)
+    assert list(meridian_home.iterdir()) == []
+
+
+@pytest.mark.integration
+def test_context_observes_unmaterialized_adhoc_identity_without_writing(
+    cwd_without_project_id: Path,
+    meridian_home: Path,
+) -> None:
+    result = _run_meridian(
+        ["context"],
+        cwd=cwd_without_project_id,
+        meridian_home=meridian_home,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "identity_tier: adhoc" in result.stdout
+    assert "project_id: adhoc.no-project." in result.stdout
+    _assert_project_not_initialized(cwd_without_project_id)
+    assert list(meridian_home.iterdir()) == []
+
+
+@pytest.mark.integration
+def test_hooks_run_is_noop_without_materialized_state(
+    cwd_without_project_id: Path,
+    meridian_home: Path,
+) -> None:
+    (meridian_home / "config.toml").write_text(
+        "[[hooks]]\n"
+        'name = "manual-test"\n'
+        'event = "spawn.finalized"\n'
+        'command = "printf should-not-run"\n',
+        encoding="utf-8",
+    )
+
+    result = _run_meridian(
+        ["hooks", "run", "manual-test"],
+        cwd=cwd_without_project_id,
+        meridian_home=meridian_home,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "skip_reason: no_state" in result.stdout
+    assert not (meridian_home / "projects").exists()
+    _assert_project_not_initialized(cwd_without_project_id)
 
 
 @pytest.mark.integration
@@ -156,7 +207,7 @@ def test_init_succeeds_for_explicit_path_from_cwd_without_project_id(
 
 
 @pytest.mark.integration
-def test_primary_launch_auto_initializes_cwd_without_project_id(
+def test_primary_launch_materializes_adhoc_state_without_litter(
     cwd_without_project_id: Path,
     meridian_home: Path,
 ) -> None:
@@ -175,21 +226,19 @@ def test_primary_launch_auto_initializes_cwd_without_project_id(
 
     assert result.returncode == 1
     assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
-    _assert_project_initialized(cwd_without_project_id)
+    _assert_adhoc_materialized(cwd_without_project_id, meridian_home)
+    assert "state is kept for this path only" in result.stderr
 
 
 @pytest.mark.integration
 @pytest.mark.parametrize(
     "args",
     [
-        ["--mode", "human", "config", "init"],
-        ["--mode", "human", "config", "set", "defaults.max_depth", "7"],
         ["--mode", "human", "work", "start", "first work"],
         ["--mode", "human", "--harness", "definitely-missing", "spawn", "-p", "hi"],
-        ["--mode", "human", "workspace", "init"],
     ],
 )
-def test_create_commands_auto_initialize_cwd_without_project_id(
+def test_runtime_writes_materialize_adhoc_state_without_litter(
     args: list[str],
     cwd_without_project_id: Path,
     meridian_home: Path,
@@ -201,6 +250,74 @@ def test_create_commands_auto_initialize_cwd_without_project_id(
     )
 
     assert NO_PROJECT_MSG not in (result.stdout + result.stderr)
+    _assert_adhoc_materialized(cwd_without_project_id, meridian_home)
+
+
+@pytest.mark.integration
+def test_materialization_notice_names_nearest_marked_ancestor(
+    tmp_path: Path,
+    meridian_home: Path,
+) -> None:
+    ancestor = tmp_path / "parent"
+    project_root = ancestor / "scratch"
+    project_root.mkdir(parents=True)
+    (ancestor / "meridian.toml").write_text(
+        '[project]\nid = "parent-project"\n', encoding="utf-8"
+    )
+
+    result = _run_meridian(
+        ["--mode", "human", "work", "start", "first work"],
+        cwd=project_root,
+        meridian_home=meridian_home,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert f"(nearest project: {ancestor.as_posix()})" in result.stderr
+    assert list(project_root.iterdir()) == []
+
+    second = _run_meridian(
+        ["--mode", "human", "work", "switch", "first-work"],
+        cwd=project_root,
+        meridian_home=meridian_home,
+    )
+    assert second.returncode == 0, second.stderr
+    assert "state is kept for this path only" not in second.stderr
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--mode", "human", "config", "set", "defaults.max_depth", "7"],
+        ["--mode", "human", "config", "reset", "defaults.max_depth"],
+        ["--mode", "human", "workspace", "init"],
+    ],
+)
+def test_project_authoring_errors_without_a_marker(
+    args: list[str],
+    cwd_without_project_id: Path,
+    meridian_home: Path,
+) -> None:
+    result = _run_meridian(args, cwd=cwd_without_project_id, meridian_home=meridian_home)
+
+    assert result.returncode == 1
+    assert "no project config here; run 'meridian init'" in result.stderr
+    _assert_project_not_initialized(cwd_without_project_id)
+    assert list(meridian_home.iterdir()) == []
+
+
+@pytest.mark.integration
+def test_config_init_still_commits_the_directory(
+    cwd_without_project_id: Path,
+    meridian_home: Path,
+) -> None:
+    result = _run_meridian(
+        ["--mode", "human", "config", "init"],
+        cwd=cwd_without_project_id,
+        meridian_home=meridian_home,
+    )
+
+    assert result.returncode == 0, result.stderr
     _assert_project_initialized(cwd_without_project_id)
 
 

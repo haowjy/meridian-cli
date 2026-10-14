@@ -669,7 +669,7 @@ async def test_streaming_serve_concludes_native_identity(
     if shape == "header-mismatch":
         shim = root.parent / "fake-bin" / "pi"
         shim.write_text(shim.read_text().replace("header_id=$id", "header_id=wrong-entry"))
-    monkeypatch.setattr(serve, "require_established_project_root", lambda: root)
+    monkeypatch.setattr(serve, "resolve_cli_project_root", lambda: root)
     monkeypatch.setenv("MERIDIAN_PROJECT_DIR", str(root))
     runtime = resolve_runtime_root(root)
     original_conclude = serve.conclude_native_run
@@ -711,7 +711,7 @@ async def test_serve_keeps_run_error_and_cleans_up_after_conclusion(
     from meridian.lib.state.spawn.model import RunBoundaryOutcome
 
     install_boundary_shim(pi_runtime, "same")
-    monkeypatch.setattr(serve, "require_established_project_root", lambda: pi_runtime)
+    monkeypatch.setattr(serve, "resolve_cli_project_root", lambda: pi_runtime)
     monkeypatch.setenv("MERIDIAN_PROJECT_DIR", str(pi_runtime))
     run_error = RuntimeError("transport failed first")
     identity_error = NativeEntryMismatch(

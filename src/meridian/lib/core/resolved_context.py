@@ -76,7 +76,7 @@ class ResolvedContext:
 
         When *explicit_project_root* or *explicit_runtime_root* are supplied they
         take precedence over ``MERIDIAN_PROJECT_DIR``. ``runtime_root`` is derived
-        from ``project_root`` (``.meridian/id`` → user home) unless
+        from ``project_root`` identity into user state unless
         *explicit_runtime_root* is supplied — inherited ``_MERIDIAN_RUNTIME_DIR`` is
         never read.
         """

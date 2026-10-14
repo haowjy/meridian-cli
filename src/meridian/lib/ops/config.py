@@ -47,7 +47,7 @@ from meridian.lib.state.paths import (
 )
 from meridian.lib.state.user_paths import get_user_home
 
-_MISSING_PROJECT_CONFIG_MESSAGE = "no project config; run `meridian config init`"
+_MISSING_PROJECT_CONFIG_MESSAGE = "no project config here; run 'meridian init'"
 logger = structlog.get_logger(__name__)
 
 
@@ -90,6 +90,8 @@ class ConfigShowOutput(BaseModel):
     path: str
     project_root: str
     project_root_source: str
+    project_identity: str | None
+    project_identity_source: Literal["meridian.toml", "path", "unminted"]
     runtime_root: str | None = None
     runtime_root_source: str | None = None
     workspace: ConfigSurfaceWorkspace
@@ -106,6 +108,8 @@ class ConfigShowOutput(BaseModel):
         lines = [f"path: {self.path}"]
         lines.append(f"project_root: {self.project_root}")
         lines.append(f"project_root.source = {self.project_root_source}")
+        lines.append(f"project_identity: {self.project_identity or '(unminted)'}")
+        lines.append(f"project_identity_source: {self.project_identity_source}")
         if self.runtime_root is not None:
             lines.append(f"runtime_root: {self.runtime_root}")
         if self.runtime_root_source is not None:
@@ -177,11 +181,19 @@ class ConfigGetOutput(BaseModel):
     value: object
     source: Literal["builtin", "file", "user-config", "env var"]
     env_var: str | None = None
+    project_identity: str | None
+    project_identity_source: Literal["meridian.toml", "path", "unminted"]
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
         source_note = self.source if self.env_var is None else f"{self.source} ({self.env_var})"
-        return f"{self.key}: {_format_value_for_text(self.value)} [source: {source_note}]"
+        return "\n".join(
+            (
+                f"project_identity: {self.project_identity or '(unminted)'}",
+                f"project_identity_source: {self.project_identity_source}",
+                f"{self.key}: {_format_value_for_text(self.value)} [source: {source_note}]",
+            )
+        )
 
 
 class ConfigResetInput(BaseModel):
@@ -221,6 +233,16 @@ def _resolve_project_authority(project_root: str | None) -> RuntimeAuthoritySnap
 
 def _resolve_project_root(project_root: str | None) -> Path:
     return _resolve_project_authority(project_root).project_root
+
+
+def _project_identity_source(
+    authority: RuntimeAuthoritySnapshot,
+) -> Literal["meridian.toml", "path", "unminted"]:
+    if authority.identity_tier == "adhoc":
+        return "path"
+    if authority.project_id is None:
+        return "unminted"
+    return "meridian.toml"
 
 
 def _resolve_option(key: str) -> ConfigOptionDescriptor:
@@ -537,6 +559,8 @@ def config_show_sync(payload: ConfigShowInput) -> ConfigShowOutput:
         path=surface.project_config.write_path.as_posix(),
         project_root=surface.project_root.as_posix(),
         project_root_source=surface.authority.project_root_source,
+        project_identity=surface.authority.project_id,
+        project_identity_source=_project_identity_source(surface.authority),
         runtime_root=(
             surface.authority.runtime_root.as_posix()
             if surface.authority.runtime_root is not None
@@ -579,7 +603,8 @@ def config_set_sync(payload: ConfigSetInput) -> ConfigSetOutput:
 
 
 def config_get_sync(payload: ConfigGetInput) -> ConfigGetOutput:
-    project_root = _resolve_project_root(payload.project_root)
+    authority = _resolve_project_authority(payload.project_root)
+    project_root = authority.project_root
     option = _resolve_option(payload.key)
     surface = build_config_surface(project_root)
     source, env_var = _source_for_path(surface, option.field_path)
@@ -591,6 +616,8 @@ def config_get_sync(payload: ConfigGetInput) -> ConfigGetOutput:
         ),
         source=source,
         env_var=env_var,
+        project_identity=authority.project_id,
+        project_identity_source=_project_identity_source(authority),
     )
 
 

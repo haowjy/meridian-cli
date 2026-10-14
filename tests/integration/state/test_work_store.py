@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.state.paths import RuntimePaths
-from meridian.lib.state.user_paths import get_project_id
+from meridian.lib.state.project_identity import resolve_project_identity
 from meridian.lib.state.work_repository import (
     archive_work_item,
     create_work_item,
@@ -126,10 +126,10 @@ def test_create_archive_and_reopen_use_project_templated_context_work_paths(
         encoding="utf-8",
     )
 
-    assert get_project_id(project_root) is None
+    assert resolve_project_identity(project_root).id is None
 
     item = create_work_item(runtime_root, "My feature")
-    project_uuid = get_project_id(project_root)
+    project_uuid = resolve_project_identity(project_root).id
     assert project_uuid is not None
     active_dir = project_root / "contexts" / project_uuid / "work" / item.name
     archived_dir = project_root / "contexts" / project_uuid / "archive" / "work" / item.name
