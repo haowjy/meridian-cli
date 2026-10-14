@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.9] - 2026-10-14
+
 ### Fixed
 - Idle push, warning, and compaction now work on OpenCode 2.x (before: never
   armed). `openai`-provider sessions are scheduled against an estimated 30-minute
