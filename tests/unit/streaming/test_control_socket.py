@@ -8,6 +8,7 @@ import pytest
 from meridian.lib.streaming import control_socket as control_socket_module
 from meridian.lib.streaming.control_socket import (
     UNIX_SOCKET_PATH_MAX_BYTES,
+    bounded_socket_path,
     control_socket_path,
 )
 from tests.conftest import posix_only
@@ -24,6 +25,18 @@ def test_control_socket_path_is_bounded_and_unique_for_long_runtime_root() -> No
     assert len(os.fsencode(first)) <= UNIX_SOCKET_PATH_MAX_BYTES
     assert first == repeated
     assert first != second
+
+
+@posix_only
+def test_bounded_app_socket_path_is_deterministic_for_long_runtime_root() -> None:
+    runtime_root = Path.cwd() / ("pathologically-long-runtime-root-" * 10)
+
+    first = bounded_socket_path(runtime_root, "app")
+    repeated = bounded_socket_path(runtime_root, "app")
+
+    assert len(os.fsencode(runtime_root)) > UNIX_SOCKET_PATH_MAX_BYTES
+    assert len(os.fsencode(first)) <= UNIX_SOCKET_PATH_MAX_BYTES
+    assert first == repeated
 
 
 @posix_only
