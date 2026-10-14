@@ -35,7 +35,6 @@ from meridian.lib.state.spawn_store import (
     finalize_spawn,
     get_spawn,
     list_spawns,
-    next_spawn_id,
     record_cancel_intent,
     record_runner_exit,
     record_spawn_exited,
@@ -697,7 +696,7 @@ def test_spawn_queries_read_v2_state_and_prompt(tmp_path: Path) -> None:
     assert row.prompt == "world"
 
 
-def test_next_and_reserved_spawn_ids_ignore_opaque_dirs_and_honor_highest_seed(
+def test_reserved_spawn_ids_ignore_opaque_dirs_and_honor_highest_seed(
     tmp_path: Path,
 ) -> None:
     runtime_root = _state_root(tmp_path)
@@ -711,9 +710,7 @@ def test_next_and_reserved_spawn_ids_ignore_opaque_dirs_and_honor_highest_seed(
             (spawn_dir / "state.json").write_text(state_payload, encoding="utf-8")
     (runtime_root / "spawn-id-counter").write_text("20\n", encoding="utf-8")
 
-    assert next_spawn_id(runtime_root) == "p21"
     assert reserve_spawn_id(runtime_root) == "p21"
-    assert next_spawn_id(runtime_root) == "p22"
     assert (runtime_root / "spawn-id-counter").read_text(encoding="utf-8").strip() == "21"
 
 
