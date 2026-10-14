@@ -12,15 +12,14 @@ argv
                     ├── startup_class   → telemetry mode + primary-launch handling
                     ├── bootstrap_plan  → state preparation + cwd auto-init policy
                     ├── telemetry_mode
-                    ├── lazy_target     → import path string (deferred import)
-                    └── redirect        → optional redirect (e.g. models list → mars models list)
+                    └── root_source     → cwd or post-parse argv root resolution
 ```
 
 `COMMAND_CATALOG` in `startup/catalog.py` is the single source of truth for routing. The startup path never queries the extension registry or any command module for routing decisions. Classification happens before anything expensive loads.
 
 ## Key Rules
 
-- **Lazy imports everywhere.** `_register_commands_for_invocation()` imports only the module group matching the first positional token. Full registration fires only for `--help`. `make_lazy_command("module.path:function")` in `lazy_dispatch.py` registers a Cyclopts handler without importing it.
+- **Selective command imports.** `_register_commands_for_invocation()` imports and explicitly registers only the module group matching the first positional token. Full registration fires only for `--help`.
 - **`app_tree.py` breaks the circular import.** It defines top-level Cyclopts app objects (`spawn_app`, `session_app`, etc.) without importing any command implementations. If you import command implementations from `app_tree.py`, the lazy strategy collapses.
 - **`to_cli_output()` dispatch, not `isinstance` in `main.py`.** Command handlers return typed result objects. Each implements `to_cli_output()`. Adding result types does not require editing `main.py`.
 - **Read-only invocation classes never initialize authority or telemetry.** `READ_ROOTLESS`, `READ_PROJECT`, and `READ_RUNTIME` never allocate project/session IDs or create missing runtime roots. Discovery within an existing runtime may catch up its disposable history index under the state layer's coordination locks; it must not mutate lifecycle authority.
@@ -57,7 +56,6 @@ argv
 - `argv_normalization.py` — pre-classifier canonicalization of session-initiation flags; `validate_fork_mode()`; `ForkModeResolution`
 - `startup/catalog.py` — `COMMAND_CATALOG`, `CommandDescriptor`
 - `startup/classify.py` — `classify_invocation()`
-- `startup/lazy_dispatch.py` — `make_lazy_command()`
 
 ## Anti-Patterns
 

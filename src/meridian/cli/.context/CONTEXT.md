@@ -8,9 +8,7 @@ heavy module loads. `CommandDescriptor` carries all routing information:
 - `startup_class` — drives telemetry mode + primary-launch background repairs (TRIVIAL, READ_ROOTLESS, READ_PROJECT, READ_RUNTIME, WRITE_PROJECT, WRITE_RUNTIME, PRIMARY_LAUNCH, SERVICE_ROOTLESS, SERVICE_RUNTIME)
 - `bootstrap_plan` — state preparation plus cwd auto-init policy
 - `telemetry_mode` — `none | stderr | segment`
-- `lazy_target` — import path string for the Cyclopts handler
 - `root_source` — `"cwd"` (default) or `"argv"` (post-parse root resolution)
-- `redirect` — optional redirect policy (e.g. `models list` → `mars models list`)
 
 The catalog is the single source of truth for routing. The CLI startup path
 never queries the extension registry for routing answers.
@@ -34,21 +32,17 @@ telemetry, spawn no writer thread, create no UUID, and make no filesystem mutati
 
 ## Lazy Import Strategy
 
-Four independent mechanisms reduce startup latency:
+Three independent mechanisms reduce startup latency:
 
 1. **Selective command registration** — `_register_commands_for_invocation()`
    imports only the module group matching the first positional token.
    Full registration fires only for `--help`.
 
-2. **`lazy_dispatch.py`** — `make_lazy_command("module.path:function")` returns
-   a callable that imports only when invoked. Cyclopts holds registrations
-   without triggering imports.
-
-3. **`app_tree.py` pattern** — defines top-level Cyclopts app objects
+2. **`app_tree.py` pattern** — defines top-level Cyclopts app objects
    (`spawn_app`, `session_app`, …) without importing any command implementations.
    Breaks the circular import where importing app objects pulled in all commands.
 
-4. **Heavy module deferral** — `primary_launch` and `mars_passthrough` imported
+3. **Heavy module deferral** — `primary_launch` and `mars_passthrough` imported
    inside handler functions, not at module scope.
 
 Together these mechanisms keep startup and help paths from importing command
