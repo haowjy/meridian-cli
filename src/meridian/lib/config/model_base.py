@@ -13,7 +13,6 @@ from meridian.lib.utils.json_shapes import json_list
 class ConfigModel(BaseModel):
     """Base for models carrying file-key warning policy."""
 
-    config_ignored_keys: ClassVar[frozenset[str]] = frozenset()
     config_silences_extras: ClassVar[bool] = False
 
 

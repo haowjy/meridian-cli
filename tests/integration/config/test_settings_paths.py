@@ -308,6 +308,28 @@ def test_config_loader_owns_unknown_context_key_warning(
     assert set(loaded.dynamic.context) == {"work", "kb"}
 
 
+def test_malformed_hooks_table_logs_no_unknown_key_warning(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    config_path = project_root / "meridian.toml"
+    config_path.write_text("[hooks]\na = 1\n", encoding="utf-8")
+
+    with (
+        caplog.at_level(logging.WARNING, logger="meridian.lib.config.errors"),
+        pytest.raises(ValueError) as exc_info,
+    ):
+        load_config(project_root)
+
+    assert str(exc_info.value) == (
+        "Invalid value for 'hooks': expected array[table], got dict ({'a': 1}) "
+        f"in '{config_path}'."
+    )
+    assert caplog.messages == []
+
+
 def test_load_config_keeps_history_unknown_keys_forbidden(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
