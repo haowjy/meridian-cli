@@ -340,21 +340,11 @@ def maybe_bootstrap_runtime_state(
 
     resolution = resolve_cli_project_root()
     project_root = resolution.project_root
-    auto_initialized_cwd = False
     if not resolution.established or project_root is None:
-        if plan is not None and plan.auto_init_cwd and resolution.source == "cwd":
-            project_root = Path.cwd().resolve()
-            auto_initialized_cwd = True
-        else:
-            exit_no_established_project()
+        exit_no_established_project()
     assert project_root is not None
 
     try:
-        if auto_initialized_cwd:
-            from meridian.lib.ops.config import ConfigInitInput, config_init_sync
-
-            config_init_sync(ConfigInitInput(project_root=project_root.as_posix()))
-
         from meridian.lib.bootstrap.services import (
             prepare_for_project_read,
             prepare_for_project_write,

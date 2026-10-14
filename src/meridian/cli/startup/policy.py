@@ -50,4 +50,3 @@ class BootstrapPlan:
     """Pre-dispatch filesystem bootstrap policy for a command."""
 
     state_requirement: StateRequirement
-    auto_init_cwd: bool = False
