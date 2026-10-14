@@ -26,8 +26,7 @@ spawn), `continue_target_run`, and the retention protected set and dependencies.
 Retention keeps a spawn's numeric latest run, latest bound run (has
 `session_instance_id`) and distinct continuation source until the whole spawn can
 retire. Surfaces, reference selection, archive and pruning call these; never
-re-derive "latest" locally. Every launch and continue still mints a new bare
-spawn; later-run allocation is not implemented.
+re-derive "latest" locally.
 
 **`dogfood_migration.py`** — one-time migration of PR 1 dogfood rows, run by
 `meridian doctor` and primary-launch repairs. Delete this module once no dogfood
