@@ -12,6 +12,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    RootModel,
     StringConstraints,
     ValidationError,
     field_validator,
@@ -90,25 +91,28 @@ class HookSpec(BaseModel):
         return self.name or self.event or self.builtin or "hook"
 
 
-def normalize_hooks_array(raw_value: object, *, source: str) -> tuple[HookSpec, ...]:
-    """Validate and normalize one TOML hooks array into typed specifications."""
+class HookConfigSection(RootModel[tuple[HookSpec, ...]]):
+    """Validated representation of one ``[[hooks]]`` array."""
+
+    model_config = ConfigDict(frozen=True, strict=True)
+
+    @field_validator("root", mode="before")
+    @classmethod
+    def _tuple_rows(cls, value: object) -> object:
+        values = json_list(value)
+        return tuple(values) if values is not None else value
+
+
+def warn_unknown_hook_keys(raw_value: object, *, source: str) -> None:
+    """Warn for ignored keys in one configured hooks array."""
 
     values = json_list(raw_value)
     if values is None:
-        raise ValueError(
-            f"Invalid value for '{source}': expected array[table], "
-            f"got {type(raw_value).__name__} ({raw_value!r})."
-        )
-
-    specs: list[HookSpec] = []
+        return
     for index, item in enumerate(values, start=1):
-        row_source = f"{source}[{index}]"
         if not is_json_object(item):
-            raise ValueError(
-                f"Invalid value for '{row_source}': expected table, "
-                f"got {type(item).__name__} ({item!r})."
-            )
-
+            continue
+        row_source = f"{source}[{index}]"
         warn_unknown_model_keys(item, model=HookSpec, source=row_source)
         raw_when = item.get("when")
         if raw_when is not None:
@@ -117,11 +121,21 @@ def normalize_hooks_array(raw_value: object, *, source: str) -> tuple[HookSpec, 
                 model=HookWhenSpec,
                 source=f"{row_source}.when",
             )
-        try:
-            specs.append(HookSpec.model_validate(item))
-        except ValidationError as error:
-            raise config_validation_error(error, source=row_source) from None
-    return tuple(specs)
+
+
+def normalize_hooks_array(raw_value: object, *, source: str) -> tuple[HookSpec, ...]:
+    """Validate and normalize one TOML hooks array into typed specifications."""
+
+    if json_list(raw_value) is None:
+        raise ValueError(
+            f"Invalid value for '{source}': expected array[table], "
+            f"got {type(raw_value).__name__} ({raw_value!r})."
+        )
+    warn_unknown_hook_keys(raw_value, source=source)
+    try:
+        return HookConfigSection.model_validate(raw_value).root
+    except ValidationError as error:
+        raise config_validation_error(error, source=source) from None
 
 
 def _slugify_hook_name_component(raw: str) -> str:

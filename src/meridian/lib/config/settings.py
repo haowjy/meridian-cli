@@ -3,9 +3,7 @@
 from meridian.lib.config.dynamic_sections import (
     DYNAMIC_SECTION_DESCRIPTORS,
     merge_dynamic_sections,
-    normalize_context_table,
     normalize_dynamic_sections,
-    normalize_work_table,
 )
 from meridian.lib.config.loader import (
     OPTION_CATALOG,
@@ -64,9 +62,7 @@ __all__ = [
     "harness_idle_model",
     "load_config",
     "merge_dynamic_sections",
-    "normalize_context_table",
     "normalize_dynamic_sections",
-    "normalize_work_table",
     "resolve_allow_builtin_agents_for_launch",
     "resolve_opencode_version_for_launch",
     "resolve_pi_disable_managed_bash",

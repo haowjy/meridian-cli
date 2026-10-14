@@ -26,9 +26,11 @@ def validation_error_path(location: ValidationPath) -> str:
         if isinstance(item, int):
             if parts:
                 parts[-1] = f"{parts[-1]}[{item + 1}]"
+            else:
+                parts.append(f"[{item + 1}]")
             continue
         parts.append(item)
-    return ".".join(parts) or "config"
+    return ".".join(parts).replace(".[", "[") or "config"
 
 
 def config_validation_error(
@@ -42,7 +44,12 @@ def config_validation_error(
     detail = error.errors(include_url=False)[0]
     path = path_formatter(detail["loc"])
     if source is not None:
-        path = source if path == "config" else f"{source}.{path}"
+        if path == "config":
+            path = source
+        elif path.startswith("["):
+            path = f"{source}{path}"
+        else:
+            path = f"{source}.{path}"
     error_type = detail["type"]
     raw_value = detail.get("input")
     got = f"{type(raw_value).__name__} ({raw_value!r})"
@@ -95,9 +102,7 @@ def warn_unknown_model_keys(
     ignored_keys: frozenset[str] = (
         model.config_ignored_keys() if issubclass(model, ConfigModel) else frozenset()
     )
-    silences_extras = (
-        model.config_silences_extras() if issubclass(model, ConfigModel) else False
-    )
+    silences_extras = model.config_silences_extras() if issubclass(model, ConfigModel) else False
     for key in raw_value:
         if key in model.model_fields:
             continue

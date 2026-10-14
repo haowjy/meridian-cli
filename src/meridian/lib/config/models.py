@@ -78,9 +78,7 @@ def normalize_string_sequence(
             )
         compact = item.strip()
         if not compact:
-            raise ValueError(
-                f"Invalid value for '{source}': expected non-empty {empty_entries}."
-            )
+            raise ValueError(f"Invalid value for '{source}': expected non-empty {empty_entries}.")
         normalized.append(compact)
     return tuple(normalized)
 
@@ -406,6 +404,21 @@ class NotifyConfig(ConfigModel):
         return value
 
 
+class WorkArtifactsConfig(ConfigModel):
+    """Artifact behavior nested under the work-item settings."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore", strict=True)
+
+    sync: str | None = None
+
+    @field_validator("sync")
+    @classmethod
+    def _validate_sync(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_required_string(value, source="work.artifacts.sync")
+
+
 class WorkConfig(ConfigModel):
     """Work-item behavior settings."""
 
@@ -413,6 +426,15 @@ class WorkConfig(ConfigModel):
 
     default_worktree: bool = False
     worktree_base: str | None = None
+    # Inspection-only dynamic values are not part of operational config snapshots.
+    artifacts: WorkArtifactsConfig | None = Field(default=None, exclude=True)
+
+    @field_validator("worktree_base")
+    @classmethod
+    def _validate_worktree_base(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_required_string(value, source="work.worktree_base")
 
 
 class PrimaryConfig(ConfigModel):
@@ -581,12 +603,8 @@ def harness_idle_model(
         option = config_field(
             f"harness.{normalized}.idle.{field_name}",
             value_kind="int" if field_name == "ttl_seconds" else "bool",
-            file_aliases=(
-                file_alias(("harness", normalized, "idle"), field_name),
-            ),
-            env_vars=(
-                f"MERIDIAN_HARNESS_IDLE_{field_name.upper()}_{normalized.upper()}",
-            ),
+            file_aliases=(file_alias(("harness", normalized, "idle"), field_name),),
+            env_vars=(f"MERIDIAN_HARNESS_IDLE_{field_name.upper()}_{normalized.upper()}",),
         )
         annotation = Annotated[(model_field.annotation, *model_field.metadata, option)]
         fields[field_name] = (

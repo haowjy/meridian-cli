@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import tomllib
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
 
 _OUTPUT_VERBOSITY_PRESETS = frozenset({"quiet", "normal", "verbose", "debug"})
 
@@ -53,6 +56,7 @@ class DynamicSectionDescriptor:
 
     section_key: str
     merge_kind: DynamicMergeKind
+    model: type[BaseModel] | None
     scaffold_lines: tuple[str, ...] = ()
 
 
