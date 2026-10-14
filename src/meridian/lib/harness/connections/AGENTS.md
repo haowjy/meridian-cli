@@ -17,6 +17,9 @@ Transports differ at the wire level:
 - **Codex** (`codex_ws.py`): real WebSocket to a managed `codex app-server`, JSON-RPC 2.0.
   Codex's `requestApproval` and `requestUserInput` messages are dispatched to
   either `AutoAcceptHandler` (spawn paths) or `InteractiveHandler` (managed-primary attach).
+  Handler capabilities are declared on the `ServerRequestHandler` protocol
+  (`no_runtime_hitl`) and read directly; never probe them with `getattr` defaults —
+  two sites with different defaults once reported contradictory HITL support.
 - **OpenCode** (`opencode_connection.py` dispatcher → `opencode_http.py` V1 /
   `opencode_v2_http.py` V2): one registered class resolves the backend version at
   `start()` from `MERIDIAN_HARNESS_OPENCODE_VERSION` (projected from

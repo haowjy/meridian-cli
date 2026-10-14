@@ -111,7 +111,7 @@ Three concentric layers, each defined by function scope:
 |---------|-------|-----|
 | `SPAWN_PREPARE` | Yes | Spawn prepare dry-run, spawn execute (fg/bg), streaming-serve prepare — needs `harness_model` |
 | `PRIMARY` | Yes | Interactive primary |
-| `DIRECT` | No | Tests and truly pre-resolved `SpawnRequest` only |
+| `DIRECT` | No | Tests only, via `tests/support/launch.py`; `resolve_launch_policy` rejects it without a prepared surface |
 
 `DIRECT` does not mean “pass model to Mars”; it means skip policy and trust the request.
 `SPAWN_PREPARE` passes effective `deny_headless_harnesses` to Mars as caller

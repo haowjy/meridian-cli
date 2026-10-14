@@ -15,7 +15,9 @@ External plugins follow the same rule: import `Hook`, `HookContext`, etc. from `
 - `fs.py` — `file_lock()`, `atomic_write_text()` — cross-platform locking and atomic
   replacement for plugins
 - `git.py` — `resolve_clone_path()` — git clone path helpers
-- `config.py` — `get_user_config()` — user config access
+- `config.py` — `get_user_config()` — user config access. Resolves the path with
+  `resolve_user_config_path()` so `--config` and `MERIDIAN_CONFIG` apply; never read
+  `~/.meridian/config.toml` directly
 
 ## Import Pattern
 

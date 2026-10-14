@@ -58,36 +58,34 @@ command catalog — no runtime mutation of shared `App` objects.
 The canonical resolver is `resolve_cli_project_root() -> CliProjectRoot` in
 `utils.py`. It returns a typed result (never raises):
 
-- `project_root: Path | None` — `None` when the project isn't established
+- `project_root: Path | None`
 - `source: "explicit" | "env" | "cwd"` — how the root was discovered
-- `established: bool` — `True` when the project is usable for project-required commands
+- `established: bool`
 
-### Established-project detection
+### Established-project detection is currently a no-op
 
-A project is **established** when:
+The root is `-C <path>`, else `MERIDIAN_PROJECT_DIR`, else the literal cwd, and
+`established` is always `True` (since #388). Nothing checks for a project marker,
+so any cwd is treated as a project: write commands run there and
+`prepare_for_runtime_write()` creates the project identity (`meridian.toml`) on
+first use. The established/not-established distinction below is shape without
+behavior. `cwd_has_project_id()` (a literal `meridian.toml`/`mars.toml` check) still
+exists in `lib/config/project_root.py`, but nothing calls it.
 
-1. **Explicit targeting:** `-C <path>` or `MERIDIAN_PROJECT_DIR`, OR
-2. **Literal-cwd marker:** `cwd_has_project_id(cwd)` returns `True` — the CWD
-   contains its own `.meridian/id` file. **No ancestor walk.**
-
-CWD resolution where `cwd_has_project_id()` returns `False` is **not established** —
-project-required commands exit 1; rootless commands exit 0.
-
-Descriptors still carry `bootstrap_plan.auto_init_cwd`, but the branch that
-consumes it is currently unreachable because `resolve_cli_project_root()` always
-reports an established root.
+Consequences: `bootstrap_plan.auto_init_cwd` is unreachable, and the no-project
+exit never fires from cwd resolution. `.context/TODO` tracks deleting the flag or
+restoring a real check — decide that before relying on either.
 
 ### Adapters
 
 - `require_established_project_root() -> Path` — calls `resolve_cli_project_root()`
-  and raises `SystemExit(1)` via `exit_no_established_project()` if not established.
-  Used by project-required commands (spawn, work, telemetry).
+  and raises `SystemExit(1)` via `exit_no_established_project()` if not established
+  (currently never). Used by project-required commands (spawn, work, telemetry).
 - `optional_cli_project_root_posix() -> str | None` — returns `None` when not
   established. Used by config/inspection commands that degrade gracefully.
 - `exit_no_established_project()` — the single CLI-edge `SystemExit(1)`.
 
-`resolve_cli_project_root()` never raises. The no-project exit is an explicit
-decision outside any `except Exception` guard.
+`resolve_cli_project_root()` never raises.
 
 ## `to_cli_output()` Dispatch
 

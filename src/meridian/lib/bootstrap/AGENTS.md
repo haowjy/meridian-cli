@@ -33,6 +33,7 @@ Read-only preparation never runs this GC.
 
 - **Don't instantiate `SpawnApplicationService` directly.** Use `build_spawn_application_service(runtime_write_ctx)`. It's the correct factory.
 - **Post-parse bootstrap exception**: commands with `root_source = RootSource.ARGV` (e.g. `meridian init [path]`) call `prepare_for_project_write(arg_derived_root)` themselves after argument parsing. All other commands receive a pre-prepared context.
+- **One authority per context.** Each `prepare_for_*` resolves a `RuntimeAuthoritySnapshot` once and passes it to `load_config(..., authority=authority)`. Config resolved without it re-derives paths and can diverge from a frozen or custom snapshot.
 - **Auto-init metadata is currently inert:** descriptors still carry `bootstrap_plan.auto_init_cwd`, but the CLI bootstrap branch that consumes it is unreachable because project-root resolution always reports an established root.
 - **Entrypoint carriers** (`SpawnEntryPoint`, `ExtensionEntryPoint`) carry `ApplicationContext + ApplicationServices` downstream. Use `build_spawn_entrypoint()`, `build_extension_entrypoint()` — don't assemble them manually.
 

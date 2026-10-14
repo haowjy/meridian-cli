@@ -281,5 +281,3 @@ discovery stays in ops and artifact presence checking stays in the store.
 
 - [launch/.context/CONTEXT.md](../../launch/.context/CONTEXT.md) — mechanism layer
   ops/spawn drives
-- [spawn/.context/CONTEXT.md](../../spawn/.context/CONTEXT.md) — archive visibility
-  ops/spawn reads
