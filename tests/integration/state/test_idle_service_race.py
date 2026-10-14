@@ -1,7 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from meridian.lib.config.settings import MeridianConfig
+from meridian.lib.config.models import MeridianConfig
 from meridian.lib.harness.idle_types import IdleFacts
 from meridian.lib.idle.service import IdleService
 from meridian.lib.state.idle_store import IdleStore

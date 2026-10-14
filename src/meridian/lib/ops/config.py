@@ -9,6 +9,9 @@ import structlog
 from pydantic import BaseModel, ConfigDict, field_serializer
 
 from meridian.lib.config.context_config import ContextSourceType
+from meridian.lib.config.dynamic_sections import DYNAMIC_SECTION_DESCRIPTORS
+from meridian.lib.config.loader import OPTION_CATALOG
+from meridian.lib.config.models import MeridianConfig, PrimaryConfig
 from meridian.lib.config.preserving_edit import (
     mutate_project_config,
     reset_scalar_option,
@@ -22,12 +25,6 @@ from meridian.lib.config.schema import (
     ConfigOptionDescriptor,
     normalize_runtime_scalar,
     parse_cli_scalar,
-)
-from meridian.lib.config.settings import (
-    DYNAMIC_SECTION_DESCRIPTORS,
-    OPTION_CATALOG,
-    MeridianConfig,
-    PrimaryConfig,
 )
 from meridian.lib.config.workspace import WorkspaceFinding
 from meridian.lib.core.util import FormatContext, to_jsonable

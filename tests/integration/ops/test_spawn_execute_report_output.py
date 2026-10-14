@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 import meridian.lib.ops.spawn.execute as execute_module
 import meridian.lib.ops.spawn.execute_init as execute_init_module
 import meridian.lib.ops.spawn.execute_runner as execute_runner_module
-from meridian.lib.config.settings import load_config
+from meridian.lib.config.loader import load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.lifecycle import LifecycleEvent, SpawnLifecycleService
 from meridian.lib.core.native_identity import NativeKeyFields

@@ -60,7 +60,6 @@ module and run inside that transaction.
 
 ## Entry Points
 
-- `settings.py` — compatibility re-exports for the split config implementation
 - `models.py` — core section models and the `MeridianConfig` schema root
 - `harness_models.py` — generated per-harness profiles and idle settings
 - `history_models.py` — history retention and archive settings

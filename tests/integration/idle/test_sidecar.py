@@ -7,7 +7,7 @@ from typing import Any, cast
 
 import pytest
 
-from meridian.lib.config.settings import MeridianConfig
+from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.codex_idle import pane_facts
 from meridian.lib.harness.connections.base import HarnessConnection

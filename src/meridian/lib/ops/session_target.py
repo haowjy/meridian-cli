@@ -215,7 +215,7 @@ def _archived_target(
     runtime_root: Path, row: SpawnRecord, *, ref: str, project_root: Path, deadline: float | None
 ) -> SessionLogTarget:
     """Stream the catalog-selected ZIP member in place; nothing is extracted."""
-    from meridian.lib.config.settings import load_config
+    from meridian.lib.config.loader import load_config
 
     if row.history_id is None:
         raise NativeSessionUnavailable(ref, "unbound")

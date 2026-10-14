@@ -10,7 +10,7 @@ from typing import cast
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from meridian.lib.config.settings import NotifyConfig
+from meridian.lib.config.models import NotifyConfig
 from meridian.lib.notify.channels.base import SendResult
 from meridian.lib.notify.notice import Notice
 

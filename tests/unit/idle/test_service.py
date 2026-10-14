@@ -4,7 +4,7 @@ from collections.abc import Callable
 from threading import Lock
 from typing import TypeVar
 
-from meridian.lib.config.settings import MeridianConfig
+from meridian.lib.config.models import MeridianConfig
 from meridian.lib.harness.idle_types import CacheTtl, DetectIdleTtl, IdleFacts
 from meridian.lib.idle.service import (
     AutocompactOffReader,

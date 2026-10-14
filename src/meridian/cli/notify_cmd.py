@@ -9,8 +9,8 @@ from cyclopts import Parameter
 
 from meridian.cli.app_tree import notify_app
 from meridian.cli.invocation import current_output_sink, get_global_options
+from meridian.lib.config.loader import load_config
 from meridian.lib.config.project_root import resolve_project_root_resolution
-from meridian.lib.config.settings import load_config
 from meridian.lib.notify.label import build_session_label
 from meridian.lib.notify.notice import manual_notice
 from meridian.lib.notify.service import SendReport, send

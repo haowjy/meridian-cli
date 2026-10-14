@@ -4,7 +4,7 @@ import json
 import subprocess
 from collections.abc import Sequence
 
-from meridian.lib.config.settings import NotifyConfig
+from meridian.lib.config.models import NotifyConfig
 from meridian.lib.notify.channels.command import CommandChannel
 from meridian.lib.notify.notice import Notice
 

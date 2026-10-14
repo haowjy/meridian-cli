@@ -12,13 +12,9 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.config.loader import OPTION_CATALOG, load_config
+from meridian.lib.config.models import MeridianConfig, NotifyConfig
 from meridian.lib.config.schema import ConfigOptionDescriptor, parse_env_scalar
-from meridian.lib.config.settings import (
-    OPTION_CATALOG,
-    MeridianConfig,
-    NotifyConfig,
-    load_config,
-)
 from meridian.lib.harness.idle_types import (
     DetectIdleTtl,
     IdleEvent,

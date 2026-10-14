@@ -10,12 +10,13 @@ from typing import TYPE_CHECKING, Any, Literal, ParamSpec, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from meridian.lib.config.loader import load_config
+from meridian.lib.config.models import MeridianConfig
 from meridian.lib.config.project_paths import ProjectConfigPaths, resolve_project_config_paths
 from meridian.lib.config.project_root import (
     ProjectRootSource,
     resolve_project_root_resolution,
 )
-from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.state.artifact_store import LocalStore

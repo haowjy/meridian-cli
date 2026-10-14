@@ -14,7 +14,7 @@ from meridian.lib.service_context import (
 )
 
 if TYPE_CHECKING:
-    from meridian.lib.config.settings import MeridianConfig
+    from meridian.lib.config.models import MeridianConfig
     from meridian.lib.core.lifecycle import SpawnLifecycleService
     from meridian.lib.core.spawn_service import SpawnApplicationService
     from meridian.lib.extensions.types import ExtensionSurface

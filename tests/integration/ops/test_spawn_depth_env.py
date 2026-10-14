@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.config.settings import load_config
+from meridian.lib.config.loader import load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import max_depth_reached
 from meridian.lib.ops.spawn.execute_init import depth_limits

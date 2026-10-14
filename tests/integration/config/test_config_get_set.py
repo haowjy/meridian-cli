@@ -8,7 +8,7 @@ from threading import Event, Thread
 import pytest
 
 import meridian.lib.ops.config as config_module
-from meridian.lib.config.settings import load_config
+from meridian.lib.config.loader import load_config
 from meridian.lib.ops.config import (
     ConfigGetInput,
     ConfigInitInput,

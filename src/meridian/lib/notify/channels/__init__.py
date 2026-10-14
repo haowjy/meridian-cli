@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from importlib import import_module
 from typing import cast
 
-from meridian.lib.config.settings import NotifyConfig
+from meridian.lib.config.models import NotifyConfig
 from meridian.lib.notify.channels.base import Channel, SendResult
 from meridian.lib.notify.notice import Notice
 

@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import ClassVar, cast
 
-from meridian.lib.config.settings import resolve_pi_harness_profile
+from meridian.lib.config.loader import resolve_pi_harness_profile
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.native_identity import (
     LaunchIntent,

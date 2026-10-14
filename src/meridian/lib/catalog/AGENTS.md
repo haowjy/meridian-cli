@@ -73,5 +73,5 @@ inventory asymmetry, `MarsResultCache` scoping contract, and fallback to merged 
 ## Related
 
 - `../launch/compiler.py` — consumes `AliasEntry` and `AgentProfile` from this layer
-- `../config/settings.py` — config defaults fed into launch compiler
+- `../config/models.py` — config defaults fed into launch compiler
 - `mars-agents` repo (sibling) — source of `.mars/agents/` and `.mars/models-merged.json`

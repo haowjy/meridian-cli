@@ -11,7 +11,7 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, field_validator
 if TYPE_CHECKING:
     from meridian.lib.catalog.agent import AgentProfile
     from meridian.lib.catalog.model_aliases import AliasEntry
-    from meridian.lib.config.settings import MeridianConfig
+    from meridian.lib.config.models import MeridianConfig
     from meridian.lib.ops.spawn.models import SpawnCreateInput
 
 _AUTOCOMPACT_TOKEN_MIN = 1000

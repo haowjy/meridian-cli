@@ -982,7 +982,7 @@ def test_failed_archive_and_restore_stages_are_reclaimed_on_retry(tmp_path, monk
 
 
 def test_small_retention_passes_progress_through_dependency_chain(tmp_path):
-    from meridian.lib.config.settings import HistoryArchiveConfig
+    from meridian.lib.config.history_models import HistoryArchiveConfig
     from meridian.lib.state.spawn.repository import write_state_locked
 
     root = tmp_path / "runtime"

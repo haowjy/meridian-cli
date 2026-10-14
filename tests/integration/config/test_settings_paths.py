@@ -3,10 +3,10 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.config.loader import load_config
 from meridian.lib.config.project_config_state import resolve_project_config_state
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.project_root import resolve_project_root_resolution
-from meridian.lib.config.settings import load_config
 from meridian.lib.ops.config import ConfigShowInput, config_show_sync
 from meridian.lib.ops.config_surface import build_config_surface
 from meridian.lib.ops.runtime import resolve_project_authority, resolve_runtime_authority_for_read
@@ -215,7 +215,7 @@ def test_load_config_preserves_unknown_and_deprecated_key_policy(
         encoding="utf-8",
     )
 
-    with caplog.at_level(logging.WARNING, logger="meridian.lib.config.settings"):
+    with caplog.at_level(logging.WARNING, logger="meridian.lib.config.errors"):
         config = load_config(project_root)
 
     assert caplog.messages == [
