@@ -138,6 +138,14 @@ def test_load_config_ignores_deleted_defaults_model_and_harness_keys(tmp_path: P
             "Invalid value for 'harness.pi.background_tasks.enabled': "
             "expected bool, got str ('yes').",
         ),
+        (
+            "[harness.claude]\nmodel = 3\n",
+            "Invalid value for 'harness.claude.model': expected str, got int (3).",
+        ),
+        (
+            "harness = { claude = 3 }\n",
+            "Invalid value for 'harness.claude': expected str or table, got int (3).",
+        ),
     ],
 )
 def test_load_config_reports_invalid_key_and_problem(

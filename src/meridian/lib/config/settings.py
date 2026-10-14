@@ -1805,7 +1805,11 @@ OPTION_CATALOG = build_option_catalog(MeridianConfig)
 def _validation_error_path(location: tuple[str | int, ...]) -> str:
     field_path = tuple(item for item in location if isinstance(item, str))
     option = OPTION_CATALOG.option_for_field_path(field_path)
-    if option is not None:
+    if (
+        option is not None
+        and len(field_path) == 1
+        and option.canonical_key.partition(".")[0] in {"defaults", "spawn", "timeouts"}
+    ):
         return option.canonical_key
 
     parts: list[str] = []
@@ -1839,6 +1843,13 @@ def _config_validation_error(error: ValidationError) -> ValueError:
     }
     expected = expected_by_type.get(error_type)
     if expected is not None:
+        if error_type == "model_type" and path in {
+            "harness.claude",
+            "harness.codex",
+            "harness.opencode",
+            "harness.pi",
+        }:
+            expected = "str or table"
         return ValueError(f"Invalid value for '{path}': expected {expected}, got {got}.")
 
     if error_type == "extra_forbidden":
