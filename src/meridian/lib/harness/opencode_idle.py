@@ -223,19 +223,17 @@ async def _backend_request(
             return int(response.status), await response.text()
 
 
-class OpenCodeIdleSensor:
-    """Translate a managed OpenCode 1.x session's raw stream into idle facts."""
+class _OpenCodeIdleSensorBase:
+    """Shared OpenCode sensor plumbing independent of backend dialect."""
 
     def __init__(
         self,
         ctx: IdleSensorContext,
         *,
-        now: Callable[[], float] = time.time,
         capture_pane: CapturePane = _capture_tmux_pane,
         request: BackendRequest | None = None,
     ) -> None:
         self._ctx = ctx
-        self._now = now
         self._capture_pane = capture_pane
         if request is None:
 
@@ -251,12 +249,6 @@ class OpenCodeIdleSensor:
             self._request = request
         self._events: asyncio.Queue[IdleEvent] = asyncio.Queue()
         self._busy = False
-        self._saw_busy = False
-        self._last_anchor_ms = now() * 1000
-        self._seen_user_messages: set[str] = set()
-        self._pending_user_messages: set[str] = set()
-        self._compaction_messages: set[str] = set()
-        self._compacting = False
 
     def _emit(
         self,
@@ -271,6 +263,62 @@ class OpenCodeIdleSensor:
                 turn_id=turn_id,
             )
         )
+
+    async def events(self) -> AsyncIterator[IdleEvent]:
+        while True:
+            event = await self._events.get()
+            if event.kind == "turn_end":
+                provider = await self._fetch_provider()
+                user, assistant = await self._fetch_message_excerpts()
+                event = replace(
+                    event,
+                    last_user_text=user,
+                    last_assistant_text=assistant,
+                    provider=provider,
+                )
+            yield event
+
+    async def _fetch_provider(self) -> str | None:
+        return None
+
+    async def _fetch_message_excerpts(self) -> tuple[str | None, str | None]:
+        raise NotImplementedError
+
+    async def facts(self) -> IdleFacts:
+        draft: Literal["yes", "no", "unknown"] = "unknown"
+        pane = self._ctx.tmux_pane
+        if pane:
+            capture = await self._capture_pane(pane)
+            if capture is not None:
+                draft = _draft_from_pane(capture) or "unknown"
+        return IdleFacts(
+            draft=draft,
+            busy=self._busy,
+            agents_running=0,
+            context_tokens=None,
+            harness_autocompact_off=False,
+        )
+
+
+class OpenCodeIdleSensor(_OpenCodeIdleSensorBase):
+    """Translate a managed OpenCode 1.x session's raw stream into idle facts."""
+
+    def __init__(
+        self,
+        ctx: IdleSensorContext,
+        *,
+        now: Callable[[], float] = time.time,
+        capture_pane: CapturePane = _capture_tmux_pane,
+        request: BackendRequest | None = None,
+    ) -> None:
+        super().__init__(ctx, capture_pane=capture_pane, request=request)
+        self._now = now
+        self._saw_busy = False
+        self._last_anchor_ms = now() * 1000
+        self._seen_user_messages: set[str] = set()
+        self._pending_user_messages: set[str] = set()
+        self._compaction_messages: set[str] = set()
+        self._compacting = False
 
     def _classify_pending_user_messages(self) -> None:
         for message_id in tuple(self._pending_user_messages):
@@ -328,23 +376,6 @@ class OpenCodeIdleSensor:
         self._last_anchor_ms = self._now() * 1000
         self._emit("turn_end", turn_id=_event_id(event))
 
-    async def events(self) -> AsyncIterator[IdleEvent]:
-        while True:
-            event = await self._events.get()
-            if event.kind == "turn_end":
-                provider = await self._fetch_provider()
-                user, assistant = await self._fetch_message_excerpts()
-                event = replace(
-                    event,
-                    last_user_text=user,
-                    last_assistant_text=assistant,
-                    provider=provider,
-                )
-            yield event
-
-    async def _fetch_provider(self) -> str | None:
-        return None
-
     async def _fetch_message_excerpts(self) -> tuple[str | None, str | None]:
         session_id = quote(self._ctx.harness_session_id, safe="")
         try:
@@ -357,21 +388,6 @@ class OpenCodeIdleSensor:
             return message_excerpts(json.loads(body))
         except (TimeoutError, OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError):
             return None, None
-
-    async def facts(self) -> IdleFacts:
-        draft: Literal["yes", "no", "unknown"] = "unknown"
-        pane = self._ctx.tmux_pane
-        if pane:
-            capture = await self._capture_pane(pane)
-            if capture is not None:
-                draft = _draft_from_pane(capture) or "unknown"
-        return IdleFacts(
-            draft=draft,
-            busy=self._busy,
-            agents_running=0,
-            context_tokens=None,
-            harness_autocompact_off=False,
-        )
 
     async def compact(self) -> CompactResult:
         if not self._ctx.tui_alive():
@@ -481,7 +497,7 @@ def _v2_message_excerpts(payload: object) -> tuple[str | None, str | None]:
     return message_excerpts(list(reversed(cast("list[object]", messages))))
 
 
-class OpenCodeV2IdleSensor(OpenCodeIdleSensor):
+class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
     """Translate OpenCode 2.x execution and inbox events into idle facts."""
 
     def __init__(
@@ -627,7 +643,6 @@ class OpenCodeV2IdleSensor(OpenCodeIdleSensor):
             waiter = asyncio.get_running_loop().create_future()
             self._compact_waiter = waiter
             self._compact_expected_id = None
-            self._compacting = True
             status, body = await asyncio.wait_for(
                 self._request("POST", f"{session_path}/compact", {}),
                 timeout=self._compact_timeout_seconds,
@@ -658,7 +673,6 @@ class OpenCodeV2IdleSensor(OpenCodeIdleSensor):
         except (OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError) as exc:
             return CompactResult("failed", str(exc))
         finally:
-            self._compacting = False
             self._compact_expected_id = None
             self._compact_waiter = None
         return CompactResult("ok")
@@ -670,7 +684,7 @@ def primary_idle_sensor(ctx: IdleSensorContext) -> IdleSensor:
     resolved = getattr(ctx.connection, "resolved_version", None)
     version: OpenCodeVersion
     if resolved in ("v1", "v2"):
-        version = cast("OpenCodeVersion", resolved)
+        version = resolved
     else:
         version = resolve_opencode_version(
             ctx.env.get("MERIDIAN_HARNESS_OPENCODE_VERSION"),
