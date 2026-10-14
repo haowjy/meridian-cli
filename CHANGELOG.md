@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.8] - 2026-10-14
+
 ### Upgrade notes
 - Direnv isolation is opt-in; no state migration. Older releases ignore the new
   launch policy. See [direnv upgrade notes](docs/upgrading.md#ignoring-direnv-unreleased).
