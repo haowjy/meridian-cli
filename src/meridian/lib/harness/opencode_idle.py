@@ -268,8 +268,10 @@ class _OpenCodeIdleSensorBase:
         while True:
             event = await self._events.get()
             if event.kind == "turn_end":
-                provider = await self._fetch_provider()
-                user, assistant = await self._fetch_message_excerpts()
+                provider, (user, assistant) = await asyncio.gather(
+                    self._fetch_provider(),
+                    self._fetch_message_excerpts(),
+                )
                 event = replace(
                     event,
                     last_user_text=user,
