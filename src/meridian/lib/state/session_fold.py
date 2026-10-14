@@ -5,7 +5,7 @@ Disk reads and lease ownership belong to session_store; replay accepts events.
 
 import uuid
 from collections.abc import Iterable, Mapping
-from typing import Any, Literal, Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -249,7 +249,7 @@ type SessionEvent = (
 )
 
 
-def parse_event(payload: dict[str, Any]) -> SessionEvent | None:
+def parse_event(payload: Mapping[str, object]) -> SessionEvent | None:
     event_type = payload.get("event")
     try:
         if event_type == "historical_import":

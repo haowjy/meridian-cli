@@ -116,6 +116,11 @@ dependency-neutral `lib/platform/atomic.py`. Never write state files with plain 
 - `append_text_line()` — binary mode so JSONL newline encoding and byte offsets
   remain stable.
 
+JSONL reads use `event_store.iter_jsonl()`: only newline-terminated rows are
+committed, empty rows are ignored, and malformed complete rows warn and skip by
+default. Callers such as the archive catalog that must fail closed select the
+strict malformed-row policy explicitly.
+
 A crash in the middle of a plain `open()` write leaves a partial file; partial
 `state.json` fails Pydantic validation on next read.
 

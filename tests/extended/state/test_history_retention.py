@@ -12,6 +12,7 @@ import pytest
 
 from meridian.lib.ops.session_archive import archive_history
 from meridian.lib.state import spawn_store
+from meridian.lib.state.event_store import JsonlDecodeError
 from meridian.lib.state.history_changes import HistoryChanges
 from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.retention_archive import (
@@ -21,6 +22,19 @@ from meridian.lib.state.retention_archive import (
     verify_archive,
 )
 from meridian.lib.state.retention_restore import restore_archive
+
+
+def test_receipt_catalog_ignores_empty_rows_but_fails_closed_on_corruption(
+    tmp_path: Path,
+) -> None:
+    catalog = tmp_path / "history-archives" / "catalog.jsonl"
+    catalog.parent.mkdir(parents=True)
+    catalog.write_text("\n", encoding="utf-8")
+    assert read_receipts(tmp_path) == ()
+
+    catalog.write_text("\n{not-valid-json}\n", encoding="utf-8")
+    with pytest.raises(JsonlDecodeError, match="Malformed JSONL row"):
+        read_receipts(tmp_path)
 
 
 def _selected_archive_locations(index: HistoryIndex, history_id: str, *, destination=None):

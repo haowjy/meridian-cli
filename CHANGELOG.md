@@ -13,6 +13,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `--ignore-direnv` / `--no-ignore-direnv` overrides. Undo direnv exports before
   primary and spawned harness launches; carry the setting to descendants.
 
+### Changed
+- Treat only newline-terminated JSONL rows as committed across sessions, archive
+  catalogs, and telemetry. Interrupted tails wait for completion instead of
+  appearing early.
+
 ### Fixed
 - Keep cleaned environments authoritative for OpenCode workspace config and
   version probes, and Pi auth/session directory defaults. No ambient-env reinjection.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -111,7 +112,7 @@ def read_launch_boundary_events(
 ) -> tuple[LaunchBoundaryEvent, ...]:
     data_path = launch_boundary_path(runtime_root, spawn_id)
 
-    def _parse(payload: dict[str, Any]) -> LaunchBoundaryEvent | None:
+    def _parse(payload: Mapping[str, object]) -> LaunchBoundaryEvent | None:
         try:
             return LaunchBoundaryEvent.model_validate(payload)
         except Exception:

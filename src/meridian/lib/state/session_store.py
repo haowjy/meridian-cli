@@ -2,10 +2,10 @@
 
 import os
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import ExitStack
 from pathlib import Path
-from typing import IO, Annotated, Any, Literal, NamedTuple, cast
+from typing import IO, Annotated, Literal, NamedTuple, cast
 
 import psutil
 from pydantic import BaseModel, BeforeValidator, ConfigDict
@@ -117,7 +117,7 @@ class StaleSessionCleanup(NamedTuple):
     materialized_scopes: tuple[MaterializedCleanupScope, ...]
 
 
-def _parse_model_observation(payload: dict[str, Any]) -> SessionModelObservationEvent | None:
+def _parse_model_observation(payload: Mapping[str, object]) -> SessionModelObservationEvent | None:
     if payload.get("event") != "model_observation":
         return None
     return SessionModelObservationEvent.model_validate(payload)
@@ -209,7 +209,7 @@ def _records_by_session(
 ) -> dict[str, SessionRecord]:
     paths = RuntimePaths.from_root_dir(runtime_root)
 
-    def selected_event(payload: dict[str, Any]) -> SessionEvent | None:
+    def selected_event(payload: Mapping[str, object]) -> SessionEvent | None:
         if chat_ids is not None:
             record = (
                 payload.get("record") if payload.get("event") == "historical_import" else payload

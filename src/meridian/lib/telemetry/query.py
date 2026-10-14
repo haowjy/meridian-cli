@@ -6,7 +6,6 @@ import re
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
 
 from meridian.lib.telemetry.reader import discover_segments, read_events
 
@@ -32,7 +31,7 @@ def query_events(
     domain: str | None = None,
     ids_filter: dict[str, str] | None = None,
     limit: int | None = None,
-) -> Generator[dict[str, Any], None, None]:
+) -> Generator[dict[str, object], None, None]:
     """Query historical telemetry events with optional filters.
 
     Reads all segments in mtime order, applying filters.
