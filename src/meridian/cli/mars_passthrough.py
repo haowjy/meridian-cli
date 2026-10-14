@@ -32,8 +32,12 @@ _MUTATING_COMMANDS = frozenset(
         "rename",
         "override",
         "adopt",
+        "version",
+        "repair",
+        "resolve",
     }
 )
+_MUTATING_COMMAND_PAIRS = frozenset({("models", "alias")})
 _USER_MUTATION_ERROR = (
     "no project Mars root here; run 'meridian init --link', or use "
     "'meridian mars --user …'"
@@ -114,6 +118,17 @@ def _mars_subcommand(args: Sequence[str]) -> str | None:
     return next((token for token in args if not token.startswith("-")), None)
 
 
+def _is_mars_mutation(args: Sequence[str]) -> bool:
+    commands = tuple(token for token in args if not token.startswith("-"))
+    return bool(
+        commands
+        and (
+            commands[0] in _MUTATING_COMMANDS
+            or commands[:2] in _MUTATING_COMMAND_PAIRS
+        )
+    )
+
+
 def decode_json_values(raw_stdout: str) -> list[object] | None:
     decoder = json.JSONDecoder()
     parsed_values: list[object] = []
@@ -147,7 +162,7 @@ def parse_mars_passthrough(
 
     # Gate before root injection so Mars's add/link auto-init can never write a
     # mars.toml into a bare project directory.
-    if not user_scope and roots.scope == "user" and subcommand in _MUTATING_COMMANDS:
+    if not user_scope and roots.scope == "user" and _is_mars_mutation(mars_args):
         raise ValueError(_USER_MUTATION_ERROR)
     if user_scope and subcommand == "init" and any(
         token == "--link" or token.startswith("--link=") for token in mars_args
