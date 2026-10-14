@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Union, get_args, get_origin
 from pydantic import BaseModel
 
 from meridian.lib.config.model_base import ConfigModel
-from meridian.lib.utils.json_shapes import is_json_object, json_list
+from meridian.lib.utils.json_shapes import json_list, json_object
 
 if TYPE_CHECKING:
     from pydantic import ValidationError
@@ -117,16 +117,33 @@ def warn_unknown_model_keys(
     """Warn for ignored Pydantic extras without duplicating field validation."""
 
     root_field = model.model_fields.get("root")
-    root_model = (
-        _nested_model_type(root_field.annotation) if root_field is not None else None
-    )
+    root_annotation = root_field.annotation if root_field is not None else None
+    root_model = _nested_model_type(root_annotation)
     root_items = json_list(raw_value)
     if root_model is not None and root_items is not None:
         for index, item in enumerate(root_items, start=1):
             warn_unknown_model_keys(item, model=root_model, source=f"{source}[{index}]")
         return
 
-    if not is_json_object(raw_value):
+    root_args = get_args(root_annotation)
+    root_value_model = (
+        _nested_model_type(root_args[1])
+        if get_origin(root_annotation) is dict
+        and len(root_args) == 2
+        and root_args[0] is str
+        else None
+    )
+    raw_object = json_object(raw_value)
+    if root_value_model is not None and raw_object is not None:
+        for name, value in raw_object.items():
+            warn_unknown_model_keys(
+                value,
+                model=root_value_model,
+                source=f"{source}.{name}",
+            )
+        return
+
+    if raw_object is None:
         return
 
     extra_behavior = model.model_config.get("extra")
@@ -134,7 +151,7 @@ def warn_unknown_model_keys(
         model.config_ignored_keys if issubclass(model, ConfigModel) else frozenset()
     )
     silences_extras = model.config_silences_extras if issubclass(model, ConfigModel) else False
-    for key, value in raw_value.items():
+    for key, value in raw_object.items():
         field = model.model_fields.get(key)
         if field is not None:
             nested_model = _nested_model_type(field.annotation)
