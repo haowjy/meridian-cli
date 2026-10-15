@@ -17,10 +17,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Replace `idle.min_compact_tokens` with `idle.compact_min_growth_tokens`; idle
   baselines start fresh. See [upgrade steps](docs/upgrading.md#idle-compaction-growth-floor-unreleased).
 
-### Fixed
-- Ignore compaction-only context after a return during idle compaction.
-- Stop OpenCode context reads at an in-progress compaction message.
-
 ## [0.10.5] - 2026-10-15
 
 ### Fixed
