@@ -10,9 +10,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   per spawn with `(N runs)`; show lists recent runs. Continue an exact run with
   `--fork pN.K`, or fork a busy spawn to branch now. Fork/from still mint spawns.
 
-### Fixed
-- Clear stale TUI text before the quit hint.
-
 ### Upgrade notes
 - First indexed read rebuilds history schema 8; no authority migration. See [upgrade notes](docs/upgrading.md#spawnrun-identity-boundary).
 

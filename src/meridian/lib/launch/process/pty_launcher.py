@@ -25,7 +25,6 @@ _MOUSE_MODE_RESET_SEQUENCE = (
 )
 _ALTERNATE_SCREEN_EXIT_SEQUENCE = b"\x1b[?1049l"
 _CURSOR_SHOW_SEQUENCE = b"\x1b[?25h"
-_CLEAR_TO_END_SEQUENCE = b"\x1b[J"
 _ALTERNATE_SCREEN_TRANSITION = re.compile(rb"\x1b\[\?(?:47|1047|1049)([hl])")
 _ALTERNATE_SCREEN_TAIL_LENGTH = len(_ALTERNATE_SCREEN_EXIT_SEQUENCE) - 1
 
@@ -152,8 +151,7 @@ def _copy_primary_pty_output(
                         if alternate_screen.enabled
                         else b""
                     )
-                    + _CURSOR_SHOW_SEQUENCE
-                    + _CLEAR_TO_END_SEQUENCE,
+                    + _CURSOR_SHOW_SEQUENCE,
                 )
 
     if wait_cancelled is not None and wait_cancelled.is_set():
