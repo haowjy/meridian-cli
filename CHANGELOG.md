@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Keep launcher diagnostics and inherited child output off primary TUI screens;
+  captured output is saved with the run and reported after exit.
+
 ## [0.10.10] - 2026-10-15
 
 ### Fixed

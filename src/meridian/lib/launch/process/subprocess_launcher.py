@@ -19,6 +19,7 @@ from .ports import (
     LaunchedProcess,
     ProcessLauncher,
 )
+from .terminal_ownership import TerminalFds
 
 
 def _write_chunk_to_stdout(chunk: bytes) -> None:
@@ -219,6 +220,7 @@ class SubprocessProcessLauncher(ProcessLauncher):
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
+        terminal_fds: TerminalFds | None = None,
     ) -> _RunningSubprocess:
         child_env = dict(env)
         stderr_log_path_raw = child_env.pop(PRIMARY_STDERR_LOG_PATH_ENV, "").strip()
@@ -229,7 +231,15 @@ class SubprocessProcessLauncher(ProcessLauncher):
                 command,
                 cwd=cwd,
                 env=child_env,
-                stderr=subprocess.PIPE if stderr_log_path is not None else None,
+                stdin=terminal_fds.stdin if terminal_fds is not None else None,
+                stdout=terminal_fds.stdout if terminal_fds is not None else None,
+                stderr=(
+                    subprocess.PIPE
+                    if stderr_log_path is not None
+                    else terminal_fds.stderr
+                    if terminal_fds is not None
+                    else None
+                ),
                 text=stderr_log_path is None,
             )
         else:

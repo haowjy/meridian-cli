@@ -111,15 +111,16 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
         env: dict[str, str],
         output_log_path: Path | None,
         on_child_started: Any,
-    ) -> tuple[int, int]:
+        launcher_diagnostics_path: Path,
+    ) -> tuple[int, int, None]:
         nonlocal black_box_calls
-        _ = (command, cwd, env, output_log_path)
+        _ = (command, cwd, env, output_log_path, launcher_diagnostics_path)
         black_box_calls += 1
         if callable(on_child_started):
             on_child_started(111)
-        return (0, 111)
+        return (0, 111, None)
 
-    exit_code, managed_session_id, managed_cancelled, _facts = (
+    exit_code, managed_session_id, managed_cancelled, _facts, captured_path = (
         process_runner._execute_primary_process(
             harness_id=HarnessId.CODEX,
             primary_spawn_id=SpawnId("p-contract-blackbox"),
@@ -148,6 +149,7 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
     assert exit_code == 0
     assert managed_session_id is None
     assert managed_cancelled is False
+    assert captured_path is None
 
 
 def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness_id(
@@ -168,15 +170,16 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
         env: dict[str, str],
         output_log_path: Path | None,
         on_child_started: Any,
-    ) -> tuple[int, int]:
+        launcher_diagnostics_path: Path,
+    ) -> tuple[int, int, None]:
         nonlocal black_box_calls
-        _ = (command, cwd, env, output_log_path)
+        _ = (command, cwd, env, output_log_path, launcher_diagnostics_path)
         black_box_calls += 1
         if callable(on_child_started):
             on_child_started(222)
-        return (0, 222)
+        return (0, 222, None)
 
-    exit_code, managed_session_id, managed_cancelled, _facts = (
+    exit_code, managed_session_id, managed_cancelled, _facts, captured_path = (
         process_runner._execute_primary_process(
             harness_id=HarnessId.CLAUDE,
             primary_spawn_id=SpawnId("p-contract-fallback"),
@@ -205,6 +208,7 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
     assert exit_code == 0
     assert managed_session_id is None
     assert managed_cancelled is False
+    assert captured_path is None
 
 
 @pytest.mark.parametrize("source", ["assigned", "observed"])

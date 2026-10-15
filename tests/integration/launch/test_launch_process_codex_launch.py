@@ -264,7 +264,9 @@ def test_run_harness_process_codex_primary_routes_to_managed_path(
     captured: dict[str, object] = {}
     selector_args: list[Path | None] = []
 
-    def fake_select_process_launcher(output_log_path: Path | None) -> ProcessLauncher:
+    def fake_select_process_launcher(
+        output_log_path: Path | None,
+    ) -> ProcessLauncher:
         selector_args.append(output_log_path)
         return SubprocessProcessLauncher()
 
@@ -296,7 +298,16 @@ def test_run_harness_process_codex_primary_routes_to_managed_path(
         env: Any,
         output_log_path: Any,
         on_child_started: Any = None,
-    ) -> tuple[int, int]:
+        launcher_diagnostics_path: Any = None,
+    ) -> tuple[int, int, None]:
+        _ = (
+            command,
+            cwd,
+            env,
+            output_log_path,
+            on_child_started,
+            launcher_diagnostics_path,
+        )
         raise AssertionError("codex primary should use managed launcher path")
 
     monkeypatch.setattr(process_runner, "select_process_launcher", fake_select_process_launcher)
@@ -452,7 +463,16 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
         env: Any,
         output_log_path: Any,
         on_child_started: Any = None,
-    ) -> tuple[int, int]:
+        launcher_diagnostics_path: Any = None,
+    ) -> tuple[int, int, None]:
+        _ = (
+            command,
+            cwd,
+            env,
+            output_log_path,
+            on_child_started,
+            launcher_diagnostics_path,
+        )
         raise AssertionError("codex primary should use managed launcher path")
 
     outcome = run_harness_process(

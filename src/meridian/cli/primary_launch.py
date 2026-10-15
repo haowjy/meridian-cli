@@ -24,6 +24,9 @@ from meridian.lib.launch.continue_replay import (
     build_continue_replay_contract,
     continue_replay_source_from_reference,
 )
+from meridian.lib.launch.process.terminal_ownership import (
+    format_launcher_diagnostics_pointer,
+)
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.resolve import resolve_agent_launch_input
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
@@ -47,6 +50,7 @@ class PrimaryLaunchOutput(BaseModel):
     resume_command: str | None = None
     warning: str | None = None
     terminal_surface_mode: str | None = None
+    launcher_diagnostics_path: Path | None = None
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
@@ -86,11 +90,17 @@ class PrimaryLaunchOutput(BaseModel):
                 lines.append(self.message)
             lines.append("To continue with meridian:")
             lines.append(self.resume_command)
+            if self.launcher_diagnostics_path is not None:
+                lines.append(
+                    format_launcher_diagnostics_pointer(self.launcher_diagnostics_path)
+                )
             return "\n".join(lines)
         if self.forked_from:
             lines.append(f"{self.message} (from {self.forked_from})")
         else:
             lines.append(self.message)
+        if self.launcher_diagnostics_path is not None:
+            lines.append(format_launcher_diagnostics_pointer(self.launcher_diagnostics_path))
         return "\n".join(lines)
 
 
@@ -418,4 +428,5 @@ def run_primary_launch(
             launch_result.warning,
         ),
         terminal_surface_mode=getattr(launch_result, "terminal_surface_mode", None),
+        launcher_diagnostics_path=launch_result.launcher_diagnostics_path,
     )

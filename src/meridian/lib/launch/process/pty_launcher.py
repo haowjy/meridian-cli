@@ -16,6 +16,7 @@ from typing import Any, BinaryIO
 from meridian.lib.platform import IS_WINDOWS, fcntl, pty, select, termios, tty
 
 from .ports import LaunchedProcess, ProcessLauncher
+from .terminal_ownership import TerminalFds
 
 _MOUSE_MODE_RESET_SEQUENCE = (
     b"\x1b[?1000l"
@@ -73,10 +74,17 @@ def _copy_primary_pty_output(
     child_pid: int,
     master_fd: int,
     output_log_path: Path | None,
+    terminal_fds: TerminalFds | None = None,
     wait_cancelled: threading.Event | None = None,
 ) -> int:
-    stdin_fd = sys.stdin.fileno()
-    stdout_fd = sys.stdout.fileno()
+    if terminal_fds is None:
+        terminal_fds = TerminalFds(
+            stdin=sys.stdin.fileno(),
+            stdout=sys.stdout.fileno(),
+            stderr=sys.stderr.fileno(),
+        )
+    stdin_fd = terminal_fds.stdin
+    stdout_fd = terminal_fds.stdout
     stdin_open = True
     saved_tty_attrs: Any = None
     last_forwarded_winsize: bytes | None = None
@@ -165,6 +173,7 @@ class _RunningPtyProcess:
     pid: int
     master_fd: int
     output_log_path: Path | None
+    terminal_fds: TerminalFds | None
     wait_cancelled: threading.Event = field(default_factory=threading.Event)
 
     def wait(self) -> LaunchedProcess:
@@ -173,9 +182,13 @@ class _RunningPtyProcess:
                 child_pid=self.pid,
                 master_fd=self.master_fd,
                 output_log_path=self.output_log_path,
+                terminal_fds=self.terminal_fds,
                 wait_cancelled=self.wait_cancelled,
             )
-            return LaunchedProcess(exit_code=exit_code, pid=self.pid)
+            return LaunchedProcess(
+                exit_code=exit_code,
+                pid=self.pid,
+            )
         finally:
             with suppress(OSError):
                 os.close(self.master_fd)
@@ -198,15 +211,24 @@ class PtyProcessLauncher(ProcessLauncher):
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
+        terminal_fds: TerminalFds | None = None,
     ) -> _RunningPtyProcess:
         if IS_WINDOWS:
             raise RuntimeError("PTY launcher is not available on Windows")
 
         master_fd, slave_fd = pty.openpty()
-        _sync_pty_winsize(source_fd=sys.stdout.fileno(), target_fd=master_fd)
+        terminal_stdout_fd = (
+            terminal_fds.stdout if terminal_fds is not None else sys.stdout.fileno()
+        )
+        _sync_pty_winsize(source_fd=terminal_stdout_fd, target_fd=master_fd)
 
         child_pid = os.fork()
         if child_pid == 0:
+            # The parent may have installed temporary teardown barriers. Do not
+            # carry them across login_tty, where an inherited handler traceback
+            # would otherwise be able to write onto the TUI terminal.
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            signal.signal(signal.SIGHUP, signal.SIG_DFL)
             try:
                 os.close(master_fd)
                 os.login_tty(slave_fd)
@@ -222,6 +244,7 @@ class PtyProcessLauncher(ProcessLauncher):
             pid=child_pid,
             master_fd=master_fd,
             output_log_path=output_log_path,
+            terminal_fds=terminal_fds,
         )
 
 

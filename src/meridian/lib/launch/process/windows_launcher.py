@@ -9,6 +9,7 @@ from meridian.lib.platform import IS_WINDOWS
 
 from .ports import ProcessLauncher, RunningProcess
 from .subprocess_launcher import SubprocessProcessLauncher
+from .terminal_ownership import TerminalFds
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ class WindowsConsoleLauncher(ProcessLauncher):
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
+        terminal_fds: TerminalFds | None = None,
     ) -> RunningProcess:
         logger.debug("Windows console-inheritance mode (no PTY capture available)")
         return SubprocessProcessLauncher().start(
@@ -36,6 +38,7 @@ class WindowsConsoleLauncher(ProcessLauncher):
             cwd=cwd,
             env=env,
             output_log_path=output_log_path,
+            terminal_fds=terminal_fds,
         )
 
 

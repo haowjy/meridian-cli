@@ -124,7 +124,9 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
         env: Any,
         output_log_path: Any,
         on_child_started: Any = None,
-    ) -> tuple[int, int]:
+        launcher_diagnostics_path: Any = None,
+    ) -> tuple[int, int, None]:
+        _ = launcher_diagnostics_path
         command = tuple(command)
         captured["command"] = command
         if "--session-id" in command:
@@ -132,7 +134,7 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
             captured["command_session_id"] = command[idx + 1]
         assert callable(on_child_started)
         on_child_started(555)
-        return (0, 555)
+        return (0, 555, None)
 
     outcome = run_harness_process(
         launch_context,
@@ -177,13 +179,15 @@ def test_run_harness_process_keeps_binding_when_observed_session_differs(
         env: Any,
         output_log_path: Any,
         on_child_started: Any = None,
-    ) -> tuple[int, int]:
+        launcher_diagnostics_path: Any = None,
+    ) -> tuple[int, int, None]:
+        _ = command, cwd, env, output_log_path, launcher_diagnostics_path
         assert callable(on_child_started)
         on_child_started(666)
-        return (0, 666)
+        return (0, 666, None)
 
     def capture_facts(*args: object, **kwargs: object):
-        return 0, None, False, AttemptFacts(first_session_id=observed_id)
+        return 0, None, False, AttemptFacts(first_session_id=observed_id), None
 
     monkeypatch.setattr(
         "meridian.lib.launch.process.runner._execute_primary_process", capture_facts
@@ -232,7 +236,9 @@ def test_run_harness_process_reconciles_claude_tui_trampoline_session_id(
         env: Any,
         output_log_path: Any,
         on_child_started: Any = None,
-    ) -> tuple[int, int]:
+        launcher_diagnostics_path: Any = None,
+    ) -> tuple[int, int, None]:
+        _ = cwd, env, output_log_path, launcher_diagnostics_path
         command = tuple(command)
         recorded_session_id = command[command.index("--session-id") + 1]
         project_dir = fake_home / ".claude" / "projects" / project_slug(project_root)
@@ -280,7 +286,7 @@ def test_run_harness_process_reconciles_claude_tui_trampoline_session_id(
         )
         assert callable(on_child_started)
         on_child_started(667)
-        return (0, 667)
+        return (0, 667, None)
 
     outcome = run_harness_process(
         launch_context,

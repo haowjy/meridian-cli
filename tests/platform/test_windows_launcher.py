@@ -14,6 +14,7 @@ from meridian.lib.launch.process.runner import (
     select_process_launcher,
 )
 from meridian.lib.launch.process.subprocess_launcher import SubprocessProcessLauncher
+from meridian.lib.launch.process.terminal_ownership import TerminalFds
 from meridian.lib.launch.process.windows_launcher import WindowsConsoleLauncher
 
 if TYPE_CHECKING:
@@ -141,7 +142,9 @@ def test_windows_console_launcher_forces_console_inheritance(
             cwd: Path,
             env: dict[str, str],
             output_log_path: Path | None,
+            terminal_fds: TerminalFds | None = None,
         ) -> _Running:
+            _ = terminal_fds
             captured["command"] = command
             captured["cwd"] = cwd
             captured["env"] = env

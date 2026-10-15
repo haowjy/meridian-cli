@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -84,6 +85,7 @@ class LaunchResult(BaseModel):
     primary_spawn_id: str | None = None
     warning: str | None = None
     terminal_surface_mode: str | None = None
+    launcher_diagnostics_path: Path | None = None
 
 
 class PrimarySessionMetadata(BaseModel):

@@ -76,6 +76,14 @@ exception, final-drains and joins it before conclusion and session scope close.
 created and closes in the finally block. If `lifecycle_service.start()` fails, the
 session is still properly closed.
 
+**The TUI owns the terminal exclusively.** `terminal_ownership.py` duplicates the
+terminal descriptors, redirects launcher fds 1 and 2 to the run's `stderr.log`, and
+yields the duplicates before the TUI process starts. Both black-box and managed
+attach callers keep that window around start callbacks and the relay through child
+exit. New native-terminal drivers must enter the same window and explicitly attach
+the TUI to its yielded fds. Only the post-exit result renderer may point users at
+captured launcher output.
+
 ## Key Rules
 
 **Don't add launcher types without registering in `select_process_backend()`.** The
@@ -87,6 +95,7 @@ the distinction is whether Meridian controls the turn or just observes.
 ## Entry Points
 
 - `runner.py` — `run_harness_process()`. The sole external entry point.
+- `terminal_ownership.py` — fd-level exclusive terminal window shared by TUI drivers.
 - `ports.py` — `ProcessLauncher` protocol, `ProcessBackendId`, backend selection types.
 
 ## Depth

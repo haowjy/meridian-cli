@@ -32,6 +32,7 @@ from meridian.lib.launch.process.primary_attach import (
     PrimaryAttachError,
     PrimaryAttachLauncher,
 )
+from meridian.lib.launch.process.terminal_ownership import TerminalFds
 from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
@@ -341,8 +342,9 @@ class FakeProcessLauncher(ProcessLauncher):
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
+        terminal_fds: TerminalFds | None = None,
     ) -> FakeProcessLauncher:
-        _ = (cwd, output_log_path)
+        _ = (cwd, output_log_path, terminal_fds)
         self.launch_commands.append(command)
         self.launch_envs.append(dict(env))
         self.output_log_paths.append(output_log_path)
@@ -389,8 +391,9 @@ class BlockingProcessLauncher(ProcessLauncher):
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
+        terminal_fds: TerminalFds | None = None,
     ) -> BlockingProcessLauncher:
-        _ = (cwd, env, output_log_path)
+        _ = (cwd, env, output_log_path, terminal_fds)
         self.launch_commands.append(command)
         metadata_path = self.spawn_dir / PRIMARY_META_FILENAME
         assert metadata_path.exists()

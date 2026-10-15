@@ -8,6 +8,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
+from .terminal_ownership import TerminalFds
+
 PRIMARY_STDERR_LOG_PATH_ENV = "_MERIDIAN_PRIMARY_STDERR_LOG_PATH"
 
 
@@ -70,6 +72,7 @@ class ProcessLauncher(Protocol):
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
+        terminal_fds: TerminalFds | None = None,
     ) -> RunningProcess: ...
 
 
