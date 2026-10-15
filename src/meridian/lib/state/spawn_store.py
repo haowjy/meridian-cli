@@ -74,6 +74,7 @@ from meridian.lib.state.spawn.repository import write_state_locked as _write_sta
 from meridian.lib.state.spawn.runs import (
     check_spawn_available,
     latest_run,
+    write_bound_run_head,
     write_run_head,
 )
 from meridian.lib.state.spawn.transitions import (
@@ -231,6 +232,8 @@ def _publish_record(paths: RuntimePaths, record: SpawnRecord) -> None:
         stored_state.model_dump_json(indent=2) + "\n",
     )
     write_run_head(paths, record.id)
+    if record.session_instance_id is not None:
+        write_bound_run_head(paths, record.id)
     source = HistorySource(kind="spawn", key=str(record.id))
     with lock_file(source.lock_path(paths.root_dir)):
         HistoryChanges(paths.root_dir).mark(source)
@@ -630,6 +633,8 @@ def update_spawn(
             updates["launch_policy_snapshot"] = launch_policy_snapshot
         return current.model_copy(update=updates)
 
+    if session_instance_id is not None:
+        write_bound_run_head(paths, spawn_id)
     outcome = _write_state_locked(
         paths.spawns_dir,
         spawn_id,

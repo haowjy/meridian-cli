@@ -21,8 +21,9 @@ legacy facts quarantine rather than bypassing the strict stored model.
 **`transitions.py`** — pure transitions such as `apply_mark_running()`,
 `apply_finalize()`, and `apply_record_exited()`. They do no I/O or locking.
 
-**`runs.py`** — pointer-backed run discovery (`runs_of`, `latest_run`) and sibling-run rules: `group_runs` (rows by stable
-spawn), `continue_target_run`, and the retention protected set and dependencies.
+**`runs.py`** — pointer-backed run discovery (`runs_of`, `latest_run`,
+`latest_bound_run`) and sibling-run rules: `group_runs` (rows by stable spawn),
+`continue_target_run`, and the retention protected set and dependencies.
 Retention keeps a spawn's numeric latest run, latest bound run (has
 `session_instance_id`) and distinct continuation source until the whole spawn can
 retire. Surfaces, reference selection, archive and pruning call these; never

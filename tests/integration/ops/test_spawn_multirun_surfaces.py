@@ -7,12 +7,13 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.refs import parse_ref
-from meridian.lib.ops.reference import resolve_session_reference
+from meridian.lib.ops.reference import resolve_continue_source_row, resolve_session_reference
 from meridian.lib.ops.session_target import resolve_transcript_source
 from meridian.lib.ops.spawn.api import spawn_continue_sync
 from meridian.lib.ops.spawn.models import SpawnContinueInput
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.spawn import repository as spawn_repository
 from tests.support.codex import write_codex_rollout
 
 
@@ -116,6 +117,67 @@ def test_multirun_never_bound_ref_refuses_instead_of_using_callers_chat(tmp_path
 
     with pytest.raises(ValueError, match="never started a session"):
         resolve_session_reference(project_root, "p8", runtime_root=runtime_root)
+
+
+@pytest.mark.parametrize("run_count", [10, 50])
+def test_bare_continue_target_reads_constant_rows_as_run_count_grows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    run_count: int,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    bound = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p7",
+        chat_id="c7",
+        model="test",
+        agent="",
+        harness="codex",
+        prompt="bound",
+    )
+    session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id="native-7",
+        model="test",
+        chat_id="c7",
+        spawn_id=bound,
+    )
+    session_store.stop_session(runtime_root, "c7")
+    spawn_store.finalize_spawn(runtime_root, bound, "succeeded", 0, origin="runner")
+    for run in range(2, run_count + 1):
+        unbound = spawn_store.start_spawn(
+            runtime_root,
+            spawn_id=f"p7.{run}",
+            chat_id="c-failed",
+            model="test",
+            agent="",
+            harness="codex",
+            prompt="failed before session binding",
+        )
+        spawn_store.finalize_spawn(
+            runtime_root, unbound, "failed", 1, origin="runner",
+        )
+
+    repository_read = spawn_repository.read_state
+    store_read = spawn_store._read_state
+    reads: list[str] = []
+
+    def tracked_repository_read(*args: object, **kwargs: object) -> object:
+        reads.append(str(args[1]))
+        return repository_read(*args, **kwargs)  # type: ignore[arg-type]
+
+    def tracked_store_read(*args: object, **kwargs: object) -> object:
+        reads.append(str(args[1]))
+        return store_read(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(spawn_repository, "read_state", tracked_repository_read)
+    monkeypatch.setattr(spawn_store, "_read_state", tracked_store_read)
+
+    row = resolve_continue_source_row(runtime_root, parse_ref("p7"))
+
+    assert row is not None and row.id == bound
+    assert reads == ["p7", "p7"]
 
 
 def test_continue_refuses_an_exact_run_before_launch_preparation() -> None:

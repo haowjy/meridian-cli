@@ -23,6 +23,10 @@ def _head_path(paths: RuntimePaths, spawn_id: SpawnId) -> Path:
     return paths.root_dir / "spawn-heads" / str(spawn_id)
 
 
+def _bound_head_path(paths: RuntimePaths, spawn_id: SpawnId) -> Path:
+    return paths.root_dir / "spawn-heads" / f"{spawn_id}.bound"
+
+
 def _read_head(paths: RuntimePaths, spawn_id: SpawnId) -> int:
     try:
         run = int(_head_path(paths, spawn_id).read_text(encoding="utf-8").strip())
@@ -38,6 +42,23 @@ def write_run_head(paths: RuntimePaths, run_id: RunId) -> None:
     if parsed.spawn_id is None or parsed.run is None or parsed.run == 1:
         return
     head = _head_path(paths, parsed.spawn_id)
+    head.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(head, f"{parsed.run}\n")
+
+
+def write_bound_run_head(paths: RuntimePaths, run_id: RunId) -> None:
+    """Atomically cache the newest run known to have acquired a generation."""
+
+    parsed = parse_ref(str(run_id))
+    if parsed.spawn_id is None or parsed.run is None or parsed.run == 1:
+        return
+    head = _bound_head_path(paths, parsed.spawn_id)
+    try:
+        current = int(head.read_text(encoding="utf-8").strip())
+    except (FileNotFoundError, OSError, ValueError):
+        current = 1
+    if parsed.run <= current:
+        return
     head.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(head, f"{parsed.run}\n")
 
@@ -124,6 +145,26 @@ def latest_run(runtime_root: Path, spawn_id: SpawnId) -> RunId | None:
     for candidate in range(run - 1, 0, -1):
         if _run_exists(paths, spawn_id, candidate):
             return _run_id(spawn_id, candidate)
+    return None
+
+
+def latest_bound_run(runtime_root: Path, spawn_id: SpawnId) -> RunId | None:
+    """Return the newest generation-bound run without reading every sibling."""
+
+    from meridian.lib.state.spawn.repository import read_state
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    try:
+        pointed_run = int(
+            _bound_head_path(paths, spawn_id).read_text(encoding="utf-8").strip()
+        )
+    except (FileNotFoundError, OSError, ValueError):
+        pointed_run = 1
+    for candidate in range(max(pointed_run, 1), 0, -1):
+        run_id = _run_id(spawn_id, candidate)
+        row = read_state(paths.spawns_dir, run_id, include_prompt=False)
+        if row is not None and row.session_instance_id is not None:
+            return run_id
     return None
 
 

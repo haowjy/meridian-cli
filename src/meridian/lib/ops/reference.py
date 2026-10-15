@@ -21,7 +21,7 @@ from meridian.lib.state import session_identity, session_store, spawn_store
 from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.state.spawn.runs import continue_target_run, latest_run, runs_of
+from meridian.lib.state.spawn.runs import latest_bound_run, latest_run
 
 
 @dataclass(frozen=True)
@@ -124,22 +124,17 @@ def resolve_continue_source_row(
         return None
 
     assert parsed.spawn_id is not None
-    run_ids = runs_of(runtime_root, parsed.spawn_id)
-    if not run_ids:
+    bound_run = latest_bound_run(runtime_root, parsed.spawn_id)
+    if bound_run is None:
+        if latest_run(runtime_root, parsed.spawn_id) is None:
+            return None
+        raise ValueError(
+            f"Spawn {parsed.spawn_id} never started a session; `--fork` is unavailable too."
+        )
+    row = spawn_store.get_spawn(runtime_root, bound_run)
+    if row is None:
         return None
-    rows = [
-        row
-        for run_id in reversed(run_ids)
-        if (row := spawn_store.get_spawn(runtime_root, run_id)) is not None
-    ]
-    if len(rows) == 1:
-        return rows[0]
-    target = continue_target_run(rows)
-    if target is not None:
-        return target
-    raise ValueError(
-        f"Spawn {parsed.spawn_id} never started a session; `--fork` is unavailable too."
-    )
+    return row
 
 
 def _resolve_untracked_reference(
