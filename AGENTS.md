@@ -38,8 +38,6 @@ uv run --extra dev python -m pyright --warnings # Type check (0 errors, 0 warnin
 uv add <package>                               # Add dependency
 ```
 
-Use `rtk` for noisy commands (`rtk git diff`, `rtk pytest`, `rtk rg "<pattern>"`).
-
 ## Design Constraints
 
 - **Harness-agnostic**: adapters bridge to Claude/Codex/OpenCode. Harness specifics stay in `lib/harness/`.
