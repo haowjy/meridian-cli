@@ -137,9 +137,9 @@ def _scope_from_wire(payload: object) -> WatchdogScope:
     root_created_at_epoch = float(str(row["root_created_at_epoch"]))
     if birth_time_unverified(root_created_at_epoch):
         raise ValueError("watchdog scope birth time must be known")
-    release_id = str(row.get("release_id", "")) or (
-        f"{scope_id}:{root_pid}:{root_created_at_epoch:.6f}"
-    )
+    release_id = row["release_id"]
+    if not isinstance(release_id, str) or not release_id:
+        raise ValueError("watchdog scope release_id must be a non-empty string")
     return WatchdogScope(
         scope_id=scope_id,
         containment=str(row["containment"]),

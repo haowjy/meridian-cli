@@ -88,6 +88,22 @@ def test_parent_death_link_waits_for_watchdog_readiness() -> None:
 
 
 @posix_only
+def test_parent_watchdog_starts_with_inherited_python_hardening_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PYTHONSAFEPATH", "1")
+    monkeypatch.setenv("PYTHONHOME", "/does/not/exist")
+
+    watchdog = start_parent_watchdog()
+    try:
+        assert watchdog is not None
+        assert watchdog.process.poll() is None
+    finally:
+        if watchdog is not None:
+            watchdog.close()
+
+
+@posix_only
 def test_watchdog_refuses_scope_without_birth_time() -> None:
     watchdog = start_parent_watchdog()
     assert watchdog is not None
@@ -107,6 +123,23 @@ def test_watchdog_refuses_scope_without_birth_time() -> None:
         assert watchdog.register_scope(scope) is False
     finally:
         watchdog.close()
+
+
+def test_watchdog_scope_requires_release_id() -> None:
+    payload: dict[str, object] = {
+        "scope_id": "backend",
+        "containment": "pid_tree_fallback",
+        "root_pid": 123,
+        "root_created_at_epoch": 456.0,
+        "pgid": None,
+    }
+
+    try:
+        parent_watchdog._scope_from_wire(payload)
+    except KeyError as exc:
+        assert exc.args == ("release_id",)
+    else:
+        raise AssertionError("missing release_id must be rejected as malformed")
 
 
 def test_watchdog_release_removes_registered_scope(

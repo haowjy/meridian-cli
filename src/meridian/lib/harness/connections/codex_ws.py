@@ -928,18 +928,25 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 self._reader_task = None
 
             scope_handle = self._scope_handle
-            self._scope_handle = None
             process = self._process
-            self._process = None
+            backend_stopped = scope_handle is None and process is None
 
-            if scope_handle is not None and process is not None and process.returncode is None:
+            if process is not None and process.returncode is not None:
+                backend_stopped = True
+            elif scope_handle is not None and process is not None:
                 try:
                     await scope_handle.terminate(
                         grace_seconds=_STOP_WAIT_TIMEOUT_SECONDS,
                         reason="stop_called",
                     )
+                    await asyncio.wait_for(
+                        process.wait(),
+                        timeout=_STOP_WAIT_TIMEOUT_SECONDS,
+                    )
                 except Exception:
                     logger.warning("Codex process-scope cleanup failed", exc_info=True)
+                else:
+                    backend_stopped = True
             elif process is not None and process.returncode is None:
                 # Legacy fallback when scope registration did not complete.
                 try:
@@ -954,16 +961,24 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                         await process.wait()
                 except Exception:
                     logger.warning("Codex subprocess cleanup failed", exc_info=True)
+                else:
+                    backend_stopped = True
 
-            parent_death_link = self._parent_death_link
-            self._parent_death_link = None
-            try:
-                await asyncio.to_thread(
-                    release_parent_death_link,
-                    parent_death_link,
-                )
-            except Exception:
-                logger.warning("Codex parent-death link cleanup failed", exc_info=True)
+            # A failed or unconfirmed stop must remain registered with the
+            # launcher watchdog. Releasing here would turn a teardown error
+            # into an unowned backend process.
+            if backend_stopped:
+                self._scope_handle = None
+                self._process = None
+                parent_death_link = self._parent_death_link
+                self._parent_death_link = None
+                try:
+                    await asyncio.to_thread(
+                        release_parent_death_link,
+                        parent_death_link,
+                    )
+                except Exception:
+                    logger.warning("Codex parent-death link cleanup failed", exc_info=True)
 
             try:
                 self._fail_pending_requests(RuntimeError("Codex connection stopped"))

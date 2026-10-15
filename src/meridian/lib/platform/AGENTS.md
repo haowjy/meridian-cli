@@ -24,6 +24,9 @@ POSIX launcher crashes are covered by `detached_process.py` and the standalone
 `parent_watchdog.py`. The watchdog is launched by file path so package initializers
 do not run. Keep its dependency, `scope_termination.py`, limited to the standard
 library and psutil; normal process-scope wrappers use the same termination core.
+Its `-S -OO` environment strips inherited `PYTHON*` startup controls and supplies
+an explicit `PYTHONPATH` containing only the script directory and psutil's
+site-packages directory; do not restore ambient Python startup behavior.
 Registration requires a known process birth time and fails closed otherwise.
 Owners release registrations only after the corresponding child scope is stopped
 and reaped, so a later launcher crash never revisits dead scopes.

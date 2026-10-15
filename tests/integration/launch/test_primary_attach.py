@@ -1299,7 +1299,7 @@ async def test_primary_attach_raises_after_max_port_bind_retries(tmp_path: Path)
 
 
 @pytest.mark.asyncio
-async def test_primary_attach_signal_cancel_records_cancelled_and_restores_handlers(
+async def test_primary_attach_sighup_before_zero_exit_is_cancelled_and_restores_handlers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1313,7 +1313,9 @@ async def test_primary_attach_signal_cancel_records_cancelled_and_restores_handl
     spawn_dir = tmp_path / "spawns" / "p902-signal"
     tui_started = asyncio.Event()
     connection = SignalAwareConnection(events=[], session_id="sess-signal")
-    process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir, wait_exit_code=-signal.SIGHUP)
+    # OpenCode handles pane-close SIGHUP and exits cleanly. The signal still
+    # wins because the launcher observes it before the fake TUI's zero exit.
+    process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir, wait_exit_code=0)
     terminated_scopes: list[str] = []
     installed_handlers: list[Any] = []
 
@@ -1366,7 +1368,7 @@ async def test_primary_attach_signal_cancel_records_cancelled_and_restores_handl
 
 
 @pytest.mark.asyncio
-async def test_primary_attach_normal_exit_just_before_signal_is_not_cancelled(
+async def test_primary_attach_zero_exit_before_sighup_is_not_cancelled(
     tmp_path: Path,
 ) -> None:
     spawn_dir = tmp_path / "spawns" / "p902-normal-before-signal"
@@ -1377,6 +1379,7 @@ async def test_primary_attach_normal_exit_just_before_signal_is_not_cancelled(
 
         def wait(self) -> LaunchedProcess:
             assert self.launcher is not None
+            self.launcher._record_tui_exit_observed()
             self.launcher._request_signal_cancel()
             return LaunchedProcess(exit_code=0, pid=self.pid)
 

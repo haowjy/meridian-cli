@@ -80,10 +80,13 @@ scopes over an inherited pipe. The helper acknowledges readiness before launch
 continues, watches the launcher by birth-validated PID, and terminates every
 registered scope if the launcher disappears. It is executed by file path and may
 import only the standard library, psutil, and `scope_termination.py`; package
-initializers would make one watchdog per launcher prohibitively expensive. Scope
-registration fails closed when its PID birth time is unknown. Once an owner has
-stopped and reaped a child, it sends a release message so the watchdog retains only
-live scopes.
+initializers would make one watchdog per launcher prohibitively expensive. Its
+environment removes inherited `PYTHON*` startup settings (including
+`PYTHONSAFEPATH` and `PYTHONHOME`) and sets `PYTHONPATH` explicitly to the script
+directory plus psutil's site-packages directory, keeping `-S -OO` startup
+deterministic. Scope registration fails closed when its PID birth time is unknown.
+Once an owner has stopped and reaped a child, it sends a release message so the
+watchdog retains only live scopes.
 
 **Legacy Windows branch (untested):** Job Object setup exists, but scoped
 termination currently routes to the psutil fallback because Job Object handle

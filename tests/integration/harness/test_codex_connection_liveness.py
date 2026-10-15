@@ -55,6 +55,12 @@ class _RecordingScopeHandle:
             self._process.exit(-15)
 
 
+class _FailingScopeHandle:
+    async def terminate(self, *, grace_seconds: float, reason: str) -> None:
+        _ = (grace_seconds, reason)
+        raise RuntimeError("scope termination failed")
+
+
 class _FreezesAfterMessagesWebSocket:
     def __init__(self, messages: list[str]) -> None:
         self._messages = messages
@@ -320,3 +326,30 @@ async def test_codex_cleanup_failure_still_ends_expected_stop_once(
     assert connection._event_stream_ended is True
     assert _drain_raw_event_queue(connection) == [None]
     assert connection._event_queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_codex_failed_backend_termination_keeps_watchdog_scope_registered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    released: list[object] = []
+    monkeypatch.setattr(
+        codex_ws,
+        "release_parent_death_link",
+        released.append,
+    )
+    connection = CodexConnection()
+    connection._state = "connected"
+    process = _ControllableProcess()
+    scope_handle = _FailingScopeHandle()
+    parent_death_link = object()
+    connection._process = process  # type: ignore[assignment]
+    connection._scope_handle = scope_handle  # type: ignore[assignment]
+    connection._parent_death_link = parent_death_link  # type: ignore[assignment]
+
+    await connection.stop(reason="test")
+
+    assert released == []
+    assert connection._process is process
+    assert connection._scope_handle is scope_handle
+    assert connection._parent_death_link is parent_death_link

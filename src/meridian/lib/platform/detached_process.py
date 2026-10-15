@@ -133,9 +133,18 @@ def start_parent_watchdog() -> ParentWatchdog | None:
         "--ready-fd",
         str(ready_write_fd),
     )
-    watchdog_env = os.environ.copy()
+    # The watchdog must not inherit Python startup controls from the launcher.
+    # Settings such as PYTHONSAFEPATH remove the script directory from sys.path,
+    # while PYTHONHOME (and other malformed PYTHON* values) can prevent the
+    # interpreter from starting at all. Supply only the import path needed by
+    # the isolated ``-S`` entrypoint.
+    watchdog_env = {
+        key: value for key, value in os.environ.items() if not key.startswith("PYTHON")
+    }
     psutil_site_packages = os.path.dirname(os.path.dirname(psutil.__file__))
-    watchdog_env["PYTHONPATH"] = psutil_site_packages
+    watchdog_env["PYTHONPATH"] = os.pathsep.join(
+        (os.path.dirname(__file__), psutil_site_packages)
+    )
     try:
         process = subprocess.Popen(
             command,
