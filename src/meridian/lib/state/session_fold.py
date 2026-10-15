@@ -19,6 +19,20 @@ from meridian.lib.core.types import (
 )
 from meridian.lib.state.native_binding import Conflict, bind
 
+HISTORICAL_GENERATION_PREFIX = "historical-"
+
+
+def normalized_generation(generation: str) -> str:
+    return generation.strip()
+
+
+def new_historical_generation() -> str:
+    return f"{HISTORICAL_GENERATION_PREFIX}{uuid.uuid4().hex}"
+
+
+def is_historical_generation(generation: str) -> bool:
+    return normalized_generation(generation).startswith(HISTORICAL_GENERATION_PREFIX)
+
 
 class SessionSettings(BaseModel):
     """Context inherited by a new conversation, never identity, lineage or a lease."""
@@ -285,10 +299,6 @@ def _record_from_start_event(event: SessionStartEvent) -> SessionRecord:
     )
 
 
-def normalized_generation(generation: str) -> str:
-    return generation.strip()
-
-
 def generation_matches(expected: str, actual: str) -> bool:
     normalized_expected = normalized_generation(expected)
     normalized_actual = normalized_generation(actual)
@@ -297,11 +307,15 @@ def generation_matches(expected: str, actual: str) -> bool:
     return normalized_expected == normalized_actual
 
 
+def validate_historical_import(event: SessionHistoricalEvent) -> None:
+    if event.record.record_mode != "historical" or event.record.stopped_at is None:
+        raise ValueError("Historical imports must be inactive")
+
+
 def project_session_event(records: dict[str, SessionRecord], event: SessionEvent) -> bool:
     """Apply one authoritative event; shared by replay and incremental discovery."""
     if isinstance(event, SessionHistoricalEvent):
-        if event.record.record_mode != "historical" or event.record.stopped_at is None:
-            raise ValueError("Historical imports must be inactive")
+        validate_historical_import(event)
         records[event.chat_id] = event.record
         return True
     if isinstance(event, SessionModelSelectionEvent):

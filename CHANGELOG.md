@@ -12,6 +12,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Upgrade notes
 - First indexed read rebuilds history schema 8; no authority migration. See [upgrade notes](docs/upgrading.md#spawnrun-identity-boundary-unreleased).
 
+## [0.10.4] - 2026-10-15
+
+### Fixed
+- History-index readers stop waiting on session writers: no more `History index deadline exhausted` / `unresolved sources` under spawn churn (#586).
+- Session appends check restored-session immutability in O(1) (reserved `historical-` generation), not a full log replay under the writer lock.
+- Session catch-up reads committed rows without the writer lock and loads only touched chats.
+- Index reads make one bounded attempt; contention reports busy. No-arg `spawn wait` yields "discovery pending" checkpoint, never false "no pending spawns".
+- Archive, restore, import, runner-history prune no longer report a committed change as failed when index refresh is busy.
+
 ## [0.10.3] - 2026-10-15
 
 ### Fixed

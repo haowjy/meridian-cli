@@ -57,8 +57,10 @@ from meridian.lib.state.session_fold import (
     SessionSettings,
     fold_session_generations,
     generation_matches,
+    is_historical_generation,
     parse_event,
     session_instance_for_event,
+    validate_historical_import,
     validate_startup_identity,
     with_key,
 )
@@ -86,13 +88,18 @@ def _append_session_event(
 ) -> None:
     changes = HistoryChanges(data_path.parent)
     with lock_file(changes.mutation_lock, mode="shared"), lock_file(lock_path):
-        if isinstance(event, (SessionUpdateEvent, SessionStopEvent, SessionModelSelectionEvent)):
-            for record in list_session_generations(data_path.parent):
-                if (record.chat_id, record.session_instance_id) == (
-                    event.chat_id,
-                    event.session_instance_id,
-                ) and record.record_mode == "historical":
-                    raise ValueError("Historical sessions are inert and cannot be mutated")
+        if isinstance(event, SessionHistoricalEvent):
+            validate_historical_import(event)
+            if not is_historical_generation(event.session_instance_id):
+                raise ValueError("Historical imports must use the reserved generation prefix")
+        if isinstance(event, SessionStartEvent) and is_historical_generation(
+            event.session_instance_id
+        ):
+            raise ValueError("Live sessions cannot use the reserved historical generation prefix")
+        if isinstance(
+            event, (SessionUpdateEvent, SessionStopEvent, SessionModelSelectionEvent)
+        ) and is_historical_generation(event.session_instance_id):
+            raise ValueError("Historical sessions are inert and cannot be mutated")
         changes.mark(HistorySource(kind="sessions"))
         # Inherited policy can include configured environment values and prompts.
         if not data_path.exists():

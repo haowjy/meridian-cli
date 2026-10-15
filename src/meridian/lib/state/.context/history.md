@@ -11,10 +11,23 @@ Every indexed mutation holds root `locks/history-mutation.lock` shared, then its
 source lock. `HistoryChanges.mark()` publishes a durable random token before the
 source changes. Failure to mark prevents the mutation. Writers never need SQLite.
 
-Catch-up captures a finite dirty set, reads each authority under its source lock,
-commits SQLite FULL, then acknowledges only unchanged tokens. Nonterminal spawn
-markers remain pending; active stream appends may coalesce them. Terminal writes
-and late events replace the token. Active activity is explicitly provisional.
+Catch-up captures a finite dirty set. Every authority is read under its source
+lock, except that append-only `sessions.jsonl` may be projected to the committed
+end observed by an open file descriptor while its writer holds the lock. In that
+case its marker stays pending. A rewrite by tail repair is an atomic
+replace, so a reader already holding the old inode sees the complete pre-rewrite
+state; the cursor's inode/tail check forces a full replay on the next catch-up.
+SQLite commits FULL, and marker acknowledgement always happens under the source
+lock and removes only an unchanged token. Nonterminal spawn markers remain
+pending; active stream appends may coalesce them. Terminal writes and late events
+replace the token. Active activity is explicitly provisional.
+
+Incremental session projection loads only the accepted-chat row and generation
+rows for each chat touched after the cursor. A cursor reset still clears the
+session projection and replays the full committed log. One read may observe only
+a committed prefix of a multi-line `SessionBindings.commit()` batch. That is
+acceptable for this disposable discovery projection; lifecycle and control
+decisions continue to read session authority directly.
 
 Lock order: catchup -> root mutation -> database -> source -> markers. Plain
 SQLite readers hold only the database gate. Rebuild holds catchup/root gates, uses a fresh rollback-journal
@@ -62,28 +75,40 @@ uses the runtime.
 ## Initialization and read budgets
 
 `history_index.py` classifies schema through read-only SQLite before entering the
-existing catch-up gate. A missing index builds automatically within the 15-second
-metadata phase, with an under-lock recheck. Corrupt files, a foreign schema in
-this schema's file, generation mismatch and `--reset` need an explicit rebuild.
-A genuine owned-build failure is latched in
+existing catch-up gate. A missing index builds automatically, with an under-lock
+recheck. Every caller gives that cold build its own 15-second initialization budget,
+separate from any caller deadline, and exhaustion is sticky: the failure is latched in
 `history-index-init-failure-v<schema>.json`; manual publication clears it. Failed marker cleanup warns; warm catch-up retries it under the
 same gate after verifying schema/generation. Status and cache-only reads never
-perform this cleanup. Contention and cancellation are not persistent failures.
+perform this cleanup. Corrupt files, a foreign schema in this schema's file,
+generation mismatch and `--reset` need an explicit rebuild. Contention is not a
+persistent failure.
 
-No-deadline reads initialize lazily, then begin the ordinary two-second budget.
-Caller-owned deadlines never start another implicit build. Corpus search enumerates
-roots without index access, shares one cold budget across roots, and starts its
-ordinary deadline after actual initialization; an all-warm pass never resets it.
-Status and cache counts inspect only; peeks keep their five-millisecond cache path.
+After lazy initialization, ordinary reads make one catch-up attempt bounded by
+`QUERY_TIMEOUT` (two seconds).
+A caller-owned deadline replaces that default. Source-lock contention, an exhausted
+attempt, and post-preflight replacement are `HistoryIndexBusy`; pending source names
+stay on `IndexCoverage`. Readers never answer from partial coverage and do not retry
+inside the index. Corrupt/incompatible metadata, generation errors, and real I/O or
+SQLite failures are not classified as contention.
 
-`descendant_projection()` uses the ordinary indexed-query path: one bounded catch-up,
-then one recursive parent-index query. Traversal retains archived rows as ancestry so a
-loose grandchild remains discoverable through an archived intermediate, excludes the
-root, and terminates parent-edge cycles by path. The result is discovery only. Callers
-must authoritatively read every selected loose row before using lifecycle state; archived
-rows are traversal edges, not projected lifecycle authority. A cold initialization or
-rebuild is still corpus-sized even though the warm query and authoritative rereads are
-subtree-sized.
+The ordinary read deadline does not cancel the separately owned cold build, but the
+same absolute caller deadline still bounds the catch-up attempted afterward. Corpus
+search still enumerates roots without index access, initializes explicitly, shares
+one cold budget across roots, and starts its ordinary deadline after actual
+initialization; an all-warm pass never resets it. Status and cache counts inspect
+only; peeks keep their five-millisecond cache path.
+
+`descendant_projection()` uses the ordinary indexed-query path with one two-second
+caller deadline: one bounded catch-up, then one recursive parent-index query.
+Streaming treats contention or deadline exhaustion as temporarily unavailable
+evidence and polls again instead of classifying it as a hard read failure. Traversal
+retains archived rows as ancestry so a loose grandchild remains discoverable through
+an archived intermediate, excludes the root, and terminates parent-edge cycles by
+path. The result is discovery only. Callers must authoritatively read every selected
+loose row before using lifecycle state; archived rows are traversal edges, not
+projected lifecycle authority. A cold initialization or rebuild is still corpus-sized
+even though the warm query and authoritative rereads are subtree-sized.
 
 ## Identity and authority
 
@@ -168,7 +193,22 @@ not just the CLI.
 Original source metadata remains provenance, not executable process ownership.
 
 Restored session generations are immutable at their append boundary as well as
-in replay. Exact session lookup returns raw authority, including nullable identity
+in replay. Restore is the sole historical-generation mint and uses the reserved
+`historical-<uuid hex>` prefix. Append guards classify the event generation in O(1)
+instead of folding the session log. The prefix rules (an import must carry it, a
+live start must not) run only at append time. Replay must never enforce them: replay
+cannot skip a row, so one older-build restore would fail every indexed read and
+rebuild. Replay checks only that an import is inactive, plus the mutation rule. An
+unprefixed restore already appended by an older build bypasses the append guard but
+remains inoperable: operations refuse to continue or fork historical sessions. An unfinished older-build `RestorePlan`
+does not resume; backward compatibility is not supported.
+
+The target is that no per-spawn path replays `sessions.jsonl` while holding
+`sessions.jsonl.flock`; the source lock must cover only bounded work. Known
+violators are `SessionBindings.__init__`, the lookups in `start_session()`, model
+selection and model observation deduplication, and `get_or_create_observed_chat()`.
+[#591](https://github.com/haowjy/meridian-cli/issues/591) tracks their removal.
+Exact session lookup returns raw authority, including nullable identity
 fields; only exported capsules enrich local linkage, after raw-authority validation. Restore provenance binds the exact local state and historical session;
 recapture validates those projections and all retained content before reusing
 original portable session facts (including absence). Synthetic local sessions

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from graphlib import TopologicalSorter
 from pathlib import Path
@@ -23,7 +24,7 @@ from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.history_codec import last_activity
-from meridian.lib.state.history_index import HistoryIndex, HistorySnapshot
+from meridian.lib.state.history_index import HistoryIndex, HistoryIndexBusy, HistorySnapshot
 from meridian.lib.state.process_scope_projection import read_scope_projection
 from meridian.lib.state.reaper import scope_liveness
 from meridian.lib.state.retention_archive import (
@@ -160,6 +161,12 @@ def _ref_matches(row: SpawnRecord, ref: str) -> bool:
         row.chat_id,
         row.owner_chat_id,
     }
+
+
+def _refresh_history_index(root: Path) -> None:
+    """Leave a contended best-effort refresh for the next indexed reader."""
+    with suppress(HistoryIndexBusy):
+        HistoryIndex(root).catch_up()
 
 
 def _protected(
@@ -531,7 +538,7 @@ def archive_history(
                 reclaimed.append(str(captured.history_id))
             else:
                 errors.append(f"{current.id}: reclaim cleanup incomplete; verified ZIP retained")
-        HistoryIndex(root).catch_up()
+        _refresh_history_index(root)
         return SessionArchiveOutput(
             selected=tuple(str(row.history_id) for row in selected),
             protected=tuple(sorted(protected)),
@@ -608,7 +615,7 @@ def session_restore_sync(payload: SessionRestoreInput) -> SessionArchiveOutput:
             receipts, destination=Path(configured).expanduser() if configured else None, full=True
         )[0].path
     restored = restore_archive(roots.runtime_root, archive, payload.refs)
-    HistoryIndex(roots.runtime_root).catch_up()
+    _refresh_history_index(roots.runtime_root)
     mappings: list[RestoredHistory] = []
     for key in restored:
         row = read_state(
@@ -630,7 +637,7 @@ def session_import_sync(payload: SessionImportInput) -> SessionArchiveOutput:
     if roots is None:
         raise ValueError("Initialize the destination project before importing history")
     receipt, recorded = import_archive(roots.runtime_root, Path(payload.archive))
-    HistoryIndex(roots.runtime_root).catch_up()
+    _refresh_history_index(roots.runtime_root)
     histories = tuple(str(row.history_id) for row in receipt.records)
     return SessionArchiveOutput(
         selected=histories if recorded else (),
