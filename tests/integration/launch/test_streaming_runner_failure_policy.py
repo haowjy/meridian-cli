@@ -15,6 +15,7 @@ import pytest
 from meridian.lib.config.loader import load_config
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch import bundle_adapter
@@ -203,6 +204,7 @@ async def test_execute_with_streaming_finalizes_resident_deadline_after_one_star
         runtime_root,
         chat_id="test-chat-resident-deadline-child",
         parent_id=str(parent_id),
+        parent_run_id=parse_ref(str(parent_id), row_key=True),
         model=str(run.model),
         agent="",
         harness=HarnessId.CODEX.value,

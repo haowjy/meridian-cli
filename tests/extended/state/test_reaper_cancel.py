@@ -21,6 +21,7 @@ import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.core.lifecycle import SpawnLifecycleService
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
 from meridian.lib.core.spawn_service import CancelOutcome, SpawnApplicationService
 from meridian.lib.core.types import SpawnId
@@ -72,6 +73,7 @@ def _start_descendant(
         spawn_id=spawn_id,
         chat_id=spawn_id,
         parent_id=parent_id,
+        parent_run_id=parse_ref(parent_id, row_key=True) if parent_id else None,
         model="gpt-5.4",
         agent="coder",
         harness="codex",

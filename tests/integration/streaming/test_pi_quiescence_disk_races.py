@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import (
     ConnectionConfig,
@@ -311,6 +312,7 @@ async def test_pi_unpublished_child_result_suppresses_done_nudge_for_private_wor
         spawn_id=child_id,
         chat_id=str(child_id),
         parent_id=str(spawn_id),
+        parent_run_id=parse_ref(str(spawn_id), row_key=True),
         model="test-model",
         agent="test-agent",
         harness=HarnessId.PI.value,
@@ -368,6 +370,7 @@ async def test_pi_spawn_child_outstanding_waits_without_done_nudge(
         spawn_id=child_id,
         chat_id=str(child_id),
         parent_id=str(spawn_id),
+        parent_run_id=parse_ref(str(spawn_id), row_key=True),
         model="test-model",
         agent="test-agent",
         harness=HarnessId.PI.value,

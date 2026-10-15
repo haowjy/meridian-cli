@@ -192,7 +192,15 @@ def test_fork_history_is_frozen_before_source_chat_resumes(tmp_path: Path) -> No
             prompt="first",
             kind="primary",
         )
-        session_store.update_session_spawn_id(root, source, first)
+        source_session = session_store.get_session_record(root, source)
+        assert source_session is not None
+        spawn_store.bind_run_generation(
+            root,
+            first,
+            chat_id=source,
+            session_instance_id=source_session.session_instance_id,
+            forked_from_history_id=source_session.forked_from_history_id,
+        )
         original = spawn_store.get_spawn(root, first)
         assert original is not None
         fork = session_store.start_session(
@@ -221,7 +229,15 @@ def test_fork_history_is_frozen_before_source_chat_resumes(tmp_path: Path) -> No
             prompt="resumed",
             kind="primary",
         )
-        session_store.update_session_spawn_id(root, source, resumed)
+        resumed_session = session_store.get_session_record(root, source)
+        assert resumed_session is not None
+        spawn_store.bind_run_generation(
+            root,
+            resumed,
+            chat_id=source,
+            session_instance_id=resumed_session.session_instance_id,
+            forked_from_history_id=resumed_session.forked_from_history_id,
+        )
         child = spawn_store.start_spawn(
             root,
             chat_id=fork,
@@ -230,6 +246,15 @@ def test_fork_history_is_frozen_before_source_chat_resumes(tmp_path: Path) -> No
             harness="codex",
             prompt="fork",
             kind="primary",
+        )
+        fork_session = session_store.get_session_record(root, fork)
+        assert fork_session is not None
+        spawn_store.bind_run_generation(
+            root,
+            child,
+            chat_id=fork,
+            session_instance_id=fork_session.session_instance_id,
+            forked_from_history_id=fork_session.forked_from_history_id,
         )
         state = spawn_store.get_spawn(root, child)
         assert state is not None
@@ -790,6 +815,15 @@ def test_child_binding_preserves_cross_owner_fork_and_native_identity(tmp_path: 
         forked_from_history_id=source.history_id,
     )
     try:
+        session = session_store.get_session_record(root, chat)
+        assert session is not None
+        spawn_store.bind_run_generation(
+            root,
+            child_id,
+            chat_id=chat,
+            session_instance_id=session.session_instance_id,
+            forked_from_history_id=session.forked_from_history_id,
+        )
         row = spawn_store.get_spawn(root, child_id)
         session = session_store.get_session_record(root, chat)
         assert row is not None and session is not None

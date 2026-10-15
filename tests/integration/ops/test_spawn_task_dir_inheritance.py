@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from meridian.lib.core.context import RuntimeContext
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId, RunId, SpawnId
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.ops.spawn.execute import _resolve_execution_contract
 from meridian.lib.ops.spawn.models import SpawnCreateInput
@@ -84,7 +84,11 @@ def test_execute_contract_does_not_shadow_ambient_work_item_task_dir(
             harness="codex",
             project_root=project_root.as_posix(),
         ),
-        ctx=RuntimeContext(spawn_id=SpawnId("p-parent"), work_id=item.name),
+        ctx=RuntimeContext(
+            spawn_id=SpawnId("p-parent"),
+            run_id=RunId("p-parent"),
+            work_id=item.name,
+        ),
     )
 
     assert contract.execution_cwd == work_task_dir.resolve()

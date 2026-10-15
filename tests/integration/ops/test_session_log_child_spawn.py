@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.native_identity import NativeSessionUnavailable
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.ops.session_export import SessionExportInput, session_export_sync
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
@@ -98,6 +99,7 @@ def test_session_log_child_spawn_without_harness_id_does_not_use_parent_chat(
             spawn_id="p42",
             chat_id=parent_chat_id,
             parent_id="p-parent",
+            parent_run_id=parse_ref("p-parent", row_key=True),
             model="gpt-5.4",
             agent="coder",
             harness="codex",
@@ -414,6 +416,7 @@ def test_session_export_include_spawns_groups_by_owner_chat(
             chat_id="c-child",
             owner_chat_id=owner_chat_id,
             parent_id=primary_spawn_id,
+            parent_run_id=parse_ref(primary_spawn_id, row_key=True),
             model="gpt-5.4",
             agent="coder",
             harness="codex",

@@ -10,7 +10,7 @@ import pytest
 
 from meridian.lib.config.loader import load_config
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
-from meridian.lib.core.types import HarnessId
+from meridian.lib.core.types import HarnessId, RunId
 from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_session_payload,
 )
@@ -110,7 +110,7 @@ def test_run_primary_attach_preserves_startup_failure_cause(
     with pytest.raises(PrimaryAttachError) as exc_info:
         runner_module.run_primary_attach(
             harness_id=HarnessId.OPENCODE,
-            spawn_id=runner_module.SpawnId("p-timeout-cause"),
+            spawn_id=RunId("p-timeout-cause"),
             spawn_dir=tmp_path / "spawn",
             control_root=tmp_path,
             task_cwd=tmp_path,
