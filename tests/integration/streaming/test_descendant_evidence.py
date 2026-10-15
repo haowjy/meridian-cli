@@ -92,7 +92,13 @@ def test_reconciled_descendant_evidence_returns_typed_unknown_on_store_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def _fail_projection(_index: object, _root_spawn_id: str) -> object:
+    def _fail_projection(
+        _index: object,
+        _root_spawn_id: str,
+        *,
+        deadline: float | None = None,
+    ) -> object:
+        assert deadline is not None
         raise OSError("store unavailable")
 
     monkeypatch.setattr(
@@ -111,6 +117,47 @@ def test_reconciled_descendant_evidence_returns_typed_unknown_on_store_error(
     assert assessment.failure == descendant_evidence_module.EvidenceFailure(
         code="descendant_evidence_read_failed",
         detail="store unavailable",
+    )
+
+
+def test_reconciled_descendant_evidence_treats_busy_index_as_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    deadlines: list[float] = []
+
+    def _busy_projection(
+        _index: object,
+        _root_spawn_id: str,
+        *,
+        deadline: float | None = None,
+    ) -> object:
+        assert deadline is not None
+        deadlines.append(deadline)
+        raise descendant_evidence_module.HistoryIndexBusy("index busy")
+
+    monkeypatch.setattr(
+        descendant_evidence_module.HistoryIndex,
+        "descendant_projection",
+        _busy_projection,
+    )
+    before = descendant_evidence_module.time.monotonic()
+
+    assessment = ReconciledDescendantEvidence(
+        runtime_root=tmp_path,
+        root_spawn_id=SpawnId("p1"),
+    ).assess()
+
+    assert assessment.disposition == "unknown"
+    assert assessment.blockers == ()
+    assert assessment.failure == descendant_evidence_module.EvidenceFailure(
+        code="descendant_evidence_unavailable",
+        detail="index busy",
+    )
+    assert before + descendant_evidence_module.QUERY_TIMEOUT <= deadlines[0]
+    assert deadlines[0] <= (
+        descendant_evidence_module.time.monotonic()
+        + descendant_evidence_module.QUERY_TIMEOUT
     )
 
 

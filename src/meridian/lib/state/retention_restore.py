@@ -11,7 +11,7 @@ import json
 import shutil
 import zipfile
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
@@ -39,6 +39,7 @@ from meridian.lib.state.retention_archive import (
     verify_archive,
 )
 from meridian.lib.state.retention_digest import model_record_digest, stored_record_digest
+from meridian.lib.state.session_fold import new_historical_generation
 from meridian.lib.state.session_identity import session_records_for_spawns
 from meridian.lib.state.session_store import (
     SessionRecord,
@@ -252,7 +253,7 @@ def restore_archive(root: Path, archive_path: Path, refs: tuple[str, ...]) -> tu
                 elif existing is None:
                     local_id = str(reserve_spawn_id(root))
                     chat_id = reserve_chat_id(root)
-                    generation = uuid4().hex
+                    generation = new_historical_generation()
                     plan = RestorePlan(
                         portable_digest=record.portable_digest,
                         local_id=local_id,

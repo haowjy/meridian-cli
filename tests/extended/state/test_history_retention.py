@@ -136,6 +136,8 @@ def test_zip_transfer_restore_is_inert_repeatable_and_conflict_safe(tmp_path: Pa
     assert state is not None
     assert state.history_id == original.history_id
     assert state.record_mode == "historical" and state.worker_pid is None
+    assert state.session_instance_id is not None
+    assert state.session_instance_id.startswith("historical-")
     assert state.runner_pid is None and state.harness_session_id is None
     history = destination / "spawns" / restored[0] / "native-transcript.jsonl"
     assert json.loads(history.read_text().splitlines()[0])["transcript"]["history_id"] == str(
@@ -891,6 +893,8 @@ def test_historical_session_updates_are_refused(tmp_path: Path) -> None:
     local = restore_archive(fresh, Path(output.archives[0]), output.reclaimed)[0]
     row = spawn_store.get_spawn(fresh, local)
     assert row is not None and row.chat_id is not None
+    assert row.session_instance_id is not None
+    assert row.session_instance_id.startswith("historical-")
     before = (fresh / "sessions.jsonl").read_bytes()
     with pytest.raises(ValueError, match="Historical"):
         session_store.update_session_work_id(fresh, row.chat_id, "changed")

@@ -57,7 +57,7 @@ def test_generated_histories_match_pre_restructure_fold(tmp_path: Path) -> None:
             params=(),
             started_at="0",
             stopped_at="1",
-            session_instance_id="old",
+            session_instance_id="historical-old",
             record_mode="historical",
         )
         events.extend(
@@ -99,5 +99,5 @@ def test_generated_histories_match_pre_restructure_fold(tmp_path: Path) -> None:
         results.append(result)
     serialized = json.dumps(results, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(serialized).hexdigest() == (
-        "aab97638816a5ea383e3549200df3872e37aa485dc68292ee6effb5494cf0fc4"
+        "f5c5954b1f3a2ecf2754d99cfe1e6733984c7e4128fc9c8c6fef017f79f9cc32"
     )

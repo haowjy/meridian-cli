@@ -30,8 +30,8 @@ nested processes also read it to skip reaping side effects.
 
 `spawn_wait` has two modes:
 - With spawn IDs: waits for specific spawns.
-- Without args (no-arg form): scoped to the current `_MERIDIAN_DEPTH` — waits for
-  spawns created at this nesting level only, not grandchild spawns.
+- Without args (no-arg form): a primary waits for active spawns owned by its chat; a
+  nested spawn waits for its transitive subtree and excludes itself.
 
 `--fail-fast` exits as soon as any spawn reaches `failed` or `timed_out`, reporting
 which spawns failed and which are still pending. `cancelled` does not trigger
@@ -39,6 +39,10 @@ fail-fast (cancellation keeps existing aggregate-exit behavior).
 
 Checkpoint polling respects the depth-appropriate yield interval (read from
 `_MERIDIAN_HARNESS` env — the orchestrator's own harness prompt-cache TTL).
+No-arg discovery always lets an absent history index finish its separate, sticky
+cold-build budget first. Its deadline then bounds one catch-up attempt; if the index
+is still busy, wait yields an explicit discovery-pending checkpoint instead of
+claiming the session has no pending spawns.
 
 Result fetchers that do not consume a parent's completion notification must use
 `SpawnWaitInput(observe=False)` (`spawn wait --no-observe`). Normal waits observe

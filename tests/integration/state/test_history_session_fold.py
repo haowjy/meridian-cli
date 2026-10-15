@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.history_index import HistoryIndex
-from meridian.lib.state.jsonl import append_durable_jsonl_line
 from meridian.lib.state.session_store import list_session_generations
 
 
@@ -108,7 +108,7 @@ def test_incremental_replay_survives_restart_and_matches_cold(tmp_path: Path):
     assert _rows(HistoryIndex(tmp_path)) == incremental
 
 
-def test_incremental_replay_waits_for_and_repairs_a_torn_tail(tmp_path: Path) -> None:
+def test_incremental_replay_waits_for_partial_line_then_resumes(tmp_path: Path) -> None:
     _append(
         tmp_path,
         _start("g1", chat_id="c1", harness_session_id="native-1"),
@@ -124,21 +124,34 @@ def test_incremental_replay_waits_for_and_repairs_a_torn_tail(tmp_path: Path) ->
         chat_id="c3",
         harness_session_id="native-3",
     )
-    with sessions_path.open("ab") as handle:
-        handle.write(json.dumps(uncommitted).encode("utf-8"))
-    HistoryChanges(tmp_path).mark(HistorySource(kind="sessions"))
+    changes = HistoryChanges(tmp_path)
+    source = HistorySource(kind="sessions")
+    with (
+        lock_file(changes.mutation_lock, mode="shared"),
+        lock_file(source.lock_path(tmp_path)),
+    ):
+        changes.mark(source)
+        with sessions_path.open("ab") as handle:
+            handle.write(json.dumps(uncommitted).encode("utf-8"))
 
     assert sorted(record.chat_id for record in index.sessions()) == ["c1", "c2"]
-
-    next_event = _start(
-        "g4",
-        chat_id="c4",
-        harness_session_id="native-4",
+    with sqlite3.connect(index.path) as db:
+        cursor_before_completion = db.execute(
+            "SELECT extent FROM cursors WHERE source = 'sessions'"
+        ).fetchone()
+    assert cursor_before_completion == (
+        sessions_path.stat().st_size - len(json.dumps(uncommitted).encode("utf-8")),
     )
-    append_durable_jsonl_line(sessions_path, json.dumps(next_event) + "\n")
-    HistoryChanges(tmp_path).mark(HistorySource(kind="sessions"))
 
-    assert sorted(record.chat_id for record in index.sessions()) == ["c1", "c2", "c3", "c4"]
+    with (
+        lock_file(changes.mutation_lock, mode="shared"),
+        lock_file(source.lock_path(tmp_path)),
+    ):
+        changes.mark(source)
+        with sessions_path.open("ab") as handle:
+            handle.write(b"\n")
+
+    assert sorted(record.chat_id for record in index.sessions()) == ["c1", "c2", "c3"]
 
     final_event = _start(
         "g5",
@@ -154,7 +167,6 @@ def test_incremental_replay_waits_for_and_repairs_a_torn_tail(tmp_path: Path) ->
         "c1",
         "c2",
         "c3",
-        "c4",
         "c5",
     ]
     with sqlite3.connect(index.path) as db:
