@@ -1,5 +1,6 @@
-<!-- Describe the PR's final state, not its history. Give reviewers enough
-     context to understand the change. -->
+<!-- Describe the PR's final state, not its history. A reviewer should get the
+     purpose, the decisions, the surrounding work and the full scope from the
+     sections up to Summary, before any detail. -->
 
 ## Why
 
@@ -11,7 +12,7 @@
 <!-- Name the core design decisions behind the change: the underlying
      problems, not just their symptoms. For each, say what was wrong, what this
      PR decides, and what it rules out. Quote the owner's rulings where they
-     set a decision. -->
+     set a decision. Write "None." when the change involves no design choice. -->
 
 1. **<decision>.** <the problem>. <what this PR decides>. Ruled out: <alternative and why>.
 
@@ -27,30 +28,34 @@
 
 - <what must be true after merge>
 
+## Work Item
+
+<!-- Name the work item, issue, design, or plan this PR delivers; otherwise
+     say this was direct maintenance. Under it, list other related work: PRs
+     this builds on or unblocks, and issues it fixes or prepares for. Deferred
+     work goes under Deferred. Write "None." when nothing is related. -->
+
+<work item, issue, design, or plan, or "Direct maintenance.">
+
+**Related work.**
+
+- #N: <how it relates>
+
 ## Summary
 
 <!-- List every part of the PR: each change a reviewer could ask "why is this
      here?" about, including follow-on fixes, safety work the main change
      forced, and anything added mid-review. A change missing from this table
-     should not be in the diff. Give each part its approximate source and test
-     lines (the parts should roughly account for the Diff totals) and why it
-     belongs in this PR. Keep the table current as parts are added. Below it,
-     give each part a short paragraph: what it does and its key tradeoffs.
-     Omit commit logs. -->
+     should not be in the diff. Keep it current as parts are added.
 
-| # | Part | Source | Tests | Why it's in this PR |
-|---|---|---|---|---|
-| 1 | | +N / -N | +N / -N | |
+     Part sizes are approximate when parts share a file. The Total row is
+     exact: `git diff --numstat` against the base, excluding generated files
+     (lockfiles, built Pi extension bundles). -->
 
-## Diff
-
-<!-- Report file/line totals excluding generated files (lockfiles, built Pi
-     extension bundles), then give non-overlapping area totals that add up.
-     Report on-disk state and schema changes under State / Schema Changes. -->
-
-- Total: N files, +N / -N
-- Breakdown:
-  - Area: N files, +N / -N — what changed
+| # | Part | Source | Tests | Docs | Why it's in this PR |
+|---|---|---|---|---|---|
+| 1 | <what it does> | +N / -N | +N / -N | +N / -N | |
+| | **Total (N files)** | **+N / -N** | **+N / -N** | **+N / -N** | |
 
 ## Before / After
 
@@ -66,11 +71,12 @@
 
 ## Code Changes
 
-<!-- Group production-code additions, refactors, and deletions by area; include
-     key paths and rationale. Aim to lower net-new code over time by simplifying,
-     refactoring, and removing duplication/dead paths—not by shrinking this diff.
-     Explain substantial additions. Track temporary code or cleanup deferred for
-     delivery speed/product clarity, with its reason and removal trigger. -->
+<!-- For each part in the Summary, explain how it works and name its key
+     paths. Explain substantial additions. Aim to lower net-new code over time
+     by simplifying, refactoring, and removing duplication/dead paths—not by
+     shrinking this diff. -->
+
+**1. <part>.** <how it works and why it is built this way>
 
 - Added:
 - Refactored:
@@ -85,11 +91,6 @@
      migration, `meridian doctor`, index rebuild), what an older build still
      running against the same runtime sees, and how to roll back. Diagram
      changed relationships in Mermaid when it helps. -->
-
-## Work Item
-
-<!-- Link the issue, work item, design, or plan; otherwise say this was direct
-     maintenance. -->
 
 ## Testing
 
@@ -113,9 +114,8 @@
      baseline/result; omit benchmarks when performance is unaffected. -->
 
 - Gates (`scripts/preflight.sh full`, pyright, extension build/tests):
-- Workflow/probe:
-- Setup and steps:
-- Expected / observed:
+- Live check (setup, steps, expected / observed):
+- Not exercised live:
 - Performance (when relevant):
 
 ## Deferred
