@@ -19,8 +19,8 @@ from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.session_identity import session_records_for_spawns
 from meridian.lib.state.spawn import repository as spawn_repository
-from meridian.lib.state.spawn import runs as spawn_runs
 from meridian.lib.state.spawn.runs import latest_run, next_run_id, runs_of
+from tests.support.io_probe import IOProbe
 from tests.support.native_snapshot import seal_spawn_snapshot
 
 
@@ -97,25 +97,18 @@ def test_run_discovery_uses_max_suffix_with_holes_and_ignores_junk(tmp_path: Pat
     assert latest_run(tmp_path, SpawnId("p1")) == "p1.3"
 
 
-def test_latest_run_rebuilds_a_missing_pointer_once(
+def test_latest_run_rebuilds_a_missing_head_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _start(tmp_path)
     (tmp_path / "spawn-heads" / "p1").unlink()
-    scans = 0
-    scan = spawn_repository.scan_spawn_ids
-
-    def count_scan(spawns_dir: Path) -> list[RunId]:
-        nonlocal scans
-        scans += 1
-        return scan(spawns_dir)
-
-    monkeypatch.setattr(spawn_runs, "scan_spawn_ids", count_scan)
+    probe = IOProbe(monkeypatch)
+    probe.watch("scan_spawn_ids", spawn_repository.scan_spawn_ids)
 
     assert not (tmp_path / "spawn-heads" / "p1").exists()
     assert latest_run(tmp_path, SpawnId("p1")) == "p1"
     assert latest_run(tmp_path, SpawnId("p1")) == "p1"
-    assert scans == 1
+    assert probe.count("scan_spawn_ids") == 1
     assert (tmp_path / "spawn-heads" / "p1").read_text(encoding="utf-8") == "1\n"
 
 
@@ -127,19 +120,12 @@ def test_latest_run_caches_a_lost_head_with_no_loose_runs(
         tmp_path, run_id, can_delete=lambda _row: True,
     )
     (tmp_path / "spawn-heads" / "p1").unlink()
-    scans = 0
-    scan = spawn_repository.scan_spawn_ids
-
-    def count_scan(spawns_dir: Path) -> list[RunId]:
-        nonlocal scans
-        scans += 1
-        return scan(spawns_dir)
-
-    monkeypatch.setattr(spawn_runs, "scan_spawn_ids", count_scan)
+    probe = IOProbe(monkeypatch)
+    probe.watch("scan_spawn_ids", spawn_repository.scan_spawn_ids)
 
     assert latest_run(tmp_path, SpawnId("p1")) is None
     assert latest_run(tmp_path, SpawnId("p1")) is None
-    assert scans == 1
+    assert probe.count("scan_spawn_ids") == 1
     assert (tmp_path / "spawn-heads" / "p1").read_text(encoding="utf-8") == "0\n"
 
 
@@ -147,18 +133,12 @@ def test_latest_run_above_spawn_counter_does_not_scan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assert _start(tmp_path, spawn_id=None) == "p1"
-    scans = 0
-
-    def count_scan(_spawns_dir: Path) -> list[RunId]:
-        nonlocal scans
-        scans += 1
-        return []
-
-    monkeypatch.setattr(spawn_runs, "scan_spawn_ids", count_scan)
+    probe = IOProbe(monkeypatch)
+    probe.watch("scan_spawn_ids", spawn_repository.scan_spawn_ids)
 
     assert latest_run(tmp_path, SpawnId("p2")) is None
     assert latest_run(tmp_path, SpawnId("p2")) is None
-    assert scans == 0
+    assert probe.count("scan_spawn_ids") == 0
     assert not (tmp_path / "spawn-heads" / "p2").exists()
 
 
@@ -367,19 +347,12 @@ def test_stale_artifact_pruning_keeps_head_without_rescanning(
     )
     assert [row.spawn_id for row in stale] == ["p1", "p1.2"]
     assert prune_stale_spawn_artifacts(stale).removed == 2
-    scans = 0
-    scan = spawn_repository.scan_spawn_ids
-
-    def count_scan(spawns_dir: Path) -> list[RunId]:
-        nonlocal scans
-        scans += 1
-        return scan(spawns_dir)
-
-    monkeypatch.setattr(spawn_runs, "scan_spawn_ids", count_scan)
+    probe = IOProbe(monkeypatch)
+    probe.watch("scan_spawn_ids", spawn_repository.scan_spawn_ids)
 
     assert runs_of(tmp_path, SpawnId("p1")) == ()
     assert runs_of(tmp_path, SpawnId("p1")) == ()
-    assert scans == 0
+    assert probe.count("scan_spawn_ids") == 0
     assert (tmp_path / "spawn-heads" / "p1").read_text(encoding="utf-8") == "2\n"
 
 

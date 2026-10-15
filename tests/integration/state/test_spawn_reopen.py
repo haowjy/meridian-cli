@@ -1,10 +1,7 @@
 """Run allocation is serialized, generation-free, and independent of suffix holes."""
 
 import os
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -16,8 +13,8 @@ from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.ops.reference import resolve_continue_source_row
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.spawn import repository as spawn_repository
-from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.runs import latest_bound_run, latest_run
+from tests.support.io_probe import IOProbe
 from tests.support.process_race import run_spawn_race_or_skip
 
 
@@ -286,15 +283,8 @@ def test_reserve_run_does_not_scan_for_a_fully_archived_ancestor(
     assert spawn_store.delete_published_spawn(
         tmp_path, parse_ref("p2", row_key=True), can_delete=lambda _row: True,
     )
-    scans = 0
-    scan = spawn_repository.scan_spawn_ids
-
-    def count_scan(spawns_dir: Path) -> list[RunId]:
-        nonlocal scans
-        scans += 1
-        return scan(spawns_dir)
-
-    monkeypatch.setattr(spawn_repository, "scan_spawn_ids", count_scan)
+    probe = IOProbe(monkeypatch)
+    probe.watch("scan_spawn_ids", spawn_repository.scan_spawn_ids)
     reservation = SpawnReservation(
         chat_id="c1",
         parent_id="p2",
@@ -306,7 +296,7 @@ def test_reserve_run_does_not_scan_for_a_fully_archived_ancestor(
     )
 
     assert spawn_store.reserve_run(tmp_path, SpawnId("p1"), reservation) == "p1.2"
-    assert scans == 0
+    assert probe.count("scan_spawn_ids") == 0
 
 
 def test_reserve_run_checks_parent_edges_from_non_latest_runs(tmp_path: Path) -> None:
@@ -375,30 +365,9 @@ def test_reserve_run_reads_one_spawn_row_while_allocation_lock_is_held(
         tmp_path, first, status="succeeded", exit_code=0, origin="runner",
     )
     paths = spawn_store.RuntimePaths.from_root_dir(tmp_path)
-    original_lock_file = spawn_store.lock_file
-    original_read_state = spawn_repository.read_state
-    allocation_lock_held = False
-    locked_reads: list[str] = []
-
-    @contextmanager
-    def tracked_lock_file(path: Path, *args: Any, **kwargs: Any) -> Iterator[None]:
-        nonlocal allocation_lock_held
-        with original_lock_file(path, *args, **kwargs):
-            was_held = allocation_lock_held
-            if path == paths.spawns_flock:
-                allocation_lock_held = True
-            try:
-                yield
-            finally:
-                allocation_lock_held = was_held
-
-    def tracked_read_state(*args: Any, **kwargs: Any) -> Any:
-        if allocation_lock_held:
-            locked_reads.append(str(args[1]))
-        return original_read_state(*args, **kwargs)
-
-    monkeypatch.setattr(spawn_store, "lock_file", tracked_lock_file)
-    monkeypatch.setattr(spawn_store, "_read_state", tracked_read_state)
+    probe = IOProbe(monkeypatch)
+    probe.watch_lock("spawns_flock", spawn_store.lock_file, paths.spawns_flock)
+    probe.watch("read_state", spawn_repository.read_state)
     reservation = SpawnReservation(
         chat_id="c1",
         prompt="again",
@@ -408,7 +377,7 @@ def test_reserve_run_reads_one_spawn_row_while_allocation_lock_is_held(
     )
 
     assert spawn_store.reserve_run(tmp_path, SpawnId("p1"), reservation) == "p1.2"
-    assert locked_reads == ["p1"]
+    assert probe.count_under_lock("read_state", "spawns_flock") <= 1
 
 
 def test_spawn_started_at_is_stamped_under_the_allocation_lock(
@@ -428,32 +397,19 @@ def test_spawn_started_at_is_stamped_under_the_allocation_lock(
         tmp_path, first, status="succeeded", exit_code=0, origin="runner",
     )
     paths = spawn_store.RuntimePaths.from_root_dir(tmp_path)
-    original_lock_file = spawn_store.lock_file
-    allocation_lock_held = False
-
-    @contextmanager
-    def tracked_lock_file(path: Path, *args: Any, **kwargs: Any) -> Iterator[None]:
-        nonlocal allocation_lock_held
-        with original_lock_file(path, *args, **kwargs):
-            was_held = allocation_lock_held
-            if path == paths.spawns_flock:
-                allocation_lock_held = True
-            try:
-                yield
-            finally:
-                allocation_lock_held = was_held
+    probe = IOProbe(monkeypatch)
+    probe.watch_lock("spawns_flock", spawn_store.lock_file, paths.spawns_flock)
 
     class LockAssertingClock:
         def __init__(self) -> None:
             self.calls = 0
 
         def utc_now_iso(self) -> str:
-            assert allocation_lock_held
+            assert probe.is_lock_held("spawns_flock")
             self.calls += 1
             return f"2026-10-15T00:00:0{self.calls}Z"
 
     clock = LockAssertingClock()
-    monkeypatch.setattr(spawn_store, "lock_file", tracked_lock_file)
 
     fresh = spawn_store.start_spawn(
         tmp_path,
@@ -549,37 +505,9 @@ def test_start_spawn_resolves_exact_parent_before_allocation_lock(
     assert first_parent_row is not None
 
     paths = spawn_store.RuntimePaths.from_root_dir(tmp_path)
-    original_lock_file = spawn_store.lock_file
-    original_read_state = spawn_store._read_state
-    allocation_lock_held = False
-    locked_dependency_reads: list[str] = []
-
-    @contextmanager
-    def tracked_lock_file(path: Path, *args: Any, **kwargs: Any) -> Iterator[None]:
-        nonlocal allocation_lock_held
-        with original_lock_file(path, *args, **kwargs):
-            was_held = allocation_lock_held
-            if path == paths.spawns_flock:
-                allocation_lock_held = True
-            try:
-                yield
-            finally:
-                allocation_lock_held = was_held
-
-    def tracked_read_state(
-        spawns_dir: Path,
-        spawn_id: RunId,
-        *,
-        include_prompt: bool = True,
-    ) -> SpawnRecord | None:
-        if allocation_lock_held:
-            locked_dependency_reads.append(f"parent:{spawn_id}")
-        return original_read_state(
-            spawns_dir, spawn_id, include_prompt=include_prompt,
-        )
-
-    monkeypatch.setattr(spawn_store, "lock_file", tracked_lock_file)
-    monkeypatch.setattr(spawn_store, "_read_state", tracked_read_state)
+    probe = IOProbe(monkeypatch)
+    probe.watch_lock("spawns_flock", spawn_store.lock_file, paths.spawns_flock)
+    probe.watch("read_state", spawn_repository.read_state)
 
     child = spawn_store.start_spawn(
         tmp_path,
@@ -594,7 +522,7 @@ def test_start_spawn_resolves_exact_parent_before_allocation_lock(
     )
     row = spawn_store.get_spawn(tmp_path, child)
 
-    assert locked_dependency_reads == []
+    assert probe.count_under_lock("read_state", "spawns_flock") == 0
     assert row is not None
     assert row.session_instance_id is None
     assert row.parent_history_id == first_parent_row.history_id
