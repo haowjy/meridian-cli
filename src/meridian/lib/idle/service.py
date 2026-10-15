@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from collections.abc import Callable, Mapping
@@ -44,8 +45,10 @@ from meridian.lib.state.idle_store import (
 )
 from meridian.lib.state.paths import resolve_project_runtime_root_or_none
 from meridian.lib.state.session_store import get_session_record
+from meridian.lib.state.user_paths import get_user_home
 
 _COMPACT_GRACE_MS = 30_000
+logger = logging.getLogger(__name__)
 
 
 class NotifySender(Protocol):
@@ -265,6 +268,17 @@ def _persisted_schedule(value: Schedule) -> IdleSchedule:
         push_at=value.push_at,
         warn_at=value.warn_at,
         compact_at=value.compact_at,
+    )
+
+
+def _close_open_stretch(state: IdleState, *, returned_at_ms: int) -> IdleState:
+    return state.model_copy(
+        update={
+            "stretch_open": False,
+            "returned_at_ms": returned_at_ms,
+            "compact_window_until_ms": None,
+            "expect_compaction_turn": False,
+        }
     )
 
 
@@ -497,14 +511,7 @@ class IdleService:
                 next_state = current.model_copy(update={"returned_at_ms": now_ms})
                 stretch_closed = current.stretch if current.idle_since_ms is not None else None
                 return next_state, ReturnResult(stretch_closed=stretch_closed, was_open=False)
-            next_state = current.model_copy(
-                update={
-                    "stretch_open": False,
-                    "returned_at_ms": now_ms,
-                    "compact_window_until_ms": None,
-                    "expect_compaction_turn": False,
-                }
-            )
+            next_state = _close_open_stretch(current, returned_at_ms=now_ms)
             return next_state, ReturnResult(stretch_closed=current.stretch, was_open=True)
 
         return self.store.mutate(harness, session, transition)
@@ -781,6 +788,33 @@ class IdleService:
         )
 
 
+def close_on_launch(*, harness: str, session: str, env: Mapping[str, str]) -> None:
+    """Close an open idle stretch before Meridian reopens its harness session."""
+
+    if not session:
+        return
+    try:
+        store = IdleStore(root=get_user_home(env=env) / "idle")
+        current = store.read(harness, session)
+        if current is None or not current.stretch_open:
+            return
+        returned_at_ms = _default_now_ms()
+
+        def transition(state: IdleState | None) -> tuple[IdleState | None, None]:
+            if state is None or not state.stretch_open:
+                return None, None
+            return _close_open_stretch(state, returned_at_ms=returned_at_ms), None
+
+        store.mutate(harness, session, transition)
+    except Exception:
+        logger.debug(
+            "Failed to close idle stretch before reopening %s session %s",
+            harness,
+            session,
+            exc_info=True,
+        )
+
+
 __all__ = [
     "ArmResult",
     "AutocompactOffReader",
@@ -791,6 +825,7 @@ __all__ = [
     "IdleService",
     "NotifySender",
     "ReturnResult",
+    "close_on_launch",
     "effective",
     "resolve_policy",
 ]
