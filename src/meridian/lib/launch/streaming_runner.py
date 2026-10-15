@@ -731,9 +731,9 @@ async def _run_streaming_attempt(
             )
             drain_exit_code = 3
         elif decision.trigger == TriggerKind.WATCHDOG:
-            terminated_by_report_watchdog = not decision.watchdog_noop
+            terminated_by_report_watchdog = True
         elif decision.trigger == TriggerKind.INACTIVITY:
-            terminated_by_inactivity = not decision.watchdog_noop
+            terminated_by_inactivity = True
         elif decision.stop_required:
             stop_exit_code = decision.synthetic_exit_code
             if decision.trigger == TriggerKind.SIGNAL:

@@ -99,6 +99,9 @@ async def test_report_watchdog_enforces_grace_deadline(
     manager = _WatchdogManager()
     spawn_id = SpawnId("report-timeout")
     monkeypatch.setattr(streaming_runner_module, "REPORT_WATCHDOG_POLL_SECONDS", 60.0)
+    grace_seconds = 0.01
+    loop = asyncio.get_running_loop()
+    started_at = loop.time()
 
     stopped = await asyncio.wait_for(
         streaming_runner_module._report_watchdog(
@@ -106,12 +109,14 @@ async def test_report_watchdog_enforces_grace_deadline(
             completion_event=asyncio.Event(),
             manager=manager,
             spawn_id=spawn_id,
-            grace_seconds=0.01,
+            grace_seconds=grace_seconds,
         ),
         timeout=2.0,
     )
+    elapsed = loop.time() - started_at
 
     assert stopped is True
+    assert elapsed >= grace_seconds
     assert manager.stop_calls == [
         {
             "spawn_id": spawn_id,
