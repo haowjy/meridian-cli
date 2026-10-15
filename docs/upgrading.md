@@ -8,9 +8,10 @@ Existing rows are run 1; legacy resume chains are not merged. List shows one
 row per spawn, and show includes its runs. Fully archived spawns must be restored
 before continuing; fork can still use their captured context.
 
-The rebuildable history index moves from schema 7 to 8, adding stable spawn and
-numeric run columns. The first indexed read rebuilds `history-v8.sqlite3` from
-authority and may take longer; the older `history-v7.sqlite3` is left untouched.
+The rebuildable history index moves from schema 7 to 9, adding stable spawn,
+numeric run, and current-chat columns. The first indexed read rebuilds
+`history-v9.sqlite3` from authority and may take longer; the older
+`history-v7.sqlite3` is left untouched.
 Bare spawn lookup uses a disposable atomic pointer under `spawn-heads/`; run
 directories remain authority, and a missing pointer is rebuilt once from them.
 

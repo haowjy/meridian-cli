@@ -11,7 +11,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `--fork pN.K`, or fork a busy spawn to branch now. Fork/from still mint spawns.
 
 ### Upgrade notes
-- First indexed read rebuilds history schema 8; no authority migration. See [upgrade notes](docs/upgrading.md#spawnrun-identity-boundary).
+- First indexed read rebuilds history schema 9; no authority migration. See [upgrade notes](docs/upgrading.md#spawnrun-identity-boundary).
 
 ## [0.10.10] - 2026-10-15
 

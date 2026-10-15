@@ -25,8 +25,8 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
 
-# Stable-spawn/run columns change projection and traversal semantics.
-SCHEMA_VERSION = 8
+# Stable-spawn/run and current-chat columns change projection and query semantics.
+SCHEMA_VERSION = 9
 
 
 def versioned(stem: str) -> str:
