@@ -12,7 +12,18 @@
 
 ## Summary
 
-<!-- Briefly map the solution and key tradeoffs; omit commit logs and diff stats. -->
+<!-- List every part of the PR: each change a reviewer could ask "why is this
+     here?" about, including follow-on fixes, safety work the main change
+     forced, and anything added mid-review. A change missing from this table
+     should not be in the diff. Give each part its approximate source and test
+     lines (the parts should roughly account for the Diff totals) and why it
+     belongs in this PR. Keep the table current as parts are added. Below it,
+     give each part a short paragraph: what it does and its key tradeoffs.
+     Omit commit logs. -->
+
+| # | Part | Source | Tests | Why it's in this PR |
+|---|---|---|---|---|
+| 1 | | +N / -N | +N / -N | |
 
 ## Diff
 
