@@ -58,9 +58,11 @@ collected. Letting the handle go early releases the containment boundary silentl
 ## Entry Points
 
 - `base.py` — `ScopedProcessHandle`, `ProcessScopeSnapshot`, `CleanupResult`
-- `posix.py` — `terminate_pgid()` (POSIX backend)
+- `posix.py` — `terminate_pgid()` result wrapper (POSIX backend)
 - `windows_job.py` — `assign_to_new_job()`, `terminate_job()` (Windows backend)
-- `fallback.py` — `terminate_tree()` (async), `terminate_tree_sync()` (sync, no event loop)
+- `fallback.py` — `terminate_tree()` (async), `terminate_tree_sync()` result wrapper
+- `../scope_termination.py` — dependency-free sync PGID/tree implementation shared
+  with the standalone parent watchdog
 
 Use `terminate_tree_sync()` from hook contexts and synchronous teardown paths where no
 event loop is running.

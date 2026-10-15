@@ -12,12 +12,18 @@ best-effort legacy code; do not add or expand them.
 
 Two layers:
 
-1. **Detection and primitives** (`__init__.py`, `locking.py`, `terminate.py`) —
-   `IS_WINDOWS`, `IS_POSIX`, `get_home_path()`, file locking, process-tree teardown shim.
+1. **Detection and primitives** (`__init__.py`, `locking.py`, `terminate.py`,
+   `scope_termination.py`) — `IS_WINDOWS`, `IS_POSIX`, `get_home_path()`, file
+   locking, and process-tree teardown.
 
 2. **Process containment** (`process_scope/`) — ensures the full subprocess tree
    Meridian starts is killed on spawn completion, cancel, or crash. Three backends:
    POSIX group kill, a legacy Windows Job Object branch, and a psutil fallback.
+
+POSIX launcher crashes are covered by `detached_process.py` and the standalone
+`parent_watchdog.py`. The watchdog is launched by file path so package initializers
+do not run. Keep its dependency, `scope_termination.py`, limited to the standard
+library and psutil; normal process-scope wrappers use the same termination core.
 
 ## Import Rule: Keep OS-Specific Imports in This Package
 
@@ -79,6 +85,8 @@ Existing callers work unchanged; new code should use `ScopedProcessHandle`.
 
 - `__init__.py` — `IS_WINDOWS`, `IS_POSIX`, `get_home_path()`, deferred POSIX proxies
 - `locking.py` — advisory file locking plus validated lock-GC unlink primitive
+- `detached_process.py` / `parent_watchdog.py` — launcher parent-death containment
+- `scope_termination.py` — dependency-free synchronous scope termination core
 - `process_scope/` — `ScopedProcessHandle`, `ProcessScopeSnapshot`, platform backends
 
 ## Depth

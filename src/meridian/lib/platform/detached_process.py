@@ -58,10 +58,13 @@ class ParentWatchdog:
     def register_scope(self, scope: ProcessScopeSnapshot) -> bool:
         """Commit one scope registration to the watchdog control pipe."""
 
-        message = json.dumps(
-            {"action": "register", "scope": asdict(scope)},
-            separators=(",", ":"),
-        ).encode("utf-8") + b"\n"
+        message = (
+            json.dumps(
+                {"action": "register", "scope": asdict(scope)},
+                separators=(",", ":"),
+            ).encode("utf-8")
+            + b"\n"
+        )
         with self._lock:
             if self._closed or self.process.poll() is not None:
                 return False
@@ -138,8 +141,9 @@ def start_parent_watchdog() -> ParentWatchdog | None:
 
     command = (
         sys.executable,
-        "-m",
-        "meridian.lib.platform.parent_watchdog",
+        "-S",
+        "-OO",
+        os.path.join(os.path.dirname(__file__), "parent_watchdog.py"),
         "--parent-pid",
         str(parent_pid),
         "--parent-created-at",
@@ -149,6 +153,9 @@ def start_parent_watchdog() -> ParentWatchdog | None:
         "--ready-fd",
         str(ready_write_fd),
     )
+    watchdog_env = os.environ.copy()
+    psutil_site_packages = os.path.dirname(os.path.dirname(psutil.__file__))
+    watchdog_env["PYTHONPATH"] = psutil_site_packages
     try:
         process = subprocess.Popen(
             command,
@@ -158,6 +165,7 @@ def start_parent_watchdog() -> ParentWatchdog | None:
             close_fds=True,
             pass_fds=(control_read_fd, ready_write_fd),
             start_new_session=True,
+            env=watchdog_env,
         )
     except OSError:
         for fd in (control_read_fd, control_write_fd, ready_read_fd, ready_write_fd):

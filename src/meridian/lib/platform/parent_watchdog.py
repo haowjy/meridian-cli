@@ -8,27 +8,97 @@ and every registered scope is terminated.
 
 from __future__ import annotations
 
-import argparse
+import json
 import os
 import select
+import sys
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import psutil
 
-from meridian.lib.platform.process_scope import terminate_scope_sync
-from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot, birth_time_unverified
-from meridian.lib.utils.json_shapes import json_object, loads_json_object
+if __package__ or TYPE_CHECKING:
+    from meridian.lib.platform.scope_termination import (
+        ProcessScope,
+        birth_time_unverified,
+        terminate_scope_sync,
+    )
+else:
+    from scope_termination import (
+        ProcessScope,
+        birth_time_unverified,
+        terminate_scope_sync,
+    )
 
 _DEFAULT_POLL_INTERVAL_SECONDS = 0.5
 _DEFAULT_GRACE_SECONDS = 5.0
 
 
-@dataclass(frozen=True)
 class WatchedProcess:
-    pid: int
-    created_at_epoch: float
+    __slots__ = ("created_at_epoch", "pid")
+
+    def __init__(self, *, pid: int, created_at_epoch: float) -> None:
+        self.pid = pid
+        self.created_at_epoch = created_at_epoch
+
+
+class WatchdogScope(ProcessScope):
+    """Process-scope fields received over the launcher control pipe."""
+
+    __slots__ = (
+        "containment",
+        "pgid",
+        "release_id",
+        "root_created_at_epoch",
+        "root_pid",
+        "scope_id",
+    )
+
+    def __init__(
+        self,
+        *,
+        scope_id: str,
+        containment: str,
+        root_pid: int,
+        root_created_at_epoch: float,
+        pgid: int | None,
+        release_id: str,
+    ) -> None:
+        self.scope_id = scope_id
+        self.containment = containment
+        self.root_pid = root_pid
+        self.root_created_at_epoch = root_created_at_epoch
+        self.pgid = pgid
+        self.release_id = release_id
+
+
+class WatchdogArguments:
+    __slots__ = (
+        "control_fd",
+        "grace_seconds",
+        "parent_created_at",
+        "parent_pid",
+        "poll_interval",
+        "ready_fd",
+    )
+
+    def __init__(
+        self,
+        *,
+        parent_pid: int,
+        parent_created_at: float,
+        control_fd: int,
+        ready_fd: int,
+        poll_interval: float,
+        grace_seconds: float,
+    ) -> None:
+        self.parent_pid = parent_pid
+        self.parent_created_at = parent_created_at
+        self.control_fd = control_fd
+        self.ready_fd = ready_fd
+        self.poll_interval = poll_interval
+        self.grace_seconds = grace_seconds
 
 
 def process_is_same_birth(process: WatchedProcess) -> bool:
@@ -48,7 +118,7 @@ def process_is_same_birth(process: WatchedProcess) -> bool:
     return abs(actual - process.created_at_epoch) <= 1.0
 
 
-def process_scope_is_alive(scope: ProcessScopeSnapshot) -> bool:
+def process_scope_is_alive(scope: ProcessScope) -> bool:
     """Return True while the scope root or one of its process-group members lives."""
 
     root = WatchedProcess(
@@ -74,61 +144,72 @@ def process_scope_is_alive(scope: ProcessScopeSnapshot) -> bool:
 def watch_parent_until_exit(
     *,
     parent: WatchedProcess,
-    target_scope: ProcessScopeSnapshot,
+    target_scope: ProcessScope,
     poll_interval_seconds: float = _DEFAULT_POLL_INTERVAL_SECONDS,
     grace_seconds: float = _DEFAULT_GRACE_SECONDS,
     parent_alive: Callable[[WatchedProcess], bool] = process_is_same_birth,
-    target_alive: Callable[[ProcessScopeSnapshot], bool] = process_scope_is_alive,
-    terminate_scope: Callable[..., object] = terminate_scope_sync,
+    target_alive: Callable[[ProcessScope], bool] | None = None,
+    terminate_scope: Callable[..., object] | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> int:
     """Watch one scope. Kept as the small pure seam used by scope tests."""
 
+    target_alive_fn = target_alive or process_scope_is_alive
     while True:
-        if not target_alive(target_scope):
+        if not target_alive_fn(target_scope):
             return 0
         if not parent_alive(parent):
-            terminate_scope(
-                target_scope,
-                grace_seconds=grace_seconds,
-                reason="parent_exit_watchdog",
-            )
+            if terminate_scope is None:
+                terminate_scope_sync(target_scope, grace_seconds=grace_seconds)
+            else:
+                terminate_scope(
+                    target_scope,
+                    grace_seconds=grace_seconds,
+                    reason="parent_exit_watchdog",
+                )
             return 0
         sleep(max(0.05, poll_interval_seconds))
 
 
-def _scope_from_wire(payload: object) -> ProcessScopeSnapshot:
-    narrowed = json_object(payload)
-    if narrowed is None:
+def _json_object(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    result: dict[str, object] = {}
+    for key, item in value.items():  # pyright: ignore[reportUnknownVariableType]  # JSON
+        if not isinstance(key, str):
+            return None
+        result[key] = item
+    return result
+
+
+def _scope_from_wire(payload: object) -> WatchdogScope:
+    row = _json_object(payload)
+    if row is None:
         raise ValueError("watchdog scope payload must be an object")
-    payload = narrowed
-    return ProcessScopeSnapshot(
-        scope_id=str(payload["scope_id"]),
-        owner_policy=str(payload["owner_policy"]),
-        owner_id=str(payload["owner_id"]),
-        role=str(payload["role"]),
-        containment=str(payload["containment"]),
-        root_pid=int(str(payload["root_pid"])),
-        root_created_at_epoch=float(str(payload["root_created_at_epoch"])),
-        pgid=int(str(payload["pgid"])) if payload.get("pgid") is not None else None,
-        job_name=str(payload["job_name"]) if payload.get("job_name") is not None else None,
-        degraded_reason=(
-            str(payload["degraded_reason"])
-            if payload.get("degraded_reason") is not None
-            else None
-        ),
-        parent_death_linked=True,
-        release_id=str(payload.get("release_id", "")),
+    scope_id = str(row["scope_id"])
+    root_pid = int(str(row["root_pid"]))
+    root_created_at_epoch = float(str(row["root_created_at_epoch"]))
+    release_id = str(row.get("release_id", "")) or (
+        f"{scope_id}:{root_pid}:{root_created_at_epoch:.6f}"
+    )
+    return WatchdogScope(
+        scope_id=scope_id,
+        containment=str(row["containment"]),
+        root_pid=root_pid,
+        root_created_at_epoch=root_created_at_epoch,
+        pgid=int(str(row["pgid"])) if row.get("pgid") is not None else None,
+        release_id=release_id,
     )
 
 
 def _handle_message(
     raw_line: bytes,
-    scopes: dict[str, ProcessScopeSnapshot],
+    scopes: dict[str, WatchdogScope],
 ) -> bool:
     """Apply one control message; return True for graceful shutdown."""
 
-    payload = loads_json_object(raw_line.decode("utf-8"))
+    decoded: object = json.loads(raw_line.decode("utf-8"))
+    payload = _json_object(decoded)
     if payload is None:
         raise ValueError("watchdog message must be a valid object")
     action = payload.get("action")
@@ -150,7 +231,7 @@ def watch_parent_scopes(
 ) -> int:
     """Read scope registrations and terminate them if the launcher disappears."""
 
-    scopes: dict[str, ProcessScopeSnapshot] = {}
+    scopes: dict[str, WatchdogScope] = {}
     buffered = b""
     graceful_shutdown = False
     parent_died = False
@@ -207,23 +288,42 @@ def watch_parent_scopes(
             continue
 
     for scope in reversed(tuple(scopes.values())):
-        terminate_scope_sync(
-            scope,
-            grace_seconds=grace_seconds,
-            reason="parent_exit_watchdog",
-        )
+        try:
+            terminate_scope_sync(
+                scope,
+                grace_seconds=grace_seconds,
+            )
+        except Exception:
+            # One broken/stale scope must not prevent remaining registrations
+            # from being terminated after their launcher dies.
+            continue
     return 0
 
 
-def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--parent-pid", type=int, required=True)
-    parser.add_argument("--parent-created-at", type=float, required=True)
-    parser.add_argument("--control-fd", type=int, required=True)
-    parser.add_argument("--ready-fd", type=int, default=-1)
-    parser.add_argument("--poll-interval", type=float, default=_DEFAULT_POLL_INTERVAL_SECONDS)
-    parser.add_argument("--grace-seconds", type=float, default=_DEFAULT_GRACE_SECONDS)
-    return parser.parse_args(argv)
+def _parse_args(argv: Sequence[str] | None) -> WatchdogArguments:
+    raw_args = list(sys.argv[1:] if argv is None else argv)
+    if len(raw_args) % 2:
+        raise ValueError("watchdog arguments must be flag/value pairs")
+    values = dict(zip(raw_args[::2], raw_args[1::2], strict=True))
+    known_flags = {
+        "--control-fd",
+        "--grace-seconds",
+        "--parent-created-at",
+        "--parent-pid",
+        "--poll-interval",
+        "--ready-fd",
+    }
+    unknown_flags = values.keys() - known_flags
+    if unknown_flags:
+        raise ValueError(f"unknown watchdog arguments: {sorted(unknown_flags)!r}")
+    return WatchdogArguments(
+        parent_pid=int(values["--parent-pid"]),
+        parent_created_at=float(values["--parent-created-at"]),
+        control_fd=int(values["--control-fd"]),
+        ready_fd=int(values.get("--ready-fd", "-1")),
+        poll_interval=float(values.get("--poll-interval", str(_DEFAULT_POLL_INTERVAL_SECONDS))),
+        grace_seconds=float(values.get("--grace-seconds", str(_DEFAULT_GRACE_SECONDS))),
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -252,6 +352,7 @@ if __name__ == "__main__":  # pragma: no cover - exercised by subprocess tests
 
 
 __all__ = [
+    "WatchdogScope",
     "WatchedProcess",
     "main",
     "process_is_same_birth",

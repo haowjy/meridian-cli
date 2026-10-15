@@ -8,24 +8,17 @@ from hashlib import sha256
 
 import structlog
 
+from meridian.lib.platform.scope_termination import (
+    PROCESS_BIRTH_UNKNOWN_EPOCH,
+    ProcessScope,
+    birth_time_unverified,
+)
+
 logger = structlog.get_logger(__name__)
-
-PROCESS_BIRTH_UNKNOWN_EPOCH = 0.0
-
-
-def birth_time_unverified(created_at_epoch: float) -> bool:
-    """Return True when process birth time was not observed.
-
-    The sentinel means "unknown", not "process born at epoch zero".
-    Adapters must skip PID-reuse numeric comparisons in this state; callers
-    decide whether an unknown birth time is safe for their policy layer.
-    """
-
-    return created_at_epoch == PROCESS_BIRTH_UNKNOWN_EPOCH
 
 
 @dataclass(frozen=True)
-class ProcessScopeSnapshot:
+class ProcessScopeSnapshot(ProcessScope):
     """Mechanism facts for a single process scope (no policy)."""
 
     scope_id: str

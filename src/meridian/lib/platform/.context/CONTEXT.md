@@ -67,20 +67,20 @@ Meridian itself dies mid-flight.
 ```
 process_scope/
   base.py          — ScopedProcessHandle, ProcessScopeSnapshot, CleanupResult types
-  posix.py         — setsid() / process-group kill
+  posix.py         — Meridian result wrapper for process-group kill
   windows_job.py   — Job Object create/assign/terminate (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)
-  fallback.py      — psutil children(recursive=True) + SIGTERM → SIGKILL (degraded)
+  fallback.py      — async tree kill plus Meridian result wrapper for sync tree kill
+scope_termination.py — dependency-free sync PGID/tree termination shared with watchdog
 ```
 
 **POSIX:** `setsid()` at launch; `os.killpg(pgid, SIGTERM)` on teardown. Catches
-reparented descendants that single-PID kill misses. Linux installs
-`PR_SET_PDEATHSIG` before exec when available. POSIX platforms without a native
-parent-death signal (macOS/BSD, or Linux without `prctl`) launch a detached
-watchdog helper after spawn. The helper acknowledges readiness over an inherited
-pipe before containment is recorded, watches the Meridian launcher by
-birth-validated PID, and terminates the full target process group if the launcher
-disappears first. It remains alive while any non-zombie process-group member exists,
-even if the scope root exits before its descendants.
+reparented descendants that single-PID kill misses. Each POSIX managed launcher starts
+one detached watchdog before its children, then registers process-group or PID-tree
+scopes over an inherited pipe. The helper acknowledges readiness before launch
+continues, watches the launcher by birth-validated PID, and terminates every
+registered scope if the launcher disappears. It is executed by file path and may
+import only the standard library, psutil, and `scope_termination.py`; package
+initializers would make one watchdog per launcher prohibitively expensive.
 
 **Legacy Windows branch (untested):** Job Object setup exists, but scoped
 termination currently routes to the psutil fallback because Job Object handle

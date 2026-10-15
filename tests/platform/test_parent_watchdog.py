@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -10,6 +11,7 @@ from pathlib import Path
 
 import psutil
 
+from meridian.lib.platform import parent_watchdog
 from meridian.lib.platform.detached_process import (
     link_child_lifetime_to_parent,
     release_parent_death_link,
@@ -37,6 +39,42 @@ def _wait_for_file(path: Path, *, timeout: float = 5.0) -> None:
             return
         time.sleep(0.02)
     raise AssertionError(f"Timed out waiting for {path}")
+
+
+def test_watchdog_entrypoint_imports_only_stdlib_and_psutil() -> None:
+    script_path = Path(parent_watchdog.__file__)
+    probe = """
+import json
+import runpy
+import sys
+from pathlib import Path
+
+script_path = Path(sys.argv[1])
+sys.path.insert(0, str(script_path.parent))
+before = set(sys.modules)
+runpy.run_path(str(script_path), run_name="_parent_watchdog_import_probe")
+added = set(sys.modules) - before
+print(json.dumps({
+    "meridian": sorted(
+        name for name in sys.modules
+        if name == "meridian" or name.startswith("meridian.")
+    ),
+    "unexpected": sorted(
+        name for name in added
+        if name.split(".", 1)[0] not in sys.stdlib_module_names
+        and name.split(".", 1)[0] not in {"psutil", "scope_termination"}
+    ),
+}))
+"""
+
+    completed = subprocess.run(
+        (sys.executable, "-c", probe, str(script_path)),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(completed.stdout) == {"meridian": [], "unexpected": []}
 
 
 @posix_only
@@ -165,9 +203,8 @@ root.wait()
 
         deadline = time.monotonic() + 8.0
         while (
-            (_process_is_running(root_pid) or _process_is_running(grandchild_pid))
-            and time.monotonic() < deadline
-        ):
+            _process_is_running(root_pid) or _process_is_running(grandchild_pid)
+        ) and time.monotonic() < deadline:
             time.sleep(0.05)
         assert _process_is_running(root_pid) is False
         assert _process_is_running(grandchild_pid) is False

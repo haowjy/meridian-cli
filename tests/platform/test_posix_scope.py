@@ -4,8 +4,8 @@ Focuses on the dead-root / dissolved-PGID degraded path (PROC-004):
 if the wrapper process dies before cleanup runs, descendant processes that
 stayed in the same PGID should still be caught via the secondary orphan scan.
 
-Classified platform: all psutil.Process, os.killpg, and _scan_by_pgid calls are
-fully mocked — no real I/O.
+Classified platform: all psutil.Process, os.killpg, and process-group scan calls
+are fully mocked — no real I/O.
 
 # qa-validated: test-suite-redesign
 """
@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 import psutil
 import pytest
 
+from meridian.lib.platform import scope_termination
 from meridian.lib.platform.process_scope import posix
 from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH, CleanupResult
 from tests.conftest import posix_only
@@ -60,13 +61,13 @@ def test_dead_root_scans_group_even_when_group_signal_succeeds() -> None:
 
     with (
         patch(
-            "meridian.lib.platform.process_scope.posix.psutil.Process",
+            "meridian.lib.platform.scope_termination.psutil.Process",
             side_effect=psutil.NoSuchProcess(pid=12345),
         ),
         # SIGTERM succeeds (group still exists)
         patch("os.killpg"),
         patch(
-            "meridian.lib.platform.process_scope.posix._scan_by_pgid",
+            "meridian.lib.platform.scope_termination._scan_process_group",
             return_value=[],
         ) as mock_scan,
     ):
@@ -96,7 +97,7 @@ def test_confirmed_pid_reuse_still_skips() -> None:
 
     with (
         patch(
-            "meridian.lib.platform.process_scope.posix.psutil.Process",
+            "meridian.lib.platform.scope_termination.psutil.Process",
             return_value=alive_proc,
         ),
         patch("os.killpg") as mock_killpg,
@@ -125,10 +126,10 @@ def test_unknown_birth_time_proceeds_to_signal_owned_pgid() -> None:
 
     with (
         patch(
-            "meridian.lib.platform.process_scope.posix.psutil.Process",
+            "meridian.lib.platform.scope_termination.psutil.Process",
             return_value=root_proc,
         ),
-        patch("meridian.lib.platform.process_scope.posix.psutil.wait_procs", return_value=([], [])),
+        patch("meridian.lib.platform.scope_termination.psutil.wait_procs", return_value=([], [])),
         patch("os.killpg") as mock_killpg,
     ):
         result = terminate_pgid(
@@ -148,7 +149,7 @@ def test_unknown_birth_time_proceeds_to_signal_owned_pgid() -> None:
 def test_terminate_pgid_degrades_to_tree_when_root_is_not_group_leader(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(posix, "IS_WINDOWS", False)
+    monkeypatch.setattr(scope_termination, "IS_WINDOWS", False)
 
     killpg_calls: list[tuple[int, int]] = []
     monkeypatch.setattr(os, "killpg", lambda pgid, sig: killpg_calls.append((pgid, sig)))
@@ -170,7 +171,7 @@ def test_terminate_pgid_degrades_to_tree_when_root_is_not_group_leader(
         return fallback_result
 
     monkeypatch.setattr(
-        "meridian.lib.platform.process_scope.fallback.terminate_tree_sync",
+        "meridian.lib.platform.scope_termination.terminate_tree_sync",
         _fake_terminate_tree_sync,
     )
 
@@ -189,8 +190,6 @@ def test_terminate_pgid_degrades_to_tree_when_root_is_not_group_leader(
             "pid": 111,
             "created_at_epoch": 100.0,
             "grace_secs": 5.0,
-            "reason": "reaper",
-            "scope_id": "backend",
             "degraded_fallback": True,
         }
     ]
@@ -200,7 +199,7 @@ def test_terminate_pgid_degrades_to_tree_when_root_is_not_group_leader(
 def test_terminate_pgid_on_windows_raises_runtime_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(posix, "IS_WINDOWS", True)
+    monkeypatch.setattr(scope_termination, "IS_WINDOWS", True)
 
     with pytest.raises(RuntimeError, match="not available on Windows"):
         posix.terminate_pgid(

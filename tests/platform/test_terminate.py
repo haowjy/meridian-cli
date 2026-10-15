@@ -7,7 +7,7 @@ import textwrap
 import psutil
 import pytest
 
-from meridian.lib.platform.process_scope.fallback import _snapshot_tree
+from meridian.lib.platform.scope_termination import snapshot_process_tree
 from meridian.lib.platform.terminate import terminate_tree
 from tests.support.async_determinism import wait_until
 
@@ -48,7 +48,7 @@ async def _wait_for_snapshot_child(
     timeout: float = 5.0,
 ) -> None:
     def _child_visible() -> bool:
-        root, children = _snapshot_tree(parent_pid)
+        root, children = snapshot_process_tree(parent_pid)
         return root is not None and any(proc.pid == child_pid for proc in children)
 
     await wait_until(
@@ -72,7 +72,7 @@ async def test_snapshot_tree_returns_process_and_children() -> None:
     child_pid = await _read_child_pid(process)
     try:
         await _wait_for_snapshot_child(parent_pid=process.pid, child_pid=child_pid)
-        root, children = _snapshot_tree(process.pid)
+        root, children = snapshot_process_tree(process.pid)
         assert root is not None
         assert root.pid == process.pid
         assert any(proc.pid == child_pid for proc in children)

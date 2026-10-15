@@ -26,6 +26,11 @@ Both entry points never raise — exceptions are caught and returned as a degrad
 logs with `process_scope.terminate_failed`; `terminate_scope_sync` logs with
 `terminate_scope_sync.failed`.
 
+The synchronous PGID/tree mechanics live in sibling `scope_termination.py`, whose
+imports are restricted to the standard library and psutil so the standalone
+parent watchdog can reuse them without importing Meridian. `posix.py` and
+`fallback.py` adapt its lightweight outcome to `CleanupResult`.
+
 `terminate_scope_sync` sets `degraded_fallback=True` when the containment type is
 anything other than `"pid_tree_fallback"` (i.e., posix_pgid fell through to fallback,
 or windows_job routed to fallback) — matching the async path's degraded semantics exactly.
