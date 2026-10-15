@@ -57,17 +57,20 @@ class EventDefinition(TypedDict):
     ids: tuple[str, ...]
 
 
+_SPAWN_IDS = ("spawn_id", "run_id")
+
+
 def _spawn_event_definition(status: str) -> EventDefinition:
     concerns: tuple[Concern, ...] = (
         ("operational", "error") if status in FAILURE_SPAWN_STATUSES else ("operational",)
     )
-    return {"domain": "spawn", "concerns": concerns, "ids": ("spawn_id", "run_id")}
+    return {"domain": "spawn", "concerns": concerns, "ids": _SPAWN_IDS}
 
 
 EVENT_REGISTRY: dict[str, EventDefinition] = {
     # Spawn domain: sparse correlation markers.
     "spawn.process_exited": {
-        "domain": "spawn", "concerns": ("operational",), "ids": ("spawn_id", "run_id"),
+        "domain": "spawn", "concerns": ("operational",), "ids": _SPAWN_IDS,
     },
     "spawn.succeeded": _spawn_event_definition("succeeded"),
     "spawn.failed": _spawn_event_definition("failed"),
@@ -110,15 +113,15 @@ EVENT_REGISTRY: dict[str, EventDefinition] = {
     "runtime.stream_event_dropped": {
         "domain": "runtime",
         "concerns": ("operational", "error"),
-        "ids": ("spawn_id", "run_id"),
+        "ids": _SPAWN_IDS,
     },
     # Usage domain.
     "usage.command.invoked": {"domain": "usage", "concerns": ("usage",), "ids": ()},
     "usage.model.selected": {
-        "domain": "usage", "concerns": ("usage",), "ids": ("spawn_id", "run_id"),
+        "domain": "usage", "concerns": ("usage",), "ids": _SPAWN_IDS,
     },
     "usage.spawn.launched": {
-        "domain": "usage", "concerns": ("usage",), "ids": ("spawn_id", "run_id"),
+        "domain": "usage", "concerns": ("usage",), "ids": _SPAWN_IDS,
     },
 }
 

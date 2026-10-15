@@ -32,7 +32,7 @@ class StoreSnapshotHook:
         self.snapshots: list[tuple[str, str | None, str | None]] = []
 
     def on_event(self, event: LifecycleEvent) -> None:
-        record = spawn_store.get_spawn(self._runtime_root, event.spawn_id)
+        record = spawn_store.get_spawn(self._runtime_root, event.run_id)
         self.snapshots.append(
             (
                 event.event_type,
@@ -54,6 +54,14 @@ class EventTypeHook:
 
     def on_event(self, event: LifecycleEvent) -> None:
         self.event_types.append(event.event_type)
+
+
+class IdentityHook:
+    def __init__(self) -> None:
+        self.events: list[LifecycleEvent] = []
+
+    def on_event(self, event: LifecycleEvent) -> None:
+        self.events.append(event)
 
 
 def _make_service(
@@ -263,6 +271,23 @@ def test_start_without_dispatch_events_defers_hook_until_announce(tmp_path: Path
     service.announce(spawn_id)
 
     assert hook.event_types == ["spawn.created"]
+
+
+def test_reopened_lifecycle_event_names_exact_and_stable_identity(tmp_path: Path) -> None:
+    hook = IdentityHook()
+    service = _make_service(tmp_path, hooks=[hook])
+    first_run = _start_spawn(service)
+    service.finalize(first_run, "succeeded", 0, origin="runner")
+
+    reopened_run = _start_spawn(
+        service,
+        chat_id="c2",
+        reopen_spawn_id=first_run,
+    )
+
+    assert reopened_run == "p1.2"
+    assert hook.events[-1].run_id == "p1.2"
+    assert hook.events[-1].spawn_id == "p1"
 
 
 def test_owner_mark_running_clears_stale_runner_created_epoch_when_pid_replaced(

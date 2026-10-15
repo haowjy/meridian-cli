@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Generator, Mapping
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 
 import structlog
 
-from meridian.lib.core.refs import spawn_of
+from meridian.lib.core.identity import identity_ids
+from meridian.lib.core.types import RunId
 
 _CANONICAL_CORRELATION_FIELDS: tuple[str, ...] = (
-    "spawn_id",
     "parent_id",
     "chat_id",
     "work_id",
@@ -30,7 +30,7 @@ _CANONICAL_CORRELATION_FIELDS: tuple[str, ...] = (
 class LifecycleCorrelation:
     """Canonical correlation fields for spawn lifecycle operations."""
 
-    spawn_id: str | None = None
+    run_id: RunId | None = None
     parent_id: str | None = None
     chat_id: str | None = None
     work_id: str | None = None
@@ -51,9 +51,8 @@ class LifecycleCorrelation:
             value = getattr(self, field_name)
             if value is not None and str(value).strip():
                 context[field_name] = str(value)
-        if self.spawn_id:
-            context["run_id"] = self.spawn_id
-            context["spawn_id"] = spawn_of(self.spawn_id)
+        if self.run_id is not None:
+            context.update(identity_ids(self.run_id))
         return context
 
 
@@ -70,21 +69,7 @@ def bind_lifecycle_correlation(
         structlog.contextvars.reset_contextvars(**tokens)
 
 
-def lifecycle_correlation_from_mapping(
-    values: Mapping[str, str | None] | None = None,
-    **kwargs: str | None,
-) -> LifecycleCorrelation:
-    """Build correlation fields from sparse values."""
-
-    merged: dict[str, str | None] = {}
-    if values is not None:
-        merged.update(values)
-    merged.update(kwargs)
-    return LifecycleCorrelation(**merged)
-
-
 __all__ = [
     "LifecycleCorrelation",
     "bind_lifecycle_correlation",
-    "lifecycle_correlation_from_mapping",
 ]

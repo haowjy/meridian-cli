@@ -7,7 +7,6 @@ from pathlib import Path
 from meridian.lib.telemetry.correlation import (
     LifecycleCorrelation,
     bind_lifecycle_correlation,
-    lifecycle_correlation_from_mapping,
 )
 from meridian.lib.telemetry.events import (
     EVENT_REGISTRY,
@@ -52,7 +51,6 @@ __all__ = [
     "concerns_for_event",
     "emit_telemetry",
     "init_telemetry",
-    "lifecycle_correlation_from_mapping",
     "make_error_data",
     "notify_observers",
     "register_debug_trace_observer",

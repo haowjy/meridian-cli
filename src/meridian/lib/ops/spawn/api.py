@@ -21,7 +21,7 @@ from meridian.lib.config.loader import load_config
 from meridian.lib.config.models import MeridianConfig
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import max_depth_reached
-from meridian.lib.core.identity import current_run_id
+from meridian.lib.core.identity import current_run_id, identity_ids
 from meridian.lib.core.native_identity import NativeSessionUnavailable
 from meridian.lib.core.refs import display_run_id, parse_ref, spawn_of
 from meridian.lib.core.sink import NullSink, OutputSink
@@ -150,7 +150,7 @@ def _all_run_rows(project_root: Path, runtime_root: Path) -> tuple[SpawnRecord, 
     ).records
 
 
-def _emit_usage_spawn_launched(*, harness: str | None, spawn_id: str | None = None) -> None:
+def _emit_usage_spawn_launched(*, harness: str | None, run_id: str | None = None) -> None:
     normalized_harness = (harness or "").strip()
     if not normalized_harness:
         return
@@ -158,7 +158,7 @@ def _emit_usage_spawn_launched(*, harness: str | None, spawn_id: str | None = No
         "usage",
         "usage.spawn.launched",
         scope="core.launch",
-        ids={"spawn_id": spawn_of(spawn_id), "run_id": spawn_id} if spawn_id is not None else None,
+        ids=identity_ids(parse_ref(run_id, row_key=True)) if run_id is not None else None,
         data={"harness": normalized_harness},
     )
 
@@ -518,7 +518,7 @@ def spawn_create_sync(
         )
     _emit_usage_spawn_launched(
         harness=result.harness_id or prepared_request.harness,
-        spawn_id=result.run_id,
+        run_id=result.run_id,
     )
     updates: dict[str, object] = {
         "identity_created": bool(authority.identity_created),

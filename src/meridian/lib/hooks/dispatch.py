@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Protocol, cast
 
 import structlog
 
+from meridian.lib.core.identity import identity_ids
 from meridian.lib.core.lifecycle import LifecycleEvent, LifecycleHook
-from meridian.lib.core.refs import spawn_of
 from meridian.lib.hooks.builtin import BUILTIN_HOOKS
 from meridian.lib.hooks.builtin.base import BuiltinHook
 from meridian.lib.hooks.interval import IntervalTracker
@@ -391,14 +391,14 @@ class HookDispatcher(LifecycleHook):
 
     def _build_context(self, event: LifecycleEvent) -> HookContext:
         authority = self._authority
+        ids = identity_ids(event.run_id)
         if authority is not None:
             return HookContext.from_authority(
                 authority=authority,
                 event_name=cast("HookEventName", event.event_type),
                 event_id=event.event_id,
                 timestamp=event.timestamp.isoformat(),
-                spawn_id=spawn_of(event.spawn_id),
-                run_id=event.spawn_id,
+                **ids,
                 spawn_status=_normalize_spawn_status(event.status),
                 spawn_agent=event.agent,
                 spawn_model=event.model,
@@ -415,8 +415,7 @@ class HookDispatcher(LifecycleHook):
             event_name=cast("HookEventName", event.event_type),
             event_id=event.event_id,
             timestamp=event.timestamp.isoformat(),
-            spawn_id=spawn_of(event.spawn_id),
-            run_id=event.spawn_id,
+            **ids,
             spawn_status=_normalize_spawn_status(event.status),
             spawn_agent=event.agent,
             spawn_model=event.model,

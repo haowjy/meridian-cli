@@ -5,7 +5,8 @@ from __future__ import annotations
 import threading
 from typing import TYPE_CHECKING
 
-from meridian.lib.core.refs import spawn_of
+from meridian.lib.core.identity import identity_ids
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import FAILURE_SPAWN_STATUSES
 from meridian.lib.core.telemetry import LifecycleObserverTier, register_observer
 
@@ -49,7 +50,7 @@ class SpawnTelemetryObserver:
             "spawn",
             event.event,
             scope="core.lifecycle",
-            ids={"spawn_id": spawn_of(event.spawn_id), "run_id": event.spawn_id},
+            ids=identity_ids(parse_ref(event.spawn_id, row_key=True)),
             data=_extract_terminal_data(event),
             severity="error" if _is_failure_event(event.event) else "info",
         )

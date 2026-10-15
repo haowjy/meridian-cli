@@ -35,7 +35,8 @@ import psutil
 import structlog
 
 from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
-from meridian.lib.core.refs import parse_ref
+from meridian.lib.core.identity import identity_ids
+from meridian.lib.core.refs import parse_ref, spawn_of
 from meridian.lib.core.spawn_lifecycle import (
     TERMINAL_SPAWN_STATUSES,
     SpawnReservation,
@@ -52,6 +53,7 @@ from meridian.lib.core.telemetry import (
 from meridian.lib.core.telemetry import (
     LifecycleEvent as TelemetryLifecycleEvent,
 )
+from meridian.lib.core.types import RunId, SpawnId
 from meridian.lib.telemetry import LifecycleCorrelation, bind_lifecycle_correlation
 
 if TYPE_CHECKING:
@@ -159,7 +161,7 @@ class LifecycleEvent:
     timestamp: datetime
 
     # Spawn context (always present)
-    spawn_id: str
+    run_id: RunId
     parent_id: str | None
     chat_id: str | None
     work_id: str | None
@@ -184,6 +186,11 @@ class LifecycleEvent:
     cache_creation_input_tokens: int | None = None
     reasoning_tokens: int | None = None
     cost_is_estimate: bool = False
+
+    @property
+    def spawn_id(self) -> SpawnId:
+        """Return the stable spawn owning this exact lifecycle run."""
+        return spawn_of(self.run_id)
 
 
 # ---------------------------------------------------------------------------
@@ -271,7 +278,6 @@ class SpawnLifecycleService:
         ):
             # Authoritative transition write still happens in _spawn_store().
             if reservation.reopen_spawn_id is not None:
-                from meridian.lib.core.types import SpawnId
                 result_id = _spawn_store().reserve_run(
                     self._runtime_root, SpawnId(reservation.reopen_spawn_id), reservation,
                 )
@@ -592,7 +598,11 @@ class SpawnLifecycleService:
         if resolved_origin is None and record is not None:
             resolved_origin = record.terminal.origin if record.terminal is not None else None
         return LifecycleCorrelation(
-            spawn_id=resolved_spawn_id,
+            run_id=(
+                parse_ref(str(resolved_spawn_id), row_key=True)
+                if resolved_spawn_id is not None
+                else None
+            ),
             parent_id=record.parent_id if record is not None else None,
             chat_id=record.chat_id if record is not None else None,
             work_id=record.work_id if record is not None else None,
@@ -694,7 +704,7 @@ class SpawnLifecycleService:
 
     def _dispatch(self, event: LifecycleEvent) -> None:
         correlation = LifecycleCorrelation(
-            spawn_id=event.spawn_id,
+            run_id=event.run_id,
             parent_id=event.parent_id,
             chat_id=event.chat_id,
             work_id=event.work_id,
@@ -718,7 +728,7 @@ class SpawnLifecycleService:
                         "Lifecycle hook raised exception; transition continues",
                         event_id=str(event.event_id),
                         event_type=event.event_type,
-                        spawn_id=event.spawn_id,
+                        **identity_ids(event.run_id),
                     )
 
     def _emit_telemetry_event(
@@ -804,7 +814,7 @@ class SpawnLifecycleService:
             event_id=generate_event_id(resolved_spawn_id, event_type, 0),
             event_type=event_type,
             timestamp=datetime.now(tz=UTC),
-            spawn_id=resolved_spawn_id,
+            run_id=parse_ref(resolved_spawn_id, row_key=True),
             parent_id=record.parent_id if record is not None else None,
             chat_id=record.chat_id if record is not None else None,
             work_id=record.work_id if record is not None else None,

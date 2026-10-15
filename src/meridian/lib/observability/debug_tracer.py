@@ -10,7 +10,8 @@ import time
 from pathlib import Path
 from typing import IO, cast
 
-from meridian.lib.core.refs import spawn_of
+from meridian.lib.core.identity import identity_ids
+from meridian.lib.core.refs import parse_ref
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ class DebugTracer:
         max_payload_bytes: int = 4096,
         report_failures: bool = True,
     ) -> None:
-        self._spawn_id = spawn_id
+        self._run_id = parse_ref(spawn_id, row_key=True)
         self._debug_path = debug_path
         self._echo_stderr = echo_stderr
         self._max_payload_bytes = max_payload_bytes
@@ -60,8 +61,7 @@ class DebugTracer:
         try:
             record: dict[str, object] = {
                 "ts": time.time(),
-                "spawn_id": spawn_of(self._spawn_id),
-                "run_id": self._spawn_id,
+                **identity_ids(self._run_id),
                 "layer": layer,
                 "direction": direction,
                 "event": event,
@@ -93,12 +93,12 @@ class DebugTracer:
                 "runtime.debug_tracer_disabled",
                 scope="observability.debug_tracer",
                 severity="warning",
-                ids={"spawn_id": spawn_of(self._spawn_id), "run_id": self._spawn_id},
+                ids=identity_ids(self._run_id),
                 data=make_error_data(exc=exc),
             )
             logger.warning(
                 "Debug tracer disabled after write failure for spawn %s",
-                self._spawn_id,
+                self._run_id,
                 exc_info=True,
             )
 
