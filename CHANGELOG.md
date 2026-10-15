@@ -14,6 +14,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - No-arg `spawn wait` scopes index reads to the caller; no full-history scan.
+- Finalize spawns on harness completion, not the next watchdog poll.
+
 ## [0.10.7] - 2026-10-15
 
 ### Fixed

@@ -323,6 +323,18 @@ async def _consume_subscriber_events(
             )
 
 
+async def _wait_for_event_or_timeout(event: asyncio.Event, timeout_seconds: float) -> bool:
+    """Return whether *event* was set before the bounded polling timeout."""
+
+    if event.is_set():
+        return True
+    try:
+        await asyncio.wait_for(event.wait(), timeout=timeout_seconds)
+    except TimeoutError:
+        return event.is_set()
+    return True
+
+
 async def _report_watchdog(
     *,
     report_path: Path,
@@ -332,15 +344,20 @@ async def _report_watchdog(
     grace_seconds: float = REPORT_WATCHDOG_GRACE_SECONDS,
 ) -> bool:
     while not report_path.exists():
-        if completion_event.is_set():
+        if await _wait_for_event_or_timeout(
+            completion_event,
+            REPORT_WATCHDOG_POLL_SECONDS,
+        ):
             return False
-        await asyncio.sleep(REPORT_WATCHDOG_POLL_SECONDS)
 
-    deadline = asyncio.get_running_loop().time() + grace_seconds
-    while asyncio.get_running_loop().time() < deadline:
-        if completion_event.is_set():
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + grace_seconds
+    while (remaining := deadline - loop.time()) > 0:
+        if await _wait_for_event_or_timeout(
+            completion_event,
+            min(REPORT_WATCHDOG_POLL_SECONDS, remaining),
+        ):
             return False
-        await asyncio.sleep(REPORT_WATCHDOG_POLL_SECONDS)
 
     if completion_event.is_set():
         return False
@@ -372,7 +389,11 @@ async def _inactivity_watchdog(
         idle = loop.time() - last_event_at[0]
         if idle >= timeout_seconds:
             break
-        await asyncio.sleep(min(poll_seconds, max(0.0, timeout_seconds - idle)))
+        if await _wait_for_event_or_timeout(
+            completion_event,
+            min(poll_seconds, max(0.0, timeout_seconds - idle)),
+        ):
+            return False
     if completion_event.is_set():
         return False
     await manager.stop_spawn(
