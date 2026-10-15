@@ -734,7 +734,6 @@ def run_harness_process(
             kind="primary",
             startup_attempt_id=startup_attempt_id,
             spawn_id=str(primary_spawn_id) if primary_spawn_id else None,
-            persist_spawn_binding=False,
         ) as managed:
             session_acquired = True
             chat_id = managed.chat_id

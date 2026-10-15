@@ -142,7 +142,6 @@ async def streaming_serve(
             control_root=str(launch_ctx.control_root),
             execution_cwd=str(launch_ctx.binding.child_cwd),
             spawn_id=str(spawn_id),
-            persist_spawn_binding=False,
             startup_attempt_id=uuid.uuid4().hex,
         ) as managed:
             lifecycle = LifecycleLog.for_spawn(runtime_root, project_root, spawn_id)

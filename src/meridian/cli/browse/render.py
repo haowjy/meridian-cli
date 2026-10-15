@@ -95,8 +95,7 @@ def render_list(model: BrowseModel, width: int) -> StyleAndTextTuples:
             )
         else:
             line = (
-                f"{prefix}{_cell(row.chat_id, _CHAT_ID_WIDTH)} "
-                f"{_cell(age, _AGE_WIDTH)} "
+                f"{prefix}{_cell(row.chat_id, _CHAT_ID_WIDTH)} {_cell(age, _AGE_WIDTH)} "
                 f"{_cell(row.agent or '—', _AGENT_WIDTH)} "
                 f"{_cell(row.model or '—', _MODEL_WIDTH)} {row.work_label or '—'}"
             )

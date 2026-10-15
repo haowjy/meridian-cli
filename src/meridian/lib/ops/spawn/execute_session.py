@@ -94,7 +94,6 @@ def _session_execution_context(
         task_cwd=task_cwd,
         execution_cwd=execution_cwd,
         spawn_id=spawn_id,
-        persist_spawn_binding=False,
         startup_attempt_id=uuid.uuid4().hex,
     ) as managed:
         if spawn_id is not None and is_exact_continue_session(request):

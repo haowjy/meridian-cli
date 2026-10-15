@@ -140,7 +140,6 @@ def session_scope(
     execution_cwd: str | None = None,
     kind: Literal["primary", "spawn"] = "spawn",
     spawn_id: str | None = None,
-    persist_spawn_binding: bool = True,
     startup_attempt_id: str | None = None,
     _start_session: Callable[..., str] = start_session,
     _stop_session: Callable[[Path, str], None] = stop_session,
@@ -172,13 +171,6 @@ def session_scope(
     try:
         if request.initial_model_selection is not None:
             record_model_selection(runtime_root, request.initial_model_selection)
-        if spawn_id is not None and persist_spawn_binding:
-            spawn_store.update_spawn(
-                runtime_root,
-                parse_ref(spawn_id, row_key=True),
-                chat_id=resolved_chat_id,
-                session_instance_id=generation,
-            )
         yield SessionAttempt(
             runtime_root,
             resolved_chat_id,

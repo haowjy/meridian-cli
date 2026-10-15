@@ -134,10 +134,7 @@ def resolve_continue_source_row(
         raise ValueError(
             f"Spawn {parsed.spawn_id} never started a session; `--fork` is unavailable too."
         )
-    row = spawn_store.get_spawn(runtime_root, bound_run)
-    if row is None:
-        return None
-    return row
+    return spawn_store.get_spawn(runtime_root, bound_run)
 
 
 def _resolve_untracked_reference(
@@ -400,14 +397,6 @@ def resolve_session_reference(
     )
 
 
-__all__ = [
-    "ResolvedSessionReference",
-    "resolve_continue_source_row",
-    "resolve_session_reference",
-    "resolve_spawn_ref",
-]
-
-
 def validate_continue_reference(ref: str) -> None:
     """Exact continues name a spawn or a segment, never an immutable run."""
     parsed = parse_ref(ref)
@@ -416,3 +405,12 @@ def validate_continue_reference(ref: str) -> None:
             f"Cannot continue run '{parsed.value}'; continue the spawn "
             f"(`{parsed.spawn_id}`) or fork the run (`--fork {parsed.value}`)."
         )
+
+
+__all__ = [
+    "ResolvedSessionReference",
+    "resolve_continue_source_row",
+    "resolve_session_reference",
+    "resolve_spawn_ref",
+    "validate_continue_reference",
+]
