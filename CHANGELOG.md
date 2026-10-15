@@ -5,19 +5,16 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- Separate spawn references from exact run keys; retain latest and bound runs safely.
-- `--continue` keeps spawn id; each launch is a run `pN.K`.
-- List one row per spawn; show its runs. Fork and from still make new spawns.
-- Expose the exact launch as `MERIDIAN_RUN_ID`; hooks carry both IDs too.
+- Keep spawn IDs across `--continue`; each launch is immutable `pN.K`. Resolve
+  bare IDs through atomic heads, list one row per spawn, show its runs, expose
+  `MERIDIAN_RUN_ID`, and retain/reopen safely. Fork/from still mint spawns.
 
 ### Fixed
-- Recheck run siblings before pruning; keep continuation sources during reopen.
-- Report missing continue targets honestly; show stable spawn and exact run separately.
-- Give child tools their entry chat ID; no-argument wait works without a parent chat.
-- Clear stale TUI text before the quit hint. No native UUID stuck onto the spawn ID.
+- Clear stale TUI text before the quit hint.
 
 ### Upgrade notes
 - First indexed read rebuilds history schema 8; no authority migration. See [upgrade notes](docs/upgrading.md#spawnrun-identity-boundary-unreleased).
+
 ## [0.10.7] - 2026-10-15
 
 ### Fixed

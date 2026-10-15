@@ -11,13 +11,17 @@ before continuing; fork can still use their captured context.
 The rebuildable history index moves from schema 7 to 8, adding stable spawn and
 numeric run columns. The first indexed read rebuilds `history-v8.sqlite3` from
 authority and may take longer; the older `history-v7.sqlite3` is left untouched.
-Bare spawn lookup now scans run directories (about 27 ms over 3,891 copied rows);
-commands resolving many references pay that cost for each reference.
+Bare spawn lookup uses a disposable atomic pointer under `spawn-heads/`; run
+directories remain authority, and missing or stale pointers recover by direct
+run probes.
 
 Older binaries treat dotted run directories as separate spawns; they do not
 provide stable-ID continue semantics. No state rewrite is needed to roll back.
 `MERIDIAN_SPAWN_ID` stays stable; `MERIDIAN_RUN_ID` names the exact launch.
 Old launcher environments use the spawn-ID fallback for run 1.
+
+Session list and browse show chat IDs without the owner-spawn column until the
+per-chat session store can restore that display without replaying session history.
 
 A bare `pN` now resolves to its newest result. Use `pN.1` for the original result
 and `pN.K` for later ones. Continuing a pre-`/clear` chat moves the spawn's next
