@@ -12,8 +12,11 @@ The rebuildable history index moves from schema 7 to 9, adding stable spawn,
 numeric run, and current-chat columns. The first indexed read rebuilds
 `history-v9.sqlite3` from authority and may take longer; the older
 `history-v7.sqlite3` is left untouched.
-Bare spawn lookup uses a disposable atomic pointer under `spawn-heads/`; run
-directories remain authority, and a missing pointer is rebuilt once from them.
+Bare spawn lookup uses a disposable atomic head under `spawn-heads/`; run
+directories remain authority. Heads persist for the life of an allocated spawn
+ID, including after retention removes its loose rows, and prevent archived run
+keys from being reused. A missing head is rebuilt once from loose rows; `0`
+records that none remain.
 
 Older binaries treat dotted run directories as separate spawns; they do not
 provide stable-ID continue semantics. No state rewrite is needed to roll back.

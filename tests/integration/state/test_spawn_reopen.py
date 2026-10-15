@@ -251,6 +251,49 @@ def test_reserve_run_checks_ancestors_without_listing_spawns(
         spawn_store.reserve_run(tmp_path, SpawnId("p1"), reservation)
 
 
+def test_reserve_run_does_not_scan_for_a_fully_archived_ancestor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for key in ("p1", "p2"):
+        run_id = spawn_store.start_spawn(
+            tmp_path,
+            spawn_id=key,
+            chat_id=f"c{key[1:]}",
+            model="test",
+            agent="",
+            harness="codex",
+            prompt="hi",
+        )
+        spawn_store.finalize_spawn(
+            tmp_path, run_id, status="succeeded", exit_code=0, origin="runner",
+        )
+    assert spawn_store.delete_published_spawn(
+        tmp_path, parse_ref("p2", row_key=True), can_delete=lambda _row: True,
+    )
+    scans = 0
+    scan = spawn_repository.scan_spawn_ids
+
+    def count_scan(spawns_dir: Path) -> list[RunId]:
+        nonlocal scans
+        scans += 1
+        return scan(spawns_dir)
+
+    monkeypatch.setattr(spawn_repository, "scan_spawn_ids", count_scan)
+    reservation = SpawnReservation(
+        chat_id="c1",
+        parent_id="p2",
+        parent_run_id=parse_ref("p2", row_key=True),
+        prompt="again",
+        session_metadata=PrimarySessionMetadata(
+            harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=(),
+        ),
+    )
+
+    assert spawn_store.reserve_run(tmp_path, SpawnId("p1"), reservation) == "p1.2"
+    assert scans == 0
+
+
 def test_reserve_run_checks_parent_edges_from_non_latest_runs(tmp_path: Path) -> None:
     metadata = PrimarySessionMetadata(
         harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=(),

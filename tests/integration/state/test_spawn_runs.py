@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -13,9 +14,12 @@ from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.ops.pruning import prune_stale_spawn_artifacts, scan_stale_spawn_artifacts
 from meridian.lib.ops.session_archive import archive_history
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.event_store import lock_file
 from meridian.lib.state.history_index import HistoryIndex
+from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.session_identity import session_records_for_spawns
-from meridian.lib.state.spawn.runs import latest_run, runs_of
+from meridian.lib.state.spawn import repository as spawn_repository
+from meridian.lib.state.spawn.runs import latest_run, next_run_id, runs_of
 from tests.support.native_snapshot import seal_spawn_snapshot
 
 
@@ -80,13 +84,69 @@ def test_run_discovery_uses_max_suffix_with_holes_and_ignores_junk(tmp_path: Pat
     assert latest_run(tmp_path, SpawnId("p1")) == "p1.3"
 
 
-def test_latest_run_rebuilds_a_missing_pointer(tmp_path: Path) -> None:
+def test_latest_run_rebuilds_a_missing_pointer_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _start(tmp_path)
     (tmp_path / "spawn-heads" / "p1").unlink()
+    scans = 0
+    scan = spawn_repository.scan_spawn_ids
+
+    def count_scan(spawns_dir: Path) -> list[RunId]:
+        nonlocal scans
+        scans += 1
+        return scan(spawns_dir)
+
+    monkeypatch.setattr(spawn_repository, "scan_spawn_ids", count_scan)
 
     assert not (tmp_path / "spawn-heads" / "p1").exists()
     assert latest_run(tmp_path, SpawnId("p1")) == "p1"
+    assert latest_run(tmp_path, SpawnId("p1")) == "p1"
+    assert scans == 1
     assert (tmp_path / "spawn-heads" / "p1").read_text(encoding="utf-8") == "1\n"
+
+
+def test_latest_run_caches_a_lost_head_with_no_loose_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = _start(tmp_path, spawn_id=None)
+    assert spawn_store.delete_published_spawn(
+        tmp_path, run_id, can_delete=lambda _row: True,
+    )
+    (tmp_path / "spawn-heads" / "p1").unlink()
+    scans = 0
+    scan = spawn_repository.scan_spawn_ids
+
+    def count_scan(spawns_dir: Path) -> list[RunId]:
+        nonlocal scans
+        scans += 1
+        return scan(spawns_dir)
+
+    monkeypatch.setattr(spawn_repository, "scan_spawn_ids", count_scan)
+
+    assert latest_run(tmp_path, SpawnId("p1")) is None
+    assert latest_run(tmp_path, SpawnId("p1")) is None
+    assert scans == 1
+    assert (tmp_path / "spawn-heads" / "p1").read_text(encoding="utf-8") == "0\n"
+
+
+def test_latest_run_above_spawn_counter_does_not_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert _start(tmp_path, spawn_id=None) == "p1"
+    scans = 0
+
+    def count_scan(_spawns_dir: Path) -> list[RunId]:
+        nonlocal scans
+        scans += 1
+        return []
+
+    monkeypatch.setattr(spawn_repository, "scan_spawn_ids", count_scan)
+
+    assert latest_run(tmp_path, SpawnId("p2")) is None
+    assert latest_run(tmp_path, SpawnId("p2")) is None
+    assert scans == 0
+    assert not (tmp_path / "spawn-heads" / "p2").exists()
 
 
 def test_latest_run_probes_above_stale_pointer(tmp_path: Path) -> None:
@@ -230,7 +290,9 @@ def test_active_spawn_protects_latest_and_latest_bound_run_from_retention(
     assert {"p1", "p1.3"} <= set(output.protected)
 
 
-def test_stale_artifact_pruning_retires_latest_run_last(tmp_path: Path) -> None:
+def test_stale_artifact_pruning_keeps_head_without_rescanning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _bound(tmp_path, "p1")
     second = _start(tmp_path, spawn_id="p1.2")
     _finish(tmp_path, second)
@@ -243,8 +305,37 @@ def test_stale_artifact_pruning_retires_latest_run_last(tmp_path: Path) -> None:
     )
     assert [row.spawn_id for row in stale] == ["p1", "p1.2"]
     assert prune_stale_spawn_artifacts(stale).removed == 2
+    scans = 0
+    scan = spawn_repository.scan_spawn_ids
+
+    def count_scan(spawns_dir: Path) -> list[RunId]:
+        nonlocal scans
+        scans += 1
+        return scan(spawns_dir)
+
+    monkeypatch.setattr(spawn_repository, "scan_spawn_ids", count_scan)
+
     assert runs_of(tmp_path, SpawnId("p1")) == ()
-    assert not (tmp_path / "spawn-heads" / "p1").exists()
+    assert runs_of(tmp_path, SpawnId("p1")) == ()
+    assert scans == 0
+    assert (tmp_path / "spawn-heads" / "p1").read_text(encoding="utf-8") == "2\n"
+
+
+def test_retired_head_prevents_reusing_partially_restored_run_keys(tmp_path: Path) -> None:
+    for key in ("p1", "p1.2", "p1.3"):
+        _finish(tmp_path, _start(tmp_path, spawn_id=key))
+    backup = tmp_path / "archived-p1"
+    shutil.copytree(tmp_path / "spawns" / "p1", backup)
+
+    for key in ("p1", "p1.2", "p1.3"):
+        assert spawn_store.delete_published_spawn(
+            tmp_path, parse_ref(key, row_key=True), can_delete=lambda _row: True,
+        )
+    shutil.copytree(backup, tmp_path / "spawns" / "p1")
+
+    paths = RuntimePaths.from_root_dir(tmp_path)
+    with lock_file(paths.spawns_flock):
+        assert next_run_id(paths, SpawnId("p1")) == "p1.4"
 
 
 def test_prune_failure_preserves_latest_and_bound_runs(tmp_path: Path, monkeypatch) -> None:
@@ -291,7 +382,7 @@ def test_archive_apply_preserves_continuation_source_on_partial_retirement(
     if mode == "complete":
         assert len(result.reclaimed) == 3
         assert remaining == ()
-        assert not (root / "spawn-heads" / "p1").exists()
+        assert (root / "spawn-heads" / "p1").read_text(encoding="utf-8") == "3\n"
     elif mode == "limited":
         assert result.limited
         assert len(result.reclaimed) == 1

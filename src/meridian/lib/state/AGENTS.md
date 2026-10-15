@@ -30,7 +30,7 @@ bare path
                                     — stable launch-boundary append lock
   locks/gc.lock                     — lock-GC pass serialization
   spawns/.staging/<unique>/         — unpublished builds and verified-archive retirement buffers
-  spawn-heads/<pN>                  — disposable highest-reserved-run bound (atomic integer)
+  spawn-heads/<pN>                  — disposable highest-ever-reserved run (atomic integer; 0 means no loose rows)
   spawns/<run_id>/                  — pN for run 1; pN.K for K >= 2
     state.json                      — authoritative spawn state (schema v3)
     history.jsonl                   — legacy runner event stream (no longer written), never read
@@ -68,9 +68,11 @@ Spawn state lives in individual immutable-run `state.json` files
 instead of replaying O(n) events. A stable `pN` groups `pN` and `pN.K` rows; the
 layout originated in the v2 migration and published rows use schema v3.
 `spawn-heads/<pN>` bounds latest-run and continue-target discovery but is never
-authority: readers verify run directories, recover ahead pointers by direct
-predecessor probes, and rebuild a missing head once from loose run rows under
-`spawns_flock`.
+authority: readers verify run directories and recover ahead pointers by direct
+predecessor probes. A head persists for the lifetime of its allocated spawn ID,
+including after retention removes every loose row, so an archived run key is
+never reused. A missing head is rebuilt once from loose run rows under
+`spawns_flock`; the durable value `0` records that none remain.
 
 ## Spawn Mutation Seam
 

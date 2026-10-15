@@ -21,12 +21,13 @@ legacy facts quarantine rather than bypassing the strict stored model.
 **`transitions.py`** — pure transitions such as `apply_mark_running()`,
 `apply_finalize()`, and `apply_record_exited()`. They do no I/O or locking.
 
-**`runs.py`** — pointer-backed run discovery (`runs_of`, `latest_run`,
+**`runs.py`** — head-backed run discovery (`runs_of`, `latest_run`,
 `latest_bound_run`) and sibling-run rules: `group_runs` (rows by stable spawn),
-and the retention protected set and dependencies. Retention keeps a spawn's
-numeric latest run and latest bound run (has `session_instance_id`) until the
-whole spawn can retire. Surfaces, reference selection, archive and pruning call
-these; never re-derive "latest" locally.
+and the retention protected set and dependencies. Each allocated spawn ID keeps
+its highest-ever-reserved head even after all loose rows retire. Retention keeps
+a spawn's numeric latest run and latest bound run (has `session_instance_id`)
+until the whole spawn can retire. Surfaces, reference selection, archive and
+pruning call these; never re-derive "latest" locally.
 
 **`dogfood_migration.py`** — one-time migration of PR 1 dogfood rows, run by
 `meridian doctor` and primary-launch repairs. Delete this module once no dogfood
