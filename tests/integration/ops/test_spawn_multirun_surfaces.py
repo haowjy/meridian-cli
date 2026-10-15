@@ -120,7 +120,7 @@ def test_multirun_never_bound_ref_refuses_instead_of_using_callers_chat(tmp_path
 
 
 @pytest.mark.parametrize("run_count", [10, 50])
-def test_bare_continue_target_reads_constant_rows_as_run_count_grows(
+def test_bare_continue_target_walks_only_its_unbound_run_tail(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     run_count: int,
@@ -177,7 +177,8 @@ def test_bare_continue_target_reads_constant_rows_as_run_count_grows(
     row = resolve_continue_source_row(runtime_root, parse_ref("p7"))
 
     assert row is not None and row.id == bound
-    assert reads == ["p7", "p7"]
+    descending = ["p7" if run == 1 else f"p7.{run}" for run in range(run_count, 0, -1)]
+    assert reads == [*descending, "p7"]
 
 
 def test_continue_refuses_an_exact_run_before_launch_preparation() -> None:
