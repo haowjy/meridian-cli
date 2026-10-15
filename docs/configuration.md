@@ -325,6 +325,10 @@ agent or child spawn is still running, the known context is below
 `min_compact_tokens`, or the harness's own automatic compaction is disabled.
 An unknown context size is allowed; an unknown draft is not. A positively
 identified user prompt closes the idle stretch immediately.
+Reopening a primary through Meridian counts as a user return: before the harness
+starts, Meridian closes any earlier idle stretch for that session, so its push,
+warning, and compaction never fire. This does not cover a Claude TUI started
+outside Meridian or switching sessions inside a running Claude TUI with `/resume`.
 
 ### Opt in an external Claude TUI
 

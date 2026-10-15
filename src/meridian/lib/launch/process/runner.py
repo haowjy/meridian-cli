@@ -48,6 +48,7 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.passthrough import get_passthrough
 from meridian.lib.harness.passthrough.base import PassthroughError
 from meridian.lib.harness.registry import HarnessRegistry
+from meridian.lib.idle.service import close_on_launch
 from meridian.lib.launch.artifact_io import (
     LifecycleLog,
     record_identity_failure,
@@ -901,6 +902,12 @@ def run_harness_process(
                     command,
                     state=prelaunch_state,
                 )
+                if resolved_harness_session_id:
+                    close_on_launch(
+                        harness=str(harness_adapter.id),
+                        session=resolved_harness_session_id,
+                        env=child_env,
+                    )
                 write_native_primary_metadata = harness_adapter.uses_native_primary_metadata()
                 native_primary_runtime_metadata = harness_adapter.native_primary_runtime_metadata(
                     prelaunch_state

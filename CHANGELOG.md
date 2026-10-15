@@ -12,6 +12,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Upgrade notes
 - First indexed read rebuilds history schema 8; no authority migration. See [upgrade notes](docs/upgrading.md#spawnrun-identity-boundary-unreleased).
 
+## [0.10.3] - 2026-10-15
+
+### Fixed
+- Meridian reopen closes old idle stretch before exec; no stale push, warn, compact.
+
 ## [0.10.2] - 2026-10-14
 
 ### Changed
