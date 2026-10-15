@@ -19,6 +19,9 @@ from meridian.lib.platform import IS_WINDOWS, fcntl, pty, termios
 
 _ENABLED_MODES = b"\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h\x1b[?1049h\x1b[?25l"
 _RESTORED_MODES = b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1049l\x1b[?25h"
+_RESTORED_MODES_WITHOUT_ALT_SCREEN = (
+    b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?25h"
+)
 
 
 @pytest.mark.skipif(IS_WINDOWS, reason="PTY relay is POSIX-only")
@@ -199,6 +202,87 @@ def test_stdin_read_oserror_marks_stdin_closed_and_forwards_to_master_eof(
 
     assert exit_code == 0
     assert writes == [(11, b"child output")]
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="PTY relay is POSIX-only")
+def test_child_alt_screen_exit_is_not_repeated_after_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.lib.launch.process import pty_launcher
+
+    child_output = (
+        b"\x1b[?1049hframe\x1b[?1049l"
+        b"Resume this session with: claude --resume session-id\r\n"
+    )
+    master_reads = iter((child_output, b""))
+    writes: list[tuple[int, bytes]] = []
+
+    monkeypatch.setattr(pty_launcher.sys, "stdin", SimpleNamespace(fileno=lambda: 10))
+    monkeypatch.setattr(pty_launcher.sys, "stdout", SimpleNamespace(fileno=lambda: 11))
+    monkeypatch.setattr(pty_launcher.os, "isatty", lambda fd: fd == 11)
+    monkeypatch.setattr(
+        pty_launcher.select,
+        "select",
+        lambda *_args, **_kwargs: ([12], [], []),
+    )
+    monkeypatch.setattr(pty_launcher.os, "read", lambda _fd, _size: next(master_reads))
+    monkeypatch.setattr(
+        pty_launcher.os,
+        "write",
+        lambda fd, data: writes.append((fd, data)) or len(data),
+    )
+    monkeypatch.setattr(pty_launcher.os, "waitpid", lambda _pid, _options: (99, 0))
+
+    exit_code = pty_launcher._copy_primary_pty_output(
+        child_pid=99,
+        master_fd=12,
+        output_log_path=None,
+    )
+
+    assert exit_code == 0
+    assert writes == [
+        (11, child_output),
+        (11, _RESTORED_MODES_WITHOUT_ALT_SCREEN),
+    ]
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="PTY relay is POSIX-only")
+def test_split_alt_screen_enter_is_restored_after_child_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.lib.launch.process import pty_launcher
+
+    master_reads = iter((b"\x1b[?10", b"49hframe", b""))
+    writes: list[tuple[int, bytes]] = []
+
+    monkeypatch.setattr(pty_launcher.sys, "stdin", SimpleNamespace(fileno=lambda: 10))
+    monkeypatch.setattr(pty_launcher.sys, "stdout", SimpleNamespace(fileno=lambda: 11))
+    monkeypatch.setattr(pty_launcher.os, "isatty", lambda fd: fd == 11)
+    monkeypatch.setattr(
+        pty_launcher.select,
+        "select",
+        lambda *_args, **_kwargs: ([12], [], []),
+    )
+    monkeypatch.setattr(pty_launcher.os, "read", lambda _fd, _size: next(master_reads))
+    monkeypatch.setattr(
+        pty_launcher.os,
+        "write",
+        lambda fd, data: writes.append((fd, data)) or len(data),
+    )
+    monkeypatch.setattr(pty_launcher.os, "waitpid", lambda _pid, _options: (99, 0))
+
+    exit_code = pty_launcher._copy_primary_pty_output(
+        child_pid=99,
+        master_fd=12,
+        output_log_path=None,
+    )
+
+    assert exit_code == 0
+    assert writes == [
+        (11, b"\x1b[?10"),
+        (11, b"49hframe"),
+        (11, _RESTORED_MODES),
+    ]
 
 
 @pytest.mark.skipif(IS_WINDOWS, reason="PTY relay is POSIX-only")

@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Keep harness exit text, including Claude resume commands, on screen with
+  Meridian's continue hint below it.
+
 ## [0.10.8] - 2026-10-15
 
 ### Fixed
