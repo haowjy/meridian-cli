@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import psutil
 import structlog
@@ -242,7 +242,6 @@ def _build_record(
     paths: RuntimePaths,
     resolved_run_id: RunId,
     *,
-    bind_existing_generation: bool = True,
     chat_id: str,
     owner_chat_id: str | None = None,
     parent_id: SpawnId | None = None,
@@ -310,19 +309,14 @@ def _build_record(
     )
     owner = (
         get_session_record(paths.root_dir, owner_chat_id or chat_id)
-        if kind != "primary" or bind_existing_generation
+        if kind != "primary"
         else None
     )
     return SpawnRecord(
-        session_instance_id=(owner.session_instance_id
-                             if owner and kind == "primary" and bind_existing_generation else None),
+        session_instance_id=None,
         parent_history_id=parent.history_id if parent else None,
         owner_history_id=owner.history_id if owner and kind != "primary" else None,
-        forked_from_history_id=(
-            start_metadata.forked_from_history_id
-            or (owner.forked_from_history_id
-                if owner and kind == "primary" and bind_existing_generation else None)
-        ),
+        forked_from_history_id=start_metadata.forked_from_history_id,
         id=resolved_run_id,
         history_id=uuid4(),
         state_revision=1,
@@ -507,7 +501,7 @@ def reserve_run(runtime_root: Path, spawn_id: SpawnId, reservation: SpawnReserva
     check_reopen_ancestry(paths, spawn_id, reservation)
     with lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"):
         record = _build_record(
-            paths, _UNASSIGNED_RUN_ID, bind_existing_generation=False,
+            paths, _UNASSIGNED_RUN_ID,
             **reservation_kwargs(reservation),
         )
         with lock_file(paths.spawns_flock):
@@ -546,13 +540,44 @@ def remove_spawn_events(
     )
 
 
+def bind_run_generation(
+    runtime_root: Path,
+    run_id: RunId,
+    *,
+    chat_id: str,
+    session_instance_id: str,
+    forked_from_history_id: UUID | None,
+) -> None:
+    """Bind one concrete run to the exact session generation that launched it."""
+    paths = RuntimePaths.from_root_dir(runtime_root)
+
+    def bind_generation(current: SpawnRecord) -> SpawnRecord:
+        return current.model_copy(
+            update={
+                "chat_id": ChatId(chat_id),
+                "session_instance_id": session_instance_id,
+                "forked_from_history_id": (
+                    forked_from_history_id or current.forked_from_history_id
+                ),
+            }
+        )
+
+    outcome = _write_state_locked(
+        paths.spawns_dir,
+        run_id,
+        bind_generation,
+        allow_terminal_overwrite=True,
+    )
+    if not isinstance(outcome, Applied):
+        raise RuntimeError(f"Could not bind run {run_id} to session generation")
+
+
 def update_spawn(
     runtime_root: Path,
     spawn_id: RunId,
     *,
     chat_id: str | None = None,
     current_chat_id: str | None = None,
-    session_instance_id: str | None = None,
     run_boundary: RunBoundaryOutcome | None = None,
     launch_mode: LaunchMode | None = None,
     worker_pid: int | None = None,
@@ -578,8 +603,6 @@ def update_spawn(
 
     def merge(current: SpawnRecord) -> SpawnRecord:
         updates: dict[str, object] = {}
-        if session_instance_id is not None:
-            updates["session_instance_id"] = session_instance_id
         if run_boundary is not None:
             updates["run_boundary"] = run_boundary
         if chat_id is not None:

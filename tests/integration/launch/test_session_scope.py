@@ -17,12 +17,16 @@ from types import SimpleNamespace
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.request import SessionRequest
-from meridian.lib.launch.session_scope import SessionAttempt
+from meridian.lib.launch.run_reopen import bind_reopened_run
+from meridian.lib.launch.session_scope import SessionAttempt, session_scope
+from meridian.lib.launch.types import PrimarySessionMetadata
+from meridian.lib.state import spawn_store
 from meridian.lib.state.session_store import (
     ConversationModelSelection,
     get_model_selection,
     get_session_record,
     start_session,
+    stop_session,
 )
 
 
@@ -39,6 +43,85 @@ def _snapshot(**overrides: object) -> LaunchPolicySnapshot:
     }
     fields.update(overrides)
     return LaunchPolicySnapshot.model_validate(fields)
+
+
+def _metadata() -> PrimarySessionMetadata:
+    return PrimarySessionMetadata(
+        harness="codex",
+        model="test",
+        agent="",
+        agent_path="",
+        skills=(),
+        skill_paths=(),
+    )
+
+
+def test_fresh_session_scope_binds_the_run_generation(tmp_path: Path) -> None:
+    run_id = spawn_store.start_spawn(
+        tmp_path,
+        spawn_id="p1",
+        chat_id="c-pending",
+        model="test",
+        agent="",
+        harness="codex",
+        prompt="fresh",
+    )
+
+    with session_scope(
+        runtime_root=tmp_path,
+        metadata=_metadata(),
+        request=SessionRequest(),
+        spawn_id=run_id,
+    ) as managed:
+        row = spawn_store.get_spawn(tmp_path, run_id)
+        assert row is not None
+        assert (row.chat_id, row.session_instance_id) == (
+            managed.chat_id,
+            managed.session_instance_id,
+        )
+
+
+def test_reopen_helper_binds_chat_generation_lineage_and_work(tmp_path: Path) -> None:
+    source_chat = start_session(
+        tmp_path,
+        harness="codex",
+        harness_session_id="native",
+        model="test",
+        chat_id="c1",
+    )
+    source = get_session_record(tmp_path, source_chat)
+    assert source is not None
+    stop_session(tmp_path, source_chat)
+    run_id = spawn_store.start_spawn(
+        tmp_path,
+        spawn_id="p1.2",
+        chat_id=source_chat,
+        model="test",
+        agent="",
+        harness="codex",
+        prompt="reopen",
+    )
+    request = SessionRequest(
+        continue_chat_id=source_chat,
+        primary_session_mode="resume",
+        forked_from_history_id=source.history_id,
+    )
+
+    with session_scope(
+        runtime_root=tmp_path,
+        metadata=_metadata(),
+        request=request,
+        chat_id=source_chat,
+        spawn_id=run_id,
+    ) as managed:
+        bind_reopened_run(tmp_path, run_id, managed, work_id="w1")
+        row = spawn_store.get_spawn(tmp_path, run_id)
+        assert row is not None
+        assert (row.chat_id, row.session_instance_id, row.work_id) == (
+            managed.chat_id,
+            managed.session_instance_id,
+            "w1",
+        )
 
 
 def _record(

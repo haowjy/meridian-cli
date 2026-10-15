@@ -7,12 +7,11 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.request import SessionRequest, SpawnRequest, is_exact_continue_session
+from meridian.lib.launch.run_reopen import bind_reopened_run
 from meridian.lib.launch.session_scope import SessionAttempt, session_scope
 from meridian.lib.launch.types import PrimarySessionMetadata
-from meridian.lib.state import spawn_store
 from meridian.lib.state.session_store import get_session_active_work_id, update_session_work_id
 
 from .execute_init import LaunchUserInputError
@@ -96,17 +95,19 @@ def _session_execution_context(
         spawn_id=spawn_id,
         startup_attempt_id=uuid.uuid4().hex,
     ) as managed:
-        if spawn_id is not None and is_exact_continue_session(request):
-            spawn_store.update_spawn(
-                runtime_root,
-                parse_ref(spawn_id, row_key=True),
-                session_instance_id=managed.session_instance_id,
-            )
         attached_work_id = get_session_active_work_id(runtime_root, managed.chat_id)
         if attached_work_id is None:
             attached_work_id = (inherited_work_id or "").strip() or None
             if attached_work_id is not None:
                 update_session_work_id(runtime_root, managed.chat_id, attached_work_id)
+        if spawn_id is not None and is_exact_continue_session(request):
+            assert managed.spawn_id is not None
+            bind_reopened_run(
+                runtime_root,
+                managed.spawn_id,
+                managed,
+                work_id=attached_work_id,
+            )
         yield _SessionExecutionContext(
             chat_id=managed.chat_id,
             work_id=attached_work_id,

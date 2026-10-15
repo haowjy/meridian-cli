@@ -118,6 +118,9 @@ class _SessionLockHandles(NamedTuple):
 
 _SESSION_LOCK_HANDLES: dict[tuple[Path, str], _SessionLockHandles] = {}
 
+REOPEN_LOCK_WAIT_SECONDS = 10.0
+REOPEN_LOCK_POLL_SECONDS = 0.05
+
 
 type MaterializedCleanupScope = str
 
@@ -276,7 +279,7 @@ class ChatBusy(ValueError):
 
 
 def _acquire_reopen_lock(runtime_root: Path, chat_id: str, lock_path: Path) -> IO[bytes]:
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + REOPEN_LOCK_WAIT_SECONDS
     while True:
         try:
             return acquire_file_lock(lock_path, timeout=0)
@@ -287,7 +290,7 @@ def _acquire_reopen_lock(runtime_root: Path, chat_id: str, lock_path: Path) -> I
                 raise FileLockTimeout(
                     f"Timed out waiting for transient chat lock: {chat_id}"
                 ) from None
-            time.sleep(0.05)
+            time.sleep(REOPEN_LOCK_POLL_SECONDS)
 
 
 def start_session(
@@ -379,38 +382,6 @@ def start_session(
                 event = event.model_copy(
                     update={"forked_from_history_id": source.history_id if source else None}
                 )
-            if spawn_id is not None:
-                from meridian.lib.state.spawn.model import SpawnRecord
-                from meridian.lib.state.spawn.repository import Applied, write_state_locked
-
-                bound_run_id = parse_ref(spawn_id, row_key=True)
-
-                def bind_spawn(current: SpawnRecord) -> SpawnRecord:
-                    return current.model_copy(
-                        update={
-                            "chat_id": event.chat_id,
-                            **(
-                                {} if reopen
-                                else {"session_instance_id": event.session_instance_id}
-                            ),
-                            "forked_from_history_id": event.forked_from_history_id
-                            or current.forked_from_history_id,
-                        }
-                    )
-
-                binding = write_state_locked(
-                    paths.spawns_dir,
-                    bound_run_id,
-                    bind_spawn,
-                    allow_terminal_overwrite=True,
-                )
-                if isinstance(binding, Applied):
-                    event = event.model_copy(
-                        update={
-                            "history_id": binding.after.history_id,
-                            "forked_from_history_id": binding.after.forked_from_history_id,
-                        }
-                    )
             _append_session_event(paths.sessions_jsonl, paths.sessions_flock, event)
             _write_session_lease(paths, resolved_chat_id, session_instance_id)
     except Exception:

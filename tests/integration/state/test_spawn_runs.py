@@ -62,6 +62,15 @@ def _bound(root: Path, key: str) -> RunId:
         root, harness="codex", harness_session_id="native-1", model="test",
         chat_id="c1", spawn_id=run_id,
     )
+    generation = session_store.get_session_record(root, "c1")
+    assert generation is not None
+    spawn_store.bind_run_generation(
+        root,
+        run_id,
+        chat_id="c1",
+        session_instance_id=generation.session_instance_id,
+        forked_from_history_id=generation.forked_from_history_id,
+    )
     session_store.stop_session(root, "c1")
     _finish(root, run_id)
     return run_id

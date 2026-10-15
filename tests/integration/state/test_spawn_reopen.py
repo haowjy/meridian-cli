@@ -21,6 +21,18 @@ from meridian.lib.state.spawn.runs import SpawnBusy, latest_bound_run, latest_ru
 from tests.support.process_race import run_spawn_race_or_skip
 
 
+def _bind_started_session(runtime_root: Path, run_id: RunId, chat_id: str) -> None:
+    record = session_store.get_session_record(runtime_root, chat_id)
+    assert record is not None
+    spawn_store.bind_run_generation(
+        runtime_root,
+        run_id,
+        chat_id=chat_id,
+        session_instance_id=record.session_instance_id,
+        forked_from_history_id=record.forked_from_history_id,
+    )
+
+
 def _reserve_run_without_busy_check_worker(runtime_root: str) -> str:
     """Exercise allocation contention without the one-active-run policy."""
 
@@ -53,6 +65,7 @@ def test_reserve_run_contract(tmp_path: Path, status: str, live: bool, busy: boo
         tmp_path, harness='codex', harness_session_id='native', model='test',
         chat_id='c1', spawn_id=first,
     )
+    _bind_started_session(tmp_path, first, "c1")
     session_store.stop_session(tmp_path, 'c1')
     spawn_store.finalize_spawn(tmp_path, first, status='succeeded', exit_code=0, origin='runner')
     latest = spawn_store.start_spawn(
@@ -105,6 +118,7 @@ def test_missing_head_recovers_across_holes_before_continue_and_reservation(
         tmp_path, harness="codex", harness_session_id="native", model="test",
         chat_id="c1", spawn_id=first,
     )
+    _bind_started_session(tmp_path, first, "c1")
     session_store.stop_session(tmp_path, "c1")
     spawn_store.finalize_spawn(
         tmp_path, first, status="succeeded", exit_code=0, origin="runner",
@@ -123,7 +137,7 @@ def test_missing_head_recovers_across_holes_before_continue_and_reservation(
             tmp_path, harness="codex", harness_session_id="native", model="test",
             chat_id="c1", spawn_id=run_id, reopen=True,
         )
-        spawn_store.update_spawn(tmp_path, run_id, session_instance_id=f"generation-{run_id}")
+        _bind_started_session(tmp_path, run_id, "c1")
         session_store.stop_session(tmp_path, "c1")
         spawn_store.finalize_spawn(
             tmp_path, run_id, status="succeeded", exit_code=0, origin="runner",
@@ -503,7 +517,7 @@ def test_primary_run_reservation_does_not_reread_owner_session(
     assert spawn_store.reserve_run(tmp_path, SpawnId("p1"), reservation) == "p1.2"
 
 
-def test_start_spawn_resolves_owner_and_exact_parent_before_allocation_lock(
+def test_start_spawn_resolves_exact_parent_before_allocation_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -531,21 +545,11 @@ def test_start_spawn_resolves_owner_and_exact_parent_before_allocation_lock(
     spawn_store.finalize_spawn(
         tmp_path, later_parent, status="succeeded", exit_code=0, origin="runner",
     )
-    session_store.start_session(
-        tmp_path,
-        harness="codex",
-        harness_session_id="native-owner",
-        model="test",
-        chat_id="c-owner",
-    )
-    session_store.stop_session(tmp_path, "c-owner")
-    owner = session_store.get_session_record(tmp_path, "c-owner")
     first_parent_row = spawn_store.get_spawn(tmp_path, first_parent)
-    assert owner is not None and first_parent_row is not None
+    assert first_parent_row is not None
 
     paths = spawn_store.RuntimePaths.from_root_dir(tmp_path)
     original_lock_file = spawn_store.lock_file
-    original_get_session_record = session_store.get_session_record
     original_read_state = spawn_store._read_state
     allocation_lock_held = False
     locked_dependency_reads: list[str] = []
@@ -562,13 +566,6 @@ def test_start_spawn_resolves_owner_and_exact_parent_before_allocation_lock(
             finally:
                 allocation_lock_held = was_held
 
-    def tracked_get_session_record(
-        root: Path, chat_id: str,
-    ) -> session_store.SessionRecord | None:
-        if allocation_lock_held:
-            locked_dependency_reads.append(f"session:{chat_id}")
-        return original_get_session_record(root, chat_id)
-
     def tracked_read_state(
         spawns_dir: Path,
         spawn_id: RunId,
@@ -582,7 +579,6 @@ def test_start_spawn_resolves_owner_and_exact_parent_before_allocation_lock(
         )
 
     monkeypatch.setattr(spawn_store, "lock_file", tracked_lock_file)
-    monkeypatch.setattr(session_store, "get_session_record", tracked_get_session_record)
     monkeypatch.setattr(spawn_store, "_read_state", tracked_read_state)
 
     child = spawn_store.start_spawn(
@@ -600,5 +596,5 @@ def test_start_spawn_resolves_owner_and_exact_parent_before_allocation_lock(
 
     assert locked_dependency_reads == []
     assert row is not None
-    assert row.session_instance_id == owner.session_instance_id
+    assert row.session_instance_id is None
     assert row.parent_history_id == first_parent_row.history_id

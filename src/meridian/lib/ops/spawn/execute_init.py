@@ -22,6 +22,7 @@ from meridian.lib.core.types import ModelId, RunId
 from meridian.lib.launch.launch_types import ResolvedLaunchBinding
 from meridian.lib.launch.plan import build_spawn_mars_runtime
 from meridian.lib.launch.request import SpawnRequest, is_exact_continue_session
+from meridian.lib.launch.run_reopen import reserve_reopened_run
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.ops.work_attachment import ensure_explicit_work_item
 from meridian.lib.state import spawn_store
@@ -240,6 +241,7 @@ def build_spawn_reservation(
 def _reserve_spawn(
     *,
     reservation: SpawnReservation,
+    request: SpawnRequest,
     runtime: OperationRuntime,
     ctx: RuntimeContext | None = None,
 ) -> _SpawnContext:
@@ -248,7 +250,16 @@ def _reserve_spawn(
     project_paths = resolve_project_config_paths(project_root=runtime.project_root)
     runtime_root = resolve_runtime_root(project_paths.project_root)
     service = build_spawn_lifecycle_service_from_roots(project_paths.project_root, runtime_root)
-    spawn_id = service.reserve(reservation)
+    spawn_id = (
+        reserve_reopened_run(
+            service,
+            project_paths.project_root,
+            reservation,
+            request.session,
+        )
+        if reservation.reopen_spawn_id is not None
+        else parse_ref(service.reserve(reservation), row_key=True)
+    )
     spawn = Spawn(
         spawn_id=parse_ref(spawn_id, row_key=True),
         prompt=reservation.prompt,

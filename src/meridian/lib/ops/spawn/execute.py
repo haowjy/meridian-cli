@@ -19,6 +19,7 @@ from meridian.lib.core.refs import parse_ref
 from meridian.lib.launch.context import PreparedLaunchSurface
 from meridian.lib.launch.cwd import resolve_task_cwd
 from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
+from meridian.lib.launch.run_reopen import fail_unacquired_run
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_boundary import (
@@ -245,11 +246,10 @@ def _reserve_then_prepare(
     logger.debug("spawn_launcher_phase", phase="reservation", launcher_pid=os.getpid())
     context = _reserve_spawn(
         reservation=reservation,
+        request=request,
         runtime=runtime,
         ctx=resolved_context,
     )
-    from meridian.lib.launch.continue_replay import seed_continue_scope
-    seed_continue_scope(runtime.project_root, str(context.spawn.spawn_id), request.session)
     logger.debug(
         "spawn_launcher_phase",
         phase="reservation_complete",
@@ -264,8 +264,11 @@ def _reserve_then_prepare(
     )
     if isinstance(preparation, SpawnActionOutput):
         if request.session.reopen_spawn_id:
-            finalize_launch_failure_sync(
-                context.runtime_root, runtime.project_root, context.spawn.spawn_id,
+            fail_unacquired_run(
+                build_spawn_lifecycle_service_from_roots(
+                    runtime.project_root, context.runtime_root
+                ),
+                context.spawn.spawn_id,
                 preparation.error or preparation.message or "pre_init_failed",
             )
         else:

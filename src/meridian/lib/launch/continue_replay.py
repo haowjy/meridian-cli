@@ -16,7 +16,7 @@ from meridian.lib.harness.model_observation import (
     read_last_executed_model,
 )
 from meridian.lib.launch.policy_snapshot import managed_model_override_from_persisted_model
-from meridian.lib.launch.request import SessionRequest, is_exact_continue_session
+from meridian.lib.launch.request import SessionRequest
 from meridian.lib.state.event_store import utc_now_iso
 from meridian.lib.state.session_store import (
     ConversationModelSelection,
@@ -515,16 +515,3 @@ __all__ = [
     "build_continue_replay_contract",
     "continue_replay_source_from_reference",
 ]
-
-
-def seed_continue_scope(project_root: Path, run_id: str, request: SessionRequest) -> None:
-    """Copy the predecessor's run-local override, including an explicit clear."""
-    from meridian.lib.core.refs import parse_ref
-    from meridian.lib.state.spawn_scope import read_spawn_scope, write_spawn_scope_task_dir
-
-    if request.source_run_id and is_exact_continue_session(request):
-        scope = read_spawn_scope(project_root, parse_ref(request.source_run_id, row_key=True))
-        if scope.task_dir is not None or scope.task_dir_cleared:
-            write_spawn_scope_task_dir(
-                project_root, parse_ref(run_id, row_key=True), scope.task_dir,
-            )

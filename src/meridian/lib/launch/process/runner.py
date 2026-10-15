@@ -61,7 +61,6 @@ from meridian.lib.launch.constants import (
 from meridian.lib.launch.extract import enrich_finalize
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.native_run import NativeRun, bind_entry, conclude_native_run
-from meridian.lib.platform.locking import FileLockTimeout
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_spawn_log_dir
@@ -71,8 +70,8 @@ from meridian.lib.state.primary_meta import (
     write_primary_metadata,
 )
 from meridian.lib.state.session_store import (
-    ChatBusy,
     get_session_active_work_id,
+    get_session_record,
     update_session_claude_config_dir,
     update_session_spawn_id,
     update_session_work_id,
@@ -87,6 +86,11 @@ from ..context import (
 )
 from ..fork import materialize_fork
 from ..request import LaunchCompositionSurface
+from ..run_reopen import (
+    bind_reopened_run,
+    fail_unacquired_run,
+    reserve_reopened_run,
+)
 from ..session_scope import session_scope
 from ..types import SessionMode
 from .ports import (
@@ -710,18 +714,26 @@ def run_harness_process(
     try:
         if preview_request.session.reopen_spawn_id is not None:
             assert resume_chat_id is not None
-            primary_spawn_id = parse_ref(lifecycle_service.start(SpawnReservation(
-                reopen_spawn_id=preview_request.session.reopen_spawn_id,
-                chat_id=resume_chat_id,
-                session_metadata=session_metadata,
-                kind="primary", prompt=preview_request.prompt,
-                harness_session_id=resolved_harness_session_id or None,
-                control_root=str(control_root), execution_cwd=str(execution_cwd),
-                launch_mode=FOREGROUND_LAUNCH_MODE, work_id=preview_context.work_id,
-                runner_pid=os.getpid(), status=SpawnStatus.QUEUED,
-            )), row_key=True)
-            from meridian.lib.launch.continue_replay import seed_continue_scope
-            seed_continue_scope(config_root, primary_spawn_id, preview_request.session)
+            primary_spawn_id = reserve_reopened_run(
+                lifecycle_service,
+                config_root,
+                SpawnReservation(
+                    reopen_spawn_id=preview_request.session.reopen_spawn_id,
+                    chat_id=resume_chat_id,
+                    session_metadata=session_metadata,
+                    kind="primary",
+                    prompt=preview_request.prompt,
+                    harness_session_id=resolved_harness_session_id or None,
+                    control_root=str(control_root),
+                    execution_cwd=str(execution_cwd),
+                    launch_mode=FOREGROUND_LAUNCH_MODE,
+                    work_id=preview_context.work_id,
+                    runner_pid=os.getpid(),
+                    status=SpawnStatus.QUEUED,
+                ),
+                preview_request.session,
+            )
+            lifecycle_service.announce(primary_spawn_id)
         reopening_spawn = primary_spawn_id is not None
         with session_scope(
             runtime_root=runtime_root,
@@ -779,13 +791,31 @@ def run_harness_process(
                         row_key=True,
                     )
                 if reopening_spawn:
-                    spawn_store.update_spawn(
+                    bind_reopened_run(
                         runtime_root,
-                        parse_ref(primary_spawn_id, row_key=True),
-                        chat_id=managed.chat_id,
-                        session_instance_id=managed.session_instance_id,
+                        primary_spawn_id,
+                        managed,
                         work_id=attached_work_id,
                     )
+                else:
+                    session_record = get_session_record(runtime_root, managed.chat_id)
+                    if session_record is None:
+                        raise RuntimeError(
+                            f"Started session {managed.chat_id} has no generation record"
+                        )
+                    spawn_store.bind_run_generation(
+                        runtime_root,
+                        primary_spawn_id,
+                        chat_id=managed.chat_id,
+                        session_instance_id=managed.session_instance_id,
+                        forked_from_history_id=session_record.forked_from_history_id,
+                    )
+                    if attached_work_id is not None:
+                        spawn_store.update_spawn(
+                            runtime_root,
+                            primary_spawn_id,
+                            work_id=attached_work_id,
+                        )
                 update_session_spawn_id_fn(
                     runtime_root,
                     chat_id,
@@ -1107,23 +1137,16 @@ def run_harness_process(
                                 "Failed to clean up adapter prelaunch state for primary spawn",
                                 exc_info=True,
                             )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
         logger.debug("Harness command not found", exc_info=True)
         exit_code = 2
         if primary_spawn_id is not None and not session_acquired:
-            lifecycle_service.finalize(
-                primary_spawn_id, status="failed", exit_code=2, origin="launcher",
-                error="pre_session_failed",
-            )
+            fail_unacquired_run(lifecycle_service, primary_spawn_id, exc, exit_code=2)
     except Exception as exc:
         # The inner finalizer owns failures after scope acquisition. A failed
         # acquisition has no generation, but its reserved run is still terminal.
         if primary_spawn_id is not None and not session_acquired:
-            lifecycle_service.finalize(
-                primary_spawn_id, status="failed", exit_code=1, origin="launcher",
-                error=("chat_busy" if isinstance(exc, ChatBusy)
-                       else "chat_lock_timeout" if isinstance(exc, FileLockTimeout) else str(exc)),
-            )
+            fail_unacquired_run(lifecycle_service, primary_spawn_id, exc)
         raise
 
     return ProcessOutcome(

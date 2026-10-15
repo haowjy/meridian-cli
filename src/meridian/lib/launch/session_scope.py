@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
+from uuid import UUID
 
 from meridian.lib.core.native_identity import BindSource, NativeKeyFields
 from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_chat
@@ -42,6 +43,7 @@ class SessionAttempt:
     session_instance_id: str
     startup_attempt_id: str | None
     spawn_id: RunId | None = None
+    forked_from_history_id: UUID | None = None
 
     def bind(self, attempted: NativeKeyFields, source: BindSource) -> BindOutcome:
         outcome = update_session_harness_id(
@@ -166,17 +168,32 @@ def session_scope(
         model_selection_protocol=1 if startup_attempt_id is not None else None,
         reopen=is_exact_continue_session(request),
     )
-    record = get_session_record(runtime_root, resolved_chat_id)
-    generation = record.session_instance_id if record is not None else ""
     try:
+        record = get_session_record(runtime_root, resolved_chat_id)
+        generation = record.session_instance_id if record is not None else ""
+        if spawn_id is not None and not is_exact_continue_session(request):
+            if record is None:
+                raise RuntimeError(
+                    f"Started session {resolved_chat_id} has no generation record"
+                )
+            spawn_store.bind_run_generation(
+                runtime_root,
+                parse_ref(spawn_id, row_key=True),
+                chat_id=resolved_chat_id,
+                session_instance_id=record.session_instance_id,
+                forked_from_history_id=record.forked_from_history_id,
+            )
         if request.initial_model_selection is not None:
             record_model_selection(runtime_root, request.initial_model_selection)
         yield SessionAttempt(
-            runtime_root,
-            resolved_chat_id,
-            generation,
-            startup_attempt_id,
-            parse_ref(spawn_id, row_key=True) if spawn_id is not None else None,
+            runtime_root=runtime_root,
+            chat_id=resolved_chat_id,
+            session_instance_id=generation,
+            startup_attempt_id=startup_attempt_id,
+            spawn_id=parse_ref(spawn_id, row_key=True) if spawn_id is not None else None,
+            forked_from_history_id=(
+                record.forked_from_history_id if record is not None else None
+            ),
         )
     finally:
         try:
