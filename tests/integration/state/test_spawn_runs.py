@@ -242,6 +242,43 @@ def test_history_index_traverses_multi_run_spawn_chain_without_duplicates(
     )
 
 
+def test_history_index_projects_only_runs_parented_within_each_subtree(
+    tmp_path: Path,
+) -> None:
+    parent = _start(tmp_path, spawn_id="p1")
+    _finish(tmp_path, parent)
+    child = _start(tmp_path, spawn_id="p2", parent_id=SpawnId("p1"))
+    _finish(tmp_path, child)
+    unrelated = _start(tmp_path, spawn_id="p9")
+    _finish(tmp_path, unrelated)
+    reopened_child = spawn_store.reserve_run(
+        tmp_path,
+        SpawnId("p2"),
+        SpawnReservation(
+            chat_id="c1",
+            parent_id="p9",
+            prompt="again",
+            session_metadata=PrimarySessionMetadata(
+                harness="codex",
+                model="test",
+                agent="coder",
+                agent_path="",
+                skills=(),
+                skill_paths=(),
+            ),
+        ),
+    )
+
+    index = HistoryIndex(tmp_path)
+    assert index.rebuild().complete
+    assert index.descendant_projection("p1") == (("p2", "p1", False),)
+    assert index.descendant_projection("p1", active_only=True) == ()
+    assert index.descendant_projection("p9") == (("p2.2", "p9", False),)
+    assert index.descendant_projection("p9", active_only=True) == (
+        (str(reopened_child), "p9", False),
+    )
+
+
 def test_bound_generations_and_clear_segment_survive_multi_run_archive_discovery(
     tmp_path: Path,
 ) -> None:

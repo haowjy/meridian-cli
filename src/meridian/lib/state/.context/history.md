@@ -104,8 +104,8 @@ caller deadline: one bounded catch-up, then one recursive parent-index query.
 Streaming treats contention or deadline exhaustion as temporarily unavailable
 evidence and polls again instead of classifying it as a hard read failure. Traversal
 retains archived rows as ancestry so a loose grandchild remains discoverable through
-an archived intermediate, excludes the root, and terminates parent-edge cycles by
-path. The result is discovery only. Callers must authoritatively read every selected
+an archived intermediate, excludes the root, and uses `UNION` to deduplicate spawn
+IDs. The result is discovery only. Callers must authoritatively read every selected
 loose row before using lifecycle state; archived rows are traversal edges, not
 projected lifecycle authority. A cold initialization or rebuild is still corpus-sized
 even though the warm query and authoritative rereads are subtree-sized.

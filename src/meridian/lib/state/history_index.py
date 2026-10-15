@@ -1498,7 +1498,9 @@ class HistoryIndex:
             SELECT records.local_id, records.parent, records.archive_id IS NOT NULL
               FROM records
               JOIN subtree ON subtree.spawn_id = records.spawn_id
-             WHERE :active_only = 0 OR records.active = 1
+             WHERE (records.parent = :root
+                    OR records.parent IN (SELECT spawn_id FROM subtree))
+               AND (:active_only = 0 OR records.active = 1)
              ORDER BY records.local_id
             """
         )
