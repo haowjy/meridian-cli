@@ -16,6 +16,16 @@ from meridian.lib.harness.idle_types import IdleEvent, IdleSensorContext, Pinned
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "codex_idle"
 MAIN_THREAD = "01a11de2-ce9f-7c41-970f-a07df19fa0e4"
 PROMPT = "\u203a"
+STATUS = "  GPT-5.6-Luna default \u00b7 /tmp/scratch/repo"
+
+
+def _composer_capture(*prompt_lines: str, empty: bool = False) -> str:
+    prompt = "\n".join(
+        f"{PROMPT} {line}" if index == 0 else f"  {line}"
+        for index, line in enumerate(prompt_lines)
+    )
+    footer = "  ? for shortcuts" if empty else ""
+    return f"transcript\n\n\n{prompt}\n\n{STATUS}\n{footer}\n"
 
 
 class FakeTmux:
@@ -220,32 +230,82 @@ def test_pane_facts_match_probe_captures(
 
 
 @pytest.mark.asyncio
-async def test_compact_clears_multiline_draft_and_accepts_compacted_record(
+@pytest.mark.parametrize(
+    ("captures", "expected", "expected_actions", "append_compaction"),
+    [
+        pytest.param(
+            [
+                _composer_capture("first line", "second line", "third line"),
+                _composer_capture("first line", "second line", "third lineix"),
+                _composer_capture("Ask Codex to do anything", empty=True),
+                _composer_capture("/compact"),
+            ],
+            ("ok", None),
+            [
+                ("capture", "%42"),
+                ("literal", "ix"),
+                ("capture", "%42"),
+                ("keys", ("C-c",)),
+                ("capture", "%42"),
+                ("literal", "/compact"),
+                ("capture", "%42"),
+                ("keys", ("Enter",)),
+            ],
+            True,
+            id="draft-cleared-and-compacted",
+        ),
+        pytest.param(
+            [
+                (
+                    "  /model  choose a model\n"
+                    f"{PROMPT} /permissions  choose permissions\n\n"
+                    f"{PROMPT} /\n\n{STATUS}\n\n"
+                )
+            ],
+            ("vetoed", "composer-not-focused"),
+            [("capture", "%42")],
+            False,
+            id="popup-vetoed-before-clear",
+        ),
+        pytest.param(
+            [
+                _composer_capture("unfinished draft"),
+                _composer_capture("unfinished draft"),
+            ],
+            ("vetoed", "clear-primer-not-visible"),
+            [
+                ("capture", "%42"),
+                ("literal", "ix"),
+                ("capture", "%42"),
+                ("keys", ("BSpace", "BSpace")),
+            ],
+            False,
+            id="missing-primer-erased-without-clear",
+        ),
+    ],
+)
+async def test_compact_clears_only_a_focused_composer(
     tmp_path: Path,
+    captures: list[str],
+    expected: tuple[str, str | None],
+    expected_actions: list[tuple[str, object]],
+    append_compaction: bool,
 ) -> None:
     rollout = _write_rollout(tmp_path)
     compacted = (FIXTURES / "compacted-0.162.1.jsonl").read_bytes()
     tmux = FakeTmux(
-        [
-            f"{PROMPT} first line\n  second line\n  third line\n",
-            f"{PROMPT} /compact\n",
-        ],
-        on_enter=lambda: _append(rollout, compacted),
+        captures.copy(),
+        on_enter=(lambda: _append(rollout, compacted)) if append_compaction else None,
     )
     clock = FakeClock()
     sensor = _sensor(tmp_path, tmux, clock)
 
     result = await sensor.compact()
 
-    assert result.result == "ok"
-    assert tmux.actions[:6] == [
-        ("capture", "%42"),
-        ("literal", "ix"),
-        ("keys", ("C-c",)),
-        ("literal", "/compact"),
-        ("capture", "%42"),
-        ("keys", ("Enter",)),
-    ]
+    assert (result.result, result.reason) == expected
+    assert tmux.actions == expected_actions
+    if not append_compaction:
+        assert ("keys", ("C-c",)) not in tmux.actions
     assert tmux.captures == []
 
 
@@ -253,8 +313,14 @@ async def test_compact_clears_multiline_draft_and_accepts_compacted_record(
 async def test_compact_times_out_when_rollout_does_not_grow(tmp_path: Path) -> None:
     rollout = _write_rollout(tmp_path)
     _append(rollout, (FIXTURES / "compacted-0.162.1.jsonl").read_bytes())
-    idle = (FIXTURES / "captures" / "idle.txt").read_text(encoding="utf-8")
-    tmux = FakeTmux([idle, idle.replace("Ask Codex to do anything", "/compact")])
+    tmux = FakeTmux(
+        [
+            _composer_capture("Ask Codex to do anything", empty=True),
+            _composer_capture("ix"),
+            _composer_capture("Ask Codex to do anything", empty=True),
+            _composer_capture("/compact"),
+        ]
+    )
     clock = FakeClock()
     sensor = _sensor(tmp_path, tmux, clock)
 
@@ -277,9 +343,13 @@ async def test_compact_ignores_partial_rollout_line_until_complete(
             with rollout.open("ab") as handle:
                 handle.write(remainder)
 
-    idle = (FIXTURES / "captures" / "idle.txt").read_text(encoding="utf-8")
     tmux = FakeTmux(
-        [idle, idle.replace("Ask Codex to do anything", "/compact")],
+        [
+            _composer_capture("Ask Codex to do anything", empty=True),
+            _composer_capture("ix"),
+            _composer_capture("Ask Codex to do anything", empty=True),
+            _composer_capture("/compact"),
+        ],
         on_enter=lambda: _append(rollout, partial),
     )
     clock = FakeClock(on_sleep=finish_line)
