@@ -281,6 +281,27 @@ def list_spawns_for_exact_session(
     return spawn_store.list_spawns(runtime_root, chat_id=session_chat_id)
 
 
+def owner_spawn_for_chat(runtime_root: Path, chat_id: str) -> SpawnId | None:
+    """Resolve a linked owner or an observed chat's verified publishing spawn."""
+    record = session_store.get_session_record(runtime_root, chat_id)
+    if record is not None and record.spawn_id:
+        return spawn_of(record.spawn_id)
+
+    from meridian.lib.state.history_index import indexed_spawn_scan
+
+    for candidate in indexed_spawn_scan(
+        runtime_root, current_chat_id=chat_id,
+    ).records:
+        current = spawn_store.get_spawn(runtime_root, candidate.id)
+        if (
+            current is not None
+            and current.record_mode == "live"
+            and current.current_chat_id == chat_id
+        ):
+            return spawn_of(current.id)
+    return None
+
+
 __all__ = [
     "get_owner_chat_for_session",
     "get_recorded_primary_spawn_for_owner_chat",
@@ -290,6 +311,7 @@ __all__ = [
     "list_spawns_for_owner_chat",
     "live_observer_for_chat",
     "native_identity_candidates",
+    "owner_spawn_for_chat",
     "session_exact_chat_id",
     "session_owner_chat_id",
     "session_records_for_spawns",
@@ -298,18 +320,3 @@ __all__ = [
     "spawn_matches_owner_chat",
     "spawn_owner_chat_id",
 ]
-
-
-def owner_spawns_for_chats(runtime_root: Path, chat_ids: Iterable[str]) -> dict[str, SpawnId]:
-    """Return owners recorded on the requested chats' accepted generations."""
-    wanted = set(chat_ids)
-    return {
-        record.chat_id: spawn_of(record.spawn_id)
-        for record in session_store.get_session_records(runtime_root, wanted)
-        if record.spawn_id is not None
-    }
-
-
-def owner_spawn_for_chat(runtime_root: Path, chat_id: str) -> SpawnId | None:
-    record = session_store.get_session_record(runtime_root, chat_id)
-    return spawn_of(record.spawn_id) if record is not None and record.spawn_id else None

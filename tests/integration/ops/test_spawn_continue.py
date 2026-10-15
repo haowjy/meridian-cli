@@ -279,6 +279,102 @@ def test_chat_continue_uses_one_keyed_session_lookup_and_no_unfiltered_index_rea
     assert keyed_lookups == [{"c1"}]
 
 
+def test_chat_continue_finds_verified_observed_owner_with_filtered_index(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    _seed_spawn(
+        runtime_root,
+        spawn_id="p28",
+        chat_id="c1",
+        harness_session_id="session-28",
+        launch_policy_snapshot=LaunchPolicySnapshot(model="gpt-5.3-codex", harness="codex"),
+    )
+    native_store = runtime_root / "native-store" / "sessions"
+    observed_native = "session-29"
+    (native_store / f"rollout-2026-01-01T00-00-00-{observed_native}.jsonl").write_text(
+        json.dumps({"type": "session_meta", "payload": {"id": observed_native}}) + "\n",
+        encoding="utf-8",
+    )
+    session_store.start_session(
+        runtime_root,
+        chat_id="c2",
+        harness="codex",
+        harness_session_id=observed_native,
+        native_store=str(native_store),
+        model="gpt-5.3-codex",
+    )
+    session_store.stop_session(runtime_root, "c2")
+    spawn_store.update_spawn(runtime_root, parse_ref("p28", row_key=True), current_chat_id="c2")
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.3-codex",
+        model_token="gpt-5.3-codex",
+        harness=HarnessId.CODEX,
+        harness_model="gpt-5.3-codex",
+    )
+    calls = _record_spawn_create(monkeypatch)
+    original_spawns = HistoryIndex.spawns
+    filters: list[dict[str, object]] = []
+
+    def tracked_spawns(index: HistoryIndex, **kwargs: Any) -> Any:
+        filters.append(kwargs)
+        return original_spawns(index, **kwargs)
+
+    monkeypatch.setattr(HistoryIndex, "spawns", tracked_spawns)
+
+    result = spawn_api.spawn_continue_sync(
+        SpawnContinueInput(spawn_id="c2", prompt="continue", project_root=str(project_root)),
+    )
+
+    assert result.status == "running"
+    assert calls[0][1].session.reopen_spawn_id == "p28"
+    assert filters and all(query.get("current_chat_id") == "c2" for query in filters)
+
+
+def test_chat_continue_without_owner_starts_new_spawn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    native_store = runtime_root / "native-store" / "sessions"
+    native_store.mkdir(parents=True)
+    native_id = "session-ownerless"
+    (native_store / f"rollout-2026-01-01T00-00-00-{native_id}.jsonl").write_text(
+        json.dumps({"type": "session_meta", "payload": {"id": native_id}}) + "\n",
+        encoding="utf-8",
+    )
+    session_store.start_session(
+        runtime_root,
+        chat_id="c7",
+        harness="codex",
+        harness_session_id=native_id,
+        native_store=str(native_store),
+        model="gpt-5.3-codex",
+    )
+    session_store.stop_session(runtime_root, "c7")
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.3-codex",
+        model_token="gpt-5.3-codex",
+        harness=HarnessId.CODEX,
+        harness_model="gpt-5.3-codex",
+    )
+    calls = _record_spawn_create(monkeypatch)
+
+    result = spawn_api.spawn_continue_sync(
+        SpawnContinueInput(spawn_id="c7", prompt="continue", project_root=str(project_root)),
+    )
+
+    assert result.status == "running"
+    assert calls[0][1].session.reopen_spawn_id is None
+
+
 def test_spawn_continue_cross_harness_refusal_names_both_harnesses_without_writes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

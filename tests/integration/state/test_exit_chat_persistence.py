@@ -147,6 +147,7 @@ def test_observed_chat_inherits_metadata_without_transcript_or_live_lease(tmp_pa
     row = spawn_store.get_spawn(runtime, "p1")
     assert row is not None and row.current_chat_id == observed
     assert row is not None and row.chat_id == source and row.harness_session_id == "entry"
+    assert session_identity.owner_spawn_for_chat(runtime, observed) == "p1"
     for ref in ("p1", observed):
         selected = resolve_session_reference(tmp_path, ref, runtime_root=runtime)
         assert selected.source_chat_id == observed

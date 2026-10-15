@@ -190,7 +190,7 @@ def _continue_source() -> ContinueReplaySource:
     )
 
 
-def test_tracked_chat_without_owner_cannot_continue(
+def test_tracked_chat_without_owner_starts_a_new_spawn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = ContinueReplaySource(
@@ -206,9 +206,18 @@ def test_tracked_chat_without_owner_cannot_continue(
         tracked=True,
     )
     _patch_intent_seams(monkeypatch, recorded=None, live=None, stored=None)
+    from meridian.lib.state import session_identity
 
-    with pytest.raises(ValueError, match="Chat c41 has no owning spawn"):
-        build_continue_replay_contract(source=source, runtime_root=Path("/tmp/x"))
+    monkeypatch.setattr(session_identity, "owner_spawn_for_chat", lambda *_: None)
+
+    contract = build_continue_replay_contract(
+        source=source,
+        requested_model_override="claude-sonnet-4-6",
+        runtime_root=Path("/tmp/x"),
+    )
+
+    assert contract.session.reopen_spawn_id is None
+    assert contract.session.source_run_id is None
 
 
 def _recorded_selection(token: str) -> ConversationModelSelection:

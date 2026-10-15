@@ -107,6 +107,7 @@ RECORDS = Table(
     Column("spawn_id", Text, nullable=False),
     Column("run", Integer, nullable=False),
     Column("chat", Text),
+    Column("current_chat", Text),
     Column("owner", Text),
     Column("parent", Text),
     Column("work", Text),
@@ -122,6 +123,7 @@ Index("loose_alias", RECORDS.c.local_id, unique=True, sqlite_where=RECORDS.c.arc
 Index("spawn_runs", RECORDS.c.spawn_id, RECORDS.c.run.desc())
 Index("owner_records", RECORDS.c.owner, RECORDS.c.started)
 Index("chat_records", RECORDS.c.chat, RECORDS.c.started)
+Index("current_chat_records", RECORDS.c.current_chat, RECORDS.c.started)
 Index("parent_records", RECORDS.c.parent)
 Index("work_records", RECORDS.c.work, RECORDS.c.started)
 Index("status_records", RECORDS.c.status, RECORDS.c.started)
@@ -447,15 +449,17 @@ class HistoryIndex:
             else last_activity(record, None, location["activity"])
         )
         db.exec_driver_sql(
-            "INSERT INTO records (history_id, local_id, spawn_id, run, chat, owner, parent, "
+            "INSERT INTO records (history_id, local_id, spawn_id, run, chat, current_chat, "
+            "owner, parent, "
             "work, status, kind, started, activity, active, archive_id, record_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 history_id,
                 record.id,
                 stable_spawn_id,
                 run,
                 record.chat_id,
+                record.current_chat_id,
                 record.owner_chat_id or record.chat_id,
                 record.parent_id,
                 record.work_id,
@@ -1430,6 +1434,7 @@ class HistoryIndex:
     ) -> tuple[SpawnRecord, ...]:
         columns = {
             "chat_id": RECORDS.c.chat,
+            "current_chat_id": RECORDS.c.current_chat,
             "owner_chat_id": RECORDS.c.owner,
             "parent_id": RECORDS.c.parent,
             "work_id": RECORDS.c.work,
@@ -1575,6 +1580,7 @@ def indexed_spawn_scan(
     *,
     spawn_id: str | set[str] | None = None,
     chat_id: str | None = None,
+    current_chat_id: str | None = None,
     related_chat_ids: set[str] | None = None,
     owner_chat_id: str | set[str] | None = None,
     parent_id: str | None = None,
@@ -1585,6 +1591,7 @@ def indexed_spawn_scan(
     records = HistoryIndex(runtime_root).spawns(
         spawn_id=spawn_id,
         chat_id=chat_id,
+        current_chat_id=current_chat_id,
         related_chat_ids=related_chat_ids,
         owner_chat_id=owner_chat_id,
         parent_id=parent_id,
