@@ -236,6 +236,7 @@ class PrepareSpawnRequest:
     harness_registry: HarnessRegistry
     chat_id: str | None = None
     parent_id: str | None = None
+    parent_run_id: RunId | None = None
     kind: SpawnKind = "child"
     desc: str | None = None
     work_id: str | None = None
@@ -456,6 +457,7 @@ class SpawnApplicationService:
                     chat_id=payload.chat_id or "",
                     owner_chat_id=payload.chat_id or "",
                     parent_id=payload.parent_id,
+                    parent_run_id=payload.parent_run_id,
                     session_metadata=prepare_session_metadata,
                     kind=payload.kind,
                     prompt=resolved_request.prompt,
@@ -555,6 +557,7 @@ class SpawnApplicationService:
         harness_registry: HarnessRegistry,
         chat_id: str | None = None,
         parent_id: str | None = None,
+        parent_run_id: RunId | None = None,
         kind: SpawnKind = "child",
         desc: str | None = None,
         work_id: str | None = None,
@@ -572,6 +575,7 @@ class SpawnApplicationService:
                 harness_registry=harness_registry,
                 chat_id=chat_id,
                 parent_id=parent_id,
+                parent_run_id=parent_run_id,
                 kind=kind,
                 desc=desc,
                 work_id=work_id,

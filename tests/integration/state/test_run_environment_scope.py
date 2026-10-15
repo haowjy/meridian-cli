@@ -1,8 +1,15 @@
 """An older live run must not write or read a successor's mutable scope/report."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
+
+from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.refs import parse_ref
+from meridian.lib.core.spawn_service import PrepareSpawnRequest, SpawnApplicationService
+from meridian.lib.core.types import RunId, SpawnId
+from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.ops.context import (
     TaskDirClearInput,
     TaskDirSetInput,
@@ -49,7 +56,6 @@ def test_ambient_self_targets_exact_run_and_old_launcher_falls_back(tmp_path, mo
 
 
 def test_child_history_edge_names_launching_parent_run_not_latest(tmp_path, monkeypatch):
-    from meridian.lib.core.lifecycle import SpawnLifecycleService
     from meridian.lib.launch.request import SpawnRequest
     from meridian.lib.ops.spawn.execute_init import build_spawn_reservation
     from meridian.lib.ops.spawn.models import SpawnCreateInput
@@ -71,3 +77,63 @@ def test_child_history_edge_names_launching_parent_run_not_latest(tmp_path, monk
     assert parent is not None and row is not None
     assert row.parent_id == "p1"
     assert row.parent_history_id == parent.history_id
+
+
+@pytest.mark.asyncio
+async def test_application_prepare_names_the_exact_parent_run(tmp_path, monkeypatch):
+    for key in ("p1", "p1.2"):
+        spawn_store.start_spawn(
+            tmp_path,
+            spawn_id=key,
+            chat_id="c1",
+            model="test",
+            agent="test",
+            harness="codex",
+            prompt="fixture",
+        )
+    parent = spawn_store.get_spawn(tmp_path, RunId("p1.2"))
+    assert parent is not None
+
+    request = SpawnRequest(prompt="child", model="test", agent="test", harness="codex")
+    prepared_surface = SimpleNamespace(request=request)
+    launch_context = SimpleNamespace(
+        resolved_request=request,
+        work_id=None,
+        control_root=tmp_path,
+        task_cwd=None,
+        runtime_root=tmp_path,
+        binding=SimpleNamespace(
+            child_cwd=tmp_path,
+            environment=SimpleNamespace(final_env={}),
+            run_params=SimpleNamespace(interactive=False, appended_system_prompt=None),
+        ),
+    )
+    monkeypatch.setattr(
+        "meridian.lib.core.spawn_service.compose_spawn_launch_surface",
+        lambda **_kwargs: prepared_surface,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.core.spawn_service.bind_spawn_launch_context",
+        lambda **_kwargs: launch_context,
+    )
+    service = SpawnApplicationService(tmp_path, SpawnLifecycleService(tmp_path))
+
+    prepared = await service.prepare(
+        PrepareSpawnRequest(
+            request=request,
+            runtime=LaunchRuntime(
+                runtime_root=str(tmp_path),
+                config_root=str(tmp_path),
+                control_root=str(tmp_path),
+            ),
+            harness_registry=SimpleNamespace(),
+            chat_id="c1",
+            parent_id="p1",
+            parent_run_id=RunId("p1.2"),
+        )
+    )
+
+    child = spawn_store.get_spawn(tmp_path, prepared.spawn_id)
+    assert child is not None
+    assert child.parent_id == SpawnId("p1")
+    assert child.parent_history_id == parent.history_id
