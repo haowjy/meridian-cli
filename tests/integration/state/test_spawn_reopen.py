@@ -11,10 +11,11 @@ import pytest
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import RunId, SpawnId
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.spawn import repository as spawn_repository
+from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.runs import continue_target_run
 
 
@@ -157,3 +158,104 @@ def test_reserve_run_reads_one_spawn_row_while_allocation_lock_is_held(
 
     assert spawn_store.reserve_run(tmp_path, SpawnId("p1"), reservation) == "p1.2"
     assert locked_reads == ["p1"]
+
+
+def test_start_spawn_resolves_owner_and_exact_parent_before_allocation_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_parent = spawn_store.start_spawn(
+        tmp_path,
+        spawn_id="p1",
+        chat_id="c-parent",
+        model="test",
+        agent="",
+        harness="codex",
+        prompt="first parent",
+    )
+    spawn_store.finalize_spawn(
+        tmp_path, first_parent, status="succeeded", exit_code=0, origin="runner",
+    )
+    later_parent = spawn_store.start_spawn(
+        tmp_path,
+        spawn_id="p1.2",
+        chat_id="c-parent",
+        model="test",
+        agent="",
+        harness="codex",
+        prompt="later parent",
+    )
+    spawn_store.finalize_spawn(
+        tmp_path, later_parent, status="succeeded", exit_code=0, origin="runner",
+    )
+    session_store.start_session(
+        tmp_path,
+        harness="codex",
+        harness_session_id="native-owner",
+        model="test",
+        chat_id="c-owner",
+    )
+    session_store.stop_session(tmp_path, "c-owner")
+    owner = session_store.get_session_record(tmp_path, "c-owner")
+    first_parent_row = spawn_store.get_spawn(tmp_path, first_parent)
+    assert owner is not None and first_parent_row is not None
+
+    paths = spawn_store.RuntimePaths.from_root_dir(tmp_path)
+    original_lock_file = spawn_store.lock_file
+    original_get_session_record = session_store.get_session_record
+    original_read_state = spawn_store._read_state
+    allocation_lock_held = False
+    locked_dependency_reads: list[str] = []
+
+    @contextmanager
+    def tracked_lock_file(path: Path, *args: Any, **kwargs: Any) -> Iterator[None]:
+        nonlocal allocation_lock_held
+        with original_lock_file(path, *args, **kwargs):
+            was_held = allocation_lock_held
+            if path == paths.spawns_flock:
+                allocation_lock_held = True
+            try:
+                yield
+            finally:
+                allocation_lock_held = was_held
+
+    def tracked_get_session_record(
+        root: Path, chat_id: str,
+    ) -> session_store.SessionRecord | None:
+        if allocation_lock_held:
+            locked_dependency_reads.append(f"session:{chat_id}")
+        return original_get_session_record(root, chat_id)
+
+    def tracked_read_state(
+        spawns_dir: Path,
+        spawn_id: RunId,
+        *,
+        include_prompt: bool = True,
+    ) -> SpawnRecord | None:
+        if allocation_lock_held:
+            locked_dependency_reads.append(f"parent:{spawn_id}")
+        return original_read_state(
+            spawns_dir, spawn_id, include_prompt=include_prompt,
+        )
+
+    monkeypatch.setattr(spawn_store, "lock_file", tracked_lock_file)
+    monkeypatch.setattr(session_store, "get_session_record", tracked_get_session_record)
+    monkeypatch.setattr(spawn_store, "_read_state", tracked_read_state)
+
+    child = spawn_store.start_spawn(
+        tmp_path,
+        chat_id="c-owner",
+        parent_id=SpawnId("p1"),
+        parent_run_id=first_parent,
+        model="test",
+        agent="",
+        harness="codex",
+        kind="primary",
+        prompt="child",
+    )
+    row = spawn_store.get_spawn(tmp_path, child)
+
+    assert locked_dependency_reads == []
+    assert row is not None
+    assert row.session_instance_id == owner.session_instance_id
+    assert row.parent_history_id == first_parent_row.history_id

@@ -91,6 +91,7 @@ from meridian.lib.state.spawn_aggregate import (
 )
 
 logger = structlog.get_logger(__name__)
+_UNASSIGNED_RUN_ID = parse_ref("p0", row_key=True)
 
 
 # ---------------------------------------------------------------------------
@@ -405,21 +406,15 @@ def start_spawn(
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     changes = HistoryChanges(runtime_root)
-    with lock_file(changes.mutation_lock, mode="shared"), lock_file(paths.spawns_flock):
-        if spawn_id is not None:
-            explicit_spawn_id = str(spawn_id)
-            if not _is_safe_spawn_dir_name(explicit_spawn_id):
-                raise ValueError(f"Invalid spawn ID: {explicit_spawn_id}")
-            resolved_run_id = parse_ref(explicit_spawn_id, row_key=True)
-        else:
-            current = _read_spawn_counter(paths)
-            if current == 0 and not _spawn_counter_path(paths).is_file():
-                current = _seed_spawn_counter_from_dirs(paths)
-            next_value = current + 1
-            atomic_write_text(_spawn_counter_path(paths), f"{next_value}\n")
-            resolved_run_id = parse_ref(f"p{next_value}", row_key=True)
+    explicit_run_id: RunId | None = None
+    if spawn_id is not None:
+        explicit_spawn_id = str(spawn_id)
+        if not _is_safe_spawn_dir_name(explicit_spawn_id):
+            raise ValueError(f"Invalid spawn ID: {explicit_spawn_id}")
+        explicit_run_id = parse_ref(explicit_spawn_id, row_key=True)
+    with lock_file(changes.mutation_lock, mode="shared"):
         record = _build_record(
-            paths, resolved_run_id,
+            paths, explicit_run_id or _UNASSIGNED_RUN_ID,
             chat_id=chat_id,
             owner_chat_id=owner_chat_id,
             parent_id=parent_id,
@@ -450,8 +445,18 @@ def start_spawn(
             started_at=started_at,
             clock=clock,
         )
-        _publish_record(paths, record)
-        return resolved_run_id
+        with lock_file(paths.spawns_flock):
+            resolved_run_id = explicit_run_id
+            if resolved_run_id is None:
+                current = _read_spawn_counter(paths)
+                if current == 0 and not _spawn_counter_path(paths).is_file():
+                    current = _seed_spawn_counter_from_dirs(paths)
+                next_value = current + 1
+                atomic_write_text(_spawn_counter_path(paths), f"{next_value}\n")
+                resolved_run_id = parse_ref(f"p{next_value}", row_key=True)
+            record = record.model_copy(update={"id": resolved_run_id})
+            _publish_record(paths, record)
+            return resolved_run_id
 
 
 def reservation_kwargs(reservation: SpawnReservation) -> dict[str, Any]:
@@ -522,16 +527,16 @@ def reserve_run(runtime_root: Path, spawn_id: SpawnId, reservation: SpawnReserva
     reservation = replace(reservation, status=SpawnStatus.QUEUED, runner_pid=os.getpid())
     check_spawn_available(runtime_root, spawn_id, reservation.chat_id)
     _check_reopen_ancestry(paths, spawn_id, reservation)
-    with (lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
-          lock_file(paths.spawns_flock)):
-        latest = check_spawn_available(runtime_root, spawn_id)
-        run_id = parse_ref(f"{spawn_id}.{(parse_ref(latest).run or 1) + 1}", row_key=True)
+    with lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"):
         record = _build_record(
-            paths, run_id, bind_existing_generation=False,
+            paths, _UNASSIGNED_RUN_ID, bind_existing_generation=False,
             **reservation_kwargs(reservation),
         )
-        _publish_record(paths, record)
-        return run_id
+        with lock_file(paths.spawns_flock):
+            latest = check_spawn_available(runtime_root, spawn_id)
+            run_id = parse_ref(f"{spawn_id}.{(parse_ref(latest).run or 1) + 1}", row_key=True)
+            _publish_record(paths, record.model_copy(update={"id": run_id}))
+            return run_id
 
 
 def remove_spawn_events(
