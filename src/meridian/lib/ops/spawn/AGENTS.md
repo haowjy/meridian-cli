@@ -33,6 +33,11 @@ nested processes also read it to skip reaping side effects.
 - Without args (no-arg form): a primary waits for active spawns owned by its chat; a
   nested spawn waits for its transitive subtree and excludes itself.
 
+No-arg candidate membership is scoped in the history index: owner-filtered SQL for a
+primary, recursive subtree SQL for a nested spawn. Discovery then re-reads only those
+selected `state.json` files before trusting lifecycle status. Recursive traversal keeps
+archived ancestors as edges so active descendants beneath them remain visible.
+
 `--fail-fast` exits as soon as any spawn reaches `failed` or `timed_out`, reporting
 which spawns failed and which are still pending. `cancelled` does not trigger
 fail-fast (cancellation keeps existing aggregate-exit behavior).
