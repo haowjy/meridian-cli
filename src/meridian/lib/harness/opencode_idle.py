@@ -21,8 +21,8 @@ from meridian.lib.harness.idle_types import (
     CompactResult,
     IdleEvent,
     IdleFacts,
+    IdleSensor,
     IdleSensorContext,
-    PrimaryIdleSensor,
 )
 from meridian.lib.harness.opencode_backend import OpenCodeVersion, resolve_opencode_version
 from meridian.lib.utils.json_shapes import json_object
@@ -244,13 +244,6 @@ async def _backend_request(
 
 class _OpenCodeIdleSensorBase:
     """Shared OpenCode sensor plumbing independent of backend dialect."""
-
-    @staticmethod
-    def compact_costs(*, ttl_seconds: int | None) -> CompactCosts | None:
-        """Keep frozen OpenCode 1.x compaction on the never-pays path."""
-
-        _ = ttl_seconds
-        return None
 
     def __init__(
         self,
@@ -620,8 +613,6 @@ def _v2_session_idle_after(payload: object, admitted_at_ms: float | None) -> boo
 class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
     """Translate OpenCode 2.x execution and inbox events into idle facts."""
 
-    compact_costs = staticmethod(compact_costs)
-
     def __init__(
         self,
         ctx: IdleSensorContext,
@@ -863,7 +854,7 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
         return CompactResult("ok")
 
 
-def primary_idle_sensor(ctx: IdleSensorContext) -> PrimaryIdleSensor:
+def primary_idle_sensor(ctx: IdleSensorContext) -> IdleSensor:
     """Create the sensor hosted by the managed-primary attach launcher."""
 
     resolved = getattr(ctx.connection, "resolved_version", None)
