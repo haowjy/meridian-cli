@@ -100,7 +100,6 @@ def test_latest_run_probes_above_stale_pointer(tmp_path: Path) -> None:
 
 def test_latest_run_probes_below_pointer_written_before_publish(tmp_path: Path) -> None:
     _start(tmp_path)
-    (tmp_path / "spawn-heads").mkdir()
     (tmp_path / "spawn-heads" / "p1").write_text("3\n", encoding="utf-8")
 
     assert latest_run(tmp_path, SpawnId("p1")) == "p1"

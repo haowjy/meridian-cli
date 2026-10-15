@@ -6,6 +6,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
 from typing import Protocol
 
+from meridian.lib.core.refs import spawn_of
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.process_scope.base import CleanupResult
@@ -24,20 +25,6 @@ class DescendantRow(Protocol):
     def status(self) -> str: ...
 
 
-def _spawn_key(value: str) -> SpawnId:
-    """Return a stable run prefix without constructing a ParsedRef per row."""
-
-    normalized = value.strip()
-    head, separator, suffix = normalized.partition(".")
-    if (
-        head.startswith("p")
-        and head[1:].isdigit()
-        and (not separator or (suffix.isdigit() and int(suffix) >= 1))
-    ):
-        return SpawnId(head)
-    return SpawnId(normalized)
-
-
 def iter_descendants[Row: DescendantRow](root_id: str, rows: Iterable[Row]) -> Iterator[Row]:
     """Yield all runs of transitive child spawns, tolerating parent cycles.
 
@@ -47,11 +34,11 @@ def iter_descendants[Row: DescendantRow](root_id: str, rows: Iterable[Row]) -> I
     rows_by_spawn: dict[SpawnId, list[Row]] = {}
     children_by_parent: dict[SpawnId, list[SpawnId]] = {}
     for row in rows:
-        child_spawn = _spawn_key(row.id)
+        child_spawn = spawn_of(row.id)
         rows_by_spawn.setdefault(child_spawn, []).append(row)
         if row.parent_id is not None:
-            children_by_parent.setdefault(_spawn_key(row.parent_id), []).append(child_spawn)
-    root_spawn = _spawn_key(root_id)
+            children_by_parent.setdefault(spawn_of(row.parent_id), []).append(child_spawn)
+    root_spawn = spawn_of(root_id)
     visited = {root_spawn}
     stack = [root_spawn]
     while stack:
@@ -66,8 +53,8 @@ def iter_descendants[Row: DescendantRow](root_id: str, rows: Iterable[Row]) -> I
 def collect_descendants(root_id: str, rows: Sequence[SpawnRecord]) -> list[SpawnRecord]:
     """Return all root run rows, when present, followed by descendant run rows."""
 
-    root_spawn = _spawn_key(root_id)
-    result = [row for row in rows if _spawn_key(row.id) == root_spawn]
+    root_spawn = spawn_of(root_id)
+    result = [row for row in rows if spawn_of(row.id) == root_spawn]
     result.extend(iter_descendants(root_id, rows))
     return result
 

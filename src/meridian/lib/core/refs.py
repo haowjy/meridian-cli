@@ -60,8 +60,12 @@ def parse_ref(text: str, *, row_key: bool = False) -> ParsedRef | RunId:
 
 
 def spawn_of(run_key: str) -> SpawnId:
-    """Stable spawn prefix, retaining nonconforming historical row identities."""
-    return parse_ref(run_key).spawn_id or SpawnId(run_key)
+    """Cheap stable prefix, retaining nonconforming historical row identities."""
+    value = run_key.strip()
+    match = _SPAWN.fullmatch(value)
+    if match is not None and (match[2] is None or int(match[2]) >= 1):
+        return SpawnId(f"p{match[1]}")
+    return SpawnId(run_key)
 
 
 def reference_sort_key(value: str) -> tuple[int, int, str]:
