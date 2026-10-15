@@ -272,6 +272,58 @@ def test_primary_run_reservation_does_not_reread_owner_session(
     assert spawn_store.reserve_run(tmp_path, SpawnId("p1"), reservation) == "p1.2"
 
 
+def test_reopen_checks_linked_observer_without_listing_unrelated_spawns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = spawn_store.start_spawn(
+        tmp_path,
+        spawn_id="p1",
+        chat_id="c1",
+        model="test",
+        agent="",
+        harness="codex",
+        prompt="hi",
+    )
+    session_store.start_session(
+        tmp_path,
+        harness="codex",
+        harness_session_id="native-1",
+        model="test",
+        chat_id="c1",
+        spawn_id=first,
+    )
+    session_store.stop_session(tmp_path, "c1")
+    spawn_store.finalize_spawn(
+        tmp_path, first, status="succeeded", exit_code=0, origin="runner",
+    )
+    reservation = SpawnReservation(
+        chat_id="c1",
+        kind="primary",
+        prompt="again",
+        session_metadata=PrimarySessionMetadata(
+            harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=(),
+        ),
+    )
+    reopened = spawn_store.reserve_run(tmp_path, SpawnId("p1"), reservation)
+    monkeypatch.setattr(
+        spawn_store,
+        "list_spawns",
+        lambda *_args, **_kwargs: pytest.fail("reopen listed unrelated spawns"),
+    )
+
+    session_store.start_session(
+        tmp_path,
+        harness="codex",
+        harness_session_id="native-1",
+        model="test",
+        chat_id="c1",
+        spawn_id=reopened,
+        reopen=True,
+    )
+    session_store.stop_session(tmp_path, "c1")
+
+
 def test_start_spawn_resolves_owner_and_exact_parent_before_allocation_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
