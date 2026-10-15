@@ -35,8 +35,7 @@ def write_run_head(paths: RuntimePaths, run_id: RunId) -> None:
     """Atomically record a derived upper bound before publishing a later run."""
 
     parsed = parse_ref(str(run_id))
-    assert parsed.spawn_id is not None and parsed.run is not None
-    if parsed.run == 1:
+    if parsed.spawn_id is None or parsed.run is None or parsed.run == 1:
         return
     head = _head_path(paths, parsed.spawn_id)
     head.parent.mkdir(parents=True, exist_ok=True)

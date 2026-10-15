@@ -2418,7 +2418,6 @@ def spawn_continue_sync(
         normalized = payload.spawn_id.strip()
         raise ValueError(f"Spawn '{normalized}' not found")
     from meridian.lib.ops.reference import validate_continue_reference
-    from meridian.lib.state.session_identity import owner_spawn_for_chat
     from meridian.lib.state.spawn.runs import latest_run
     validate_continue_reference(payload.spawn_id)
     if parse_ref(payload.spawn_id).kind == "chat":
@@ -2430,7 +2429,16 @@ def spawn_continue_sync(
             raise ValueError(cross_harness_continue_error(
                 resolved_reference.source_chat_id, resolved_reference.harness, payload.harness,
             ))
-        owner = owner_spawn_for_chat(runtime_root, payload.spawn_id)
+        owner = (
+            spawn_of(resolved_reference.source_spawn_id)
+            if resolved_reference.source_spawn_id is not None
+            else None
+        )
+        if owner is None:
+            raise ValueError(
+                f"Chat {payload.spawn_id} has no owning spawn; "
+                f"use `--fork {payload.spawn_id}` to start a new spawn."
+            )
         owner_run = latest_run(runtime_root, owner) if owner else None
         source_spawn = spawn_store.get_spawn(runtime_root, owner_run) if owner_run else None
         resolved_spawn_id = str(owner_run or payload.spawn_id)

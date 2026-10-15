@@ -301,24 +301,15 @@ __all__ = [
 
 
 def owner_spawns_for_chats(runtime_root: Path, chat_ids: Iterable[str]) -> dict[str, SpawnId]:
-    """Batch ownership discovery: linked generations win over observed publishers."""
+    """Return owners recorded on the requested chats' accepted generations."""
     wanted = set(chat_ids)
-    owners: dict[str, SpawnId] = {}
-    for generation in session_store.list_session_generations(runtime_root):
-        if generation.chat_id in wanted and generation.spawn_id:
-            owners[generation.chat_id] = spawn_of(generation.spawn_id)
-    unresolved = wanted - owners.keys()
-    if unresolved:
-        from meridian.lib.state.history_index import HistoryIndex
-        publishers = sorted(HistoryIndex(runtime_root).spawns(),
-                            key=lambda row: row.started_at or "")
-        for row in publishers:
-            if row.current_chat_id in unresolved:
-                current = spawn_store.get_spawn(runtime_root, row.id)
-                if current is not None and current.current_chat_id in unresolved:
-                    owners[current.current_chat_id] = spawn_of(current.id)
-    return owners
+    return {
+        record.chat_id: spawn_of(record.spawn_id)
+        for record in session_store.get_session_records(runtime_root, wanted)
+        if record.spawn_id is not None
+    }
 
 
 def owner_spawn_for_chat(runtime_root: Path, chat_id: str) -> SpawnId | None:
-    return owner_spawns_for_chats(runtime_root, (chat_id,)).get(chat_id)
+    record = session_store.get_session_record(runtime_root, chat_id)
+    return spawn_of(record.spawn_id) if record is not None and record.spawn_id else None

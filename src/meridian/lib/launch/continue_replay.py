@@ -438,8 +438,7 @@ def build_continue_replay_contract(
         skills = ()
         passthrough_args = ()
 
-    from meridian.lib.core.refs import parse_ref
-    from meridian.lib.state.session_identity import owner_spawn_for_chat
+    from meridian.lib.core.refs import parse_ref, spawn_of
     from meridian.lib.state.spawn.runs import latest_run
     from meridian.lib.state.spawn_scope import read_spawn_scope
 
@@ -448,9 +447,18 @@ def build_continue_replay_contract(
     task_dir = source.source_execution_cwd
     if not fork and runtime_root is not None:
         parsed = parse_ref(source.source_ref)
-        reopen_spawn = (parsed.spawn_id if parsed.kind == "spawn" else
-                        owner_spawn_for_chat(runtime_root, source.source_chat_id)
-                        if source.source_chat_id else None)
+        reopen_spawn = (
+            parsed.spawn_id
+            if parsed.kind == "spawn"
+            else spawn_of(source.source_run_id)
+            if source.source_run_id is not None
+            else None
+        )
+        if source.source_chat_id is not None and reopen_spawn is None:
+            raise ValueError(
+                f"Chat {source.source_chat_id} has no owning spawn; "
+                f"use `--fork {source.source_chat_id}` to start a new spawn."
+            )
         if reopen_spawn is not None:
             predecessor = latest_run(runtime_root, reopen_spawn)
         if predecessor and source.source_control_root:

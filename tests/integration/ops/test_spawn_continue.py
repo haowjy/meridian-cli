@@ -22,6 +22,7 @@ from meridian.lib.ops.reference_recovery import RecoveryProvenance, RecoveryResu
 from meridian.lib.ops.spawn.execute_init import resolve_spawn_work_id
 from meridian.lib.ops.spawn.models import SpawnActionOutput, SpawnContinueInput, SpawnCreateInput
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from tests.support.launch import stub_bundle_request_and_resolve
 
@@ -232,6 +233,50 @@ def test_spawn_continue_maps_source_contract_to_spawn_create(
     assert request.work_id_hint == "w-spawn"
     assert request.task_cwd == source_task_dir.as_posix()
     assert request.session.requested_harness_session_id == "session-28"
+
+
+def test_chat_continue_uses_one_keyed_session_lookup_and_no_unfiltered_index_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    _seed_spawn(
+        runtime_root,
+        spawn_id="p28",
+        chat_id="c1",
+        harness_session_id="session-28",
+        launch_policy_snapshot=LaunchPolicySnapshot(model="gpt-5.3-codex", harness="codex"),
+    )
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.3-codex",
+        model_token="gpt-5.3-codex",
+        harness=HarnessId.CODEX,
+        harness_model="gpt-5.3-codex",
+    )
+    _record_spawn_create(monkeypatch)
+    original_get_records = session_store.get_session_records
+    keyed_lookups: list[set[str]] = []
+
+    def tracked_get_records(root: Path, chat_ids: set[str]) -> list[session_store.SessionRecord]:
+        keyed_lookups.append(chat_ids)
+        return original_get_records(root, chat_ids)
+
+    monkeypatch.setattr(session_store, "get_session_records", tracked_get_records)
+    monkeypatch.setattr(
+        HistoryIndex,
+        "spawns",
+        lambda *_args, **_kwargs: pytest.fail("chat continue read the unfiltered spawn index"),
+    )
+
+    result = spawn_api.spawn_continue_sync(
+        SpawnContinueInput(spawn_id="c1", prompt="continue", project_root=str(project_root)),
+    )
+
+    assert result.status == "running"
+    assert keyed_lookups == [{"c1"}]
 
 
 def test_spawn_continue_cross_harness_refusal_names_both_harnesses_without_writes(

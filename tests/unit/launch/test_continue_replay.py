@@ -177,6 +177,7 @@ def test_build_continue_replay_contract_rejects_agent_opt_out() -> None:
 def _continue_source() -> ContinueReplaySource:
     return ContinueReplaySource(
         source_ref="c41",
+        source_run_id="p41",
         harness_session_id="session-41",
         harness="claude",
         source_chat_id="c41",
@@ -187,6 +188,27 @@ def _continue_source() -> ContinueReplaySource:
         source_launch_policy_snapshot=_snapshot(),
         tracked=True,
     )
+
+
+def test_tracked_chat_without_owner_cannot_continue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = ContinueReplaySource(
+        source_ref="c41",
+        harness_session_id="session-41",
+        harness="claude",
+        source_chat_id="c41",
+        source_work_id=None,
+        source_execution_cwd="/tmp/source",
+        source_control_root="/tmp/repo",
+        source_native_store="/recorded/store",
+        source_launch_policy_snapshot=_snapshot(),
+        tracked=True,
+    )
+    _patch_intent_seams(monkeypatch, recorded=None, live=None, stored=None)
+
+    with pytest.raises(ValueError, match="Chat c41 has no owning spawn"):
+        build_continue_replay_contract(source=source, runtime_root=Path("/tmp/x"))
 
 
 def _recorded_selection(token: str) -> ConversationModelSelection:
