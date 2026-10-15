@@ -17,7 +17,7 @@ from meridian.lib.ops.reference import resolve_continue_source_row
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.spawn import repository as spawn_repository
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.state.spawn.runs import SpawnBusy, latest_bound_run, latest_run
+from meridian.lib.state.spawn.runs import latest_bound_run, latest_run
 from tests.support.process_race import run_spawn_race_or_skip
 
 
@@ -159,7 +159,7 @@ def test_missing_head_recovers_across_holes_before_continue_and_reservation(
         ),
     )
     assert live == "p1.4"
-    with pytest.raises(SpawnBusy, match=r"busy.*p1\.4"):
+    with pytest.raises(spawn_store.SpawnBusy, match=r"busy.*p1\.4"):
         spawn_store.reserve_run(
             tmp_path,
             SpawnId("p1"),
@@ -398,7 +398,7 @@ def test_reserve_run_reads_one_spawn_row_while_allocation_lock_is_held(
         return original_read_state(*args, **kwargs)
 
     monkeypatch.setattr(spawn_store, "lock_file", tracked_lock_file)
-    monkeypatch.setattr(spawn_repository, "read_state", tracked_read_state)
+    monkeypatch.setattr(spawn_store, "_read_state", tracked_read_state)
     reservation = SpawnReservation(
         chat_id="c1",
         prompt="again",

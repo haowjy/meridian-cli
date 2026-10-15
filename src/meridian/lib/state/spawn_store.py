@@ -72,7 +72,7 @@ from meridian.lib.state.spawn.repository import read_state as _read_state
 from meridian.lib.state.spawn.repository import scan_spawn_ids as _scan_spawn_ids
 from meridian.lib.state.spawn.repository import write_state_locked as _write_state_locked
 from meridian.lib.state.spawn.runs import (
-    check_spawn_available,
+    latest_run,
     next_run_id,
     write_run_head,
 )
@@ -493,11 +493,60 @@ def reservation_kwargs(reservation: SpawnReservation) -> dict[str, Any]:
     )
 
 
+class SpawnBusy(ValueError):
+    """A reopen would overlap an active run of the same spawn."""
+
+    def __init__(self, run_id: RunId):
+        self.run_id = run_id
+        spawn_id = spawn_of(run_id)
+        super().__init__(
+            f"Spawn {spawn_id} is busy (run {run_id}); use `spawn inject {spawn_id}` "
+            f"or `--fork {spawn_id}`."
+        )
+
+
+def check_spawn_available(runtime_root: Path, spawn_id: SpawnId) -> RunId:
+    """Confirm the stable spawn has no active latest run."""
+    from meridian.lib.state.reaper import peek_reconciled_active_spawn
+
+    latest = latest_run(runtime_root, spawn_id)
+    if latest is None:
+        raise ValueError(
+            f"Spawn {spawn_id} has no live runs (not found, or archived: "
+            f"restore it or `--fork {spawn_id}`)"
+        )
+    row = _read_state(
+        RuntimePaths.from_root_dir(runtime_root).spawns_dir,
+        latest,
+        include_prompt=False,
+    )
+    if row is None:
+        raise ValueError(f"Latest run unavailable: {latest}; run `meridian doctor`")
+    if _is_active_spawn_status(peek_reconciled_active_spawn(runtime_root, row).status):
+        raise SpawnBusy(latest)
+    return latest
+
+
+def _check_reopen_chat_preflight(runtime_root: Path, chat_id: str) -> None:
+    """Reject a known-live chat before allocation without extending lock order.
+
+    The later session-lock acquisition is authoritative. A chat can become live
+    after this advisory check; that failure finalizes the already-reserved run.
+    Repeating this session read under ``spawns_flock`` would not close that race
+    and would invert the spawn/session lock order.
+    """
+    from meridian.lib.state.session_store import ChatBusy, is_session_lease_owner_alive
+
+    if is_session_lease_owner_alive(runtime_root, chat_id):
+        raise ChatBusy(chat_id)
+
+
 def reserve_run(runtime_root: Path, spawn_id: SpawnId, reservation: SpawnReservation) -> RunId:
     """Publish max-K+1 under the allocation gate; never copy a generation."""
     paths = RuntimePaths.from_root_dir(runtime_root)
     reservation = replace(reservation, status=SpawnStatus.QUEUED, runner_pid=os.getpid())
-    check_spawn_available(runtime_root, spawn_id, reservation.chat_id)
+    check_spawn_available(runtime_root, spawn_id)
+    _check_reopen_chat_preflight(runtime_root, reservation.chat_id)
     check_reopen_ancestry(paths, spawn_id, reservation)
     with lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"):
         record = _build_record(

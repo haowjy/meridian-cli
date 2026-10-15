@@ -19,6 +19,7 @@ from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.session_identity import session_records_for_spawns
 from meridian.lib.state.spawn import repository as spawn_repository
+from meridian.lib.state.spawn import runs as spawn_runs
 from meridian.lib.state.spawn.runs import latest_run, next_run_id, runs_of
 from tests.support.native_snapshot import seal_spawn_snapshot
 
@@ -109,7 +110,7 @@ def test_latest_run_rebuilds_a_missing_pointer_once(
         scans += 1
         return scan(spawns_dir)
 
-    monkeypatch.setattr(spawn_repository, "scan_spawn_ids", count_scan)
+    monkeypatch.setattr(spawn_runs, "scan_spawn_ids", count_scan)
 
     assert not (tmp_path / "spawn-heads" / "p1").exists()
     assert latest_run(tmp_path, SpawnId("p1")) == "p1"
@@ -134,7 +135,7 @@ def test_latest_run_caches_a_lost_head_with_no_loose_runs(
         scans += 1
         return scan(spawns_dir)
 
-    monkeypatch.setattr(spawn_repository, "scan_spawn_ids", count_scan)
+    monkeypatch.setattr(spawn_runs, "scan_spawn_ids", count_scan)
 
     assert latest_run(tmp_path, SpawnId("p1")) is None
     assert latest_run(tmp_path, SpawnId("p1")) is None
@@ -153,7 +154,7 @@ def test_latest_run_above_spawn_counter_does_not_scan(
         scans += 1
         return []
 
-    monkeypatch.setattr(spawn_repository, "scan_spawn_ids", count_scan)
+    monkeypatch.setattr(spawn_runs, "scan_spawn_ids", count_scan)
 
     assert latest_run(tmp_path, SpawnId("p2")) is None
     assert latest_run(tmp_path, SpawnId("p2")) is None
@@ -374,7 +375,7 @@ def test_stale_artifact_pruning_keeps_head_without_rescanning(
         scans += 1
         return scan(spawns_dir)
 
-    monkeypatch.setattr(spawn_repository, "scan_spawn_ids", count_scan)
+    monkeypatch.setattr(spawn_runs, "scan_spawn_ids", count_scan)
 
     assert runs_of(tmp_path, SpawnId("p1")) == ()
     assert runs_of(tmp_path, SpawnId("p1")) == ()

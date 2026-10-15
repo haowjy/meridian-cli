@@ -11,6 +11,7 @@ from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import lock_file
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.spawn.repository import read_state, scan_spawn_ids
 
 logger = structlog.get_logger(__name__)
 
@@ -46,8 +47,6 @@ def _is_above_spawn_counter(paths: RuntimePaths, spawn_id: SpawnId) -> bool:
 
 def _scan_and_rebuild_head(paths: RuntimePaths, spawn_id: SpawnId) -> int | None:
     """Recover one missing derived head under the allocation gate."""
-    from meridian.lib.state.spawn.repository import scan_spawn_ids
-
     if _is_above_spawn_counter(paths, spawn_id):
         return None
     with lock_file(paths.spawns_flock):
@@ -178,8 +177,6 @@ def latest_run(runtime_root: Path, spawn_id: SpawnId) -> RunId | None:
 def latest_bound_run(runtime_root: Path, spawn_id: SpawnId) -> RunId | None:
     """Return the newest generation-bound run below the derived run head."""
 
-    from meridian.lib.state.spawn.repository import read_state
-
     paths = RuntimePaths.from_root_dir(runtime_root)
     latest = latest_run(runtime_root, spawn_id)
     if latest is None:
@@ -212,42 +209,3 @@ def successor_run(run_ids: Iterable[RunId]) -> RunId:
     if any(spawn_of(run_id) != spawn_id for run_id in siblings[1:]):
         raise ValueError("Successor runs require siblings from one spawn")
     return make_run_id(spawn_id, max(run_number(run_id) for run_id in siblings) + 1)
-
-
-class SpawnBusy(ValueError):
-    """A reopen would overlap an active run of the same spawn."""
-
-    def __init__(self, run_id: RunId):
-        self.run_id = run_id
-        spawn = spawn_of(run_id)
-        super().__init__(
-            f"Spawn {spawn} is busy (run {run_id}); use `spawn inject {spawn}` "
-            f"or `--fork {spawn}`."
-        )
-
-
-def check_spawn_available(
-    runtime_root: Path, spawn_id: SpawnId, chat_id: str | None = None,
-) -> RunId:
-    """Read-only preflight, repeated under the allocation gate before publication."""
-    from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
-    from meridian.lib.state.reaper import peek_reconciled_active_spawn
-    from meridian.lib.state.session_store import ChatBusy, is_session_lease_owner_alive
-    from meridian.lib.state.spawn.repository import read_state
-
-    latest = latest_run(runtime_root, spawn_id)
-    if latest is None:
-        raise ValueError(
-            f"Spawn {spawn_id} has no live runs (not found, or archived: "
-            f"restore it or `--fork {spawn_id}`)"
-        )
-    row = read_state(
-        RuntimePaths.from_root_dir(runtime_root).spawns_dir, latest, include_prompt=False,
-    )
-    if row is None:
-        raise ValueError(f"Latest run unavailable: {latest}; run `meridian doctor`")
-    if is_active_spawn_status(peek_reconciled_active_spawn(runtime_root, row).status):
-        raise SpawnBusy(latest)
-    if chat_id is not None and is_session_lease_owner_alive(runtime_root, chat_id):
-        raise ChatBusy(chat_id)
-    return latest
