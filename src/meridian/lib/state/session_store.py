@@ -358,20 +358,11 @@ def start_session(
         ):
             existing = get_session_record(runtime_root, resolved_chat_id)
             if existing is not None:
-                from meridian.lib.state import spawn_store
                 from meridian.lib.state.session_identity import live_observer_for_chat
 
-                linked = (
-                    spawn_store.get_spawn(
-                        runtime_root, parse_ref(existing.spawn_id, row_key=True),
-                    )
-                    if existing.spawn_id is not None
-                    else None
-                )
                 observer = live_observer_for_chat(
                     runtime_root,
                     resolved_chat_id,
-                    records=(linked,) if linked is not None else None,
                     excluding_spawn_id=spawn_id,
                 )
                 if observer is not None:

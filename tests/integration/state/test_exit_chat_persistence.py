@@ -239,6 +239,41 @@ def test_observed_chat_is_protected_by_its_live_run_not_a_copied_lease(tmp_path:
     session_store.stop_session(runtime, current)
 
 
+def test_linked_chat_is_protected_by_a_different_live_observer(tmp_path: Path):
+    runtime = tmp_path / "runtime"
+    owner = spawn_store.start_spawn(
+        runtime, spawn_id="p1", chat_id="c1", harness="claude", kind="primary",
+        model="", agent="", prompt="",
+    )
+    session_store.start_session(
+        runtime, chat_id="c1", spawn_id=owner, harness="claude", model="",
+        harness_session_id="native-1", native_store=str(tmp_path / "native"),
+    )
+    session_store.stop_session(runtime, "c1")
+    spawn_store.finalize_spawn(
+        runtime, owner, status="succeeded", exit_code=0, origin="runner",
+    )
+
+    observer = spawn_store.start_spawn(
+        runtime, spawn_id="p5", chat_id="c5", harness="claude", kind="primary",
+        model="", agent="", prompt="",
+    )
+    session_store.start_session(
+        runtime, chat_id="c5", spawn_id=observer, harness="claude", model="",
+        harness_session_id="native-5", native_store=str(tmp_path / "native"),
+    )
+    try:
+        spawn_store.update_spawn(runtime, observer, current_chat_id="c1")
+        assert session_identity.live_observer_for_chat(runtime, "c1") == observer
+        with pytest.raises(session_store.ChatBusy, match="chat_busy"):
+            session_store.start_session(
+                runtime, chat_id="c1", harness="claude", model="",
+                harness_session_id="native-1", native_store=str(tmp_path / "native"),
+            )
+    finally:
+        session_store.stop_session(runtime, "c5")
+
+
 def test_spawn_current_chat_precedes_boundary_but_not_mismatch():
     row = SpawnRecord(
         id="p1", status="running", chat_id="c-old", current_chat_id="c-new"
