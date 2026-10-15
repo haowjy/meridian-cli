@@ -17,6 +17,7 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn list` | See running and recent spawns |
 | `meridian spawn list --profile reviewer` | Show spawns launched with the `reviewer` profile |
 | `meridian spawn list --primary` | Show only primary spawns (top-level sessions) |
+| `meridian spawn wait` | Discover this session's pending spawns and wait for them; yields a retry checkpoint if concurrent history writes delay discovery |
 | `meridian spawn wait ID` | Block until a spawn completes; report body included by default, `--no-full` to suppress |
 | `meridian spawn show ID` | Read a spawn's report and status |
 | `meridian spawn status ID` | Read spawn status summary (report body off by default; add `--full` to include) |
@@ -37,6 +38,11 @@ native config. See [managed startup and failure behavior](codex-tui-passthrough.
 does not currently expose that endpoint ([#498](https://github.com/haowjy/meridian-cli/issues/498)).
 
 Common `spawn` flags:
+
+No-arg `spawn wait` gives a missing history index its own sticky cold-build budget;
+the wait deadline then bounds one catch-up attempt. If the history index is still
+busy, the command exits cleanly with a discovery-pending checkpoint. Re-run it; it
+does not print "No pending spawns" until discovery has complete coverage.
 
 | Flag | Description |
 | ---- | ----------- |
