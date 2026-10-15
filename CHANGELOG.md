@@ -4,6 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Compact idle sessions even with unsent drafts; Codex clears the composer first.
+- Retry unreadable Codex screens, then skip compaction and push a warning.
+- Keep OpenCode managed-primary event sensing alive through quiet periods and compaction;
+  durable fallback now accepts only completed native compaction messages.
+
 ## [0.10.4] - 2026-10-15
 
 ### Fixed

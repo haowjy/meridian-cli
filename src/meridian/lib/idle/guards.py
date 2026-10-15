@@ -31,7 +31,6 @@ class GuardFacts:
     anchor: int
     role: str | None = "primary"
     harness_enabled: bool = True
-    draft: Literal["yes", "no", "unknown"] = "no"
     busy: bool = False
     agents_running: int = 0
     child_spawns_active: bool = False
@@ -94,8 +93,6 @@ def decide(
         return Decision.skip("cache-cold")
     if facts.busy:
         return Decision.skip("busy")
-    if facts.draft != "no":
-        return Decision.skip("draft-unknown" if facts.draft == "unknown" else "draft-present")
     if facts.agents_running > 0:
         return Decision.skip("agents-running")
     if facts.child_spawns_active:

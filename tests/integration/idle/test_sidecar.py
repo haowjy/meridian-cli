@@ -76,7 +76,7 @@ class Sensor:
             await asyncio.sleep(0.001)
 
     async def facts(self) -> IdleFacts:
-        return IdleFacts("no", False, 0, 100_000, False)
+        return IdleFacts(False, 0, 100_000, False)
 
     async def compact(self) -> CompactResult:
         self.compact_calls += 1

@@ -19,7 +19,7 @@ def test_two_compaction_claims_racing_have_one_winner(tmp_path: Path) -> None:
     )
     armed = service.arm(harness="example", session="s1", ttl_seconds=3600)
     now[0] = armed.compact_at or 0
-    facts = IdleFacts("no", False, 0, 100_000, False)
+    facts = IdleFacts(False, 0, 100_000, False)
 
     def claim() -> str:
         return service.fire(

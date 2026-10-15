@@ -21,7 +21,8 @@ See the [integration contract](../lib/harness/.context/pi-integration.md).
 Meridian-idle marks every core call `--interactive`. User input cancels timers
 synchronously and queues its return behind any in-flight arm without awaiting the
 CLI. A compact claim is acted on only after a second check confirms that the user
-has not returned and Pi remains idle with no pending messages or draft.
+has not returned and Pi remains idle with no pending messages. Unsent composer
+text does not veto compaction.
 
 ## Build and verify
 

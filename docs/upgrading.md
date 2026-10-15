@@ -120,10 +120,10 @@ One-hour Anthropic cache writes cost more than five-minute writes. Export
 - Compaction is **on by default** for interactive primaries. To turn it off for
   one tmux session, export `MERIDIAN_IDLE_COMPACT=0` before launching; for
   everything, set `[idle] compact = false`; for one harness,
-  `[harness.codex.idle] compact = false`. Compaction never runs over a draft in
-  the prompt box, while agents are running, under about 40k tokens of context,
-  when the timer fired late (machine asleep), or when the harness's own
-  auto-compaction is off.
+  `[harness.codex.idle] compact = false`. Compaction may discard unsent text in
+  the prompt box. It does not run while agents are running, under about 40k
+  tokens of context, when the timer fired late (machine asleep), or when the
+  harness's own auto-compaction is off.
 - Notifications are silent until configured: set `[notify] ntfy_topic` for push
   and `email_to`, `smtp_user` and `smtp_password_file` (a `0600` file holding
   a Gmail app password) for email. `MERIDIAN_NOTIFY_SMTP_PASSWORD` works as a

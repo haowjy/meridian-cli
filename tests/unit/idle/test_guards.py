@@ -1,4 +1,4 @@
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 import pytest
 
@@ -97,14 +97,6 @@ def state(**updates: object) -> IdleState:
         ),
         (
             "compact",
-            GuardFacts(1, 1, draft="yes"),
-            state(),
-            Config(),
-            3_300_000,
-            "draft-present",
-        ),
-        (
-            "compact",
             GuardFacts(1, 1, agents_running=1),
             state(),
             Config(),
@@ -152,7 +144,6 @@ def test_guard_order_does_not_evaluate_compaction_guards_for_push() -> None:
     facts = GuardFacts(
         1,
         1,
-        draft="yes",
         busy=True,
         agents_running=1,
         child_spawns_active=True,
@@ -161,11 +152,3 @@ def test_guard_order_does_not_evaluate_compaction_guards_for_push() -> None:
     )
 
     assert decide("push", facts, state(), Config(compact=False), 60_000).decision == "act"
-
-
-def test_unknown_draft_skips_but_unknown_context_proceeds() -> None:
-    unknown_draft = GuardFacts(1, 1, draft="unknown", context_tokens=None)
-    safe_draft = replace(unknown_draft, draft="no")
-
-    assert decide("compact", unknown_draft, state(), Config(), 3_300_000).reason == "draft-unknown"
-    assert decide("compact", safe_draft, state(), Config(), 3_300_000).decision == "act"
