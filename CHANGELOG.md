@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.10] - 2026-10-15
+
 ### Fixed
 - Finalize spawns on harness completion, not next watchdog poll (~1 s off every streaming spawn exit).
 
