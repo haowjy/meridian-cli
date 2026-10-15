@@ -37,14 +37,12 @@ function context() {
   const state = {
     idle: true,
     pending: false,
-    editor: "",
     compact: vi.fn<(options?: CompactCallbacks) => void>(),
   };
   const ctx = {
     cwd: "/work/project",
     model: { provider: "anthropic" },
     sessionManager: { getSessionId: () => "pi-session" },
-    ui: { getEditorText: () => state.editor },
     isIdle: () => state.idle,
     hasPendingMessages: () => state.pending,
     getContextUsage: () => ({ tokens: 42_000, contextWindow: 200_000, percent: 21 }),
@@ -128,14 +126,14 @@ describe("meridian idle event mapping", () => {
     const calls = run.mock.calls.map(([args]) => args);
     expect(calls.filter((args) => args[1] === "arm")).toEqual([[
       "idle", "arm", "--harness", "pi", "--session", "pi-session",
-      "--provider", "anthropic", "--interactive",
+      "--provider", "anthropic", "--context-tokens", "42000", "--interactive",
     ]]);
     expect(calls.filter((args) => args[1] === "fire").map((args) => args[2])).toEqual([
       "push", "warn", "compact",
     ]);
     expect(calls.filter((args) => args[1] === "fire" && args[2] === "compact")).toEqual([[
       "idle", "fire", "compact", "--harness", "pi", "--session", "pi-session",
-      "--stretch", "7", "--anchor", "8", "--draft", "no",
+      "--stretch", "7", "--anchor", "8",
       "--context-tokens", "42000", "--interactive",
     ]]);
     expect(state.compact).toHaveBeenCalledOnce();
@@ -181,6 +179,7 @@ describe("meridian idle event mapping", () => {
     expect(arm).toEqual([
       "idle", "arm", "--harness", "pi", "--session", "pi-session",
       "--provider", "anthropic",
+      "--context-tokens", "42000",
       "--user-text=latest\n prompt", "--assistant-text=- latest answer",
       "--interactive",
     ]);
@@ -280,35 +279,6 @@ describe("meridian idle event mapping", () => {
     });
   });
 
-  it("vetoes compaction after act when a draft appeared", async () => {
-    const { ctx, state } = context();
-    const run = vi.fn<MeridianRunner>(async (args) => {
-      if (args[1] === "config") return commandResult({ enabled: true });
-      if (args[1] === "status") return commandResult([]);
-      if (args[1] === "arm") {
-        return commandResult({ stretch: 7, anchor: 8, compact_at: Date.now() + 100 });
-      }
-      if (args[1] === "fire") {
-        state.editor = "new draft";
-        return commandResult({ decision: "act" });
-      }
-      return commandResult({});
-    });
-    const installed = host(run);
-
-    await event(installed.handlers, "session_start", {}, ctx);
-    await event(installed.handlers, "agent_end", {}, ctx);
-    await vi.advanceTimersByTimeAsync(0);
-    await vi.advanceTimersByTimeAsync(100);
-
-    expect(state.compact).not.toHaveBeenCalled();
-    const done = run.mock.calls.find(([args]) => args[1] === "done")?.[0];
-    expect(done).toEqual([
-      "idle", "done", "compact", "--harness", "pi", "--session", "pi-session",
-      "--stretch", "7", "--result", "vetoed", "--reason", "draft", "--interactive",
-    ]);
-  });
-
   it("reload recovery skips completed stages and an absorbed arm keeps its timers", async () => {
     const deadline = Date.now() + 100;
     const run = vi.fn<MeridianRunner>(async (args) => {
@@ -341,12 +311,12 @@ describe("meridian idle event mapping", () => {
     ]);
     expect(calls.filter((args) => args[1] === "arm")).toEqual([[
       "idle", "arm", "--harness", "pi", "--session", "pi-session",
-      "--provider", "anthropic", "--interactive",
+      "--provider", "anthropic", "--context-tokens", "42000", "--interactive",
     ]]);
     expect(calls.filter((args) => args[1] === "fire").map((args) => args[2])).toEqual(["warn"]);
     expect(calls.filter((args) => args[1] === "fire")[0]).toEqual([
       "idle", "fire", "warn", "--harness", "pi", "--session", "pi-session",
-      "--stretch", "11", "--anchor", "12", "--draft", "no",
+      "--stretch", "11", "--anchor", "12",
       "--context-tokens", "42000", "--interactive",
     ]);
     expectCliContract(calls);

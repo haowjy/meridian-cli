@@ -41,7 +41,6 @@ AssistantTextOption = Annotated[
     _option("--assistant-text", "Last assistant message for notification excerpts."),
 ]
 UserPromptOption = Annotated[bool, _option("--user-prompt", "Confirm a user prompt.")]
-DraftOption = Annotated[str, _option("--draft", "Draft state: yes, no, or unknown.")]
 BusyOption = Annotated[bool, _option("--busy", "The harness is currently busy.")]
 AgentsRunningOption = Annotated[int, _option("--agents-running", "Number of running agents.")]
 ContextTokensOption = Annotated[int | None, _option("--context-tokens", "Current token count.")]
@@ -123,6 +122,7 @@ def _service(harness: str | None = None, *, interactive: bool = False) -> IdleSe
         interactive=interactive,
         autocompact_off=bundle.autocompact_off,
         detect_ttl=bundle.detect_ttl,
+        compact_costs=bundle.compact_costs,
         native_idle_hook=bundle.native_idle_hook,
     )
 
@@ -150,6 +150,7 @@ def cmd_idle_arm(
     turn_id: TurnIdOption = None,
     user_text: UserTextOption = None,
     assistant_text: AssistantTextOption = None,
+    context_tokens: ContextTokensOption = None,
     interactive: InteractiveOption = False,
 ) -> None:
     """Open or re-anchor; same stretch and anchor means keep your timers."""
@@ -166,6 +167,13 @@ def cmd_idle_arm(
             turn_id=turn_id,
             last_user_text=user_text,
             last_assistant_text=assistant_text,
+            context_tokens=context_tokens,
+        ),
+        checks=(
+            (
+                context_tokens is None or context_tokens >= 0,
+                "--context-tokens must not be negative",
+            ),
         ),
     )
 
@@ -196,7 +204,6 @@ def cmd_idle_fire(
     session: SessionOption,
     stretch: StretchOption,
     anchor: AnchorOption,
-    draft: DraftOption = "unknown",
     busy: BusyOption = False,
     agents_running: AgentsRunningOption = 0,
     context_tokens: ContextTokensOption = None,
@@ -205,9 +212,7 @@ def cmd_idle_fire(
 ) -> None:
     """Evaluate guards and claim one due stage."""
 
-    normalized_draft = draft.strip().lower()
     facts = IdleFacts(
-        draft=cast("Literal['yes', 'no', 'unknown']", normalized_draft),
         busy=busy,
         agents_running=agents_running,
         context_tokens=context_tokens,
@@ -228,10 +233,6 @@ def cmd_idle_fire(
             (stage in {"push", "warn", "compact"}, f"unknown idle stage: {stage}"),
             (stretch >= 1, "--stretch must be greater than zero"),
             (anchor >= 1, "--anchor must be greater than zero"),
-            (
-                normalized_draft in {"yes", "no", "unknown"},
-                "--draft must be one of: yes, no, unknown",
-            ),
             (agents_running >= 0, "--agents-running must not be negative"),
             (
                 context_tokens is None or context_tokens >= 0,
@@ -299,7 +300,10 @@ def _print_status_table(rows: list[dict[str, object]]) -> None:
     if not rows:
         print("No open idle stretches.")
         return
-    print(f"{'HARNESS':<10} {'SESSION':<24} {'STRETCH':>7} {'ANCHOR':>6} SCHEDULE")
+    print(
+        f"{'HARNESS':<10} {'SESSION':<24} {'STRETCH':>7} {'ANCHOR':>6} "
+        f"{'COMPACT':<38} SCHEDULE"
+    )
     for row in rows:
         schedule = cast("dict[str, object]", row["schedule"])
         deadlines = ", ".join(
@@ -307,10 +311,19 @@ def _print_status_table(rows: list[dict[str, object]]) -> None:
             for stage in ("push", "warn", "compact")
             if schedule.get(f"{stage}_at") is not None
         )
+        done = cast("dict[str, object]", row["done"])
+        compact = str(done.get("compact", "-"))
+        evaluation = row.get("compact_eval")
+        if compact == "skipped:not-worth-it" and isinstance(evaluation, dict):
+            evaluation_dict = cast("dict[str, object]", evaluation)
+            growth = evaluation_dict.get("growth_tokens")
+            need = evaluation_dict.get("need_tokens")
+            if isinstance(growth, int) and isinstance(need, int):
+                compact += f" ({round(growth / 1000)}k/{round(need / 1000)}k)"
         print(
             f"{row['harness']!s:<10} {row['session']!s:<24} "
             f"{int(cast('int', row['stretch'])):>7} "
-            f"{int(cast('int', row['anchor'])):>6} {deadlines}"
+            f"{int(cast('int', row['anchor'])):>6} {compact:<38} {deadlines}"
         )
 
 

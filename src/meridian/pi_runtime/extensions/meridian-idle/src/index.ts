@@ -123,6 +123,10 @@ export class IdleRuntime {
       if (provider) {
         args.push("--provider", provider);
       }
+      const tokens = contextTokens(ctx);
+      if (tokens !== null) {
+        args.push("--context-tokens", String(tokens));
+      }
       const excerpts = messageExcerpts(messages);
       if (excerpts.user !== null) this.lastUserText = excerpts.user;
       if (this.lastUserText !== null) {
@@ -283,7 +287,6 @@ export class IdleRuntime {
       "--session", active.session,
       "--stretch", String(active.stretch),
       "--anchor", String(active.anchor),
-      "--draft", draftFact(active.ctx),
     ];
     if (busyFact(active.ctx)) {
       args.push("--busy");
@@ -346,9 +349,6 @@ export class IdleRuntime {
     if (hasPendingMessages(ctx)) {
       return "pending messages";
     }
-    if (draftFact(ctx) !== "no") {
-      return "draft";
-    }
     return null;
   }
 
@@ -407,14 +407,6 @@ function hasPendingMessages(ctx: ExtensionContext): boolean {
   }
 }
 
-function draftFact(ctx: ExtensionContext): "yes" | "no" | "unknown" {
-  try {
-    return ctx.ui.getEditorText().length > 0 ? "yes" : "no";
-  } catch {
-    return "unknown";
-  }
-}
-
 function busyFact(ctx: ExtensionContext): boolean {
   try {
     return !ctx.isIdle() || ctx.hasPendingMessages();
@@ -426,7 +418,7 @@ function busyFact(ctx: ExtensionContext): boolean {
 function contextTokens(ctx: ExtensionContext): number | null {
   try {
     const tokens = ctx.getContextUsage()?.tokens;
-    return typeof tokens === "number" && Number.isSafeInteger(tokens) ? tokens : null;
+    return typeof tokens === "number" && Number.isSafeInteger(tokens) && tokens > 0 ? tokens : null;
   } catch {
     return null;
   }

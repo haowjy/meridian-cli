@@ -10,12 +10,23 @@ import pytest
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.codex_bootstrap import bootstrap_turn_prompt
 from meridian.lib.harness.codex_idle import CodexIdleSensor, pane_facts, parse_idle_event
+from meridian.lib.harness.codex_rollout import latest_context_tokens
 from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.idle_types import IdleEvent, IdleSensorContext, PinnedIdleSession
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "codex_idle"
 MAIN_THREAD = "01a11de2-ce9f-7c41-970f-a07df19fa0e4"
 PROMPT = "\u203a"
+STATUS = "  GPT-5.6-Luna default \u00b7 /tmp/scratch/repo"
+
+
+def _composer_capture(*prompt_lines: str, empty: bool = False) -> str:
+    prompt = "\n".join(
+        f"{PROMPT} {line}" if index == 0 else f"  {line}"
+        for index, line in enumerate(prompt_lines)
+    )
+    footer = "  ? for shortcuts" if empty else ""
+    return f"transcript\n\n\n{prompt}\n\n{STATUS}\n{footer}\n"
 
 
 class FakeTmux:
@@ -128,8 +139,11 @@ def _probe_payloads() -> list[str]:
     return [record["argv"][0] for record in records]
 
 
-def test_parse_idle_event_pins_main_thread_and_tracks_input_growth() -> None:
+def test_parse_idle_event_pins_main_thread_and_tracks_input_growth(tmp_path: Path) -> None:
     counts: dict[str, int | None] = {MAIN_THREAD: None}
+    rollout = _write_rollout(tmp_path)
+    _append(rollout, _token_count(12_000, 12_345))
+    env = {"CODEX_HOME": str(tmp_path / "codex")}
 
     def read_session(session: str) -> PinnedIdleSession | None:
         if session not in counts:
@@ -138,7 +152,7 @@ def test_parse_idle_event_pins_main_thread_and_tracks_input_growth() -> None:
 
     parsed: list[IdleEvent | None] = []
     for payload in _probe_payloads():
-        event = parse_idle_event(payload, session_reader=read_session)
+        event = parse_idle_event(payload, session_reader=read_session, env=env)
         parsed.append(event)
         if event is not None:
             counts[event.harness_session_id] = event.input_count
@@ -150,10 +164,32 @@ def test_parse_idle_event_pins_main_thread_and_tracks_input_growth() -> None:
     assert all(event.implies_return for event in pinned)
     assert pinned[-1].last_user_text == "Run sleep 3 in shell, then reply done."
     assert pinned[-1].last_assistant_text == "done"
+    assert pinned[-1].context_tokens == 12_345
 
-    repeated = parse_idle_event(_probe_payloads()[-1], session_reader=read_session)
+    repeated = parse_idle_event(_probe_payloads()[-1], session_reader=read_session, env=env)
     assert repeated is not None
     assert repeated.implies_return is False
+
+
+def _token_count(input_tokens: int, total_tokens: int) -> bytes:
+    return (json.dumps({
+        "type": "event_msg", "payload": {
+            "type": "token_count", "info": {"last_token_usage": {
+                "input_tokens": input_tokens, "total_tokens": total_tokens,
+            }},
+        },
+    }) + "\n").encode()
+
+
+def test_latest_context_tokens_stops_at_compaction_boundaries(tmp_path: Path) -> None:
+    rollout = tmp_path / "rollout.jsonl"
+    usage = _token_count(40_000, 41_234)
+    rollout.write_bytes(usage)
+    assert latest_context_tokens(rollout) == 41_234
+    _append(rollout, _token_count(0, 9_000))
+    assert latest_context_tokens(rollout) is None
+    rollout.write_bytes(usage + b'{"type": "compacted", "payload": {}}\n')
+    assert latest_context_tokens(rollout) is None
 
 
 def test_parse_idle_event_skips_bootstrap_but_tracks_the_next_real_turn() -> None:
@@ -181,7 +217,7 @@ def test_parse_idle_event_skips_bootstrap_but_tracks_the_next_real_turn() -> Non
         inputs=[bootstrap_prompt],
         answer=bootstrap_prompt,
     )
-    assert parse_idle_event(bootstrap, session_reader=read_session) is None
+    assert parse_idle_event(bootstrap, session_reader=read_session, env={}) is None
     assert last_input_count is None
 
     real_turn = payload(
@@ -189,62 +225,141 @@ def test_parse_idle_event_skips_bootstrap_but_tracks_the_next_real_turn() -> Non
         inputs=[bootstrap_prompt, "actual user prompt"],
         answer="actual answer",
     )
-    event = parse_idle_event(real_turn, session_reader=read_session)
+    event = parse_idle_event(real_turn, session_reader=read_session, env={})
     assert event is not None
     assert event.implies_return is True
     assert event.input_count == 2
     assert event.last_user_text == "actual user prompt"
 
     last_input_count = event.input_count
-    repeated = parse_idle_event(real_turn, session_reader=read_session)
+    repeated = parse_idle_event(real_turn, session_reader=read_session, env={})
     assert repeated is not None
     assert repeated.implies_return is False
 
 
 @pytest.mark.parametrize(
-    ("capture_name", "draft", "busy"),
+    ("capture_name", "busy"),
     [
-        ("idle.txt", "no", False),
-        ("draft.txt", "yes", False),
-        ("busy.txt", "no", True),
-        ("busy-final.txt", "no", False),
+        ("idle.txt", False),
+        ("busy.txt", True),
+        ("busy-final.txt", False),
     ],
 )
 def test_pane_facts_match_probe_captures(
     capture_name: str,
-    draft: str,
     busy: bool,
 ) -> None:
     capture = (FIXTURES / "captures" / capture_name).read_text(encoding="utf-8")
 
     facts = pane_facts(capture)
-    assert (facts.draft, facts.busy) == (draft, busy)
+    assert facts.busy is busy
 
 
 @pytest.mark.asyncio
-async def test_compact_accepts_appended_rollout_compacted_record(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("captures", "expected", "expected_actions", "append_compaction"),
+    [
+        pytest.param(
+            [
+                _composer_capture("first line", "second line", "third line"),
+                _composer_capture("first line", "second line", "third lineix"),
+                _composer_capture("Ask Codex to do anything", empty=True),
+                _composer_capture("/compact"),
+            ],
+            ("ok", None),
+            [
+                ("capture", "%42"),
+                ("literal", "ix"),
+                ("capture", "%42"),
+                ("keys", ("C-c",)),
+                ("capture", "%42"),
+                ("literal", "/compact"),
+                ("capture", "%42"),
+                ("keys", ("Enter",)),
+            ],
+            True,
+            id="draft-cleared-and-compacted",
+        ),
+        pytest.param(
+            [
+                (
+                    "  /model  choose a model\n"
+                    f"{PROMPT} /permissions  choose permissions\n\n"
+                    f"{PROMPT} /\n\n{STATUS}\n\n"
+                )
+            ]
+            * 3,
+            ("vetoed", "screen-not-recognized"),
+            [("capture", "%42")] * 3,
+            False,
+            id="unrecognized-after-retries-vetoed-before-clear",
+        ),
+        pytest.param(
+            [
+                (
+                    "  /model  choose a model\n"
+                    f"{PROMPT} /permissions  choose permissions\n\n"
+                    f"{PROMPT} /\n\n{STATUS}\n\n"
+                ),
+                _composer_capture("unfinished draft"),
+                _composer_capture("unfinished draftix"),
+                _composer_capture("Ask Codex to do anything", empty=True),
+                _composer_capture("/compact"),
+            ],
+            ("ok", None),
+            [
+                ("capture", "%42"),
+                ("capture", "%42"),
+                ("literal", "ix"),
+                ("capture", "%42"),
+                ("keys", ("C-c",)),
+                ("capture", "%42"),
+                ("literal", "/compact"),
+                ("capture", "%42"),
+                ("keys", ("Enter",)),
+            ],
+            True,
+            id="recognized-on-second-attempt-compacts",
+        ),
+        pytest.param(
+            [
+                _composer_capture("unfinished draft"),
+                _composer_capture("unfinished draft"),
+            ],
+            ("vetoed", "screen-not-recognized"),
+            [
+                ("capture", "%42"),
+                ("literal", "ix"),
+                ("capture", "%42"),
+                ("keys", ("BSpace", "BSpace")),
+            ],
+            False,
+            id="missing-primer-erased-without-clear",
+        ),
+    ],
+)
+async def test_compact_clears_only_a_focused_composer(
+    tmp_path: Path,
+    captures: list[str],
+    expected: tuple[str, str | None],
+    expected_actions: list[tuple[str, object]],
+    append_compaction: bool,
+) -> None:
     rollout = _write_rollout(tmp_path)
     compacted = (FIXTURES / "compacted-0.162.1.jsonl").read_bytes()
-    idle = (FIXTURES / "captures" / "idle.txt").read_text(encoding="utf-8")
     tmux = FakeTmux(
-        [
-            idle,
-            idle.replace("Ask Codex to do anything", "/compact"),
-        ],
-        on_enter=lambda: _append(rollout, compacted),
+        captures.copy(),
+        on_enter=(lambda: _append(rollout, compacted)) if append_compaction else None,
     )
     clock = FakeClock()
     sensor = _sensor(tmp_path, tmux, clock)
 
     result = await sensor.compact()
 
-    assert result.result == "ok"
-    assert tmux.actions[:4] == [
-        ("capture", "%42"),
-        ("literal", "/compact"),
-        ("capture", "%42"),
-        ("keys", ("Enter",)),
-    ]
+    assert (result.result, result.reason) == expected
+    assert tmux.actions == expected_actions
+    if not append_compaction:
+        assert ("keys", ("C-c",)) not in tmux.actions
     assert tmux.captures == []
 
 
@@ -252,8 +367,14 @@ async def test_compact_accepts_appended_rollout_compacted_record(tmp_path: Path)
 async def test_compact_times_out_when_rollout_does_not_grow(tmp_path: Path) -> None:
     rollout = _write_rollout(tmp_path)
     _append(rollout, (FIXTURES / "compacted-0.162.1.jsonl").read_bytes())
-    idle = (FIXTURES / "captures" / "idle.txt").read_text(encoding="utf-8")
-    tmux = FakeTmux([idle, idle.replace("Ask Codex to do anything", "/compact")])
+    tmux = FakeTmux(
+        [
+            _composer_capture("Ask Codex to do anything", empty=True),
+            _composer_capture("ix"),
+            _composer_capture("Ask Codex to do anything", empty=True),
+            _composer_capture("/compact"),
+        ]
+    )
     clock = FakeClock()
     sensor = _sensor(tmp_path, tmux, clock)
 
@@ -276,9 +397,13 @@ async def test_compact_ignores_partial_rollout_line_until_complete(
             with rollout.open("ab") as handle:
                 handle.write(remainder)
 
-    idle = (FIXTURES / "captures" / "idle.txt").read_text(encoding="utf-8")
     tmux = FakeTmux(
-        [idle, idle.replace("Ask Codex to do anything", "/compact")],
+        [
+            _composer_capture("Ask Codex to do anything", empty=True),
+            _composer_capture("ix"),
+            _composer_capture("Ask Codex to do anything", empty=True),
+            _composer_capture("/compact"),
+        ],
         on_enter=lambda: _append(rollout, partial),
     )
     clock = FakeClock(on_sleep=finish_line)
@@ -304,24 +429,3 @@ async def test_compact_vetoes_when_rollout_cannot_be_found_without_typing(
     assert (result.result, result.reason) == ("vetoed", "rollout-not-found")
     assert all(action != "literal" for action, _ in tmux.actions)
     assert all(action != "keys" for action, _ in tmux.actions)
-
-
-@pytest.mark.asyncio
-async def test_compact_vetoes_user_input_and_erases_only_its_typed_text(
-    tmp_path: Path,
-) -> None:
-    _write_rollout(tmp_path)
-    tmux = FakeTmux(
-        [
-            f"{PROMPT} Ask Codex to do anything\n",
-            f"{PROMPT} user text/compact\n",
-        ]
-    )
-    clock = FakeClock()
-    sensor = _sensor(tmp_path, tmux, clock)
-
-    result = await sensor.compact()
-
-    assert result.result == "vetoed"
-    assert tmux.actions[-1] == ("keys", ("BSpace",) * len("/compact"))
-    assert ("keys", ("Enter",)) not in tmux.actions

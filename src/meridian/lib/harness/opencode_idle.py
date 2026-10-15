@@ -14,8 +14,10 @@ from urllib.parse import quote
 import aiohttp
 
 from meridian.lib.harness.connections.base import RawHarnessEvent
+from meridian.lib.harness.connections.opencode_v2_http import v2_session_idle_marker
 from meridian.lib.harness.idle_types import (
     CacheTtl,
+    CompactCosts,
     CompactResult,
     IdleEvent,
     IdleFacts,
@@ -25,7 +27,6 @@ from meridian.lib.harness.idle_types import (
 from meridian.lib.harness.opencode_backend import OpenCodeVersion, resolve_opencode_version
 from meridian.lib.utils.json_shapes import json_object
 
-CapturePane = Callable[[str], Awaitable[str | None]]
 BackendRequest = Callable[[str, str, Mapping[str, object] | None], Awaitable[tuple[int, str]]]
 
 _GET_TIMEOUT_SECONDS = 10.0
@@ -46,6 +47,24 @@ def detect_ttl(
 
     _ = session_id, native_store, env
     return _PROVIDER_TTLS.get((provider or "").strip().lower())
+
+
+def compact_costs(
+    *, ttl_seconds: int | None
+) -> CompactCosts | None:
+    """Return measured remote-compaction economics for OpenCode's OpenAI route."""
+
+    _ = ttl_seconds
+    # One OpenCode 2.x OpenAI compaction read 187,520 cached tokens at 0.1x
+    # with 730 uncached tokens; the V2 request retains a 15k-token text tail.
+    return CompactCosts(
+        w=1.0,
+        c=0.104,
+        u=1_000,
+        o=8.0,
+        summary_tokens=1_600,
+        residue_tokens=16_500,
+    )
 
 
 def _properties(event: RawHarnessEvent) -> Mapping[str, object]:
@@ -104,32 +123,6 @@ def _status(event: RawHarnessEvent) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _draft_from_pane(capture: str) -> Literal["yes", "no"] | None:
-    """Read the final OpenCode composer box from a plain tmux pane capture."""
-
-    groups: list[list[str]] = []
-    current: list[str] = []
-    for line in capture.splitlines():
-        stripped = line.lstrip()
-        if stripped.startswith("┃"):
-            current.append(stripped.removeprefix("┃"))
-            continue
-        if current:
-            groups.append(current)
-            current = []
-    if current:
-        groups.append(current)
-
-    for box in reversed(groups):
-        if len(box) < 4:
-            continue
-        top, *prompt_rows, footer = box
-        if top.strip() or " · " not in footer:
-            continue
-        return "yes" if any(row.strip() for row in prompt_rows) else "no"
-    return None
-
-
 def _text_content(value: object) -> str | None:
     if isinstance(value, str):
         return value if value.strip() else None
@@ -175,30 +168,6 @@ def message_excerpts(payload: object) -> tuple[str | None, str | None]:
     return user, assistant
 
 
-async def _capture_tmux_pane(pane: str) -> str | None:
-    try:
-        process = await asyncio.create_subprocess_exec(
-            "tmux",
-            "capture-pane",
-            "-p",
-            "-t",
-            pane,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-    except OSError:
-        return None
-    try:
-        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=2.0)
-    except TimeoutError:
-        process.kill()
-        await process.wait()
-        return None
-    if process.returncode != 0:
-        return None
-    return stdout.decode("utf-8", errors="replace")
-
-
 async def _backend_request(
     ctx: IdleSensorContext,
     method: str,
@@ -227,11 +196,9 @@ class _OpenCodeIdleSensorBase:
         self,
         ctx: IdleSensorContext,
         *,
-        capture_pane: CapturePane = _capture_tmux_pane,
         request: BackendRequest | None = None,
     ) -> None:
         self._ctx = ctx
-        self._capture_pane = capture_pane
         if request is None:
 
             async def request_backend(
@@ -265,36 +232,35 @@ class _OpenCodeIdleSensorBase:
         while True:
             event = await self._events.get()
             if event.kind == "turn_end":
-                provider, (user, assistant) = await asyncio.gather(
+                provider, (user, assistant, context_tokens) = await asyncio.gather(
                     self._fetch_provider(),
-                    self._fetch_message_excerpts(),
+                    self._fetch_message_facts(),
                 )
                 event = replace(
                     event,
                     last_user_text=user,
                     last_assistant_text=assistant,
                     provider=provider,
+                    context_tokens=context_tokens,
                 )
             yield event
 
     async def _fetch_provider(self) -> str | None:
         return None
 
-    async def _fetch_message_excerpts(self) -> tuple[str | None, str | None]:
+    async def _fetch_message_facts(
+        self,
+    ) -> tuple[str | None, str | None, int | None]:
         raise NotImplementedError
 
+    async def _fetch_context_tokens(self) -> int | None:
+        return None
+
     async def facts(self) -> IdleFacts:
-        draft: Literal["yes", "no", "unknown"] = "unknown"
-        pane = self._ctx.tmux_pane
-        if pane:
-            capture = await self._capture_pane(pane)
-            if capture is not None:
-                draft = _draft_from_pane(capture) or "unknown"
         return IdleFacts(
-            draft=draft,
             busy=self._busy,
             agents_running=0,
-            context_tokens=None,
+            context_tokens=await self._fetch_context_tokens(),
             harness_autocompact_off=False,
         )
 
@@ -307,10 +273,9 @@ class OpenCodeIdleSensor(_OpenCodeIdleSensorBase):
         ctx: IdleSensorContext,
         *,
         now: Callable[[], float] = time.time,
-        capture_pane: CapturePane = _capture_tmux_pane,
         request: BackendRequest | None = None,
     ) -> None:
-        super().__init__(ctx, capture_pane=capture_pane, request=request)
+        super().__init__(ctx, request=request)
         self._now = now
         self._saw_busy = False
         self._last_anchor_ms = now() * 1000
@@ -375,7 +340,9 @@ class OpenCodeIdleSensor(_OpenCodeIdleSensorBase):
         self._last_anchor_ms = self._now() * 1000
         self._emit("turn_end", turn_id=_event_id(event))
 
-    async def _fetch_message_excerpts(self) -> tuple[str | None, str | None]:
+    async def _fetch_message_facts(
+        self,
+    ) -> tuple[str | None, str | None, int | None]:
         session_id = quote(self._ctx.harness_session_id, safe="")
         try:
             status, body = await asyncio.wait_for(
@@ -383,10 +350,11 @@ class OpenCodeIdleSensor(_OpenCodeIdleSensorBase):
                 timeout=_GET_TIMEOUT_SECONDS,
             )
             if status != 200:
-                return None, None
-            return message_excerpts(json.loads(body))
+                return None, None, None
+            user, assistant = message_excerpts(json.loads(body))
+            return user, assistant, None
         except (TimeoutError, OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError):
-            return None, None
+            return None, None, None
 
     async def compact(self) -> CompactResult:
         if not self._ctx.tui_alive():
@@ -503,6 +471,82 @@ def _v2_message_excerpts(payload: object) -> tuple[str | None, str | None]:
     return message_excerpts(list(reversed(cast("list[object]", messages))))
 
 
+def v2_message_context_tokens(payload: object) -> int | None:
+    """Return the newest trustworthy assistant main-context usage."""
+
+    response = json_object(payload)
+    messages = response.get("data") if response is not None else None
+    if not isinstance(messages, list):
+        return None
+    for raw_message in cast("list[object]", messages):
+        message = json_object(raw_message)
+        if message is None:
+            continue
+        info = json_object(message.get("info"))
+        facts = info if info is not None else message
+        role = facts.get("role") or message.get("role") or message.get("type")
+        if role != "assistant":
+            continue
+        if facts.get("mode") == "compaction" or facts.get("summary") is True:
+            return None
+        tokens = json_object(facts.get("tokens"))
+        if tokens is None:
+            continue
+        cache = json_object(tokens.get("cache"))
+        values = (
+            tokens.get("input"),
+            cache.get("read") if cache is not None else None,
+            cache.get("write") if cache is not None else None,
+        )
+        total = sum(
+            value
+            for value in values
+            if not isinstance(value, bool) and isinstance(value, int) and value > 0
+        )
+        if total <= 0:
+            continue
+        return total
+    return None
+
+
+def _v2_has_completed_compaction_message(payload: object, expected_id: str) -> bool:
+    response = json_object(payload)
+    messages = response.get("data") if response is not None else None
+    if not isinstance(messages, list):
+        return False
+    for raw_message in cast("list[object]", messages):
+        message = json_object(raw_message)
+        if message is None:
+            continue
+        info = json_object(message.get("info"))
+        identity = next(
+            (
+                candidate
+                for candidate in (message, info)
+                if candidate is not None
+                and candidate.get("id") == expected_id
+                and candidate.get("type") == "compaction"
+            ),
+            None,
+        )
+        if identity is None:
+            continue
+        raw_status = message.get("status")
+        if not isinstance(raw_status, str) and info is not None:
+            raw_status = info.get("status")
+        return isinstance(raw_status, str) and raw_status.strip().lower() == "completed"
+    return False
+
+
+def _v2_session_idle_after(payload: object, admitted_at_ms: float | None) -> bool:
+    if admitted_at_ms is None:
+        return False
+    outcome, idle_at_ms = v2_session_idle_marker(payload)
+    if isinstance(outcome, str) and outcome.strip().lower() not in {"", "succeeded"}:
+        return False
+    return idle_at_ms is not None and idle_at_ms >= admitted_at_ms
+
+
 class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
     """Translate OpenCode 2.x execution and inbox events into idle facts."""
 
@@ -510,11 +554,10 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
         self,
         ctx: IdleSensorContext,
         *,
-        capture_pane: CapturePane = _capture_tmux_pane,
         request: BackendRequest | None = None,
         compact_timeout_seconds: float = _SUMMARIZE_TIMEOUT_SECONDS,
     ) -> None:
-        super().__init__(ctx, capture_pane=capture_pane, request=request)
+        super().__init__(ctx, request=request)
         self._compact_timeout_seconds = compact_timeout_seconds
         self._seen_user_inbox_ids: set[str] = set()
         self._pending_user_inbox_ids: set[str] = set()
@@ -602,7 +645,9 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
         self._maybe_finish_compaction()
         self._emit("turn_end", turn_id=_event_id(event))
 
-    async def _fetch_message_excerpts(self) -> tuple[str | None, str | None]:
+    async def _fetch_message_facts(
+        self,
+    ) -> tuple[str | None, str | None, int | None]:
         session_id = quote(self._ctx.harness_session_id, safe="")
         try:
             status, body = await asyncio.wait_for(
@@ -614,10 +659,16 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
                 timeout=_GET_TIMEOUT_SECONDS,
             )
             if status != 200:
-                return None, None
-            return _v2_message_excerpts(json.loads(body))
+                return None, None, None
+            payload = json.loads(body)
+            user, assistant = _v2_message_excerpts(payload)
+            return user, assistant, v2_message_context_tokens(payload)
         except (TimeoutError, OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError):
-            return None, None
+            return None, None, None
+
+    async def _fetch_context_tokens(self) -> int | None:
+        _, _, context_tokens = await self._fetch_message_facts()
+        return context_tokens
 
     async def _fetch_provider(self) -> str | None:
         session_id = quote(self._ctx.harness_session_id, safe="")
@@ -632,6 +683,39 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
             return model[0] if model is not None else None
         except (TimeoutError, OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError):
             return None
+
+    async def _confirm_durable_compaction(
+        self,
+        *,
+        inbox_id: str,
+        admitted_at_ms: float | None,
+    ) -> bool:
+        """Confirm a completed compaction after a live-only stream gap."""
+
+        session_id = quote(self._ctx.harness_session_id, safe="")
+        session_path = f"/api/session/{session_id}"
+        try:
+            messages_status, messages_body = await asyncio.wait_for(
+                self._request(
+                    "GET",
+                    f"{session_path}/message?limit=20&order=desc&type=compaction",
+                    None,
+                ),
+                timeout=_GET_TIMEOUT_SECONDS,
+            )
+            if messages_status != 200 or not _v2_has_completed_compaction_message(
+                json.loads(messages_body), inbox_id
+            ):
+                return False
+            session_status, session_body = await asyncio.wait_for(
+                self._request("GET", session_path, None),
+                timeout=_GET_TIMEOUT_SECONDS,
+            )
+            return session_status == 200 and _v2_session_idle_after(
+                json.loads(session_body), admitted_at_ms
+            )
+        except (TimeoutError, OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError):
+            return False
 
     async def compact(self) -> CompactResult:
         if not self._ctx.tui_alive():
@@ -677,10 +761,22 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
                 return CompactResult("failed", "invalid compaction response")
             self._compact_expected_id = inbox_id
             self._maybe_finish_compaction()
-            succeeded, reason = await asyncio.wait_for(
-                waiter,
-                timeout=self._compact_timeout_seconds,
+            admitted_time = json_object(admitted.get("time"))
+            admitted_at_ms = (
+                _epoch_ms(admitted_time.get("created")) if admitted_time is not None else None
             )
+            try:
+                succeeded, reason = await asyncio.wait_for(
+                    waiter,
+                    timeout=self._compact_timeout_seconds,
+                )
+            except TimeoutError:
+                if await self._confirm_durable_compaction(
+                    inbox_id=inbox_id,
+                    admitted_at_ms=admitted_at_ms,
+                ):
+                    return CompactResult("ok")
+                return CompactResult("failed", "timeout")
             if not succeeded:
                 return CompactResult("failed", reason)
         except TimeoutError:
@@ -722,7 +818,9 @@ __all__ = [
     "OpenCodeIdleSensor",
     "OpenCodeV2IdleSensor",
     "autocompact_off",
+    "compact_costs",
     "detect_ttl",
     "message_excerpts",
     "primary_idle_sensor",
+    "v2_message_context_tokens",
 ]

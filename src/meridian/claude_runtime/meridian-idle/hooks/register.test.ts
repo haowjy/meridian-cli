@@ -3,7 +3,6 @@ import type { AgentInfo, On, SessionCompactResult } from 'claude-code'
 
 type Host = {
   calls: string[][]
-  draft: string
   agents: AgentInfo[]
   reply: Record<string, unknown | ((args: string[]) => unknown)>
   compactResult: () => SessionCompactResult
@@ -18,7 +17,6 @@ const COMPOSER = { kind: 'composer' } as const
 function host(): Host {
   return {
     calls: [],
-    draft: '',
     agents: [],
     reply: {
       config: { enabled: true },
@@ -64,7 +62,6 @@ function install(on: On, h: Host) {
   on('session.id', () => ({ value: 'sess-1' }))
   on('session.surfaces', () => ({ value: ['terminal'] }))
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1_000_000, tokens: 120_000 }, rateLimits: [] } }))
-  on('prompt.read', () => ({ value: { text: h.draft, cursor: h.draft.length } }))
   on('agent.list', () => ({ value: h.agents }))
   on('config.list', () => ({ value: [{ key: 'autoCompact', label: 'Auto-compact', kind: 'boolean', value: true }] as never }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
@@ -122,13 +119,13 @@ test('a completed turn arms every returned deadline and reports a successful com
   expect(calls(h, 'arm')).toEqual([
     [
       'arm', '--harness', 'claude', '--session', 'sess-1',
-      '--assistant-text=done', '--interactive',
+      '--context-tokens', '120000', '--assistant-text=done', '--interactive',
     ],
   ])
   expect(calls(h, 'fire').map(args => args[1])).toEqual(['push', 'warn', 'compact'])
   expect(calls(h, 'fire')[2]).toEqual([
     'fire', 'compact', '--harness', 'claude', '--session', 'sess-1',
-    '--stretch', '1', '--anchor', '1', '--draft', 'no', '--agents-running', '0',
+    '--stretch', '1', '--anchor', '1', '--agents-running', '0',
     '--context-tokens', '120000', '--interactive',
   ])
   expect(h.compactCalls).toBe(1)
@@ -171,25 +168,6 @@ test('only composer input returns, and both prompts and slash commands clear tim
   expectCliContract(h)
 })
 
-test('a draft typed after core said act vetoes the compaction instead of compacting over it', async ($, on) => {
-  const h = host()
-  h.reply.fire = (args: string[]) => {
-    if (args[1] === 'compact') h.draft = 'typed while fire ran'
-    return { decision: 'act', reason: 'guards-passed' }
-  }
-  const clock = install(on, h)
-
-  await $.session.start(TUI)
-  await clock.advance(2000)
-  await $.turn.complete(MAIN_TURN)
-  await clock.advance(30_000)
-
-  expect(h.compactCalls).toBe(0)
-  expect(h.calls.find(args => args[0] === 'done')?.filter(arg => arg !== '--interactive').slice(-4)).toEqual([
-    '--result', 'vetoed', '--reason', 'draft',
-  ])
-})
-
 test('reload recovery skips completed stages and an absorbed arm keeps its timers', async ($, on) => {
   const h = host()
   h.reply.status = [{
@@ -212,7 +190,7 @@ test('reload recovery skips completed stages and an absorbed arm keeps its timer
   expect(calls(h, 'status')).toEqual([['status', '--json', '--interactive']])
   expect(calls(h, 'arm')).toEqual([[
     'arm', '--harness', 'claude', '--session', 'sess-1',
-    '--assistant-text=done', '--interactive',
+    '--context-tokens', '120000', '--assistant-text=done', '--interactive',
   ]])
   expect(calls(h, 'fire').map(args => args[1])).toEqual(['warn'])
   expect(calls(h, 'fire')[0]).toEqual([

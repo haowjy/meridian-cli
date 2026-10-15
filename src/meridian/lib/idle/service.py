@@ -18,11 +18,13 @@ from meridian.lib.config.models import MeridianConfig, NotifyConfig
 from meridian.lib.config.schema import ConfigOptionDescriptor, parse_env_scalar
 from meridian.lib.core.identity import current_spawn_id
 from meridian.lib.harness.idle_types import (
+    COMPACT_SCREEN_NOT_RECOGNIZED,
     DetectIdleTtl,
     IdleEvent,
     IdleFacts,
     NativeIdleHook,
     PinnedIdleSession,
+    ResolveCompactCosts,
 )
 from meridian.lib.idle.children import (
     SpawnStoreReader,
@@ -31,12 +33,18 @@ from meridian.lib.idle.children import (
 )
 from meridian.lib.idle.excerpts import trim_turn_excerpts
 from meridian.lib.idle.guards import DecisionKind, GuardFacts, decide
-from meridian.lib.idle.messages import compaction_notice, stage_notice
+from meridian.lib.idle.messages import (
+    compaction_notice,
+    stage_notice,
+    unreadable_compaction_notice,
+)
 from meridian.lib.idle.timeline import Schedule, schedule, select_push_delay
+from meridian.lib.idle.worth import compact_eval_detail
 from meridian.lib.notify import Notice, SendReport, send
 from meridian.lib.notify.label import build_session_label
 from meridian.lib.state.idle_store import (
     CompactResultValue,
+    ContextBaseline,
     IdleSchedule,
     IdleState,
     IdleStore,
@@ -94,7 +102,7 @@ class IdlePolicyConfig(BaseModel):
     warn_email: bool
     compact_minutes: int
     compact: bool
-    min_compact_tokens: int
+    compact_min_growth_tokens: int | None
     late_fire_tolerance_seconds: int
     ttl_seconds: int | None
 
@@ -112,7 +120,7 @@ class ConfigResult:
             "warn_minutes": self.policy.warn_minutes,
             "compact_minutes": self.policy.compact_minutes,
             "compact": self.policy.compact,
-            "min_compact_tokens": self.policy.min_compact_tokens,
+            "compact_min_growth_tokens": self.policy.compact_min_growth_tokens,
         }
         if self.reason is not None:
             payload["reason"] = self.reason
@@ -154,9 +162,13 @@ class ReturnResult:
 class FireResult:
     decision: DecisionKind
     reason: str
+    detail: str | None = None
 
     def to_wire(self) -> dict[str, object]:
-        return {"decision": self.decision, "reason": self.reason}
+        payload: dict[str, object] = {"decision": self.decision, "reason": self.reason}
+        if self.detail is not None:
+            payload["detail"] = self.detail
+        return payload
 
 
 @dataclass(frozen=True)
@@ -298,6 +310,7 @@ class IdleService:
         interactive: bool = False,
         autocompact_off: AutocompactOffReader | None = None,
         detect_ttl: DetectIdleTtl | None = None,
+        compact_costs: ResolveCompactCosts | None = None,
         native_idle_hook: NativeIdleHook | None = None,
     ) -> None:
         self.env = dict(os.environ if env is None else env)
@@ -311,6 +324,7 @@ class IdleService:
         self._spawn_reader = spawn_reader or spawn_store_reader(self.env)
         self._autocompact_off = autocompact_off
         self._detect_ttl = detect_ttl
+        self._compact_costs = compact_costs
         self._native_idle_hook = native_idle_hook
 
     def config_for(self, harness: str) -> ConfigResult:
@@ -334,6 +348,7 @@ class IdleService:
         last_user_text: str | None = None,
         last_assistant_text: str | None = None,
         provider: str | None = None,
+        context_tokens: int | None = None,
     ) -> ArmResult:
         config_result = self.config_for(harness)
         if not config_result.enabled:
@@ -355,6 +370,8 @@ class IdleService:
             raise ValueError("ttl_seconds must be greater than zero")
         if input_count is not None and input_count < 0:
             raise ValueError("input_count must be zero or greater")
+        if context_tokens is not None and context_tokens < 0:
+            raise ValueError("context_tokens must be zero or greater")
         if self._notify_config().include_messages:
             user_excerpt, assistant_excerpt = trim_turn_excerpts(
                 last_user_text,
@@ -365,6 +382,15 @@ class IdleService:
         now_ms = self._now_ms()
 
         def transition(current: IdleState | None) -> tuple[IdleState, ArmResult]:
+            kept_input = input_count if input_count is not None else (
+                current.last_input_count if current is not None else None
+            )
+            untrusted = (
+                current is not None and not current.stretch_open
+                and current.done.get("compact") in {"claimed", "ok"}
+            )
+            context = current.context if current is not None else ContextBaseline()
+            observed_context = context if untrusted else context.observe(context_tokens)
             if (
                 implies_return
                 and turn_id is not None
@@ -373,9 +399,8 @@ class IdleService:
             ):
                 next_state = current.model_copy(
                     update={
-                        "last_input_count": (
-                            input_count if input_count is not None else current.last_input_count
-                        )
+                        "last_input_count": kept_input,
+                        "context": observed_context,
                     }
                 )
                 return next_state, _result_for_state(
@@ -392,9 +417,7 @@ class IdleService:
                     next_state = current.model_copy(
                         update={
                             "expect_compaction_turn": False,
-                            "last_input_count": (
-                                input_count if input_count is not None else current.last_input_count
-                            ),
+                            "last_input_count": kept_input,
                         }
                     )
                     return next_state, _result_for_state(next_state, reason="compact-window")
@@ -402,9 +425,7 @@ class IdleService:
                     next_state = current.model_copy(
                         update={
                             "expect_compaction_turn": False,
-                            "last_input_count": (
-                                input_count if input_count is not None else current.last_input_count
-                            ),
+                            "last_input_count": kept_input,
                         }
                     )
                     return next_state, _result_for_state(
@@ -414,9 +435,8 @@ class IdleService:
                 if current.stretch_open and current.done.get("compact") == "ok":
                     next_state = current.model_copy(
                         update={
-                            "last_input_count": (
-                                input_count if input_count is not None else current.last_input_count
-                            )
+                            "last_input_count": kept_input,
+                            "context": observed_context,
                         }
                     )
                     return next_state, _result_for_state(
@@ -459,11 +479,7 @@ class IdleService:
                     if implies_return
                     else (current.last_turn_id if current is not None and not opens_new else None)
                 ),
-                last_input_count=(
-                    input_count
-                    if input_count is not None
-                    else (current.last_input_count if current is not None else None)
-                ),
+                last_input_count=kept_input,
                 last_user_text=user_excerpt,
                 last_assistant_text=assistant_excerpt,
                 anchor=anchor,
@@ -471,6 +487,10 @@ class IdleService:
                 returned_at_ms=returned_at_ms,
                 ttl_seconds=resolved_ttl,
                 ttl_estimated=ttl_estimated,
+                context=observed_context,
+                compact_eval=(
+                    current.compact_eval if current is not None and not opens_new else None
+                ),
                 schedule=_persisted_schedule(placed),
                 done=done,
                 compact_window_until_ms=None,
@@ -543,14 +563,11 @@ class IdleService:
             raise ValueError("anchor must be greater than zero")
         policy = resolve_policy(harness, self.config, self.env)
         observed = facts or IdleFacts(
-            draft="unknown",
             busy=False,
             agents_running=0,
             context_tokens=None,
             harness_autocompact_off=False,
         )
-        if observed.draft not in {"yes", "no", "unknown"}:
-            raise ValueError("draft must be one of: yes, no, unknown")
         if observed.agents_running < 0:
             raise ValueError("agents_running must not be negative")
         if observed.context_tokens is not None and observed.context_tokens < 0:
@@ -565,7 +582,6 @@ class IdleService:
             anchor=anchor,
             role=self.role,
             harness_enabled=policy.enabled,
-            draft=observed.draft,
             busy=observed.busy,
             agents_running=observed.agents_running,
             child_spawns_active=self._children_active() if stage == "compact" else False,
@@ -577,8 +593,25 @@ class IdleService:
         def transition(
             current: IdleState | None,
         ) -> tuple[IdleState | None, tuple[FireResult, IdleState | None]]:
-            decision = decide(stage, guard_facts, current, policy, now_ms)
-            result = FireResult(decision.decision, decision.reason)
+            costs = None
+            if stage == "compact" and current is not None and self._compact_costs is not None:
+                costs = self._compact_costs(
+                    ttl_seconds=current.ttl_seconds,
+                )
+            decision = decide(
+                stage,
+                guard_facts,
+                current,
+                policy,
+                now_ms,
+                compact_costs=costs,
+            )
+            detail = (
+                compact_eval_detail(decision.compact_eval)
+                if decision.compact_eval is not None
+                else None
+            )
+            result = FireResult(decision.decision, decision.reason, detail)
             if decision.decision == "skip":
                 transient = {
                     "not-primary",
@@ -592,7 +625,10 @@ class IdleService:
                     return current, (result, None)
                 done = dict(current.done)
                 done[stage] = f"skipped:{decision.reason}"
-                next_state = current.model_copy(update={"done": done})
+                updates: dict[str, object] = {"done": done}
+                if decision.compact_eval is not None:
+                    updates["compact_eval"] = decision.compact_eval
+                next_state = current.model_copy(update=updates)
                 return next_state, (result, None)
 
             if current is None:  # pragma: no cover - guarded by decide()
@@ -600,6 +636,8 @@ class IdleService:
             done = dict(current.done)
             done[stage] = "claimed" if stage == "compact" else "sent"
             updates: dict[str, object] = {"done": done}
+            if decision.compact_eval is not None:
+                updates["compact_eval"] = decision.compact_eval
             if stage == "compact":
                 updates.update(
                     compact_window_until_ms=now_ms + _COMPACT_GRACE_MS,
@@ -688,13 +726,15 @@ class IdleService:
             raise ValueError("result must be one of: ok, failed, vetoed")
         now_ms = self._now_ms()
 
-        def transition(current: IdleState | None) -> tuple[IdleState | None, DoneResult]:
+        def transition(
+            current: IdleState | None,
+        ) -> tuple[IdleState | None, tuple[DoneResult, IdleState | None]]:
             if (
                 current is None
                 or current.stretch != stretch
                 or current.done.get(stage) != "claimed"
             ):
-                return current, DoneResult(recorded=False)
+                return current, (DoneResult(recorded=False), None)
             done = dict(current.done)
             done[stage] = result
             updates: dict[str, object] = {"done": done}
@@ -705,19 +745,29 @@ class IdleService:
                     compact_window_until_ms=None,
                     expect_compaction_turn=False,
                 )
-            return current.model_copy(update=updates), DoneResult(recorded=True)
+            if result == "ok":
+                updates["context"] = current.context.after_compaction()
+            next_state = current.model_copy(update=updates)
+            return next_state, (DoneResult(recorded=True), next_state)
 
-        done_result = self.store.mutate(harness, session, transition)
+        done_result, completed_state = self.store.mutate(harness, session, transition)
         if done_result.recorded:
             with suppress(Exception):
-                self._notify_sender(
-                    compaction_notice(
-                        result,
-                        detail,
-                        build_session_label(environ=self.env),
-                    ),
-                    self._notify_config(),
-                )
+                label = build_session_label(environ=self.env)
+                if (
+                    result == "vetoed"
+                    and detail == COMPACT_SCREEN_NOT_RECOGNIZED
+                    and completed_state is not None
+                ):
+                    notice = unreadable_compaction_notice(
+                        harness,
+                        completed_state,
+                        label,
+                        now_ms=now_ms,
+                    )
+                else:
+                    notice = compaction_notice(result, detail, label)
+                self._notify_sender(notice, self._notify_config())
         return done_result
 
     def event(
@@ -739,6 +789,7 @@ class IdleService:
                 last_user_text=event.last_user_text,
                 last_assistant_text=event.last_assistant_text,
                 provider=event.provider,
+                context_tokens=event.context_tokens,
             )
         return self.return_(
             harness=harness,
@@ -766,7 +817,7 @@ class IdleService:
         try:
             if not payload.strip():
                 raise ValueError("idle event requires a payload argument or stdin")
-            event = hook.observe(payload, read_session)
+            event = hook.observe(payload, read_session, self.env)
             if event is not None:
                 self.event(event, harness=harness)
         finally:

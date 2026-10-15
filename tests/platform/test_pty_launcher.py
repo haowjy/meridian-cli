@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import select
 import signal
+import struct
 import sys
 import threading
 import time
@@ -14,7 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from meridian.lib.platform import IS_WINDOWS, pty
+from meridian.lib.platform import IS_WINDOWS, fcntl, pty, termios
 
 _ENABLED_MODES = b"\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h\x1b[?1049h\x1b[?25l"
 _RESTORED_MODES = b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1049l\x1b[?25h\x1b[J"
@@ -28,7 +29,6 @@ def test_non_tty_stdout_does_not_receive_terminal_restore(
 
     monkeypatch.setattr(pty_launcher.sys, "stdin", SimpleNamespace(fileno=lambda: 10))
     monkeypatch.setattr(pty_launcher.sys, "stdout", SimpleNamespace(fileno=lambda: 11))
-    monkeypatch.setattr(pty_launcher, "_install_winsize_forwarding", lambda **_kwargs: lambda: None)
     monkeypatch.setattr(pty_launcher.os, "isatty", lambda _fd: False)
     monkeypatch.setattr(
         pty_launcher.select,
@@ -59,7 +59,6 @@ def test_closed_stdout_ends_pty_forwarding_cleanly(
 
     monkeypatch.setattr(pty_launcher.sys, "stdin", SimpleNamespace(fileno=lambda: 10))
     monkeypatch.setattr(pty_launcher.sys, "stdout", SimpleNamespace(fileno=lambda: 11))
-    monkeypatch.setattr(pty_launcher, "_install_winsize_forwarding", lambda **_kwargs: lambda: None)
     monkeypatch.setattr(pty_launcher.os, "isatty", lambda _fd: False)
     monkeypatch.setattr(
         pty_launcher.select,
@@ -94,7 +93,6 @@ def test_closed_pane_oserror_ends_pty_forwarding_cleanly(
 
     monkeypatch.setattr(pty_launcher.sys, "stdin", SimpleNamespace(fileno=lambda: 10))
     monkeypatch.setattr(pty_launcher.sys, "stdout", SimpleNamespace(fileno=lambda: 11))
-    monkeypatch.setattr(pty_launcher, "_install_winsize_forwarding", lambda **_kwargs: lambda: None)
     monkeypatch.setattr(pty_launcher.os, "isatty", lambda _fd: False)
     monkeypatch.setattr(
         pty_launcher.select,
@@ -128,7 +126,6 @@ def test_closed_pane_oserror_on_master_write_ends_stdin_forwarding_cleanly(
 
     monkeypatch.setattr(pty_launcher.sys, "stdin", SimpleNamespace(fileno=lambda: 10))
     monkeypatch.setattr(pty_launcher.sys, "stdout", SimpleNamespace(fileno=lambda: 11))
-    monkeypatch.setattr(pty_launcher, "_install_winsize_forwarding", lambda **_kwargs: lambda: None)
     monkeypatch.setattr(pty_launcher.os, "isatty", lambda _fd: False)
 
     ready_sets = iter(([10], [12]))
@@ -169,7 +166,6 @@ def test_stdin_read_oserror_marks_stdin_closed_and_forwards_to_master_eof(
 
     monkeypatch.setattr(pty_launcher.sys, "stdin", SimpleNamespace(fileno=lambda: 10))
     monkeypatch.setattr(pty_launcher.sys, "stdout", SimpleNamespace(fileno=lambda: 11))
-    monkeypatch.setattr(pty_launcher, "_install_winsize_forwarding", lambda **_kwargs: lambda: None)
     monkeypatch.setattr(pty_launcher.os, "isatty", lambda _fd: False)
 
     ready_sets = iter(([10], [12], [12]))
@@ -213,7 +209,6 @@ def test_wait_cancelled_after_eof_returns_130_without_waitpid(
 
     monkeypatch.setattr(pty_launcher.sys, "stdin", SimpleNamespace(fileno=lambda: 10))
     monkeypatch.setattr(pty_launcher.sys, "stdout", SimpleNamespace(fileno=lambda: 11))
-    monkeypatch.setattr(pty_launcher, "_install_winsize_forwarding", lambda **_kwargs: lambda: None)
     monkeypatch.setattr(pty_launcher.os, "isatty", lambda _fd: False)
     monkeypatch.setattr(pty_launcher.os, "read", lambda _fd, _size: b"")
     cancelled = threading.Event()
@@ -239,6 +234,105 @@ def test_wait_cancelled_after_eof_returns_130_without_waitpid(
     )
 
     assert exit_code == 130
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="PTY relay is POSIX-only")
+def test_worker_thread_relay_forwards_terminal_resizes(tmp_path: Path) -> None:
+    """Managed attach relays in a worker thread, where signal handlers cannot run."""
+
+    outer_master, outer_slave = pty.openpty()
+    fcntl.ioctl(outer_master, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+    relay_pid = os.fork()
+
+    if relay_pid == 0:
+        try:
+            os.close(outer_master)
+            os.dup2(outer_slave, 0)
+            os.dup2(outer_slave, 1)
+            if outer_slave > 1:
+                os.close(outer_slave)
+            sys.stdin = os.fdopen(os.dup(0), "r")
+            sys.stdout = os.fdopen(os.dup(1), "w")
+
+            from meridian.lib.launch.process.pty_launcher import PtyProcessLauncher
+
+            child_code = """
+import os
+import signal
+import time
+
+resized = False
+
+def handle_resize(_signum, _frame):
+    global resized
+    resized = True
+
+def report(label):
+    size = os.get_terminal_size()
+    print(f"{label} {size.columns}x{size.lines}", flush=True)
+
+signal.signal(signal.SIGWINCH, handle_resize)
+report("INITIAL")
+deadline = time.monotonic() + 2.0
+while not resized and time.monotonic() < deadline:
+    time.sleep(0.02)
+if resized:
+    report("RESIZED")
+"""
+            process = PtyProcessLauncher().start(
+                command=(sys.executable, "-c", child_code),
+                cwd=tmp_path,
+                env=dict(os.environ),
+                output_log_path=None,
+            )
+            waiter = threading.Thread(target=process.wait, daemon=True)
+            waiter.start()
+            waiter.join(timeout=5.0)
+            if waiter.is_alive():
+                process.terminate()
+                process.cancel_wait()
+                waiter.join(timeout=1.0)
+                os._exit(2)
+            os._exit(0)
+        except BaseException:
+            os._exit(1)
+
+    os.close(outer_slave)
+    terminal_output = bytearray()
+    resized_outer = False
+    relay_status: int | None = None
+    deadline = time.monotonic() + 7.0
+    try:
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select([outer_master], [], [], 0.05)
+            if ready:
+                try:
+                    chunk = os.read(outer_master, 4096)
+                except OSError:
+                    chunk = b""
+                terminal_output.extend(chunk)
+            if not resized_outer and b"INITIAL 80x24" in terminal_output:
+                fcntl.ioctl(
+                    outer_master,
+                    termios.TIOCSWINSZ,
+                    struct.pack("HHHH", 30, 100, 0, 0),
+                )
+                resized_outer = True
+            waited_pid, relay_status = os.waitpid(relay_pid, os.WNOHANG)
+            if waited_pid == relay_pid:
+                break
+        else:
+            os.kill(relay_pid, signal.SIGKILL)
+            pytest.fail("worker-thread PTY relay did not exit")
+    finally:
+        with suppress(ChildProcessError):
+            os.waitpid(relay_pid, 0)
+        os.close(outer_master)
+
+    assert relay_status is not None
+    assert os.waitstatus_to_exitcode(relay_status) == 0
+    assert resized_outer
+    assert b"RESIZED 100x30" in terminal_output
 
 
 @pytest.mark.skipif(IS_WINDOWS, reason="PTY relay is POSIX-only")

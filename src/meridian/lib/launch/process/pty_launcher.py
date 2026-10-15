@@ -10,7 +10,7 @@ import threading
 from contextlib import ExitStack, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, BinaryIO, cast
+from typing import Any, BinaryIO
 
 from meridian.lib.platform import IS_WINDOWS, fcntl, pty, select, termios, tty
 
@@ -52,38 +52,6 @@ def _sync_pty_winsize(*, source_fd: int, target_fd: int) -> None:
         return
 
 
-def _invoke_previous_sigwinch_handler(
-    previous: signal.Handlers,
-    *,
-    signum: int,
-    frame: Any,
-) -> None:
-    if previous in {signal.SIG_DFL, signal.SIG_IGN, None}:
-        return
-    if callable(previous):
-        previous(signum, frame)
-
-
-def _install_winsize_forwarding(*, source_fd: int, target_fd: int) -> Any:
-    """Sync PTY size now and on future terminal resize signals."""
-
-    _sync_pty_winsize(source_fd=source_fd, target_fd=target_fd)
-    if threading.current_thread() is not threading.main_thread():
-        return lambda: None
-    previous = cast("signal.Handlers", signal.getsignal(signal.SIGWINCH))
-
-    def _handle_resize(signum: int, frame: Any) -> None:
-        _sync_pty_winsize(source_fd=source_fd, target_fd=target_fd)
-        _invoke_previous_sigwinch_handler(previous, signum=signum, frame=frame)
-
-    signal.signal(signal.SIGWINCH, _handle_resize)
-
-    def _restore() -> None:
-        signal.signal(signal.SIGWINCH, previous)
-
-    return _restore
-
-
 def _copy_primary_pty_output(
     *,
     child_pid: int,
@@ -95,8 +63,8 @@ def _copy_primary_pty_output(
     stdout_fd = sys.stdout.fileno()
     stdin_open = True
     saved_tty_attrs: Any = None
+    last_forwarded_winsize: bytes | None = None
 
-    restore_resize = _install_winsize_forwarding(source_fd=stdout_fd, target_fd=master_fd)
     try:
         if os.isatty(stdin_fd):
             saved_tty_attrs = termios.tcgetattr(stdin_fd)
@@ -110,6 +78,14 @@ def _copy_primary_pty_output(
             while True:
                 if wait_cancelled is not None and wait_cancelled.is_set():
                     return 130
+                winsize = _read_winsize(stdout_fd)
+                if winsize is not None and winsize != last_forwarded_winsize:
+                    try:
+                        fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
+                    except OSError:
+                        pass
+                    else:
+                        last_forwarded_winsize = winsize
                 fds = [master_fd]
                 if stdin_open:
                     fds.append(stdin_fd)
@@ -145,7 +121,6 @@ def _copy_primary_pty_output(
                             stdin_open = False
                             continue
     finally:
-        restore_resize()
         if saved_tty_attrs is not None:
             termios.tcsetattr(stdin_fd, termios.TCSADRAIN, saved_tty_attrs)
         if os.isatty(stdout_fd):
@@ -225,7 +200,6 @@ class PtyProcessLauncher(ProcessLauncher):
 
 __all__ = [
     "PtyProcessLauncher",
-    "_install_winsize_forwarding",
     "_sync_pty_winsize",
     "can_use_pty",
 ]

@@ -18,6 +18,33 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Upgrade notes
 - First indexed read rebuilds history schema 8; no authority migration. See [upgrade notes](docs/upgrading.md#spawnrun-identity-boundary-unreleased).
+## [0.10.7] - 2026-10-15
+
+### Fixed
+- Forward terminal resizes to managed primary TUIs.
+
+## [0.10.6] - 2026-10-15
+
+### Changed
+- Replace the idle compaction total-context floor with a growth-based,
+  per-harness break-even; `idle.compact_min_growth_tokens` is the explicit
+  override and replaces `idle.min_compact_tokens`.
+- Use measured warm-cache costs for OpenCode 2.x `openai` compaction; frozen
+  OpenCode 1.x remains push-only.
+- Skip idle compaction when current context, its growth baseline, or route
+  economics are unknown, and expose the persisted evaluation in idle status.
+
+### Upgrade notes
+- Replace `idle.min_compact_tokens` with `idle.compact_min_growth_tokens`; idle
+  baselines start fresh. See [upgrade steps](docs/upgrading.md#idle-compaction-growth-floor).
+
+## [0.10.5] - 2026-10-15
+
+### Fixed
+- Compact idle sessions even with unsent drafts; Codex clears the composer first.
+- Retry unreadable Codex screens, then skip compaction and push a warning.
+- Keep OpenCode managed-primary event sensing alive through quiet periods and compaction;
+  durable fallback now accepts only completed native compaction messages.
 
 ## [0.10.4] - 2026-10-15
 
@@ -144,7 +171,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Upgrade notes
 - Direnv isolation is opt-in; no state migration. Older releases ignore the new
-  launch policy. See [direnv upgrade notes](docs/upgrading.md#ignoring-direnv-unreleased).
+  launch policy. See [direnv upgrade notes](docs/upgrading.md#ignoring-direnv).
 
 ### Added
 - Add `environment.ignore_direnv` with `MERIDIAN_IGNORE_DIRENV` and
@@ -206,7 +233,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.9.5] - 2026-10-12
 
 ### Upgrade notes
-- Stop active launches and back up project runtime state before upgrading. New current-chat fields are incompatible with 0.9.3 and 0.9.4 readers; rollback requires pre-upgrade state. See [current-chat tracking](docs/upgrading.md#current-chat-tracking-unreleased).
+- Stop active launches and back up project runtime state before upgrading. New current-chat fields are incompatible with 0.9.3 and 0.9.4 readers; rollback requires pre-upgrade state. See [current-chat tracking](docs/upgrading.md#current-chat-tracking).
 
 ### Changed
 - Persist a run's current chat separately from its immutable entry chat. Rebuild history projection in a new versioned namespace.

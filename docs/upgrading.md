@@ -24,7 +24,27 @@ and `pN.K` for later ones. Continuing a pre-`/clear` chat moves the spawn's next
 continue target back to that segment. Children from earlier runs remain children
 of the spawn, so active earlier children still participate in no-argument wait.
 
-## OpenCode 2.x idle (unreleased)
+## Idle compaction growth floor
+
+Replace `idle.min_compact_tokens` (and per-harness equivalents) with
+`idle.compact_min_growth_tokens`, or remove it to use the calculated break-even.
+The environment override is `MERIDIAN_IDLE_COMPACT_MIN_GROWTH_TOKENS`.
+The value now measures growth beyond a baseline, not total context size.
+
+Stop active Meridian primaries before changing versions. Idle files under
+`MERIDIAN_HOME/idle/` gain a nested `context` baseline and a stretch-local
+`compact_eval`. Existing released files acquire the baseline on the next
+trustworthy turn; experimental flat-baseline files are discarded by validation
+and re-created on the next arm. No migration or index rebuild is required.
+Provider transcripts, chats, and spawn authority are unchanged.
+
+Rollback requires restoring the old config/environment key and restarting
+primaries. Released 0.10.0 cannot read the new idle rows: its status returned
+an empty list against scratch copies of these rows. It will start fresh idle
+stretches rather than preserve baselines or evaluations. Do not run both
+versions against the same idle directory.
+
+## OpenCode 2.x idle
 
 Idle push, warning, and compaction now work on OpenCode 2.x; before, no OpenCode
 session ever armed. Sessions on the `openai` provider are scheduled against an
@@ -33,7 +53,7 @@ estimated 30-minute cache (GPT-5.6 or later; per provider, not per model, so set
 OpenCode 1.x stay push-only. A configured `ttl_seconds` always wins. See
 [OpenCode versions](configuration.md#opencode-versions).
 
-## Ignoring direnv (unreleased)
+## Ignoring direnv
 
 `[environment] ignore_direnv = true` opts harness launches out of inherited
 direnv changes. The default remains `false`; upgrading alone changes no launch
@@ -55,7 +75,7 @@ JSON fixture, without starting a harness. Stop active launchers before switching
 versions, and remove the new config setting/CLI flags when rolling back. The
 direnv inheritance protection is unavailable on the older version.
 
-## Current-chat tracking (unreleased)
+## Current-chat tracking
 
 Claude continuation follows the run's last observed native session, including
 in-process `/clear` or `/resume`, without requiring a final-exit callback. The
@@ -144,10 +164,13 @@ One-hour Anthropic cache writes cost more than five-minute writes. Export
 - Compaction is **on by default** for interactive primaries. To turn it off for
   one tmux session, export `MERIDIAN_IDLE_COMPACT=0` before launching; for
   everything, set `[idle] compact = false`; for one harness,
-  `[harness.codex.idle] compact = false`. Compaction never runs over a draft in
-  the prompt box, while agents are running, under about 40k tokens of context,
-  when the timer fired late (machine asleep), or when the harness's own
-  auto-compaction is off.
+  `[harness.codex.idle] compact = false`. Compaction may discard unsent text in
+  the prompt box. It does not run while agents are running, under about 40k
+  tokens of context, when the timer fired late (machine asleep), or when the
+  harness's own auto-compaction is off.
+  [Version 0.10.6](#idle-compaction-growth-floor) replaced the
+  fixed context floor with growth since a baseline compared against each route's
+  break-even.
 - Notifications are silent until configured: set `[notify] ntfy_topic` for push
   and `email_to`, `smtp_user` and `smtp_password_file` (a `0600` file holding
   a Gmail app password) for email. `MERIDIAN_NOTIFY_SMTP_PASSWORD` works as a
@@ -158,8 +181,12 @@ One-hour Anthropic cache writes cost more than five-minute writes. Export
 - Per-harness defaults: Claude senses its cache lifetime from the transcript
   (1 h or 5 min); Meridian gives interactive Pi primaries long cache retention;
   Codex assumes 30 minutes (`[harness.codex.idle] ttl_seconds = 1800`); OpenCode
-  is push-only (`ttl_seconds = 300`). Pi provider IDs other than `anthropic` and
-  `openai` remain push-only.
+  is push-only (`ttl_seconds = 300`).
+  [Version 0.9.9](#opencode-2x-idle) gave OpenCode 2.x `openai`
+  sessions warning and compaction; other providers and OpenCode 1.x remain
+  push-only. Pi provider IDs other than `anthropic` and `openai` remain push-only.
+  Version 0.9.8 added an estimated 30-minute warning and compaction schedule for
+  Pi's `openai-codex` provider.
 - Idle and cache-warning titles show time until the cache goes cold when a TTL
   is known. Heuristic/configured TTLs are labelled `est.`. Idle state saves
   `ttl_estimated` alongside the TTL; existing development-build records without

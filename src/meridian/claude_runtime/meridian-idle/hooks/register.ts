@@ -262,6 +262,8 @@ async function armTask($: EngineInterface, s: State, epoch: number, assistantTex
     }
     const session = await $.session.id()
     const args = ['arm', '--harness', HARNESS, '--session', session]
+    const tokens = await contextTokens($)
+    if (tokens !== undefined) args.push('--context-tokens', String(tokens))
     const userExcerpt = capExcerpt(s.lastUserText)
     const assistantExcerpt = capExcerpt(assistantText)
     if (userExcerpt !== undefined) args.push(`--user-text=${userExcerpt}`)
@@ -328,17 +330,10 @@ function userReturned($: EngineInterface, s: State): void {
 
 // -- timers: fire, and act on compact --------------------------------------
 
-async function draftState($: EngineInterface): Promise<'yes' | 'no' | 'unknown'> {
-  try {
-    return (await $.prompt.read()).text === '' ? 'no' : 'yes'
-  } catch {
-    return 'unknown'
-  }
-}
-
 async function contextTokens($: EngineInterface): Promise<number | undefined> {
   try {
-    return asNumber((await $.session.usage()).context.tokens)
+    const tokens = asNumber((await $.session.usage()).context.tokens)
+    return tokens !== undefined && tokens > 0 ? tokens : undefined
   } catch {
     return undefined
   }
@@ -355,13 +350,12 @@ async function autoCompactOff($: EngineInterface): Promise<boolean> {
 
 /** Facts `idle fire compact` needs. A fact the host will not give is omitted, so core applies its own unknown-fact rule. */
 async function compactFacts($: EngineInterface, busy: boolean): Promise<string[]> {
-  const [draft, agents, tokens, autoOff] = await Promise.all([
-    draftState($),
+  const [agents, tokens, autoOff] = await Promise.all([
     runningAgents($),
     contextTokens($),
     autoCompactOff($),
   ])
-  const facts = ['--draft', draft]
+  const facts: string[] = []
   // A running turn, or agents we cannot list, is not "idle": report busy so core skips instead of compacting under them.
   if (busy || agents === undefined) facts.push('--busy')
   if (agents !== undefined) facts.push('--agents-running', String(agents))
@@ -379,9 +373,6 @@ function compacted(tokensBefore: number | undefined, tokensAfter: number | undef
 
 /** Core said "act" and has claimed the stage, so exactly one `done` must follow whatever happens here. */
 async function compactNow($: EngineInterface, s: State, armed: Armed, epoch: number): Promise<Outcome> {
-  if (s.epoch !== epoch) return { result: 'vetoed', reason: 'user returned' }
-  // The fire call took ~1 s; a draft typed since then must still win.
-  if ((await draftState($)) !== 'no') return { result: 'vetoed', reason: 'draft' }
   if (s.epoch !== epoch) return { result: 'vetoed', reason: 'user returned' }
   try {
     const result = await $.session.compact()
@@ -404,7 +395,8 @@ async function onTimer($: EngineInterface, s: State, stage: Stage, armed: Armed,
       note($, s, `fire ${stage} failed: ${problem ?? 'unexpected reply'}`)
       return
     }
-    note($, s, `fire ${stage}: ${String(reply.decision)} (${String(reply.reason)})`)
+    const detail = typeof reply.detail === 'string' ? `: ${reply.detail}` : ''
+    note($, s, `fire ${stage}: ${String(reply.decision)} (${String(reply.reason)})${detail}`)
     armed.fired[stage] = reply.decision === 'act' ? 'act' : `skip: ${String(reply.reason)}`
     // Push and warn are core's job. Only a compact "act" asks anything of us.
     if (stage !== 'compact' || reply.decision !== 'act') return

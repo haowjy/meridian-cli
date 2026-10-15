@@ -261,7 +261,7 @@ or 2-Step Verification is off.
 | `warn_email` | `true` | `MERIDIAN_IDLE_WARN_EMAIL` | Include the configured email backend in the warning |
 | `compact_minutes` | `5` | `MERIDIAN_IDLE_COMPACT_MINUTES` | Minutes before cache expiry to try compaction |
 | `compact` | `true` | `MERIDIAN_IDLE_COMPACT` | Permit idle compaction |
-| `min_compact_tokens` | `40000` | `MERIDIAN_IDLE_MIN_COMPACT_TOKENS` | Skip compaction when a known context size is smaller |
+| `compact_min_growth_tokens` | break-even | `MERIDIAN_IDLE_COMPACT_MIN_GROWTH_TOKENS` | Override the calculated break-even with a fixed growth floor; `0` permits any known growth |
 | `late_fire_tolerance_seconds` | `120` | `MERIDIAN_IDLE_LATE_FIRE_TOLERANCE_SECONDS` | Skip a timer that fires more than this many seconds late |
 
 After a turn lasting at least two minutes, the waiting push follows 60 seconds
@@ -283,6 +283,7 @@ Use `claude`, `codex`, `opencode`, or `pi` for `<harness>`.
 | `enabled` | `true` | `MERIDIAN_HARNESS_IDLE_ENABLED_<H>` |
 | `compact` | `true` | `MERIDIAN_HARNESS_IDLE_COMPACT_<H>` |
 | `ttl_seconds` | Claude/OpenCode/Pi: sensed; Codex: `1800` | `MERIDIAN_HARNESS_IDLE_TTL_SECONDS_<H>` |
+| `compact_min_growth_tokens` | global setting | `MERIDIAN_HARNESS_IDLE_COMPACT_MIN_GROWTH_TOKENS_<H>` |
 
 `<H>` is the uppercase harness name, for example
 `MERIDIAN_HARNESS_IDLE_TTL_SECONDS_CODEX`.
@@ -304,10 +305,10 @@ local config. Environment always beats every file, so a per-tmux
 
 | Harness | Default behavior |
 |---|---|
-| Claude | Push, warning, and compaction; the mod reads the cache TTL from the transcript |
-| Pi | Push, warning, and compaction. Meridian sets `PI_CACHE_RETENTION=long` for interactive primaries unless you set it; `anthropic` and `openai` are scheduled under long retention, `openai-codex` against an estimated 30 minutes. `PI_CACHE_RETENTION=short` and other providers are push-only. |
-| Codex | Push, warning, and compaction with a fixed 1800-second TTL |
-| OpenCode | 2.x: push, warning, and compaction when the session's provider is `openai` (estimated 30 minutes); other providers push-only. 1.x: push only ([OpenCode versions](#opencode-versions)). |
+| Claude | Push and warning; compact after roughly 50k–63k tokens of growth for a one-hour cache (higher for shorter caches) |
+| Pi | Push and warning. Compaction does not pay at measured prices, so the compact stage records `skipped:not-worth-it`. Meridian still sets `PI_CACHE_RETENTION=long` for interactive primaries unless you set it; unsupported providers remain push-only. |
+| Codex | Push and warning with a fixed 1800-second TTL; compact after roughly 100k tokens of growth, assuming the OpenAI/ChatGPT route |
+| OpenCode | 2.x `openai`: push and warning; compact after roughly 60k tokens of growth from a new baseline, or 44k after Meridian's own compaction. Other providers are push-only. 1.x remains push-only ([OpenCode versions](#opencode-versions)). |
 
 The OpenAI estimates (Pi `openai-codex`, OpenCode `openai`) are per provider, not
 per model, and assume GPT-5.6 or later. For an older model on those routes, set
@@ -318,13 +319,46 @@ The Pi cache-retention default is launch behavior, independent of whether
 even when idle notifications and compaction are off.
 
 Idle automation runs only in an interactive primary session. Each stage is
-claimed at most once between user prompts. A compaction is skipped when the
-timer is stale or late, idle or compaction is disabled, the cache is already
-cold, the harness is busy, a draft is present or cannot be determined, an
-agent or child spawn is still running, the known context is below
-`min_compact_tokens`, or the harness's own automatic compaction is disabled.
-An unknown context size is allowed; an unknown draft is not. A positively
-identified user prompt closes the idle stretch immediately.
+claimed at most once between user prompts. At the compact deadline Meridian
+compares growth since the first trustworthy context observation with the cost
+of compacting now. The default threshold is the per-harness break-even:
+
+```text
+growth needed = (return_probability × cold_read_cost × residue
+                 + compact_read_cost × baseline
+                 + uncached_input + output_cost × summary)
+                / (return_probability × cold_read_cost - compact_read_cost)
+```
+
+The baseline survives user returns and new idle stretches. It resets when the
+context shrinks, and the first real turn after a Meridian compaction establishes
+a new baseline. `meridian idle status --json` exposes the baseline in `context`
+and the current stretch's `compact_eval`; the table shows a skipped comparison such as
+`skipped:not-worth-it (19k/50k)`.
+
+Set `compact_min_growth_tokens` to replace the calculated threshold. This also
+opts routes whose measured economics say "never" back into compaction. The
+override still requires a known current context and baseline.
+
+Pi registers no cost constants: at the fixed return probability of 0.5 its
+measured compactions never pay. Its evaluations report `basis: never` and
+`costs: null` unless a growth override is set. OpenCode 2.x uses measured
+OpenAI-route costs; 1.x has no detected TTL or context accounting and remains
+push-only. Codex and OpenCode cost resolution does not detect custom model
+providers at fire time. A manually configured TTL on another provider therefore
+uses the OpenAI assumptions; set a growth override when that route differs.
+
+A compaction is skipped when the timer is stale or late, idle or compaction is
+disabled, the cache is already cold, the harness is busy, an agent or child
+spawn is still running, growth is not worth the cost, the context or baseline
+is unknown, or the harness's own automatic compaction is disabled. Unsent
+composer text does not block compaction; Codex clears it before submitting
+`/compact`. Before sending any key, Meridian retries an unrecognized Codex
+screen for about 10 seconds. If it still cannot verify the focused composer,
+it sends no keys, skips the attempt, and sends a push-only notice with the
+remaining cache lifetime. A failed primer or clear verification likewise stops
+the sequence and sends the same notice. A positively identified user prompt
+closes the idle stretch immediately.
 Reopening a primary through Meridian counts as a user return: before the harness
 starts, Meridian closes any earlier idle stretch for that session, so its push,
 warning, and compaction never fire. This does not cover a Claude TUI started

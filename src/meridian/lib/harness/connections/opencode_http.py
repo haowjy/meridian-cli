@@ -170,6 +170,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
     _SUCCESS_STATUSES: ClassVar[frozenset[int]] = frozenset((200, 201, 202, 204))
     _ACTION_SUCCESS_STATUSES: ClassVar[frozenset[int]] = frozenset((200, 201, 202, 204, 409))
     _EVENT_RETRY_DELAY_SECONDS: ClassVar[float] = 0.25
+    _EVENT_RETRY_MAX_DELAY_SECONDS: ClassVar[float] = 10.0
     _LIVENESS_TIMEOUT_SECONDS: ClassVar[float] = 120.0
     # Re-polls allowed on the liveness-timeout path before a stall is declared
     # terminal. One is enough to cover the prompt-before-subscribe gap; the cap
@@ -737,11 +738,12 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         if self._session_id is None:
             return
 
-        reconciled = await self._reconcile_initial_terminal()
-        if reconciled is not None:
-            self._liveness.mark_activity()
-            yield reconciled
-            return
+        if not self._primary_observer_mode:
+            reconciled = await self._reconcile_initial_terminal()
+            if reconciled is not None:
+                self._liveness.mark_activity()
+                yield reconciled
+                return
 
         stall_reconciles_remaining = self._STALL_RECONCILE_LIMIT
 
@@ -754,22 +756,34 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
             stall_reconciles_remaining -= 1
             return await self._reconcile_on_stall()
 
-        async def _handle_stall() -> RawHarnessEvent | None:
-            """Resolve a read/open liveness stall into an event to yield, or None."""
+        async def _handle_stall() -> tuple[RawHarnessEvent | None, bool]:
+            """Resolve a liveness stall into an event and reconnect decision."""
 
             if self._process_exited():
-                return self._process_exit_event()
+                return self._process_exit_event(), False
+            if self._liveness.evaluate() is LivenessDecision.BACKEND_DEAD:
+                # A dead or mismatched backend identity cannot be repaired by reconnecting SSE.
+                logger.warning("OpenCode event stream stopped: backend is no longer alive")
+                self._set_failed()
+                return None, False
+            if self._primary_observer_mode:
+                logger.debug(
+                    "OpenCode event stream quiet for %.1fs; reconnecting persistent observer",
+                    self._LIVENESS_TIMEOUT_SECONDS,
+                )
+                self._liveness.mark_activity()
+                return None, True
             reconciled = await _reconcile_before_stall()
             if reconciled is not None:
                 self._liveness.mark_activity()
-                return reconciled
+                return reconciled, False
             logger.log(
                 logging.DEBUG if self._primary_observer_mode else logging.WARNING,
                 "OpenCode event stream liveness timeout after %.1fs without events",
                 self._LIVENESS_TIMEOUT_SECONDS,
             )
             self._set_failed()
-            return None
+            return None, False
 
         async def _open_response() -> aiohttp.ClientResponse:
             return await self._liveness.wait_for_activity(self._open_event_stream())
@@ -778,6 +792,8 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
         sse_data_lines: list[str] = []
         liveness: BackendLivenessPolicy = self._liveness
         event_queue: asyncio.Queue[RawHarnessEvent] = self._event_queue
+        open_failure: tuple[type[BaseException], str] | None = None
+        open_retry_delay = self._EVENT_RETRY_DELAY_SECONDS
 
         while self._state in ("connected", "stopping"):
             if self._process_exited():
@@ -789,26 +805,22 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 LivenessDecision.BACKEND_DEAD,
                 LivenessDecision.STREAM_STALLED,
             ):
-                reconciled = await _reconcile_before_stall()
-                if reconciled is not None:
-                    self._liveness.mark_activity()
-                    yield reconciled
+                event, reconnect = await _handle_stall()
+                if event is not None:
+                    yield event
+                if not reconnect:
                     return
-                logger.log(
-                    logging.DEBUG if self._primary_observer_mode else logging.WARNING,
-                    "OpenCode event stream liveness timeout after %.1fs without events",
-                    self._LIVENESS_TIMEOUT_SECONDS,
-                )
-                self._set_failed()
-                return
 
             self._liveness.mark_activity_if_idle()
             try:
                 response = await _open_response()
             except EventStreamLivenessTimeout:
-                event = await _handle_stall()
+                event, reconnect = await _handle_stall()
                 if event is not None:
                     yield event
+                if reconnect:
+                    await asyncio.sleep(self._EVENT_RETRY_DELAY_SECONDS)
+                    continue
                 return
             except Exception as exc:
                 if self._state in ("stopping", "stopped"):
@@ -818,9 +830,28 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                     if event is not None:
                         yield event
                     return
-                logger.warning("OpenCode event stream dropped; reconnecting: %s", exc)
-                await asyncio.sleep(self._EVENT_RETRY_DELAY_SECONDS)
+                if not self._primary_observer_mode:
+                    logger.warning("OpenCode event stream dropped; reconnecting: %s", exc)
+                    await asyncio.sleep(self._EVENT_RETRY_DELAY_SECONDS)
+                    continue
+                failure = (type(exc), str(exc))
+                if failure != open_failure:
+                    logger.warning(
+                        "OpenCode primary observer event stream open failed; retrying: %s",
+                        exc,
+                    )
+                open_failure = failure
+                await asyncio.sleep(open_retry_delay)
+                open_retry_delay = min(
+                    open_retry_delay * 2,
+                    self._EVENT_RETRY_MAX_DELAY_SECONDS,
+                )
                 continue
+
+            if open_failure is not None:
+                logger.info("OpenCode primary observer event stream reconnected")
+            open_failure = None
+            open_retry_delay = self._EVENT_RETRY_DELAY_SECONDS
 
             buffer = ""
             pending_read: asyncio.Task[bytes] | None = None
@@ -870,10 +901,27 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                         pending_read = None
                     except EventStreamLivenessTimeout:
                         pending_read = None
-                        event = await _handle_stall()
+                        event, reconnect = await _handle_stall()
                         if event is not None:
                             yield event
+                        if reconnect:
+                            break
                         return
+                    except (aiohttp.ClientError, OSError) as exc:
+                        pending_read = None
+                        if not self._primary_observer_mode:
+                            raise
+                        if self._process_exited():
+                            event = self._process_exit_event()
+                            if event is not None:
+                                yield event
+                            return
+                        logger.warning(
+                            "OpenCode event stream dropped; reconnecting persistent "
+                            "observer: %s",
+                            exc,
+                        )
+                        break
                     if not chunk:
                         break
                     buffer += chunk.decode("utf-8", errors="replace")
