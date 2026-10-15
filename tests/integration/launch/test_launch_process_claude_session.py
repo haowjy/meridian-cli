@@ -123,6 +123,7 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
         cwd: Any,
         env: Any,
         output_log_path: Any,
+        terminal_surface_mode: Any,
         on_child_started: Any = None,
     ) -> tuple[int, int]:
         command = tuple(command)
@@ -176,6 +177,7 @@ def test_run_harness_process_keeps_binding_when_observed_session_differs(
         cwd: Any,
         env: Any,
         output_log_path: Any,
+        terminal_surface_mode: Any,
         on_child_started: Any = None,
     ) -> tuple[int, int]:
         assert callable(on_child_started)
@@ -231,6 +233,7 @@ def test_run_harness_process_reconciles_claude_tui_trampoline_session_id(
         cwd: Any,
         env: Any,
         output_log_path: Any,
+        terminal_surface_mode: Any,
         on_child_started: Any = None,
     ) -> tuple[int, int]:
         command = tuple(command)

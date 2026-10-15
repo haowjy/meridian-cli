@@ -15,9 +15,11 @@ from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.platform.detached_process import (
     ParentDeathLink,
+    ParentWatchdog,
     detached_subprocess_config,
     link_child_lifetime_to_parent,
     release_parent_death_link,
+    start_parent_watchdog,
 )
 from meridian.lib.platform.process_scope import (
     ProcessScopeSnapshot,
@@ -84,6 +86,7 @@ class ManagedBackendConfig:
     cwd: Path
     env: dict[str, str]
     control_root: Path
+    parent_watchdog: ParentWatchdog | None = None
 
 
 @dataclass(frozen=True)
@@ -143,6 +146,13 @@ async def launch_managed_backend(
 
     runtime_root = resolve_project_runtime_root_for_write(config.control_root)
     subprocess_config = detached_subprocess_config()
+    parent_watchdog = config.parent_watchdog
+    owned_watchdog: ParentWatchdog | None = None
+    if not IS_WINDOWS and parent_watchdog is None:
+        owned_watchdog = await asyncio.to_thread(start_parent_watchdog)
+        parent_watchdog = owned_watchdog
+    if not IS_WINDOWS and parent_watchdog is None:
+        raise RuntimeError("Managed backend parent watchdog could not be started")
 
     try:
         process = await asyncio.create_subprocess_exec(
@@ -153,22 +163,38 @@ async def launch_managed_backend(
             stderr=stderr,
             **subprocess_config.kwargs,
         )
-    except (FileNotFoundError, NotADirectoryError) as exc:
-        raise HarnessBinaryNotFound.from_os_error(
-            harness_id=config.harness_id,
-            error=exc,
-            binary_name=config.command[0],
-        ) from exc
+    except BaseException as exc:
+        if owned_watchdog is not None:
+            await asyncio.to_thread(owned_watchdog.close)
+        if isinstance(exc, FileNotFoundError | NotADirectoryError):
+            raise HarnessBinaryNotFound.from_os_error(
+                harness_id=config.harness_id,
+                error=exc,
+                binary_name=config.command[0],
+            ) from exc
+        raise
 
     pid = process.pid
-    parent_death_link = (
-        ParentDeathLink(parent_death_linked=False)
-        if subprocess_config.parent_death_linked
-        else link_child_lifetime_to_parent(pid)
-    )
-    parent_death_linked = (
-        subprocess_config.parent_death_linked or parent_death_link.parent_death_linked
-    )
+    if IS_WINDOWS:
+        parent_death_link = link_child_lifetime_to_parent(pid)
+    else:
+        provisional_scope = spawn_owned_process_handle(
+            spawn_id=config.spawn_id,
+            process=process,
+            scope_id="backend",
+            role="harness_backend",
+        ).snapshot
+        if parent_watchdog is None or not parent_watchdog.register_scope(provisional_scope):
+            provisional_handle = ScopedProcessHandle(process=process, snapshot=provisional_scope)
+            await provisional_handle.terminate(reason="parent_watchdog_registration_failed")
+            if owned_watchdog is not None:
+                await asyncio.to_thread(owned_watchdog.close)
+            raise RuntimeError("Managed backend could not be linked to launcher lifetime")
+        parent_death_link = ParentDeathLink(
+            owned_watchdog=owned_watchdog,
+            parent_death_linked=True,
+        )
+    parent_death_linked = parent_death_link.parent_death_linked
 
     try:
         scope_handle = await register_spawn_owned_process(

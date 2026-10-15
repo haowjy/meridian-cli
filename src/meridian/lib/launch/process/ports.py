@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from meridian.lib.launch.launch_types import TerminalSurfaceMode
+
+if TYPE_CHECKING:
+    from meridian.lib.platform.detached_process import ParentWatchdog
 
 PRIMARY_STDERR_LOG_PATH_ENV = "_MERIDIAN_PRIMARY_STDERR_LOG_PATH"
 
@@ -30,12 +32,20 @@ class ProcessBackendId(StrEnum):
     WINDOWS_CONSOLE = "windows_console"
 
 
+class ProcessBackendSurface(StrEnum):
+    """Actual IO surface supplied by a selected process backend."""
+
+    PIPE_CAPTURE = "pipe_capture"
+    PTY_MEDIATED = "pty_mediated"
+    NATIVE_INHERIT = "native_inherit"
+
+
 @dataclass(frozen=True)
 class ProcessPlatformContract:
     """Explicit process/platform contract for one launcher backend."""
 
     backend_id: ProcessBackendId
-    surface_mode: TerminalSurfaceMode
+    surface: ProcessBackendSurface
     captures_output_to_artifact: bool
     platform_family: str
 
@@ -45,6 +55,9 @@ class RunningProcess(Protocol):
 
     @property
     def pid(self) -> int: ...
+
+    @property
+    def parent_death_linked(self) -> bool: ...
 
     def wait(self) -> LaunchedProcess: ...
 
@@ -65,6 +78,7 @@ class ProcessLauncher(Protocol):
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
+        parent_watchdog: ParentWatchdog | None = None,
     ) -> RunningProcess: ...
 
 
@@ -76,13 +90,20 @@ class SelectedProcessLauncher:
     contract: ProcessPlatformContract
 
 
-ProcessLauncherSelector = Callable[[Path | None], ProcessLauncher]
+class ProcessLauncherSelector(Protocol):
+    def __call__(
+        self,
+        output_log_path: Path | None,
+        *,
+        terminal_surface_mode: TerminalSurfaceMode,
+    ) -> ProcessLauncher: ...
 
 
 __all__ = [
     "PRIMARY_STDERR_LOG_PATH_ENV",
     "LaunchedProcess",
     "ProcessBackendId",
+    "ProcessBackendSurface",
     "ProcessLauncher",
     "ProcessLauncherSelector",
     "ProcessPlatformContract",

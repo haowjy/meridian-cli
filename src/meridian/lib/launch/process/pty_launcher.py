@@ -11,11 +11,14 @@ import threading
 from contextlib import ExitStack, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 from meridian.lib.platform import IS_WINDOWS, fcntl, pty, select, termios, tty
 
 from .ports import LaunchedProcess, ProcessLauncher
+
+if TYPE_CHECKING:
+    from meridian.lib.platform.detached_process import ParentWatchdog
 
 _MOUSE_MODE_RESET_SEQUENCE = (
     b"\x1b[?1000l"
@@ -167,6 +170,10 @@ class _RunningPtyProcess:
     output_log_path: Path | None
     wait_cancelled: threading.Event = field(default_factory=threading.Event)
 
+    @property
+    def parent_death_linked(self) -> bool:
+        return False
+
     def wait(self) -> LaunchedProcess:
         try:
             exit_code = _copy_primary_pty_output(
@@ -198,7 +205,9 @@ class PtyProcessLauncher(ProcessLauncher):
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
+        parent_watchdog: ParentWatchdog | None = None,
     ) -> _RunningPtyProcess:
+        _ = parent_watchdog
         if IS_WINDOWS:
             raise RuntimeError("PTY launcher is not available on Windows")
 

@@ -191,6 +191,7 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
         cwd: Any,
         env: Any,
         output_log_path: Any,
+        terminal_surface_mode: Any,
         on_child_started: Any = None,
     ) -> tuple[int, int]:
         nonlocal black_box_calls

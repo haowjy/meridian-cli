@@ -334,6 +334,10 @@ class FakeProcessLauncher(ProcessLauncher):
     def __post_init__(self) -> None:
         _publish_spawn(self.spawn_dir)
 
+    @property
+    def parent_death_linked(self) -> bool:
+        return False
+
     def start(
         self,
         *,
@@ -381,6 +385,10 @@ class BlockingProcessLauncher(ProcessLauncher):
 
     def __post_init__(self) -> None:
         _publish_spawn(self.spawn_dir)
+
+    @property
+    def parent_death_linked(self) -> bool:
+        return False
 
     def start(
         self,
@@ -970,6 +978,73 @@ async def test_primary_attach_writes_metadata_before_tui_launch(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
+async def test_primary_attach_shares_one_parent_watchdog_with_backend_and_tui(
+    tmp_path: Path,
+) -> None:
+    spawn_dir = tmp_path / "spawns" / "p900-watchdog"
+
+    class RecordingWatchdog:
+        close_calls = 0
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    class WatchdogConnection(FakeManagedConnection):
+        seen_watchdog: object | None = None
+
+        async def start(
+            self,
+            config: ConnectionConfig,
+            spec: ResolvedLaunchSpec,
+        ) -> None:
+            self.seen_watchdog = config.parent_watchdog
+            await super().start(config, spec)
+
+    class WatchdogProcessLauncher(FakeProcessLauncher):
+        seen_watchdog: object | None = None
+
+        def start(
+            self,
+            *,
+            command: tuple[str, ...],
+            cwd: Path,
+            env: dict[str, str],
+            output_log_path: Path | None,
+            parent_watchdog: object | None = None,
+        ) -> WatchdogProcessLauncher:
+            self.seen_watchdog = parent_watchdog
+            return super().start(
+                command=command,
+                cwd=cwd,
+                env=env,
+                output_log_path=output_log_path,
+            )
+
+    watchdog = RecordingWatchdog()
+    connection = WatchdogConnection(events=[])
+    process_launcher = WatchdogProcessLauncher(spawn_dir=spawn_dir)
+    launcher = PrimaryAttachLauncher(
+        spawn_id=SpawnId("p900-watchdog"),
+        spawn_dir=spawn_dir,
+        connection=connection,
+        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
+        process_launcher=process_launcher,
+        parent_watchdog=watchdog,  # type: ignore[arg-type]
+    )
+
+    await launcher.run(
+        config=_build_config(spawn_id=SpawnId("p900-watchdog"), control_root=tmp_path),
+        spec=_build_spec(),
+        cwd=tmp_path,
+        env={},
+    )
+
+    assert connection.seen_watchdog is watchdog
+    assert process_launcher.seen_watchdog is watchdog
+    assert watchdog.close_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_primary_attach_merges_observer_client_env_into_tui(tmp_path: Path) -> None:
     spawn_dir = tmp_path / "spawns" / "p905"
     connection = FakeManagedConnection(
@@ -1228,7 +1303,7 @@ async def test_primary_attach_signal_cancel_records_cancelled_and_restores_handl
     spawn_dir = tmp_path / "spawns" / "p902-signal"
     tui_started = asyncio.Event()
     connection = FakeManagedConnection(events=[], session_id="sess-signal")
-    process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir, wait_exit_code=130)
+    process_launcher = BlockingProcessLauncher(spawn_dir=spawn_dir, wait_exit_code=-signal.SIGHUP)
     terminated_scopes: list[str] = []
     installed_handlers: list[Any] = []
 
@@ -1245,6 +1320,7 @@ async def test_primary_attach_signal_cancel_records_cancelled_and_restores_handl
     monkeypatch.setattr(primary_attach_module, "terminate_scope_sync", _terminate_scope)
     before_term = signal.getsignal(signal.SIGTERM)
     before_hup = signal.getsignal(signal.SIGHUP)
+    before_int = signal.getsignal(signal.SIGINT)
     launcher = PrimaryAttachLauncher(
         spawn_id=SpawnId("p902-signal"),
         spawn_dir=spawn_dir,
@@ -1265,6 +1341,7 @@ async def test_primary_attach_signal_cancel_records_cancelled_and_restores_handl
     await tui_started.wait()
     assert installed_handlers
     assert installed_handlers[0] not in (signal.SIG_DFL, signal.SIG_IGN)
+    assert signal.getsignal(signal.SIGINT) not in (signal.SIG_DFL, signal.SIG_IGN)
 
     launcher._request_signal_cancel()
     outcome = await run_task
@@ -1274,6 +1351,46 @@ async def test_primary_attach_signal_cancel_records_cancelled_and_restores_handl
     assert terminated_scopes == ["tui:signal_cancelled"]
     assert signal.getsignal(signal.SIGTERM) is before_term
     assert signal.getsignal(signal.SIGHUP) is before_hup
+    assert signal.getsignal(signal.SIGINT) is before_int
+
+
+@pytest.mark.asyncio
+async def test_primary_attach_normal_exit_just_before_signal_is_not_cancelled(
+    tmp_path: Path,
+) -> None:
+    spawn_dir = tmp_path / "spawns" / "p902-normal-before-signal"
+    connection = FakeManagedConnection(events=[], session_id="sess-normal-before-signal")
+
+    class NormalExitBeforeSignal(FakeProcessLauncher):
+        launcher: PrimaryAttachLauncher | None = None
+
+        def wait(self) -> LaunchedProcess:
+            assert self.launcher is not None
+            self.launcher._request_signal_cancel()
+            return LaunchedProcess(exit_code=0, pid=self.pid)
+
+    process_launcher = NormalExitBeforeSignal(spawn_dir=spawn_dir)
+    launcher = PrimaryAttachLauncher(
+        spawn_id=SpawnId("p902-normal-before-signal"),
+        spawn_dir=spawn_dir,
+        connection=connection,
+        tui_command_builder=lambda session_id: ("codex", "resume", session_id),
+        process_launcher=process_launcher,
+    )
+    process_launcher.launcher = launcher
+
+    outcome = await launcher.run(
+        config=_build_config(
+            spawn_id=SpawnId("p902-normal-before-signal"),
+            control_root=tmp_path,
+        ),
+        spec=_build_spec(),
+        cwd=tmp_path,
+        env={},
+    )
+
+    assert outcome.cancelled is False
+    assert outcome.exit_code == 0
 
 
 @pytest.mark.asyncio

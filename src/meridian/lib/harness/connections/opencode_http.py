@@ -1012,6 +1012,7 @@ class OpenCodeV1Connection(HarnessConnection[ResolvedLaunchSpec]):
                 cwd=config.control_root,
                 env=env,
                 control_root=config.control_root,
+                parent_watchdog=config.parent_watchdog,
             ),
             stderr=self._stderr_handle,
         )

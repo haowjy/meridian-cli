@@ -25,9 +25,9 @@ run_harness_process()
 ```
 
 **Backend selection rules:**
-- Managed Codex/OpenCode + POSIX TTY: `NativeProcessLauncher` with inherited stdio
+- Managed Codex/OpenCode + POSIX: `NativeProcessLauncher` with inherited stdio
 - Managed Claude/Pi + POSIX TTY: `PtyProcessLauncher`
-- No TTY (CI, piped): `SubprocessProcessLauncher` portable fallback
+- PTY policy without a usable PTY: `SubprocessProcessLauncher` portable fallback
 - Legacy native-Windows branch (untested): `WindowsConsoleLauncher`
 - Output capture: PTY when available, otherwise subprocess pipes
 

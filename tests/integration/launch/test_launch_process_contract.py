@@ -110,6 +110,7 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
+        terminal_surface_mode: Any,
         on_child_started: Any,
     ) -> tuple[int, int]:
         nonlocal black_box_calls
@@ -168,6 +169,7 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
+        terminal_surface_mode: Any,
         on_child_started: Any,
     ) -> tuple[int, int]:
         nonlocal black_box_calls

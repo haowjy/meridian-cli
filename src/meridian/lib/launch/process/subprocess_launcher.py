@@ -10,9 +10,12 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from queue import Empty, Full, Queue
-from typing import BinaryIO
+from typing import TYPE_CHECKING, BinaryIO
 
 from meridian.lib.platform import IS_WINDOWS
+
+if TYPE_CHECKING:
+    from meridian.lib.platform.detached_process import ParentWatchdog
 
 from .ports import (
     PRIMARY_STDERR_LOG_PATH_ENV,
@@ -125,6 +128,10 @@ class _RunningSubprocess:
     wait_cancelled: threading.Event = field(default_factory=threading.Event)
 
     @property
+    def parent_death_linked(self) -> bool:
+        return False
+
+    @property
     def pid(self) -> int:
         return self.process.pid
 
@@ -219,7 +226,9 @@ class SubprocessProcessLauncher(ProcessLauncher):
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
+        parent_watchdog: ParentWatchdog | None = None,
     ) -> _RunningSubprocess:
+        _ = parent_watchdog
         child_env = dict(env)
         stderr_log_path_raw = child_env.pop(PRIMARY_STDERR_LOG_PATH_ENV, "").strip()
         stderr_log_path = Path(stderr_log_path_raw) if stderr_log_path_raw else None

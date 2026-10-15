@@ -404,6 +404,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                     cwd=effective_cwd,
                     env=env,
                     control_root=config.control_root,
+                    parent_watchdog=config.parent_watchdog,
                 ),
                 stderr=self._stderr_handle,
             )

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import signal
 import subprocess
+import sys
 from typing import TYPE_CHECKING, Any
 
 from meridian.lib.platform import detached_process
@@ -15,42 +15,13 @@ if TYPE_CHECKING:
 
 
 @posix_only
-def test_detached_subprocess_config_links_linux_parent_death_preexec(
+def test_detached_subprocess_config_isolates_backend_without_preexec(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(detached_process, "IS_WINDOWS", False)
-    monkeypatch.setattr(detached_process, "_linux_parent_death_sig_available", lambda: True)
-    calls: list[signal.Signals] = []
-
-    def _set_parent_death_signal(signum: signal.Signals) -> None:
-        calls.append(signum)
-
-    monkeypatch.setattr(
-        detached_process,
-        "_set_parent_death_signal",
-        _set_parent_death_signal,
-    )
-    monkeypatch.setattr(detached_process.os, "getppid", lambda: 4242)
-
-    config = detached_process.detached_subprocess_config()
-    preexec = config.kwargs["preexec_fn"]
-
-    assert config.parent_death_linked is True
-    assert config.kwargs["start_new_session"] is True
-    assert callable(preexec)
-    preexec()
-    assert calls == [signal.SIGKILL]
-
-
-def test_detached_subprocess_config_degrades_without_prctl(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(detached_process, "IS_WINDOWS", False)
-    monkeypatch.setattr(detached_process, "_linux_parent_death_sig_available", lambda: False)
 
     config = detached_process.detached_subprocess_config()
 
-    assert config.parent_death_linked is False
     assert config.kwargs == {"start_new_session": True}
     assert "preexec_fn" not in config.kwargs
 
@@ -58,45 +29,34 @@ def test_detached_subprocess_config_degrades_without_prctl(
 def test_link_child_lifetime_to_parent_posix_starts_watchdog(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class _Popen:
+    class _Process:
         pid = 4567
 
-        def __init__(self, command: tuple[str, ...], **kwargs: object) -> None:
-            launched.append((command, kwargs))
+    class _Watchdog:
+        process = _Process()
 
-    launched: list[tuple[tuple[str, ...], dict[str, object]]] = []
+        def register_scope(self, scope: ProcessScopeSnapshot) -> bool:
+            registered.append(scope)
+            return True
 
-    def _birth_epoch(pid: int) -> float:
-        return float(pid)
+        def close(self) -> None:
+            return None
+
+    registered: list[ProcessScopeSnapshot] = []
 
     def _pgid(_pid: int) -> int:
         return 1234
 
-    def _watchdog_ready(_fd: int) -> bool:
-        return True
-
     monkeypatch.setattr(detached_process, "IS_WINDOWS", False)
-    monkeypatch.setattr(detached_process, "_process_birth_epoch", _birth_epoch)
     monkeypatch.setattr(detached_process, "_process_group_id", _pgid)
-    monkeypatch.setattr(detached_process, "_watchdog_reported_ready", _watchdog_ready)
-    monkeypatch.setattr(detached_process.subprocess, "Popen", _Popen)
+    monkeypatch.setattr(detached_process, "start_parent_watchdog", _Watchdog)
 
     link = detached_process.link_child_lifetime_to_parent(1234)
 
     assert link.parent_death_linked is True
     assert link.watchdog_process is not None
     assert link.watchdog_process.pid == 4567
-    assert launched
-    command, kwargs = launched[0]
-    assert command[:3] == (
-        detached_process.sys.executable,
-        "-m",
-        "meridian.lib.platform.parent_watchdog",
-    )
-    assert "--target-pid" in command
-    assert "1234" in command
-    assert kwargs["start_new_session"] is True
-    assert kwargs["stdin"] == subprocess.DEVNULL
+    assert [(scope.root_pid, scope.pgid) for scope in registered] == [(1234, 1234)]
 
 
 def test_detached_subprocess_config_links_windows_child_with_job(
@@ -115,7 +75,6 @@ def test_detached_subprocess_config_links_windows_child_with_job(
     monkeypatch.setattr(windows_job, "assign_to_new_job", _assign)
 
     config = detached_process.detached_subprocess_config()
-    assert config.parent_death_linked is False
     assert config.kwargs == {}
 
     link = detached_process.link_child_lifetime_to_parent(1234)
@@ -153,12 +112,15 @@ def test_link_child_lifetime_to_parent_posix_falls_back_to_pid_tree_watchdog(
     monkeypatch.setattr(detached_process, "IS_WINDOWS", False)
     monkeypatch.setattr(detached_process, "_process_group_id", _pgid_unavailable)
 
-    link = detached_process.link_child_lifetime_to_parent(4242)
+    child = subprocess.Popen((sys.executable, "-c", "import time; time.sleep(60)"))
+    link = detached_process.link_child_lifetime_to_parent(child.pid)
 
     try:
         assert link.parent_death_linked is True
         assert link.watchdog_process is not None
     finally:
+        child.terminate()
+        child.wait(timeout=5.0)
         detached_process.release_parent_death_link(link)
 
 

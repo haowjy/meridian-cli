@@ -135,6 +135,7 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
         cwd: Any,
         env: Any,
         output_log_path: Any,
+        terminal_surface_mode: Any,
         on_child_started: Any = None,
     ) -> tuple[int, int]:
         command = tuple(command)
@@ -213,6 +214,7 @@ def test_run_harness_process_black_box_primary_uses_control_root_with_distinct_t
         cwd: Any,
         env: Any,
         output_log_path: Any,
+        terminal_surface_mode: Any,
         on_child_started: Any = None,
     ) -> tuple[int, int]:
         _ = command, output_log_path
@@ -264,6 +266,7 @@ def test_run_harness_process_claude_primary_print_json_persists_session_id_from_
         cwd: Any,
         env: Any,
         output_log_path: Any,
+        terminal_surface_mode: Any,
         on_child_started: Any = None,
     ) -> tuple[int, int]:
         assert isinstance(output_log_path, Path)
@@ -338,6 +341,7 @@ def test_run_harness_process_claude_primary_stays_on_black_box_path(
         cwd: Any,
         env: Any,
         output_log_path: Any,
+        terminal_surface_mode: Any,
         on_child_started: Any = None,
     ) -> tuple[int, int]:
         nonlocal black_box_calls
@@ -407,7 +411,15 @@ def test_primary_print_survives_corrupt_stdout_and_fold_drift(monkeypatch, tmp_p
             raise ValueError("format drift")
         original_fold(self, kind, payload)
 
-    def captured_child(command, cwd, env, output_log_path, on_child_started=None):
+    def captured_child(
+        command,
+        cwd,
+        env,
+        output_log_path,
+        terminal_surface_mode,
+        on_child_started=None,
+    ):
+        _ = terminal_surface_mode
         output_log_path.write_bytes(
             b'\xff\n{"type":"broken"}\n'
             b'{"type":"result","result":"surviving report","usage":{"input_tokens":7}}\n'

@@ -60,6 +60,8 @@ from meridian.lib.launch.constants import (
 from meridian.lib.launch.extract import enrich_finalize
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.launch.native_run import NativeRun, bind_entry, conclude_native_run
+from meridian.lib.platform import IS_WINDOWS
+from meridian.lib.platform.detached_process import start_parent_watchdog
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_spawn_log_dir
@@ -92,7 +94,7 @@ from .ports import (
     ProcessLauncherSelector,
 )
 from .primary_attach import PrimaryAttachError, PrimaryAttachLauncher, PrimaryAttachOutcome
-from .selector import select_process_backend, select_process_launcher
+from .selector import select_process_launcher
 from .session import (
     build_session_metadata,
     resolve_attached_work_id,
@@ -165,7 +167,14 @@ def _write_native_primary_metadata(
 
 
 RunPrimaryProcessWithCapture = Callable[
-    [tuple[str, ...], Path, dict[str, str], Path | None, Callable[[int], None] | None],
+    [
+        tuple[str, ...],
+        Path,
+        dict[str, str],
+        Path | None,
+        TerminalSurfaceMode,
+        Callable[[int], None] | None,
+    ],
     tuple[int, int | None],
 ]
 RunPrimaryAttach = Callable[
@@ -190,11 +199,15 @@ def run_primary_process_with_capture(
     cwd: Path,
     env: dict[str, str],
     output_log_path: Path | None,
+    terminal_surface_mode: TerminalSurfaceMode,
     on_child_started: Callable[[int], None] | None = None,
     *,
     launcher_selector: ProcessLauncherSelector = select_process_launcher,
 ) -> tuple[int, int | None]:
-    launcher: ProcessLauncher = launcher_selector(output_log_path)
+    launcher: ProcessLauncher = launcher_selector(
+        output_log_path,
+        terminal_surface_mode=terminal_surface_mode,
+    )
 
     running = launcher.start(
         command=command,
@@ -291,6 +304,7 @@ def _execute_via_blackbox(
     launch_cwd: Path,
     child_env: dict[str, str],
     output_log_path: Path | None,
+    terminal_surface_mode: TerminalSurfaceMode,
     run_primary_process_with_capture_fn: RunPrimaryProcessWithCapture,
     on_running: Callable[[int], None],
 ) -> int:
@@ -301,6 +315,7 @@ def _execute_via_blackbox(
         launch_cwd,
         child_env,
         output_log_path,
+        terminal_surface_mode,
         on_running,
     )
     return exit_code
@@ -372,6 +387,7 @@ def _execute_primary_process(
         launch_cwd=launch_cwd,
         child_env=blackbox_env,
         output_log_path=output_log_path,
+        terminal_surface_mode=terminal_surface_mode,
         run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
         on_running=on_running,
     )
@@ -519,17 +535,24 @@ async def _run_primary_attach(
             env=env,
         )
         fold = harness_bundle.extractor.create_fold()
+        tui_command_builder = passthrough.build_tui_command(connection, spec)
+        parent_watchdog = None
+        if not IS_WINDOWS:
+            parent_watchdog = await asyncio.to_thread(start_parent_watchdog)
+            if parent_watchdog is None:
+                raise RuntimeError("Managed primary parent watchdog could not be started")
 
         launcher = PrimaryAttachLauncher(
             spawn_id=spawn_id,
             spawn_dir=spawn_dir,
             connection=connection,
-            tui_command_builder=passthrough.build_tui_command(connection, spec),
+            tui_command_builder=tui_command_builder,
             process_launcher=process_launcher,
             runtime_root=spawn_dir.parent.parent,
             on_running=on_running,
             session_id_observer=session_id_observer,
             fold=fold,
+            parent_watchdog=parent_watchdog,
         )
         return await launcher.run(
             config=config,
@@ -1039,6 +1062,4 @@ __all__ = [
     "run_harness_process",
     "run_primary_attach",
     "run_primary_process_with_capture",
-    "select_process_backend",
-    "select_process_launcher",
 ]

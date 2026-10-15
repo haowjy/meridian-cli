@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from meridian.lib.platform import IS_WINDOWS
+
+if TYPE_CHECKING:
+    from meridian.lib.platform.detached_process import ParentWatchdog
 
 from .ports import ProcessLauncher, RunningProcess
 from .subprocess_launcher import SubprocessProcessLauncher
@@ -29,6 +33,7 @@ class WindowsConsoleLauncher(ProcessLauncher):
         cwd: Path,
         env: dict[str, str],
         output_log_path: Path | None,
+        parent_watchdog: ParentWatchdog | None = None,
     ) -> RunningProcess:
         logger.debug("Windows console-inheritance mode (no PTY capture available)")
         return SubprocessProcessLauncher().start(
@@ -36,6 +41,7 @@ class WindowsConsoleLauncher(ProcessLauncher):
             cwd=cwd,
             env=env,
             output_log_path=output_log_path,
+            parent_watchdog=parent_watchdog,
         )
 
 

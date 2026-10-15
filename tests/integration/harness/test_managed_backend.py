@@ -16,7 +16,11 @@ from meridian.lib.harness.connections.managed_backend import (
     ManagedBackendConfig,
     launch_managed_backend,
 )
-from meridian.lib.platform.detached_process import DetachedSubprocessConfig, ParentDeathLink
+from meridian.lib.platform.detached_process import (
+    DetachedSubprocessConfig,
+    ParentDeathLink,
+    release_parent_death_link,
+)
 from meridian.lib.platform.process_scope.base import PROCESS_BIRTH_UNKNOWN_EPOCH
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.process_scope_projection import read_scopes_from_disk
@@ -40,29 +44,17 @@ def _publish_spawn(tmp_path: Path, spawn_id: SpawnId, *, status: str = "running"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("preexec_linked", "post_spawn_linked"),
-    ((True, False), (False, True)),
-)
 async def test_launch_managed_backend_records_scope_with_parent_death_outcome(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    preexec_linked: bool,
-    post_spawn_linked: bool,
 ) -> None:
     spawn_id = SpawnId("spawn-3")
     _publish_spawn(tmp_path, spawn_id)
+    registered = []
 
-    monkeypatch.setattr(
-        managed_backend,
-        "detached_subprocess_config",
-        lambda: DetachedSubprocessConfig(kwargs={}, parent_death_linked=preexec_linked),
-    )
-    monkeypatch.setattr(
-        managed_backend,
-        "link_child_lifetime_to_parent",
-        lambda _pid: ParentDeathLink(parent_death_linked=post_spawn_linked),
-    )
+    class RecordingWatchdog:
+        def register_scope(self, scope: object) -> bool:
+            registered.append(scope)
+            return True
 
     handle = await launch_managed_backend(
         ManagedBackendConfig(
@@ -72,6 +64,7 @@ async def test_launch_managed_backend_records_scope_with_parent_death_outcome(
             cwd=tmp_path,
             env=os.environ.copy(),
             control_root=tmp_path,
+            parent_watchdog=RecordingWatchdog(),  # type: ignore[arg-type]
         ),
         stderr=asyncio.subprocess.DEVNULL,
     )
@@ -80,6 +73,7 @@ async def test_launch_managed_backend_records_scope_with_parent_death_outcome(
     scopes = read_scopes_from_disk(runtime_root, spawn_id)
 
     assert handle.scope_handle.snapshot.parent_death_linked is True
+    assert len(registered) == 1
     assert [(scope.scope_id, scope.root_pid, scope.parent_death_linked) for scope in scopes] == [
         ("backend", handle.scope_handle.snapshot.root_pid, True)
     ]
@@ -105,14 +99,8 @@ async def test_launch_managed_backend_records_unknown_birth_sentinel_when_create
     monkeypatch.setattr(
         managed_backend,
         "detached_subprocess_config",
-        lambda: DetachedSubprocessConfig(kwargs={}, parent_death_linked=False),
+        lambda: DetachedSubprocessConfig(kwargs={}),
     )
-    monkeypatch.setattr(
-        managed_backend,
-        "link_child_lifetime_to_parent",
-        lambda _pid: ParentDeathLink(parent_death_linked=False),
-    )
-
     handle = await launch_managed_backend(
         ManagedBackendConfig(
             spawn_id=spawn_id,
@@ -129,6 +117,7 @@ async def test_launch_managed_backend_records_unknown_birth_sentinel_when_create
     assert handle.scope_handle.snapshot.root_created_at_epoch == PROCESS_BIRTH_UNKNOWN_EPOCH
     assert [scope.root_created_at_epoch for scope in scopes] == [PROCESS_BIRTH_UNKNOWN_EPOCH]
     await handle.process.wait()
+    await asyncio.to_thread(release_parent_death_link, handle.parent_death_link)
 
 
 @pytest.mark.asyncio

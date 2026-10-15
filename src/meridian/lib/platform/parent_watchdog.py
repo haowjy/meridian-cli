@@ -1,15 +1,16 @@
-"""Subprocess parent-death watchdog.
+"""Launcher parent-death watchdog for one or more process scopes.
 
-Runs as a tiny helper process on POSIX platforms that lack a native
-parent-death signal. It watches the Meridian launcher process and terminates a
-PID-guarded target process tree or isolated process group if the launcher
-disappears before the scope is empty.
+The watchdog is started before a launcher creates children. The launcher then
+registers each concrete scope over a pipe. A graceful launcher shutdown sends
+an explicit shutdown message; EOF without that message means the launcher died
+and every registered scope is terminated.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import select
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -17,11 +18,8 @@ from dataclasses import dataclass
 import psutil
 
 from meridian.lib.platform.process_scope import terminate_scope_sync
-from meridian.lib.platform.process_scope.base import (
-    PROCESS_BIRTH_UNKNOWN_EPOCH,
-    ProcessScopeSnapshot,
-    birth_time_unverified,
-)
+from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot, birth_time_unverified
+from meridian.lib.utils.json_shapes import json_object, loads_json_object
 
 _DEFAULT_POLL_INTERVAL_SECONDS = 0.5
 _DEFAULT_GRACE_SECONDS = 5.0
@@ -39,7 +37,10 @@ def process_is_same_birth(process: WatchedProcess) -> bool:
     if process.pid <= 0:
         return False
     try:
-        actual = psutil.Process(process.pid).create_time()
+        actual_process = psutil.Process(process.pid)
+        if actual_process.status() == psutil.STATUS_ZOMBIE:
+            return False
+        actual = actual_process.create_time()
     except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
         return False
     if birth_time_unverified(process.created_at_epoch):
@@ -81,7 +82,7 @@ def watch_parent_until_exit(
     terminate_scope: Callable[..., object] = terminate_scope_sync,
     sleep: Callable[[float], None] = time.sleep,
 ) -> int:
-    """Watch *parent* and terminate *target_scope* if the parent dies first."""
+    """Watch one scope. Kept as the small pure seam used by scope tests."""
 
     while True:
         if not target_alive(target_scope):
@@ -96,15 +97,129 @@ def watch_parent_until_exit(
         sleep(max(0.05, poll_interval_seconds))
 
 
+def _scope_from_wire(payload: object) -> ProcessScopeSnapshot:
+    narrowed = json_object(payload)
+    if narrowed is None:
+        raise ValueError("watchdog scope payload must be an object")
+    payload = narrowed
+    return ProcessScopeSnapshot(
+        scope_id=str(payload["scope_id"]),
+        owner_policy=str(payload["owner_policy"]),
+        owner_id=str(payload["owner_id"]),
+        role=str(payload["role"]),
+        containment=str(payload["containment"]),
+        root_pid=int(str(payload["root_pid"])),
+        root_created_at_epoch=float(str(payload["root_created_at_epoch"])),
+        pgid=int(str(payload["pgid"])) if payload.get("pgid") is not None else None,
+        job_name=str(payload["job_name"]) if payload.get("job_name") is not None else None,
+        degraded_reason=(
+            str(payload["degraded_reason"])
+            if payload.get("degraded_reason") is not None
+            else None
+        ),
+        parent_death_linked=True,
+        release_id=str(payload.get("release_id", "")),
+    )
+
+
+def _handle_message(
+    raw_line: bytes,
+    scopes: dict[str, ProcessScopeSnapshot],
+) -> bool:
+    """Apply one control message; return True for graceful shutdown."""
+
+    payload = loads_json_object(raw_line.decode("utf-8"))
+    if payload is None:
+        raise ValueError("watchdog message must be a valid object")
+    action = payload.get("action")
+    if action == "register":
+        scope = _scope_from_wire(payload.get("scope"))
+        scopes[scope.release_id] = scope
+        return False
+    if action == "shutdown":
+        return True
+    raise ValueError(f"unknown watchdog action: {action!r}")
+
+
+def watch_parent_scopes(
+    *,
+    parent: WatchedProcess,
+    control_fd: int,
+    poll_interval_seconds: float = _DEFAULT_POLL_INTERVAL_SECONDS,
+    grace_seconds: float = _DEFAULT_GRACE_SECONDS,
+) -> int:
+    """Read scope registrations and terminate them if the launcher disappears."""
+
+    scopes: dict[str, ProcessScopeSnapshot] = {}
+    buffered = b""
+    graceful_shutdown = False
+    parent_died = False
+
+    while not graceful_shutdown and not parent_died:
+        if not process_is_same_birth(parent):
+            parent_died = True
+            break
+        readable, _, _ = select.select(
+            [control_fd],
+            [],
+            [],
+            max(0.05, poll_interval_seconds),
+        )
+        if not readable:
+            continue
+        chunk = os.read(control_fd, 64 * 1024)
+        if not chunk:
+            # The only graceful close is an explicit shutdown message. A bare
+            # EOF is a crash, including SIGKILL while the parent is a zombie.
+            parent_died = True
+            break
+        buffered += chunk
+        while b"\n" in buffered:
+            raw_line, buffered = buffered.split(b"\n", 1)
+            if not raw_line:
+                continue
+            try:
+                graceful_shutdown = _handle_message(raw_line, scopes)
+            except (KeyError, TypeError, ValueError, UnicodeDecodeError):
+                # Fail closed: malformed parent control must not silently drop
+                # the launcher's lifetime protection.
+                parent_died = True
+                break
+            if graceful_shutdown:
+                break
+
+    if not parent_died:
+        return 0
+
+    # Drain registrations already committed to the pipe before EOF so a child
+    # started immediately before launcher death is still covered.
+    while True:
+        chunk = os.read(control_fd, 64 * 1024)
+        if not chunk:
+            break
+        buffered += chunk
+    for raw_line in buffered.splitlines():
+        if not raw_line:
+            continue
+        try:
+            _handle_message(raw_line, scopes)
+        except (KeyError, TypeError, ValueError, UnicodeDecodeError):
+            continue
+
+    for scope in reversed(tuple(scopes.values())):
+        terminate_scope_sync(
+            scope,
+            grace_seconds=grace_seconds,
+            reason="parent_exit_watchdog",
+        )
+    return 0
+
+
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--parent-pid", type=int, required=True)
     parser.add_argument("--parent-created-at", type=float, required=True)
-    parser.add_argument("--target-pid", type=int, required=True)
-    parser.add_argument("--target-created-at", type=float, required=True)
-    parser.add_argument("--target-pgid", type=int, default=0)
-    parser.add_argument("--scope-id", default="backend")
-    parser.add_argument("--role", default="harness_backend")
+    parser.add_argument("--control-fd", type=int, required=True)
     parser.add_argument("--ready-fd", type=int, default=-1)
     parser.add_argument("--poll-interval", type=float, default=_DEFAULT_POLL_INTERVAL_SECONDS)
     parser.add_argument("--grace-seconds", type=float, default=_DEFAULT_GRACE_SECONDS)
@@ -113,36 +228,26 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
-    target_pgid = args.target_pgid if args.target_pgid > 0 else None
-    target_scope = ProcessScopeSnapshot(
-        scope_id=args.scope_id,
-        owner_policy="spawn_owned",
-        owner_id=f"parent-watchdog:{args.parent_pid}",
-        role=args.role,
-        containment="posix_pgid" if target_pgid is not None else "pid_tree_fallback",
-        root_pid=args.target_pid,
-        root_created_at_epoch=args.target_created_at or PROCESS_BIRTH_UNKNOWN_EPOCH,
-        pgid=target_pgid,
-        job_name=None,
-        degraded_reason=None,
-    )
     if args.ready_fd >= 0:
         try:
             os.write(args.ready_fd, b"1")
         finally:
             os.close(args.ready_fd)
-    return watch_parent_until_exit(
-        parent=WatchedProcess(
-            pid=args.parent_pid,
-            created_at_epoch=args.parent_created_at or PROCESS_BIRTH_UNKNOWN_EPOCH,
-        ),
-        target_scope=target_scope,
-        poll_interval_seconds=args.poll_interval,
-        grace_seconds=args.grace_seconds,
-    )
+    try:
+        return watch_parent_scopes(
+            parent=WatchedProcess(
+                pid=args.parent_pid,
+                created_at_epoch=args.parent_created_at,
+            ),
+            control_fd=args.control_fd,
+            poll_interval_seconds=args.poll_interval,
+            grace_seconds=args.grace_seconds,
+        )
+    finally:
+        os.close(args.control_fd)
 
 
-if __name__ == "__main__":  # pragma: no cover - exercised by subprocess smoke tests
+if __name__ == "__main__":  # pragma: no cover - exercised by subprocess tests
     raise SystemExit(main())
 
 
@@ -151,5 +256,6 @@ __all__ = [
     "main",
     "process_is_same_birth",
     "process_scope_is_alive",
+    "watch_parent_scopes",
     "watch_parent_until_exit",
 ]

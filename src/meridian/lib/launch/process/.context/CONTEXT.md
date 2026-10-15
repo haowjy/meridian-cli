@@ -6,20 +6,25 @@
 `ProcessPlatformContract` describing how IO is surfaced.
 
 Selection when output capture is requested (`output_log_path` is set):
-1. `PtyProcessLauncher` (PTY_MEDIATED, captures to artifact) — if `can_use_pty()`
-2. `SubprocessProcessLauncher` (PIPE_CAPTURE, captures to artifact) — fallback
+1. `PtyProcessLauncher` (`ProcessBackendSurface.PTY_MEDIATED`) — if `can_use_pty()`
+2. `SubprocessProcessLauncher` (`ProcessBackendSurface.PIPE_CAPTURE`) — fallback
 
 When no capture is needed, resolved `TerminalSurfaceMode` is authoritative:
-- `NATIVE_INHERIT` uses `NativeProcessLauncher` on a POSIX TTY. It inherits
-  stdio and the shell's process group, resets child SIGINT, links child death to
-  the launcher, and records only a PID-tree scope because the process group is shared.
+- `NATIVE_INHERIT` uses `NativeProcessLauncher` on POSIX, including piped/no-TTY
+  environments. It inherits stdio and the launcher's process group and records a
+  PID-tree scope because the process group is shared.
 - `PTY_MEDIATED` uses `PtyProcessLauncher` when a POSIX PTY is available.
-- No-TTY environments use `SubprocessProcessLauncher` as a portable inherited-IO fallback.
+- `PTY_MEDIATED` falls back to `SubprocessProcessLauncher` where PTYs are unavailable.
 - `WindowsConsoleLauncher` remains the legacy native-console branch.
 
 Harness adapter capabilities select the resolved mode: Codex/OpenCode use native
-inherit; Claude/Pi use PTY mediation. TTY detection validates platform capability;
-it does not override managed-primary policy.
+inherit; Claude/Pi use PTY mediation. The mode is adapter policy, not persisted
+continue state.
+
+On POSIX, managed attach starts one PID/birth-guarded watchdog before either
+child. The backend registers its isolated process-group scope and the native TUI
+registers its PID-tree scope over the watchdog pipe. A graceful launcher close
+releases the watchdog; launcher death terminates every registered scope.
 
 `captures_output_to_artifact` on `ProcessPlatformContract` is authoritative — callers must
 not assume capture based on launcher type alone.
@@ -53,7 +58,8 @@ enter the same pipeline through `conclude_native_run` after exit.
 
 ### Signal cancellation
 
-`PrimaryAttachLauncher` registers a `SignalCallbackReceiver` (targets `SIGTERM`/`SIGHUP`)
+`PrimaryAttachLauncher` registers a cancellation receiver (targets `SIGTERM`/`SIGHUP`)
+and a no-op `SIGINT` receiver
 with the process-global `SignalCoordinator` (`lib/launch/signals.py`) for the duration of
 `run()`. A closed terminal sends SIGHUP and a killed process sends SIGTERM; catching them
 lets the launcher stop the TUI wait through `RunningProcess.cancel_wait()` and finalize
@@ -64,9 +70,9 @@ receiver is unregistered in `run()`'s `finally`, which restores the previous han
   signals (main thread only) and restores any signal no longer targeted; it is the single
   seam for both the streaming `SignalForwarder` (`SIGINT`/`SIGTERM` → subprocess) and this
   launcher receiver.
-- The wait returns exit 130 when `cancel_wait()` unblocks it; cancellation is asserted
-  only when the signal was seen **and** the relay returned 130, so a session that exited
-  normally just before the signal is not recorded as cancelled.
+- The wait returns exit 130 when `cancel_wait()` unblocks it. Cancellation is asserted
+  when the launcher saw SIGHUP/SIGTERM and the TUI either died by signal or the wait was
+  cancelled; a normal TUI exit that won the race is not recorded as cancelled.
 - A signal that arrives before the TUI exists (during backend startup) is latched and
   honored once the TUI starts. If startup then fails, `run()` returns a cancelled outcome
   rather than raising, so `_execute_primary_process()` does not fall back to a black-box

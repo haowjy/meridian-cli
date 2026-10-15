@@ -6,9 +6,10 @@ from pathlib import Path
 
 from meridian.lib.launch.launch_types import TerminalSurfaceMode
 
-from .native_launcher import NativeProcessLauncher, can_use_native_terminal
+from .native_launcher import NativeProcessLauncher
 from .ports import (
     ProcessBackendId,
+    ProcessBackendSurface,
     ProcessLauncher,
     ProcessPlatformContract,
     SelectedProcessLauncher,
@@ -21,7 +22,7 @@ from .windows_launcher import WindowsConsoleLauncher, can_use_windows_console_la
 def select_process_launcher(
     output_log_path: Path | None,
     *,
-    terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED,
+    terminal_surface_mode: TerminalSurfaceMode,
 ) -> ProcessLauncher:
     """Choose one launcher for an explicitly resolved terminal surface."""
 
@@ -34,7 +35,7 @@ def select_process_launcher(
 def select_process_backend(
     output_log_path: Path | None,
     *,
-    terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED,
+    terminal_surface_mode: TerminalSurfaceMode,
 ) -> SelectedProcessLauncher:
     """Choose the launcher and describe the actual IO surface it provides."""
 
@@ -44,7 +45,7 @@ def select_process_backend(
                 launcher=PtyProcessLauncher(),
                 contract=ProcessPlatformContract(
                     backend_id=ProcessBackendId.PTY,
-                    surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
+                    surface=ProcessBackendSurface.PTY_MEDIATED,
                     captures_output_to_artifact=True,
                     platform_family="posix",
                 ),
@@ -53,7 +54,7 @@ def select_process_backend(
             launcher=SubprocessProcessLauncher(),
             contract=ProcessPlatformContract(
                 backend_id=ProcessBackendId.SUBPROCESS,
-                surface_mode=TerminalSurfaceMode.PIPE_CAPTURE,
+                surface=ProcessBackendSurface.PIPE_CAPTURE,
                 captures_output_to_artifact=True,
                 platform_family="portable",
             ),
@@ -65,29 +66,27 @@ def select_process_backend(
                 launcher=WindowsConsoleLauncher(),
                 contract=ProcessPlatformContract(
                     backend_id=ProcessBackendId.WINDOWS_CONSOLE,
-                    surface_mode=TerminalSurfaceMode.NATIVE_INHERIT,
+                    surface=ProcessBackendSurface.NATIVE_INHERIT,
                     captures_output_to_artifact=False,
                     platform_family="windows",
                 ),
             )
-        if can_use_native_terminal():
-            return SelectedProcessLauncher(
-                launcher=NativeProcessLauncher(),
-                contract=ProcessPlatformContract(
-                    backend_id=ProcessBackendId.NATIVE,
-                    surface_mode=TerminalSurfaceMode.NATIVE_INHERIT,
-                    captures_output_to_artifact=False,
-                    platform_family="posix",
-                ),
-            )
-        return _portable_inherit_fallback()
+        return SelectedProcessLauncher(
+            launcher=NativeProcessLauncher(),
+            contract=ProcessPlatformContract(
+                backend_id=ProcessBackendId.NATIVE,
+                surface=ProcessBackendSurface.NATIVE_INHERIT,
+                captures_output_to_artifact=False,
+                platform_family="posix",
+            ),
+        )
 
     if terminal_surface_mode is TerminalSurfaceMode.PTY_MEDIATED and can_use_pty():
         return SelectedProcessLauncher(
             launcher=PtyProcessLauncher(),
             contract=ProcessPlatformContract(
                 backend_id=ProcessBackendId.PTY,
-                surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
+                surface=ProcessBackendSurface.PTY_MEDIATED,
                 captures_output_to_artifact=False,
                 platform_family="posix",
             ),
@@ -98,20 +97,16 @@ def select_process_backend(
             launcher=WindowsConsoleLauncher(),
             contract=ProcessPlatformContract(
                 backend_id=ProcessBackendId.WINDOWS_CONSOLE,
-                surface_mode=TerminalSurfaceMode.NATIVE_INHERIT,
+                surface=ProcessBackendSurface.NATIVE_INHERIT,
                 captures_output_to_artifact=False,
                 platform_family="windows",
             ),
         )
-    return _portable_inherit_fallback()
-
-
-def _portable_inherit_fallback() -> SelectedProcessLauncher:
     return SelectedProcessLauncher(
         launcher=SubprocessProcessLauncher(),
         contract=ProcessPlatformContract(
             backend_id=ProcessBackendId.SUBPROCESS,
-            surface_mode=TerminalSurfaceMode.NATIVE_INHERIT,
+            surface=ProcessBackendSurface.NATIVE_INHERIT,
             captures_output_to_artifact=False,
             platform_family="portable",
         ),

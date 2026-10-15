@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 from contextlib import suppress
+from pathlib import Path
 
 import psutil
 
@@ -27,6 +28,15 @@ def _process_is_running(pid: int) -> bool:
         return psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
     except (psutil.NoSuchProcess, psutil.AccessDenied):
         return False
+
+
+def _wait_for_file(path: Path, *, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.is_file() and path.stat().st_size > 0:
+            return
+        time.sleep(0.02)
+    raise AssertionError(f"Timed out waiting for {path}")
 
 
 @posix_only
@@ -103,3 +113,69 @@ def test_watchdog_terminates_group_after_scope_root_exits() -> None:
         if child_pid > 0:
             with suppress(ProcessLookupError):
                 os.kill(child_pid, signal.SIGKILL)
+
+
+@posix_only
+def test_watchdog_kills_backend_wrapper_group_when_launcher_is_killed(
+    tmp_path: Path,
+) -> None:
+    root_pid_path = tmp_path / "backend-wrapper.pid"
+    grandchild_pid_path = tmp_path / "backend-grandchild.pid"
+    parent_code = """
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+from meridian.lib.platform.detached_process import link_child_lifetime_to_parent
+
+root_pid_path, grandchild_pid_path = sys.argv[1:]
+root = subprocess.Popen(
+    ("sh", "-c", f"sleep 300 & echo $! > {grandchild_pid_path}; wait"),
+    start_new_session=True,
+)
+link = link_child_lifetime_to_parent(root.pid)
+if not link.parent_death_linked:
+    raise RuntimeError("watchdog unavailable")
+Path(root_pid_path).write_text(str(root.pid))
+root.wait()
+""".strip()
+    parent = subprocess.Popen(
+        (
+            sys.executable,
+            "-c",
+            parent_code,
+            str(root_pid_path),
+            str(grandchild_pid_path),
+        ),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    root_pid = 0
+    grandchild_pid = 0
+    try:
+        _wait_for_file(root_pid_path)
+        _wait_for_file(grandchild_pid_path)
+        root_pid = int(root_pid_path.read_text(encoding="utf-8"))
+        grandchild_pid = int(grandchild_pid_path.read_text(encoding="utf-8"))
+
+        os.kill(parent.pid, signal.SIGKILL)
+        parent.wait(timeout=5.0)
+
+        deadline = time.monotonic() + 8.0
+        while (
+            (_process_is_running(root_pid) or _process_is_running(grandchild_pid))
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.05)
+        assert _process_is_running(root_pid) is False
+        assert _process_is_running(grandchild_pid) is False
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+            parent.wait(timeout=5.0)
+        for pid in (root_pid, grandchild_pid):
+            if pid > 0 and _process_is_running(pid):
+                with suppress(ProcessLookupError):
+                    os.kill(pid, signal.SIGKILL)

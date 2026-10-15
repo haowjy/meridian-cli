@@ -609,7 +609,6 @@ def _resolve_policy_from_snapshot(
         skills_readonly=surface.skills_readonly,
         alias_catalog=surface.catalog.alias_map(no_refresh_models=surface.models_readonly),
         resolve_terminal_surface_mode=_resolve_terminal_surface_mode,
-        logger=_LOGGER,
     )
     return ResolvedLaunchPolicy(
         profile=replayed.profile,

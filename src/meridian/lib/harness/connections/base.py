@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from meridian.lib.harness.connections.resident_backend import ResidentBackendControl
     from meridian.lib.harness.semantics import EventSemantics, PrimaryEventScope
     from meridian.lib.observability.debug_tracer import DebugTracer
+    from meridian.lib.platform.detached_process import ParentWatchdog
     from meridian.lib.platform.process_scope import ProcessScopeSnapshot
 
 # Uniform transport message cap across harness adapters.
@@ -304,6 +305,7 @@ class ConnectionConfig:
     pi_session_role: PiSessionRole | None = None
     debug_tracer: DebugTracer | None = None
     session_id_observer: Callable[[str], None] | None = None
+    parent_watchdog: ParentWatchdog | None = None
 
 
 def validate_prompt_size(config: ConnectionConfig) -> None:

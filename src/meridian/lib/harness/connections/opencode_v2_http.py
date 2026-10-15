@@ -217,6 +217,7 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
                 cwd=config.control_root,
                 env=env,
                 control_root=config.control_root,
+                parent_watchdog=config.parent_watchdog,
             ),
             stderr=self._stderr_handle,
             stdout=asyncio.subprocess.PIPE,
