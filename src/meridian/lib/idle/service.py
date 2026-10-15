@@ -713,25 +713,21 @@ class IdleService:
         done_result, completed_state = self.store.mutate(harness, session, transition)
         if done_result.recorded:
             with suppress(Exception):
-                notice = None
-                if result != "vetoed":
-                    notice = compaction_notice(
-                        result,
-                        detail,
-                        build_session_label(environ=self.env),
-                    )
-                elif (
-                    detail == COMPACT_SCREEN_NOT_RECOGNIZED
+                label = build_session_label(environ=self.env)
+                if (
+                    result == "vetoed"
+                    and detail == COMPACT_SCREEN_NOT_RECOGNIZED
                     and completed_state is not None
                 ):
                     notice = unreadable_compaction_notice(
                         harness,
                         completed_state,
-                        build_session_label(environ=self.env),
+                        label,
                         now_ms=now_ms,
                     )
-                if notice is not None:
-                    self._notify_sender(notice, self._notify_config())
+                else:
+                    notice = compaction_notice(result, detail, label)
+                self._notify_sender(notice, self._notify_config())
         return done_result
 
     def event(

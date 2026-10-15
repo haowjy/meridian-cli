@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Literal
 
 from meridian.lib.notify import Notice, SessionLabel
-from meridian.lib.state.idle_store import IdleState
+from meridian.lib.state.idle_store import CompactResultValue, IdleState
 
 
 def _body(lines: list[str | None], *, fallback: str | None = None) -> str:
@@ -68,7 +68,7 @@ def stage_notice(
 
 
 def compaction_notice(
-    result: Literal["ok", "failed"],
+    result: CompactResultValue,
     detail: str | None,
     label: SessionLabel,
 ) -> Notice:
@@ -77,6 +77,7 @@ def compaction_notice(
     event = {
         "ok": "Compacted",
         "failed": "Compaction failed",
+        "vetoed": "Compaction skipped",
     }[result]
     title = f"[{event.lower()}] {label.headline}"
     normalized_detail = detail.strip() if detail else ""

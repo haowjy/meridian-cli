@@ -538,7 +538,11 @@ def test_unreadable_compaction_screen_sends_one_push_notification() -> None:
         result="vetoed",
         detail="tui-unavailable",
     )
-    assert len(sender.notices) == 1
+    assert [notice.body for notice in sender.notices] == [
+        "Codex not compacted: Meridian couldn't read its screen. "
+        "Cache expires in ~5 min.",
+        "Compaction skipped: tui-unavailable",
+    ]
 
 
 def test_return_always_closes_during_compaction_and_late_done_records_same_stretch() -> None:
