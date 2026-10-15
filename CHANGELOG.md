@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.4] - 2026-10-15
+
 ### Fixed
 - History-index readers stop waiting on session writers: no more `History index deadline exhausted` / `unresolved sources` under spawn churn (#586).
 - Session appends check restored-session immutability in O(1) (reserved `historical-` generation), not a full log replay under the writer lock.
