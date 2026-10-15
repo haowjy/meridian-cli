@@ -126,8 +126,11 @@ def resolve_continue_source_row(
     assert parsed.spawn_id is not None
     bound_run = latest_bound_run(runtime_root, parsed.spawn_id)
     if bound_run is None:
-        if latest_run(runtime_root, parsed.spawn_id) is None:
+        latest = latest_run(runtime_root, parsed.spawn_id)
+        if latest is None:
             return None
+        if latest == parse_ref(str(parsed.spawn_id), row_key=True):
+            return spawn_store.get_spawn(runtime_root, latest)
         raise ValueError(
             f"Spawn {parsed.spawn_id} never started a session; `--fork` is unavailable too."
         )

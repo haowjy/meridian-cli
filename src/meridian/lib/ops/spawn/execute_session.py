@@ -97,11 +97,10 @@ def _session_execution_context(
         persist_spawn_binding=False,
         startup_attempt_id=uuid.uuid4().hex,
     ) as managed:
-        if spawn_id is not None:
+        if spawn_id is not None and is_exact_continue_session(request):
             spawn_store.update_spawn(
                 runtime_root,
                 parse_ref(spawn_id, row_key=True),
-                chat_id=managed.chat_id,
                 session_instance_id=managed.session_instance_id,
             )
         attached_work_id = get_session_active_work_id(runtime_root, managed.chat_id)

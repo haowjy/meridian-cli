@@ -17,7 +17,6 @@ from meridian.lib.bootstrap.services import (
 )
 from meridian.lib.core.domain import SpawnStatus, TerminalSpawnStatus
 from meridian.lib.core.native_identity import NativeIdentityError
-from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import parse_terminal_status
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import HarnessConnection
@@ -35,7 +34,6 @@ from meridian.lib.launch.session_scope import session_scope
 from meridian.lib.launch.streaming_runner import run_streaming_spawn, signal_coordinator
 from meridian.lib.ops.runtime import OperationRuntime
 from meridian.lib.ops.spawn.execute_init import build_spawn_mars_runtime
-from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
 
 
@@ -147,12 +145,6 @@ async def streaming_serve(
             persist_spawn_binding=False,
             startup_attempt_id=uuid.uuid4().hex,
         ) as managed:
-            spawn_store.update_spawn(
-                runtime_root,
-                parse_ref(spawn_id, row_key=True),
-                chat_id=managed.chat_id,
-                session_instance_id=managed.session_instance_id,
-            )
             lifecycle = LifecycleLog.for_spawn(runtime_root, project_root, spawn_id)
             try:
                 native_run = bind_entry(
