@@ -161,8 +161,8 @@ One-hour Anthropic cache writes cost more than five-minute writes. Export
   [Version 0.9.9](#upgrading-to-099-opencode-2x-idle) gave OpenCode 2.x `openai`
   sessions warning and compaction; other providers and OpenCode 1.x remain
   push-only. Pi provider IDs other than `anthropic` and `openai` remain push-only.
-  [Version 0.9.8](#upgrading-to-098-ignoring-direnv) added an estimated 30-minute
-  warning and compaction schedule for Pi's `openai-codex` provider.
+  Version 0.9.8 added an estimated 30-minute warning and compaction schedule for
+  Pi's `openai-codex` provider.
 - Idle and cache-warning titles show time until the cache goes cold when a TTL
   is known. Heuristic/configured TTLs are labelled `est.`. Idle state saves
   `ttl_estimated` alongside the TTL; existing development-build records without
