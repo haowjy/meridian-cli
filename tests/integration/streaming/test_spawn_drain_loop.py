@@ -438,10 +438,12 @@ async def test_held_descendant_refresh_does_not_block_ordered_event_delivery(
 
     projection = descendant_evidence_module.HistoryIndex.descendant_projection
 
-    def held_projection(index: object, root_spawn_id: str) -> object:
+    def held_projection(
+        index: object, root_spawn_id: str, *, deadline: float | None = None
+    ) -> object:
         entered.set()
         release.wait(timeout=5)
-        return projection(index, root_spawn_id)  # type: ignore[arg-type]
+        return projection(index, root_spawn_id, deadline=deadline)  # type: ignore[arg-type]
 
     monkeypatch.setattr(
         descendant_evidence_module.HistoryIndex,

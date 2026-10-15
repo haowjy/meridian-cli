@@ -68,7 +68,7 @@ async def test_terminal_done_fails_closed_when_descendant_evidence_unreadable(
     )
     write_spawn_signal(tmp_path, "p1", "done")
 
-    def _raise_evidence_read_failure(*_args: object) -> None:
+    def _raise_evidence_read_failure(*_args: object, **_kwargs: object) -> None:
         raise OSError("descendant evidence unavailable")
 
     monkeypatch.setattr(
@@ -121,10 +121,12 @@ async def test_terminal_done_completes_when_descendant_evidence_recovers(
     evidence_readable = False
     projection = descendant_evidence_module.HistoryIndex.descendant_projection
 
-    def _read_descendants(index: object, root_spawn_id: str) -> object:
+    def _read_descendants(
+        index: object, root_spawn_id: str, *, deadline: float | None = None
+    ) -> object:
         if not evidence_readable:
             raise OSError("descendant evidence unavailable")
-        return projection(index, root_spawn_id)  # type: ignore[arg-type]
+        return projection(index, root_spawn_id, deadline=deadline)  # type: ignore[arg-type]
 
     monkeypatch.setattr(
         descendant_evidence_module.HistoryIndex,

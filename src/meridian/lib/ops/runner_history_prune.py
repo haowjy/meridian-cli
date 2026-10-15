@@ -15,6 +15,7 @@ import re
 import stat
 import time
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,7 +29,7 @@ from meridian.lib.ops.session_target import resolve_run_sources
 from meridian.lib.platform.atomic import iter_atomic_temp_paths
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store, spawn_store
-from meridian.lib.state.history_index import HistoryIndex
+from meridian.lib.state.history_index import HistoryIndex, HistoryIndexBusy
 from meridian.lib.state.process_scope_projection import read_scope_projection
 from meridian.lib.state.reaper import scope_liveness
 from meridian.lib.state.session_store import SessionRecord
@@ -159,7 +160,8 @@ def prune_runner_history(
         return _prune(root, apply=False, after_days=after_days)
     with lock_file(root / "history-archives/archive.lock"):
         result = _prune(root, apply=True, after_days=after_days)
-    HistoryIndex(root).catch_up()
+    with suppress(HistoryIndexBusy):
+        HistoryIndex(root).catch_up()
     return result
 
 

@@ -13,11 +13,11 @@ import os
 import sqlite3
 import time
 from collections.abc import Callable, Generator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, NoReturn
+from typing import BinaryIO, Literal, NoReturn
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -60,7 +60,7 @@ from meridian.lib.state.history_changes import (
     versioned,
 )
 from meridian.lib.state.history_codec import canonical_time, last_activity
-from meridian.lib.state.jsonl import iter_jsonl
+from meridian.lib.state.jsonl import iter_jsonl_file
 from meridian.lib.state.session_fold import (
     SessionHistoricalEvent,
     SessionRecord,
@@ -204,6 +204,10 @@ class HistoryIndexIncomplete(RuntimeError):
     """Discovery cannot safely promise complete candidate membership."""
 
 
+class HistoryIndexBusy(HistoryIndexIncomplete):
+    """Transient contention prevented a complete history-index read."""
+
+
 @dataclass(frozen=True)
 class IndexCoverage:
     generation: str
@@ -247,6 +251,20 @@ def _remaining(deadline: float) -> float:
     if remaining <= 0:
         raise TimeoutError("History index deadline exhausted")
     return remaining
+
+
+def _source_label(source: HistorySource) -> str:
+    return f"spawn:{source.key}" if source.kind == "spawn" else source.kind
+
+
+@contextmanager
+def _source_lock(path: Path, deadline: float) -> Generator[None]:
+    """Past the deadline, one try-lock still tells contention from exhaustion."""
+    remaining = deadline - time.monotonic()
+    with lock_file(path, timeout=max(remaining, 0.0)):
+        if remaining <= 0:
+            raise TimeoutError("History index deadline exhausted")
+        yield
 
 
 def _reraise_dbapi(exc: DBAPIError) -> NoReturn:
@@ -318,10 +336,13 @@ def _connect(
         engine.dispose()
 
 
-def _tail(path: Path, extent: int, count: int = 256) -> str:
-    with path.open("rb") as handle:
+def _tail(handle: BinaryIO, extent: int, count: int = 256) -> str:
+    position = handle.tell()
+    try:
         handle.seek(max(0, extent - count))
         return hashlib.sha256(handle.read(min(extent, count))).hexdigest()
+    finally:
+        handle.seek(position)
 
 
 @dataclass(frozen=True)
@@ -485,134 +506,156 @@ class HistoryIndex:
 
     def _sessions(self, db: Connection) -> None:
         path = self.root / "sessions.jsonl"
-        if not path.exists():
+        try:
+            handle = path.open("rb")
+        except FileNotFoundError:
             db.execute(delete(SESSIONS))
             db.execute(delete(SESSION_CHATS))
             db.execute(delete(WORK_CHATS))
             db.execute(delete(ALIASES).where(ALIASES.c.source_id.like("session:%")))
             db.execute(delete(CURSORS).where(CURSORS.c.source == "sessions"))
             return
-        stat = path.stat()
-        inode = f"{stat.st_dev}:{stat.st_ino}"
-        cursor = (
-            db.execute(select(CURSORS).where(CURSORS.c.source == "sessions")).mappings().first()
-        )
-        offset = 0
-        if (
-            cursor
-            and cursor["inode"] == inode
-            and cursor["extent"] <= stat.st_size
-            and cursor["tail"] == _tail(path, cursor["extent"])
-        ):
-            if cursor["extent"] == stat.st_size:
-                return  # Nothing appended since the cursor.
-            offset = cursor["extent"]
-        else:
-            db.execute(delete(SESSIONS))
-            db.execute(delete(SESSION_CHATS))
-            db.execute(delete(WORK_CHATS))
-            db.execute(delete(ALIASES).where(ALIASES.c.source_id.like("session:%")))
-        # Replay with the authority's working sets, then publish only changed rows.
-        # Metadata is derived once per changed generation, not mirrored per event.
-        records: dict[str, SessionRecord] = {}
-        latest_blank: dict[str, str] = {}
-        chat_ordinals: dict[str, int] = {}
-        for chat, ordinal, blank, raw in db.exec_driver_sql(
-            "SELECT chat, ordinal, latest_blank, record_json FROM session_chats"
-        ):
-            records[chat] = SessionRecord.model_validate_json(raw)
-            chat_ordinals[chat] = ordinal
-            if blank is not None:
-                latest_blank[chat] = blank
-        generations: dict[tuple[str, str], dict[str, SessionRecord]] = {}
-        ordinals: dict[tuple[str, str], int] = {}
-        for chat, generation, ordinal, raw in db.exec_driver_sql(
-            "SELECT chat, generation, ordinal, record_json FROM sessions"
-        ):
-            generations[(chat, generation)] = {chat: SessionRecord.model_validate_json(raw)}
-            ordinals[(chat, generation)] = ordinal
-        dirty: set[tuple[str, str]] = set()
-        dirty_chats: set[str] = set()
-        work_chats: set[tuple[str, str]] = set()
-        for parsed_event, end in iter_jsonl(path, parse_event, offset=offset):
-            if isinstance(parsed_event, SessionUpdateEvent) and parsed_event.active_work_id:
-                work_chats.add((parsed_event.active_work_id.strip(), parsed_event.chat_id))
-            if parsed_event is not None:
-                prior = records.get(parsed_event.chat_id)
-                key = project_session_generation(
-                    records, generations, latest_blank, parsed_event, ordinal=offset
-                )
-                started = isinstance(
-                    parsed_event, (SessionStartEvent, SessionHistoricalEvent)
-                )
-                if records.get(parsed_event.chat_id) is not prior:
-                    dirty_chats.add(parsed_event.chat_id)
-                    if started:
-                        chat_ordinals[parsed_event.chat_id] = offset
-                if key is not None:
-                    dirty.add(key)
-                    if started:
-                        ordinals[key] = offset
-            offset = end
-        for chat, generation in dirty:
-            record = generations[(chat, generation)][chat]
-            history_id = str(record.history_id) if record.history_id else None
-            if history_id is None and record.spawn_id:
-                linked = db.exec_driver_sql(
-                    "SELECT history_id FROM locations WHERE source_id = ?",
-                    (f"spawn:{record.spawn_id}",),
-                ).first()
-                history_id = linked[0] if linked else None
-            if history_id is None and generation:
-                linked = db.exec_driver_sql(
-                    "SELECT history_id FROM records WHERE chat = ? AND archive_id IS NULL "
-                    "AND json_extract(record_json, '$.session_instance_id') = ? LIMIT 1",
-                    (chat, generation),
-                ).first()
-                history_id = linked[0] if linked else None
-            db.exec_driver_sql(
-                "INSERT OR REPLACE INTO sessions (chat, generation, ordinal, kind, stopped, "
-                "activity, history_id, record_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    chat,
-                    generation,
-                    ordinals[(chat, generation)],
-                    record.kind,
-                    record.stopped_at,
-                    canonical_time(record.stopped_at or record.started_at),
-                    history_id,
-                    record.model_dump_json(),
-                ),
+        with handle:
+            stat = os.fstat(handle.fileno())
+            snapshot_extent = stat.st_size
+            inode = f"{stat.st_dev}:{stat.st_ino}"
+            cursor = (
+                db.execute(select(CURSORS).where(CURSORS.c.source == "sessions"))
+                .mappings()
+                .first()
             )
-            source_id = f"session:{chat}:{generation}"
-            if history_id:
-                self._aliases(db, source_id, history_id, session=record)
+            offset = 0
+            if (
+                cursor
+                and cursor["inode"] == inode
+                and cursor["extent"] <= snapshot_extent
+                and cursor["tail"] == _tail(handle, cursor["extent"])
+            ):
+                if cursor["extent"] == snapshot_extent:
+                    return  # Nothing appended since the cursor.
+                offset = cursor["extent"]
             else:
-                db.exec_driver_sql("DELETE FROM aliases WHERE source_id = ?", (source_id,))
-        if dirty_chats:
-            db.exec_driver_sql(
-                "INSERT OR REPLACE INTO session_chats (chat, ordinal, latest_blank, record_json) "
-                "VALUES (?, ?, ?, ?)",
-                [
+                db.execute(delete(SESSIONS))
+                db.execute(delete(SESSION_CHATS))
+                db.execute(delete(WORK_CHATS))
+                db.execute(delete(ALIASES).where(ALIASES.c.source_id.like("session:%")))
+            # Load a chat's prior state only when an appended event touches it.
+            # Metadata is derived once per changed generation, not mirrored per event.
+            records: dict[str, SessionRecord] = {}
+            latest_blank: dict[str, str] = {}
+            chat_ordinals: dict[str, int] = {}
+            generations: dict[tuple[str, str], dict[str, SessionRecord]] = {}
+            ordinals: dict[tuple[str, str], int] = {}
+            loaded_chats: set[str] = set()
+            dirty: set[tuple[str, str]] = set()
+            dirty_chats: set[str] = set()
+            work_chats: set[tuple[str, str]] = set()
+            for parsed_event, end in iter_jsonl_file(
+                handle,
+                parse_event,
+                path=path,
+                offset=offset,
+                extent=snapshot_extent,
+            ):
+                if isinstance(parsed_event, SessionUpdateEvent) and parsed_event.active_work_id:
+                    work_chats.add((parsed_event.active_work_id.strip(), parsed_event.chat_id))
+                if parsed_event is not None:
+                    chat = parsed_event.chat_id
+                    if chat not in loaded_chats:
+                        accepted = db.exec_driver_sql(
+                            "SELECT ordinal, latest_blank, record_json FROM session_chats "
+                            "WHERE chat = ?",
+                            (chat,),
+                        ).first()
+                        if accepted is not None:
+                            chat_ordinals[chat] = accepted[0]
+                            if accepted[1] is not None:
+                                latest_blank[chat] = accepted[1]
+                            records[chat] = SessionRecord.model_validate_json(accepted[2])
+                        for generation, ordinal, raw in db.exec_driver_sql(
+                            "SELECT generation, ordinal, record_json FROM sessions WHERE chat = ?",
+                            (chat,),
+                        ):
+                            generations[(chat, generation)] = {
+                                chat: SessionRecord.model_validate_json(raw)
+                            }
+                            ordinals[(chat, generation)] = ordinal
+                        loaded_chats.add(chat)
+                    prior = records.get(chat)
+                    key = project_session_generation(
+                        records, generations, latest_blank, parsed_event, ordinal=offset
+                    )
+                    started = isinstance(
+                        parsed_event, (SessionStartEvent, SessionHistoricalEvent)
+                    )
+                    if records.get(chat) is not prior:
+                        dirty_chats.add(chat)
+                        if started:
+                            chat_ordinals[chat] = offset
+                    if key is not None:
+                        dirty.add(key)
+                        if started:
+                            ordinals[key] = offset
+                offset = end
+            for chat, generation in dirty:
+                record = generations[(chat, generation)][chat]
+                history_id = str(record.history_id) if record.history_id else None
+                if history_id is None and record.spawn_id:
+                    linked = db.exec_driver_sql(
+                        "SELECT history_id FROM locations WHERE source_id = ?",
+                        (f"spawn:{record.spawn_id}",),
+                    ).first()
+                    history_id = linked[0] if linked else None
+                if history_id is None and generation:
+                    linked = db.exec_driver_sql(
+                        "SELECT history_id FROM records WHERE chat = ? AND archive_id IS NULL "
+                        "AND json_extract(record_json, '$.session_instance_id') = ? LIMIT 1",
+                        (chat, generation),
+                    ).first()
+                    history_id = linked[0] if linked else None
+                db.exec_driver_sql(
+                    "INSERT OR REPLACE INTO sessions (chat, generation, ordinal, kind, stopped, "
+                    "activity, history_id, record_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         chat,
-                        chat_ordinals[chat],
-                        latest_blank.get(chat),
-                        records[chat].model_dump_json(),
-                    )
-                    for chat in dirty_chats
-                ],
-            )
-        if work_chats:
+                        generation,
+                        ordinals[(chat, generation)],
+                        record.kind,
+                        record.stopped_at,
+                        canonical_time(record.stopped_at or record.started_at),
+                        history_id,
+                        record.model_dump_json(),
+                    ),
+                )
+                source_id = f"session:{chat}:{generation}"
+                if history_id:
+                    self._aliases(db, source_id, history_id, session=record)
+                else:
+                    db.exec_driver_sql("DELETE FROM aliases WHERE source_id = ?", (source_id,))
+            if dirty_chats:
+                db.exec_driver_sql(
+                    "INSERT OR REPLACE INTO session_chats "
+                    "(chat, ordinal, latest_blank, record_json) VALUES (?, ?, ?, ?)",
+                    [
+                        (
+                            chat,
+                            chat_ordinals[chat],
+                            latest_blank.get(chat),
+                            records[chat].model_dump_json(),
+                        )
+                        for chat in dirty_chats
+                    ],
+                )
+            if work_chats:
+                db.exec_driver_sql(
+                    "INSERT OR IGNORE INTO work_chats (work, chat) VALUES (?, ?)",
+                    list(work_chats),
+                )
             db.exec_driver_sql(
-                "INSERT OR IGNORE INTO work_chats (work, chat) VALUES (?, ?)",
-                list(work_chats),
+                "INSERT OR REPLACE INTO cursors (source, inode, extent, tail) VALUES "
+                "('sessions', ?, ?, ?)",
+                (inode, offset, _tail(handle, offset)),
             )
-        db.exec_driver_sql(
-            "INSERT OR REPLACE INTO cursors (source, inode, extent, tail) VALUES "
-            "('sessions', ?, ?, ?)",
-            (inode, offset, _tail(path, offset)),
-        )
 
     def _project(self, db: Connection, source: HistorySource) -> bool:
         if source.kind == "spawn":
@@ -679,9 +722,23 @@ class HistoryIndex:
         active: list[str] = []
         busy = False
         for marker in target:
+            if marker.source.kind == "sessions":
+                try:
+                    with lock_file(marker.source.lock_path(self.root), timeout=0):
+                        # Only a lock owner may capture a token for acknowledgement.
+                        current = DirtySource.model_validate_json(
+                            (changes.directory / marker.source.name).read_bytes()
+                        )
+                        self._sessions(db)
+                        acknowledged.append(current)
+                except FileLockTimeout:
+                    # The append-only journal is safe to read through its committed
+                    # extent. Keep the marker so acknowledgement cannot race its writer.
+                    self._sessions(db)
+                continue
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                pending.append(marker.source.name)
+                pending.append(_source_label(marker.source))
                 continue
             try:
                 with lock_file(marker.source.lock_path(self.root), timeout=remaining):
@@ -696,7 +753,7 @@ class HistoryIndex:
                         acknowledged.append(current)
             except FileLockTimeout:
                 busy = True
-                pending.append(marker.source.name)
+                pending.append(_source_label(marker.source))
         db.commit()
         return acknowledged, pending, active, busy
 
@@ -706,8 +763,9 @@ class HistoryIndex:
         Each schema owns its marker queue. Runners and primaries of an older build
         that outlive an upgrade still finish spawns and append session events.
         Active loose spawns are provisional anyway, and the session log keeps a
-        cursor, so both are cheap. Busy sources wait for the next catch-up. Spawns
-        an older build creates after this projection was built need a rebuild.
+        cursor, so both are cheap. Sessions project without their writer lock;
+        busy spawn sources wait for the next catch-up. Spawns an older build creates
+        after this projection was built need a rebuild.
         """
         marked = {marker.source.name for marker in target}
         sources = [
@@ -724,11 +782,12 @@ class HistoryIndex:
         for source in sources:
             if source.name in marked:
                 continue
+            if source.kind == "sessions":
+                self._sessions(db)  # Returns at once when nothing was appended.
+                continue
             try:
                 with lock_file(source.lock_path(self.root), timeout=0):
-                    if source.kind == "sessions":
-                        self._sessions(db)  # Returns at once when nothing was appended.
-                    elif self._spawn(db, parse_ref(source.key, row_key=True)):
+                    if self._spawn(db, parse_ref(source.key, row_key=True)):
                         active.append(source.key)
             except FileLockTimeout:
                 continue
@@ -759,14 +818,14 @@ class HistoryIndex:
                     insert(META).values(version=SCHEMA_VERSION, generation=generation, build=build)
                 )
                 for key in scan_spawn_ids(self.root / "spawns"):
-                    with lock_file(
+                    with _source_lock(
                         HistorySource(kind="spawn", key=str(key)).lock_path(self.root),
-                        timeout=_remaining(deadline),
+                        deadline,
                     ):
                         self._spawn(db, key)
                 for kind in ("sessions", "catalog"):
                     source = HistorySource(kind=kind)
-                    with lock_file(source.lock_path(self.root), timeout=_remaining(deadline)):
+                    with _source_lock(source.lock_path(self.root), deadline):
                         self._project(db, source)
                 _, target = changes.capture(timeout=_remaining(deadline))
                 acknowledged, pending, active, busy = self._drain(db, target, deadline)
@@ -1014,18 +1073,36 @@ class HistoryIndex:
                 raise self._initialization_error(reason) from exc
             return self._finish_rebuild(coverage, acknowledged)
 
-    def _operation_deadline(self, deadline: float | None) -> float:
-        ordinary = time.monotonic() + QUERY_TIMEOUT if deadline is None else deadline
-        status = self.classify(deadline=ordinary)
-        if status.baseline == "absent" and deadline is None:
+    def _ensure_baseline(self) -> None:
+        """Build an absent index with its own sticky initialization budget."""
+        if not self.path.exists():
             self.initialize(deadline=time.monotonic() + INITIALIZATION_TIMEOUT)
-            return time.monotonic() + QUERY_TIMEOUT
-        self._check_current(status)
-        return ordinary
+
+    @contextmanager
+    def _translate_busy(self) -> Generator[None]:
+        """Keep transient contention distinct from index corruption or incompleteness."""
+        try:
+            yield
+        except HistoryIndexBusy:
+            raise
+        except FileLockTimeout as exc:
+            gate = self._lock_timeout_gate(exc)
+            names = (gate,) if gate else self._pending_source_names()
+            raise self._busy_error(names) from exc
+        except TimeoutError as exc:
+            raise self._deadline_error(self._pending_source_names()) from exc
+
+    def _current_catch_up(self, deadline: float) -> IndexCoverage:
+        """One attempt; a non-current baseline fails closed instead of retrying."""
+        self._check_current(self.classify(deadline=deadline))
+        return self._catch_up(deadline)
 
     def catch_up(self, *, timeout: float | None = None) -> IndexCoverage:
-        deadline = self._operation_deadline(None if timeout is None else time.monotonic() + timeout)
-        return self._catch_up(deadline)
+        """Best-effort refresh; may be incomplete or raise ``HistoryIndexBusy``."""
+        self._ensure_baseline()
+        deadline = time.monotonic() + (QUERY_TIMEOUT if timeout is None else timeout)
+        with self._translate_busy():
+            return self._current_catch_up(deadline)
 
     def _catch_up(self, deadline: float) -> IndexCoverage:
         changes = HistoryChanges(self.root)
@@ -1036,9 +1113,7 @@ class HistoryIndex:
         ):
             generation, target = changes.inspect(timeout=_remaining(deadline))
             if generation is None or not self.path.exists():
-                raise HistoryIndexIncomplete(
-                    "History index changed after preflight; retry required"
-                )
+                raise self._busy_error(self._pending_source_names())
             with _connect(self.path, timeout=_remaining(deadline)) as db:
                 meta = db.execute(select(META)).mappings().first()
                 if meta is None or meta["generation"] != generation:
@@ -1046,7 +1121,7 @@ class HistoryIndex:
                         "History baseline generation mismatch; run session index rebuild --reset"
                     )
                 if meta["version"] != SCHEMA_VERSION:
-                    raise HistoryIndexIncomplete("History index schema changed after preflight")
+                    raise self._busy_error(self._pending_source_names())
                 warnings = self._clear_initialization_failure()
                 acknowledged, pending, active, _ = self._drain(db, target, deadline)
                 active += self._reread_unmarked(db, target)
@@ -1056,18 +1131,69 @@ class HistoryIndex:
                     generation, meta["build"], not pending, tuple(pending), tuple(active), warnings
                 )
 
+    def _pending_source_names(self) -> tuple[str, ...]:
+        try:
+            _, pending = HistoryChanges(self.root).inspect(timeout=0)
+        except FileLockTimeout:
+            return ()
+        return tuple(
+            _source_label(marker.source)
+            for marker in pending
+            if marker.source.kind != "sessions"
+        )
+
+    @staticmethod
+    def _source_names(sources: tuple[str, ...]) -> str:
+        ordered = tuple(dict.fromkeys(sources))
+        return ", ".join(ordered) if ordered else "history index coordination"
+
+    def _lock_timeout_gate(self, exc: FileLockTimeout) -> str | None:
+        if exc.path is None:
+            return None
+        path = exc.path.resolve()
+        changes = HistoryChanges(self.root)
+        gates = {
+            self.catchup_lock.resolve(): "history index catch-up gate",
+            changes.mutation_lock.resolve(): "history mutation gate",
+            self.database_lock.resolve(): "history index database gate",
+            changes.marker_lock.resolve(): "history marker gate",
+            (self.root / "sessions.jsonl.flock").resolve(): "session writer gate",
+            (self.root / "history-archives" / "catalog.lock").resolve(): "archive catalog gate",
+        }
+        if gate := gates.get(path):
+            return gate
+        if path.parent == (self.root / "locks" / "spawns").resolve():
+            return "spawn source gate"
+        return None
+
+    def _busy_error(self, names: tuple[str, ...]) -> HistoryIndexBusy:
+        formatted = self._source_names(names)
+        return HistoryIndexBusy(
+            f"History index is busy ({formatted}); another Meridian process holds it. "
+            "Retry the command."
+        )
+
+    def _deadline_error(self, names: tuple[str, ...]) -> HistoryIndexBusy:
+        formatted = self._source_names(names)
+        return HistoryIndexBusy(
+            "History index read did not obtain complete coverage before its deadline "
+            f"({formatted}). Retry the command."
+        )
+
     @contextmanager
     def query(self, *, deadline: float | None = None) -> Generator[Connection]:
-        deadline = self._operation_deadline(deadline)
-        coverage = self._catch_up(deadline)
-        if not coverage.complete:
-            raise HistoryIndexIncomplete(
-                f"History index has unresolved sources: {coverage.pending}"
-            )
-        with (
-            lock_file(self.database_lock, mode="shared", timeout=_remaining(deadline)),
-            _connect(self.path, timeout=_remaining(deadline)) as db,
-        ):
+        self._ensure_baseline()
+        deadline = time.monotonic() + QUERY_TIMEOUT if deadline is None else deadline
+        with self._translate_busy():
+            coverage = self._current_catch_up(deadline)
+            if not coverage.complete:
+                raise self._deadline_error(coverage.pending)
+        with ExitStack() as stack:
+            with self._translate_busy():
+                stack.enter_context(
+                    lock_file(self.database_lock, mode="shared", timeout=_remaining(deadline))
+                )
+                db = stack.enter_context(_connect(self.path, timeout=_remaining(deadline)))
             yield db
 
     def preview_references(self) -> tuple[tuple[str, str | None, str], ...]:
@@ -1299,6 +1425,7 @@ class HistoryIndex:
         *,
         oldest_first: bool = False,
         related_chat_ids: set[str] | None = None,
+        deadline: float | None = None,
         **filters: str | set[str] | None,
     ) -> tuple[SpawnRecord, ...]:
         columns = {
@@ -1328,10 +1455,15 @@ class HistoryIndex:
             if oldest_first
             else stmt.order_by(RECORDS.c.started.desc(), RECORDS.c.local_id.desc())
         )
-        with self.query() as db:
+        with self.query(deadline=deadline) as db:
             return tuple(SpawnRecord.model_validate_json(row[0]) for row in db.execute(stmt))
 
-    def descendant_projection(self, root_spawn_id: str) -> tuple[tuple[str, str | None, bool], ...]:
+    def descendant_projection(
+        self,
+        root_spawn_id: str,
+        *,
+        deadline: float | None = None,
+    ) -> tuple[tuple[str, str | None, bool], ...]:
         """Return the indexed transitive subtree, retaining archived ancestry.
 
         The query context performs one bounded catch-up before taking the shared
@@ -1359,7 +1491,7 @@ class HistoryIndex:
              ORDER BY local_id
             """
         )
-        with self.query() as db:
+        with self.query(deadline=deadline) as db:
             return tuple(
                 (str(row[0]), str(row[1]) if row[1] is not None else None, bool(row[2]))
                 for row in db.execute(statement, {"root": root_spawn_id})
@@ -1447,6 +1579,7 @@ def indexed_spawn_scan(
     owner_chat_id: str | set[str] | None = None,
     parent_id: str | None = None,
     work_id: str | None = None,
+    deadline: float | None = None,
 ) -> SpawnScan:
     """Discovery partition; corruption fails coverage rather than omitting a sibling."""
     records = HistoryIndex(runtime_root).spawns(
@@ -1456,5 +1589,6 @@ def indexed_spawn_scan(
         owner_chat_id=owner_chat_id,
         parent_id=parent_id,
         work_id=work_id,
+        deadline=deadline,
     )
     return SpawnScan.ordered(records, ())

@@ -230,14 +230,25 @@ def test_foreign_schema_in_this_file_is_read_only_and_never_hydrated(
     assert index.inspect().baseline == "current"
 
 
-def test_explicit_deadline_does_not_start_implicit_initialization(tmp_path: Path) -> None:
+def test_caller_deadline_bounds_contention_not_owned_cold_build(
+    tmp_path: Path, monkeypatch
+) -> None:
     index = HistoryIndex(tmp_path)
-    with (
-        pytest.raises(history_index.HistoryIndexIncomplete, match="initialization/rebuild"),
-        index.query(deadline=time.monotonic() + 0.1),
-    ):
-        pytest.fail("Absent index must not be queried")
-    assert not index.path.exists() and not index.failure_path.exists()
+    original_project = HistoryIndex._project
+
+    def slow_cold_project(self, db, source):
+        if not self.path.exists():
+            time.sleep(0.15)
+        return original_project(self, db, source)
+
+    monkeypatch.setattr(HistoryIndex, "_project", slow_cold_project)
+    started = time.monotonic()
+    with pytest.raises(history_index.HistoryIndexBusy), index.query(deadline=started + 0.2):
+        pytest.fail("expired caller deadline must not produce partial query results")
+
+    assert time.monotonic() - started >= 0.3
+    assert index.path.exists()
+    assert not index.failure_path.exists()
 
 
 def test_malformed_marker_requires_manual_recovery(tmp_path: Path) -> None:
