@@ -5,6 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Spawn action and detail JSON now expose the stable `spawn_id` and exact
+  `run_id` as separate fields.
 - `--continue pN` keeps `pN`; each launch is run `pN.K` (`MERIDIAN_RUN_ID`).
   Bare `pN` means the newest run and `pN.1` the original. List shows one row
   per spawn with `(N runs)`; show lists recent runs. Continue an exact run with

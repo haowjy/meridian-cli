@@ -166,6 +166,7 @@ class SpawnActionOutput(BaseModel):
     command: str
     status: str
     spawn_id: str | None = None
+    run_id: str | None = None
     message: str | None = None
     error: str | None = None
     current_depth: int | None = None
@@ -217,26 +218,26 @@ class SpawnActionOutput(BaseModel):
         return self.task_cwd != self.authority_root
 
     def _transcript_command(self) -> str | None:
-        if self.command != "spawn.create" or self.spawn_id is None or self.background:
+        if self.command != "spawn.create" or self.run_id is None or self.background:
             return None
         if self.session_log_available is False:
             return None
         if self.session_log_available is True:
-            return f"meridian session log {self.spawn_id}"
+            return f"meridian session log {self.run_id}"
         if self.status == "failed":
             return None
-        return f"meridian session log {self.spawn_id}"
+        return f"meridian session log {self.run_id}"
 
     def to_wire(self) -> dict[str, object]:
         """Project minimal external JSON shape. Omit nulls and input echo."""
         wire: dict[str, object] = {"status": self.status}
         if self.identity_created:
             wire["identity_created"] = True
-        if self.spawn_id is not None:
-            wire["spawn_id"] = spawn_of(self.spawn_id)
-            wire["run_id"] = self.spawn_id
+        if self.run_id is not None:
+            wire["spawn_id"] = self.spawn_id
+            wire["run_id"] = self.run_id
             if self.background and self.status == "running":
-                wire["note"] = _background_wait_note(self.spawn_id)
+                wire["note"] = _background_wait_note(self.run_id)
                 wire["terminal"] = False
                 wire["wait_required"] = True
                 wire["wait_command"] = "meridian spawn wait"
@@ -248,7 +249,7 @@ class SpawnActionOutput(BaseModel):
             wire["report"] = self.report
         if self.error is not None:
             wire["error"] = self.error
-        if self.status == "failed" and self.spawn_id is None:
+        if self.status == "failed" and self.run_id is None:
             if self.message is not None:
                 wire["message"] = self.message
             if self.model is not None:
@@ -263,7 +264,7 @@ class SpawnActionOutput(BaseModel):
             wire["context_from_resolved"] = list(self.context_from_resolved)
         include_task_context = (
             self.status == "dry-run"
-            or (self.status == "failed" and self.spawn_id is None)
+            or (self.status == "failed" and self.run_id is None)
             or self._has_distinct_task_cwd()
         )
         if include_task_context:
@@ -339,10 +340,10 @@ class SpawnActionOutput(BaseModel):
             return self.to_cli_wire()
 
         wire: dict[str, object] = {"status": self.status}
-        if self.spawn_id is not None:
-            wire["spawn_id"] = spawn_of(self.spawn_id)
-            wire["run_id"] = self.spawn_id
-            wire["note"] = _background_wait_note(self.spawn_id)
+        if self.run_id is not None:
+            wire["spawn_id"] = self.spawn_id
+            wire["run_id"] = self.run_id
+            wire["note"] = _background_wait_note(self.run_id)
             wire["terminal"] = False
             wire["wait_required"] = True
             wire["wait_command"] = "meridian spawn wait"
@@ -385,12 +386,12 @@ class SpawnActionOutput(BaseModel):
         return self._format_default_text()
 
     def _format_terminal_text(self) -> str:
-        if self.spawn_id is None:
+        if self.run_id is None:
             return self._format_default_text()
         duration_suffix = ""
         if self.duration_secs is not None:
             duration_suffix = f" ({self.duration_secs:.1f}s)"
-        lines = [f"{self.spawn_id} {self.status}{duration_suffix}"]
+        lines = [f"{self.run_id} {self.status}{duration_suffix}"]
         if self.error:
             lines.append(f"Error: {self.error}")
         if self._has_distinct_task_cwd():
@@ -419,8 +420,8 @@ class SpawnActionOutput(BaseModel):
         return "\n".join(lines)
 
     def _format_default_text(self) -> str:
-        if self.background and self.status == "running" and self.spawn_id and not self.message:
-            return _background_wait_note(self.spawn_id)
+        if self.background and self.status == "running" and self.run_id and not self.message:
+            return _background_wait_note(self.run_id)
 
         lines: list[str] = []
         if self.message:
@@ -428,9 +429,9 @@ class SpawnActionOutput(BaseModel):
         else:
             lines.append(f"Spawn {self.status}.")
         if self.spawn_id:
-            lines.append(f"Spawn id: {spawn_of(self.spawn_id)}")
-            if spawn_of(self.spawn_id) != self.spawn_id:
-                lines.append(f"Run: {self.spawn_id}")
+            lines.append(f"Spawn id: {self.spawn_id}")
+            if self.run_id is not None and self.run_id != self.spawn_id:
+                lines.append(f"Run: {self.run_id}")
         if self.forked_from:
             lines.append(f"Forked from: {self.forked_from}")
         if self.model and self.harness_id:
@@ -810,6 +811,7 @@ class SpawnDetailOutput(BaseModel):
     continue_chat_id: str | None = None
     run_boundary: RunBoundaryOutcome | None = None
     spawn_id: str
+    run_id: str
     status: str
     model: str
     harness: str
@@ -895,12 +897,12 @@ class SpawnDetailOutput(BaseModel):
         report_text = self._normalized_report_body()
         if report_text is None:
             return None
-        return f"Report for {self.spawn_id}\n{report_text}"
+        return f"Report for {self.run_id}\n{report_text}"
 
     def transcript_command(self) -> str | None:
         if not self.session_log_available:
             return None
-        return f"meridian session log {self.spawn_id}"
+        return f"meridian session log {self.run_id}"
 
     def _has_distinct_task_cwd(self) -> bool:
         if self.authority_root is None or self.task_cwd is None:
@@ -918,6 +920,7 @@ class SpawnDetailOutput(BaseModel):
         """Project slim JSON shape for wire serialization. Omits internal fields."""
         wire: dict[str, object] = {
             "spawn_id": self.spawn_id,
+            "run_id": self.run_id,
             "status": self.status,
             "model": self.model,
             "harness": self.harness,
@@ -1047,7 +1050,7 @@ class SpawnDetailOutput(BaseModel):
             meta_parts.append(f"{self.duration_secs:.1f}s")
         meta_suffix = f" ({', '.join(meta_parts)})" if meta_parts else ""
 
-        lines = [f"{self.spawn_id} {status_str}{meta_suffix}"]
+        lines = [f"{self.run_id} {status_str}{meta_suffix}"]
         failure_line = self._failure_line_for_compact_or_moderate()
         if failure_line is not None:
             label, value = failure_line
@@ -1071,9 +1074,9 @@ class SpawnDetailOutput(BaseModel):
     def _format_moderate_text(self) -> str:
         status_str = self._status_for_compact_or_moderate()
 
-        lines = [f"Spawn: {spawn_of(self.spawn_id)}"]
-        if spawn_of(self.spawn_id) != self.spawn_id:
-            lines.append(f"Run: {self.spawn_id}")
+        lines = [f"Spawn: {self.spawn_id}"]
+        if self.run_id != self.spawn_id:
+            lines.append(f"Run: {self.run_id}")
         lines.append(f"Status: {status_str}")
         lines.append(f"Model: {self.model} ({self.harness})")
         if self.duration_secs is not None:
@@ -1143,6 +1146,7 @@ class SpawnDetailOutput(BaseModel):
 
         pairs: list[tuple[str, str | None]] = [
             ("Spawn", self.spawn_id),
+            ("Run", self.run_id if self.run_id != self.spawn_id else None),
             ("Status", status_str),
             ("Kind", kind_value),
             ("Activity", activity_value),
@@ -1195,7 +1199,7 @@ class SpawnDetailOutput(BaseModel):
             ("Last message", self.last_message),
             (
                 "Progress",
-                f"meridian session log {self.spawn_id}" if self.log_path else None,
+                f"meridian session log {self.run_id}" if self.log_path else None,
             ),
             (
                 "Transcript",
@@ -1347,7 +1351,7 @@ class SpawnWaitMultiOutput(BaseModel):
             return self._format_checkpoint_text()
         if self.fail_fast:
             failed_ids = ", ".join(
-                spawn.spawn_id for spawn in self.spawns if spawn.status in {"failed", "timed_out"}
+                spawn.run_id for spawn in self.spawns if spawn.status in {"failed", "timed_out"}
             )
             pending_ids = ", ".join(self.pending_ids)
             details = self.model_copy(update={"fail_fast": False, "pending_ids": ()}).format_text(
@@ -1365,7 +1369,7 @@ class SpawnWaitMultiOutput(BaseModel):
         rows = [["spawn_id", "status", "duration", "exit", "report"]]
         rows.extend(
             [
-                run.spawn_id,
+                run.run_id,
                 run.status,
                 f"{run.duration_secs:.1f}s" if run.duration_secs is not None else "-",
                 str(run.exit_code) if run.exit_code is not None else "-",
@@ -1399,7 +1403,7 @@ class SpawnWaitMultiOutput(BaseModel):
             )
         lines = [f"Wait checkpoint{elapsed}. Still pending:"]
         for sid in self.checkpoint_pending_ids:
-            detail = next((spawn for spawn in self.spawns if spawn.spawn_id == sid), None)
+            detail = next((spawn for spawn in self.spawns if spawn.run_id == sid), None)
             status = detail.status if detail else "unknown"
             desc = (detail.desc or "").strip() if detail else ""
             line = f"  {sid}  {status}"

@@ -115,10 +115,12 @@ def _record_spawn_create(
     ) -> SpawnActionOutput:
         _ = (runtime, ctx, prepared, on_spawn_id)
         calls.append((payload, request))
+        run_id = f"p-captured-{len(calls)}"
         return SpawnActionOutput(
             command="spawn.create",
             status="running",
-            spawn_id=f"p-captured-{len(calls)}",
+            spawn_id=run_id,
+            run_id=run_id,
         )
 
     monkeypatch.setattr(spawn_api, "execute_spawn_blocking", execute_spawn_blocking)

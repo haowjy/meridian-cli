@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import NamedTuple, cast
 
 from meridian.lib.core.depth import is_root_side_effect_process
-from meridian.lib.core.refs import parse_ref, reference_sort_key
+from meridian.lib.core.refs import parse_ref, reference_sort_key, spawn_of
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.types import RunId
 from meridian.lib.ops.reference import resolve_spawn_ref
@@ -526,7 +526,8 @@ def detail_from_row(
         chat_id=row.chat_id,
         continue_chat_id=row.continue_chat_id,
         run_boundary=row.run_boundary,
-        spawn_id=row.id,
+        spawn_id=str(spawn_of(row.id)),
+        run_id=row.id,
         status=row.status,
         model=row.model or "",
         harness=row.harness or "",

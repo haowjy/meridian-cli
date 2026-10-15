@@ -15,7 +15,7 @@ from meridian.lib.bootstrap.services import build_spawn_lifecycle_service_from_r
 from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.refs import parse_ref
+from meridian.lib.core.refs import parse_ref, spawn_of
 from meridian.lib.launch.context import PreparedLaunchSurface
 from meridian.lib.launch.cwd import resolve_task_cwd
 from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
@@ -396,12 +396,14 @@ def execute_spawn_background(
         _cleanup_background_runtime_artifacts(log_dir)
         logger.exception(
             "Failed to persist background worker params.",
-            spawn_id=spawn_id_text,
+            spawn_id=str(spawn_of(spawn_id_text)),
+            run_id=spawn_id_text,
         )
         return SpawnActionOutput(
             command="spawn.create",
             status="failed",
-            spawn_id=spawn_id_text,
+            spawn_id=str(spawn_of(spawn_id_text)),
+            run_id=spawn_id_text,
             message=f"Failed to launch background spawn: {exc}",
             error="background_launch_failed",
             model=request.model or "",
@@ -437,7 +439,8 @@ def execute_spawn_background(
             "spawn_launcher_phase",
             phase="popen",
             launcher_pid=os.getpid(),
-            spawn_id=spawn_id_text,
+            spawn_id=str(spawn_of(spawn_id_text)),
+            run_id=spawn_id_text,
         )
         with (
             stdout_path.open("ab") as stdout_handle,
@@ -480,13 +483,15 @@ def execute_spawn_background(
         _cleanup_background_runtime_artifacts(log_dir)
         logger.exception(
             "Failed to launch background spawn worker.",
-            spawn_id=spawn_id_text,
+            spawn_id=str(spawn_of(spawn_id_text)),
+            run_id=spawn_id_text,
             command=list(launch_command),
         )
         return SpawnActionOutput(
             command="spawn.create",
             status="failed",
-            spawn_id=spawn_id_text,
+            spawn_id=str(spawn_of(spawn_id_text)),
+            run_id=spawn_id_text,
             message=f"Failed to launch background spawn: {exc}",
             error="background_launch_failed",
             model=request.model or "",
@@ -529,7 +534,8 @@ def execute_spawn_background(
     return SpawnActionOutput(
         command="spawn.create",
         status="running",
-        spawn_id=spawn_id_text,
+        spawn_id=str(spawn_of(spawn_id_text)),
+        run_id=spawn_id_text,
         message=_BACKGROUND_SUBMIT_MESSAGE,
         model=request.model or "",
         harness_id=request.harness or "",
@@ -645,7 +651,8 @@ def execute_spawn_blocking(
         return SpawnActionOutput(
             command="spawn.create",
             status="failed",
-            spawn_id=spawn_id_text,
+            spawn_id=str(spawn_of(spawn_id_text)),
+            run_id=spawn_id_text,
             message=f"Spawn execution failed: {exc}",
             error="execution_crash",
             model=request.model or "",
@@ -707,7 +714,8 @@ def execute_spawn_blocking(
     return SpawnActionOutput(
         command="spawn.create",
         status=status,
-        spawn_id=spawn_id_text,
+        spawn_id=str(spawn_of(spawn_id_text)),
+        run_id=spawn_id_text,
         message="Spawn completed.",
         model=request.model or "",
         harness_id=request.harness or "",

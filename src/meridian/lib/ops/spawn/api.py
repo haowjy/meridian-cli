@@ -518,7 +518,7 @@ def spawn_create_sync(
         )
     _emit_usage_spawn_launched(
         harness=result.harness_id or prepared_request.harness,
-        spawn_id=result.spawn_id,
+        spawn_id=result.run_id,
     )
     updates: dict[str, object] = {
         "identity_created": bool(authority.identity_created),
@@ -1100,7 +1100,8 @@ def _spawn_cancel_output_from_outcome(outcome: CancelOutcome) -> SpawnActionOutp
         return SpawnActionOutput(
             command="spawn.cancel",
             status="failed",
-            spawn_id=outcome.spawn_id,
+            spawn_id=str(spawn_of(outcome.spawn_id)),
+            run_id=outcome.spawn_id,
             message=f"Cancellation of spawn '{outcome.spawn_id}' did not converge.",
             error=f"Spawn remained {outcome.status} after cancellation.",
             model=outcome.model,
@@ -1123,7 +1124,8 @@ def _spawn_cancel_output_from_outcome(outcome: CancelOutcome) -> SpawnActionOutp
     return SpawnActionOutput(
         command="spawn.cancel",
         status=outcome.status,
-        spawn_id=outcome.spawn_id,
+        spawn_id=str(spawn_of(outcome.spawn_id)),
+        run_id=outcome.spawn_id,
         message=message,
         model=outcome.model,
         harness_id=outcome.harness,
@@ -1252,7 +1254,8 @@ def _spawn_signal_sync(
     return SpawnActionOutput(
         command=command,
         status="succeeded",
-        spawn_id=resolved_spawn_id,
+        spawn_id=str(spawn_of(resolved_spawn_id)),
+        run_id=resolved_spawn_id,
         message=f"Spawn {kind} signal written.",
     )
 
@@ -1335,7 +1338,8 @@ async def _spawn_cancel_impl(
         return SpawnActionOutput(
             command="spawn.cancel",
             status="failed",
-            spawn_id=spawn_id,
+            spawn_id=str(spawn_of(spawn_id)),
+            run_id=spawn_id,
             message=f"Cancel failed: {exc}",
             error=str(exc),
             exit_code=1,
@@ -1433,7 +1437,8 @@ def spawn_cancel_all_sync(
             result = SpawnActionOutput(
                 command="spawn.cancel",
                 status="failed",
-                spawn_id=row.id,
+                spawn_id=str(spawn_of(row.id)),
+                run_id=row.id,
                 message=f"Cancel failed: {exc}",
                 error=str(exc),
                 model=row.model,
@@ -1667,7 +1672,7 @@ def _build_wait_multi_output(
     status: str | None = None
     exit_code: int | None = None
     if total_runs == 1:
-        spawn_id = results[0].spawn_id
+        spawn_id = results[0].run_id
         status = results[0].status
         exit_code = results[0].exit_code
 
@@ -1957,7 +1962,7 @@ def spawn_wait_sync(
                 )
                 pending_ids = tuple(
                     sorted(
-                        detail.spawn_id
+                        detail.run_id
                         for detail in details
                         if not _spawn_is_terminal(detail.status)
                     )
@@ -1967,7 +1972,7 @@ def spawn_wait_sync(
                     parent_spawn_id=parent_wait_observer_id,
                     waiting_remove=spawn_ids,
                     observed_add=tuple(
-                        detail.spawn_id for detail in details if _spawn_is_terminal(detail.status)
+                        detail.run_id for detail in details if _spawn_is_terminal(detail.status)
                     ),
                 )
                 if not pending_ids:
@@ -1993,7 +1998,7 @@ def spawn_wait_sync(
                     runtime_root=runtime_root,
                     parent_spawn_id=parent_wait_observer_id,
                     waiting_remove=spawn_ids,
-                    observed_add=tuple(detail.spawn_id for detail in details),
+                    observed_add=tuple(detail.run_id for detail in details),
                 )
                 return _build_wait_multi_output(details)
 
@@ -2022,7 +2027,7 @@ def spawn_wait_sync(
                     parent_spawn_id=parent_wait_observer_id,
                     waiting_remove=spawn_ids,
                     observed_add=tuple(
-                        detail.spawn_id
+                        detail.run_id
                         for detail in checkpoint_details
                         if _spawn_is_terminal(detail.status)
                     ),

@@ -14,6 +14,7 @@ from meridian.lib.config.loader import load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.lifecycle import LifecycleEvent, SpawnLifecycleService
 from meridian.lib.core.native_identity import NativeKeyFields
+from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.request import SpawnRequest
@@ -142,6 +143,15 @@ def test_execute_spawn_blocking_reads_report_and_does_not_print_running_preamble
             NativeKeyFields(session_id="fake-native-session"),
             source="observed",
         )
+        session = session_store.get_session_record(runtime_root, chat_id)
+        assert session is not None
+        spawn_store.bind_run_generation(
+            runtime_root,
+            parse_ref(spawn_id, row_key=True),
+            chat_id=chat_id,
+            session_instance_id=session.session_instance_id,
+            forked_from_history_id=session.forked_from_history_id,
+        )
         session_store.stop_session(runtime_root, chat_id)
         spawn_store.finalize_spawn(
             runtime_root,
@@ -174,7 +184,7 @@ def test_execute_spawn_blocking_reads_report_and_does_not_print_running_preamble
     assert result.report == "fake report body"
     assert result.duration_secs == 1.25
     assert result.format_text().endswith(
-        "fake report body\n\nTranscript: meridian session log " + str(result.spawn_id)
+        "fake report body\n\nTranscript: meridian session log " + str(result.run_id)
     )
 
 
@@ -292,7 +302,7 @@ def test_execute_spawn_blocking_refreshes_params_with_bound_ambient_work_dir(
             harness="codex",
         ),
         runtime=runtime,
-        ctx=RuntimeContext(depth=1, spawn_id="p-parent"),
+        ctx=RuntimeContext(depth=1, spawn_id="p-parent", run_id="p-parent"),
     )
 
     assert result.status == "succeeded"
@@ -383,7 +393,7 @@ def test_reserve_then_prepare_graceful_prep_failure_leaks_nothing_with_work(
             harness="codex",
         ),
         runtime=runtime,
-        ctx=RuntimeContext(depth=1, spawn_id="p-parent"),
+        ctx=RuntimeContext(depth=1, spawn_id="p-parent", run_id="p-parent"),
     )
 
     assert result.status == "failed"
@@ -431,7 +441,7 @@ def test_reserve_then_prepare_happy_path_announces_once_with_normalized_work_id(
             agent="coder",
         ),
         runtime=runtime,
-        ctx=RuntimeContext(depth=1, spawn_id="p-parent"),
+        ctx=RuntimeContext(depth=1, spawn_id="p-parent", run_id="p-parent"),
     )
 
     assert result.status == "succeeded"
@@ -474,7 +484,7 @@ def test_reserve_then_prepare_background_happy_path_announces_once_with_normaliz
             agent="coder",
         ),
         runtime=runtime,
-        ctx=RuntimeContext(depth=1, spawn_id="p-parent"),
+        ctx=RuntimeContext(depth=1, spawn_id="p-parent", run_id="p-parent"),
     )
 
     assert result.status == "running"
@@ -575,7 +585,7 @@ def test_reserve_then_prepare_materializes_context_from_work(
             inherited_context_work_id="source-work",
         ),
         runtime=runtime,
-        ctx=RuntimeContext(depth=1, spawn_id="p-parent"),
+        ctx=RuntimeContext(depth=1, spawn_id="p-parent", run_id="p-parent"),
     )
 
     assert result.status == "succeeded"

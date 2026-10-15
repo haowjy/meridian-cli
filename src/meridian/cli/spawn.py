@@ -1124,12 +1124,12 @@ def _spawn_wait(
 
 
 def _spawn_create_metadata_output(result: SpawnActionOutput) -> Any | None:
-    if result.spawn_id is None or result.background or result.status == "dry-run":
+    if result.run_id is None or result.background or result.status == "dry-run":
         return None
     try:
         return spawn_show_sync(
             SpawnShowInput(
-                spawn_id=result.spawn_id,
+                spawn_id=result.run_id,
                 include_report_body=True,
             ),
             sink=current_output_sink(),

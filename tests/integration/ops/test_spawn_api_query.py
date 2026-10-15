@@ -283,6 +283,10 @@ def test_spawn_show_bare_ref_lists_only_latest_ten_runs(tmp_path: Path) -> None:
         SpawnShowInput(project_root=project_root.as_posix(), spawn_id="p1")
     )
 
+    assert detail.spawn_id == "p1"
+    assert detail.run_id == "p1.15"
+    assert detail.to_cli_wire()["spawn_id"] == "p1"
+    assert detail.to_cli_wire()["run_id"] == "p1.15"
     assert [run.run_id for run in detail.runs] == [f"p1.{number}" for number in range(6, 16)]
     assert detail.earlier_runs == "… 5 earlier runs (p1.1 … p1.5)"
     rendered = detail.format_text()
@@ -460,6 +464,7 @@ def test_spawn_cancel_all_excludes_a_run_reopened_below_another_parent(
             command="spawn.cancel",
             status="cancelled",
             spawn_id=payload.spawn_id,
+            run_id=payload.spawn_id,
             message="cancelled",
         )
 
@@ -510,6 +515,7 @@ def test_spawn_cancel_all_counts_finalizing_cancellations_as_accepted(
             command="spawn.cancel",
             status="finalizing",
             spawn_id=str(spawn_id),
+            run_id=str(spawn_id),
             message="Spawn did not terminate within grace; reaper will reconcile.",
         )
 
