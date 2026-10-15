@@ -27,6 +27,7 @@ export type BashRecord = {
 
 export type BashRecordsFile = {
   v: 1;
+  /** Historical field name: this run-scoped file stores its exact run ID here. */
   spawn_id: string;
   updated_at_ms: number;
   records: Record<string, BashRecord>;
@@ -36,6 +37,7 @@ export type BashRecordsFile = {
 /** Consumed only by an explicit operation or admission of this exact custom message. */
 export type DeliveryReceiptsFile = {
   v: 1;
+  /** Historical field name: this run-scoped file stores its exact run ID here. */
   spawn_id: string;
   messages: Record<string, string[]>;
 };

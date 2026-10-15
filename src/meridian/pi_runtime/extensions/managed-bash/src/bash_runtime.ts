@@ -153,13 +153,13 @@ const scope = globalThis as typeof globalThis & { [ownersKey]?: Map<string, Bash
 const owners = scope[ownersKey] ??= new Map<string, BashRuntime>();
 
 export class BashRuntime {
-  private readonly spawnId = currentRunIdFromEnv();
-  private readonly recordsPath = resolveBashRecordsPath(this.spawnId);
-  private readonly receiptsPath = resolveDeliveryReceiptsPath(this.spawnId);
-  private readonly logStore = new BashLogStore(resolveBashLogsDir(this.spawnId));
+  private readonly runId = currentRunIdFromEnv();
+  private readonly recordsPath = resolveBashRecordsPath(this.runId);
+  private readonly receiptsPath = resolveDeliveryReceiptsPath(this.runId);
+  private readonly logStore = new BashLogStore(resolveBashLogsDir(this.runId));
   private readonly publication = new BashPublication({
     path: this.recordsPath,
-    spawnId: this.spawnId,
+    runId: this.runId,
     evidence: (published) => this.withEvidence(published),
   });
   private readonly executions = new Map<string, Execution>();
@@ -371,7 +371,7 @@ export class BashRuntime {
 
   async clearFinished(): Promise<number> {
     await this.prepare();
-    const admitted = admittedWorkIds(await readDeliveryReceipts(this.spawnId, this.receiptsPath));
+    const admitted = admittedWorkIds(await readDeliveryReceipts(this.runId, this.receiptsPath));
     let cleared: string[] = [];
     await this.publication.publish({
       stage: (base) => {
@@ -823,7 +823,7 @@ export class BashRuntime {
       throw error;
     }
     const file = parseBashRecordsFile(JSON.parse(text));
-    if (!file || file.spawn_id !== this.spawnId) throw new Error("Invalid managed Bash record store; refusing to replace recovery evidence");
+    if (!file || file.spawn_id !== this.runId) throw new Error("Invalid managed Bash record store; refusing to replace recovery evidence");
     const rows = new Map<string, BashRecord>();
     for (const row of Object.values(file.records)) {
       // Durable fault evidence is never replaced; ownership loss is added once.
