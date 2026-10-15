@@ -87,7 +87,6 @@ class NativeIdleHook:
 class IdleFacts:
     """Live facts used to decide whether compaction is safe."""
 
-    draft: Literal["yes", "no", "unknown"]
     busy: bool
     agents_running: int
     context_tokens: int | None

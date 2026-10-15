@@ -349,11 +349,12 @@ providers at fire time. A manually configured TTL on another provider therefore
 uses the OpenAI assumptions; set a growth override when that route differs.
 
 A compaction is skipped when the timer is stale or late, idle or compaction is
-disabled, the cache is already cold, the harness is busy, a draft is present or
-cannot be determined, an agent or child spawn is still running, growth is not
-worth the cost, the context or baseline is unknown, or the harness's own
-automatic compaction is disabled. A positively identified user prompt closes
-the idle stretch immediately.
+disabled, the cache is already cold, the harness is busy, an agent or child
+spawn is still running, growth is not worth the cost, the context or baseline
+is unknown, or the harness's own automatic compaction is disabled. Unsent
+composer text does not block compaction; Codex clears it before submitting
+`/compact`. A positively identified user prompt closes the idle stretch
+immediately.
 Reopening a primary through Meridian counts as a user return: before the harness
 starts, Meridian closes any earlier idle stretch for that session, so its push,
 warning, and compaction never fire. This does not cover a Claude TUI started

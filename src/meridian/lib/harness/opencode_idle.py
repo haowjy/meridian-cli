@@ -27,7 +27,6 @@ from meridian.lib.harness.idle_types import (
 from meridian.lib.harness.opencode_backend import OpenCodeVersion, resolve_opencode_version
 from meridian.lib.utils.json_shapes import json_object
 
-CapturePane = Callable[[str], Awaitable[str | None]]
 BackendRequest = Callable[[str, str, Mapping[str, object] | None], Awaitable[tuple[int, str]]]
 
 _GET_TIMEOUT_SECONDS = 10.0
@@ -124,34 +123,6 @@ def _status(event: RawHarnessEvent) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _draft_from_pane(capture: str) -> Literal["yes", "no"] | None:
-    """Read the final OpenCode composer box from a plain tmux pane capture."""
-
-    lines = capture.splitlines()
-    for border_index in range(len(lines) - 1, 0, -1):
-        border = lines[border_index].strip()
-        if len(border) < 4 or border[0] != "╹" or set(border[1:]) != {"▀"}:
-            continue
-
-        box: list[str] = []
-        row_index = border_index - 1
-        while row_index >= 0:
-            row = lines[row_index].lstrip()
-            if not row.startswith("┃"):
-                break
-            box.append(row.removeprefix("┃"))
-            row_index -= 1
-        box.reverse()
-        if len(box) < 4:
-            continue
-
-        top, *prompt_rows, footer = box
-        if top.strip() or not footer.strip():
-            continue
-        return "yes" if any(row.strip() for row in prompt_rows) else "no"
-    return None
-
-
 def _text_content(value: object) -> str | None:
     if isinstance(value, str):
         return value if value.strip() else None
@@ -197,30 +168,6 @@ def message_excerpts(payload: object) -> tuple[str | None, str | None]:
     return user, assistant
 
 
-async def _capture_tmux_pane(pane: str) -> str | None:
-    try:
-        process = await asyncio.create_subprocess_exec(
-            "tmux",
-            "capture-pane",
-            "-p",
-            "-t",
-            pane,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-    except OSError:
-        return None
-    try:
-        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=2.0)
-    except TimeoutError:
-        process.kill()
-        await process.wait()
-        return None
-    if process.returncode != 0:
-        return None
-    return stdout.decode("utf-8", errors="replace")
-
-
 async def _backend_request(
     ctx: IdleSensorContext,
     method: str,
@@ -249,11 +196,9 @@ class _OpenCodeIdleSensorBase:
         self,
         ctx: IdleSensorContext,
         *,
-        capture_pane: CapturePane = _capture_tmux_pane,
         request: BackendRequest | None = None,
     ) -> None:
         self._ctx = ctx
-        self._capture_pane = capture_pane
         if request is None:
 
             async def request_backend(
@@ -312,14 +257,7 @@ class _OpenCodeIdleSensorBase:
         return None
 
     async def facts(self) -> IdleFacts:
-        draft: Literal["yes", "no", "unknown"] = "unknown"
-        pane = self._ctx.tmux_pane
-        if pane:
-            capture = await self._capture_pane(pane)
-            if capture is not None:
-                draft = _draft_from_pane(capture) or "unknown"
         return IdleFacts(
-            draft=draft,
             busy=self._busy,
             agents_running=0,
             context_tokens=await self._fetch_context_tokens(),
@@ -335,10 +273,9 @@ class OpenCodeIdleSensor(_OpenCodeIdleSensorBase):
         ctx: IdleSensorContext,
         *,
         now: Callable[[], float] = time.time,
-        capture_pane: CapturePane = _capture_tmux_pane,
         request: BackendRequest | None = None,
     ) -> None:
-        super().__init__(ctx, capture_pane=capture_pane, request=request)
+        super().__init__(ctx, request=request)
         self._now = now
         self._saw_busy = False
         self._last_anchor_ms = now() * 1000
@@ -617,11 +554,10 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
         self,
         ctx: IdleSensorContext,
         *,
-        capture_pane: CapturePane = _capture_tmux_pane,
         request: BackendRequest | None = None,
         compact_timeout_seconds: float = _SUMMARIZE_TIMEOUT_SECONDS,
     ) -> None:
-        super().__init__(ctx, capture_pane=capture_pane, request=request)
+        super().__init__(ctx, request=request)
         self._compact_timeout_seconds = compact_timeout_seconds
         self._seen_user_inbox_ids: set[str] = set()
         self._pending_user_inbox_ids: set[str] = set()

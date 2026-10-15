@@ -174,8 +174,6 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
         "1",
         "--anchor",
         "1",
-        "--draft",
-        "no",
         "--context-tokens",
         "51000",
     )
@@ -351,10 +349,6 @@ def test_idle_cli_error_envelopes_and_role_reasons(tmp_path: Path) -> None:
         (("return", *_IDENTITY), "--user-prompt is required"),
         ((*_FIRE, "--stretch", "0", "--anchor", "1"), "--stretch must be greater than zero"),
         ((*_FIRE, "--stretch", "1", "--anchor", "0"), "--anchor must be greater than zero"),
-        (
-            (*_FIRE, "--stretch", "1", "--anchor", "1", "--draft", "maybe"),
-            "--draft must be one of: yes, no, unknown",
-        ),
         (
             (*_FIRE, "--stretch", "1", "--anchor", "1", "--agents-running=-1"),
             "--agents-running must not be negative",

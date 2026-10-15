@@ -557,14 +557,11 @@ class IdleService:
             raise ValueError("anchor must be greater than zero")
         policy = resolve_policy(harness, self.config, self.env)
         observed = facts or IdleFacts(
-            draft="unknown",
             busy=False,
             agents_running=0,
             context_tokens=None,
             harness_autocompact_off=False,
         )
-        if observed.draft not in {"yes", "no", "unknown"}:
-            raise ValueError("draft must be one of: yes, no, unknown")
         if observed.agents_running < 0:
             raise ValueError("agents_running must not be negative")
         if observed.context_tokens is not None and observed.context_tokens < 0:
@@ -579,7 +576,6 @@ class IdleService:
             anchor=anchor,
             role=self.role,
             harness_enabled=policy.enabled,
-            draft=observed.draft,
             busy=observed.busy,
             agents_running=observed.agents_running,
             child_spawns_active=self._children_active() if stage == "compact" else False,

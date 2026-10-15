@@ -304,65 +304,6 @@ async def test_compact_suppresses_return_when_busy_precedes_compaction_part(
 
 
 @pytest.mark.parametrize(
-    ("capture", "expected_draft"),
-    [
-        pytest.param(
-            """\
- ┃
- ┃
- ┃
- ┃ DeepSeek V4.1 Flash
- ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
- …/opencode-idle-draft  8.8K (1%) · $0.00
-""",
-            "no",
-            id="opencode-2-empty",
-        ),
-        pytest.param(
-            """\
- ┃
- ┃ unsent draft
- ┃
- ┃ DeepSeek V4.1 Flash
- ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
- …/opencode-idle-draft  8.8K (1%) · $0.00
-""",
-            "yes",
-            id="opencode-2-typed",
-        ),
-        pytest.param(
-            """\
-  ┃
-  ┃
-  ┃
-  ┃  Build · Big Pickle OpenCode Zen
-  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-   /workspace  12.0K (6%) ctrl+p commands
-""",
-            "no",
-            id="opencode-1-empty",
-        ),
-        pytest.param(
-            """\
- ┃
- ┃ quoted transcript content
- ┃
- ┃ Build · quoted transcript metadata
- transcript status
-""",
-            None,
-            id="transcript-block-without-composer",
-        ),
-    ],
-)
-def test_draft_from_pane_recognizes_composer_shape(
-    capture: str,
-    expected_draft: str | None,
-) -> None:
-    assert opencode_idle._draft_from_pane(capture) == expected_draft
-
-
-@pytest.mark.parametrize(
     "terminal_type",
     [
         "session.execution.succeeded",

@@ -41,7 +41,6 @@ AssistantTextOption = Annotated[
     _option("--assistant-text", "Last assistant message for notification excerpts."),
 ]
 UserPromptOption = Annotated[bool, _option("--user-prompt", "Confirm a user prompt.")]
-DraftOption = Annotated[str, _option("--draft", "Draft state: yes, no, or unknown.")]
 BusyOption = Annotated[bool, _option("--busy", "The harness is currently busy.")]
 AgentsRunningOption = Annotated[int, _option("--agents-running", "Number of running agents.")]
 ContextTokensOption = Annotated[int | None, _option("--context-tokens", "Current token count.")]
@@ -205,7 +204,6 @@ def cmd_idle_fire(
     session: SessionOption,
     stretch: StretchOption,
     anchor: AnchorOption,
-    draft: DraftOption = "unknown",
     busy: BusyOption = False,
     agents_running: AgentsRunningOption = 0,
     context_tokens: ContextTokensOption = None,
@@ -214,9 +212,7 @@ def cmd_idle_fire(
 ) -> None:
     """Evaluate guards and claim one due stage."""
 
-    normalized_draft = draft.strip().lower()
     facts = IdleFacts(
-        draft=cast("Literal['yes', 'no', 'unknown']", normalized_draft),
         busy=busy,
         agents_running=agents_running,
         context_tokens=context_tokens,
@@ -237,10 +233,6 @@ def cmd_idle_fire(
             (stage in {"push", "warn", "compact"}, f"unknown idle stage: {stage}"),
             (stretch >= 1, "--stretch must be greater than zero"),
             (anchor >= 1, "--anchor must be greater than zero"),
-            (
-                normalized_draft in {"yes", "no", "unknown"},
-                "--draft must be one of: yes, no, unknown",
-            ),
             (agents_running >= 0, "--agents-running must not be negative"),
             (
                 context_tokens is None or context_tokens >= 0,
