@@ -308,7 +308,7 @@ local config. Environment always beats every file, so a per-tmux
 | Claude | Push and warning; compact after roughly 50k–63k tokens of growth for a one-hour cache (higher for shorter caches) |
 | Pi | Push and warning. Compaction does not pay at measured prices, so the compact stage records `skipped:not-worth-it`. Meridian still sets `PI_CACHE_RETENTION=long` for interactive primaries unless you set it; unsupported providers remain push-only. |
 | Codex | Push and warning with a fixed 1800-second TTL; compact after roughly 100k tokens of growth, assuming the OpenAI/ChatGPT route |
-| OpenCode | 2.x `openai`: push and warning; measured cold compaction does not pay, so the compact stage records `skipped:not-worth-it`. Other providers are push-only. 1.x remains push-only ([OpenCode versions](#opencode-versions)). |
+| OpenCode | 2.x `openai`: push and warning; compact after roughly 60k tokens of growth from a new baseline, or 44k after Meridian's own compaction. Other providers are push-only. 1.x remains push-only ([OpenCode versions](#opencode-versions)). |
 
 The OpenAI estimates (Pi `openai-codex`, OpenCode `openai`) are per provider, not
 per model, and assume GPT-5.6 or later. For an older model on those routes, set
@@ -340,10 +340,13 @@ Set `compact_min_growth_tokens` to replace the calculated threshold. This also
 opts routes whose measured economics say "never" back into compaction. The
 override still requires a known current context and baseline.
 
-Pi and OpenCode register no cost constants: at the fixed return probability of
-0.5 their measured compactions never pay. Their evaluations report `basis: never`
-and `costs: null` unless a growth override is set. Codex uses OpenAI-route costs
-without detecting custom model providers; use a growth override for other routes.
+Pi registers no cost constants: at the fixed return probability of 0.5 its
+measured compactions never pay. Its evaluations report `basis: never` and
+`costs: null` unless a growth override is set. OpenCode 2.x uses measured
+OpenAI-route costs; 1.x has no detected TTL or context accounting and remains
+push-only. Codex and OpenCode cost resolution does not detect custom model
+providers at fire time. A manually configured TTL on another provider therefore
+uses the OpenAI assumptions; set a growth override when that route differs.
 
 A compaction is skipped when the timer is stale or late, idle or compaction is
 disabled, the cache is already cold, the harness is busy, a draft is present or

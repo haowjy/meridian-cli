@@ -8,6 +8,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Replace the idle compaction total-context floor with a growth-based,
   per-harness break-even; `idle.compact_min_growth_tokens` is the explicit
   override and replaces `idle.min_compact_tokens`.
+- Use measured warm-cache costs for OpenCode 2.x `openai` compaction; frozen
+  OpenCode 1.x remains push-only.
 - Skip idle compaction when current context, its growth baseline, or route
   economics are unknown, and expose the persisted evaluation in idle status.
 

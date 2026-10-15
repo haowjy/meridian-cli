@@ -128,6 +128,14 @@ class IdleSensor(Protocol):
     async def compact(self) -> CompactResult: ...
 
 
+class PrimaryIdleSensor(IdleSensor, Protocol):
+    """Managed-primary sensor with dialect-specific compaction economics."""
+
+    def compact_costs(
+        self, *, ttl_seconds: int | None
+    ) -> CompactCosts | None: ...
+
+
 @dataclass(frozen=True)
 class CacheTtl:
     """A cache lifetime and whether it is a heuristic rather than a known TTL."""
@@ -172,5 +180,6 @@ __all__ = [
     "IdleSensorContext",
     "NativeIdleHook",
     "PinnedIdleSession",
+    "PrimaryIdleSensor",
     "ResolveCompactCosts",
 ]

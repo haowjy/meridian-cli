@@ -17,11 +17,12 @@ from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.opencode_v2_http import v2_session_idle_marker
 from meridian.lib.harness.idle_types import (
     CacheTtl,
+    CompactCosts,
     CompactResult,
     IdleEvent,
     IdleFacts,
-    IdleSensor,
     IdleSensorContext,
+    PrimaryIdleSensor,
 )
 from meridian.lib.harness.opencode_backend import OpenCodeVersion, resolve_opencode_version
 from meridian.lib.utils.json_shapes import json_object
@@ -47,6 +48,24 @@ def detect_ttl(
 
     _ = session_id, native_store, env
     return _PROVIDER_TTLS.get((provider or "").strip().lower())
+
+
+def compact_costs(
+    *, ttl_seconds: int | None
+) -> CompactCosts | None:
+    """Return measured remote-compaction economics for OpenCode's OpenAI route."""
+
+    _ = ttl_seconds
+    # One OpenCode 2.x OpenAI compaction read 187,520 cached tokens at 0.1x
+    # with 730 uncached tokens; the V2 request retains a 15k-token text tail.
+    return CompactCosts(
+        w=1.0,
+        c=0.104,
+        u=1_000,
+        o=8.0,
+        summary_tokens=1_600,
+        residue_tokens=16_500,
+    )
 
 
 def _properties(event: RawHarnessEvent) -> Mapping[str, object]:
@@ -225,6 +244,13 @@ async def _backend_request(
 
 class _OpenCodeIdleSensorBase:
     """Shared OpenCode sensor plumbing independent of backend dialect."""
+
+    @staticmethod
+    def compact_costs(*, ttl_seconds: int | None) -> CompactCosts | None:
+        """Keep frozen OpenCode 1.x compaction on the never-pays path."""
+
+        _ = ttl_seconds
+        return None
 
     def __init__(
         self,
@@ -594,6 +620,8 @@ def _v2_session_idle_after(payload: object, admitted_at_ms: float | None) -> boo
 class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
     """Translate OpenCode 2.x execution and inbox events into idle facts."""
 
+    compact_costs = staticmethod(compact_costs)
+
     def __init__(
         self,
         ctx: IdleSensorContext,
@@ -835,7 +863,7 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
         return CompactResult("ok")
 
 
-def primary_idle_sensor(ctx: IdleSensorContext) -> IdleSensor:
+def primary_idle_sensor(ctx: IdleSensorContext) -> PrimaryIdleSensor:
     """Create the sensor hosted by the managed-primary attach launcher."""
 
     resolved = getattr(ctx.connection, "resolved_version", None)
@@ -863,6 +891,7 @@ __all__ = [
     "OpenCodeIdleSensor",
     "OpenCodeV2IdleSensor",
     "autocompact_off",
+    "compact_costs",
     "detect_ttl",
     "message_excerpts",
     "primary_idle_sensor",

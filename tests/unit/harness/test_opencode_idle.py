@@ -564,13 +564,13 @@ async def test_v2_compact_confirms_durable_completion_after_stream_gap(
 
 
 @pytest.mark.parametrize(
-    ("version", "resolved_version", "expected_type"),
+    ("version", "resolved_version", "expected_type", "has_compact_costs"),
     [
-        ("v1", "v1", opencode_idle.OpenCodeIdleSensor),
-        ("v1", None, opencode_idle.OpenCodeIdleSensor),
-        ("v2", "v2", opencode_idle.OpenCodeV2IdleSensor),
-        ("auto", "v1", opencode_idle.OpenCodeIdleSensor),
-        ("auto", "v2", opencode_idle.OpenCodeV2IdleSensor),
+        ("v1", "v1", opencode_idle.OpenCodeIdleSensor, False),
+        ("v1", None, opencode_idle.OpenCodeIdleSensor, False),
+        ("v2", "v2", opencode_idle.OpenCodeV2IdleSensor, True),
+        ("auto", "v1", opencode_idle.OpenCodeIdleSensor, False),
+        ("auto", "v2", opencode_idle.OpenCodeV2IdleSensor, True),
     ],
 )
 def test_primary_idle_sensor_dispatches_by_resolved_connection_version(
@@ -578,12 +578,14 @@ def test_primary_idle_sensor_dispatches_by_resolved_connection_version(
     version: str | None,
     resolved_version: str | None,
     expected_type: type[object],
+    has_compact_costs: bool,
 ) -> None:
     sensor = opencode_idle.primary_idle_sensor(
         _context(tmp_path, version=version, resolved_version=resolved_version)
     )
 
     assert type(sensor) is expected_type
+    assert (sensor.compact_costs(ttl_seconds=1800) is not None) is has_compact_costs
 
 
 @pytest.mark.parametrize(

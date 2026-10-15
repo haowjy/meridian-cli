@@ -14,9 +14,9 @@ from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessE
 from meridian.lib.harness.extractors.base import HarnessExtractor
 from meridian.lib.harness.idle_types import (
     DetectIdleTtl,
-    IdleSensor,
     IdleSensorContext,
     NativeIdleHook,
+    PrimaryIdleSensor,
     ResolveCompactCosts,
 )
 from meridian.lib.harness.launch_types import ManagedPrimaryPreview
@@ -74,7 +74,7 @@ class HarnessProjectionPorts(Generic[SpecT]):
 
 
 EventSinks = Callable[[Path, SpawnId], tuple[Callable[[RawHarnessEvent], None], ...]]
-PrimaryIdleSensor = Callable[[IdleSensorContext], IdleSensor | None]
+PrimaryIdleSensorFactory = Callable[[IdleSensorContext], PrimaryIdleSensor | None]
 AutocompactOffReader = Callable[[Mapping[str, str]], bool | None]
 
 
@@ -96,7 +96,7 @@ class HarnessBundle(Generic[SpecT]):
     projections: HarnessProjectionPorts[SpecT]
     semantics: HarnessSemantics
     event_sinks: EventSinks = _no_event_sinks
-    primary_idle_sensor: PrimaryIdleSensor | None = None
+    primary_idle_sensor: PrimaryIdleSensorFactory | None = None
     native_idle_hook: NativeIdleHook | None = None
     autocompact_off: AutocompactOffReader | None = None
     detect_ttl: DetectIdleTtl | None = None

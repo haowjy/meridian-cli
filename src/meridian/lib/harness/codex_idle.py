@@ -27,10 +27,10 @@ from meridian.lib.harness.idle_types import (
     CompactResult,
     IdleEvent,
     IdleFacts,
-    IdleSensor,
     IdleSensorContext,
     NativeIdleHook,
     PinnedIdleSession,
+    PrimaryIdleSensor,
 )
 from meridian.lib.platform import get_home_path
 
@@ -272,6 +272,7 @@ CODEX_NATIVE_IDLE_HOOK = NativeIdleHook(
 class CodexIdleSensor:
     """Pane-backed facts and typed-then-verified compaction for Codex."""
 
+    compact_costs = staticmethod(compact_costs)
     external_events = True
 
     def __init__(
@@ -359,7 +360,7 @@ class CodexIdleSensor:
         return CompactResult("failed", "timeout")
 
 
-def primary_idle_sensor(ctx: IdleSensorContext) -> IdleSensor:
+def primary_idle_sensor(ctx: IdleSensorContext) -> PrimaryIdleSensor:
     """Build the managed-primary Codex sensor."""
 
     return CodexIdleSensor(ctx)

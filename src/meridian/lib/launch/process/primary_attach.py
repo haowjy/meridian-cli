@@ -317,7 +317,7 @@ class PrimaryAttachLauncher:
                 error_reporter=error_reporter,
                 autocompact_off=self._harness_bundle.autocompact_off,
                 detect_ttl=self._harness_bundle.detect_ttl,
-                compact_costs=self._harness_bundle.compact_costs,
+                compact_costs=sensor.compact_costs,
             )
         )
 
