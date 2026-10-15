@@ -126,7 +126,7 @@ describe("meridian idle event mapping", () => {
     const calls = run.mock.calls.map(([args]) => args);
     expect(calls.filter((args) => args[1] === "arm")).toEqual([[
       "idle", "arm", "--harness", "pi", "--session", "pi-session",
-      "--provider", "anthropic", "--interactive",
+      "--provider", "anthropic", "--context-tokens", "42000", "--interactive",
     ]]);
     expect(calls.filter((args) => args[1] === "fire").map((args) => args[2])).toEqual([
       "push", "warn", "compact",
@@ -179,6 +179,7 @@ describe("meridian idle event mapping", () => {
     expect(arm).toEqual([
       "idle", "arm", "--harness", "pi", "--session", "pi-session",
       "--provider", "anthropic",
+      "--context-tokens", "42000",
       "--user-text=latest\n prompt", "--assistant-text=- latest answer",
       "--interactive",
     ]);
@@ -310,7 +311,7 @@ describe("meridian idle event mapping", () => {
     ]);
     expect(calls.filter((args) => args[1] === "arm")).toEqual([[
       "idle", "arm", "--harness", "pi", "--session", "pi-session",
-      "--provider", "anthropic", "--interactive",
+      "--provider", "anthropic", "--context-tokens", "42000", "--interactive",
     ]]);
     expect(calls.filter((args) => args[1] === "fire").map((args) => args[2])).toEqual(["warn"]);
     expect(calls.filter((args) => args[1] === "fire")[0]).toEqual([

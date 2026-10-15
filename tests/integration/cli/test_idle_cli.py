@@ -63,7 +63,7 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
         "compact": True,
         "compact_minutes": 1,
         "enabled": True,
-        "min_compact_tokens": 40_000,
+        "compact_min_growth_tokens": None,
         "push_seconds": 0,
         "warn_minutes": 15,
     }
@@ -78,6 +78,8 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
         "--implies-return",
         "--turn-id",
         "turn-1",
+        "--context-tokens",
+        "50000",
     )
     assert isinstance(armed, dict)
     assert set(armed) == {"stretch", "anchor", "push_at", "compact_at"}
@@ -95,6 +97,8 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
         "--implies-return",
         "--turn-id",
         "turn-1",
+        "--context-tokens",
+        "50000",
     ) == {
         "stretch": 1,
         "anchor": 1,
@@ -120,6 +124,12 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
         "returned_at_ms": returned_at_ms,
         "ttl_seconds": 61,
         "ttl_estimated": True,
+        "context": {
+            "context_tokens": 50_000,
+            "baseline_tokens": 50_000,
+            "baseline_source": "observed",
+        },
+        "compact_eval": None,
         "schedule": {
             "push_at": armed["push_at"],
             "warn_at": None,
@@ -134,8 +144,9 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
     assert human.returncode == 0
     assert human.stderr == ""
     assert human.stdout == (
-        "HARNESS    SESSION                  STRETCH ANCHOR SCHEDULE\n"
-        f"claude     fake-claude-session            1      1 push={armed['push_at']}, "
+        "HARNESS    SESSION                  STRETCH ANCHOR "
+        "COMPACT                                SCHEDULE\n"
+        f"claude     fake-claude-session            1      1 {'-':<38} push={armed['push_at']}, "
         f"compact={armed['compact_at']}\n"
     )
 
@@ -151,6 +162,29 @@ def test_idle_cli_wire_contract(tmp_path: Path) -> None:
         "--anchor",
         "1",
     ) == {"decision": "act", "reason": "guards-passed"}
+    env["MERIDIAN_IDLE_COMPACT_MIN_GROWTH_TOKENS"] = "0"
+    compact_fire = _json_success(
+        tmp_path,
+        env,
+        "idle",
+        "fire",
+        "compact",
+        *identity,
+        "--stretch",
+        "1",
+        "--anchor",
+        "1",
+        "--context-tokens",
+        "51000",
+    )
+    assert compact_fire == {
+        "decision": "act",
+        "reason": "guards-passed",
+        "detail": "growth 1k >= need 0k (configured)",
+    }
+    assert _json_success(
+        tmp_path, env, "idle", "status", "--json"
+    )[0]["compact_eval"]["verdict"] == "worth-it"
     assert (
         _json_success(
             tmp_path,

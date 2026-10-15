@@ -14,6 +14,11 @@ a harness adapter: **adapters report facts; core decides**.
   compaction completion.
 - Keep `timeline.py` and `guards.py` pure. Guard order is behavioral: the first
   match is the reported reason.
+- Context baselines survive returns and new stretches. Only a trustworthy shrink
+  or the first real turn after Meridian's own successful compaction resets them;
+  absorbed compaction turns never update context. The first arm after a closed
+  stretch with claimed/successful compaction also skips observation: it may be
+  the compaction's own late turn end.
 - Authoritative state lives in `../state/idle_store.py`; sidecar timers are
   disposable and reconstructed from that state.
 - A primary reopen through Meridian closes any open stretch in the launcher

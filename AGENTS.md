@@ -58,6 +58,10 @@ Derived fields inherit the precedence level of their source.
 
 Read `docs/releasing.md` before releasing or opening a PR.
 
+Docs never state release status ("unreleased", "next release"): `CHANGELOG.md`
+`[Unreleased]` owns that, and a release stamps the version. Title upgrade notes
+in `docs/upgrading.md` by topic; the changelog entry that links to them dates them.
+
 PRs: use `.github/PULL_REQUEST_TEMPLATE.md` — fill every section. Set a
 `release:*` label before merging. No label defaults to RC.
 

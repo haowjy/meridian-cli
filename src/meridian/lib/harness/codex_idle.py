@@ -10,6 +10,7 @@ import time
 import tomllib
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import suppress
+from dataclasses import replace
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -17,11 +18,13 @@ from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.harness.codex_bootstrap import is_bootstrap_turn_prompt
 from meridian.lib.harness.codex_rollout import (
     find_rollout,
+    latest_context_tokens,
     resolve_codex_home,
 )
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.idle_types import (
     COMPACT_SCREEN_NOT_RECOGNIZED,
+    CompactCosts,
     CompactResult,
     IdleEvent,
     IdleFacts,
@@ -38,6 +41,25 @@ _CLEAR_PRIMER = "ix"
 _SCREEN_RECOGNITION_TIMEOUT_SECONDS = 10.0
 _SCREEN_RECOGNITION_POLL_SECONDS = 5.0
 IDLE_NOTIFY_COMMAND = ("meridian", "idle", "event", "--harness", "codex")
+
+
+def compact_costs(
+    *, ttl_seconds: int | None
+) -> CompactCosts | None:
+    """Return measured remote-compaction economics for Codex's OpenAI route."""
+
+    _ = ttl_seconds
+    # 160 rollout compactions put cached input at median 0.114*C and summary
+    # output at 4.5k tokens. R=3.5k is the cross-session post-minus-prefix
+    # median; GPT-5.x output is priced at roughly 8x input.
+    return CompactCosts(
+        w=1.0,
+        c=0.114,
+        u=0,
+        o=8.0,
+        summary_tokens=4_500,
+        residue_tokens=3_500,
+    )
 
 
 class TmuxClient(Protocol):
@@ -165,12 +187,16 @@ def _composer_is_empty(capture: str) -> bool:
     return lines[prompt_index].removeprefix(_PROMPT_MARKER).strip() == ""
 
 
-def _session_rollout(ctx: IdleSensorContext) -> Path | None:
-    sessions_root = resolve_codex_home(ctx.env) / "sessions"
+def _find_session_rollout(session_id: str, env: Mapping[str, str]) -> Path | None:
+    sessions_root = resolve_codex_home(env) / "sessions"
     try:
-        return find_rollout(sessions_root, ctx.harness_session_id)
+        return find_rollout(sessions_root, session_id)
     except (OSError, NativeIdentityError):
         return None
+
+
+def _session_rollout(ctx: IdleSensorContext) -> Path | None:
+    return _find_session_rollout(ctx.harness_session_id, ctx.env)
 
 
 def _has_appended_compaction(path: Path, offset: int) -> bool:
@@ -252,6 +278,7 @@ def _delegate_user_notify(payload: str, env: Mapping[str, str]) -> None:
 def parse_idle_event(
     payload: str,
     session_reader: Callable[[str], PinnedIdleSession | None],
+    env: Mapping[str, str],
 ) -> IdleEvent | None:
     """Parse one Codex ``notify`` argv payload pinned to an active primary."""
 
@@ -286,6 +313,7 @@ def parse_idle_event(
     if is_bootstrap_turn_prompt(last_input):
         return None
     last_assistant = raw.get("last-assistant-message")
+    rollout = _find_session_rollout(thread_id, env)
     return IdleEvent(
         kind="turn_end",
         harness_session_id=thread_id,
@@ -296,6 +324,7 @@ def parse_idle_event(
         last_assistant_text=(
             last_assistant if isinstance(last_assistant, str) else None
         ),
+        context_tokens=latest_context_tokens(rollout) if rollout is not None else None,
     )
 
 
@@ -338,11 +367,13 @@ class CodexIdleSensor:
             yield
 
     async def facts(self) -> IdleFacts:
+        rollout = _session_rollout(self._ctx)
+        context_tokens = latest_context_tokens(rollout) if rollout is not None else None
         pane = self._ctx.tmux_pane
         if pane is None or not self._ctx.tui_alive():
-            return pane_facts("")
+            return replace(pane_facts(""), context_tokens=context_tokens)
         capture = await self._tmux.capture(pane)
-        return pane_facts(capture or "")
+        return replace(pane_facts(capture or ""), context_tokens=context_tokens)
 
     async def _erase_typed_text(self, pane: str, text: str) -> None:
         await self._tmux.send_keys(pane, *("BSpace",) * len(text))
@@ -447,6 +478,7 @@ __all__ = [
     "CODEX_NATIVE_IDLE_HOOK",
     "IDLE_NOTIFY_COMMAND",
     "CodexIdleSensor",
+    "compact_costs",
     "pane_facts",
     "parse_idle_event",
     "primary_idle_sensor",

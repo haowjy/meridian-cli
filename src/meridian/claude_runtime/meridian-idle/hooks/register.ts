@@ -262,6 +262,8 @@ async function armTask($: EngineInterface, s: State, epoch: number, assistantTex
     }
     const session = await $.session.id()
     const args = ['arm', '--harness', HARNESS, '--session', session]
+    const tokens = await contextTokens($)
+    if (tokens !== undefined) args.push('--context-tokens', String(tokens))
     const userExcerpt = capExcerpt(s.lastUserText)
     const assistantExcerpt = capExcerpt(assistantText)
     if (userExcerpt !== undefined) args.push(`--user-text=${userExcerpt}`)
@@ -330,7 +332,8 @@ function userReturned($: EngineInterface, s: State): void {
 
 async function contextTokens($: EngineInterface): Promise<number | undefined> {
   try {
-    return asNumber((await $.session.usage()).context.tokens)
+    const tokens = asNumber((await $.session.usage()).context.tokens)
+    return tokens !== undefined && tokens > 0 ? tokens : undefined
   } catch {
     return undefined
   }
@@ -392,7 +395,8 @@ async function onTimer($: EngineInterface, s: State, stage: Stage, armed: Armed,
       note($, s, `fire ${stage} failed: ${problem ?? 'unexpected reply'}`)
       return
     }
-    note($, s, `fire ${stage}: ${String(reply.decision)} (${String(reply.reason)})`)
+    const detail = typeof reply.detail === 'string' ? `: ${reply.detail}` : ''
+    note($, s, `fire ${stage}: ${String(reply.decision)} (${String(reply.reason)})${detail}`)
     armed.fired[stage] = reply.decision === 'act' ? 'act' : `skip: ${String(reply.reason)}`
     // Push and warn are core's job. Only a compact "act" asks anything of us.
     if (stage !== 'compact' || reply.decision !== 'act') return

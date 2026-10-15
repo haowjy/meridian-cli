@@ -333,16 +333,42 @@ async def test_v2_recorded_normal_prompt_emits_return_and_parent_turn_end(
     await _assert_quiet(iterator)
 
 
-def test_v2_turn_end_fetches_wrapped_descending_message_excerpts() -> None:
+def test_v2_turn_end_parses_wrapped_descending_message_facts() -> None:
     payload = {
         "data": [
-            {"type": "assistant", "content": "latest answer"},
+            {
+                "info": {
+                    "role": "assistant",
+                    "tokens": {
+                        "input": 10_000,
+                        "cache": {"read": 20_000, "write": 3_000},
+                    },
+                },
+                "content": "latest answer",
+            },
             {"type": "user", "text": "latest"},
             {"type": "assistant", "content": "old answer"},
             {"type": "user", "text": "old prompt"},
         ]
     }
     assert opencode_idle._v2_message_excerpts(payload) == ("latest", "latest answer")
+    assert opencode_idle.v2_message_context_tokens(payload) == 33_000
+
+    compaction = {
+        "data": [
+            {
+                "info": {
+                    "role": "assistant",
+                    "mode": "compaction",
+                    "tokens": {"input": 80_000, "cache": {"read": 0, "write": 0}},
+                }
+            },
+            *payload["data"],
+        ]
+    }
+    assert opencode_idle.v2_message_context_tokens(compaction) is None
+    compaction["data"][0]["info"]["tokens"]["input"] = 0
+    assert opencode_idle.v2_message_context_tokens(compaction) is None
 
 
 async def test_v2_steered_prompt_returns_before_terminal_and_does_not_leak_to_compaction(

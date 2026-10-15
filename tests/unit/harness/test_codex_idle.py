@@ -10,6 +10,7 @@ import pytest
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.codex_bootstrap import bootstrap_turn_prompt
 from meridian.lib.harness.codex_idle import CodexIdleSensor, pane_facts, parse_idle_event
+from meridian.lib.harness.codex_rollout import latest_context_tokens
 from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.idle_types import IdleEvent, IdleSensorContext, PinnedIdleSession
 
@@ -138,8 +139,11 @@ def _probe_payloads() -> list[str]:
     return [record["argv"][0] for record in records]
 
 
-def test_parse_idle_event_pins_main_thread_and_tracks_input_growth() -> None:
+def test_parse_idle_event_pins_main_thread_and_tracks_input_growth(tmp_path: Path) -> None:
     counts: dict[str, int | None] = {MAIN_THREAD: None}
+    rollout = _write_rollout(tmp_path)
+    _append(rollout, _token_count(12_000, 12_345))
+    env = {"CODEX_HOME": str(tmp_path / "codex")}
 
     def read_session(session: str) -> PinnedIdleSession | None:
         if session not in counts:
@@ -148,7 +152,7 @@ def test_parse_idle_event_pins_main_thread_and_tracks_input_growth() -> None:
 
     parsed: list[IdleEvent | None] = []
     for payload in _probe_payloads():
-        event = parse_idle_event(payload, session_reader=read_session)
+        event = parse_idle_event(payload, session_reader=read_session, env=env)
         parsed.append(event)
         if event is not None:
             counts[event.harness_session_id] = event.input_count
@@ -160,10 +164,32 @@ def test_parse_idle_event_pins_main_thread_and_tracks_input_growth() -> None:
     assert all(event.implies_return for event in pinned)
     assert pinned[-1].last_user_text == "Run sleep 3 in shell, then reply done."
     assert pinned[-1].last_assistant_text == "done"
+    assert pinned[-1].context_tokens == 12_345
 
-    repeated = parse_idle_event(_probe_payloads()[-1], session_reader=read_session)
+    repeated = parse_idle_event(_probe_payloads()[-1], session_reader=read_session, env=env)
     assert repeated is not None
     assert repeated.implies_return is False
+
+
+def _token_count(input_tokens: int, total_tokens: int) -> bytes:
+    return (json.dumps({
+        "type": "event_msg", "payload": {
+            "type": "token_count", "info": {"last_token_usage": {
+                "input_tokens": input_tokens, "total_tokens": total_tokens,
+            }},
+        },
+    }) + "\n").encode()
+
+
+def test_latest_context_tokens_stops_at_compaction_boundaries(tmp_path: Path) -> None:
+    rollout = tmp_path / "rollout.jsonl"
+    usage = _token_count(40_000, 41_234)
+    rollout.write_bytes(usage)
+    assert latest_context_tokens(rollout) == 41_234
+    _append(rollout, _token_count(0, 9_000))
+    assert latest_context_tokens(rollout) is None
+    rollout.write_bytes(usage + b'{"type": "compacted", "payload": {}}\n')
+    assert latest_context_tokens(rollout) is None
 
 
 def test_parse_idle_event_skips_bootstrap_but_tracks_the_next_real_turn() -> None:
@@ -191,7 +217,7 @@ def test_parse_idle_event_skips_bootstrap_but_tracks_the_next_real_turn() -> Non
         inputs=[bootstrap_prompt],
         answer=bootstrap_prompt,
     )
-    assert parse_idle_event(bootstrap, session_reader=read_session) is None
+    assert parse_idle_event(bootstrap, session_reader=read_session, env={}) is None
     assert last_input_count is None
 
     real_turn = payload(
@@ -199,14 +225,14 @@ def test_parse_idle_event_skips_bootstrap_but_tracks_the_next_real_turn() -> Non
         inputs=[bootstrap_prompt, "actual user prompt"],
         answer="actual answer",
     )
-    event = parse_idle_event(real_turn, session_reader=read_session)
+    event = parse_idle_event(real_turn, session_reader=read_session, env={})
     assert event is not None
     assert event.implies_return is True
     assert event.input_count == 2
     assert event.last_user_text == "actual user prompt"
 
     last_input_count = event.input_count
-    repeated = parse_idle_event(real_turn, session_reader=read_session)
+    repeated = parse_idle_event(real_turn, session_reader=read_session, env={})
     assert repeated is not None
     assert repeated.implies_return is False
 
