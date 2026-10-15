@@ -30,6 +30,7 @@ bare path
                                     — stable launch-boundary append lock
   locks/gc.lock                     — lock-GC pass serialization
   spawns/.staging/<unique>/         — unpublished builds and verified-archive retirement buffers
+  spawn-heads/<pN>                  — disposable latest-run upper bound (atomic integer)
   spawns/<run_id>/                  — pN for run 1; pN.K for K >= 2
     state.json                      — authoritative spawn state (schema v3)
     history.jsonl                   — legacy runner event stream (no longer written), never read
@@ -66,6 +67,8 @@ Spawn state lives in individual immutable-run `state.json` files
 (`spawns/<run_id>/state.json`), not a global event log, so status reads stay O(1)
 instead of replaying O(n) events. A stable `pN` groups `pN` and `pN.K` rows; the
 layout originated in the v2 migration and published rows use schema v3.
+`spawn-heads/<pN>` accelerates latest-run discovery but is never authority: readers
+verify run directories and recover stale/ahead pointers by bounded direct probes.
 
 ## Spawn Mutation Seam
 

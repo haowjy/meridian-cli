@@ -5,9 +5,42 @@ from pathlib import Path
 
 from meridian.lib.core.refs import parse_ref, reference_sort_key, spawn_of
 from meridian.lib.core.types import RunId, SpawnId
+from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.state.spawn.repository import scan_spawn_ids
+
+
+def _run_id(spawn_id: SpawnId, run: int) -> RunId:
+    return parse_ref(str(spawn_id) if run == 1 else f"{spawn_id}.{run}", row_key=True)
+
+
+def _run_exists(paths: RuntimePaths, spawn_id: SpawnId, run: int) -> bool:
+    return (paths.spawns_dir / _run_id(spawn_id, run) / "state.json").is_file()
+
+
+def _head_path(paths: RuntimePaths, spawn_id: SpawnId) -> Path:
+    # Heads cannot live under spawns/<pN>: run 1 may retire before later runs.
+    return paths.root_dir / "spawn-heads" / str(spawn_id)
+
+
+def _read_head(paths: RuntimePaths, spawn_id: SpawnId) -> int:
+    try:
+        run = int(_head_path(paths, spawn_id).read_text(encoding="utf-8").strip())
+    except (FileNotFoundError, OSError, ValueError):
+        return 1
+    return max(run, 1)
+
+
+def write_run_head(paths: RuntimePaths, run_id: RunId) -> None:
+    """Atomically record a derived upper bound before publishing a later run."""
+
+    parsed = parse_ref(str(run_id))
+    assert parsed.spawn_id is not None and parsed.run is not None
+    if parsed.run == 1:
+        return
+    head = _head_path(paths, parsed.spawn_id)
+    head.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(head, f"{parsed.run}\n")
 
 
 def group_runs(rows: Iterable[SpawnRecord]) -> dict[SpawnId, tuple[SpawnRecord, ...]]:
@@ -61,21 +94,38 @@ def runs_of(runtime_root: Path, spawn_id: SpawnId) -> tuple[RunId, ...]:
     """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    matches: list[tuple[int, str, RunId]] = []
-    for row_key in scan_spawn_ids(paths.spawns_dir):
-        parsed = parse_ref(str(row_key))
-        if parsed.kind not in {"spawn", "run"} or parsed.spawn_id != spawn_id:
-            continue
-        assert parsed.run is not None
-        matches.append((parsed.run, str(row_key), row_key))
-    return tuple(row_key for _, _, row_key in sorted(matches))
+    latest = latest_run(runtime_root, spawn_id)
+    if latest is None:
+        return ()
+    last_run = parse_ref(str(latest)).run
+    assert last_run is not None
+    return tuple(
+        _run_id(spawn_id, run)
+        for run in range(1, last_run + 1)
+        if _run_exists(paths, spawn_id, run)
+    )
 
 
 def latest_run(runtime_root: Path, spawn_id: SpawnId) -> RunId | None:
-    """Return the highest-numbered loose run for a stable spawn."""
+    """Return the newest loose run without scanning unrelated spawn directories."""
 
-    runs = runs_of(runtime_root, spawn_id)
-    return runs[-1] if runs else None
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    pointed_run = _read_head(paths, spawn_id)
+
+    # A stale pointer can be left by an older/pointerless writer. Probe upward
+    # first so the derived cache is never required for correctness.
+    run = pointed_run
+    while _run_exists(paths, spawn_id, run + 1):
+        run += 1
+    if _run_exists(paths, spawn_id, run):
+        return _run_id(spawn_id, run)
+
+    # reserve_run publishes the pointer before the row. A crash in between is
+    # recovered by finding the highest surviving predecessor.
+    for candidate in range(run - 1, 0, -1):
+        if _run_exists(paths, spawn_id, candidate):
+            return _run_id(spawn_id, candidate)
+    return None
 
 
 class SpawnBusy(ValueError):

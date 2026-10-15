@@ -80,6 +80,59 @@ def test_run_discovery_uses_max_suffix_with_holes_and_ignores_junk(tmp_path: Pat
     assert latest_run(tmp_path, SpawnId("p1")) == "p1.3"
 
 
+def test_latest_run_without_pointer_is_run_one(tmp_path: Path) -> None:
+    _start(tmp_path)
+
+    assert not (tmp_path / "spawn-heads" / "p1").exists()
+    assert latest_run(tmp_path, SpawnId("p1")) == "p1"
+
+
+def test_latest_run_probes_above_stale_pointer(tmp_path: Path) -> None:
+    _start(tmp_path)
+    _start(tmp_path, spawn_id="p1.2")
+    _start(tmp_path, spawn_id="p1.3")
+    (tmp_path / "spawn-heads" / "p1").write_text("2\n", encoding="utf-8")
+
+    assert latest_run(tmp_path, SpawnId("p1")) == "p1.3"
+
+
+def test_latest_run_probes_below_pointer_written_before_publish(tmp_path: Path) -> None:
+    _start(tmp_path)
+    (tmp_path / "spawn-heads").mkdir()
+    (tmp_path / "spawn-heads" / "p1").write_text("3\n", encoding="utf-8")
+
+    assert latest_run(tmp_path, SpawnId("p1")) == "p1"
+
+
+@pytest.mark.parametrize("unrelated_count", [10, 200])
+def test_latest_run_stats_only_target_spawn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unrelated_count: int,
+) -> None:
+    _start(tmp_path)
+    for number in range(2, unrelated_count + 2):
+        state = tmp_path / "spawns" / f"p{number}" / "state.json"
+        state.parent.mkdir()
+        state.write_text("{}\n", encoding="utf-8")
+
+    original_is_file = Path.is_file
+    checked_state_paths: list[Path] = []
+
+    def count_is_file(path: Path) -> bool:
+        if path.name == "state.json":
+            checked_state_paths.append(path)
+        return original_is_file(path)
+
+    monkeypatch.setattr(Path, "is_file", count_is_file)
+
+    assert latest_run(tmp_path, SpawnId("p1")) == "p1"
+    assert checked_state_paths == [
+        tmp_path / "spawns" / "p1.2" / "state.json",
+        tmp_path / "spawns" / "p1" / "state.json",
+    ]
+
+
 def test_spawn_counter_ignores_dotted_run_suffixes(tmp_path: Path) -> None:
     first = _start(tmp_path, spawn_id="p100")
     _finish(tmp_path, first)

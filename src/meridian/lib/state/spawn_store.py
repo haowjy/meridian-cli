@@ -71,7 +71,7 @@ from meridian.lib.state.spawn.repository import (
 from meridian.lib.state.spawn.repository import read_state as _read_state
 from meridian.lib.state.spawn.repository import scan_spawn_ids as _scan_spawn_ids
 from meridian.lib.state.spawn.repository import write_state_locked as _write_state_locked
-from meridian.lib.state.spawn.runs import check_spawn_available, runs_of
+from meridian.lib.state.spawn.runs import check_spawn_available, runs_of, write_run_head
 from meridian.lib.state.spawn.transitions import (
     apply_cancel_intent,
     apply_finalize,
@@ -225,6 +225,7 @@ def _publish_record(paths: RuntimePaths, record: SpawnRecord) -> None:
         stage_dir / "state.json",
         stored_state.model_dump_json(indent=2) + "\n",
     )
+    write_run_head(paths, record.id)
     source = HistorySource(kind="spawn", key=str(record.id))
     with lock_file(source.lock_path(paths.root_dir)):
         HistoryChanges(paths.root_dir).mark(source)
