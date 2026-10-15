@@ -1,4 +1,5 @@
 # ops/ — must-do follow-ups
 
-- After #418 B1 makes accepted-chat ownership a true keyed read, restore the
-  owner spawn in session list/browse without folding `sessions.jsonl` on refresh.
+- After #418 B2 (per-chat journals) makes `chat_record(chat)` O(chat), restore
+  the accepted generation's owner spawn in session list/browse without folding
+  `sessions.jsonl` on refresh.

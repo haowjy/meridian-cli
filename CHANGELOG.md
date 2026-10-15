@@ -5,15 +5,16 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- Keep spawn IDs across `--continue`; each launch is immutable `pN.K`. Resolve
-  bare IDs through atomic heads, list one row per spawn, show its runs, expose
-  `MERIDIAN_RUN_ID`, and retain/reopen safely. Fork/from still mint spawns.
+- `--continue pN` keeps `pN`; each launch is run `pN.K` (`MERIDIAN_RUN_ID`).
+  Bare `pN` means the newest run and `pN.1` the original. List shows one row
+  per spawn with `(N runs)`; show lists recent runs. Continue an exact run with
+  `--fork pN.K`, or fork a busy spawn to branch now. Fork/from still mint spawns.
 
 ### Fixed
 - Clear stale TUI text before the quit hint.
 
 ### Upgrade notes
-- First indexed read rebuilds history schema 8; no authority migration. See [upgrade notes](docs/upgrading.md#spawnrun-identity-boundary-unreleased).
+- First indexed read rebuilds history schema 8; no authority migration. See [upgrade notes](docs/upgrading.md#spawnrun-identity-boundary).
 
 ## [0.10.7] - 2026-10-15
 
