@@ -28,6 +28,7 @@ from meridian.lib.ops.spawn.models import (
     SpawnWaitInput,
 )
 from meridian.lib.state import spawn_store
+from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.session_store import start_session
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
@@ -168,6 +169,95 @@ def test_spawn_show_json_exposes_structured_entry_and_boundary_identity(tmp_path
         "status": "unresolved",
         "trampoline_successor_id": None,
     }
+
+
+@pytest.mark.parametrize("unrelated_count", [10, 200])
+def test_spawn_show_bare_ref_reads_only_target_runs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unrelated_count: int,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    run_id = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p1",
+        chat_id="c1",
+        model="test",
+        agent="coder",
+        harness="codex",
+        prompt="done",
+    )
+    spawn_store.finalize_spawn(runtime_root, run_id, "succeeded", 0, origin="runner")
+    for number in range(2, unrelated_count + 2):
+        state = runtime_root / "spawns" / f"p{number}" / "state.json"
+        state.parent.mkdir()
+        state.write_text("{}\n", encoding="utf-8")
+
+    original_get_spawn = spawn_store.get_spawn
+    reads: list[str] = []
+
+    def tracked_get_spawn(root: Path, key: str):
+        reads.append(str(key))
+        return original_get_spawn(root, key)
+
+    monkeypatch.setattr(spawn_store, "get_spawn", tracked_get_spawn)
+    monkeypatch.setattr(
+        spawn_api,
+        "_all_run_rows",
+        lambda *_args, **_kwargs: pytest.fail("show read every run row"),
+    )
+
+    detail = spawn_api.spawn_show_sync(
+        SpawnShowInput(project_root=project_root.as_posix(), spawn_id="p1")
+    )
+
+    assert detail.spawn_id == "p1"
+    assert reads == ["p1", "p1"]
+
+
+def test_spawn_show_latest_does_not_materialize_all_run_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    for number in range(1, 4):
+        run_id = spawn_store.start_spawn(
+            runtime_root,
+            spawn_id=f"p{number}",
+            chat_id=f"c{number}",
+            model="test",
+            agent="coder",
+            harness="codex",
+            prompt="done",
+            started_at=f"2026-01-0{number}T00:00:00Z",
+        )
+        spawn_store.finalize_spawn(runtime_root, run_id, "succeeded", 0, origin="runner")
+    assert HistoryIndex(runtime_root).rebuild().complete
+
+    original_get_spawn = spawn_store.get_spawn
+    reads: list[str] = []
+
+    def tracked_get_spawn(root: Path, key: str):
+        reads.append(str(key))
+        return original_get_spawn(root, key)
+
+    monkeypatch.setattr(spawn_store, "get_spawn", tracked_get_spawn)
+    monkeypatch.setattr(
+        spawn_api,
+        "_all_run_rows",
+        lambda *_args, **_kwargs: pytest.fail("@latest read every run row"),
+    )
+
+    detail = spawn_api.spawn_show_sync(
+        SpawnShowInput(project_root=project_root.as_posix(), spawn_id="@latest")
+    )
+
+    assert detail.spawn_id == "p3"
+    assert reads == ["p3", "p3"]
 
 
 def test_spawn_stats_includes_finalizing_bucket(tmp_path: Path) -> None:

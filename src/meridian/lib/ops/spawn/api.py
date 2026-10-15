@@ -895,19 +895,28 @@ def spawn_show_sync(
         include_report_body=payload.include_report_body,
         runtime_root=runtime_root,
     )
-    from meridian.lib.state.spawn.runs import group_runs
+    from meridian.lib.state.spawn.runs import runs_of
 
     from .models import SpawnRunEntry
     runs = ()
     if parse_ref(payload.spawn_id).kind == "spawn":
-        siblings = group_runs(_all_run_rows(project_root, runtime_root)).get(spawn_of(row.id), ())
+        stable_id = spawn_of(row.id)
+        sibling_rows: list[SpawnRecord] = []
+        for run_id in runs_of(runtime_root, stable_id):
+            sibling = (
+                row
+                if run_id == row.id
+                else read_spawn_row(project_root, run_id, runtime_root=runtime_root)
+            )
+            if sibling is not None:
+                sibling_rows.append(sibling)
         runs = tuple(SpawnRunEntry(
             run_id=str(item.id) if parse_ref(item.id).kind == "run" else f"{item.id}.1",
             status=item.status, started_at=item.started_at,
             chat_id=item.chat_id, current_chat_id=item.current_chat_id,
             duration_secs=item.terminal.duration_secs if item.terminal else None,
             cost_usd=item.terminal.total_cost_usd if item.terminal else None,
-        ) for item in siblings)
+        ) for item in sibling_rows)
     surfaced_activity = _surface_primary_activity(row.status, activity)
     return detail.model_copy(
         update={
