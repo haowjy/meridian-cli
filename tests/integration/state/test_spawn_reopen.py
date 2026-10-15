@@ -13,10 +13,11 @@ from meridian.lib.core.refs import parse_ref
 from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.core.types import RunId, SpawnId
 from meridian.lib.launch.types import PrimarySessionMetadata
+from meridian.lib.ops.reference import resolve_continue_source_row
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.spawn import repository as spawn_repository
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.state.spawn.runs import continue_target_run, latest_run
+from meridian.lib.state.spawn.runs import SpawnBusy, latest_bound_run, latest_run
 from tests.support.process_race import run_spawn_race_or_skip
 
 
@@ -87,7 +88,71 @@ def test_reserve_run_contract(tmp_path: Path, status: str, live: bool, busy: boo
     assert (row.chat_id, row.owner_chat_id) == ('c1', 'c9')
     bound = spawn_store.get_spawn(tmp_path, parse_ref('p1', row_key=True))
     assert bound is not None
-    assert continue_target_run([bound, row]) == bound
+    assert latest_bound_run(tmp_path, SpawnId("p1")) == bound.id
+
+
+def test_missing_head_recovers_across_holes_before_continue_and_reservation(
+    tmp_path: Path,
+) -> None:
+    metadata = PrimarySessionMetadata(
+        harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=(),
+    )
+    first = spawn_store.start_spawn(
+        tmp_path, spawn_id="p1", chat_id="c1", model="test", agent="",
+        harness="codex", prompt="hi",
+    )
+    session_store.start_session(
+        tmp_path, harness="codex", harness_session_id="native", model="test",
+        chat_id="c1", spawn_id=first,
+    )
+    session_store.stop_session(tmp_path, "c1")
+    spawn_store.finalize_spawn(
+        tmp_path, first, status="succeeded", exit_code=0, origin="runner",
+    )
+
+    runs: list[RunId] = []
+    for _ in range(2):
+        run_id = spawn_store.reserve_run(
+            tmp_path,
+            SpawnId("p1"),
+            SpawnReservation(
+                chat_id="c1", kind="primary", prompt="again", session_metadata=metadata,
+            ),
+        )
+        session_store.start_session(
+            tmp_path, harness="codex", harness_session_id="native", model="test",
+            chat_id="c1", spawn_id=run_id, reopen=True,
+        )
+        spawn_store.update_spawn(tmp_path, run_id, session_instance_id=f"generation-{run_id}")
+        session_store.stop_session(tmp_path, "c1")
+        spawn_store.finalize_spawn(
+            tmp_path, run_id, status="succeeded", exit_code=0, origin="runner",
+        )
+        runs.append(run_id)
+
+    assert spawn_store.delete_published_spawn(
+        tmp_path, runs[0], can_delete=lambda _row: True,
+    )
+    (tmp_path / "spawn-heads" / "p1").unlink()
+
+    assert resolve_continue_source_row(tmp_path, parse_ref("p1")).id == runs[1]
+    assert (tmp_path / "spawn-heads" / "p1").read_text(encoding="utf-8") == "3\n"
+    live = spawn_store.reserve_run(
+        tmp_path,
+        SpawnId("p1"),
+        SpawnReservation(
+            chat_id="c1", kind="primary", prompt="again", session_metadata=metadata,
+        ),
+    )
+    assert live == "p1.4"
+    with pytest.raises(SpawnBusy, match=r"busy.*p1\.4"):
+        spawn_store.reserve_run(
+            tmp_path,
+            SpawnId("p1"),
+            SpawnReservation(
+                chat_id="c1", kind="primary", prompt="again", session_metadata=metadata,
+            ),
+        )
 
 
 def test_concurrent_run_reservations_allocate_distinct_suffixes(tmp_path: Path) -> None:

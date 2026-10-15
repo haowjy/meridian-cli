@@ -382,11 +382,8 @@ def start_session(
             if spawn_id is not None:
                 from meridian.lib.state.spawn.model import SpawnRecord
                 from meridian.lib.state.spawn.repository import Applied, write_state_locked
-                from meridian.lib.state.spawn.runs import write_bound_run_head
 
                 bound_run_id = parse_ref(spawn_id, row_key=True)
-                if not reopen:
-                    write_bound_run_head(paths, bound_run_id)
 
                 def bind_spawn(current: SpawnRecord) -> SpawnRecord:
                     return current.model_copy(

@@ -80,11 +80,13 @@ def test_run_discovery_uses_max_suffix_with_holes_and_ignores_junk(tmp_path: Pat
     assert latest_run(tmp_path, SpawnId("p1")) == "p1.3"
 
 
-def test_latest_run_without_pointer_is_run_one(tmp_path: Path) -> None:
+def test_latest_run_rebuilds_a_missing_pointer(tmp_path: Path) -> None:
     _start(tmp_path)
+    (tmp_path / "spawn-heads" / "p1").unlink()
 
     assert not (tmp_path / "spawn-heads" / "p1").exists()
     assert latest_run(tmp_path, SpawnId("p1")) == "p1"
+    assert (tmp_path / "spawn-heads" / "p1").read_text(encoding="utf-8") == "1\n"
 
 
 def test_latest_run_probes_above_stale_pointer(tmp_path: Path) -> None:
@@ -243,6 +245,7 @@ def test_stale_artifact_pruning_retires_latest_run_last(tmp_path: Path) -> None:
     assert [row.spawn_id for row in stale] == ["p1", "p1.2"]
     assert prune_stale_spawn_artifacts(stale).removed == 2
     assert runs_of(tmp_path, SpawnId("p1")) == ()
+    assert not (tmp_path / "spawn-heads" / "p1").exists()
 
 
 def test_prune_failure_preserves_latest_and_bound_runs(tmp_path: Path, monkeypatch) -> None:
@@ -289,6 +292,7 @@ def test_archive_apply_preserves_continuation_source_on_partial_retirement(
     if mode == "complete":
         assert len(result.reclaimed) == 3
         assert remaining == ()
+        assert not (root / "spawn-heads" / "p1").exists()
     elif mode == "limited":
         assert result.limited
         assert len(result.reclaimed) == 1

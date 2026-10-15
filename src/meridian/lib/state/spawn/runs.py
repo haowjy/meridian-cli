@@ -1,13 +1,19 @@
 """Run discovery and sibling grouping, continuation, and retention rules."""
 
 from collections.abc import Iterable, Sequence
+from contextlib import suppress
 from pathlib import Path
+
+import structlog
 
 from meridian.lib.core.refs import parse_ref, reference_sort_key, spawn_of
 from meridian.lib.core.types import RunId, SpawnId
 from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.event_store import lock_file
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.model import SpawnRecord
+
+logger = structlog.get_logger(__name__)
 
 
 def _run_id(spawn_id: SpawnId, run: int) -> RunId:
@@ -23,44 +29,74 @@ def _head_path(paths: RuntimePaths, spawn_id: SpawnId) -> Path:
     return paths.root_dir / "spawn-heads" / str(spawn_id)
 
 
-def _bound_head_path(paths: RuntimePaths, spawn_id: SpawnId) -> Path:
-    return paths.root_dir / "spawn-heads" / f"{spawn_id}.bound"
-
-
-def _read_head(paths: RuntimePaths, spawn_id: SpawnId) -> int:
+def _read_int(path: Path) -> int | None:
     try:
-        run = int(_head_path(paths, spawn_id).read_text(encoding="utf-8").strip())
+        value = int(path.read_text(encoding="utf-8").strip())
     except (FileNotFoundError, OSError, ValueError):
-        return 1
-    return max(run, 1)
+        return None
+    return value if value >= 1 else None
+
+
+def _scan_and_rebuild_head(paths: RuntimePaths, spawn_id: SpawnId) -> int | None:
+    """Recover one missing derived head under the allocation gate."""
+    from meridian.lib.state.spawn.repository import scan_spawn_ids
+
+    with lock_file(paths.spawns_flock):
+        current = _read_int(_head_path(paths, spawn_id))
+        if current is not None:
+            return current
+        highest = max(
+            (
+                parsed.run or 1
+                for run_id in scan_spawn_ids(paths.spawns_dir)
+                if (parsed := parse_ref(str(run_id))).spawn_id == spawn_id
+            ),
+            default=None,
+        )
+        logger.info(
+            "spawn_run_head_rebuilt",
+            spawn_id=str(spawn_id),
+            run=highest,
+        )
+        if highest is None:
+            with suppress(OSError):
+                _head_path(paths, spawn_id).unlink()
+            return None
+        write_run_head(paths, _run_id(spawn_id, highest))
+        return highest
+
+
+def _read_head(paths: RuntimePaths, spawn_id: SpawnId) -> int | None:
+    return _read_int(_head_path(paths, spawn_id)) or _scan_and_rebuild_head(paths, spawn_id)
 
 
 def write_run_head(paths: RuntimePaths, run_id: RunId) -> None:
-    """Atomically record a derived upper bound before publishing a later run."""
+    """Atomically advance the highest run ever reserved for one spawn."""
 
     parsed = parse_ref(str(run_id))
-    if parsed.spawn_id is None or parsed.run is None or parsed.run == 1:
+    if parsed.spawn_id is None or parsed.run is None:
         return
     head = _head_path(paths, parsed.spawn_id)
-    head.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(head, f"{parsed.run}\n")
-
-
-def write_bound_run_head(paths: RuntimePaths, run_id: RunId) -> None:
-    """Atomically cache the newest run known to have acquired a generation."""
-
-    parsed = parse_ref(str(run_id))
-    if parsed.spawn_id is None or parsed.run is None or parsed.run == 1:
-        return
-    head = _bound_head_path(paths, parsed.spawn_id)
-    try:
-        current = int(head.read_text(encoding="utf-8").strip())
-    except (FileNotFoundError, OSError, ValueError):
-        current = 1
-    if parsed.run <= current:
+    current = _read_int(head)
+    if current is not None and parsed.run <= current:
         return
     head.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(head, f"{parsed.run}\n")
+
+
+def remove_run_head(paths: RuntimePaths, spawn_id: SpawnId) -> None:
+    """Remove the derived head after the spawn's last loose run retires."""
+    with suppress(OSError):
+        _head_path(paths, spawn_id).unlink()
+
+
+def remove_run_head_if_empty(paths: RuntimePaths, spawn_id: SpawnId) -> None:
+    """Remove the head when none of its bounded run keys remain."""
+    highest = _read_int(_head_path(paths, spawn_id))
+    if highest is not None and not any(
+        _run_exists(paths, spawn_id, run) for run in range(1, highest + 1)
+    ):
+        remove_run_head(paths, spawn_id)
 
 
 def group_runs(rows: Iterable[SpawnRecord]) -> dict[SpawnId, tuple[SpawnRecord, ...]]:
@@ -73,16 +109,8 @@ def group_runs(rows: Iterable[SpawnRecord]) -> dict[SpawnId, tuple[SpawnRecord, 
     }
 
 
-def continue_target_run(rows: Sequence[SpawnRecord]) -> SpawnRecord | None:
-    """Newest run that actually acquired a session generation."""
-    return max(
-        (row for row in rows if row.session_instance_id is not None),
-        key=lambda row: reference_sort_key(row.id), default=None,
-    )
-
-
 def retention_run_ids(rows: Sequence[SpawnRecord]) -> set[RunId]:
-    """Keep latest, latest bound, and the selected continuation source until last."""
+    """Keep the latest and newest generation-bound runs until last."""
     if not rows:
         return set()
     latest = max(rows, key=lambda row: reference_sort_key(row.id))
@@ -90,8 +118,7 @@ def retention_run_ids(rows: Sequence[SpawnRecord]) -> set[RunId]:
         (row for row in rows if row.session_instance_id is not None),
         key=lambda row: reference_sort_key(row.id), default=None,
     )
-    target = continue_target_run(rows)
-    return {row.id for row in (latest, bound, target) if row is not None}
+    return {row.id for row in (latest, bound) if row is not None}
 
 
 def retention_dependencies(rows: Sequence[SpawnRecord]) -> dict[RunId, set[RunId]]:
@@ -131,6 +158,8 @@ def latest_run(runtime_root: Path, spawn_id: SpawnId) -> RunId | None:
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     pointed_run = _read_head(paths, spawn_id)
+    if pointed_run is None:
+        return None
 
     # A stale pointer can be left by an older/pointerless writer. Probe upward
     # first so the derived cache is never required for correctness.
@@ -149,23 +178,31 @@ def latest_run(runtime_root: Path, spawn_id: SpawnId) -> RunId | None:
 
 
 def latest_bound_run(runtime_root: Path, spawn_id: SpawnId) -> RunId | None:
-    """Return the newest generation-bound run without reading every sibling."""
+    """Return the newest generation-bound run below the derived run head."""
 
     from meridian.lib.state.spawn.repository import read_state
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    try:
-        pointed_run = int(
-            _bound_head_path(paths, spawn_id).read_text(encoding="utf-8").strip()
-        )
-    except (FileNotFoundError, OSError, ValueError):
-        pointed_run = 1
-    for candidate in range(max(pointed_run, 1), 0, -1):
+    latest = latest_run(runtime_root, spawn_id)
+    if latest is None:
+        return None
+    pointed_run = parse_ref(str(latest)).run or 1
+    for candidate in range(pointed_run, 0, -1):
+        if not _run_exists(paths, spawn_id, candidate):
+            continue
         run_id = _run_id(spawn_id, candidate)
         row = read_state(paths.spawns_dir, run_id, include_prompt=False)
         if row is not None and row.session_instance_id is not None:
             return run_id
     return None
+
+
+def next_run_id(paths: RuntimePaths, spawn_id: SpawnId) -> RunId:
+    """Return the next never-reserved key while ``spawns_flock`` is held."""
+    highest = _read_head(paths, spawn_id)
+    if highest is None:
+        raise ValueError(f"Spawn {spawn_id} has no live runs")
+    return _run_id(spawn_id, highest + 1)
 
 
 class SpawnBusy(ValueError):

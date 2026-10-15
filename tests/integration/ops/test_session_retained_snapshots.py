@@ -136,11 +136,12 @@ def test_restored_chat_and_spawn_read_local_snapshot_and_stay_inert(
     from meridian.lib.ops.spawn.models import SpawnContinueInput
 
     archived.native.unlink()
-    project, _ = _project(tmp_path, "c2")
+    project, root = _project(tmp_path, "c2")
     restored = session_restore_sync(
         SessionRestoreInput(project_root=str(project), archive=str(archived.zip), refs=("c1",))
     ).restored_histories[0]
     assert restored.chat_id is not None
+    assert (root / "spawn-heads" / restored.spawn_id).read_text(encoding="utf-8") == "1\n"
     for ref in (restored.chat_id, restored.spawn_id):
         assert NEEDLE in _log(project, ref)
         assert NEEDLE in _export(project, ref)

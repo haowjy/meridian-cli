@@ -155,12 +155,18 @@ def _remove_published_spawn[T](
             return None
         changes.mark(HistorySource(kind="spawn", key=resolved_spawn_id))
         try:
-            return remove(spawn_dir)
+            removed = remove(spawn_dir)
         except OSError:
             # A rename may already have committed before synchronization failed.
             # In that case leave staging and the caller's prepared ZIP receipt
             # intact; never return a cleanup handle with uncertain durability.
             return None
+        if guard_spawn_allocation:
+            from meridian.lib.core.refs import spawn_of
+            from meridian.lib.state.spawn.runs import remove_run_head_if_empty
+
+            remove_run_head_if_empty(paths, spawn_of(spawn_id))
+        return removed
 
 
 def _remove_artifacts(directory: Path) -> bool:
@@ -178,7 +184,11 @@ def delete_published_spawn(
     """Delete ordinary published artifacts under their ownership locks."""
     return bool(
         _remove_published_spawn(
-            runtime_root, spawn_id, can_delete=can_delete, remove=_remove_artifacts
+            runtime_root,
+            spawn_id,
+            can_delete=can_delete,
+            remove=_remove_artifacts,
+            guard_spawn_allocation=True,
         )
     )
 

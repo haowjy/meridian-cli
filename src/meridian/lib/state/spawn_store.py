@@ -73,8 +73,8 @@ from meridian.lib.state.spawn.repository import scan_spawn_ids as _scan_spawn_id
 from meridian.lib.state.spawn.repository import write_state_locked as _write_state_locked
 from meridian.lib.state.spawn.runs import (
     check_spawn_available,
+    next_run_id,
     runs_of,
-    write_bound_run_head,
     write_run_head,
 )
 from meridian.lib.state.spawn.transitions import (
@@ -232,8 +232,6 @@ def _publish_record(paths: RuntimePaths, record: SpawnRecord) -> None:
         stored_state.model_dump_json(indent=2) + "\n",
     )
     write_run_head(paths, record.id)
-    if record.session_instance_id is not None:
-        write_bound_run_head(paths, record.id)
     source = HistorySource(kind="spawn", key=str(record.id))
     with lock_file(source.lock_path(paths.root_dir)):
         HistoryChanges(paths.root_dir).mark(source)
@@ -541,8 +539,8 @@ def reserve_run(runtime_root: Path, spawn_id: SpawnId, reservation: SpawnReserva
             # Serialize ancestry validation with publication so concurrent
             # cross-reopens cannot both pass against the same old graph.
             _check_reopen_ancestry(paths, spawn_id, reservation)
-            latest = check_spawn_available(runtime_root, spawn_id)
-            run_id = parse_ref(f"{spawn_id}.{(parse_ref(latest).run or 1) + 1}", row_key=True)
+            check_spawn_available(runtime_root, spawn_id)
+            run_id = next_run_id(paths, spawn_id)
             _publish_record(paths, record.model_copy(update={"id": run_id}))
             return run_id
 
@@ -638,8 +636,6 @@ def update_spawn(
             updates["launch_policy_snapshot"] = launch_policy_snapshot
         return current.model_copy(update=updates)
 
-    if session_instance_id is not None:
-        write_bound_run_head(paths, spawn_id)
     outcome = _write_state_locked(
         paths.spawns_dir,
         spawn_id,

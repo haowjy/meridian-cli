@@ -22,6 +22,7 @@ from meridian.lib.platform.atomic import atomic_replace
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_publish_dir, atomic_write_text
 from meridian.lib.state.history_changes import HistoryChanges, HistorySource
+from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.retention_archive import (
     ArchivedRecord,
     ArchiveReceipt,
@@ -49,6 +50,7 @@ from meridian.lib.state.session_store import (
 )
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import read_state, record_to_stored_state
+from meridian.lib.state.spawn.runs import write_run_head
 from meridian.lib.state.spawn_store import list_spawns, reserve_spawn_id
 
 
@@ -241,6 +243,7 @@ def restore_archive(root: Path, archive_path: Path, refs: tuple[str, ...]) -> tu
     if set(refs) != matched:
         raise ValueError(f"Archive references not found: {sorted(set(refs) - matched)}")
     changes = HistoryChanges(root)
+    paths = RuntimePaths.from_root_dir(root)
     restored: list[str] = []
     with lock_file(root / "history-archives/archive.lock"):
         plans = root / "history-archives" / "restores"
@@ -303,8 +306,12 @@ def restore_archive(root: Path, archive_path: Path, refs: tuple[str, ...]) -> tu
                     else:
                         if current is not None or destination.exists():
                             raise ValueError("Restore publication alias conflict")
-                        with lock_file(source.lock_path(root)):
+                        with (
+                            lock_file(paths.spawns_flock),
+                            lock_file(source.lock_path(root)),
+                        ):
                             changes.mark(source)
+                            write_run_head(paths, parse_ref(local_id, row_key=True))
                             atomic_publish_dir(stage, destination)
                     if plan is not None:
                         append_historical_session(root, plan.session)
