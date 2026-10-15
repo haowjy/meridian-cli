@@ -106,6 +106,25 @@ def _v2_session_data(body: object | None) -> Mapping[str, object] | None:
     return mapping
 
 
+def v2_session_idle_marker(body: object | None) -> tuple[str | None, float | None]:
+    """Return the durable V2 outcome and idle timestamp in epoch milliseconds."""
+
+    data = _v2_session_data(body)
+    if data is None:
+        return None, None
+    raw_outcome = data.get("outcome") or data.get("idle_outcome")
+    outcome = raw_outcome if isinstance(raw_outcome, str) else None
+    time_block = data.get("time")
+    raw_idle = (
+        cast("Mapping[str, object]", time_block).get("idle")
+        if isinstance(time_block, Mapping)
+        else None
+    )
+    if isinstance(raw_idle, bool) or not isinstance(raw_idle, (int, float)):
+        return outcome, None
+    return outcome, float(raw_idle)
+
+
 async def _drain_stream(stream: asyncio.StreamReader) -> None:
     """Keep the child's stdout pipe from filling after the handshake."""
 
@@ -519,28 +538,19 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
             return None
         if status not in self._SUCCESS_STATUSES:
             return None
-        data = _v2_session_data(body)
-        if data is None:
-            return None
-        outcome = data.get("outcome") or data.get("idle_outcome")
+        outcome, idle_ms = v2_session_idle_marker(body)
         if not isinstance(outcome, str) or not outcome.strip():
             return None
         # ``time.updated`` is bumped by the prompt POST itself, so it cannot
         # distinguish this turn from a previous one on resume. ``time.idle`` is
         # the turn-end marker, so require it to fall at/after our prompt. A stale
         # outcome from a prior turn has an older idle stamp and is skipped.
-        time_block = data.get("time")
-        idle = (
-            cast("Mapping[str, object]", time_block).get("idle")
-            if isinstance(time_block, Mapping)
-            else None
-        )
-        if not isinstance(idle, (int, float)) or isinstance(idle, bool):
+        if idle_ms is None:
             return None
         # Strict: the turn must have ended at/after our prompt was posted. A
         # tolerance window lets a prior turn that ended within it on a fast
         # resume be mistaken for this turn and terminate the spawn early.
-        if float(idle) < self._initial_prompt_posted_at * 1000.0:
+        if idle_ms < self._initial_prompt_posted_at * 1000.0:
             return None
         event_type = _V2_OUTCOME_EVENTS.get(outcome.strip().lower())
         if event_type is None:
@@ -588,4 +598,4 @@ class OpenCodeV2Connection(OpenCodeV1Connection):
         await super()._cleanup_runtime(replacement_deadline=replacement_deadline)
 
 
-__all__ = ["OpenCodeV2Connection"]
+__all__ = ["OpenCodeV2Connection", "v2_session_idle_marker"]

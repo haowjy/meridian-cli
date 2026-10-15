@@ -79,7 +79,6 @@ def test_push_warn_and_missing_message_rendering() -> None:
     [
         ("ok", "ignored detail", "compacted", "Compacted"),
         ("failed", "timeout", "compaction failed", "Compaction failed: timeout"),
-        ("vetoed", "draft", "compaction skipped", "Compaction skipped: draft"),
     ],
 )
 def test_compaction_rendering(

@@ -200,8 +200,8 @@ spawn-watch when their `[harness.pi]` toggles are enabled. Session-boundary is
 always loaded by the adapter and has no config toggle. Meridian-idle is selected
 only when the launch profile is interactive. It passes `--interactive` on every
 `meridian idle` call, serializes arm/return transitions without making user input
-wait for the CLI, and re-checks live idle, pending-message, and draft state after
-a compact claim before calling Pi's aborting `ctx.compact()`.
+wait for the CLI, and re-checks live idle and pending-message state after a
+compact claim before calling Pi's aborting `ctx.compact()`.
 
 - **Spawned RPC**: suppress ambient extensions by default (`--no-extensions`),
   skills, context files, and prompt templates. `load_all_pi_extensions = true`

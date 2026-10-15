@@ -10,6 +10,8 @@ from typing import Any, Literal, Protocol
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
 
+COMPACT_SCREEN_NOT_RECOGNIZED = "screen-not-recognized"
+
 
 @dataclass(frozen=True)
 class IdleEvent:
@@ -47,7 +49,6 @@ class NativeIdleHook:
 class IdleFacts:
     """Live facts used to decide whether compaction is safe."""
 
-    draft: Literal["yes", "no", "unknown"]
     busy: bool
     agents_running: int
     context_tokens: int | None
@@ -110,6 +111,7 @@ class DetectIdleTtl(Protocol):
 
 
 __all__ = [
+    "COMPACT_SCREEN_NOT_RECOGNIZED",
     "CacheTtl",
     "CompactResult",
     "DetectIdleTtl",

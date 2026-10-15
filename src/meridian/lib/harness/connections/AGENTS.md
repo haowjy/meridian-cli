@@ -36,7 +36,11 @@ Transports differ at the wire level:
   V2's `/api/event` stream is live-only: a terminal that lands between the
   pre-subscribe session GET and the SSE attach is re-polled on the liveness-timeout
   path (`_reconcile_on_stall`, bounded by `_STALL_RECONCILE_LIMIT`) through the same
-  guarded helper, so the missed terminal is surfaced instead of a stall.
+  guarded helper, so the missed terminal is surfaced instead of a stall. That
+  one-turn policy remains the spawn default. A primary observer's stream lives
+  until the primary closes: quiet, EOF, and recoverable errors reconnect without
+  synthesizing terminal events into the interactive session. Spawn streams may
+  end at a reconciled terminal.
   OpenCode's `permission.asked` (V1) / `permission.v2.asked` (V2) stream events are
   routed to the injected `ServerRequestHandler` as `HarnessRequest`s, not
   yielded raw; the handler runs in a bounded background task (a stalled reply must

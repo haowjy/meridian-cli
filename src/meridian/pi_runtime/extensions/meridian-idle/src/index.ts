@@ -283,7 +283,6 @@ export class IdleRuntime {
       "--session", active.session,
       "--stretch", String(active.stretch),
       "--anchor", String(active.anchor),
-      "--draft", draftFact(active.ctx),
     ];
     if (busyFact(active.ctx)) {
       args.push("--busy");
@@ -346,9 +345,6 @@ export class IdleRuntime {
     if (hasPendingMessages(ctx)) {
       return "pending messages";
     }
-    if (draftFact(ctx) !== "no") {
-      return "draft";
-    }
     return null;
   }
 
@@ -404,14 +400,6 @@ function hasPendingMessages(ctx: ExtensionContext): boolean {
     return ctx.hasPendingMessages();
   } catch {
     return true;
-  }
-}
-
-function draftFact(ctx: ExtensionContext): "yes" | "no" | "unknown" {
-  try {
-    return ctx.ui.getEditorText().length > 0 ? "yes" : "no";
-  } catch {
-    return "unknown";
   }
 }
 
