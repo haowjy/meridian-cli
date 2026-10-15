@@ -45,17 +45,23 @@
 
 <!-- List every part of the PR: each change a reviewer could ask "why is this
      here?" about, including follow-on fixes, safety work the main change
-     forced, and anything added mid-review. A change missing from this table
-     should not be in the diff. Keep it current as parts are added.
+     forced, and anything added mid-review. For each, say what it does and why
+     it is in this PR. A change missing from this list should not be in the
+     diff. Keep it current as parts are added. -->
 
-     Part sizes are approximate when parts share a file. The Total row is
-     exact: `git diff --numstat` against the base, excluding generated files
-     (lockfiles, built Pi extension bundles). -->
+1. **<part>.** <what it does>. Why it's here: <reason>.
 
-| # | Part | Source | Tests | Docs | Why it's in this PR |
-|---|---|---|---|---|---|
-| 1 | <what it does> | +N / -N | +N / -N | +N / -N | |
-| | **Total (N files)** | **+N / -N** | **+N / -N** | **+N / -N** | |
+## Diff
+
+<!-- One row per Summary part, same numbers. Part sizes are approximate when
+     parts share a file. The Total row is exact: `git diff --numstat` against
+     the base, excluding generated files (lockfiles, built Pi extension
+     bundles). -->
+
+| # | Part | Source | Tests | Docs |
+|---|---|---|---|---|
+| 1 | <part> | +N / -N | +N / -N | +N / -N |
+| | **Total (N files)** | **+N / -N** | **+N / -N** | **+N / -N** |
 
 ## Before / After
 
