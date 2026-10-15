@@ -440,7 +440,7 @@ def build_continue_replay_contract(
 
     from meridian.lib.core.refs import parse_ref
     from meridian.lib.state.session_identity import owner_spawn_for_chat
-    from meridian.lib.state.spawn.runs import check_spawn_available, latest_run
+    from meridian.lib.state.spawn.runs import latest_run
     from meridian.lib.state.spawn_scope import read_spawn_scope
 
     reopen_spawn = None
@@ -452,7 +452,6 @@ def build_continue_replay_contract(
                         owner_spawn_for_chat(runtime_root, source.source_chat_id)
                         if source.source_chat_id else None)
         if reopen_spawn is not None:
-            check_spawn_available(runtime_root, reopen_spawn, source.source_chat_id)
             predecessor = latest_run(runtime_root, reopen_spawn)
         if predecessor and source.source_control_root:
             scope = read_spawn_scope(

@@ -1,7 +1,10 @@
 """Run allocation is serialized, generation-free, and independent of suffix holes."""
 
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -11,6 +14,7 @@ from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.spawn import repository as spawn_repository
 from meridian.lib.state.spawn.runs import continue_target_run
 
 
@@ -62,3 +66,94 @@ def test_reserve_run_contract(tmp_path: Path, status: str, live: bool, busy: boo
     bound = spawn_store.get_spawn(tmp_path, parse_ref('p1', row_key=True))
     assert bound is not None
     assert continue_target_run([bound, row]) == bound
+
+
+def test_reserve_run_checks_ancestors_without_listing_spawns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for key, parent in (("p1", None), ("p2", "p1"), ("p3", "p2")):
+        run_id = spawn_store.start_spawn(
+            tmp_path,
+            spawn_id=key,
+            chat_id=f"c{key[1:]}",
+            parent_id=SpawnId(parent) if parent else None,
+            model="test",
+            agent="",
+            harness="codex",
+            prompt="hi",
+        )
+        spawn_store.finalize_spawn(
+            tmp_path, run_id, status="succeeded", exit_code=0, origin="runner",
+        )
+
+    monkeypatch.setattr(
+        spawn_store,
+        "list_spawns",
+        lambda *_args, **_kwargs: pytest.fail("ancestor check listed all spawns"),
+    )
+    reservation = SpawnReservation(
+        chat_id="c1",
+        parent_id="p3",
+        parent_run_id=parse_ref("p3", row_key=True),
+        prompt="again",
+        session_metadata=PrimarySessionMetadata(
+            harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=(),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="Cannot reopen ancestor spawn p1"):
+        spawn_store.reserve_run(tmp_path, SpawnId("p1"), reservation)
+
+
+def test_reserve_run_reads_one_spawn_row_while_allocation_lock_is_held(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = spawn_store.start_spawn(
+        tmp_path,
+        spawn_id="p1",
+        chat_id="c1",
+        model="test",
+        agent="",
+        harness="codex",
+        prompt="hi",
+    )
+    spawn_store.finalize_spawn(
+        tmp_path, first, status="succeeded", exit_code=0, origin="runner",
+    )
+    paths = spawn_store.RuntimePaths.from_root_dir(tmp_path)
+    original_lock_file = spawn_store.lock_file
+    original_read_state = spawn_repository.read_state
+    allocation_lock_held = False
+    locked_reads: list[str] = []
+
+    @contextmanager
+    def tracked_lock_file(path: Path, *args: Any, **kwargs: Any) -> Iterator[None]:
+        nonlocal allocation_lock_held
+        with original_lock_file(path, *args, **kwargs):
+            was_held = allocation_lock_held
+            if path == paths.spawns_flock:
+                allocation_lock_held = True
+            try:
+                yield
+            finally:
+                allocation_lock_held = was_held
+
+    def tracked_read_state(*args: Any, **kwargs: Any) -> Any:
+        if allocation_lock_held:
+            locked_reads.append(str(args[1]))
+        return original_read_state(*args, **kwargs)
+
+    monkeypatch.setattr(spawn_store, "lock_file", tracked_lock_file)
+    monkeypatch.setattr(spawn_repository, "read_state", tracked_read_state)
+    reservation = SpawnReservation(
+        chat_id="c1",
+        prompt="again",
+        session_metadata=PrimarySessionMetadata(
+            harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=(),
+        ),
+    )
+
+    assert spawn_store.reserve_run(tmp_path, SpawnId("p1"), reservation) == "p1.2"
+    assert locked_reads == ["p1"]

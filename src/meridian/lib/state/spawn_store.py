@@ -71,7 +71,11 @@ from meridian.lib.state.spawn.repository import (
 from meridian.lib.state.spawn.repository import read_state as _read_state
 from meridian.lib.state.spawn.repository import scan_spawn_ids as _scan_spawn_ids
 from meridian.lib.state.spawn.repository import write_state_locked as _write_state_locked
-from meridian.lib.state.spawn.runs import check_spawn_available, runs_of, write_run_head
+from meridian.lib.state.spawn.runs import (
+    check_spawn_available,
+    latest_run,
+    write_run_head,
+)
 from meridian.lib.state.spawn.transitions import (
     apply_cancel_intent,
     apply_finalize,
@@ -483,22 +487,44 @@ def reservation_kwargs(reservation: SpawnReservation) -> dict[str, Any]:
     )
 
 
+def _check_reopen_ancestry(
+    paths: RuntimePaths,
+    spawn_id: SpawnId,
+    reservation: SpawnReservation,
+) -> None:
+    """Refuse a parent chain that would make the reopened spawn its own ancestor."""
+
+    if reservation.parent_id is None:
+        return
+    parent_id = SpawnId(reservation.parent_id)
+    parent_run_id = reservation.parent_run_id
+    visited: set[SpawnId] = set()
+    while True:
+        if parent_id == spawn_id:
+            raise ValueError(f"Cannot reopen ancestor spawn {spawn_id}")
+        if parent_id in visited:
+            raise ValueError(f"Cannot reopen through cyclic parent chain at {parent_id}")
+        visited.add(parent_id)
+
+        run_id = parent_run_id or latest_run(paths.root_dir, parent_id)
+        if run_id is None:
+            return
+        parent = _read_state(paths.spawns_dir, run_id, include_prompt=False)
+        if parent is None or parent.parent_id is None:
+            return
+        parent_id = parent.parent_id
+        parent_run_id = None
+
+
 def reserve_run(runtime_root: Path, spawn_id: SpawnId, reservation: SpawnReservation) -> RunId:
     """Publish max-K+1 under the allocation gate; never copy a generation."""
     paths = RuntimePaths.from_root_dir(runtime_root)
     reservation = replace(reservation, status=SpawnStatus.QUEUED, runner_pid=os.getpid())
+    check_spawn_available(runtime_root, spawn_id, reservation.chat_id)
+    _check_reopen_ancestry(paths, spawn_id, reservation)
     with (lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"),
           lock_file(paths.spawns_flock)):
-        check_spawn_available(runtime_root, spawn_id, reservation.chat_id)
-        if reservation.parent_id:
-            from meridian.lib.core.refs import spawn_of
-            from meridian.lib.state.spawn_tree import iter_descendants
-            descendants = iter_descendants(spawn_id, list_spawns(runtime_root).records)
-            if reservation.parent_id == spawn_id or any(
-                spawn_of(row.id) == reservation.parent_id for row in descendants
-            ):
-                raise ValueError(f"Cannot reopen ancestor spawn {spawn_id}")
-        latest = runs_of(runtime_root, spawn_id)[-1]
+        latest = check_spawn_available(runtime_root, spawn_id)
         run_id = parse_ref(f"{spawn_id}.{(parse_ref(latest).run or 1) + 1}", row_key=True)
         record = _build_record(
             paths, run_id, bind_existing_generation=False,

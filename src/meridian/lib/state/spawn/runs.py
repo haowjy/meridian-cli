@@ -142,7 +142,7 @@ class SpawnBusy(ValueError):
 
 def check_spawn_available(
     runtime_root: Path, spawn_id: SpawnId, chat_id: str | None = None,
-) -> None:
+) -> RunId:
     """Read-only preflight, repeated under the allocation gate before publication."""
     from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
     from meridian.lib.state.reaper import peek_reconciled_active_spawn
@@ -164,3 +164,4 @@ def check_spawn_available(
         raise SpawnBusy(latest)
     if chat_id is not None and is_session_lease_owner_alive(runtime_root, chat_id):
         raise ChatBusy(chat_id)
+    return latest
