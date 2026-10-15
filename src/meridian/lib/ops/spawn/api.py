@@ -2228,7 +2228,9 @@ def _build_continue_create_input(
         if source_spawn else payload.prompt or ""
     )
     if not derived_prompt.strip():
-        raise ValueError("Continuing an unowned chat requires a prompt")
+        raise ValueError(
+            f"Cannot continue chat '{target.source_ref}'; provide a prompt for an unowned chat."
+        )
 
     return SpawnCreateInput(
         prompt=derived_prompt,

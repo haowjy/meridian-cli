@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import meridian.lib.state.spawn.runs as spawn_runs
 from meridian.lib.core.refs import parse_ref
 from meridian.lib.ops.reference import resolve_continue_source_row, resolve_session_reference
 from meridian.lib.ops.session_target import resolve_transcript_source
@@ -13,7 +14,6 @@ from meridian.lib.ops.spawn.api import spawn_continue_sync
 from meridian.lib.ops.spawn.models import SpawnContinueInput
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
-from meridian.lib.state.spawn import repository as spawn_repository
 from tests.support.codex import write_codex_rollout
 
 
@@ -43,6 +43,15 @@ def test_bare_ref_uses_latest_bound_run_while_run_one_alias_is_exact(tmp_path: P
             runtime_root, harness="codex", harness_session_id=native_id,
             model="gpt-test", chat_id="c2", native_store=native_store.as_posix(),
             spawn_id=run,
+        )
+        session = session_store.get_session_record(runtime_root, "c2")
+        assert session is not None
+        spawn_store.bind_run_generation(
+            runtime_root,
+            run,
+            chat_id="c2",
+            session_instance_id=session.session_instance_id,
+            forked_from_history_id=session.forked_from_history_id,
         )
         session_store.stop_session(runtime_root, "c2")
         spawn_store.finalize_spawn(runtime_root, run, "succeeded", 0, origin="runner")
@@ -115,7 +124,11 @@ def test_multirun_never_bound_ref_refuses_instead_of_using_callers_chat(tmp_path
         )
         spawn_store.finalize_spawn(runtime_root, run, "failed", 1, origin="runner")
 
-    with pytest.raises(ValueError, match="never started a session"):
+    with pytest.raises(
+        ValueError,
+        match=r"Cannot continue spawn 'p8'; it never started a session, "
+        r"so `--fork` is unavailable\.",
+    ):
         resolve_session_reference(project_root, "p8", runtime_root=runtime_root)
 
 
@@ -143,6 +156,15 @@ def test_bare_continue_target_walks_only_its_unbound_run_tail(
         chat_id="c7",
         spawn_id=bound,
     )
+    session = session_store.get_session_record(runtime_root, "c7")
+    assert session is not None
+    spawn_store.bind_run_generation(
+        runtime_root,
+        bound,
+        chat_id="c7",
+        session_instance_id=session.session_instance_id,
+        forked_from_history_id=session.forked_from_history_id,
+    )
     session_store.stop_session(runtime_root, "c7")
     spawn_store.finalize_spawn(runtime_root, bound, "succeeded", 0, origin="runner")
     for run in range(2, run_count + 1):
@@ -159,19 +181,19 @@ def test_bare_continue_target_walks_only_its_unbound_run_tail(
             runtime_root, unbound, "failed", 1, origin="runner",
         )
 
-    repository_read = spawn_repository.read_state
+    run_read = spawn_runs.read_state
     store_read = spawn_store._read_state
     reads: list[str] = []
 
-    def tracked_repository_read(*args: object, **kwargs: object) -> object:
+    def tracked_run_read(*args: object, **kwargs: object) -> object:
         reads.append(str(args[1]))
-        return repository_read(*args, **kwargs)  # type: ignore[arg-type]
+        return run_read(*args, **kwargs)  # type: ignore[arg-type]
 
     def tracked_store_read(*args: object, **kwargs: object) -> object:
         reads.append(str(args[1]))
         return store_read(*args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(spawn_repository, "read_state", tracked_repository_read)
+    monkeypatch.setattr(spawn_runs, "read_state", tracked_run_read)
     monkeypatch.setattr(spawn_store, "_read_state", tracked_store_read)
 
     row = resolve_continue_source_row(runtime_root, parse_ref("p7"))

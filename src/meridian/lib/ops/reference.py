@@ -144,7 +144,8 @@ def resolve_continue_source_row(
         if latest == parse_ref(str(parsed.spawn_id), row_key=True):
             return spawn_store.get_spawn(runtime_root, latest)
         raise ValueError(
-            f"Spawn {parsed.spawn_id} never started a session; `--fork` is unavailable too."
+            f"Cannot continue spawn '{parsed.spawn_id}'; it never started a session, "
+            "so `--fork` is unavailable."
         )
     return spawn_store.get_spawn(runtime_root, bound_run)
 

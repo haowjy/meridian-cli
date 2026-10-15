@@ -187,7 +187,8 @@ an ad-hoc user-state root. Either is an unexpected read side effect.
 **Spawn IDs** (`spawn-id-counter`): incremented under `spawns_flock` at reservation
 time. IDs can be reserved before the spawn row exists (`reserve_spawn_id()`).
 Format: `p1`, `p2`, `p3`, … The counter mints stable spawns only.
-`reserve_run()` numbers later runs from the highest surviving run suffix plus one.
+`reserve_run()` numbers later runs from the highest run ever reserved plus one,
+using the durable `spawn-heads/<pN>` high-water mark.
 When the counter file is missing,
 recovery seeds from the numeric spawn prefix of every surviving row, dotted ones included (`p100.2` seeds 100).
 Ignoring dotted rows entirely would re-mint `p100` after retention retired its

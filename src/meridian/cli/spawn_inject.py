@@ -64,12 +64,12 @@ async def inject_message(
             runtime_root=runtime_root,
         )
     except ValueError:
-        _fail(f"spawn not found: {normalized_spawn_id}")
+        _fail(f"Spawn '{normalized_spawn_id}' not found.")
     spawn_dir = runtime_root / "spawns" / run_id
     socket_path = control_socket_path(runtime_root, run_id)
 
     if not spawn_dir.exists():
-        _fail(f"spawn not found: {normalized_spawn_id}")
+        _fail(f"Spawn '{normalized_spawn_id}' not found.")
 
     normalized_message = message.strip()
     if not normalized_message:
@@ -79,12 +79,12 @@ async def inject_message(
     while True:
         record = spawn_store.get_spawn(runtime_root, run_id)
         if record is None or record.status not in ACTIVE_SPAWN_STATUSES:
-            _fail(f"spawn not running: {run_id} has no control endpoint")
+            _fail(f"Spawn '{normalized_spawn_id}' is not running; no control endpoint.")
         if socket_path.exists():
             break
         remaining = discovery_deadline - time.monotonic()
         if remaining <= 0:
-            _fail(f"spawn not running: {run_id} has no control endpoint")
+            _fail(f"Spawn '{normalized_spawn_id}' is not running; no control endpoint.")
         await asyncio.sleep(min(_ENDPOINT_DISCOVERY_POLL_SECONDS, remaining))
 
     request: dict[str, str] = {"type": "user_message", "text": normalized_message}
@@ -94,33 +94,35 @@ async def inject_message(
         reader, writer = await asyncio.open_unix_connection(str(socket_path))
         response_data = await _send_and_receive(reader, writer, request)
     except TimeoutError:
-        _fail(f"timed out waiting for response from spawn {run_id}")
+        _fail(f"Timed out waiting for a response from spawn '{normalized_spawn_id}'.")
     except ConnectionRefusedError:
-        _fail(f"connection refused: spawn {run_id} is not running")
+        _fail(f"Connection refused: spawn '{normalized_spawn_id}' is not running.")
     except FileNotFoundError:
-        _fail(f"spawn not running: {run_id} control socket disappeared")
+        _fail(f"Spawn '{normalized_spawn_id}' is not running; its control socket disappeared.")
     except OSError as exc:
         if exc.errno == errno.ENOENT:
-            _fail(f"spawn not running: {run_id} control socket disappeared")
+            _fail(
+                f"Spawn '{normalized_spawn_id}' is not running; its control socket disappeared."
+            )
         if exc.errno == errno.ECONNREFUSED:
-            _fail(f"connection refused: spawn {run_id} is not running")
+            _fail(f"Connection refused: spawn '{normalized_spawn_id}' is not running.")
         raise
 
     if not response_data:
-        _fail(f"spawn not running: {run_id} returned no response")
+        _fail(f"Spawn '{normalized_spawn_id}' is not running; it returned no response.")
 
     parsed_obj: object | None = None
     try:
         parsed_obj = json.loads(response_data.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
-        _fail(f"invalid response from spawn {run_id}")
+        _fail(f"Invalid response from spawn '{normalized_spawn_id}'.")
     if not isinstance(parsed_obj, dict):
-        _fail(f"invalid response from spawn {run_id}")
+        _fail(f"Invalid response from spawn '{normalized_spawn_id}'.")
     parsed = cast("dict[str, object]", parsed_obj)
 
     ok = parsed.get("ok")
     if ok is True:
-        print(f"Message delivered to spawn {run_id}")
+        print(f"Message delivered to spawn '{normalized_spawn_id}'.")
         return
 
     error_value = parsed.get("error")

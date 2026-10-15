@@ -376,6 +376,14 @@ def test_chat_continue_without_owner_starts_new_spawn(
     assert result.status == "running"
     assert calls[0][1].session.reopen_spawn_id is None
 
+    with pytest.raises(
+        ValueError,
+        match=r"Cannot continue chat 'c7'; provide a prompt for an unowned chat\.",
+    ):
+        spawn_api.spawn_continue_sync(
+            SpawnContinueInput(spawn_id="c7", prompt="", project_root=str(project_root)),
+        )
+
 
 def test_spawn_continue_cross_harness_refusal_names_both_harnesses_without_writes(
     tmp_path: Path,
