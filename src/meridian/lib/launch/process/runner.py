@@ -73,7 +73,6 @@ from meridian.lib.state.session_store import (
     get_session_active_work_id,
     get_session_record,
     update_session_claude_config_dir,
-    update_session_spawn_id,
     update_session_work_id,
 )
 from meridian.lib.state.spawn.model import FOREGROUND_LAUNCH_MODE
@@ -659,7 +658,6 @@ def run_harness_process(
         run_primary_process_with_capture
     ),
     run_primary_attach_fn: RunPrimaryAttach = run_primary_attach,
-    update_session_spawn_id_fn: Callable[..., None] = update_session_spawn_id,
     update_session_work_id_fn: Callable[..., None] = update_session_work_id,
     get_session_active_work_id_fn: Callable[[Path, str], str | None] = get_session_active_work_id,
 ) -> ProcessOutcome:
@@ -816,11 +814,6 @@ def run_harness_process(
                             primary_spawn_id,
                             work_id=attached_work_id,
                         )
-                update_session_spawn_id_fn(
-                    runtime_root,
-                    chat_id,
-                    str(primary_spawn_id),
-                )
                 lifecycle = LifecycleLog.for_spawn(runtime_root, config_root, primary_spawn_id)
                 forked_session_id: str | None = None
                 if should_fork:

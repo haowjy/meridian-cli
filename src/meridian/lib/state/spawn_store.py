@@ -595,7 +595,7 @@ def bind_run_generation(
     session_instance_id: str,
     forked_from_history_id: UUID | None,
 ) -> None:
-    """Bind one concrete run to the exact session generation that launched it."""
+    """Bind one concrete run and session generation to each other's durable identity."""
     paths = RuntimePaths.from_root_dir(runtime_root)
 
     def bind_generation(current: SpawnRecord) -> SpawnRecord:
@@ -617,6 +617,9 @@ def bind_run_generation(
     )
     if not isinstance(outcome, Applied):
         raise RuntimeError(f"Could not bind run {run_id} to session generation")
+    from meridian.lib.state.session_store import update_session_spawn_id
+
+    update_session_spawn_id(runtime_root, chat_id, str(run_id))
 
 
 def update_spawn(
