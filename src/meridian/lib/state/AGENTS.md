@@ -105,7 +105,22 @@ must never control a machine-wide scan.
 Use `history_index.py` for filtered discovery, not repeated broad authority scans.
 Keep lifecycle/control decisions on direct authoritative reads. All new indexed
 writers must publish dirty intent before file mutation; SQLite is never a writer
-dependency. Restored `record_mode="historical"` aggregates are inert and immutable.
+dependency. Restored `record_mode="historical"` aggregates are inert and immutable;
+their reserved `historical-` generation prefix makes the append guard O(1). The
+target is that no per-spawn path replays `sessions.jsonl` while holding
+`sessions.jsonl.flock`. Known violators are `SessionBindings.__init__`, the
+`start_session()` lookups, model-selection and model-observation dedup, and
+`get_or_create_observed_chat()`; [#591](https://github.com/haowjy/meridian-cli/issues/591)
+tracks their removal.
+Indexed queries build a missing projection, then make one catch-up attempt bounded
+by the caller deadline (two seconds by default). Contention raises
+`HistoryIndexBusy`; incomplete coverage is never a negative result. Every caller
+gives an absent projection a separate, sticky 15-second cold build before its
+ordinary read attempt. An exhausted cold build latches failure.
+Warm catch-up projects `sessions.jsonl` to the committed end even when its writer
+lock is busy; the lock gates marker acknowledgement, not the read. Spawn and archive
+catalog projection still require their source locks. Incremental session catch-up
+loads only the working sets for chats touched after its cursor.
 The index file and its sidecars (marker queue, GENERATION, catch-up/database/marker
 locks, init latch) are named by `SCHEMA_VERSION`; a schema bump builds a new file
 from authority and never touches an older build's file. Never migrate in place.

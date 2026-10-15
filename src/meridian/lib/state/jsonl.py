@@ -16,7 +16,7 @@ import logging
 import os
 from collections.abc import Callable, Generator, Iterable
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import BinaryIO, Literal, TypeVar
 
 from meridian.lib.platform.atomic import atomic_replace
 from meridian.lib.state.atomic import append_text_line
@@ -44,32 +44,54 @@ def iter_jsonl(
     if not path.exists():
         return
     with path.open("rb") as handle:
-        handle.seek(offset)
-        while raw_line := handle.readline():
-            if not raw_line.endswith(b"\n"):
-                break
-            end_offset = handle.tell()
-            if not raw_line.strip():
-                yield None, end_offset
-                continue
-            try:
-                decoded: object = json.loads(raw_line)
-                payload = json_object(decoded)
-                if payload is None:
-                    raise ValueError("JSONL row is not an object")
-                value = parse(payload)
-            except (UnicodeDecodeError, ValueError) as error:
-                if on_malformed == "raise":
-                    raise JsonlDecodeError(
-                        f"Malformed JSONL row at byte {end_offset - len(raw_line)}: {path}"
-                    ) from error
-                logger.debug(
-                    "Skipping malformed JSONL row at byte %d: %s",
-                    end_offset - len(raw_line),
-                    path,
-                )
-                value = None
-            yield value, end_offset
+        yield from iter_jsonl_file(
+            handle,
+            parse,
+            path=path,
+            offset=offset,
+            on_malformed=on_malformed,
+        )
+
+
+def iter_jsonl_file(
+    handle: BinaryIO,
+    parse: Callable[[dict[str, object]], T | None],
+    *,
+    path: Path,
+    offset: int = 0,
+    extent: int | None = None,
+    on_malformed: MalformedPolicy = "skip",
+) -> Generator[tuple[T | None, int], None, None]:
+    """Yield committed rows from one open inode, optionally bounded to an extent."""
+
+    handle.seek(offset)
+    while extent is None or handle.tell() < extent:
+        remaining = -1 if extent is None else extent - handle.tell()
+        raw_line = handle.readline(remaining)
+        if not raw_line or not raw_line.endswith(b"\n"):
+            break
+        end_offset = handle.tell()
+        if not raw_line.strip():
+            yield None, end_offset
+            continue
+        try:
+            decoded: object = json.loads(raw_line)
+            payload = json_object(decoded)
+            if payload is None:
+                raise ValueError("JSONL row is not an object")
+            value = parse(payload)
+        except (UnicodeDecodeError, ValueError) as error:
+            if on_malformed == "raise":
+                raise JsonlDecodeError(
+                    f"Malformed JSONL row at byte {end_offset - len(raw_line)}: {path}"
+                ) from error
+            logger.debug(
+                "Skipping malformed JSONL row at byte %d: %s",
+                end_offset - len(raw_line),
+                path,
+            )
+            value = None
+        yield value, end_offset
 
 
 def _jsonl_tail_needs_repair(path: Path) -> bool:
@@ -152,5 +174,6 @@ __all__ = [
     "append_durable_jsonl_line",
     "append_durable_jsonl_lines",
     "iter_jsonl",
+    "iter_jsonl_file",
     "repair_jsonl_tail",
 ]

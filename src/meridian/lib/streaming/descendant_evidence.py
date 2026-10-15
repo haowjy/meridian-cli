@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,7 +12,7 @@ from pathlib import Path
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state import spawn_store
-from meridian.lib.state.history_index import HistoryIndex
+from meridian.lib.state.history_index import QUERY_TIMEOUT, HistoryIndex, HistoryIndexBusy
 from meridian.lib.state.reaper import peek_reconciled_active_spawn
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.streaming.completion_contracts import (
@@ -70,7 +71,12 @@ class ReconciledDescendantEvidence:
                 records = ()
                 blockers = self._blocker_reader()
         except Exception as exc:
-            failure = EvidenceFailure(code="descendant_evidence_read_failed", detail=str(exc))
+            code = (
+                "descendant_evidence_unavailable"
+                if isinstance(exc, HistoryIndexBusy)
+                else "descendant_evidence_read_failed"
+            )
+            failure = EvidenceFailure(code=code, detail=str(exc))
             return DescendantProjection(
                 WorkAssessment(
                     disposition="unknown",
@@ -97,7 +103,10 @@ class ReconciledDescendantEvidence:
     def _read_records(
         self,
     ) -> tuple[SpawnRecord, ...]:
-        selected = HistoryIndex(self._runtime_root).descendant_projection(str(self._root_spawn_id))
+        selected = HistoryIndex(self._runtime_root).descendant_projection(
+            str(self._root_spawn_id),
+            deadline=time.monotonic() + QUERY_TIMEOUT,
+        )
         descendants: list[SpawnRecord] = []
         for spawn_id, _parent_id, archived in selected:
             if archived:

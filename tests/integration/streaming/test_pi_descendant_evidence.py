@@ -175,10 +175,12 @@ async def test_pi_tree_authority_polls_until_store_recovers(
     store_available = False
     projection = descendant_evidence_module.HistoryIndex.descendant_projection
 
-    def _sometimes_list_spawns(index: object, root_spawn_id: str) -> object:
+    def _sometimes_list_spawns(
+        index: object, root_spawn_id: str, *, deadline: float | None = None
+    ) -> object:
         if not store_available:
             raise OSError("tree store temporarily unavailable")
-        return projection(index, root_spawn_id)  # type: ignore[arg-type]
+        return projection(index, root_spawn_id, deadline=deadline)  # type: ignore[arg-type]
 
     monkeypatch.setattr(
         descendant_evidence_module.HistoryIndex,
@@ -258,7 +260,13 @@ async def test_pi_tree_authority_blocks_on_store_error(
     start_row(tmp_path, "p1", HarnessId.PI, None)
     started = await _start_pi(tmp_path, monkeypatch)
 
-    def _fail_list_spawns(_index: object, _root_spawn_id: str) -> object:
+    def _fail_list_spawns(
+        _index: object,
+        _root_spawn_id: str,
+        *,
+        deadline: float | None = None,
+    ) -> object:
+        assert deadline is not None
         raise OSError("tree store unavailable")
 
     monkeypatch.setattr(
