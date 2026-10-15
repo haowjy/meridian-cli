@@ -13,9 +13,11 @@ import os
 import select
 import subprocess
 import sys
+import tempfile
 import threading
 from contextlib import suppress
 from dataclasses import asdict, dataclass, field
+from typing import IO
 
 import psutil
 import structlog
@@ -28,7 +30,8 @@ from meridian.lib.platform.process_scope.base import (
 
 logger = structlog.get_logger(__name__)
 
-_WATCHDOG_READY_TIMEOUT_SECONDS = 2.0
+_WATCHDOG_READY_TIMEOUT_SECONDS = 10.0
+_WATCHDOG_STDERR_LIMIT_BYTES = 4096
 
 
 @dataclass
@@ -146,51 +149,104 @@ def start_parent_watchdog() -> ParentWatchdog | None:
         (os.path.dirname(__file__), psutil_site_packages)
     )
     try:
-        process = subprocess.Popen(
-            command,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
-            pass_fds=(control_read_fd, ready_write_fd),
-            start_new_session=True,
-            env=watchdog_env,
-        )
+        stderr_capture = tempfile.TemporaryFile()  # noqa: SIM115  # closed in finally
     except OSError:
         for fd in (control_read_fd, control_write_fd, ready_read_fd, ready_write_fd):
             os.close(fd)
         logger.warning(
             "parent_watchdog.start_unavailable",
             platform=sys.platform,
+            failure_reason="stderr_capture_unavailable",
             exc_info=True,
         )
         return None
 
-    os.close(control_read_fd)
-    os.close(ready_write_fd)
     try:
-        ready = _watchdog_reported_ready(ready_read_fd)
-    except OSError:
-        ready = False
-        logger.warning(
-            "parent_watchdog.handshake_failed",
-            platform=sys.platform,
-            exc_info=True,
-        )
+        try:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=stderr_capture,
+                close_fds=True,
+                pass_fds=(control_read_fd, ready_write_fd),
+                start_new_session=True,
+                env=watchdog_env,
+            )
+        except OSError:
+            for fd in (
+                control_read_fd,
+                control_write_fd,
+                ready_read_fd,
+                ready_write_fd,
+            ):
+                os.close(fd)
+            logger.warning(
+                "parent_watchdog.start_unavailable",
+                platform=sys.platform,
+                failure_reason="process_start_failed",
+                exc_info=True,
+            )
+            return None
+
+        os.close(control_read_fd)
+        os.close(ready_write_fd)
+        handshake_error = False
+        try:
+            ready_signal = _watchdog_ready_signal(ready_read_fd)
+        except OSError:
+            ready_signal = b""
+            handshake_error = True
+            logger.warning(
+                "parent_watchdog.handshake_failed",
+                platform=sys.platform,
+                exc_info=True,
+            )
+        finally:
+            os.close(ready_read_fd)
+
+        watchdog = ParentWatchdog(process=process, control_write_fd=control_write_fd)
+        if ready_signal == b"1":
+            return watchdog
+
+        returncode_before_cleanup = process.poll()
+        watchdog.close()
+        watchdog_stderr = _read_watchdog_stderr(stderr_capture)
+        if handshake_error:
+            logger.warning(
+                "parent_watchdog.start_unavailable",
+                platform=sys.platform,
+                failure_reason="handshake_error",
+                watchdog_returncode=process.returncode,
+                watchdog_stderr=watchdog_stderr or None,
+            )
+        elif ready_signal is None:
+            logger.warning(
+                "parent_watchdog.start_unavailable",
+                platform=sys.platform,
+                failure_reason="readiness_timeout",
+                timeout_seconds=_WATCHDOG_READY_TIMEOUT_SECONDS,
+            )
+        elif ready_signal == b"" or returncode_before_cleanup is not None:
+            logger.warning(
+                "parent_watchdog.start_unavailable",
+                platform=sys.platform,
+                failure_reason="early_exit",
+                watchdog_returncode=process.returncode,
+                watchdog_stderr=watchdog_stderr or None,
+            )
+        else:
+            logger.warning(
+                "parent_watchdog.start_unavailable",
+                platform=sys.platform,
+                failure_reason="invalid_ready_signal",
+                watchdog_ready_signal=repr(ready_signal),
+                watchdog_returncode=process.returncode,
+                watchdog_stderr=watchdog_stderr or None,
+            )
+        return None
     finally:
-        os.close(ready_read_fd)
-
-    watchdog = ParentWatchdog(process=process, control_write_fd=control_write_fd)
-    if ready:
-        return watchdog
-
-    watchdog.close()
-    logger.warning(
-        "parent_watchdog.start_unavailable",
-        platform=sys.platform,
-        watchdog_returncode=process.returncode,
-    )
-    return None
+        stderr_capture.close()
 
 
 def process_scope_for_parent_watchdog(
@@ -262,14 +318,26 @@ def _reap_watchdog_process(process: subprocess.Popen[bytes]) -> None:
             process.wait(timeout=1.0)
 
 
-def _watchdog_reported_ready(read_fd: int) -> bool:
+def _watchdog_ready_signal(read_fd: int) -> bytes | None:
     readable, _, _ = select.select(
         [read_fd],
         [],
         [],
         _WATCHDOG_READY_TIMEOUT_SECONDS,
     )
-    return bool(readable and os.read(read_fd, 1) == b"1")
+    if not readable:
+        return None
+    return os.read(read_fd, 1)
+
+
+def _read_watchdog_stderr(stderr_capture: IO[bytes]) -> str:
+    stderr_capture.seek(0)
+    raw = stderr_capture.read(_WATCHDOG_STDERR_LIMIT_BYTES + 1)
+    truncated = len(raw) > _WATCHDOG_STDERR_LIMIT_BYTES
+    message = raw[:_WATCHDOG_STDERR_LIMIT_BYTES].decode("utf-8", errors="replace").strip()
+    if truncated:
+        message += "\n[truncated]"
+    return message
 
 
 def _process_birth_epoch(pid: int) -> float:

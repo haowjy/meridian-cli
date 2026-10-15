@@ -27,6 +27,9 @@ library and psutil; normal process-scope wrappers use the same termination core.
 Its `-S -OO` environment strips inherited `PYTHON*` startup controls and supplies
 an explicit `PYTHONPATH` containing only the script directory and psutil's
 site-packages directory; do not restore ambient Python startup behavior.
+The launcher waits up to 10 seconds for its readiness byte so CPU contention cannot
+defeat containment, while returning immediately on the happy path. Startup failures
+distinguish handshake timeout from early exit and include bounded child stderr.
 Registration requires a known process birth time and fails closed otherwise.
 Owners release registrations only after the corresponding child scope is stopped
 and reaped, so a later launcher crash never revisits dead scopes.

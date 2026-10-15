@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import psutil
+from structlog.testing import capture_logs
 
-from meridian.lib.platform import parent_watchdog
+from meridian.lib.platform import detached_process, parent_watchdog
 from meridian.lib.platform.detached_process import start_parent_watchdog
 from meridian.lib.platform.process_scope.base import (
     PROCESS_BIRTH_UNKNOWN_EPOCH,
@@ -85,6 +86,68 @@ def test_parent_death_link_waits_for_watchdog_readiness() -> None:
     finally:
         if watchdog is not None:
             watchdog.close()
+
+
+def test_parent_watchdog_readiness_budget_survives_cpu_contention() -> None:
+    assert detached_process._WATCHDOG_READY_TIMEOUT_SECONDS >= 10.0
+
+
+@posix_only
+def test_parent_watchdog_reports_readiness_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        detached_process.select,
+        "select",
+        lambda *_args: ([], [], []),
+    )
+
+    with capture_logs() as logs:
+        watchdog = start_parent_watchdog()
+
+    assert watchdog is None
+    assert logs[-1] == {
+        "event": "parent_watchdog.start_unavailable",
+        "failure_reason": "readiness_timeout",
+        "log_level": "warning",
+        "platform": sys.platform,
+        "timeout_seconds": detached_process._WATCHDOG_READY_TIMEOUT_SECONDS,
+    }
+
+
+@posix_only
+def test_parent_watchdog_reports_early_exit_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_popen = subprocess.Popen
+
+    def launch_failing_watchdog(
+        *_args: object,
+        **kwargs: object,
+    ) -> subprocess.Popen[bytes]:
+        return original_popen(
+            (
+                sys.executable,
+                "-c",
+                "import sys; sys.stderr.write('watchdog boom\\n'); raise SystemExit(7)",
+            ),
+            **kwargs,  # pyright: ignore[reportArgumentType]  # subprocess kwargs proxy
+        )
+
+    monkeypatch.setattr(detached_process.subprocess, "Popen", launch_failing_watchdog)
+
+    with capture_logs() as logs:
+        watchdog = start_parent_watchdog()
+
+    assert watchdog is None
+    assert logs[-1] == {
+        "event": "parent_watchdog.start_unavailable",
+        "failure_reason": "early_exit",
+        "log_level": "warning",
+        "platform": sys.platform,
+        "watchdog_returncode": 7,
+        "watchdog_stderr": "watchdog boom",
+    }
 
 
 @posix_only

@@ -84,7 +84,10 @@ initializers would make one watchdog per launcher prohibitively expensive. Its
 environment removes inherited `PYTHON*` startup settings (including
 `PYTHONSAFEPATH` and `PYTHONHOME`) and sets `PYTHONPATH` explicitly to the script
 directory plus psutil's site-packages directory, keeping `-S -OO` startup
-deterministic. Scope registration fails closed when its PID birth time is unknown.
+deterministic. The readiness handshake has a 10-second contention budget but returns
+as soon as the byte arrives; timeout and early child exit are diagnosed separately,
+with bounded stderr captured for the latter. Scope registration fails closed when
+its PID birth time is unknown.
 Once an owner has stopped and reaped a child, it sends a release message so the
 watchdog retains only live scopes.
 

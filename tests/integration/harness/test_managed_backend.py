@@ -149,6 +149,10 @@ async def test_launch_managed_backend_cleans_up_when_terminal_spawn_rejects_scop
     released: list[ParentDeathLink | None] = []
     original_launch = asyncio.create_subprocess_exec
 
+    class AcceptingWatchdog:
+        def register_scope(self, _scope: object) -> bool:
+            return True
+
     async def capture_launch(*args: object, **kwargs: object) -> asyncio.subprocess.Process:
         process = await original_launch(*args, **kwargs)
         launched.append(process)
@@ -172,6 +176,7 @@ async def test_launch_managed_backend_cleans_up_when_terminal_spawn_rejects_scop
                     cwd=tmp_path,
                     env=os.environ.copy(),
                     control_root=tmp_path,
+                    parent_watchdog=AcceptingWatchdog(),  # type: ignore[arg-type]
                 ),
                 stderr=asyncio.subprocess.DEVNULL,
             )
