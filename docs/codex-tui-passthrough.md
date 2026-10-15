@@ -131,17 +131,21 @@ startup time by:
 
 ## Failure Behavior
 
-Codex primary is managed-only. If managed startup fails, Meridian fails loudly instead of silently falling back to black-box Codex. This is deliberate: hidden instruction delivery and managed session tracking are the point of the command.
+Codex uses the `raise` managed-attach failure policy. If managed startup raises
+`PrimaryAttachError`, Meridian fails loudly instead of falling back to black-box
+Codex. Hidden instruction delivery and managed session tracking are the point of
+the command.
 
-OpenCode managed-primary startup also fails loudly rather than falling back to
-black-box execution. An explicit provider/model selection is applied through
-launch-local configuration; a conflicting native primary-agent model triggers at
-most one verified backend replacement before session creation. Native config files
-are not edited. Dry-run describes serve, inspection, bootstrap and attach stages;
-it does not claim to know native-resolved defaults or an actual message model.
-Dry-run uses cached model resolution without native availability probes; normal
-launch still validates availability. CLI telemetry/cache setup may write local
-files. Invalid inherited OpenCode JSON is rejected, never silently discarded.
+OpenCode uses the `fallback_to_blackbox` policy. On `PrimaryAttachError`, Meridian
+logs a warning, removes managed sidecars, and starts a black-box OpenCode TUI. An
+explicit provider/model selection is applied through launch-local configuration; a
+conflicting native primary-agent model triggers at most one verified backend
+replacement before session creation. Native config files are not edited. Dry-run
+describes serve, inspection, bootstrap and attach stages; it does not claim to know
+native-resolved defaults or an actual message model. Dry-run uses cached model
+resolution without native availability probes; normal launch still validates
+availability. CLI telemetry/cache setup may write local files. Invalid inherited
+OpenCode JSON is rejected, never silently discarded.
 
 Continue preserves native choice. Later injected turns use the last committed
 native agent/model/variant, not the original launch model. Unsubmitted TUI-local

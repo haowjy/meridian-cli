@@ -59,20 +59,23 @@ enter the same pipeline through `conclude_native_run` after exit.
 ### Signal cancellation
 
 `PrimaryAttachLauncher` registers a cancellation receiver (targets `SIGTERM`/`SIGHUP`)
-and a no-op `SIGINT` receiver
 with the process-global `SignalCoordinator` (`lib/launch/signals.py`) for the duration of
-`run()`. A closed terminal sends SIGHUP and a killed process sends SIGTERM; catching them
-lets the launcher stop the TUI wait through `RunningProcess.cancel_wait()` and finalize
-normally, instead of dying and leaving an active record for orphan reconciliation. The
-receiver is unregistered in `run()`'s `finally`, which restores the previous handlers.
+`run()`. A no-op `SIGINT` receiver is registered immediately before the TUI starts and
+unregistered at the start of the main-thread `finally` as the TUI lifecycle unwinds. A
+closed terminal sends SIGHUP and a killed process sends SIGTERM; catching them lets the
+launcher stop the TUI wait through `RunningProcess.cancel_wait()` and finalize normally,
+instead of dying and leaving an active record for orphan reconciliation. The cancellation
+receiver is unregistered in `run()`'s outer `finally`, which restores the previous handlers.
 
 - `SignalCoordinator` installs handlers for the union of its active receivers' target
   signals (main thread only) and restores any signal no longer targeted; it is the single
   seam for both the streaming `SignalForwarder` (`SIGINT`/`SIGTERM` → subprocess) and this
   launcher receiver.
-- The wait returns exit 130 when `cancel_wait()` unblocks it. Cancellation is asserted
-  when the launcher saw SIGHUP/SIGTERM and the TUI either died by signal or the wait was
-  cancelled; a normal TUI exit that won the race is not recorded as cancelled.
+- Cancellation is asserted and the outcome returns exit 130 when the launcher observed
+  SIGHUP/SIGTERM before the TUI's exit, whatever exit code the TUI returned. A normal TUI
+  exit observed first is not recorded as cancelled. `_TuiExitOrdering` arbitrates this
+  race with an `RLock` because coordinator callbacks run inside Python signal handlers and
+  can interrupt main-thread reads while the lock is held.
 - A signal that arrives before the TUI exists (during backend startup) is latched and
   honored once the TUI starts. If startup then fails, `run()` returns a cancelled outcome
   rather than raising, so `_execute_primary_process()` does not fall back to a black-box
