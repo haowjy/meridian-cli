@@ -24,6 +24,7 @@ from meridian.lib.ops.spawn.models import SpawnActionOutput, SpawnContinueInput,
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from tests.support.codex import write_codex_rollout
 from tests.support.io_probe import IOProbe
 from tests.support.launch import stub_bundle_request_and_resolve
 
@@ -56,17 +57,19 @@ def _seed_spawn(
     harness = snapshot.harness if snapshot is not None else "codex"
     native_store = runtime_root / "native-store" / "sessions"
     if harness_session_id:
-        native_store.mkdir(parents=True, exist_ok=True)
-        native_header = (
-            {"type": "agent-setting", "sessionId": harness_session_id}
-            if harness == "claude"
-            else {"type": "session_meta", "payload": {"id": harness_session_id}}
-        )
-        filename = (
-            f"{harness_session_id}.jsonl" if harness == "claude"
-            else f"rollout-2026-01-01T00-00-00-{harness_session_id}.jsonl"
-        )
-        (native_store / filename).write_text(json.dumps(native_header) + "\n", encoding="utf-8")
+        if harness == "claude":
+            native_store.mkdir(parents=True, exist_ok=True)
+            (native_store / f"{harness_session_id}.jsonl").write_text(
+                json.dumps({"type": "agent-setting", "sessionId": harness_session_id}) + "\n",
+                encoding="utf-8",
+            )
+        else:
+            write_codex_rollout(
+                sessions_root=native_store,
+                project_root=runtime_root,
+                session_id=harness_session_id,
+                date_dirs=(),
+            )
     session_store.start_session(
         runtime_root, chat_id=chat_id, spawn_id=spawn_id,
         harness=harness,
@@ -293,9 +296,11 @@ def test_chat_continue_finds_verified_observed_owner_with_filtered_index(
     )
     native_store = runtime_root / "native-store" / "sessions"
     observed_native = "session-29"
-    (native_store / f"rollout-2026-01-01T00-00-00-{observed_native}.jsonl").write_text(
-        json.dumps({"type": "session_meta", "payload": {"id": observed_native}}) + "\n",
-        encoding="utf-8",
+    write_codex_rollout(
+        sessions_root=native_store,
+        project_root=project_root,
+        session_id=observed_native,
+        date_dirs=(),
     )
     session_store.start_session(
         runtime_root,
@@ -341,11 +346,12 @@ def test_chat_continue_without_owner_starts_new_spawn(
     project_root.mkdir()
     runtime_root = _state_root(project_root)
     native_store = runtime_root / "native-store" / "sessions"
-    native_store.mkdir(parents=True)
     native_id = "session-ownerless"
-    (native_store / f"rollout-2026-01-01T00-00-00-{native_id}.jsonl").write_text(
-        json.dumps({"type": "session_meta", "payload": {"id": native_id}}) + "\n",
-        encoding="utf-8",
+    write_codex_rollout(
+        sessions_root=native_store,
+        project_root=project_root,
+        session_id=native_id,
+        date_dirs=(),
     )
     session_store.start_session(
         runtime_root,
@@ -630,8 +636,11 @@ def test_continue_preserves_native_and_switched_chat_sources(
         expected_session = "session-31"
         source = "p30"
         native_store = runtime_root / "native-store" / "sessions"
-        (native_store / "rollout-2026-01-01T00-00-00-session-31.jsonl").write_text(
-            json.dumps({"type": "session_meta", "payload": {"id": expected_session}}) + "\n",
+        write_codex_rollout(
+            sessions_root=native_store,
+            project_root=project_root,
+            session_id=expected_session,
+            date_dirs=(),
         )
         session_store.start_session(
             runtime_root, chat_id="c2", harness="codex", harness_session_id=expected_session,

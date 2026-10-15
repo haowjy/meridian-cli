@@ -36,6 +36,7 @@ from meridian.lib.state.spawn import repository as spawn_repository
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
 from meridian.lib.state.spawn.repository import Applied
 from tests.support.io_probe import IOProbe
+from tests.support.spawn_runs import seed_run
 
 
 def _state_root(project_root: Path) -> Path:
@@ -45,44 +46,17 @@ def _state_root(project_root: Path) -> Path:
 
 
 def _start_reparented_runs(runtime_root: Path) -> tuple[RunId, RunId]:
-    p1 = spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p1",
-        chat_id="c1",
-        model="test",
-        agent="coder",
-        harness="codex",
-        prompt="root",
+    seed_run(runtime_root, "p1", status=None, chat_id="c1", prompt="root")
+    seed_run(runtime_root, "p9", status=None, chat_id="c9", prompt="other root")
+    p2 = seed_run(
+        runtime_root, "p2", status=None, parent="p1", chat_id="c2", prompt="first run",
     )
-    p9 = spawn_store.start_spawn(
+    p2_reopened = seed_run(
         runtime_root,
-        spawn_id="p9",
-        chat_id="c9",
-        model="test",
-        agent="coder",
-        harness="codex",
-        prompt="other root",
-    )
-    p2 = spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p2",
-        chat_id="c2",
-        parent_id=SpawnId("p1"),
-        parent_run_id=p1,
-        model="test",
-        agent="coder",
-        harness="codex",
-        prompt="first run",
-    )
-    p2_reopened = spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p2.2",
+        "p2.2",
+        status=None,
+        parent="p9",
         chat_id="c2-reopened",
-        parent_id=SpawnId("p9"),
-        parent_run_id=p9,
-        model="test",
-        agent="coder",
-        harness="codex",
         prompt="reopened elsewhere",
     )
     return p2, p2_reopened
@@ -227,16 +201,7 @@ def test_spawn_show_bare_ref_reads_only_target_runs(
     project_root = tmp_path / "repo"
     project_root.mkdir()
     runtime_root = _state_root(project_root)
-    run_id = spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p1",
-        chat_id="c1",
-        model="test",
-        agent="coder",
-        harness="codex",
-        prompt="done",
-    )
-    spawn_store.finalize_spawn(runtime_root, run_id, "succeeded", 0, origin="runner")
+    seed_run(runtime_root, "p1", chat_id="c1", prompt="done")
     for number in range(2, unrelated_count + 2):
         state = runtime_root / "spawns" / f"p{number}" / "state.json"
         state.parent.mkdir()
@@ -261,16 +226,7 @@ def test_spawn_show_bare_ref_lists_only_latest_ten_runs(tmp_path: Path) -> None:
     runtime_root = _state_root(project_root)
     for number in range(1, 16):
         key = "p1" if number == 1 else f"p1.{number}"
-        run_id = spawn_store.start_spawn(
-            runtime_root,
-            spawn_id=key,
-            chat_id="c1",
-            model="test",
-            agent="coder",
-            harness="codex",
-            prompt="done",
-        )
-        spawn_store.finalize_spawn(runtime_root, run_id, "succeeded", 0, origin="runner")
+        seed_run(runtime_root, key, chat_id="c1", prompt="done")
 
     detail = spawn_api.spawn_show_sync(
         SpawnShowInput(project_root=project_root.as_posix(), spawn_id="p1")
@@ -295,17 +251,13 @@ def test_spawn_show_latest_does_not_materialize_all_run_rows(
     project_root.mkdir()
     runtime_root = _state_root(project_root)
     for number in range(1, 4):
-        run_id = spawn_store.start_spawn(
+        seed_run(
             runtime_root,
-            spawn_id=f"p{number}",
+            f"p{number}",
             chat_id=f"c{number}",
-            model="test",
-            agent="coder",
-            harness="codex",
             prompt="done",
             started_at=f"2026-01-0{number}T00:00:00Z",
         )
-        spawn_store.finalize_spawn(runtime_root, run_id, "succeeded", 0, origin="runner")
     assert HistoryIndex(runtime_root).rebuild().complete
 
     probe = IOProbe(monkeypatch)

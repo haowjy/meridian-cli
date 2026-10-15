@@ -7,15 +7,15 @@ import pytest
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.refs import parse_ref
-from meridian.lib.core.spawn_lifecycle import SpawnReservation
 from meridian.lib.core.types import RunId, SpawnId
-from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.ops.reference import resolve_continue_source_row
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.spawn import repository as spawn_repository
 from meridian.lib.state.spawn.runs import latest_bound_run, latest_run
 from tests.support.io_probe import IOProbe
 from tests.support.process_race import run_spawn_race_or_skip
+from tests.support.spawn_runs import reservation as run_reservation
+from tests.support.spawn_runs import seed_run
 
 
 def _bind_started_session(runtime_root: Path, run_id: RunId, chat_id: str) -> None:
@@ -40,24 +40,12 @@ def _reserve_run_without_busy_check_worker(runtime_root: str) -> str:
         return run_id
 
     spawn_store.check_spawn_available = current_run
-    reservation = SpawnReservation(
-        chat_id="c1",
-        prompt="again",
-        session_metadata=PrimarySessionMetadata(
-            harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=(),
-        ),
-    )
+    reservation = run_reservation()
     return str(spawn_store.reserve_run(Path(runtime_root), SpawnId("p1"), reservation))
 
 
 def _continue_run_worker(runtime_root: str) -> tuple[str, str]:
-    reservation = SpawnReservation(
-        chat_id="c1",
-        prompt="again",
-        session_metadata=PrimarySessionMetadata(
-            harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=(),
-        ),
-    )
+    reservation = run_reservation()
     try:
         run_id = spawn_store.reserve_run(Path(runtime_root), SpawnId("p1"), reservation)
     except spawn_store.SpawnBusy as exc:
@@ -70,36 +58,22 @@ def _continue_run_worker(runtime_root: str) -> tuple[str, str]:
     ('running', True, True), ('queued', True, True),
 ])
 def test_reserve_run_contract(tmp_path: Path, status: str, live: bool, busy: bool) -> None:
-    first = spawn_store.start_spawn(
-        tmp_path, spawn_id='p1', chat_id='c1', model='test', agent='', harness='codex', prompt='hi',
+    seed_run(
+        tmp_path, "p1", bound=True, chat_id="c1", agent="", prompt="hi",
+        harness_session_id="native",
     )
-    session_store.start_session(
-        tmp_path, harness='codex', harness_session_id='native', model='test',
-        chat_id='c1', spawn_id=first,
-    )
-    _bind_started_session(tmp_path, first, "c1")
-    session_store.stop_session(tmp_path, 'c1')
-    spawn_store.finalize_spawn(tmp_path, first, status='succeeded', exit_code=0, origin='runner')
-    latest = spawn_store.start_spawn(
-        tmp_path, spawn_id='p1.3', chat_id='c1', owner_chat_id='c9', model='test', agent='',
-        harness='codex', prompt='hi', started_at='2000-01-01T00:00:00Z',
+    latest = seed_run(
+        tmp_path, "p1.3", status="succeeded" if status == "succeeded" else None,
+        chat_id="c1", owner_chat_id="c9", agent="", prompt="hi",
+        started_at="2000-01-01T00:00:00Z",
         runner_pid=os.getpid() if live else 999_999_999,
     )
-    if status == 'succeeded':
-        spawn_store.finalize_spawn(
-            tmp_path, latest, status='succeeded', exit_code=0, origin='runner',
-        )
-    elif status == 'queued':
+    if status == 'queued':
         # The publisher's PID keeps a queued reservation live beyond startup grace.
         from meridian.lib.state.spawn.repository import write_state_locked
         write_state_locked(tmp_path / 'spawns', latest,
                            lambda row: row.model_copy(update={'status': SpawnStatus.QUEUED}))
-    reservation = SpawnReservation(
-        chat_id='c1', owner_chat_id='c9', kind='primary', prompt='again',
-        session_metadata=PrimarySessionMetadata(
-            harness='codex', model='test', agent='', agent_path='', skills=(), skill_paths=(),
-        ),
-    )
+    reservation = run_reservation(owner_chat_id="c9", kind="primary")
     if busy:
         with pytest.raises(ValueError, match=r'busy.*p1\.3'):
             spawn_store.reserve_run(tmp_path, SpawnId('p1'), reservation)
@@ -119,21 +93,9 @@ def test_reserve_run_contract(tmp_path: Path, status: str, live: bool, busy: boo
 def test_missing_head_recovers_across_holes_before_continue_and_reservation(
     tmp_path: Path,
 ) -> None:
-    metadata = PrimarySessionMetadata(
-        harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=(),
-    )
-    first = spawn_store.start_spawn(
-        tmp_path, spawn_id="p1", chat_id="c1", model="test", agent="",
-        harness="codex", prompt="hi",
-    )
-    session_store.start_session(
-        tmp_path, harness="codex", harness_session_id="native", model="test",
-        chat_id="c1", spawn_id=first,
-    )
-    _bind_started_session(tmp_path, first, "c1")
-    session_store.stop_session(tmp_path, "c1")
-    spawn_store.finalize_spawn(
-        tmp_path, first, status="succeeded", exit_code=0, origin="runner",
+    seed_run(
+        tmp_path, "p1", bound=True, chat_id="c1", agent="", prompt="hi",
+        harness_session_id="native",
     )
 
     runs: list[RunId] = []
@@ -141,9 +103,7 @@ def test_missing_head_recovers_across_holes_before_continue_and_reservation(
         run_id = spawn_store.reserve_run(
             tmp_path,
             SpawnId("p1"),
-            SpawnReservation(
-                chat_id="c1", kind="primary", prompt="again", session_metadata=metadata,
-            ),
+            run_reservation(kind="primary"),
         )
         session_store.start_session(
             tmp_path, harness="codex", harness_session_id="native", model="test",
@@ -166,34 +126,19 @@ def test_missing_head_recovers_across_holes_before_continue_and_reservation(
     live = spawn_store.reserve_run(
         tmp_path,
         SpawnId("p1"),
-        SpawnReservation(
-            chat_id="c1", kind="primary", prompt="again", session_metadata=metadata,
-        ),
+        run_reservation(kind="primary"),
     )
     assert live == "p1.4"
     with pytest.raises(spawn_store.SpawnBusy, match=r"busy.*p1\.4"):
         spawn_store.reserve_run(
             tmp_path,
             SpawnId("p1"),
-            SpawnReservation(
-                chat_id="c1", kind="primary", prompt="again", session_metadata=metadata,
-            ),
+            run_reservation(kind="primary"),
         )
 
 
 def test_concurrent_run_reservations_allocate_distinct_suffixes(tmp_path: Path) -> None:
-    first = spawn_store.start_spawn(
-        tmp_path,
-        spawn_id="p1",
-        chat_id="c1",
-        model="test",
-        agent="",
-        harness="codex",
-        prompt="hi",
-    )
-    spawn_store.finalize_spawn(
-        tmp_path, first, status="succeeded", exit_code=0, origin="runner",
-    )
+    seed_run(tmp_path, "p1", agent="", prompt="hi")
 
     allocated = run_spawn_race_or_skip(
         _reserve_run_without_busy_check_worker,
@@ -206,18 +151,7 @@ def test_concurrent_run_reservations_allocate_distinct_suffixes(tmp_path: Path) 
 def test_concurrent_continues_allow_one_run_and_name_it_in_busy_refusal(
     tmp_path: Path,
 ) -> None:
-    first = spawn_store.start_spawn(
-        tmp_path,
-        spawn_id="p1",
-        chat_id="c1",
-        model="test",
-        agent="",
-        harness="codex",
-        prompt="hi",
-    )
-    spawn_store.finalize_spawn(
-        tmp_path, first, status="succeeded", exit_code=0, origin="runner",
-    )
+    seed_run(tmp_path, "p1", agent="", prompt="hi")
 
     outcomes = run_spawn_race_or_skip(
         _continue_run_worker,
@@ -234,30 +168,13 @@ def test_interrupted_publish_leaves_pointer_that_recovers_to_published_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    first = spawn_store.start_spawn(
-        tmp_path,
-        spawn_id="p1",
-        chat_id="c1",
-        model="test",
-        agent="",
-        harness="codex",
-        prompt="hi",
-    )
-    spawn_store.finalize_spawn(
-        tmp_path, first, status="succeeded", exit_code=0, origin="runner",
-    )
+    first = seed_run(tmp_path, "p1", agent="", prompt="hi")
 
     def fail_publish(_source: Path, _destination: Path) -> None:
         raise RuntimeError("simulated crash before run publication")
 
     monkeypatch.setattr(spawn_store, "atomic_publish_dir", fail_publish)
-    reservation = SpawnReservation(
-        chat_id="c1",
-        prompt="again",
-        session_metadata=PrimarySessionMetadata(
-            harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=(),
-        ),
-    )
+    reservation = run_reservation()
 
     with pytest.raises(RuntimeError, match="simulated crash"):
         spawn_store.reserve_run(tmp_path, SpawnId("p1"), reservation)
@@ -271,31 +188,15 @@ def test_reserve_run_checks_ancestors_without_listing_spawns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     for key, parent in (("p1", None), ("p2", "p1"), ("p3", "p2")):
-        run_id = spawn_store.start_spawn(
-            tmp_path,
-            spawn_id=key,
-            chat_id=f"c{key[1:]}",
-            parent_id=SpawnId(parent) if parent else None,
-            parent_run_id=parse_ref(parent, row_key=True) if parent else None,
-            model="test",
-            agent="",
-            harness="codex",
-            prompt="hi",
-        )
-        spawn_store.finalize_spawn(
-            tmp_path, run_id, status="succeeded", exit_code=0, origin="runner",
+        seed_run(
+            tmp_path, key, parent=parent, chat_id=f"c{key[1:]}", agent="", prompt="hi",
         )
 
     probe = IOProbe(monkeypatch)
     probe.watch("scan_spawn_ids", spawn_repository.scan_spawn_ids)
-    reservation = SpawnReservation(
-        chat_id="c1",
+    reservation = run_reservation(
         parent_id="p3",
         parent_run_id=parse_ref("p3", row_key=True),
-        prompt="again",
-        session_metadata=PrimarySessionMetadata(
-            harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=(),
-        ),
     )
 
     with pytest.raises(ValueError, match="Cannot reopen ancestor spawn p1"):
@@ -308,31 +209,15 @@ def test_reserve_run_does_not_scan_for_a_fully_archived_ancestor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     for key in ("p1", "p2"):
-        run_id = spawn_store.start_spawn(
-            tmp_path,
-            spawn_id=key,
-            chat_id=f"c{key[1:]}",
-            model="test",
-            agent="",
-            harness="codex",
-            prompt="hi",
-        )
-        spawn_store.finalize_spawn(
-            tmp_path, run_id, status="succeeded", exit_code=0, origin="runner",
-        )
+        seed_run(tmp_path, key, chat_id=f"c{key[1:]}", agent="", prompt="hi")
     assert spawn_store.delete_published_spawn(
         tmp_path, parse_ref("p2", row_key=True), can_delete=lambda _row: True,
     )
     probe = IOProbe(monkeypatch)
     probe.watch("scan_spawn_ids", spawn_repository.scan_spawn_ids)
-    reservation = SpawnReservation(
-        chat_id="c1",
+    reservation = run_reservation(
         parent_id="p2",
         parent_run_id=parse_ref("p2", row_key=True),
-        prompt="again",
-        session_metadata=PrimarySessionMetadata(
-            harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=(),
-        ),
     )
 
     assert spawn_store.reserve_run(tmp_path, SpawnId("p1"), reservation) == "p1.2"
@@ -340,35 +225,19 @@ def test_reserve_run_does_not_scan_for_a_fully_archived_ancestor(
 
 
 def test_reserve_run_checks_parent_edges_from_non_latest_runs(tmp_path: Path) -> None:
-    metadata = PrimarySessionMetadata(
-        harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=(),
-    )
-
     for key, parent in (("p1", None), ("p2", "p1"), ("p3", None)):
-        run_id = spawn_store.start_spawn(
-            tmp_path,
-            spawn_id=key,
-            chat_id=f"c{key[1:]}",
-            parent_id=SpawnId(parent) if parent else None,
-            parent_run_id=parse_ref(parent, row_key=True) if parent else None,
-            model="test",
-            agent="",
-            harness="codex",
-            prompt="hi",
-        )
-        spawn_store.finalize_spawn(
-            tmp_path, run_id, status="succeeded", exit_code=0, origin="runner",
+        seed_run(
+            tmp_path, key, parent=parent, chat_id=f"c{key[1:]}", agent="", prompt="hi",
         )
 
     second = spawn_store.reserve_run(
         tmp_path,
         SpawnId("p2"),
-        SpawnReservation(
+        run_reservation(
             chat_id="c2",
             parent_id="p3",
             parent_run_id=parse_ref("p3", row_key=True),
             prompt="move",
-            session_metadata=metadata,
         ),
     )
     spawn_store.finalize_spawn(
@@ -379,11 +248,9 @@ def test_reserve_run_checks_parent_edges_from_non_latest_runs(tmp_path: Path) ->
         spawn_store.reserve_run(
             tmp_path,
             SpawnId("p1"),
-            SpawnReservation(
-                chat_id="c1",
+            run_reservation(
                 parent_id="p2",
                 prompt="cycle",
-                session_metadata=metadata,
             ),
         )
 
@@ -392,29 +259,12 @@ def test_reserve_run_reads_one_spawn_row_while_allocation_lock_is_held(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    first = spawn_store.start_spawn(
-        tmp_path,
-        spawn_id="p1",
-        chat_id="c1",
-        model="test",
-        agent="",
-        harness="codex",
-        prompt="hi",
-    )
-    spawn_store.finalize_spawn(
-        tmp_path, first, status="succeeded", exit_code=0, origin="runner",
-    )
+    seed_run(tmp_path, "p1", agent="", prompt="hi")
     paths = spawn_store.RuntimePaths.from_root_dir(tmp_path)
     probe = IOProbe(monkeypatch)
     probe.watch_lock("spawns_flock", spawn_store.lock_file, paths.spawns_flock)
     probe.watch("read_state", spawn_repository.read_state)
-    reservation = SpawnReservation(
-        chat_id="c1",
-        prompt="again",
-        session_metadata=PrimarySessionMetadata(
-            harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=(),
-        ),
-    )
+    reservation = run_reservation()
 
     assert spawn_store.reserve_run(tmp_path, SpawnId("p1"), reservation) == "p1.2"
     assert probe.count_under_lock("read_state", "spawns_flock") <= 1
@@ -424,18 +274,7 @@ def test_spawn_started_at_is_stamped_under_the_allocation_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    first = spawn_store.start_spawn(
-        tmp_path,
-        spawn_id="p1",
-        chat_id="c1",
-        model="test",
-        agent="",
-        harness="codex",
-        prompt="hi",
-    )
-    spawn_store.finalize_spawn(
-        tmp_path, first, status="succeeded", exit_code=0, origin="runner",
-    )
+    seed_run(tmp_path, "p1", agent="", prompt="hi")
     paths = spawn_store.RuntimePaths.from_root_dir(tmp_path)
     probe = IOProbe(monkeypatch)
     probe.watch_lock("spawns_flock", spawn_store.lock_file, paths.spawns_flock)
@@ -463,14 +302,8 @@ def test_spawn_started_at_is_stamped_under_the_allocation_lock(
     reopened = spawn_store.reserve_run(
         tmp_path,
         SpawnId("p1"),
-        SpawnReservation(
-            chat_id="c1",
-            prompt="again",
+        run_reservation(
             clock=clock,
-            session_metadata=PrimarySessionMetadata(
-                harness="codex", model="test", agent="", agent_path="",
-                skills=(), skill_paths=(),
-            ),
         ),
     )
 
@@ -484,29 +317,11 @@ def test_start_spawn_resolves_exact_parent_before_allocation_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    first_parent = spawn_store.start_spawn(
-        tmp_path,
-        spawn_id="p1",
-        chat_id="c-parent",
-        model="test",
-        agent="",
-        harness="codex",
-        prompt="first parent",
+    first_parent = seed_run(
+        tmp_path, "p1", chat_id="c-parent", agent="", prompt="first parent",
     )
-    spawn_store.finalize_spawn(
-        tmp_path, first_parent, status="succeeded", exit_code=0, origin="runner",
-    )
-    later_parent = spawn_store.start_spawn(
-        tmp_path,
-        spawn_id="p1.2",
-        chat_id="c-parent",
-        model="test",
-        agent="",
-        harness="codex",
-        prompt="later parent",
-    )
-    spawn_store.finalize_spawn(
-        tmp_path, later_parent, status="succeeded", exit_code=0, origin="runner",
+    seed_run(
+        tmp_path, "p1.2", chat_id="c-parent", agent="", prompt="later parent",
     )
     first_parent_row = spawn_store.get_spawn(tmp_path, first_parent)
     assert first_parent_row is not None

@@ -8,9 +8,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.refs import parse_ref
-from meridian.lib.core.spawn_lifecycle import SpawnReservation
-from meridian.lib.core.types import RunId, SpawnId
-from meridian.lib.launch.types import PrimarySessionMetadata
+from meridian.lib.core.types import SpawnId
 from meridian.lib.ops.pruning import prune_stale_spawn_artifacts, scan_stale_spawn_artifacts
 from meridian.lib.ops.session_archive import archive_history
 from meridian.lib.state import session_store, spawn_store
@@ -23,68 +21,13 @@ from meridian.lib.state.spawn import runs as spawn_runs
 from meridian.lib.state.spawn.runs import latest_run, next_run_id, runs_of
 from tests.support.io_probe import IOProbe
 from tests.support.native_snapshot import seal_spawn_snapshot
-
-
-def _start(
-    root: Path,
-    *,
-    spawn_id: str | None = "p1",
-    parent_id: SpawnId | None = None,
-) -> RunId:
-    return spawn_store.start_spawn(
-        root,
-        spawn_id=spawn_id,
-        chat_id="c1",
-        model="test",
-        agent="coder",
-        harness="codex",
-        prompt="hello",
-        parent_id=parent_id,
-        parent_run_id=(
-            parse_ref(str(parent_id), row_key=True) if parent_id is not None else None
-        ),
-    )
-
-
-def _finish(root: Path, run_id: object) -> None:
-    # These fixtures represent a completed launch whose runner has exited.
-    spawn_store.update_spawn(root, parse_ref(str(run_id), row_key=True), runner_pid=999_999_999)
-    spawn_store.finalize_spawn(
-        root,
-        parse_ref(str(run_id), row_key=True),
-        status="succeeded",
-        exit_code=0,
-        origin="runner",
-    )
-
-
-def _bound(root: Path, key: str) -> RunId:
-    run_id = _start(root, spawn_id=key)
-    session_store.start_session(
-        root, harness="codex", harness_session_id="native-1", model="test",
-        chat_id="c1", spawn_id=run_id,
-    )
-    generation = session_store.get_session_record(root, "c1")
-    assert generation is not None
-    spawn_store.bind_run_generation(
-        root,
-        run_id,
-        chat_id="c1",
-        session_instance_id=generation.session_instance_id,
-        forked_from_history_id=generation.forked_from_history_id,
-    )
-    session_store.stop_session(root, "c1")
-    _finish(root, run_id)
-    return run_id
+from tests.support.spawn_runs import reservation, seed_run
 
 
 def test_run_discovery_uses_max_suffix_with_holes_and_ignores_junk(tmp_path: Path) -> None:
-    first = _start(tmp_path)
-    _finish(tmp_path, first)
-    second = _start(tmp_path, spawn_id="p1.2")
-    _finish(tmp_path, second)
-    third = _start(tmp_path, spawn_id="p1.3")
-    _finish(tmp_path, third)
+    seed_run(tmp_path)
+    seed_run(tmp_path, "p1.2")
+    seed_run(tmp_path, "p1.3")
     spawn_store.delete_published_spawn(
         tmp_path,
         parse_ref("p1.2", row_key=True),
@@ -101,7 +44,7 @@ def test_run_discovery_uses_max_suffix_with_holes_and_ignores_junk(tmp_path: Pat
 def test_latest_run_rebuilds_a_missing_head_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _start(tmp_path)
+    seed_run(tmp_path, status=None)
     (tmp_path / "spawn-heads" / "p1").unlink()
     probe = IOProbe(monkeypatch)
     probe.watch("scan_spawn_ids", spawn_repository.scan_spawn_ids)
@@ -116,7 +59,7 @@ def test_latest_run_rebuilds_a_missing_head_once(
 def test_latest_run_caches_a_lost_head_with_no_loose_runs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    run_id = _start(tmp_path, spawn_id=None)
+    run_id = seed_run(tmp_path, None, status=None)
     assert spawn_store.delete_published_spawn(
         tmp_path, run_id, can_delete=lambda _row: True,
     )
@@ -133,7 +76,7 @@ def test_latest_run_caches_a_lost_head_with_no_loose_runs(
 def test_latest_run_above_spawn_counter_does_not_scan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    assert _start(tmp_path, spawn_id=None) == "p1"
+    assert seed_run(tmp_path, None, status=None) == "p1"
     probe = IOProbe(monkeypatch)
     probe.watch("scan_spawn_ids", spawn_repository.scan_spawn_ids)
 
@@ -144,16 +87,16 @@ def test_latest_run_above_spawn_counter_does_not_scan(
 
 
 def test_latest_run_probes_above_stale_pointer(tmp_path: Path) -> None:
-    _start(tmp_path)
-    _start(tmp_path, spawn_id="p1.2")
-    _start(tmp_path, spawn_id="p1.3")
+    seed_run(tmp_path, status=None)
+    seed_run(tmp_path, "p1.2", status=None)
+    seed_run(tmp_path, "p1.3", status=None)
     (tmp_path / "spawn-heads" / "p1").write_text("2\n", encoding="utf-8")
 
     assert latest_run(tmp_path, SpawnId("p1")) == "p1.3"
 
 
 def test_latest_run_probes_below_pointer_written_before_publish(tmp_path: Path) -> None:
-    _start(tmp_path)
+    seed_run(tmp_path, status=None)
     (tmp_path / "spawn-heads" / "p1").write_text("3\n", encoding="utf-8")
 
     assert latest_run(tmp_path, SpawnId("p1")) == "p1"
@@ -165,7 +108,7 @@ def test_latest_run_stats_only_target_spawn(
     monkeypatch: pytest.MonkeyPatch,
     unrelated_count: int,
 ) -> None:
-    _start(tmp_path)
+    seed_run(tmp_path, status=None)
     for number in range(2, unrelated_count + 2):
         state = tmp_path / "spawns" / f"p{number}" / "state.json"
         state.parent.mkdir()
@@ -180,10 +123,8 @@ def test_latest_run_stats_only_target_spawn(
 
 
 def test_spawn_counter_ignores_dotted_run_suffixes(tmp_path: Path) -> None:
-    first = _start(tmp_path, spawn_id="p100")
-    _finish(tmp_path, first)
-    second = _start(tmp_path, spawn_id="p100.2")
-    _finish(tmp_path, second)
+    seed_run(tmp_path, "p100")
+    seed_run(tmp_path, "p100.2")
     spawn_store.delete_published_spawn(
         tmp_path,
         parse_ref("p100", row_key=True),
@@ -191,26 +132,19 @@ def test_spawn_counter_ignores_dotted_run_suffixes(tmp_path: Path) -> None:
     )
     (tmp_path / "spawn-id-counter").unlink(missing_ok=True)
 
-    assert _start(tmp_path, spawn_id=None) == "p101"
+    assert seed_run(tmp_path, None, status=None) == "p101"
 
 
 def test_history_index_traverses_multi_run_spawn_chain_without_duplicates(
     tmp_path: Path,
 ) -> None:
-    parent = _start(tmp_path, spawn_id="p1")
-    _finish(tmp_path, parent)
-    child = _start(tmp_path, spawn_id="p2", parent_id=SpawnId("p1"))
-    _finish(tmp_path, child)
-    child_second = _start(tmp_path, spawn_id="p2.2", parent_id=SpawnId("p1"))
-    _finish(tmp_path, child_second)
-    grandchild = _start(tmp_path, spawn_id="p3", parent_id=SpawnId("p2"))
-    _finish(tmp_path, grandchild)
-    grandchild_second = _start(tmp_path, spawn_id="p3.2", parent_id=SpawnId("p2"))
-    _finish(tmp_path, grandchild_second)
-    great_grandchild = _start(tmp_path, spawn_id="p4", parent_id=SpawnId("p3"))
-    _finish(tmp_path, great_grandchild)
-    great_grandchild_second = _start(tmp_path, spawn_id="p4.2", parent_id=SpawnId("p3"))
-    _finish(tmp_path, great_grandchild_second)
+    seed_run(tmp_path, "p1")
+    seed_run(tmp_path, "p2", parent="p1")
+    seed_run(tmp_path, "p2.2", parent="p1")
+    seed_run(tmp_path, "p3", parent="p2")
+    seed_run(tmp_path, "p3.2", parent="p2")
+    seed_run(tmp_path, "p4", parent="p3")
+    seed_run(tmp_path, "p4.2", parent="p3")
 
     index = HistoryIndex(tmp_path)
     assert index.rebuild().complete
@@ -230,28 +164,16 @@ def test_history_index_traverses_multi_run_spawn_chain_without_duplicates(
 def test_history_index_projects_only_runs_parented_within_each_subtree(
     tmp_path: Path,
 ) -> None:
-    parent = _start(tmp_path, spawn_id="p1")
-    _finish(tmp_path, parent)
-    child = _start(tmp_path, spawn_id="p2", parent_id=SpawnId("p1"))
-    _finish(tmp_path, child)
-    unrelated = _start(tmp_path, spawn_id="p9")
-    _finish(tmp_path, unrelated)
+    seed_run(tmp_path, "p1")
+    seed_run(tmp_path, "p2", parent="p1")
+    seed_run(tmp_path, "p9")
     reopened_child = spawn_store.reserve_run(
         tmp_path,
         SpawnId("p2"),
-        SpawnReservation(
-            chat_id="c1",
+        reservation(
             parent_id="p9",
             parent_run_id=parse_ref("p9", row_key=True),
-            prompt="again",
-            session_metadata=PrimarySessionMetadata(
-                harness="codex",
-                model="test",
-                agent="coder",
-                agent_path="",
-                skills=(),
-                skill_paths=(),
-            ),
+            agent="coder",
         ),
     )
 
@@ -268,9 +190,9 @@ def test_history_index_projects_only_runs_parented_within_each_subtree(
 def test_bound_generations_and_clear_segment_survive_multi_run_archive_discovery(
     tmp_path: Path,
 ) -> None:
-    first = _bound(tmp_path, "p1")
+    first = seed_run(tmp_path, "p1", bound=True)
 
-    second = _bound(tmp_path, "p1.2")
+    second = seed_run(tmp_path, "p1.2", bound=True)
     session_store.start_session(
         tmp_path,
         harness="codex",
@@ -308,10 +230,9 @@ def test_bound_generations_and_clear_segment_survive_multi_run_archive_discovery
 def test_active_spawn_protects_latest_and_latest_bound_run_from_retention(
     tmp_path: Path,
 ) -> None:
-    _bound(tmp_path, "p1")
-    second = _start(tmp_path, spawn_id="p1.2")
-    _finish(tmp_path, second)
-    third = _start(tmp_path, spawn_id="p1.3")
+    seed_run(tmp_path, "p1", bound=True)
+    seed_run(tmp_path, "p1.2")
+    third = seed_run(tmp_path, "p1.3", status=None)
     assert third == "p1.3"
 
     output = archive_history(
@@ -327,9 +248,8 @@ def test_active_spawn_protects_latest_and_latest_bound_run_from_retention(
 def test_stale_artifact_pruning_keeps_head_without_rescanning(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _bound(tmp_path, "p1")
-    second = _start(tmp_path, spawn_id="p1.2")
-    _finish(tmp_path, second)
+    seed_run(tmp_path, "p1", bound=True)
+    seed_run(tmp_path, "p1.2")
 
     stale = scan_stale_spawn_artifacts(
         tmp_path,
@@ -350,7 +270,7 @@ def test_stale_artifact_pruning_keeps_head_without_rescanning(
 
 def test_retired_head_prevents_reusing_partially_restored_run_keys(tmp_path: Path) -> None:
     for key in ("p1", "p1.2", "p1.3"):
-        _finish(tmp_path, _start(tmp_path, spawn_id=key))
+        seed_run(tmp_path, key)
     backup = tmp_path / "archived-p1"
     shutil.copytree(tmp_path / "spawns" / "p1", backup)
 
@@ -366,9 +286,9 @@ def test_retired_head_prevents_reusing_partially_restored_run_keys(tmp_path: Pat
 
 
 def test_prune_failure_preserves_latest_and_bound_runs(tmp_path: Path, monkeypatch) -> None:
-    _bound(tmp_path, "p1")
-    _bound(tmp_path, "p1.2")
-    _finish(tmp_path, _start(tmp_path, spawn_id="p1.3"))
+    seed_run(tmp_path, "p1", bound=True)
+    seed_run(tmp_path, "p1.2", bound=True)
+    seed_run(tmp_path, "p1.3")
     delete = spawn_store.delete_published_spawn
     monkeypatch.setattr(
         spawn_store, "delete_published_spawn",
@@ -391,9 +311,9 @@ def test_archive_apply_preserves_continuation_source_on_partial_retirement(
     root = tmp_path / "runtime"
     for key in ("p1", "p1.2", "p1.3"):
         if key != "p1.3":
-            _bound(root, key)
+            seed_run(root, key, bound=True)
         else:
-            _finish(root, _start(root, spawn_id=key))
+            seed_run(root, key)
         seal_spawn_snapshot(root, key)
     if mode == "retire-failure":
         retire = session_archive.retire_published_spawn
@@ -420,14 +340,10 @@ def test_archive_apply_preserves_continuation_source_on_partial_retirement(
 
 
 def test_prune_rechecks_siblings_published_after_scan(tmp_path: Path) -> None:
-    first = _bound(tmp_path, "p1")
+    first = seed_run(tmp_path, "p1", bound=True)
     stale = scan_stale_spawn_artifacts(
         tmp_path, retention_days=0, active_spawn_ids=set(), now=10**10,
     )
-    spawn_store.reserve_run(tmp_path, SpawnId("p1"), SpawnReservation(
-        chat_id="c1", prompt="again", session_metadata=PrimarySessionMetadata(
-            harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=(),
-        ),
-    ))
+    spawn_store.reserve_run(tmp_path, SpawnId("p1"), reservation())
     assert prune_stale_spawn_artifacts(stale).removed == 0
     assert spawn_store.get_spawn(tmp_path, first) is not None
