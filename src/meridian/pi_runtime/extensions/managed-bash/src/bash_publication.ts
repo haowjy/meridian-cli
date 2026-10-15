@@ -55,7 +55,7 @@ export class BashPublication {
 
   constructor(private readonly options: {
     path: string;
-    spawnId: string;
+    runId: string;
     /** Merges live evidence (progress, failure overlays) into the value a slot stages against. */
     evidence: (published: Published) => Published;
   }) {}
@@ -85,7 +85,7 @@ export class BashPublication {
   private async write(next: Published): Promise<void> {
     const file: BashRecordsFile = {
       v: 1,
-      spawn_id: this.options.spawnId,
+      spawn_id: this.options.runId,
       updated_at_ms: Date.now(),
       records: Object.fromEntries(next.rows),
       ...(next.runtimeError !== undefined ? { runtime_error: next.runtimeError } : {}),

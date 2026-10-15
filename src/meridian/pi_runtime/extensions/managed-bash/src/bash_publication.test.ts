@@ -19,7 +19,7 @@ beforeEach(async () => { root = await mkdtemp(path.join(tmpdir(), "pi-publicatio
 afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
 const open = (evidence: (published: Published) => Published = (published) => published) =>
-  new BashPublication({ path: recordsPath, spawnId: "p-unit", evidence });
+  new BashPublication({ path: recordsPath, runId: "p-unit", evidence });
 const disk = async (): Promise<BashRecordsFile> => JSON.parse(await readFile(recordsPath, "utf8")) as BashRecordsFile;
 /** A directory where the file belongs makes the atomic rename fail for real. */
 const breakStorage = async (): Promise<void> => { await mkdir(recordsPath); };

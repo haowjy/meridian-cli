@@ -22,28 +22,36 @@ export function currentRunIdFromEnv(): string {
   return process.env.MERIDIAN_RUN_ID?.trim() || currentSpawnIdFromEnv();
 }
 
-export function resolvePiBashDir(spawnId = currentSpawnIdFromEnv()): string {
+export function resolveSpawnScopeDir(spawnId = currentSpawnIdFromEnv()): string {
   return path.join(resolveStateRoot(), "pi-bash", spawnId);
 }
 
-export function resolveBashRecordsPath(spawnId = currentRunIdFromEnv()): string {
-  return path.join(resolvePiBashDir(spawnId), "bash-records.json");
+export function resolveRunScopeDir(runId = currentRunIdFromEnv()): string {
+  return path.join(resolveStateRoot(), "pi-bash", runId);
 }
 
-export function resolveDeliveryReceiptsPath(spawnId = currentRunIdFromEnv()): string {
-  return path.join(resolvePiBashDir(spawnId), "delivery-receipts.json");
+export function resolveBashRecordsPath(runId = currentRunIdFromEnv()): string {
+  return path.join(resolveRunScopeDir(runId), "bash-records.json");
 }
 
 export function resolveObservedSpawnsPath(spawnId = currentSpawnIdFromEnv()): string {
-  return path.join(resolvePiBashDir(spawnId), "observed-spawns.json");
+  return path.join(resolveSpawnScopeDir(spawnId), "observed-spawns.json");
 }
 
 export function resolveClearedSpawnsPath(spawnId = currentSpawnIdFromEnv()): string {
-  return path.join(resolvePiBashDir(spawnId), "cleared-spawns.json");
+  return path.join(resolveSpawnScopeDir(spawnId), "cleared-spawns.json");
 }
 
-export function resolveBashLogsDir(spawnId = currentRunIdFromEnv()): string {
-  return path.join(resolvePiBashDir(spawnId), "logs");
+export function resolveDeliveryReceiptsPath(runId = currentRunIdFromEnv()): string {
+  return path.join(resolveRunScopeDir(runId), "delivery-receipts.json");
+}
+
+export function resolveDeliveryFaultPath(runId = currentRunIdFromEnv()): string {
+  return path.join(resolveRunScopeDir(runId), "delivery-fault.json");
+}
+
+export function resolveBashLogsDir(runId = currentRunIdFromEnv()): string {
+  return path.join(resolveRunScopeDir(runId), "logs");
 }
 
 export function resolveSpawnsDir(): string {

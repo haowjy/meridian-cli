@@ -1,4 +1,4 @@
-import { parseRef } from "../../shared/meridian_spawn";
+import { parseRef } from "../../shared/ids";
 import { existsSync, mkdirSync, watch, type FSWatcher } from "node:fs";
 import { open, readdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
@@ -14,7 +14,11 @@ import {
   currentRunIdFromEnv,
   resolveBashRecordsPath,
   resolveClearedSpawnsPath,
-  resolvePiBashDir,
+  resolveDeliveryFaultPath,
+  resolveDeliveryReceiptsPath,
+  resolveObservedSpawnsPath,
+  resolveRunScopeDir,
+  resolveSpawnScopeDir,
   resolveSpawnsDir,
 } from "../../shared/pi_state_paths";
 import type { BashRecordsFile, SpawnStateFile } from "../../shared/schemas";
@@ -60,11 +64,13 @@ export class SpawnWatchRuntime {
   private readonly currentSpawnId = currentSpawnIdFromEnv();
   private readonly currentRunId = currentRunIdFromEnv();
   private readonly spawnsDir = resolveSpawnsDir();
-  private readonly bashDir = resolvePiBashDir(this.currentRunId);
+  private readonly spawnScopeDir = resolveSpawnScopeDir(this.currentSpawnId);
+  private readonly runScopeDir = resolveRunScopeDir(this.currentRunId);
   private readonly bashRecordsPath = resolveBashRecordsPath(this.currentRunId);
   private readonly clearedPath = resolveClearedSpawnsPath(this.currentSpawnId);
-  private readonly receiptsPath = path.join(this.bashDir, "delivery-receipts.json");
-  private readonly observationsPath = path.join(resolvePiBashDir(this.currentSpawnId), "observed-spawns.json");
+  private readonly receiptsPath = resolveDeliveryReceiptsPath(this.currentRunId);
+  private readonly observationsPath = resolveObservedSpawnsPath(this.currentSpawnId);
+  private readonly deliveryFaultPath = resolveDeliveryFaultPath(this.currentRunId);
   private readonly queued = new Map<string, string[]>();
   private candidateChildIds = new Set<string>();
   private watchers: FSWatcher[] = [];
@@ -97,14 +103,14 @@ export class SpawnWatchRuntime {
     if (this.running) return;
     this.running = true;
     mkdirSync(this.spawnsDir, { recursive: true });
-    mkdirSync(this.bashDir, { recursive: true });
-    mkdirSync(resolvePiBashDir(this.currentSpawnId), { recursive: true });
+    mkdirSync(this.runScopeDir, { recursive: true });
+    mkdirSync(this.spawnScopeDir, { recursive: true });
     const watched: Array<[string, () => void]> = [
       [this.spawnsDir, () => { this.discoveryRevision++; this.requestIdleDelivery(); }],
-      [this.bashDir, () => this.requestIdleDelivery()],
+      [this.runScopeDir, () => this.requestIdleDelivery()],
     ];
     if (this.currentRunId !== this.currentSpawnId) {
-      watched.push([resolvePiBashDir(this.currentSpawnId), () => this.requestIdleDelivery()]);
+      watched.push([this.spawnScopeDir, () => this.requestIdleDelivery()]);
     }
     for (const [dir, onChange] of watched) {
       try {
@@ -402,7 +408,7 @@ export class SpawnWatchRuntime {
       if (existsSync(this.spawnsDir)) {
         for (const name of (await readdir(this.spawnsDir)).sort()) {
           if (!mayRead()) break;
-          if (parseRef(name).runId === undefined) continue;
+          if (parseRef(name).spawnId === undefined) continue;
           const value = await readPrivateJson(path.join(this.spawnsDir, name, "state.json"));
           if (value === undefined) continue;
           const state = this.parseOwnedChild(name, value);
@@ -452,16 +458,16 @@ export class SpawnWatchRuntime {
 
   private async recordFault(operation: "scan" | "admission", error: unknown): Promise<void> {
     this.logWarning(error);
-    try { await writeJsonAtomic(path.join(this.bashDir, "delivery-fault.json"), {
+    try { await writeJsonAtomic(this.deliveryFaultPath, {
+      // Persisted for compatibility; spawn_id contains this run-scoped file's exact run ID.
       v: 1, spawn_id: this.currentRunId, operation, error: String(error),
     }); } catch (writeError) { this.logWarning(writeError); }
   }
 
   private async clearFault(operation: "scan" | "admission"): Promise<void> {
-    const file = path.join(this.bashDir, "delivery-fault.json");
-    const value = await readPrivateJson(file) as { operation?: unknown; error?: unknown } | undefined;
+    const value = await readPrivateJson(this.deliveryFaultPath) as { operation?: unknown; error?: unknown } | undefined;
     if (!value || !value.error || value.operation !== operation) return;
-    await writeJsonAtomic(file, { v: 1, spawn_id: this.currentRunId, operation: null, error: null });
+    await writeJsonAtomic(this.deliveryFaultPath, { v: 1, spawn_id: this.currentRunId, operation: null, error: null });
   }
 }
 
@@ -608,7 +614,7 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
   const key = Symbol.for("meridian.spawn-watch.runtimes");
   const registry = globalThis as typeof globalThis & { [key]: Map<string, SpawnWatchRuntime> | undefined };
   const owners = registry[key] ??= new Map();
-  const ownerPath = resolvePiBashDir(currentRunIdFromEnv());
+  const ownerPath = resolveRunScopeDir(currentRunIdFromEnv());
   const runtime = owners.get(ownerPath) ?? new SpawnWatchRuntime(pi);
   owners.set(ownerPath, runtime);
   runtime.rebind(pi);
