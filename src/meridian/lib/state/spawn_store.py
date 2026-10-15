@@ -73,7 +73,7 @@ from meridian.lib.state.spawn.repository import scan_spawn_ids as _scan_spawn_id
 from meridian.lib.state.spawn.repository import write_state_locked as _write_state_locked
 from meridian.lib.state.spawn.runs import (
     check_spawn_available,
-    latest_run,
+    runs_of,
     write_bound_run_head,
     write_run_head,
 )
@@ -508,24 +508,22 @@ def _check_reopen_ancestry(
 
     if reservation.parent_id is None:
         return
-    parent_id = SpawnId(reservation.parent_id)
-    parent_run_id = reservation.parent_run_id
+    pending = [SpawnId(reservation.parent_id)]
     visited: set[SpawnId] = set()
-    while True:
+    while pending:
+        parent_id = pending.pop()
         if parent_id == spawn_id:
             raise ValueError(f"Cannot reopen ancestor spawn {spawn_id}")
         if parent_id in visited:
-            raise ValueError(f"Cannot reopen through cyclic parent chain at {parent_id}")
+            continue
         visited.add(parent_id)
 
-        run_id = parent_run_id or latest_run(paths.root_dir, parent_id)
-        if run_id is None:
-            return
-        parent = _read_state(paths.spawns_dir, run_id, include_prompt=False)
-        if parent is None or parent.parent_id is None:
-            return
-        parent_id = parent.parent_id
-        parent_run_id = None
+        # Parentage is spawn-level: any surviving run's edge makes its parent
+        # an ancestor, even when a later reopen records a different parent.
+        for run_id in runs_of(paths.root_dir, parent_id):
+            parent = _read_state(paths.spawns_dir, run_id, include_prompt=False)
+            if parent is not None and parent.parent_id is not None:
+                pending.append(parent.parent_id)
 
 
 def reserve_run(runtime_root: Path, spawn_id: SpawnId, reservation: SpawnReservation) -> RunId:
@@ -540,6 +538,9 @@ def reserve_run(runtime_root: Path, spawn_id: SpawnId, reservation: SpawnReserva
             **reservation_kwargs(reservation),
         )
         with lock_file(paths.spawns_flock):
+            # Serialize ancestry validation with publication so concurrent
+            # cross-reopens cannot both pass against the same old graph.
+            _check_reopen_ancestry(paths, spawn_id, reservation)
             latest = check_spawn_available(runtime_root, spawn_id)
             run_id = parse_ref(f"{spawn_id}.{(parse_ref(latest).run or 1) + 1}", row_key=True)
             _publish_record(paths, record.model_copy(update={"id": run_id}))
