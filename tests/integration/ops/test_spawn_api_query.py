@@ -217,6 +217,32 @@ def test_spawn_show_bare_ref_reads_only_target_runs(
     assert reads == ["p1", "p1"]
 
 
+def test_spawn_show_bare_ref_lists_only_latest_ten_runs(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    for number in range(1, 16):
+        key = "p1" if number == 1 else f"p1.{number}"
+        run_id = spawn_store.start_spawn(
+            runtime_root,
+            spawn_id=key,
+            chat_id="c1",
+            model="test",
+            agent="coder",
+            harness="codex",
+            prompt="done",
+        )
+        spawn_store.finalize_spawn(runtime_root, run_id, "succeeded", 0, origin="runner")
+
+    detail = spawn_api.spawn_show_sync(
+        SpawnShowInput(project_root=project_root.as_posix(), spawn_id="p1")
+    )
+
+    assert [run.run_id for run in detail.runs] == [f"p1.{number}" for number in range(6, 16)]
+    assert detail.earlier_runs == "… 5 earlier runs (p1.1 … p1.5)"
+    assert detail.earlier_runs in detail.format_text()
+
+
 def test_spawn_show_latest_does_not_materialize_all_run_rows(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

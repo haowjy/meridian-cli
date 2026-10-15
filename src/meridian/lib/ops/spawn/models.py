@@ -854,6 +854,7 @@ class SpawnDetailOutput(BaseModel):
     session_log_available: bool = False
 
     runs: tuple[SpawnRunEntry, ...] = ()
+    earlier_runs: str | None = None
 
     def _normalized_report_body(self) -> str | None:
         report_text = (self.report_body or "").strip()
@@ -990,6 +991,8 @@ class SpawnDetailOutput(BaseModel):
             wire["session_config_dir"] = self.session_config_dir
         if self.runs:
             wire["runs"] = [run.model_dump() for run in self.runs]
+        if self.earlier_runs is not None:
+            wire["earlier_runs"] = self.earlier_runs
         return wire
 
     def to_cli_output(
@@ -1025,6 +1028,8 @@ class SpawnDetailOutput(BaseModel):
             text += "\n\n" + tabular(rows)
             text += (f"\nTotal: {sum(run.duration_secs or 0 for run in self.runs):.1f}s, "
                      f"${sum(run.cost_usd or 0 for run in self.runs):.4f}")
+            if self.earlier_runs is not None:
+                text += f"\n{self.earlier_runs}"
         return f"{self.boundary_summary}\n{text}" if self.boundary_summary else text
 
     def format_wait_text(self, ctx: FormatContext | None = None) -> str:

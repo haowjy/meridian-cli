@@ -899,10 +899,14 @@ def spawn_show_sync(
 
     from .models import SpawnRunEntry
     runs = ()
+    earlier_runs = None
     if parse_ref(payload.spawn_id).kind == "spawn":
         stable_id = spawn_of(row.id)
+        run_ids = runs_of(runtime_root, stable_id)
+        omitted = run_ids[:-10]
+        visible = run_ids[-10:]
         sibling_rows: list[SpawnRecord] = []
-        for run_id in runs_of(runtime_root, stable_id):
+        for run_id in visible:
             sibling = (
                 row
                 if run_id == row.id
@@ -917,10 +921,19 @@ def spawn_show_sync(
             duration_secs=item.terminal.duration_secs if item.terminal else None,
             cost_usd=item.terminal.total_cost_usd if item.terminal else None,
         ) for item in sibling_rows)
+        if omitted:
+            def display_run(run_id: RunId) -> str:
+                return str(run_id) if parse_ref(run_id).kind == "run" else f"{run_id}.1"
+
+            earlier_runs = (
+                f"… {len(omitted)} earlier runs "
+                f"({display_run(omitted[0])} … {display_run(omitted[-1])})"
+            )
     surfaced_activity = _surface_primary_activity(row.status, activity)
     return detail.model_copy(
         update={
             "runs": runs,
+            "earlier_runs": earlier_runs,
             "kind": kind,
             "activity": surfaced_activity,
             "managed_backend": managed_backend,
