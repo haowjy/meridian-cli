@@ -239,6 +239,39 @@ def test_reserve_run_reads_one_spawn_row_while_allocation_lock_is_held(
     assert locked_reads == ["p1"]
 
 
+def test_primary_run_reservation_does_not_reread_owner_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = spawn_store.start_spawn(
+        tmp_path,
+        spawn_id="p1",
+        chat_id="c1",
+        model="test",
+        agent="",
+        harness="codex",
+        prompt="hi",
+    )
+    spawn_store.finalize_spawn(
+        tmp_path, first, status="succeeded", exit_code=0, origin="runner",
+    )
+    monkeypatch.setattr(
+        session_store,
+        "get_session_record",
+        lambda *_args, **_kwargs: pytest.fail("reopen reread the owner session"),
+    )
+    reservation = SpawnReservation(
+        chat_id="c1",
+        kind="primary",
+        prompt="again",
+        session_metadata=PrimarySessionMetadata(
+            harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=(),
+        ),
+    )
+
+    assert spawn_store.reserve_run(tmp_path, SpawnId("p1"), reservation) == "p1.2"
+
+
 def test_start_spawn_resolves_owner_and_exact_parent_before_allocation_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

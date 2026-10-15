@@ -311,7 +311,11 @@ def _build_record(
         if parent_id
         else None
     )
-    owner = get_session_record(paths.root_dir, owner_chat_id or chat_id)
+    owner = (
+        get_session_record(paths.root_dir, owner_chat_id or chat_id)
+        if kind != "primary" or bind_existing_generation
+        else None
+    )
     return SpawnRecord(
         session_instance_id=(owner.session_instance_id
                              if owner and kind == "primary" and bind_existing_generation else None),
