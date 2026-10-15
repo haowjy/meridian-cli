@@ -24,6 +24,7 @@ from meridian.lib.ops.spawn.models import SpawnActionOutput, SpawnContinueInput,
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from tests.support.io_probe import IOProbe
 from tests.support.launch import stub_bundle_request_and_resolve
 
 
@@ -259,14 +260,8 @@ def test_chat_continue_uses_one_keyed_session_lookup_and_no_unfiltered_index_rea
         harness_model="gpt-5.3-codex",
     )
     _record_spawn_create(monkeypatch)
-    original_get_records = session_store.get_session_records
-    keyed_lookups: list[set[str]] = []
-
-    def tracked_get_records(root: Path, chat_ids: set[str]) -> list[session_store.SessionRecord]:
-        keyed_lookups.append(chat_ids)
-        return original_get_records(root, chat_ids)
-
-    monkeypatch.setattr(session_store, "get_session_records", tracked_get_records)
+    probe = IOProbe(monkeypatch)
+    probe.watch("get_session_records", session_store.get_session_records)
     monkeypatch.setattr(
         HistoryIndex,
         "spawns",
@@ -278,7 +273,8 @@ def test_chat_continue_uses_one_keyed_session_lookup_and_no_unfiltered_index_rea
     )
 
     assert result.status == "running"
-    assert keyed_lookups == [{"c1"}]
+    assert probe.count("get_session_records") == 1
+    assert probe.calls("get_session_records")[0].args[1] == {"c1"}
 
 
 def test_chat_continue_finds_verified_observed_owner_with_filtered_index(

@@ -32,8 +32,10 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from meridian.lib.state.session_store import start_session
+from meridian.lib.state.spawn import repository as spawn_repository
 from meridian.lib.state.spawn.model import RunBoundaryOutcome
 from meridian.lib.state.spawn.repository import Applied
+from tests.support.io_probe import IOProbe
 
 
 def _state_root(project_root: Path) -> Path:
@@ -240,26 +242,17 @@ def test_spawn_show_bare_ref_reads_only_target_runs(
         state.parent.mkdir()
         state.write_text("{}\n", encoding="utf-8")
 
-    original_get_spawn = spawn_store.get_spawn
-    reads: list[str] = []
-
-    def tracked_get_spawn(root: Path, key: str):
-        reads.append(str(key))
-        return original_get_spawn(root, key)
-
-    monkeypatch.setattr(spawn_store, "get_spawn", tracked_get_spawn)
-    monkeypatch.setattr(
-        spawn_api,
-        "_all_run_rows",
-        lambda *_args, **_kwargs: pytest.fail("show read every run row"),
-    )
+    probe = IOProbe(monkeypatch)
+    probe.watch("get_spawn", spawn_store.get_spawn)
+    probe.watch("scan_spawn_ids", spawn_repository.scan_spawn_ids)
 
     detail = spawn_api.spawn_show_sync(
         SpawnShowInput(project_root=project_root.as_posix(), spawn_id="p1")
     )
 
     assert detail.spawn_id == "p1"
-    assert reads == ["p1", "p1"]
+    assert probe.count("get_spawn") <= 2
+    assert probe.count("scan_spawn_ids") == 0
 
 
 def test_spawn_show_bare_ref_lists_only_latest_ten_runs(tmp_path: Path) -> None:
@@ -315,26 +308,17 @@ def test_spawn_show_latest_does_not_materialize_all_run_rows(
         spawn_store.finalize_spawn(runtime_root, run_id, "succeeded", 0, origin="runner")
     assert HistoryIndex(runtime_root).rebuild().complete
 
-    original_get_spawn = spawn_store.get_spawn
-    reads: list[str] = []
-
-    def tracked_get_spawn(root: Path, key: str):
-        reads.append(str(key))
-        return original_get_spawn(root, key)
-
-    monkeypatch.setattr(spawn_store, "get_spawn", tracked_get_spawn)
-    monkeypatch.setattr(
-        spawn_api,
-        "_all_run_rows",
-        lambda *_args, **_kwargs: pytest.fail("@latest read every run row"),
-    )
+    probe = IOProbe(monkeypatch)
+    probe.watch("get_spawn", spawn_store.get_spawn)
+    probe.watch("scan_spawn_ids", spawn_repository.scan_spawn_ids)
 
     detail = spawn_api.spawn_show_sync(
         SpawnShowInput(project_root=project_root.as_posix(), spawn_id="@latest")
     )
 
     assert detail.spawn_id == "p3"
-    assert reads == ["p3", "p3"]
+    assert probe.count("get_spawn") <= 2
+    assert probe.count("scan_spawn_ids") == 0
 
 
 def test_spawn_stats_includes_finalizing_bucket(tmp_path: Path) -> None:

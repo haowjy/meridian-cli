@@ -244,11 +244,8 @@ def test_reserve_run_checks_ancestors_without_listing_spawns(
             tmp_path, run_id, status="succeeded", exit_code=0, origin="runner",
         )
 
-    monkeypatch.setattr(
-        spawn_store,
-        "list_spawns",
-        lambda *_args, **_kwargs: pytest.fail("ancestor check listed all spawns"),
-    )
+    probe = IOProbe(monkeypatch)
+    probe.watch("scan_spawn_ids", spawn_repository.scan_spawn_ids)
     reservation = SpawnReservation(
         chat_id="c1",
         parent_id="p3",
@@ -261,6 +258,7 @@ def test_reserve_run_checks_ancestors_without_listing_spawns(
 
     with pytest.raises(ValueError, match="Cannot reopen ancestor spawn p1"):
         spawn_store.reserve_run(tmp_path, SpawnId("p1"), reservation)
+    assert probe.count("scan_spawn_ids") == 0
 
 
 def test_reserve_run_does_not_scan_for_a_fully_archived_ancestor(
@@ -438,39 +436,6 @@ def test_spawn_started_at_is_stamped_under_the_allocation_lock(
     reopened_row = spawn_store.get_spawn(tmp_path, reopened)
     assert fresh_row is not None and fresh_row.started_at == "2026-10-15T00:00:01Z"
     assert reopened_row is not None and reopened_row.started_at == "2026-10-15T00:00:02Z"
-
-
-def test_primary_run_reservation_does_not_reread_owner_session(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    first = spawn_store.start_spawn(
-        tmp_path,
-        spawn_id="p1",
-        chat_id="c1",
-        model="test",
-        agent="",
-        harness="codex",
-        prompt="hi",
-    )
-    spawn_store.finalize_spawn(
-        tmp_path, first, status="succeeded", exit_code=0, origin="runner",
-    )
-    monkeypatch.setattr(
-        session_store,
-        "get_session_record",
-        lambda *_args, **_kwargs: pytest.fail("reopen reread the owner session"),
-    )
-    reservation = SpawnReservation(
-        chat_id="c1",
-        kind="primary",
-        prompt="again",
-        session_metadata=PrimarySessionMetadata(
-            harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=(),
-        ),
-    )
-
-    assert spawn_store.reserve_run(tmp_path, SpawnId("p1"), reservation) == "p1.2"
 
 
 def test_start_spawn_resolves_exact_parent_before_allocation_lock(

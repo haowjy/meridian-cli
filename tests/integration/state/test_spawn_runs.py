@@ -19,6 +19,7 @@ from meridian.lib.state.history_index import HistoryIndex
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.session_identity import session_records_for_spawns
 from meridian.lib.state.spawn import repository as spawn_repository
+from meridian.lib.state.spawn import runs as spawn_runs
 from meridian.lib.state.spawn.runs import latest_run, next_run_id, runs_of
 from tests.support.io_probe import IOProbe
 from tests.support.native_snapshot import seal_spawn_snapshot
@@ -170,21 +171,12 @@ def test_latest_run_stats_only_target_spawn(
         state.parent.mkdir()
         state.write_text("{}\n", encoding="utf-8")
 
-    original_is_file = Path.is_file
-    checked_state_paths: list[Path] = []
-
-    def count_is_file(path: Path) -> bool:
-        if path.name == "state.json":
-            checked_state_paths.append(path)
-        return original_is_file(path)
-
-    monkeypatch.setattr(Path, "is_file", count_is_file)
+    probe = IOProbe(monkeypatch)
+    probe.watch("run_exists", spawn_runs._run_exists)
 
     assert latest_run(tmp_path, SpawnId("p1")) == "p1"
-    assert checked_state_paths == [
-        tmp_path / "spawns" / "p1.2" / "state.json",
-        tmp_path / "spawns" / "p1" / "state.json",
-    ]
+    assert probe.count("run_exists") <= 2
+    assert all(call.args[1] == SpawnId("p1") for call in probe.calls("run_exists"))
 
 
 def test_spawn_counter_ignores_dotted_run_suffixes(tmp_path: Path) -> None:

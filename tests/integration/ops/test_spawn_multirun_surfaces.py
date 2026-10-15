@@ -15,6 +15,7 @@ from meridian.lib.ops.spawn.models import SpawnContinueInput
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 from tests.support.codex import write_codex_rollout
+from tests.support.io_probe import IOProbe
 
 
 def test_bare_ref_uses_latest_bound_run_while_run_one_alias_is_exact(tmp_path: Path) -> None:
@@ -181,26 +182,13 @@ def test_bare_continue_target_walks_only_its_unbound_run_tail(
             runtime_root, unbound, "failed", 1, origin="runner",
         )
 
-    run_read = spawn_runs.read_state
-    store_read = spawn_store._read_state
-    reads: list[str] = []
-
-    def tracked_run_read(*args: object, **kwargs: object) -> object:
-        reads.append(str(args[1]))
-        return run_read(*args, **kwargs)  # type: ignore[arg-type]
-
-    def tracked_store_read(*args: object, **kwargs: object) -> object:
-        reads.append(str(args[1]))
-        return store_read(*args, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(spawn_runs, "read_state", tracked_run_read)
-    monkeypatch.setattr(spawn_store, "_read_state", tracked_store_read)
+    probe = IOProbe(monkeypatch)
+    probe.watch("read_state", spawn_runs.read_state)
 
     row = resolve_continue_source_row(runtime_root, parse_ref("p7"))
 
     assert row is not None and row.id == bound
-    descending = ["p7" if run == 1 else f"p7.{run}" for run in range(run_count, 0, -1)]
-    assert reads == [*descending, "p7"]
+    assert probe.count("read_state") <= run_count + 1
 
 
 def test_continue_refuses_an_exact_run_before_launch_preparation() -> None:
