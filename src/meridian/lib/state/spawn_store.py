@@ -271,12 +271,9 @@ def _build_record(
     launch_policy_snapshot: LaunchPolicySnapshot | None = None,
     status: SpawnStatus = SpawnStatus.RUNNING,
     started_at: str | None = None,
-    clock: Clock | None = None,
 ) -> SpawnRecord:
     """Build a run without borrowing the chat's previous generation."""
 
-    resolved_clock = clock or RealClock()
-    started = started_at or resolved_clock.utc_now_iso()
     start_metadata = _resolve_start_metadata(
         metadata=metadata,
         desc=desc,
@@ -363,7 +360,7 @@ def _build_record(
         runner_created_at_epoch=resolved_runner_created_at_epoch,
         status=status,
         prompt=prompt,
-        started_at=started,
+        started_at=started_at,
         last_attempt_exited_at=None,
         last_attempt_exit_code=None,
         runner_exit=None,
@@ -448,7 +445,6 @@ def start_spawn(
             launch_policy_snapshot=launch_policy_snapshot,
             status=status,
             started_at=started_at,
-            clock=clock,
         )
         with lock_file(paths.spawns_flock):
             resolved_run_id = explicit_run_id
@@ -459,7 +455,12 @@ def start_spawn(
                 next_value = current + 1
                 atomic_write_text(_spawn_counter_path(paths), f"{next_value}\n")
                 resolved_run_id = parse_ref(f"p{next_value}", row_key=True)
-            record = record.model_copy(update={"id": resolved_run_id})
+            record = record.model_copy(
+                update={
+                    "id": resolved_run_id,
+                    "started_at": record.started_at or (clock or RealClock()).utc_now_iso(),
+                }
+            )
             _publish_record(paths, record)
             return resolved_run_id
 
@@ -486,7 +487,6 @@ def reservation_kwargs(reservation: SpawnReservation) -> dict[str, Any]:
         launch_policy_snapshot=reservation.launch_policy_snapshot,
         status=reservation.status,
         started_at=reservation.started_at,
-        clock=reservation.clock,
         parent_id=SpawnId(reservation.parent_id) if reservation.parent_id else None,
         model=reservation.session_metadata.model,
         agent=reservation.session_metadata.agent,
@@ -541,7 +541,16 @@ def reserve_run(runtime_root: Path, spawn_id: SpawnId, reservation: SpawnReserva
             _check_reopen_ancestry(paths, spawn_id, reservation)
             check_spawn_available(runtime_root, spawn_id)
             run_id = next_run_id(paths, spawn_id)
-            _publish_record(paths, record.model_copy(update={"id": run_id}))
+            _publish_record(
+                paths,
+                record.model_copy(
+                    update={
+                        "id": run_id,
+                        "started_at": record.started_at
+                        or (reservation.clock or RealClock()).utc_now_iso(),
+                    }
+                ),
+            )
             return run_id
 
 

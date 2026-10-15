@@ -352,6 +352,79 @@ def test_reserve_run_reads_one_spawn_row_while_allocation_lock_is_held(
     assert locked_reads == ["p1"]
 
 
+def test_spawn_started_at_is_stamped_under_the_allocation_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = spawn_store.start_spawn(
+        tmp_path,
+        spawn_id="p1",
+        chat_id="c1",
+        model="test",
+        agent="",
+        harness="codex",
+        prompt="hi",
+    )
+    spawn_store.finalize_spawn(
+        tmp_path, first, status="succeeded", exit_code=0, origin="runner",
+    )
+    paths = spawn_store.RuntimePaths.from_root_dir(tmp_path)
+    original_lock_file = spawn_store.lock_file
+    allocation_lock_held = False
+
+    @contextmanager
+    def tracked_lock_file(path: Path, *args: Any, **kwargs: Any) -> Iterator[None]:
+        nonlocal allocation_lock_held
+        with original_lock_file(path, *args, **kwargs):
+            was_held = allocation_lock_held
+            if path == paths.spawns_flock:
+                allocation_lock_held = True
+            try:
+                yield
+            finally:
+                allocation_lock_held = was_held
+
+    class LockAssertingClock:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def utc_now_iso(self) -> str:
+            assert allocation_lock_held
+            self.calls += 1
+            return f"2026-10-15T00:00:0{self.calls}Z"
+
+    clock = LockAssertingClock()
+    monkeypatch.setattr(spawn_store, "lock_file", tracked_lock_file)
+
+    fresh = spawn_store.start_spawn(
+        tmp_path,
+        chat_id="c2",
+        model="test",
+        agent="",
+        harness="codex",
+        prompt="fresh",
+        clock=clock,
+    )
+    reopened = spawn_store.reserve_run(
+        tmp_path,
+        SpawnId("p1"),
+        SpawnReservation(
+            chat_id="c1",
+            prompt="again",
+            clock=clock,
+            session_metadata=PrimarySessionMetadata(
+                harness="codex", model="test", agent="", agent_path="",
+                skills=(), skill_paths=(),
+            ),
+        ),
+    )
+
+    fresh_row = spawn_store.get_spawn(tmp_path, fresh)
+    reopened_row = spawn_store.get_spawn(tmp_path, reopened)
+    assert fresh_row is not None and fresh_row.started_at == "2026-10-15T00:00:01Z"
+    assert reopened_row is not None and reopened_row.started_at == "2026-10-15T00:00:02Z"
+
+
 def test_primary_run_reservation_does_not_reread_owner_session(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
