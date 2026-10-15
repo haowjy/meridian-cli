@@ -74,7 +74,6 @@ from meridian.lib.state.spawn.repository import write_state_locked as _write_sta
 from meridian.lib.state.spawn.runs import (
     check_spawn_available,
     next_run_id,
-    runs_of,
     write_run_head,
 )
 from meridian.lib.state.spawn.transitions import (
@@ -90,6 +89,7 @@ from meridian.lib.state.spawn_aggregate import (
     ensure_spawn_staging_dir,
     sync_retirement_parents,
 )
+from meridian.lib.state.spawn_tree import check_reopen_ancestry
 
 logger = structlog.get_logger(__name__)
 _UNASSIGNED_RUN_ID = parse_ref("p0", row_key=True)
@@ -499,39 +499,12 @@ def reservation_kwargs(reservation: SpawnReservation) -> dict[str, Any]:
     )
 
 
-def _check_reopen_ancestry(
-    paths: RuntimePaths,
-    spawn_id: SpawnId,
-    reservation: SpawnReservation,
-) -> None:
-    """Refuse a parent chain that would make the reopened spawn its own ancestor."""
-
-    if reservation.parent_id is None:
-        return
-    pending = [SpawnId(reservation.parent_id)]
-    visited: set[SpawnId] = set()
-    while pending:
-        parent_id = pending.pop()
-        if parent_id == spawn_id:
-            raise ValueError(f"Cannot reopen ancestor spawn {spawn_id}")
-        if parent_id in visited:
-            continue
-        visited.add(parent_id)
-
-        # Parentage is spawn-level: any surviving run's edge makes its parent
-        # an ancestor, even when a later reopen records a different parent.
-        for run_id in runs_of(paths.root_dir, parent_id):
-            parent = _read_state(paths.spawns_dir, run_id, include_prompt=False)
-            if parent is not None and parent.parent_id is not None:
-                pending.append(parent.parent_id)
-
-
 def reserve_run(runtime_root: Path, spawn_id: SpawnId, reservation: SpawnReservation) -> RunId:
     """Publish max-K+1 under the allocation gate; never copy a generation."""
     paths = RuntimePaths.from_root_dir(runtime_root)
     reservation = replace(reservation, status=SpawnStatus.QUEUED, runner_pid=os.getpid())
     check_spawn_available(runtime_root, spawn_id, reservation.chat_id)
-    _check_reopen_ancestry(paths, spawn_id, reservation)
+    check_reopen_ancestry(paths, spawn_id, reservation)
     with lock_file(HistoryChanges(runtime_root).mutation_lock, mode="shared"):
         record = _build_record(
             paths, _UNASSIGNED_RUN_ID, bind_existing_generation=False,
@@ -540,7 +513,7 @@ def reserve_run(runtime_root: Path, spawn_id: SpawnId, reservation: SpawnReserva
         with lock_file(paths.spawns_flock):
             # Serialize ancestry validation with publication so concurrent
             # cross-reopens cannot both pass against the same old graph.
-            _check_reopen_ancestry(paths, spawn_id, reservation)
+            check_reopen_ancestry(paths, spawn_id, reservation)
             check_spawn_available(runtime_root, spawn_id)
             run_id = next_run_id(paths, spawn_id)
             _publish_record(

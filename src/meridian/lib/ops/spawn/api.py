@@ -67,7 +67,10 @@ from meridian.lib.state.primary_meta import (
 )
 from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn_signals import SpawnSignalKind, write_spawn_signal
-from meridian.lib.state.spawn_tree import collect_descendants, descendant_id_set
+from meridian.lib.state.spawn_tree import (
+    collect_run_parent_subtree,
+    run_parent_descendant_id_set,
+)
 from meridian.lib.state.work_state import slugify
 from meridian.lib.telemetry.init import setup_telemetry
 from meridian.lib.telemetry.observer import register_spawn_telemetry_observer
@@ -738,7 +741,7 @@ def spawn_stats_sync(
             else:
                 spawns = [s for s in all_spawns if spawn_of(s.id) == spawn_of(root_id)]
         else:
-            spawns = collect_descendants(root_id, all_spawns)
+            spawns = collect_run_parent_subtree(root_id, all_spawns)
     else:
         spawns = all_spawns
 
@@ -1381,7 +1384,9 @@ def spawn_cancel_all_sync(
     # When called from a nested spawn, scope to that spawn's descendants only.
     # When called from a primary/root context, scope to the full chat.
     if caller_spawn_id is not None and not payload.include_others:
-        descendant_ids: set[str] | None = descendant_id_set(caller_spawn_id, active_rows)
+        descendant_ids: set[str] | None = run_parent_descendant_id_set(
+            caller_spawn_id, active_rows
+        )
     else:
         descendant_ids = None
 

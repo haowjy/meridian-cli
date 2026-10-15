@@ -14,7 +14,8 @@ import pytest
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.core.context import RuntimeContext
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.refs import spawn_of
+from meridian.lib.core.types import RunId, SpawnId
 from meridian.lib.launch.constants import PRIMARY_META_FILENAME
 from meridian.lib.ops.spawn.models import (
     SpawnActionOutput,
@@ -39,6 +40,50 @@ def _state_root(project_root: Path) -> Path:
     runtime_root = resolve_project_runtime_root_for_write(project_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
     return runtime_root
+
+
+def _start_reparented_runs(runtime_root: Path) -> tuple[RunId, RunId]:
+    p1 = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p1",
+        chat_id="c1",
+        model="test",
+        agent="coder",
+        harness="codex",
+        prompt="root",
+    )
+    p9 = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p9",
+        chat_id="c9",
+        model="test",
+        agent="coder",
+        harness="codex",
+        prompt="other root",
+    )
+    p2 = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p2",
+        chat_id="c2",
+        parent_id=SpawnId("p1"),
+        parent_run_id=p1,
+        model="test",
+        agent="coder",
+        harness="codex",
+        prompt="first run",
+    )
+    p2_reopened = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p2.2",
+        chat_id="c2-reopened",
+        parent_id=SpawnId("p9"),
+        parent_run_id=p9,
+        model="test",
+        agent="coder",
+        harness="codex",
+        prompt="reopened elsewhere",
+    )
+    return p2, p2_reopened
 
 
 @pytest.mark.parametrize("observe", [True, False])
@@ -373,6 +418,64 @@ def test_spawn_stats_session_filters_by_exact_chat_id(tmp_path: Path) -> None:
 
     assert child_only.total_runs == 1
     assert owner_family.total_runs == 0
+
+
+def test_spawn_stats_scopes_each_reopened_run_by_its_own_parent(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    p2, p2_reopened = _start_reparented_runs(runtime_root)
+
+    output = spawn_api.spawn_stats_sync(
+        SpawnStatsInput(project_root=project_root.as_posix(), spawn_id="p1")
+    )
+
+    assert output.total_runs == 2
+    assert [child.spawn_id for child in output.children] == ["p1", str(p2)]
+    assert str(p2_reopened) not in {child.spawn_id for child in output.children}
+
+
+def test_spawn_cancel_all_excludes_a_run_reopened_below_another_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    prepared = prepare_for_runtime_write(project_root)
+    runtime_root = prepared.runtime_root
+    assert runtime_root is not None
+    p2, p2_reopened = _start_reparented_runs(runtime_root)
+    cancelled: list[str] = []
+
+    def _fake_spawn_cancel_sync(
+        payload: SpawnCancelInput,
+        ctx=None,
+        *,
+        sink=None,
+        prepared=None,
+    ) -> SpawnActionOutput:
+        _ = (ctx, sink, prepared)
+        cancelled.append(payload.spawn_id)
+        return SpawnActionOutput(
+            command="spawn.cancel",
+            status="cancelled",
+            spawn_id=payload.spawn_id,
+            message="cancelled",
+        )
+
+    monkeypatch.setattr(spawn_api, "spawn_cancel_sync", _fake_spawn_cancel_sync)
+
+    output = spawn_api.spawn_cancel_all_sync(
+        SpawnCancelAllInput(project_root=project_root.as_posix()),
+        ctx=RuntimeContext(
+            spawn_id=SpawnId("p1"), run_id=RunId("p1"), chat_id="c1"
+        ),
+        prepared=prepared,
+    )
+
+    assert output.total_running == 1
+    assert cancelled == [str(p2)]
+    assert str(p2_reopened) not in cancelled
 
 
 def test_spawn_cancel_all_counts_finalizing_cancellations_as_accepted(
@@ -781,7 +884,8 @@ def test_spawn_children_uses_persisted_display_label_without_prompt_read(tmp_pat
     child_id = spawn_store.start_spawn(
         runtime_root,
         spawn_id="p-child",
-        parent_id=str(parent_id),
+        parent_id=spawn_of(parent_id),
+        parent_run_id=parent_id,
         chat_id="c-child",
         model="gpt-5.4",
         agent="coder",
@@ -829,7 +933,8 @@ def test_spawn_children_prefers_goal_over_display_label(tmp_path: Path) -> None:
     child_id = spawn_store.start_spawn(
         runtime_root,
         spawn_id="p-child",
-        parent_id=str(parent_id),
+        parent_id=spawn_of(parent_id),
+        parent_run_id=parent_id,
         chat_id="c-child",
         model="gpt-5.4",
         agent="coder",
@@ -866,7 +971,8 @@ def test_spawn_children_legacy_row_without_display_label_returns_none_desc(tmp_p
     child_id = spawn_store.start_spawn(
         runtime_root,
         spawn_id="p-child",
-        parent_id=str(parent_id),
+        parent_id=spawn_of(parent_id),
+        parent_run_id=parent_id,
         chat_id="c-child",
         model="gpt-5.4",
         agent="coder",

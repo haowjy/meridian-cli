@@ -1481,6 +1481,8 @@ class HistoryIndex:
             """
             WITH RECURSIVE
             edges(spawn_id, parent) AS (
+                -- Keep each distinct run-level parent edge for reachability;
+                -- repeated generations with the same edge add no information.
                 SELECT DISTINCT spawn_id, parent
                   FROM records
                  WHERE parent IS NOT NULL

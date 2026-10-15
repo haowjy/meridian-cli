@@ -3,7 +3,10 @@
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.refs import parse_ref, spawn_of
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.state.spawn_tree import collect_descendants, has_outstanding_descendant_work
+from meridian.lib.state.spawn_tree import (
+    collect_run_parent_subtree,
+    has_outstanding_descendant_work,
+)
 
 
 def _row(
@@ -34,12 +37,14 @@ def test_outstanding_descendant_work_is_cycle_safe() -> None:
 
 
 def test_collect_descendants_deduplicates_a_cycle() -> None:
-    descendants = collect_descendants("p1", _cycle(child_status=SpawnStatus.RUNNING))
+    descendants = collect_run_parent_subtree(
+        "p1", _cycle(child_status=SpawnStatus.RUNNING)
+    )
 
     assert [row.id for row in descendants] == ["p1", "p2"]
 
 
-def test_collect_descendants_unions_run_parents_and_preserves_run_rows() -> None:
+def test_collect_descendants_requires_each_runs_own_parent_edge() -> None:
     rows = [
         _row("p1", status=SpawnStatus.SUCCEEDED),
         _row("p2", parent_id="p1", status=SpawnStatus.RUNNING),
@@ -47,9 +52,9 @@ def test_collect_descendants_unions_run_parents_and_preserves_run_rows() -> None
         _row("p3", parent_id="p2", status=SpawnStatus.RUNNING),
     ]
 
-    descendants = collect_descendants("p1", rows)
+    descendants = collect_run_parent_subtree("p1", rows)
 
-    assert [row.id for row in descendants] == ["p1", "p2", "p2.2", "p3"]
+    assert [row.id for row in descendants] == ["p1", "p2", "p3"]
 
 
 def test_collect_descendants_keeps_noncanonical_rows_distinct() -> None:
@@ -60,6 +65,6 @@ def test_collect_descendants_keeps_noncanonical_rows_distinct() -> None:
         _row("p2.2", parent_id="p9", status=SpawnStatus.SUCCEEDED),
     ]
 
-    descendants = collect_descendants("p1", rows)
+    descendants = collect_run_parent_subtree("p1", rows)
 
-    assert [row.id for row in descendants] == ["p1", "p2.0", "p2", "p2.2"]
+    assert [row.id for row in descendants] == ["p1", "p2.0", "p2"]

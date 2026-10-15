@@ -9,7 +9,7 @@ from pathlib import Path
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.state import spawn_store
 from meridian.lib.state.runtime_root import derive_runtime_root_from_project
-from meridian.lib.state.spawn_tree import iter_descendants
+from meridian.lib.state.spawn_tree import iter_run_parent_descendants
 
 
 @dataclass(frozen=True)
@@ -31,7 +31,7 @@ def active_child_count(parent_spawn_id: str | None, rows: Iterable[SpawnRow]) ->
         return 0
     return sum(
         is_active_spawn_status(row.status)
-        for row in iter_descendants(parent_spawn_id, rows)
+        for row in iter_run_parent_descendants(parent_spawn_id, rows)
     )
 
 
