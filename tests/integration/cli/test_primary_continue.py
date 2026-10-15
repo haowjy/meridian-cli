@@ -819,6 +819,20 @@ def test_complete_claude_key_projects_exact_resume_command(
         model="sonnet",
     )
     session_store.stop_session(runtime_root, chat_id)
+    owner = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p1",
+        chat_id=chat_id,
+        model="sonnet",
+        agent="",
+        harness="claude",
+        kind="primary",
+        prompt="original",
+    )
+    session_store.update_session_spawn_id(runtime_root, chat_id, owner)
+    spawn_store.finalize_spawn(
+        runtime_root, owner, status="succeeded", exit_code=0, origin="runner",
+    )
 
     output = _run_primary_continue(tmp_path, chat_id, dry_run=True)
 

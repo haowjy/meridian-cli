@@ -144,10 +144,14 @@ async def streaming_serve(
             control_root=str(launch_ctx.control_root),
             execution_cwd=str(launch_ctx.binding.child_cwd),
             spawn_id=str(spawn_id),
+            persist_spawn_binding=False,
             startup_attempt_id=uuid.uuid4().hex,
         ) as managed:
             spawn_store.update_spawn(
-                runtime_root, parse_ref(spawn_id, row_key=True), chat_id=managed.chat_id
+                runtime_root,
+                parse_ref(spawn_id, row_key=True),
+                chat_id=managed.chat_id,
+                session_instance_id=managed.session_instance_id,
             )
             lifecycle = LifecycleLog.for_spawn(runtime_root, project_root, spawn_id)
             try:

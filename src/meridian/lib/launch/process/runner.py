@@ -722,6 +722,7 @@ def run_harness_process(
             )))
             from meridian.lib.launch.continue_replay import seed_continue_scope
             seed_continue_scope(config_root, primary_spawn_id, preview_request.session)
+        reopening_spawn = primary_spawn_id is not None
         with session_scope(
             runtime_root=runtime_root,
             metadata=session_metadata,
@@ -733,6 +734,7 @@ def run_harness_process(
             kind="primary",
             startup_attempt_id=startup_attempt_id,
             spawn_id=str(primary_spawn_id) if primary_spawn_id else None,
+            persist_spawn_binding=False,
         ) as managed:
             session_acquired = True
             chat_id = managed.chat_id
@@ -776,10 +778,14 @@ def run_harness_process(
                             )
                         )
                     )
-                spawn_store.update_spawn(
-                    runtime_root, parse_ref(primary_spawn_id, row_key=True),
-                    work_id=attached_work_id,
-                )
+                if reopening_spawn:
+                    spawn_store.update_spawn(
+                        runtime_root,
+                        parse_ref(primary_spawn_id, row_key=True),
+                        chat_id=managed.chat_id,
+                        session_instance_id=managed.session_instance_id,
+                        work_id=attached_work_id,
+                    )
                 update_session_spawn_id_fn(
                     runtime_root,
                     chat_id,

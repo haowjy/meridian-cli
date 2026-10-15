@@ -50,3 +50,16 @@ def test_collect_descendants_unions_run_parents_and_preserves_run_rows() -> None
     descendants = collect_descendants("p1", rows)
 
     assert [row.id for row in descendants] == ["p1", "p2", "p2.2", "p3"]
+
+
+def test_collect_descendants_keeps_noncanonical_rows_distinct() -> None:
+    rows = [
+        _row("p1", status=SpawnStatus.SUCCEEDED),
+        _row("p2.0", parent_id="p1", status=SpawnStatus.RUNNING),
+        _row("p2", parent_id="p1", status=SpawnStatus.RUNNING),
+        _row("p2.2", parent_id="p9", status=SpawnStatus.SUCCEEDED),
+    ]
+
+    descendants = collect_descendants("p1", rows)
+
+    assert [row.id for row in descendants] == ["p1", "p2.0", "p2", "p2.2"]
