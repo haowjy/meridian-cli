@@ -6,9 +6,26 @@
 <!-- State the problem or opportunity and why it matters. Include before-state
      evidence when it exists: failing output, timings, a reproduction. -->
 
+## Core design decisions
+
+<!-- Name the core design decisions behind the change: the underlying
+     problems, not just their symptoms. For each, say what was wrong, what this
+     PR decides, and what it rules out. Quote the owner's rulings where they
+     set a decision. -->
+
+1. **<decision>.** <the problem>. <what this PR decides>. Ruled out: <alternative and why>.
+
 ## Goal
 
-<!-- State what must be true after merge. -->
+<!-- Start with the long-term goal this PR serves: the direction it moves
+     toward, even when this PR is one step of it. Write "None." when the PR
+     stands alone. Then state what must be true after merge. -->
+
+**Long term.** <the direction this PR moves toward, or "None.">
+
+**This PR.**
+
+- <what must be true after merge>
 
 ## Summary
 
