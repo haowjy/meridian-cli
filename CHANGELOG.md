@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
-- Detect unsent drafts in the OpenCode 2.x composer before idle compaction.
+- Compact idle sessions even with unsent drafts; Codex clears the composer first.
 - Keep OpenCode managed-primary event sensing alive through quiet periods and compaction;
   durable fallback now accepts only completed native compaction messages.
 

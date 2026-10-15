@@ -70,7 +70,7 @@ class RecordingIdleSensor:
             self.cancelled.set()
 
     async def facts(self) -> IdleFacts:
-        return IdleFacts("no", False, 0, None, False)
+        return IdleFacts(False, 0, None, False)
 
     async def compact(self) -> CompactResult:
         return CompactResult("vetoed", "test")

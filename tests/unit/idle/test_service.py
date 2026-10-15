@@ -67,7 +67,6 @@ class Sender:
 
 
 SAFE_FACTS = IdleFacts(
-    draft="no",
     busy=False,
     agents_running=0,
     context_tokens=100_000,

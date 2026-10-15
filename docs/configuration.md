@@ -320,11 +320,11 @@ even when idle notifications and compaction are off.
 Idle automation runs only in an interactive primary session. Each stage is
 claimed at most once between user prompts. A compaction is skipped when the
 timer is stale or late, idle or compaction is disabled, the cache is already
-cold, the harness is busy, a draft is present or cannot be determined, an
-agent or child spawn is still running, the known context is below
+cold, the harness is busy, an agent or child spawn is still running, the known context is below
 `min_compact_tokens`, or the harness's own automatic compaction is disabled.
-An unknown context size is allowed; an unknown draft is not. A positively
-identified user prompt closes the idle stretch immediately.
+An unknown context size is allowed. Unsent composer text does not block
+compaction; Codex clears it before submitting `/compact`. A positively identified
+user prompt closes the idle stretch immediately.
 Reopening a primary through Meridian counts as a user return: before the harness
 starts, Meridian closes any earlier idle stretch for that session, so its push,
 warning, and compaction never fire. This does not cover a Claude TUI started

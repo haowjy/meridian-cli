@@ -11,7 +11,7 @@ import tomllib
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import suppress
 from pathlib import Path
-from typing import Literal, Protocol, cast
+from typing import Protocol, cast
 
 from meridian.lib.core.native_identity import NativeIdentityError
 from meridian.lib.harness.codex_bootstrap import is_bootstrap_turn_prompt
@@ -31,9 +31,9 @@ from meridian.lib.harness.idle_types import (
 )
 from meridian.lib.platform import get_home_path
 
-_EMPTY_PROMPT = "Ask Codex to do anything"
 _PROMPT_MARKER = "\u203a"
 _COMPACT_COMMAND = "/compact"
+_CLEAR_PRIMER = "ix"
 IDLE_NOTIFY_COMMAND = ("meridian", "idle", "event", "--harness", "codex")
 
 
@@ -87,11 +87,6 @@ def _prompt_text(capture: str) -> str | None:
     return None
 
 
-def _prompt_is_empty(capture: str) -> bool:
-    prompt = _prompt_text(capture)
-    return prompt in {"", _EMPTY_PROMPT}
-
-
 def _session_rollout(ctx: IdleSensorContext) -> Path | None:
     sessions_root = resolve_codex_home(ctx.env) / "sessions"
     try:
@@ -126,15 +121,7 @@ def _has_appended_compaction(path: Path, offset: int) -> bool:
 def pane_facts(capture: str) -> IdleFacts:
     """Map one Codex pane capture to the facts visible in its TUI."""
 
-    prompt = _prompt_text(capture)
-    if prompt is None:
-        draft: Literal["yes", "no", "unknown"] = "unknown"
-    elif prompt in {"", _EMPTY_PROMPT}:
-        draft = "no"
-    else:
-        draft = "yes"
     return IdleFacts(
-        draft=draft,
         busy="Working (" in capture,
         agents_running=0,
         context_tokens=None,
@@ -287,10 +274,6 @@ class CodexIdleSensor:
         if pane is None or not self._ctx.tui_alive():
             return CompactResult("vetoed", "tui-unavailable")
 
-        before = await self._tmux.capture(pane)
-        if before is None or not _prompt_is_empty(before):
-            return CompactResult("vetoed", "prompt-not-empty")
-
         rollout = _session_rollout(self._ctx)
         if rollout is None:
             return CompactResult("vetoed", "rollout-not-found")
@@ -299,6 +282,21 @@ class CodexIdleSensor:
         except OSError:
             return CompactResult("vetoed", "rollout-unavailable")
 
+        # Codex 0.162.1 clears the whole composer with Ctrl+C only when it is
+        # nonempty. Prime both regular and Vim-mode composers, then clear; this
+        # keeps Ctrl+C out of the empty-composer quit path. Recheck the pane
+        # immediately beforehand so it cannot knowingly interrupt a live turn.
+        before = await self._tmux.capture(pane)
+        if before is not None and "Working (" in before:
+            return CompactResult("vetoed", "busy")
+        if not self._ctx.tui_alive():
+            return CompactResult("vetoed", "tui-exited-before-clear")
+        if not await self._tmux.send_literal(pane, _CLEAR_PRIMER):
+            return CompactResult("vetoed", "clear-prime-failed")
+        if not await self._tmux.send_keys(pane, "C-c"):
+            return CompactResult("vetoed", "clear-failed")
+        if not self._ctx.tui_alive():
+            return CompactResult("vetoed", "tui-exited-before-submit")
         if not await self._tmux.send_literal(pane, _COMPACT_COMMAND):
             return CompactResult("vetoed", "type-failed")
         if not self._ctx.tui_alive():

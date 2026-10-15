@@ -316,10 +316,6 @@ def test_idle_cli_error_envelopes_and_role_reasons(tmp_path: Path) -> None:
         ((*_FIRE, "--stretch", "0", "--anchor", "1"), "--stretch must be greater than zero"),
         ((*_FIRE, "--stretch", "1", "--anchor", "0"), "--anchor must be greater than zero"),
         (
-            (*_FIRE, "--stretch", "1", "--anchor", "1", "--draft", "maybe"),
-            "--draft must be one of: yes, no, unknown",
-        ),
-        (
             (*_FIRE, "--stretch", "1", "--anchor", "1", "--agents-running=-1"),
             "--agents-running must not be negative",
         ),

@@ -202,34 +202,33 @@ def test_parse_idle_event_skips_bootstrap_but_tracks_the_next_real_turn() -> Non
 
 
 @pytest.mark.parametrize(
-    ("capture_name", "draft", "busy"),
+    ("capture_name", "busy"),
     [
-        ("idle.txt", "no", False),
-        ("draft.txt", "yes", False),
-        ("busy.txt", "no", True),
-        ("busy-final.txt", "no", False),
+        ("idle.txt", False),
+        ("busy.txt", True),
+        ("busy-final.txt", False),
     ],
 )
 def test_pane_facts_match_probe_captures(
     capture_name: str,
-    draft: str,
     busy: bool,
 ) -> None:
     capture = (FIXTURES / "captures" / capture_name).read_text(encoding="utf-8")
 
     facts = pane_facts(capture)
-    assert (facts.draft, facts.busy) == (draft, busy)
+    assert facts.busy is busy
 
 
 @pytest.mark.asyncio
-async def test_compact_accepts_appended_rollout_compacted_record(tmp_path: Path) -> None:
+async def test_compact_clears_multiline_draft_and_accepts_compacted_record(
+    tmp_path: Path,
+) -> None:
     rollout = _write_rollout(tmp_path)
     compacted = (FIXTURES / "compacted-0.162.1.jsonl").read_bytes()
-    idle = (FIXTURES / "captures" / "idle.txt").read_text(encoding="utf-8")
     tmux = FakeTmux(
         [
-            idle,
-            idle.replace("Ask Codex to do anything", "/compact"),
+            f"{PROMPT} first line\n  second line\n  third line\n",
+            f"{PROMPT} /compact\n",
         ],
         on_enter=lambda: _append(rollout, compacted),
     )
@@ -239,8 +238,10 @@ async def test_compact_accepts_appended_rollout_compacted_record(tmp_path: Path)
     result = await sensor.compact()
 
     assert result.result == "ok"
-    assert tmux.actions[:4] == [
+    assert tmux.actions[:6] == [
         ("capture", "%42"),
+        ("literal", "ix"),
+        ("keys", ("C-c",)),
         ("literal", "/compact"),
         ("capture", "%42"),
         ("keys", ("Enter",)),
@@ -304,24 +305,3 @@ async def test_compact_vetoes_when_rollout_cannot_be_found_without_typing(
     assert (result.result, result.reason) == ("vetoed", "rollout-not-found")
     assert all(action != "literal" for action, _ in tmux.actions)
     assert all(action != "keys" for action, _ in tmux.actions)
-
-
-@pytest.mark.asyncio
-async def test_compact_vetoes_user_input_and_erases_only_its_typed_text(
-    tmp_path: Path,
-) -> None:
-    _write_rollout(tmp_path)
-    tmux = FakeTmux(
-        [
-            f"{PROMPT} Ask Codex to do anything\n",
-            f"{PROMPT} user text/compact\n",
-        ]
-    )
-    clock = FakeClock()
-    sensor = _sensor(tmp_path, tmux, clock)
-
-    result = await sensor.compact()
-
-    assert result.result == "vetoed"
-    assert tmux.actions[-1] == ("keys", ("BSpace",) * len("/compact"))
-    assert ("keys", ("Enter",)) not in tmux.actions
