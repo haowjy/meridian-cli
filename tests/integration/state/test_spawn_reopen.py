@@ -16,7 +16,28 @@ from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.spawn import repository as spawn_repository
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.state.spawn.runs import continue_target_run
+from meridian.lib.state.spawn.runs import continue_target_run, latest_run
+from tests.support.process_race import run_spawn_race_or_skip
+
+
+def _reserve_run_without_busy_check_worker(runtime_root: str) -> str:
+    """Exercise allocation contention without the one-active-run policy."""
+
+    def current_run(root: Path, spawn_id: SpawnId, chat_id: str | None = None) -> RunId:
+        del chat_id
+        run_id = latest_run(root, spawn_id)
+        assert run_id is not None
+        return run_id
+
+    spawn_store.check_spawn_available = current_run
+    reservation = SpawnReservation(
+        chat_id="c1",
+        prompt="again",
+        session_metadata=PrimarySessionMetadata(
+            harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=(),
+        ),
+    )
+    return str(spawn_store.reserve_run(Path(runtime_root), SpawnId("p1"), reservation))
 
 
 @pytest.mark.parametrize('status,live,busy', [
@@ -67,6 +88,64 @@ def test_reserve_run_contract(tmp_path: Path, status: str, live: bool, busy: boo
     bound = spawn_store.get_spawn(tmp_path, parse_ref('p1', row_key=True))
     assert bound is not None
     assert continue_target_run([bound, row]) == bound
+
+
+def test_concurrent_run_reservations_allocate_distinct_suffixes(tmp_path: Path) -> None:
+    first = spawn_store.start_spawn(
+        tmp_path,
+        spawn_id="p1",
+        chat_id="c1",
+        model="test",
+        agent="",
+        harness="codex",
+        prompt="hi",
+    )
+    spawn_store.finalize_spawn(
+        tmp_path, first, status="succeeded", exit_code=0, origin="runner",
+    )
+
+    allocated = run_spawn_race_or_skip(
+        _reserve_run_without_busy_check_worker,
+        [(tmp_path.as_posix(),), (tmp_path.as_posix(),)],
+    )
+
+    assert sorted(allocated) == ["p1.2", "p1.3"]
+
+
+def test_interrupted_publish_leaves_pointer_that_recovers_to_published_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = spawn_store.start_spawn(
+        tmp_path,
+        spawn_id="p1",
+        chat_id="c1",
+        model="test",
+        agent="",
+        harness="codex",
+        prompt="hi",
+    )
+    spawn_store.finalize_spawn(
+        tmp_path, first, status="succeeded", exit_code=0, origin="runner",
+    )
+
+    def fail_publish(_source: Path, _destination: Path) -> None:
+        raise RuntimeError("simulated crash before run publication")
+
+    monkeypatch.setattr(spawn_store, "atomic_publish_dir", fail_publish)
+    reservation = SpawnReservation(
+        chat_id="c1",
+        prompt="again",
+        session_metadata=PrimarySessionMetadata(
+            harness="codex", model="test", agent="", agent_path="", skills=(), skill_paths=(),
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        spawn_store.reserve_run(tmp_path, SpawnId("p1"), reservation)
+
+    assert (tmp_path / "spawn-heads" / "p1").read_text(encoding="utf-8") == "2\n"
+    assert latest_run(tmp_path, SpawnId("p1")) == first
 
 
 def test_reserve_run_checks_ancestors_without_listing_spawns(
