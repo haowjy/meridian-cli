@@ -11,6 +11,7 @@ from typing import Literal, Protocol, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from meridian.lib.harness.idle_types import BaselineSource, CompactEval
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.json_doc import mutate_model, read_model
 from meridian.lib.state.user_paths import get_user_home
@@ -36,6 +37,31 @@ def _empty_done() -> dict[Stage, str]:
     return {}
 
 
+class ContextBaseline(BaseModel):
+    """Trustworthy context observations and the retained growth baseline."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    context_tokens: int | None = Field(default=None, ge=0)
+    baseline_tokens: int | None = Field(default=None, ge=0)
+    baseline_source: BaselineSource = "observed"
+
+    def observe(self, tokens: int | None) -> ContextBaseline:
+        if tokens is None or tokens <= 0:
+            return self
+        baseline, source = self.baseline_tokens, self.baseline_source
+        if baseline is None:
+            baseline = tokens
+        elif self.context_tokens is not None and tokens < self.context_tokens:
+            baseline, source = tokens, "observed"
+        return ContextBaseline(
+            context_tokens=tokens, baseline_tokens=baseline, baseline_source=source
+        )
+
+    def after_compaction(self) -> ContextBaseline:
+        return self.model_copy(update={"baseline_tokens": None, "baseline_source": "compacted"})
+
+
 class IdleState(BaseModel):
     """Versioned state for one harness-native session."""
 
@@ -55,6 +81,8 @@ class IdleState(BaseModel):
     returned_at_ms: int | None = None
     ttl_seconds: int | None = Field(default=None, gt=0)
     ttl_estimated: bool = True
+    context: ContextBaseline = ContextBaseline()
+    compact_eval: CompactEval | None = None
     schedule: IdleSchedule
     done: dict[Stage, str] = Field(default_factory=_empty_done)
     compact_window_until_ms: int | None = None
@@ -211,6 +239,7 @@ class IdleStore:
 
 __all__ = [
     "CompactResultValue",
+    "ContextBaseline",
     "IdleSchedule",
     "IdleState",
     "IdleStore",

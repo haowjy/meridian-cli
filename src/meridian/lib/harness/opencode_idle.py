@@ -17,6 +17,7 @@ from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.connections.opencode_v2_http import v2_session_idle_marker
 from meridian.lib.harness.idle_types import (
     CacheTtl,
+    CompactCosts,
     CompactResult,
     IdleEvent,
     IdleFacts,
@@ -46,6 +47,24 @@ def detect_ttl(
 
     _ = session_id, native_store, env
     return _PROVIDER_TTLS.get((provider or "").strip().lower())
+
+
+def compact_costs(
+    *, ttl_seconds: int | None
+) -> CompactCosts | None:
+    """Return measured remote-compaction economics for OpenCode's OpenAI route."""
+
+    _ = ttl_seconds
+    # One OpenCode 2.x OpenAI compaction read 187,520 cached tokens at 0.1x
+    # with 730 uncached tokens; the V2 request retains a 15k-token text tail.
+    return CompactCosts(
+        w=1.0,
+        c=0.104,
+        u=1_000,
+        o=8.0,
+        summary_tokens=1_600,
+        residue_tokens=16_500,
+    )
 
 
 def _properties(event: RawHarnessEvent) -> Mapping[str, object]:
@@ -213,29 +232,35 @@ class _OpenCodeIdleSensorBase:
         while True:
             event = await self._events.get()
             if event.kind == "turn_end":
-                provider, (user, assistant) = await asyncio.gather(
+                provider, (user, assistant, context_tokens) = await asyncio.gather(
                     self._fetch_provider(),
-                    self._fetch_message_excerpts(),
+                    self._fetch_message_facts(),
                 )
                 event = replace(
                     event,
                     last_user_text=user,
                     last_assistant_text=assistant,
                     provider=provider,
+                    context_tokens=context_tokens,
                 )
             yield event
 
     async def _fetch_provider(self) -> str | None:
         return None
 
-    async def _fetch_message_excerpts(self) -> tuple[str | None, str | None]:
+    async def _fetch_message_facts(
+        self,
+    ) -> tuple[str | None, str | None, int | None]:
         raise NotImplementedError
+
+    async def _fetch_context_tokens(self) -> int | None:
+        return None
 
     async def facts(self) -> IdleFacts:
         return IdleFacts(
             busy=self._busy,
             agents_running=0,
-            context_tokens=None,
+            context_tokens=await self._fetch_context_tokens(),
             harness_autocompact_off=False,
         )
 
@@ -315,7 +340,9 @@ class OpenCodeIdleSensor(_OpenCodeIdleSensorBase):
         self._last_anchor_ms = self._now() * 1000
         self._emit("turn_end", turn_id=_event_id(event))
 
-    async def _fetch_message_excerpts(self) -> tuple[str | None, str | None]:
+    async def _fetch_message_facts(
+        self,
+    ) -> tuple[str | None, str | None, int | None]:
         session_id = quote(self._ctx.harness_session_id, safe="")
         try:
             status, body = await asyncio.wait_for(
@@ -323,10 +350,11 @@ class OpenCodeIdleSensor(_OpenCodeIdleSensorBase):
                 timeout=_GET_TIMEOUT_SECONDS,
             )
             if status != 200:
-                return None, None
-            return message_excerpts(json.loads(body))
+                return None, None, None
+            user, assistant = message_excerpts(json.loads(body))
+            return user, assistant, None
         except (TimeoutError, OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError):
-            return None, None
+            return None, None, None
 
     async def compact(self) -> CompactResult:
         if not self._ctx.tui_alive():
@@ -441,6 +469,44 @@ def _v2_message_excerpts(payload: object) -> tuple[str | None, str | None]:
     # The V2 request explicitly asks for newest-first results. The shared
     # extractor retains the last text for each role, so restore timeline order.
     return message_excerpts(list(reversed(cast("list[object]", messages))))
+
+
+def v2_message_context_tokens(payload: object) -> int | None:
+    """Return the newest trustworthy assistant main-context usage."""
+
+    response = json_object(payload)
+    messages = response.get("data") if response is not None else None
+    if not isinstance(messages, list):
+        return None
+    for raw_message in cast("list[object]", messages):
+        message = json_object(raw_message)
+        if message is None:
+            continue
+        info = json_object(message.get("info"))
+        facts = info if info is not None else message
+        role = facts.get("role") or message.get("role") or message.get("type")
+        if role != "assistant":
+            continue
+        if facts.get("mode") == "compaction" or facts.get("summary") is True:
+            return None
+        tokens = json_object(facts.get("tokens"))
+        if tokens is None:
+            continue
+        cache = json_object(tokens.get("cache"))
+        values = (
+            tokens.get("input"),
+            cache.get("read") if cache is not None else None,
+            cache.get("write") if cache is not None else None,
+        )
+        total = sum(
+            value
+            for value in values
+            if not isinstance(value, bool) and isinstance(value, int) and value > 0
+        )
+        if total <= 0:
+            continue
+        return total
+    return None
 
 
 def _v2_has_completed_compaction_message(payload: object, expected_id: str) -> bool:
@@ -579,7 +645,9 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
         self._maybe_finish_compaction()
         self._emit("turn_end", turn_id=_event_id(event))
 
-    async def _fetch_message_excerpts(self) -> tuple[str | None, str | None]:
+    async def _fetch_message_facts(
+        self,
+    ) -> tuple[str | None, str | None, int | None]:
         session_id = quote(self._ctx.harness_session_id, safe="")
         try:
             status, body = await asyncio.wait_for(
@@ -591,10 +659,16 @@ class OpenCodeV2IdleSensor(_OpenCodeIdleSensorBase):
                 timeout=_GET_TIMEOUT_SECONDS,
             )
             if status != 200:
-                return None, None
-            return _v2_message_excerpts(json.loads(body))
+                return None, None, None
+            payload = json.loads(body)
+            user, assistant = _v2_message_excerpts(payload)
+            return user, assistant, v2_message_context_tokens(payload)
         except (TimeoutError, OSError, RuntimeError, aiohttp.ClientError, json.JSONDecodeError):
-            return None, None
+            return None, None, None
+
+    async def _fetch_context_tokens(self) -> int | None:
+        _, _, context_tokens = await self._fetch_message_facts()
+        return context_tokens
 
     async def _fetch_provider(self) -> str | None:
         session_id = quote(self._ctx.harness_session_id, safe="")
@@ -744,7 +818,9 @@ __all__ = [
     "OpenCodeIdleSensor",
     "OpenCodeV2IdleSensor",
     "autocompact_off",
+    "compact_costs",
     "detect_ttl",
     "message_excerpts",
     "primary_idle_sensor",
+    "v2_message_context_tokens",
 ]

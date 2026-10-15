@@ -98,7 +98,7 @@ class BlockingCompactionSensor(Sensor):
         self.compact_cancelled = False
 
     async def events(self) -> AsyncIterator[IdleEvent]:
-        yield IdleEvent("turn_end", "session-1", "turn-1")
+        yield IdleEvent("turn_end", "session-1", "turn-1", context_tokens=1)
         await self.compact_started.wait()
         yield IdleEvent("user_prompt", "session-1", None)
         while self._alive[0]:
@@ -178,7 +178,7 @@ def policy(
     return (
         IdleService(
             store=store,
-            config=MeridianConfig(),
+            config=MeridianConfig.model_validate({"idle": {"compact_min_growth_tokens": 0}}),
             env={"MERIDIAN_SESSION_ROLE": "primary"},
             now_ms=clock.now_ms,
             notify_sender=sender,
@@ -195,7 +195,7 @@ async def test_sidecar_drives_idle_push_warn_compact_and_done(tmp_path: Path) ->
     clock = Clock()
     sender = Sender()
     service, store = policy(tmp_path, clock, sender)
-    sensor = Sensor((IdleEvent("turn_end", "session-1", "turn-1"),), alive)
+    sensor = Sensor((IdleEvent("turn_end", "session-1", "turn-1", context_tokens=1),), alive)
 
     task = asyncio.create_task(
         run(
@@ -417,6 +417,7 @@ async def test_external_sensor_recovers_an_externally_written_arm(tmp_path: Path
         session="session-1",
         implies_return=True,
         turn_id="external-turn",
+        context_tokens=1,
     )
     await wait_until(
         lambda: bool(

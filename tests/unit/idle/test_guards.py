@@ -9,7 +9,7 @@ from meridian.lib.state.idle_store import IdleSchedule, IdleState, Stage
 @dataclass(frozen=True)
 class Config:
     compact: bool = True
-    min_compact_tokens: int = 40_000
+    compact_min_growth_tokens: int | None = 0
     late_fire_tolerance_seconds: int = 120
 
 
@@ -22,6 +22,7 @@ def state(**updates: object) -> IdleState:
         "anchor": 1,
         "idle_since_ms": 0,
         "ttl_seconds": 3600,
+        "context": {"context_tokens": 50_000, "baseline_tokens": 50_000},
         "schedule": IdleSchedule(
             push_at=60_000,
             warn_at=2_700_000,
@@ -113,15 +114,15 @@ def state(**updates: object) -> IdleState:
         ),
         (
             "compact",
-            GuardFacts(1, 1, context_tokens=39_999),
+            GuardFacts(1, 1, context_tokens=89_999),
             state(),
-            Config(),
+            Config(compact_min_growth_tokens=40_000),
             3_300_000,
-            "context-too-small",
+            "not-worth-it",
         ),
         (
             "compact",
-            GuardFacts(1, 1, harness_autocompact_off=True),
+            GuardFacts(1, 1, context_tokens=50_000, harness_autocompact_off=True),
             state(),
             Config(),
             3_300_000,
