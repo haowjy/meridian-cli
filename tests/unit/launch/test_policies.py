@@ -6,7 +6,7 @@ from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.config.models import MeridianConfig, PrimaryConfig
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.overrides import RuntimeOverrides
-from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.bundle_adapter import _map_provenance_level
 from meridian.lib.launch.compiler import ModelPolicyRule, ProvenanceLevel
@@ -37,8 +37,8 @@ def _surface(*layers: RuntimeOverrides) -> SurfacePolicyInput:
     )
 
 
-def _terminal_surface_mode(*, harness_id: HarnessId) -> TerminalSurfaceMode:
-    _ = harness_id
+def _terminal_surface_mode(*, adapter: SubprocessHarness) -> TerminalSurfaceMode:
+    _ = adapter
     return TerminalSurfaceMode.PTY_MEDIATED
 
 

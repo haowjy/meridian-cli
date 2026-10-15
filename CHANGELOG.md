@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Let Codex and OpenCode managed primaries own the user's terminal directly.
+
 ## [0.10.10] - 2026-10-15
 
 ### Fixed

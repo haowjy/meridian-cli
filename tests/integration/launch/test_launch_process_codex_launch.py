@@ -22,7 +22,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.connections.base import ObserverEndpoint
 from meridian.lib.harness.passthrough.codex import CodexPassthrough
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.launch.process import runner as process_runner
 from meridian.lib.launch.process.ports import ProcessLauncher
 from meridian.lib.launch.process.primary_attach import (
@@ -262,10 +262,14 @@ def test_run_harness_process_codex_primary_routes_to_managed_path(
     )
     harness_registry.get_subprocess_harness(HarnessId.CODEX)
     captured: dict[str, object] = {}
-    selector_args: list[Path | None] = []
+    selector_args: list[tuple[Path | None, TerminalSurfaceMode]] = []
 
-    def fake_select_process_launcher(output_log_path: Path | None) -> ProcessLauncher:
-        selector_args.append(output_log_path)
+    def fake_select_process_launcher(
+        output_log_path: Path | None,
+        *,
+        terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED,
+    ) -> ProcessLauncher:
+        selector_args.append((output_log_path, terminal_surface_mode))
         return SubprocessProcessLauncher()
 
     def fake_run_primary_attach(
@@ -311,7 +315,7 @@ def test_run_harness_process_codex_primary_routes_to_managed_path(
 
     assert captured["harness_id"] == HarnessId.CODEX
     assert isinstance(captured["spawn_dir"], Path)
-    assert selector_args == [None]
+    assert selector_args == [(None, TerminalSurfaceMode.NATIVE_INHERIT)]
     assert outcome.primary_spawn_id is not None
     assert list(launch_context.runtime_root.rglob("tui.log")) == []
     assert outcome.exit_code == 0

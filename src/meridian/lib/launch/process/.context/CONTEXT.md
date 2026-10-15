@@ -5,31 +5,33 @@
 `select_process_backend()` returns a `SelectedProcessLauncher` with an explicit
 `ProcessPlatformContract` describing how IO is surfaced.
 
-Selection order when output capture is requested (`output_log_path` is set):
+Selection when output capture is requested (`output_log_path` is set):
 1. `PtyProcessLauncher` (PTY_MEDIATED, captures to artifact) — if `can_use_pty()`
 2. `SubprocessProcessLauncher` (PIPE_CAPTURE, captures to artifact) — fallback
 
-Selection order when no capture is needed (`output_log_path` is None):
-1. `WindowsConsoleLauncher` (NATIVE_INHERIT, no capture) — legacy, untested;
-   selected if `can_use_windows_console_launcher()`
-2. `PtyProcessLauncher` (PTY_MEDIATED, no capture) — elif `can_use_pty()`
-3. `SubprocessProcessLauncher` (NATIVE_INHERIT, no capture) — fallback
+When no capture is needed, resolved `TerminalSurfaceMode` is authoritative:
+- `NATIVE_INHERIT` uses `NativeProcessLauncher` on a POSIX TTY. It inherits
+  stdio and the shell's process group, resets child SIGINT, links child death to
+  the launcher, and records only a PID-tree scope because the process group is shared.
+- `PTY_MEDIATED` uses `PtyProcessLauncher` when a POSIX PTY is available.
+- No-TTY environments use `SubprocessProcessLauncher` as a portable inherited-IO fallback.
+- `WindowsConsoleLauncher` remains the legacy native-console branch.
 
-The PTY launcher is preferred for POSIX interactive TUI harnesses. The legacy
-Windows console launcher attempts native console inheritance; the subprocess
-launcher is the fallback.
+Harness adapter capabilities select the resolved mode: Codex/OpenCode use native
+inherit; Claude/Pi use PTY mediation. TTY detection validates platform capability;
+it does not override managed-primary policy.
 
 `captures_output_to_artifact` on `ProcessPlatformContract` is authoritative — callers must
 not assume capture based on launcher type alone.
 
 `ProcessLauncher.start()` returns a `RunningProcess` immediately after process birth.
-PID/scope recording happens before `RunningProcess.wait()` begins the blocking terminal
-relay. Keep those phases separate: managed-primary cancellation depends on having a
+PID/scope recording happens before `RunningProcess.wait()` begins its blocking
+wait (and, for PTY mode, relay). Keep those phases separate: managed-primary cancellation depends on having a
 concrete process identity before it can wait for exit or terminate the scope.
 `RunningProcess.cancel_wait()` must release its caller-facing wait even when scope
 termination cannot confirm child exit. Managed attach also directly terminates the
 concrete process as a fallback and bridges the synchronous wait through a daemon thread,
-so an uncooperative relay cannot be re-joined by `asyncio.run()` during loop shutdown.
+so an uncooperative wait cannot be re-joined by `asyncio.run()` during loop shutdown.
 
 ## Managed Attach vs Black-Box
 
@@ -54,7 +56,7 @@ enter the same pipeline through `conclude_native_run` after exit.
 `PrimaryAttachLauncher` registers a `SignalCallbackReceiver` (targets `SIGTERM`/`SIGHUP`)
 with the process-global `SignalCoordinator` (`lib/launch/signals.py`) for the duration of
 `run()`. A closed terminal sends SIGHUP and a killed process sends SIGTERM; catching them
-lets the launcher stop the TUI relay through `RunningProcess.cancel_wait()` and finalize
+lets the launcher stop the TUI wait through `RunningProcess.cancel_wait()` and finalize
 normally, instead of dying and leaving an active record for orphan reconciliation. The
 receiver is unregistered in `run()`'s `finally`, which restores the previous handlers.
 
@@ -62,7 +64,7 @@ receiver is unregistered in `run()`'s `finally`, which restores the previous han
   signals (main thread only) and restores any signal no longer targeted; it is the single
   seam for both the streaming `SignalForwarder` (`SIGINT`/`SIGTERM` → subprocess) and this
   launcher receiver.
-- The relay returns exit 130 when `cancel_wait()` unblocks it; cancellation is asserted
+- The wait returns exit 130 when `cancel_wait()` unblocks it; cancellation is asserted
   only when the signal was seen **and** the relay returned 130, so a session that exited
   normally just before the signal is not recorded as cancelled.
 - A signal that arrives before the TUI exists (during backend startup) is latched and

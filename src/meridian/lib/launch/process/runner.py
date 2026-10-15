@@ -58,7 +58,7 @@ from meridian.lib.launch.constants import (
     PRIMARY_META_FILENAME,
 )
 from meridian.lib.launch.extract import enrich_finalize
-from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.launch.native_run import NativeRun, bind_entry, conclude_native_run
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
@@ -88,22 +88,16 @@ from ..session_scope import session_scope
 from ..types import SessionMode
 from .ports import (
     PRIMARY_STDERR_LOG_PATH_ENV,
-    ProcessBackendId,
     ProcessLauncher,
     ProcessLauncherSelector,
-    ProcessPlatformContract,
-    ProcessSurfaceMode,
-    SelectedProcessLauncher,
 )
 from .primary_attach import PrimaryAttachError, PrimaryAttachLauncher, PrimaryAttachOutcome
-from .pty_launcher import PtyProcessLauncher, can_use_pty
+from .selector import select_process_backend, select_process_launcher
 from .session import (
     build_session_metadata,
     resolve_attached_work_id,
     resolve_primary_session_mode,
 )
-from .subprocess_launcher import SubprocessProcessLauncher
-from .windows_launcher import WindowsConsoleLauncher, can_use_windows_console_launcher
 
 logger = logging.getLogger(__name__)
 
@@ -191,66 +185,6 @@ RunPrimaryAttach = Callable[
 ]
 
 
-def select_process_launcher(output_log_path: Path | None) -> ProcessLauncher:
-    """Choose the launch backend for one primary process invocation."""
-
-    return select_process_backend(output_log_path).launcher
-
-
-def select_process_backend(output_log_path: Path | None) -> SelectedProcessLauncher:
-    """Choose the launch backend plus explicit process/platform contract."""
-
-    if output_log_path is not None:
-        if can_use_pty():
-            return SelectedProcessLauncher(
-                launcher=PtyProcessLauncher(),
-                contract=ProcessPlatformContract(
-                    backend_id=ProcessBackendId.PTY,
-                    surface_mode=ProcessSurfaceMode.PTY_MEDIATED,
-                    captures_output_to_artifact=True,
-                    platform_family="posix",
-                ),
-            )
-        return SelectedProcessLauncher(
-            launcher=SubprocessProcessLauncher(),
-            contract=ProcessPlatformContract(
-                backend_id=ProcessBackendId.SUBPROCESS,
-                surface_mode=ProcessSurfaceMode.PIPE_CAPTURE,
-                captures_output_to_artifact=True,
-                platform_family="portable",
-            ),
-        )
-    if can_use_windows_console_launcher():
-        return SelectedProcessLauncher(
-            launcher=WindowsConsoleLauncher(),
-            contract=ProcessPlatformContract(
-                backend_id=ProcessBackendId.WINDOWS_CONSOLE,
-                surface_mode=ProcessSurfaceMode.NATIVE_INHERIT,
-                captures_output_to_artifact=False,
-                platform_family="windows",
-            ),
-        )
-    if can_use_pty():
-        return SelectedProcessLauncher(
-            launcher=PtyProcessLauncher(),
-            contract=ProcessPlatformContract(
-                backend_id=ProcessBackendId.PTY,
-                surface_mode=ProcessSurfaceMode.PTY_MEDIATED,
-                captures_output_to_artifact=False,
-                platform_family="posix",
-            ),
-        )
-    return SelectedProcessLauncher(
-        launcher=SubprocessProcessLauncher(),
-        contract=ProcessPlatformContract(
-            backend_id=ProcessBackendId.SUBPROCESS,
-            surface_mode=ProcessSurfaceMode.NATIVE_INHERIT,
-            captures_output_to_artifact=False,
-            platform_family="portable",
-        ),
-    )
-
-
 def run_primary_process_with_capture(
     command: tuple[str, ...],
     cwd: Path,
@@ -324,6 +258,7 @@ def _execute_via_managed_attach(
     task_cwd: Path | None,
     child_env: dict[str, str],
     launch_spec: ResolvedLaunchSpec,
+    process_launcher: ProcessLauncher,
     native_run: NativeRun,
     run_primary_attach_fn: RunPrimaryAttach,
     on_running: Callable[[int], None],
@@ -338,7 +273,7 @@ def _execute_via_managed_attach(
         task_cwd,
         child_env,
         launch_spec,
-        select_process_launcher(None),
+        process_launcher,
         on_running,
         native_run.observe,
     )
@@ -381,6 +316,7 @@ def _execute_primary_process(
     task_cwd: Path | None,
     child_env: dict[str, str],
     launch_spec: ResolvedLaunchSpec,
+    terminal_surface_mode: TerminalSurfaceMode,
     command: tuple[str, ...],
     harness_contract: HarnessContract,
     native_run: NativeRun,
@@ -392,6 +328,10 @@ def _execute_primary_process(
 
     use_managed_backend = harness_contract.bootstrap_mode.value == "managed_primary_attach"
     if use_managed_backend:
+        process_launcher = select_process_launcher(
+            None,
+            terminal_surface_mode=terminal_surface_mode,
+        )
         try:
             return _execute_via_managed_attach(
                 harness_id=harness_id,
@@ -401,6 +341,7 @@ def _execute_primary_process(
                 task_cwd=task_cwd,
                 child_env=child_env,
                 launch_spec=launch_spec,
+                process_launcher=process_launcher,
                 native_run=native_run,
                 run_primary_attach_fn=run_primary_attach_fn,
                 on_running=on_running,
@@ -859,6 +800,9 @@ def run_harness_process(
                 )
                 lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
                 launch_spec = runtime_context.binding.spec
+                terminal_surface_mode = runtime_context.resolved_request.terminal_surface_mode
+                if terminal_surface_mode is None:
+                    raise RuntimeError("Resolved primary launch is missing terminal surface mode")
                 managed = replace(managed, spawn_id=primary_spawn_id)
                 native_run = bind_entry(
                     managed,
@@ -975,6 +919,7 @@ def run_harness_process(
                         task_cwd=task_cwd,
                         child_env=child_env,
                         launch_spec=launch_spec,
+                        terminal_surface_mode=terminal_surface_mode,
                         command=command,
                         harness_contract=harness_adapter.contract,
                         native_run=native_run,

@@ -20,7 +20,7 @@ from meridian.lib.core.native_identity import NativeKeyFields
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import BootstrapMode
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.launch.native_run import NativeRun
 from meridian.lib.launch.process import runner as process_runner
 from meridian.lib.launch.process.ports import PRIMARY_STDERR_LOG_PATH_ENV, LaunchedProcess
@@ -133,6 +133,7 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
                 permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
                 interactive=True,
             ),
+            terminal_surface_mode=TerminalSurfaceMode.NATIVE_INHERIT,
             command=("codex",),
             harness_contract=harness_contract,
             native_run=_native_run(tmp_path),
@@ -190,6 +191,7 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
                 permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
                 interactive=True,
             ),
+            terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
             command=("claude",),
             harness_contract=harness_contract,
             native_run=_native_run(tmp_path),

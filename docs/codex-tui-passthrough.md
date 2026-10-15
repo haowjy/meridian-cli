@@ -13,6 +13,24 @@ For `meridian codex`, Meridian now:
 
 This gives Meridian a real Codex thread ID, managed startup telemetry, and hidden instruction delivery for the role/system tiers.
 
+## Terminal Ownership and Job Control
+
+Codex and OpenCode managed primaries attach their TUI directly to the user's
+stdin, stdout, and stderr. Meridian does not put another PTY or byte relay
+between these TUIs and the terminal. The managed backend connection, events,
+idle sensing, metadata, heartbeat, and teardown continue independently of the
+terminal path. Claude and Pi primaries continue to use Meridian's PTY relay.
+
+The Meridian launcher and a native TUI remain in the shell's foreground process
+group. Pressing `Ctrl+Z` therefore stops both processes; run `fg` in the invoking
+shell to resume them together. Meridian does not take foreground ownership away
+from the shell.
+
+Normal TUI exit restores terminal state through the harness. If the TUI itself
+is killed with `kill -9`, it cannot run that cleanup and the screen may retain
+mouse, cursor, or alternate-screen state. Run `reset` after the shell returns if
+the terminal remains garbled.
+
 ## Workspace Roots
 
 Configured `[workspace.*]` roots are projected when Meridian launches the managed

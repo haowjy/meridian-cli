@@ -8,6 +8,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
+from meridian.lib.launch.launch_types import TerminalSurfaceMode
+
 PRIMARY_STDERR_LOG_PATH_ENV = "_MERIDIAN_PRIMARY_STDERR_LOG_PATH"
 
 
@@ -23,16 +25,9 @@ class ProcessBackendId(StrEnum):
     """Named launch backends used for local harness process execution."""
 
     PTY = "pty"
+    NATIVE = "native"
     SUBPROCESS = "subprocess"
     WINDOWS_CONSOLE = "windows_console"
-
-
-class ProcessSurfaceMode(StrEnum):
-    """How the local launcher surfaces child terminal IO."""
-
-    PTY_MEDIATED = "pty_mediated"
-    PIPE_CAPTURE = "pipe_capture"
-    NATIVE_INHERIT = "native_inherit"
 
 
 @dataclass(frozen=True)
@@ -40,7 +35,7 @@ class ProcessPlatformContract:
     """Explicit process/platform contract for one launcher backend."""
 
     backend_id: ProcessBackendId
-    surface_mode: ProcessSurfaceMode
+    surface_mode: TerminalSurfaceMode
     captures_output_to_artifact: bool
     platform_family: str
 
@@ -91,7 +86,6 @@ __all__ = [
     "ProcessLauncher",
     "ProcessLauncherSelector",
     "ProcessPlatformContract",
-    "ProcessSurfaceMode",
     "RunningProcess",
     "SelectedProcessLauncher",
 ]

@@ -14,7 +14,7 @@ run_harness_process()
     │
     ├── session_scope()            ← open/close session store entry
     ├── lifecycle_service.start()  ← create spawn row
-    ├── select_process_backend()   ← pick {PTY, subprocess, legacy Windows console}
+    ├── select_process_backend()   ← apply resolved terminal mode + platform fallback
     │
     ├── _execute_via_managed_attach()   ← PrimaryAttachLauncher path
     │       └── fallback on PrimaryAttachError → _execute_via_blackbox()
@@ -25,9 +25,11 @@ run_harness_process()
 ```
 
 **Backend selection rules:**
+- Managed Codex/OpenCode + POSIX TTY: `NativeProcessLauncher` with inherited stdio
+- Managed Claude/Pi + POSIX TTY: `PtyProcessLauncher`
+- No TTY (CI, piped): `SubprocessProcessLauncher` portable fallback
 - Legacy native-Windows branch (untested): `WindowsConsoleLauncher`
-- POSIX + TTY available: `PtyProcessLauncher`
-- POSIX + no TTY (CI, piped): `SubprocessProcessLauncher`
+- Output capture: PTY when available, otherwise subprocess pipes
 
 **Managed-attach fallback:** if `PrimaryAttachLauncher` raises `PrimaryAttachError`
 (harness didn't start the server), it falls back to `_execute_via_blackbox()`. This
@@ -78,8 +80,9 @@ session is still properly closed.
 
 ## Key Rules
 
-**Don't add launcher types without registering in `select_process_backend()`.** The
-selection logic reads `ProcessPlatformContract` — new launchers need entries there.
+**Don't add launcher types without registering in `selector.py`.** The selection
+logic reads `TerminalSurfaceMode` and returns a `ProcessPlatformContract`; new
+launchers need entries there.
 
 **Managed-attach fallback is silent.** The user sees the primary TUI either way —
 the distinction is whether Meridian controls the turn or just observes.
@@ -88,6 +91,8 @@ the distinction is whether Meridian controls the turn or just observes.
 
 - `runner.py` — `run_harness_process()`. The sole external entry point.
 - `ports.py` — `ProcessLauncher` protocol, `ProcessBackendId`, backend selection types.
+- `selector.py` — resolved terminal-mode and platform-capability selection.
+- `native_launcher.py` — inherited terminal, signal, and parent-death lifecycle.
 
 ## Depth
 

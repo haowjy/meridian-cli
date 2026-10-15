@@ -144,7 +144,7 @@ def test_link_child_lifetime_to_parent_reports_windows_job_failure(
     assert link.parent_death_linked is False
 
 
-def test_link_child_lifetime_to_parent_posix_is_not_linked(
+def test_link_child_lifetime_to_parent_posix_falls_back_to_pid_tree_watchdog(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def _pgid_unavailable(_pid: int) -> None:
@@ -155,7 +155,11 @@ def test_link_child_lifetime_to_parent_posix_is_not_linked(
 
     link = detached_process.link_child_lifetime_to_parent(4242)
 
-    assert link == detached_process.ParentDeathLink(parent_death_linked=False)
+    try:
+        assert link.parent_death_linked is True
+        assert link.watchdog_process is not None
+    finally:
+        detached_process.release_parent_death_link(link)
 
 
 def test_watchdog_terminates_target_when_parent_dies() -> None:

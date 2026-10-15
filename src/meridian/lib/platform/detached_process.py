@@ -1,11 +1,11 @@
-"""Parent-death linkage for detached subprocess backends.
+"""Parent-death linkage for subprocess children.
 
 Platform contract:
 - **Linux** with ``prctl(PR_SET_PDEATHSIG)``: child receives SIGKILL when this
   process dies (installed in a pre-exec hook before the child execs).
-- **Other POSIX** (macOS, BSD, Linux without ``prctl``): children start in a
-  new session, then a tiny detached watchdog process terminates the child
-  process group if the Meridian launcher dies first.
+- **Other POSIX** (macOS, BSD, Linux without ``prctl``): a tiny detached
+  watchdog process terminates either the child's isolated process group or its
+  PID-guarded process tree if the Meridian launcher dies first.
 - **Windows**: parent-death linkage is applied post-spawn via a Job Object
   (see ``link_child_lifetime_to_parent``).
 """
@@ -61,25 +61,48 @@ def detached_subprocess_config() -> DetachedSubprocessConfig:
     linkage happens post-spawn.
     """
 
+    return parent_death_subprocess_config(start_new_session=True)
+
+
+def parent_death_subprocess_config(
+    *,
+    start_new_session: bool,
+    child_preexec_fn: Callable[[], None] | None = None,
+) -> DetachedSubprocessConfig:
+    """Build subprocess kwargs with parent-death linkage independent of sessions.
+
+    ``start_new_session=False`` is used by native terminal children, which must
+    remain in the invoking shell's foreground process group. An optional child
+    setup hook is composed with Linux ``PR_SET_PDEATHSIG`` in the one pre-exec
+    callback so callers do not duplicate the platform mechanism.
+    """
+
     if IS_WINDOWS:
         return DetachedSubprocessConfig(kwargs={}, parent_death_linked=False)
 
-    if _linux_parent_death_sig_available():
-        return DetachedSubprocessConfig(
-            kwargs={
-                "start_new_session": True,
-                "preexec_fn": _posix_parent_death_preexec,
-            },
-            parent_death_linked=True,
-        )
+    preexec_steps: list[Callable[[], None]] = []
+    parent_death_linked = _linux_parent_death_sig_available()
+    if parent_death_linked:
+        preexec_steps.append(_posix_parent_death_preexec)
+    if child_preexec_fn is not None:
+        preexec_steps.append(child_preexec_fn)
 
+    kwargs: dict[str, Any] = {"start_new_session": start_new_session}
+    if preexec_steps:
+        kwargs["preexec_fn"] = _compose_preexec(tuple(preexec_steps))
     return DetachedSubprocessConfig(
-        kwargs={"start_new_session": True},
-        parent_death_linked=False,
+        kwargs=kwargs,
+        parent_death_linked=parent_death_linked,
     )
 
 
-def link_child_lifetime_to_parent(pid: int) -> ParentDeathLink:
+def link_child_lifetime_to_parent(
+    pid: int,
+    *,
+    target_process_group: bool = True,
+    scope_id: str = "backend",
+    role: str = "harness_backend",
+) -> ParentDeathLink:
     """Attach an already-started child to this process lifetime when needed."""
 
     if IS_WINDOWS:
@@ -95,7 +118,12 @@ def link_child_lifetime_to_parent(pid: int) -> ParentDeathLink:
             parent_death_linked=True,
         )
 
-    return _start_parent_watchdog(pid)
+    return _start_parent_watchdog(
+        pid,
+        target_process_group=target_process_group,
+        scope_id=scope_id,
+        role=role,
+    )
 
 
 def release_parent_death_link(link: ParentDeathLink | None) -> None:
@@ -114,13 +142,17 @@ def release_parent_death_link(link: ParentDeathLink | None) -> None:
             link.watchdog_process.wait(timeout=1.0)
 
 
-def _start_parent_watchdog(pid: int) -> ParentDeathLink:
+def _start_parent_watchdog(
+    pid: int,
+    *,
+    target_process_group: bool,
+    scope_id: str,
+    role: str,
+) -> ParentDeathLink:
     parent_pid = os.getpid()
     parent_created_at = _process_birth_epoch(parent_pid)
     target_created_at = _process_birth_epoch(pid)
-    target_pgid = _process_group_id(pid)
-    if target_pgid is None:
-        return ParentDeathLink(parent_death_linked=False)
+    target_pgid = _process_group_id(pid) if target_process_group else None
 
     try:
         ready_read_fd, ready_write_fd = os.pipe()
@@ -144,13 +176,15 @@ def _start_parent_watchdog(pid: int) -> ParentDeathLink:
         str(pid),
         "--target-created-at",
         str(target_created_at),
-        "--target-pgid",
-        str(target_pgid),
         "--scope-id",
-        "backend",
+        scope_id,
+        "--role",
+        role,
         "--ready-fd",
         str(ready_write_fd),
     )
+    if target_pgid is not None:
+        command = (*command, "--target-pgid", str(target_pgid))
     try:
         process = subprocess.Popen(
             command,
@@ -212,6 +246,14 @@ def _watchdog_reported_ready(read_fd: int) -> bool:
     return bool(readable and os.read(read_fd, 1) == b"1")
 
 
+def _compose_preexec(steps: tuple[Callable[[], None], ...]) -> Callable[[], None]:
+    def _run() -> None:
+        for step in steps:
+            step()
+
+    return _run
+
+
 def _process_birth_epoch(pid: int) -> float:
     try:
         return psutil.Process(pid).create_time()
@@ -259,5 +301,6 @@ __all__ = [
     "ParentDeathLink",
     "detached_subprocess_config",
     "link_child_lifetime_to_parent",
+    "parent_death_subprocess_config",
     "release_parent_death_link",
 ]

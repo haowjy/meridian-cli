@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 class TerminalSurfaceMode(StrEnum):
     """How Meridian surfaces an interactive harness terminal."""
 
-    PURE_STDIO = "pure_stdio"
+    PIPE_CAPTURE = "pipe_capture"
     PTY_MEDIATED = "pty_mediated"
     NATIVE_INHERIT = "native_inherit"
 

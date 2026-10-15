@@ -222,7 +222,7 @@ def replay_launch_policy_snapshot(
     model_selection = _snapshot_model_selection(snapshot=snapshot, snapshot_model=snapshot_model)
     terminal_surface_mode = _resolve_snapshot_terminal_mode(
         snapshot=snapshot,
-        harness_id=harness_id,
+        adapter=adapter,
         resolve_terminal_surface_mode=resolve_terminal_surface_mode,
         logger=logger,
     )
@@ -347,11 +347,11 @@ def _snapshot_skills(
 def _resolve_snapshot_terminal_mode(
     *,
     snapshot: LaunchPolicySnapshot,
-    harness_id: HarnessId,
+    adapter: SubprocessHarness,
     resolve_terminal_surface_mode: Callable[..., TerminalSurfaceMode],
     logger: logging.Logger | None,
 ) -> TerminalSurfaceMode:
-    terminal_surface_mode = resolve_terminal_surface_mode(harness_id=harness_id)
+    terminal_surface_mode = resolve_terminal_surface_mode(adapter=adapter)
     if snapshot.terminal_surface_mode is None:
         return terminal_surface_mode
 

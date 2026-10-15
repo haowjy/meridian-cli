@@ -1,9 +1,9 @@
-"""Detached process parent-death watchdog.
+"""Subprocess parent-death watchdog.
 
 Runs as a tiny helper process on POSIX platforms that lack a native
-parent-death signal.  It watches the Meridian launcher process and terminates
-an already-isolated target process scope if the launcher disappears before the
-scope is empty.
+parent-death signal. It watches the Meridian launcher process and terminates a
+PID-guarded target process tree or isolated process group if the launcher
+disappears before the scope is empty.
 """
 
 from __future__ import annotations
@@ -104,6 +104,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--target-created-at", type=float, required=True)
     parser.add_argument("--target-pgid", type=int, default=0)
     parser.add_argument("--scope-id", default="backend")
+    parser.add_argument("--role", default="harness_backend")
     parser.add_argument("--ready-fd", type=int, default=-1)
     parser.add_argument("--poll-interval", type=float, default=_DEFAULT_POLL_INTERVAL_SECONDS)
     parser.add_argument("--grace-seconds", type=float, default=_DEFAULT_GRACE_SECONDS)
@@ -117,7 +118,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         scope_id=args.scope_id,
         owner_policy="spawn_owned",
         owner_id=f"parent-watchdog:{args.parent_pid}",
-        role="harness_backend",
+        role=args.role,
         containment="posix_pgid" if target_pgid is not None else "pid_tree_fallback",
         root_pid=args.target_pid,
         root_created_at_epoch=args.target_created_at or PROCESS_BIRTH_UNKNOWN_EPOCH,

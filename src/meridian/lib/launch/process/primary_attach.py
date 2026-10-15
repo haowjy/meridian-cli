@@ -58,7 +58,7 @@ logger = structlog.get_logger(__name__)
 
 
 def _start_process_wait(running_process: RunningProcess) -> asyncio.Future[LaunchedProcess]:
-    """Run a synchronous terminal relay without joining it during loop shutdown."""
+    """Run a synchronous process wait without joining it during loop shutdown."""
 
     loop = asyncio.get_running_loop()
     result_future: asyncio.Future[LaunchedProcess] = loop.create_future()
@@ -95,6 +95,7 @@ def _make_scope_snapshot(
     owner_policy: str,
     owner_id: str,
     role: str,
+    parent_death_linked: bool = False,
 ) -> ProcessScopeSnapshot:
     """Build a ProcessScopeSnapshot for a managed-primary process.
 
@@ -110,8 +111,12 @@ def _make_scope_snapshot(
     containment: str
     if not IS_WINDOWS:
         try:
-            pgid = os.getpgid(pid)
-            containment = "posix_pgid"
+            child_pgid = os.getpgid(pid)
+            if child_pgid == os.getpgrp():
+                containment = "pid_tree_fallback"
+            else:
+                pgid = child_pgid
+                containment = "posix_pgid"
         except OSError:
             containment = "pid_tree_fallback"
     else:
@@ -128,6 +133,7 @@ def _make_scope_snapshot(
         pgid=pgid,
         job_name=None,
         degraded_reason=None,
+        parent_death_linked=parent_death_linked,
     )
 
 
@@ -263,7 +269,7 @@ class PrimaryAttachLauncher:
         self._signal_cancel_requested = False
 
     def _request_signal_cancel(self) -> None:
-        """Handle SIGTERM/SIGHUP: stop the TUI relay so ``run`` can finalize."""
+        """Handle SIGTERM/SIGHUP: stop the TUI wait so ``run`` can finalize."""
 
         self._signal_cancel_requested = True
         running = self._running_process
@@ -408,7 +414,13 @@ class PrimaryAttachLauncher:
 
             def _handle_running(pid: int) -> None:
                 self._set_tui_pid(pid)
-                self._record_tui_scope(pid, session_id)
+                self._record_tui_scope(
+                    pid,
+                    session_id,
+                    parent_death_linked=bool(
+                        getattr(running_process, "parent_death_linked", False)
+                    ),
+                )
                 if running_callback is not None:
                     running_callback(pid)
 
@@ -421,7 +433,7 @@ class PrimaryAttachLauncher:
             self._running_process = running_process
             if self._signal_cancel_requested:
                 # A signal arrived during backend startup; honor it now that the
-                # TUI relay exists.
+                # TUI process exists.
                 running_process.cancel_wait()
             try:
                 _handle_running(running_process.pid)
@@ -439,13 +451,13 @@ class PrimaryAttachLauncher:
 
             # The TUI owns the primary. Observer silence is not a quit.
             launched = await asyncio.shield(launch_task)
-            # Cancellation is only asserted when the relay was actually
+            # Cancellation is only asserted when the process wait was actually
             # interrupted by the signal: ``cancel_wait`` returns exit 130, while a
             # clean TUI exit returns its own code. This avoids turning a session
             # that exited normally just before a signal landed into a cancel.
             cancelled = self._signal_cancel_requested and launched.exit_code == 130
             if cancelled:
-                # The relay stopped on the signal, so the TUI child is still alive.
+                # The wait stopped on the signal; ensure the TUI scope is gone.
                 await self._stop_idle_task()
                 await self._stop_tui_launch_task(
                     running_process,
@@ -654,7 +666,13 @@ class PrimaryAttachLauncher:
 
         record_scope(self._spawn_dir.parent.parent, self._spawn_id, scope_snapshot)
 
-    def _record_tui_scope(self, pid: int, session_id: str | None) -> None:
+    def _record_tui_scope(
+        self,
+        pid: int,
+        session_id: str | None,
+        *,
+        parent_death_linked: bool,
+    ) -> None:
         if pid <= 0:
             return
         runtime_root = self._spawn_dir.parent.parent
@@ -665,6 +683,7 @@ class PrimaryAttachLauncher:
             owner_policy="session_owned",
             owner_id=owner_id,
             role="harness_tui",
+            parent_death_linked=parent_death_linked,
         )
         self._tui_scope_snapshot = snapshot
         record_scope(runtime_root, self._spawn_id, snapshot)
