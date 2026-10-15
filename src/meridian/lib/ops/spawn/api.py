@@ -1451,7 +1451,6 @@ def _spawn_is_terminal(status: str) -> bool:
 
 def _resolve_wait_targets(
     payload: SpawnWaitInput,
-    project_root: Path,
     runtime_root: Path,
     ctx: RuntimeContext,
     *,
@@ -1479,7 +1478,6 @@ def _resolve_wait_targets(
     self_spawn_id = str(ctx.spawn_id) if ctx.spawn_id else None
     try:
         pending = _discover_pending_spawns(
-            project_root,
             runtime_root,
             chat_id,
             exclude_spawn_id=self_spawn_id,
@@ -1492,7 +1490,6 @@ def _resolve_wait_targets(
 
 
 def _discover_pending_spawns(
-    project_root: Path,
     runtime_root: Path,
     chat_id: str,
     *,
@@ -1500,35 +1497,48 @@ def _discover_pending_spawns(
     only_descendants_of: str | None = None,
     deadline: float | None = None,
 ) -> list[SpawnRecord]:
-    """Discover active spawns for a given chat ID.
+    """Discover this owner's active spawns, or only the caller's transitive subtree.
 
-    When *only_descendants_of* is set (i.e. called from a nested spawn),
-    returns only spawns that are descendants of that spawn — not siblings,
-    ancestors, or the primary session. This prevents no-arg ``spawn wait``
-    from blocking on the entire chat tree.
+    The index selects membership; lifecycle decisions re-read authority. Recursive
+    traversal retains terminal and archived ancestry so it cannot lose grandchildren.
     """
-    from meridian.lib.state.reaper import reconcile_spawns
+    from meridian.lib.state.reaper import peek_reconciled_active_spawn
     from meridian.lib.state.session_identity import spawn_matches_owner_chat
 
-    all_spawns = reconcile_spawns(
-        project_root,
-        runtime_root,
-        indexed_spawn_scan(runtime_root, deadline=deadline),
-    ).records
-
-    # Build descendant set if scoping to a parent
-    descendant_ids: set[str] | None = None
+    index = history_index.HistoryIndex(runtime_root)
     if only_descendants_of is not None:
-        descendant_ids = descendant_id_set(only_descendants_of, all_spawns)
+        selected_ids = {
+            projection[0]
+            for projection in index.descendant_projection(
+                only_descendants_of,
+                active_only=True,
+                deadline=deadline,
+            )
+        }
+    else:
+        selected_ids = {
+            row.id
+            for row in index.spawns(
+                owner_chat_id=chat_id,
+                status=set(ACTIVE_SPAWN_STATUSES),
+                deadline=deadline,
+            )
+        }
 
-    pending = [
-        row
-        for row in all_spawns
-        if row.status in ACTIVE_SPAWN_STATUSES
-        and row.id != exclude_spawn_id
-        and (descendant_ids is None or row.id in descendant_ids)
-        and (descendant_ids is not None or spawn_matches_owner_chat(row, chat_id or ""))
-    ]
+    pending: list[SpawnRecord] = []
+    for spawn_id in selected_ids:
+        if spawn_id == exclude_spawn_id:
+            continue
+        row = spawn_store.get_spawn(runtime_root, spawn_id)
+        if row is None:
+            # Retirement can race the projection query just as it can race wait polling.
+            continue
+        # Nested callers are scoped by subtree, not owner, matching main.
+        if only_descendants_of is None and not spawn_matches_owner_chat(row, chat_id):
+            continue
+        row = peek_reconciled_active_spawn(runtime_root, row)
+        if row.status in ACTIVE_SPAWN_STATUSES:
+            pending.append(row)
     pending.sort(key=lambda row: row.id)
     return pending
 
@@ -1755,7 +1765,6 @@ def spawn_wait_sync(
     hard_deadline = None if use_checkpoint else wait_deadline
     targets = _resolve_wait_targets(
         payload,
-        project_root,
         runtime_root,
         resolved_context,
         deadline=min(wait_deadline, time.monotonic() + history_index.QUERY_TIMEOUT),
