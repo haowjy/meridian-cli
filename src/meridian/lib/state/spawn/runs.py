@@ -158,7 +158,7 @@ def latest_run(runtime_root: Path, spawn_id: SpawnId) -> RunId | None:
     if pointed_run is None or pointed_run == _NO_LOOSE_RUNS:
         return None
 
-    # A stale pointer can be left by an older/pointerless writer. Probe upward
+    # A stale head can be left by an older writer. Probe upward
     # first so the derived cache is never required for correctness.
     run = pointed_run
     while _run_exists(paths, spawn_id, run + 1):
@@ -166,7 +166,7 @@ def latest_run(runtime_root: Path, spawn_id: SpawnId) -> RunId | None:
     if _run_exists(paths, spawn_id, run):
         return make_run_id(spawn_id, run)
 
-    # reserve_run publishes the pointer before the row. A crash in between is
+    # reserve_run publishes the head before the row. A crash in between is
     # recovered by finding the highest surviving predecessor.
     for candidate in range(run - 1, 0, -1):
         if _run_exists(paths, spawn_id, candidate):

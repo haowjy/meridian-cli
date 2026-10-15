@@ -164,7 +164,7 @@ def test_concurrent_continues_allow_one_run_and_name_it_in_busy_refusal(
     assert len(busy) == 1 and "p1.2" in busy[0]
 
 
-def test_interrupted_publish_leaves_pointer_that_recovers_to_published_run(
+def test_interrupted_publish_leaves_head_that_recovers_to_published_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -183,20 +183,34 @@ def test_interrupted_publish_leaves_pointer_that_recovers_to_published_run(
     assert latest_run(tmp_path, SpawnId("p1")) == first
 
 
-def test_reserve_run_checks_ancestors_without_listing_spawns(
+def test_reserve_run_checks_non_latest_parent_edges_without_listing_spawns(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    for key, parent in (("p1", None), ("p2", "p1"), ("p3", "p2")):
+    for key, parent in (("p1", None), ("p2", "p1"), ("p3", None)):
         seed_run(
             tmp_path, key, parent=parent, chat_id=f"c{key[1:]}", agent="", prompt="hi",
         )
 
+    second = spawn_store.reserve_run(
+        tmp_path,
+        SpawnId("p2"),
+        run_reservation(
+            chat_id="c2",
+            parent_id="p3",
+            parent_run_id=parse_ref("p3", row_key=True),
+            prompt="move",
+        ),
+    )
+    spawn_store.finalize_spawn(
+        tmp_path, second, status="succeeded", exit_code=0, origin="runner",
+    )
+
     probe = IOProbe(monkeypatch)
     probe.watch("scan_spawn_ids", spawn_repository.scan_spawn_ids)
     reservation = run_reservation(
-        parent_id="p3",
-        parent_run_id=parse_ref("p3", row_key=True),
+        parent_id="p2",
+        prompt="cycle",
     )
 
     with pytest.raises(ValueError, match="Cannot reopen ancestor spawn p1"):
@@ -222,37 +236,6 @@ def test_reserve_run_does_not_scan_for_a_fully_archived_ancestor(
 
     assert spawn_store.reserve_run(tmp_path, SpawnId("p1"), reservation) == "p1.2"
     assert probe.count("scan_spawn_ids") == 0
-
-
-def test_reserve_run_checks_parent_edges_from_non_latest_runs(tmp_path: Path) -> None:
-    for key, parent in (("p1", None), ("p2", "p1"), ("p3", None)):
-        seed_run(
-            tmp_path, key, parent=parent, chat_id=f"c{key[1:]}", agent="", prompt="hi",
-        )
-
-    second = spawn_store.reserve_run(
-        tmp_path,
-        SpawnId("p2"),
-        run_reservation(
-            chat_id="c2",
-            parent_id="p3",
-            parent_run_id=parse_ref("p3", row_key=True),
-            prompt="move",
-        ),
-    )
-    spawn_store.finalize_spawn(
-        tmp_path, second, status="succeeded", exit_code=0, origin="runner",
-    )
-
-    with pytest.raises(ValueError, match="Cannot reopen ancestor spawn p1"):
-        spawn_store.reserve_run(
-            tmp_path,
-            SpawnId("p1"),
-            run_reservation(
-                parent_id="p2",
-                prompt="cycle",
-            ),
-        )
 
 
 def test_reserve_run_reads_one_spawn_row_while_allocation_lock_is_held(

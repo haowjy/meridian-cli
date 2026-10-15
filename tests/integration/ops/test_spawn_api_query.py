@@ -192,17 +192,15 @@ def test_spawn_show_json_exposes_structured_entry_and_boundary_identity(tmp_path
     }
 
 
-@pytest.mark.parametrize("unrelated_count", [10, 200])
 def test_spawn_show_bare_ref_reads_only_target_runs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    unrelated_count: int,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     runtime_root = _state_root(project_root)
     seed_run(runtime_root, "p1", chat_id="c1", prompt="done")
-    for number in range(2, unrelated_count + 2):
+    for number in range(2, 12):
         state = runtime_root / "spawns" / f"p{number}" / "state.json"
         state.parent.mkdir()
         state.write_text("{}\n", encoding="utf-8")

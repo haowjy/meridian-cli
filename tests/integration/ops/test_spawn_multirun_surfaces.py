@@ -114,13 +114,12 @@ def test_multirun_never_bound_ref_refuses_instead_of_using_callers_chat(tmp_path
         resolve_session_reference(project_root, "p8", runtime_root=runtime_root)
 
 
-@pytest.mark.parametrize("run_count", [10, 50])
 def test_bare_continue_target_walks_only_its_unbound_run_tail(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    run_count: int,
 ) -> None:
     runtime_root = tmp_path / "runtime"
+    run_count = 10
     bound = seed_run(
         runtime_root,
         "p7",

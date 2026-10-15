@@ -621,8 +621,6 @@ def test_spawn_fork_uses_recovered_session_id(
 def test_continue_preserves_native_and_switched_chat_sources(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, switched_chat: bool,
 ) -> None:
-    from meridian.lib.core.refs import parse_ref
-
     project_root = tmp_path / "repo"
     project_root.mkdir()
     runtime_root = _state_root(project_root)

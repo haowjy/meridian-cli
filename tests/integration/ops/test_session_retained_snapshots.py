@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 
 from meridian.lib.core.native_identity import NativeSessionUnavailable
+from meridian.lib.core.types import SpawnId
 from meridian.lib.ops.session_archive import (
     SessionImportInput,
     SessionRestoreInput,
@@ -26,6 +27,7 @@ from meridian.lib.ops.session_target import resolve_transcript_source
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.native_snapshot import NATIVE_SNAPSHOT_FILENAME
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
+from meridian.lib.state.spawn.runs import runs_of
 
 NEEDLE = "SNAPNEEDLE"
 
@@ -141,7 +143,7 @@ def test_restored_chat_and_spawn_read_local_snapshot_and_stay_inert(
         SessionRestoreInput(project_root=str(project), archive=str(archived.zip), refs=("c1",))
     ).restored_histories[0]
     assert restored.chat_id is not None
-    assert (root / "spawn-heads" / restored.spawn_id).read_text(encoding="utf-8") == "1\n"
+    assert runs_of(root, SpawnId(restored.spawn_id)) == (restored.spawn_id,)
     for ref in (restored.chat_id, restored.spawn_id):
         assert NEEDLE in _log(project, ref)
         assert NEEDLE in _export(project, ref)

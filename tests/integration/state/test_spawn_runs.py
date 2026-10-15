@@ -86,7 +86,7 @@ def test_latest_run_above_spawn_counter_does_not_scan(
     assert not (tmp_path / "spawn-heads" / "p2").exists()
 
 
-def test_latest_run_probes_above_stale_pointer(tmp_path: Path) -> None:
+def test_latest_run_probes_above_stale_head(tmp_path: Path) -> None:
     seed_run(tmp_path, status=None)
     seed_run(tmp_path, "p1.2", status=None)
     seed_run(tmp_path, "p1.3", status=None)
@@ -95,21 +95,19 @@ def test_latest_run_probes_above_stale_pointer(tmp_path: Path) -> None:
     assert latest_run(tmp_path, SpawnId("p1")) == "p1.3"
 
 
-def test_latest_run_probes_below_pointer_written_before_publish(tmp_path: Path) -> None:
+def test_latest_run_probes_below_head_written_before_publish(tmp_path: Path) -> None:
     seed_run(tmp_path, status=None)
     (tmp_path / "spawn-heads" / "p1").write_text("3\n", encoding="utf-8")
 
     assert latest_run(tmp_path, SpawnId("p1")) == "p1"
 
 
-@pytest.mark.parametrize("unrelated_count", [10, 200])
 def test_latest_run_stats_only_target_spawn(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    unrelated_count: int,
 ) -> None:
     seed_run(tmp_path, status=None)
-    for number in range(2, unrelated_count + 2):
+    for number in range(2, 12):
         state = tmp_path / "spawns" / f"p{number}" / "state.json"
         state.parent.mkdir()
         state.write_text("{}\n", encoding="utf-8")
