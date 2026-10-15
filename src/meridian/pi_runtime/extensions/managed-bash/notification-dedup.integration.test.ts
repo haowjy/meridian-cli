@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { BashRecordsFile } from "../shared/schemas";
+import { isTerminalBashStatus, type BashRecordsFile, type BashStatus } from "../shared/schemas";
 import { SpawnWatchRuntime } from "../meridian-spawn-watch/src/index";
 import managedBashExtension from "./src/index";
 
@@ -36,6 +36,23 @@ async function waitForTerminalRecord(recordsPath: string, bashId: string): Promi
 type RegisteredTool = {
   execute: (...args: unknown[]) => Promise<{ details?: unknown }>;
 };
+
+type BashOutputDetails = { status: BashStatus; output: string };
+
+async function waitForTerminalOutput(tool: RegisteredTool, bashId: string): Promise<BashOutputDetails> {
+  const deadline = Date.now() + 2_000;
+  let attempts = 0;
+  let lastStatus: BashStatus | undefined;
+  while (Date.now() < deadline) {
+    const result = await tool.execute("call", { action: "output", bash_id: bashId });
+    const details = result.details as BashOutputDetails;
+    attempts += 1;
+    lastStatus = details.status;
+    if (isTerminalBashStatus(details.status)) return details;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`bash output did not become terminal after ${attempts} attempts (last status: ${lastStatus ?? "missing"}): ${bashId}`);
+}
 
 async function waitForMessages(messages: unknown[]): Promise<void> {
   const deadline = Date.now() + 2_000;
@@ -151,9 +168,8 @@ describe("managed bash and spawn-watch completion notifications", () => {
       const running = JSON.parse(await readFile(recordsPath, "utf-8")) as BashRecordsFile;
       expect(running.records[bashId]?.notification_consumed_at_ms).toBeUndefined();
 
-      await waitForTerminalRecord(recordsPath, bashId);
-      const read = await tools.get("bash_manage")!.execute("call", { action: "output", bash_id: bashId });
-      expect((read.details as { output: string }).output).toContain("done");
+      const read = await waitForTerminalOutput(tools.get("bash_manage")!, bashId);
+      expect(read.output).toContain("done");
       const records = JSON.parse(await readFile(recordsPath, "utf-8")) as BashRecordsFile;
       expect(typeof records.records[bashId]?.notification_consumed_at_ms).toBe("number");
 

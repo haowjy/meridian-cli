@@ -52,6 +52,9 @@ No-arg `spawn wait` gives a missing history index its own sticky cold-build budg
 the wait deadline then bounds one catch-up attempt. If the history index is still
 busy, the command exits cleanly with a discovery-pending checkpoint. Re-run it; it
 does not print "No pending spawns" until discovery has complete coverage.
+Candidate lookup is scoped to the current chat in the index, or to the caller's
+recursive subtree for nested spawns, before selected rows are checked against
+authoritative spawn state.
 
 | Flag | Description |
 | ---- | ----------- |

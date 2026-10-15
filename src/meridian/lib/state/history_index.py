@@ -1467,24 +1467,26 @@ class HistoryIndex:
         self,
         root_spawn_id: str,
         *,
+        active_only: bool = False,
         deadline: float | None = None,
     ) -> tuple[tuple[str, str | None, bool], ...]:
         """Return the indexed transitive subtree, retaining archived ancestry.
 
         The query context performs one bounded catch-up before taking the shared
         database lock.  Callers must authoritatively read every returned loose
-        row before using its lifecycle state.
+        row before using its lifecycle state. ``active_only`` filters after
+        traversal, preserving inactive ancestors needed to reach active descendants.
         """
         statement = text(
             """
-            WITH RECURSIVE subtree(local_id, spawn_id, parent, archived, path) AS (
-                SELECT local_id, spawn_id, parent, archive_id IS NOT NULL,
+            WITH RECURSIVE subtree(local_id, spawn_id, parent, archived, active, path) AS (
+                SELECT local_id, spawn_id, parent, archive_id IS NOT NULL, active,
                        ',' || spawn_id || ','
                   FROM records
                  WHERE parent = :root AND spawn_id != :root
                 UNION ALL
                 SELECT child.local_id, child.spawn_id, child.parent,
-                       child.archive_id IS NOT NULL,
+                       child.archive_id IS NOT NULL, child.active,
                        subtree.path || child.spawn_id || ','
                   FROM records AS child
                   JOIN subtree ON child.parent = subtree.spawn_id
@@ -1493,13 +1495,16 @@ class HistoryIndex:
             )
             SELECT DISTINCT local_id, parent, archived
               FROM subtree
+             WHERE :active_only = 0 OR active = 1
              ORDER BY local_id
             """
         )
         with self.query(deadline=deadline) as db:
             return tuple(
                 (str(row[0]), str(row[1]) if row[1] is not None else None, bool(row[2]))
-                for row in db.execute(statement, {"root": root_spawn_id})
+                for row in db.execute(
+                    statement, {"root": root_spawn_id, "active_only": active_only}
+                )
             )
 
     def work_chat_ids(self, work_id: str, *, deadline: float | None = None) -> set[str]:

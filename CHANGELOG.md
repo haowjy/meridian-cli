@@ -16,6 +16,22 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Upgrade notes
 - First indexed read rebuilds history schema 8; no authority migration. See [upgrade notes](docs/upgrading.md#spawnrun-identity-boundary).
 
+## [0.10.10] - 2026-10-15
+
+### Fixed
+- Finalize spawns on harness completion, not next watchdog poll (~1 s off every streaming spawn exit).
+
+## [0.10.9] - 2026-10-15
+
+### Fixed
+- Keep harness exit text, including Claude resume commands, on screen with
+  Meridian's continue hint below it.
+
+## [0.10.8] - 2026-10-15
+
+### Fixed
+- No-arg `spawn wait` scopes index reads to the caller; no full-history scan.
+
 ## [0.10.7] - 2026-10-15
 
 ### Fixed

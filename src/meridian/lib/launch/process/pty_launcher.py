@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import signal
 import struct
 import sys
@@ -16,15 +17,31 @@ from meridian.lib.platform import IS_WINDOWS, fcntl, pty, select, termios, tty
 
 from .ports import LaunchedProcess, ProcessLauncher
 
-_TERMINAL_RESTORE_SEQUENCE = (
+_MOUSE_MODE_RESET_SEQUENCE = (
     b"\x1b[?1000l"
     b"\x1b[?1002l"
     b"\x1b[?1003l"
     b"\x1b[?1006l"
-    b"\x1b[?1049l"
-    b"\x1b[?25h"
-    b"\x1b[J"  # Clear stale TUI text below the restored cursor before the quit hint.
 )
+_ALTERNATE_SCREEN_EXIT_SEQUENCE = b"\x1b[?1049l"
+_CURSOR_SHOW_SEQUENCE = b"\x1b[?25h"
+_CLEAR_TO_END_SEQUENCE = b"\x1b[J"
+_ALTERNATE_SCREEN_TRANSITION = re.compile(rb"\x1b\[\?(?:47|1047|1049)([hl])")
+_ALTERNATE_SCREEN_TAIL_LENGTH = len(_ALTERNATE_SCREEN_EXIT_SEQUENCE) - 1
+
+
+@dataclass
+class _AlternateScreenState:
+    """Track the child's alternate-screen state across PTY read boundaries."""
+
+    enabled: bool = False
+    _tail: bytes = b""
+
+    def observe(self, chunk: bytes) -> None:
+        data = self._tail + chunk
+        for match in _ALTERNATE_SCREEN_TRANSITION.finditer(data):
+            self.enabled = match.group(1) == b"h"
+        self._tail = data[-_ALTERNATE_SCREEN_TAIL_LENGTH:]
 
 
 def can_use_pty() -> bool:
@@ -64,6 +81,7 @@ def _copy_primary_pty_output(
     stdin_open = True
     saved_tty_attrs: Any = None
     last_forwarded_winsize: bytes | None = None
+    alternate_screen = _AlternateScreenState()
 
     try:
         if os.isatty(stdin_fd):
@@ -101,6 +119,7 @@ def _copy_primary_pty_output(
                     if output_handle is not None:
                         output_handle.write(chunk)
                         output_handle.flush()
+                    alternate_screen.observe(chunk)
                     try:
                         os.write(stdout_fd, chunk)
                     except OSError:
@@ -125,7 +144,17 @@ def _copy_primary_pty_output(
             termios.tcsetattr(stdin_fd, termios.TCSADRAIN, saved_tty_attrs)
         if os.isatty(stdout_fd):
             with suppress(OSError):
-                os.write(stdout_fd, _TERMINAL_RESTORE_SEQUENCE)
+                os.write(
+                    stdout_fd,
+                    _MOUSE_MODE_RESET_SEQUENCE
+                    + (
+                        _ALTERNATE_SCREEN_EXIT_SEQUENCE
+                        if alternate_screen.enabled
+                        else b""
+                    )
+                    + _CURSOR_SHOW_SEQUENCE
+                    + _CLEAR_TO_END_SEQUENCE,
+                )
 
     if wait_cancelled is not None and wait_cancelled.is_set():
         return 130
