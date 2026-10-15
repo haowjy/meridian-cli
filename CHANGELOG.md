@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-10-15
+
 ### Fixed
 - Meridian reopen closes old idle stretch before exec; no stale push, warn, compact.
 
