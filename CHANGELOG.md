@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.5] - 2026-10-15
+
 ### Fixed
 - Compact idle sessions even with unsent drafts; Codex clears the composer first.
 - Retry unreadable Codex screens, then skip compaction and push a warning.
