@@ -42,9 +42,14 @@ from meridian.lib.launch.continue_replay import (
     build_continue_replay_contract,
     continue_replay_source_from_reference,
 )
-from meridian.lib.launch.request import SessionRequest, cross_harness_continue_error
+from meridian.lib.launch.request import SessionRequest
 from meridian.lib.ops.mars import mars_agent_subagents, mars_list_subagents
-from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
+from meridian.lib.ops.reference import (
+    ContinueTarget,
+    ResolvedSessionReference,
+    resolve_continue_target,
+    resolve_session_reference,
+)
 from meridian.lib.ops.runtime import (
     OperationRuntime,
     build_runtime_from_root_and_config,
@@ -2084,68 +2089,52 @@ def _source_spawn_for_follow_up(
     *,
     runtime_root: Path | None = None,
     harness_hint: str | None = None,
-) -> tuple[RunId, SpawnRecord, ResolvedSessionReference]:
+    fork: bool = False,
+) -> tuple[ContinueTarget, SpawnRecord | None]:
     parsed_source = parse_ref(payload_spawn_id)
-    # Native session IDs need session provenance, not spawn-ID resolution.
-    resolved_spawn_id = (
+    resolved_run_id = (
         resolve_spawn_reference(project_root, payload_spawn_id, runtime_root=runtime_root)
-        if parsed_source.kind != "native" or payload_spawn_id.startswith("@")
+        if payload_spawn_id.startswith("@")
         else None
     )
-    try:
-        # Resolve tracked chats in their native harness first. A requested
-        # harness is not evidence that the chat belongs to that harness.
-        resolved_reference = resolve_session_reference(
-            project_root,
-            payload_spawn_id,
-            runtime_root=runtime_root,
-        )
-    except ValueError:
-        if harness_hint is None:
-            raise
-        # An untracked native session ID may need the hint to disambiguate it.
-        resolved_reference = resolve_session_reference(
-            project_root,
-            payload_spawn_id,
-            runtime_root=runtime_root,
-            harness_hint=harness_hint,
-        )
-    if (
-        harness_hint is not None
-        and resolved_reference.harness is not None
-        and resolved_reference.harness != harness_hint
-    ):
-        raise ValueError(
-            cross_harness_continue_error(
-                resolved_reference.source_chat_id,
-                resolved_reference.harness,
-                harness_hint,
-            )
+    target = resolve_continue_target(
+        project_root,
+        payload_spawn_id,
+        fork=fork,
+        runtime_root=runtime_root,
+        harness_hint=harness_hint,
+        resolved_run_id=resolved_run_id,
+    )
+    resolved_reference = target.reference
+    if resolved_run_id is not None:
+        source_run_id = resolved_run_id
+    elif parsed_source.kind == "chat":
+        source_run_id = target.predecessor_run
+    else:
+        source_run_id = (
+            parse_ref(resolved_reference.source_spawn_id, row_key=True)
+            if resolved_reference.source_spawn_id is not None
+            else None
         )
     row = (
-        read_spawn_row(project_root, resolved_spawn_id, runtime_root=runtime_root)
-        if resolved_spawn_id is not None else None
+        read_spawn_row(project_root, source_run_id, runtime_root=runtime_root)
+        if source_run_id is not None
+        else None
     )
-    follow_reference_provenance = (
-        parsed_source.kind == "spawn" or row is None
-    ) and resolved_reference.source_spawn_id is not None
-    if follow_reference_provenance:
-        # Bare spawn continuation skips reservations which never reached a
-        # session. Raw native refs keep their exact retained provenance.
-        source_spawn_id = resolved_reference.source_spawn_id
-        assert source_spawn_id is not None
-        resolved_spawn_id = parse_ref(source_spawn_id, row_key=True)
-        row = read_spawn_row(project_root, resolved_spawn_id, runtime_root=runtime_root)
-        if row is not None and parsed_source.kind != "spawn" and (
+    if (
+        row is not None
+        and parsed_source.kind not in {"spawn", "chat"}
+        and (
             row.chat_id != resolved_reference.source_chat_id
             or row.harness != resolved_reference.harness
-        ):
-            raise ValueError("Native session reference has inconsistent retained spawn metadata")
-    if row is None:
+        )
+    ):
+        raise ValueError("Native session reference has inconsistent retained spawn metadata")
+    if row is None and parsed_source.kind != "chat":
         raise ValueError(
             f"Spawn '{payload_spawn_id}' not found; continuation requires retained spawn metadata"
         )
-    return row.id, row, resolved_reference
+    return target, row
 
 
 def _prompt_for_follow_up(
@@ -2201,20 +2190,21 @@ def _build_continue_create_input(
     *,
     payload: SpawnContinueInput,
     source_spawn: SpawnRecord | None,
-    source_spawn_id: str,
-    resolved_reference: ResolvedSessionReference,
+    target: ContinueTarget,
     runtime_root: Path,
 ) -> SpawnCreateInput:
+    resolved_reference = target.reference
+    source_spawn_id = str(source_spawn.id) if source_spawn is not None else target.source_ref
     continue_contract = build_continue_replay_contract(
         source=continue_replay_source_from_reference(
-            spawn_of(source_spawn_id) if payload.spawn_id.startswith("@") else payload.spawn_id,
+            target.source_ref,
             resolved_reference,
             harness_session_id=resolved_reference.authoritative_harness_session_id,
         ),
+        target=target,
         explicit_harness=(payload.harness or "").strip() or None,
         requested_agent=payload.agent,
         agent_opt_out=payload.agent_opt_out,
-        fork=payload.fork,
         requested_model_override=payload.model,
         runtime_root=runtime_root,
     )
@@ -2454,40 +2444,22 @@ def spawn_continue_sync(
     if runtime_root is None:
         normalized = payload.spawn_id.strip()
         raise ValueError(f"Spawn '{normalized}' not found")
-    from meridian.lib.ops.reference import validate_continue_reference
-    from meridian.lib.state.session_identity import owner_spawn_for_chat
-    from meridian.lib.state.spawn.runs import latest_run
-    validate_continue_reference(payload.spawn_id)
-    if parse_ref(payload.spawn_id).kind == "chat":
-        resolved_reference = resolve_session_reference(
-            project_root, payload.spawn_id, runtime_root=runtime_root,
-        )
-        if (payload.harness and resolved_reference.harness
-                and payload.harness != resolved_reference.harness):
-            raise ValueError(cross_harness_continue_error(
-                resolved_reference.source_chat_id, resolved_reference.harness, payload.harness,
-            ))
-        owner = (
-            spawn_of(resolved_reference.source_spawn_id)
-            if resolved_reference.source_spawn_id is not None
-            else owner_spawn_for_chat(runtime_root, payload.spawn_id)
-        )
-        owner_run = latest_run(runtime_root, owner) if owner is not None else None
-        source_spawn = spawn_store.get_spawn(runtime_root, owner_run) if owner_run else None
-        resolved_spawn_id = str(owner_run or payload.spawn_id)
-    else:
-        resolved_spawn_id, source_spawn, resolved_reference = _source_spawn_for_follow_up(
-            payload.spawn_id, project_root, runtime_root=runtime_root, harness_hint=payload.harness,
-        )
+    target, source_spawn = _source_spawn_for_follow_up(
+        payload.spawn_id,
+        project_root,
+        runtime_root=runtime_root,
+        harness_hint=payload.harness,
+        fork=payload.fork,
+    )
+    resolved_reference = target.reference
     if resolved_reference.missing_harness_session_id:
-        raise NativeSessionUnavailable(resolved_spawn_id, "unbound")
+        raise NativeSessionUnavailable(target.source_ref, "unbound")
 
     _reject_continue_policy_overrides(payload)
     create_input = _build_continue_create_input(
         payload=payload,
         source_spawn=source_spawn,
-        source_spawn_id=resolved_spawn_id,
-        resolved_reference=resolved_reference,
+        target=target,
         runtime_root=runtime_root,
     )
     if prepared is not None:

@@ -27,7 +27,10 @@ from meridian.lib.launch.continue_replay import (
 )
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.resolve import resolve_agent_launch_input
-from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
+from meridian.lib.ops.reference import (
+    ContinueTarget,
+    resolve_continue_target,
+)
 from meridian.lib.ops.run_boundary import run_boundary_summary
 from meridian.lib.ops.spawn.models import normalize_goal
 from meridian.lib.state import spawn_store
@@ -100,13 +103,14 @@ def resolve_session_target(
     project_root: Path,
     continue_ref: str,
     harness_hint: str | None = None,
-) -> ResolvedSessionReference:
-    normalized = continue_ref.strip()
-    if not normalized:
-        raise ValueError("--continue requires a non-empty session reference.")
-    from meridian.lib.ops.reference import validate_continue_reference
-    validate_continue_reference(normalized)
-    return resolve_session_reference(project_root, normalized, harness_hint=harness_hint)
+    fork: bool = False,
+) -> ContinueTarget:
+    return resolve_continue_target(
+        project_root,
+        continue_ref,
+        fork=fork,
+        harness_hint=harness_hint,
+    )
 
 
 def run_primary_launch(
@@ -232,17 +236,19 @@ def run_primary_launch(
             raise ValueError("Cannot combine --continue with --skills.")
         if passthrough:
             raise ValueError("Cannot combine --continue with passthrough args (--).")
-        resolved_continue = resolve_session_target(
+        continue_target = resolve_session_target(
             project_root=project_root, continue_ref=resume_target, harness_hint=harness,
         )
+        resolved_continue = continue_target.reference
         if resolved_continue.missing_harness_session_id:
             raise NativeSessionUnavailable(resume_target, "unbound")
         continue_contract = build_continue_replay_contract(
             source=continue_replay_source_from_reference(
-                source_ref=resume_target,
+                source_ref=continue_target.source_ref,
                 resolved_reference=resolved_continue,
                 harness_session_id=resolved_continue.authoritative_harness_session_id,
             ),
+            target=continue_target,
             explicit_harness=explicit_harness,
             requested_agent=agent_launch.agent,
             agent_opt_out=agent_launch.agent_opt_out,
@@ -279,8 +285,10 @@ def run_primary_launch(
         session_mode = SessionMode.RESUME
     elif selected_fork_target is not None:
         resolved_fork = resolve_session_target(
-            project_root=project_root, continue_ref=selected_fork_target
-        )
+            project_root=project_root,
+            continue_ref=selected_fork_target,
+            fork=True,
+        ).reference
         if resolved_fork.missing_harness_session_id:
             raise NativeSessionUnavailable(selected_fork_target, "unbound")
 

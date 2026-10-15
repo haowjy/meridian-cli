@@ -8,10 +8,11 @@ from uuid import UUID
 
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.native_identity import NativeSessionUnavailable
-from meridian.lib.core.refs import ParsedRef, parse_ref
-from meridian.lib.core.types import RunId
+from meridian.lib.core.refs import ParsedRef, parse_ref, spawn_of
+from meridian.lib.core.types import RunId, SpawnId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
+from meridian.lib.launch.request import cross_harness_continue_error
 from meridian.lib.ops.reference_recovery import (
     RecoveryResult,
     recover_harness_session_id,
@@ -69,6 +70,17 @@ class ResolvedSessionReference:
         ):
             return None
         return self.harness_session_id if self.tracked else self.effective_harness_session_id
+
+
+@dataclass(frozen=True)
+class ContinueTarget:
+    """One resolved continue decision shared by ops and launch composition."""
+
+    spawn_id: SpawnId | None
+    predecessor_run: RunId | None
+    reference: ResolvedSessionReference
+    source_ref: str
+    fork: bool
 
 
 def _normalize_optional(value: str | None) -> str | None:
@@ -397,20 +409,85 @@ def resolve_session_reference(
     )
 
 
-def validate_continue_reference(ref: str) -> None:
-    """Exact continues name a spawn or a segment, never an immutable run."""
-    parsed = parse_ref(ref)
-    if parsed.kind == "run":
+def resolve_continue_target(
+    project_root: Path,
+    ref: str,
+    *,
+    fork: bool,
+    runtime_root: Path | None = None,
+    harness_hint: str | None = None,
+    resolved_run_id: RunId | None = None,
+) -> ContinueTarget:
+    """Resolve a continue reference once into its source and run identity."""
+    normalized = ref.strip()
+    if not normalized:
+        raise ValueError("--continue requires a non-empty session reference.")
+    parsed = parse_ref(normalized)
+    if parsed.kind == "run" and not fork:
         raise ValueError(
             f"Cannot continue run '{parsed.value}'; continue the spawn "
             f"(`{parsed.spawn_id}`) or fork the run (`--fork {parsed.value}`)."
         )
 
+    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+    identity_ref = (
+        str(spawn_of(resolved_run_id))
+        if normalized.startswith("@") and resolved_run_id is not None
+        else normalized
+    )
+    reference = resolve_session_reference(
+        project_root,
+        identity_ref,
+        runtime_root=resolved_runtime_root,
+        harness_hint=harness_hint,
+    )
+    if (
+        harness_hint is not None
+        and reference.harness is not None
+        and harness_hint != reference.harness
+    ):
+        raise ValueError(
+            cross_harness_continue_error(
+                reference.source_chat_id, reference.harness, harness_hint
+            )
+        )
+
+    source_run = (
+        parse_ref(reference.source_spawn_id, row_key=True)
+        if reference.source_spawn_id is not None
+        else resolved_run_id
+    )
+    if parsed.kind == "run" and parsed.run_id is not None:
+        source_run = parsed.run_id
+
+    spawn_id: SpawnId | None = None
+    if not fork:
+        if parsed.kind == "spawn":
+            spawn_id = parsed.spawn_id
+        elif source_run is not None:
+            spawn_id = spawn_of(source_run)
+        elif reference.source_chat_id is not None and resolved_runtime_root is not None:
+            spawn_id = session_identity.owner_spawn_for_chat(
+                resolved_runtime_root, reference.source_chat_id
+            )
+
+    predecessor = source_run
+    if spawn_id is not None and resolved_runtime_root is not None:
+        predecessor = latest_run(resolved_runtime_root, spawn_id)
+    return ContinueTarget(
+        spawn_id=spawn_id,
+        predecessor_run=predecessor,
+        reference=reference,
+        source_ref=identity_ref,
+        fork=fork,
+    )
+
 
 __all__ = [
+    "ContinueTarget",
     "ResolvedSessionReference",
     "resolve_continue_source_row",
+    "resolve_continue_target",
     "resolve_session_reference",
     "resolve_spawn_ref",
-    "validate_continue_reference",
 ]
