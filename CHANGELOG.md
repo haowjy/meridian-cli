@@ -22,7 +22,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Upgrade notes
 - Replace `idle.min_compact_tokens` with `idle.compact_min_growth_tokens`; idle
-  baselines start fresh. See [upgrade steps](docs/upgrading.md#upgrading-to-0106-idle-compaction-growth-floor).
+  baselines start fresh. See [upgrade steps](docs/upgrading.md#idle-compaction-growth-floor).
 
 ## [0.10.5] - 2026-10-15
 
@@ -157,7 +157,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Upgrade notes
 - Direnv isolation is opt-in; no state migration. Older releases ignore the new
-  launch policy. See [direnv upgrade notes](docs/upgrading.md#upgrading-to-098-ignoring-direnv).
+  launch policy. See [direnv upgrade notes](docs/upgrading.md#ignoring-direnv).
 
 ### Added
 - Add `environment.ignore_direnv` with `MERIDIAN_IGNORE_DIRENV` and
@@ -219,7 +219,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.9.5] - 2026-10-12
 
 ### Upgrade notes
-- Stop active launches and back up project runtime state before upgrading. New current-chat fields are incompatible with 0.9.3 and 0.9.4 readers; rollback requires pre-upgrade state. See [current-chat tracking](docs/upgrading.md#upgrading-to-095-current-chat-tracking).
+- Stop active launches and back up project runtime state before upgrading. New current-chat fields are incompatible with 0.9.3 and 0.9.4 readers; rollback requires pre-upgrade state. See [current-chat tracking](docs/upgrading.md#current-chat-tracking).
 
 ### Changed
 - Persist a run's current chat separately from its immutable entry chat. Rebuild history projection in a new versioned namespace.
