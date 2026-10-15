@@ -271,6 +271,7 @@ def test_pruning_does_not_split_spawn_lock_identity(tmp_path: Path) -> None:
             path=str(artifact_path),
             size_bytes=0,
             last_activity="2026-01-01T00:00:00+00:00",
+            sibling_run_ids=(spawn_id,),
         )
     ]
 
@@ -302,6 +303,7 @@ def test_pruning_preserves_spawn_with_pending_cleanup_claim(tmp_path: Path) -> N
             path=str(paths.spawns_dir / spawn_id),
             size_bytes=0,
             last_activity="2026-01-01T00:00:00+00:00",
+            sibling_run_ids=(spawn_id,),
         )
     ]
 

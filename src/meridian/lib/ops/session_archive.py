@@ -14,6 +14,7 @@ from meridian.lib.config.history_models import HistoryArchiveConfig
 from meridian.lib.config.loader import load_config
 from meridian.lib.core.domain import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.refs import parse_ref, spawn_of
+from meridian.lib.core.types import SpawnId
 from meridian.lib.ops.runner_history_prune import (
     PRUNE_AFTER_DAYS,
     RunnerHistoryPrune,
@@ -52,7 +53,6 @@ from meridian.lib.state.spawn.runs import (
     group_runs,
     retention_dependencies,
     retention_run_ids,
-    runs_of,
 )
 from meridian.lib.state.spawn_aggregate import cleanup_retired_spawn, retire_published_spawn
 
@@ -171,7 +171,12 @@ def _refresh_history_index(root: Path) -> None:
 
 def _protected(
     root: Path,
-) -> tuple[dict[str, SpawnRecord], set[str], dict[str, set[str]]]:
+) -> tuple[
+    dict[str, SpawnRecord],
+    set[str],
+    dict[str, set[str]],
+    dict[SpawnId, tuple[SpawnRecord, ...]],
+]:
     scan = spawn_store.list_spawns(root)
     if scan.quarantines:
         raise ValueError(
@@ -282,7 +287,7 @@ def _protected(
             if record.chat_id in chats | fork_chats:
                 protected.add(record.id)
         changed = len(protected) != before
-    return records, protected, edges
+    return records, protected, edges, runs_by_spawn
 
 
 def archive_history(
@@ -312,7 +317,7 @@ def archive_history(
         # No omission-sensitive policy may start from an incomplete candidate set.
         candidates = HistoryIndex(root).spawns(oldest_first=True)
         with lock_file(changes.mutation_lock, mode="shared"):
-            _, protected, edges = _protected(root)
+            _, protected, edges, _ = _protected(root)
             sessions = session_records_for_spawns(root, candidates)
         # The published snapshot is the archive source of truth. Explicitly
         # selected records (and age-eligible records during maintenance)
@@ -474,7 +479,7 @@ def archive_history(
         pending = list(selected)
         while pending:
             with lock_file(changes.mutation_lock):
-                records, protected_now, edges = _protected(root)
+                records, protected_now, edges, runs_by_spawn = _protected(root)
                 # Retire dependents first, including when their dependencies are older.
                 # An unselected or changed loose dependent keeps its dependency loose.
                 required = {target for targets in edges.values() for target in targets}
@@ -511,20 +516,26 @@ def archive_history(
                             }
                         ),
                     )
-                    siblings = group_runs(records.values())[spawn_of(current.id)]
+                    siblings = runs_by_spawn[spawn_of(current.id)]
                     dependencies = retention_dependencies(siblings)
                     special_now = current.id in dependencies
                     predecessors = dependencies.get(current.id, set())
+                    highest_seen = max(
+                        parse_ref(str(sibling.id)).run or 1 for sibling in siblings
+                    )
+                    successor = parse_ref(
+                        f"{spawn_of(current.id)}.{highest_seen + 1}", row_key=True,
+                    )
                     retired = retire_published_spawn(
                         root,
                         current.id,
-                        can_delete=lambda row, captured=captured, predecessors=predecessors: (
+                        can_delete=lambda row, captured=captured, predecessors=predecessors,
+                        successor=successor: (
                             row is not None
                             and row.history_id == captured.history_id
-                            and (
-                                not predecessors.intersection(
-                                    runs_of(root, spawn_of(row.id))
-                                )
+                            and not any(
+                                (root / "spawns" / run_id / "state.json").is_file()
+                                for run_id in (*predecessors, successor)
                             )
                         ),
                         guard_spawn_allocation=special_now,

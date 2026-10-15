@@ -34,7 +34,6 @@ from meridian.lib.state.spawn.runs import (
     group_runs,
     retention_dependencies,
     retention_run_ids,
-    runs_of,
 )
 from meridian.lib.state.user_paths import get_context_home
 
@@ -84,6 +83,7 @@ class StaleSpawnArtifact(BaseModel):
     path: str
     size_bytes: int
     last_activity: str
+    sibling_run_ids: tuple[RunId, ...]
 
 
 @dataclass(frozen=True)
@@ -391,8 +391,23 @@ def _scan_stale_spawn_artifacts(
                     path=spawn_dir.as_posix(),
                     size_bytes=size_bytes,
                     last_activity=_iso_from_mtime(latest_mtime),
+                    sibling_run_ids=(run_id,),
                 )
             )
+
+    results = [
+        artifact.model_copy(
+            update={
+                "sibling_run_ids": tuple(
+                    sorted(
+                        all_run_ids[str(spawn_of(artifact.spawn_id))],
+                        key=reference_sort_key,
+                    )
+                )
+            }
+        )
+        for artifact in results
+    ]
 
     stale_ids = {str(row.spawn_id) for row in results}
     special: set[str] = set()
@@ -547,13 +562,35 @@ def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> SpawnArtifac
             lock_file(paths.spawns_flock),
         ):
             run_id = parse_ref(str(artifact.spawn_id), row_key=True)
-            run_ids = runs_of(runtime_root, spawn_of(run_id))
-            rows = [_read_prune_sibling(runtime_root, key) for key in run_ids]
-            dependencies = retention_dependencies([row for row in rows if row is not None])
-            if any(row is None for row in rows) or (
+            if run_id not in artifact.sibling_run_ids:
+                continue
+            spawn_id = spawn_of(run_id)
+            highest_seen = max(
+                parse_ref(str(key)).run or 1 for key in artifact.sibling_run_ids
+            )
+            successor = parse_ref(f"{spawn_id}.{highest_seen + 1}", row_key=True)
+            checked_ids = (*artifact.sibling_run_ids, successor)
+            rows_by_id = {
+                key: _read_prune_sibling(runtime_root, key) for key in checked_ids
+            }
+            # A reopen published after the scan, or a quarantined sibling, makes
+            # the scan-time retention decision incomplete.
+            if rows_by_id[successor] is not None or any(
+                row is None and (paths.spawns_dir / key / "state.json").exists()
+                for key, row in rows_by_id.items()
+            ):
+                continue
+            rows = [
+                row
+                for key in artifact.sibling_run_ids
+                if (row := rows_by_id[key]) is not None
+            ]
+            run_ids = {row.id for row in rows}
+            dependencies = retention_dependencies(rows)
+            if (
                 run_id in dependencies and (
                     dependencies[run_id].intersection(run_ids)
-                    or any(is_active_spawn_status(row.status) for row in rows if row is not None)
+                    or any(is_active_spawn_status(row.status) for row in rows)
                 )
             ):
                 continue
