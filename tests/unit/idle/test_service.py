@@ -6,7 +6,12 @@ from threading import Lock
 from typing import TypeVar
 
 from meridian.lib.config.models import MeridianConfig
-from meridian.lib.harness.idle_types import CacheTtl, DetectIdleTtl, IdleFacts
+from meridian.lib.harness.idle_types import (
+    COMPACT_SCREEN_NOT_RECOGNIZED,
+    CacheTtl,
+    DetectIdleTtl,
+    IdleFacts,
+)
 from meridian.lib.idle.service import (
     AutocompactOffReader,
     ConfigResult,
@@ -475,6 +480,65 @@ def test_failed_compaction_clears_the_window_and_allows_reanchor() -> None:
     assert (current.done["compact"], current.compact_window_until_ms) == ("failed", None)
     next_arm = idle.arm(harness="example", session="s1", ttl_seconds=3600)
     assert (next_arm.stretch, next_arm.anchor, next_arm.reason) == (1, 2, None)
+
+
+def test_unreadable_compaction_screen_sends_one_push_notification() -> None:
+    idle, clock, _, sender = service()
+    armed = idle.arm(harness="codex", session="s1", ttl_seconds=3600)
+    clock.value = armed.compact_at or 0
+    idle.fire(
+        "compact",
+        harness="codex",
+        session="s1",
+        stretch=1,
+        anchor=1,
+        facts=SAFE_FACTS,
+    )
+
+    first = idle.done(
+        "compact",
+        harness="codex",
+        session="s1",
+        stretch=1,
+        result="vetoed",
+        detail=COMPACT_SCREEN_NOT_RECOGNIZED,
+    )
+    duplicate = idle.done(
+        "compact",
+        harness="codex",
+        session="s1",
+        stretch=1,
+        result="vetoed",
+        detail=COMPACT_SCREEN_NOT_RECOGNIZED,
+    )
+
+    assert first.recorded is True
+    assert duplicate.recorded is False
+    assert [notice.body for notice in sender.notices] == [
+        "Codex not compacted: Meridian couldn't read its screen. "
+        "Cache expires in ~5 min."
+    ]
+    assert sender.notices[0].email is False
+
+    other = idle.arm(harness="codex", session="s2", ttl_seconds=3600)
+    clock.value = other.compact_at or 0
+    idle.fire(
+        "compact",
+        harness="codex",
+        session="s2",
+        stretch=1,
+        anchor=1,
+        facts=SAFE_FACTS,
+    )
+    idle.done(
+        "compact",
+        harness="codex",
+        session="s2",
+        stretch=1,
+        result="vetoed",
+        detail="tui-unavailable",
+    )
+    assert len(sender.notices) == 1
 
 
 def test_return_always_closes_during_compaction_and_late_done_records_same_stretch() -> None:

@@ -261,18 +261,46 @@ def test_pane_facts_match_probe_captures(
                     f"{PROMPT} /permissions  choose permissions\n\n"
                     f"{PROMPT} /\n\n{STATUS}\n\n"
                 )
-            ],
-            ("vetoed", "composer-not-focused"),
-            [("capture", "%42")],
+            ]
+            * 3,
+            ("vetoed", "screen-not-recognized"),
+            [("capture", "%42")] * 3,
             False,
-            id="popup-vetoed-before-clear",
+            id="unrecognized-after-retries-vetoed-before-clear",
+        ),
+        pytest.param(
+            [
+                (
+                    "  /model  choose a model\n"
+                    f"{PROMPT} /permissions  choose permissions\n\n"
+                    f"{PROMPT} /\n\n{STATUS}\n\n"
+                ),
+                _composer_capture("unfinished draft"),
+                _composer_capture("unfinished draftix"),
+                _composer_capture("Ask Codex to do anything", empty=True),
+                _composer_capture("/compact"),
+            ],
+            ("ok", None),
+            [
+                ("capture", "%42"),
+                ("capture", "%42"),
+                ("literal", "ix"),
+                ("capture", "%42"),
+                ("keys", ("C-c",)),
+                ("capture", "%42"),
+                ("literal", "/compact"),
+                ("capture", "%42"),
+                ("keys", ("Enter",)),
+            ],
+            True,
+            id="recognized-on-second-attempt-compacts",
         ),
         pytest.param(
             [
                 _composer_capture("unfinished draft"),
                 _composer_capture("unfinished draft"),
             ],
-            ("vetoed", "clear-primer-not-visible"),
+            ("vetoed", "screen-not-recognized"),
             [
                 ("capture", "%42"),
                 ("literal", "ix"),
