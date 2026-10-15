@@ -56,7 +56,7 @@ from meridian.lib.ops.runtime import (
     runtime_context,
 )
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state import session_store, spawn_store, work_store
+from meridian.lib.state import history_index, session_store, spawn_store, work_store
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.history_index import indexed_spawn_scan
 from meridian.lib.state.paths import resolve_project_paths
@@ -117,6 +117,12 @@ from .query import (
 
 _WAIT_PROGRESS_INTERVAL_SECS = 5.0
 _WAIT_POLL_INTERVAL_SECS = 0.25
+
+
+@dataclass(frozen=True)
+class _WaitTargetDiscovery:
+    spawn_ids: tuple[str, ...] = ()
+    discovery_pending: bool = False
 
 
 def _looks_like_spawn_ref(ref: str) -> bool:
@@ -1448,8 +1454,10 @@ def _resolve_wait_targets(
     project_root: Path,
     runtime_root: Path,
     ctx: RuntimeContext,
-) -> tuple[str, ...]:
-    """Resolve explicit wait IDs or discover pending spawns for the current chat."""
+    *,
+    deadline: float,
+) -> _WaitTargetDiscovery:
+    """Resolve explicit IDs or report that bounded no-arg discovery is unfinished."""
     candidates: list[str] = []
     for spawn_id in payload.spawn_ids:
         normalized = spawn_id.strip()
@@ -1460,7 +1468,7 @@ def _resolve_wait_targets(
         candidates.append(payload.spawn_id.strip())
 
     if candidates:
-        return tuple(dict.fromkeys(candidates))
+        return _WaitTargetDiscovery(tuple(dict.fromkeys(candidates)))
 
     chat_id = (ctx.chat_id or "").strip()
     if not chat_id:
@@ -1469,14 +1477,18 @@ def _resolve_wait_targets(
         )
 
     self_spawn_id = str(ctx.spawn_id) if ctx.spawn_id else None
-    pending = _discover_pending_spawns(
-        project_root,
-        runtime_root,
-        chat_id,
-        exclude_spawn_id=self_spawn_id,
-        only_descendants_of=self_spawn_id,
-    )
-    return tuple(row.id for row in pending)
+    try:
+        pending = _discover_pending_spawns(
+            project_root,
+            runtime_root,
+            chat_id,
+            exclude_spawn_id=self_spawn_id,
+            only_descendants_of=self_spawn_id,
+            deadline=deadline,
+        )
+    except history_index.HistoryIndexBusy:
+        return _WaitTargetDiscovery(discovery_pending=True)
+    return _WaitTargetDiscovery(tuple(row.id for row in pending))
 
 
 def _discover_pending_spawns(
@@ -1486,6 +1498,7 @@ def _discover_pending_spawns(
     *,
     exclude_spawn_id: str | None = None,
     only_descendants_of: str | None = None,
+    deadline: float | None = None,
 ) -> list[SpawnRecord]:
     """Discover active spawns for a given chat ID.
 
@@ -1500,7 +1513,7 @@ def _discover_pending_spawns(
     all_spawns = reconcile_spawns(
         project_root,
         runtime_root,
-        indexed_spawn_scan(runtime_root),
+        indexed_spawn_scan(runtime_root, deadline=deadline),
     ).records
 
     # Build descendant set if scoping to a parent
@@ -1621,8 +1634,6 @@ def _emit_wait_progress(message: str, *, sink: OutputSink) -> None:
 def _resolve_wait_checkpoint_seconds(
     *,
     payload: SpawnWaitInput,
-    spawn_ids: tuple[str, ...],
-    project_root: Path,
     config: MeridianConfig,
 ) -> float:
     """Resolve per-invocation or harness-aware wait-yield interval."""
@@ -1630,7 +1641,6 @@ def _resolve_wait_checkpoint_seconds(
     if payload.yield_after_secs is not None:
         return payload.yield_after_secs
 
-    _ = (spawn_ids, project_root)
     parent_harness = os.getenv("_MERIDIAN_HARNESS")
     return float(config.wait_yield_seconds_for_harness(parent_harness))
 
@@ -1731,10 +1741,39 @@ def spawn_wait_sync(
     has_explicit_ids = bool(payload.spawn_ids) or bool(
         payload.spawn_id is not None and payload.spawn_id.strip()
     )
-    spawn_ids = _resolve_wait_targets(payload, project_root, runtime_root, resolved_context)
-    wait_chat_id: str | None = None
-    if not has_explicit_ids:
-        wait_chat_id = (resolved_context.chat_id or "").strip() or None
+    wait_chat_id = None if has_explicit_ids else (resolved_context.chat_id or "").strip() or None
+    timeout_minutes = (
+        payload.timeout if payload.timeout is not None else config.wait_timeout_minutes
+    )
+    timeout_seconds = timeout_minutes * 60.0
+    checkpoint_seconds = _resolve_wait_checkpoint_seconds(payload=payload, config=config)
+    started = time.monotonic()
+    use_checkpoint = not payload.timeout_explicit
+    wait_seconds = checkpoint_seconds if use_checkpoint else timeout_seconds
+    wait_deadline = started + max(wait_seconds, 0.0)
+    checkpoint_deadline = wait_deadline if use_checkpoint else None
+    hard_deadline = None if use_checkpoint else wait_deadline
+    targets = _resolve_wait_targets(
+        payload,
+        project_root,
+        runtime_root,
+        resolved_context,
+        deadline=min(wait_deadline, time.monotonic() + history_index.QUERY_TIMEOUT),
+    )
+    if targets.discovery_pending:
+        return SpawnWaitMultiOutput(
+            spawns=(),
+            total_runs=0,
+            succeeded_runs=0,
+            failed_runs=0,
+            cancelled_runs=0,
+            any_failed=False,
+            checkpoint=True,
+            checkpoint_discovery_pending=True,
+            checkpoint_chat_id=wait_chat_id,
+            checkpoint_elapsed_secs=time.monotonic() - started,
+        )
+    spawn_ids = targets.spawn_ids
 
     if not spawn_ids:
         chat_display = wait_chat_id or "current chat"
@@ -1764,24 +1803,6 @@ def spawn_wait_sync(
         sink=active_sink,
     )
 
-    timeout_minutes = (
-        payload.timeout if payload.timeout is not None else config.wait_timeout_minutes
-    )
-    timeout_seconds = timeout_minutes * 60.0
-    checkpoint_seconds = _resolve_wait_checkpoint_seconds(
-        payload=payload,
-        spawn_ids=spawn_ids,
-        project_root=project_root,
-        config=config,
-    )
-    started = time.monotonic()
-    use_checkpoint = not payload.timeout_explicit
-    if use_checkpoint:
-        checkpoint_deadline = started + max(checkpoint_seconds, 0.0)
-        hard_deadline = None
-    else:
-        checkpoint_deadline = None
-        hard_deadline = started + max(timeout_seconds, 0.0)
     poll = (
         payload.poll_interval_secs
         if payload.poll_interval_secs is not None
@@ -1962,7 +1983,7 @@ def spawn_wait_sync(
                 if progress is not None:
                     _emit_wait_progress(progress, sink=active_sink)
                 next_progress = now + progress_interval
-            time.sleep(poll)
+            time.sleep(min(poll, max(0.0, wait_deadline - time.monotonic())))
     finally:
         _update_pi_wait_observation(
             runtime_root=runtime_root,

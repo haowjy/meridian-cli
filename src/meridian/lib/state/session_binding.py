@@ -26,11 +26,8 @@ class SessionBindings:
         self.events = read_events(self.paths.sessions_jsonl, sessions.parse_event)
         self._pending: list[sessions.SessionUpdateEvent] = []
         self.records: dict[str, sessions.SessionRecord] = {}
-        self.historical: set[tuple[str, str]] = set()
         for event in self.events:
             sessions.project_session_event(self.records, event)
-            if isinstance(event, sessions.SessionHistoricalEvent):
-                self.historical.add((event.chat_id, event.session_instance_id))
 
     def bind(
         self,
@@ -69,7 +66,7 @@ class SessionBindings:
         if startup_attempt_id is not None:
             sessions.validate_startup_identity(self.events, event)
         if isinstance(outcome, Bound) or startup_attempt_id is not None:
-            if (event.chat_id, event.session_instance_id) in self.historical:
+            if sessions.is_historical_generation(event.session_instance_id):
                 raise ValueError("Historical sessions are inert and cannot be mutated")
             self._pending.append(event)
             self.events.append(event)

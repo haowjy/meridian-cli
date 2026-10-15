@@ -1288,6 +1288,7 @@ class SpawnWaitMultiOutput(BaseModel):
     fail_fast: bool = False
     pending_ids: tuple[str, ...] = ()
     checkpoint: bool = False
+    checkpoint_discovery_pending: bool = False
     checkpoint_pending_ids: tuple[str, ...] = ()
     checkpoint_chat_id: str | None = None
     checkpoint_elapsed_secs: float | None = None
@@ -1347,6 +1348,12 @@ class SpawnWaitMultiOutput(BaseModel):
             elapsed = f" after {self.checkpoint_elapsed_secs / 60:.0f}m"
         else:
             elapsed = f" after {self.checkpoint_elapsed_secs:.0f}s"
+        if self.checkpoint_discovery_pending:
+            return (
+                f"Wait checkpoint{elapsed}.\n"
+                "Discovery still pending (history index busy); "
+                "run `meridian spawn wait` again."
+            )
         lines = [f"Wait checkpoint{elapsed}. Still pending:"]
         for sid in self.checkpoint_pending_ids:
             detail = next((spawn for spawn in self.spawns if spawn.spawn_id == sid), None)
@@ -1381,6 +1388,8 @@ class SpawnWaitMultiOutput(BaseModel):
             wire["pending_ids"] = list(self.pending_ids)
         if self.checkpoint:
             wire["checkpoint"] = True
+            if self.checkpoint_discovery_pending:
+                wire["checkpoint_discovery_pending"] = True
             wire["checkpoint_pending_ids"] = list(self.checkpoint_pending_ids)
             if self.checkpoint_elapsed_secs is not None:
                 wire["checkpoint_elapsed_secs"] = round(self.checkpoint_elapsed_secs, 2)

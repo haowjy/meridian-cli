@@ -91,6 +91,166 @@ def _write_session_start(
         )
 
 
+def test_live_session_appends_do_not_replay_the_session_log(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    chat_id = session_store.start_session(runtime_root, "codex", "thread", "test")
+    record = session_store.get_session_record(runtime_root, chat_id)
+    assert record is not None
+
+    def refuse_replay(*args: object, **kwargs: object) -> None:
+        raise AssertionError("session append replayed sessions.jsonl")
+
+    monkeypatch.setattr(session_store, "list_session_generations", refuse_replay)
+    monkeypatch.setattr(session_store, "read_events", refuse_replay)
+
+    session_store.update_session_work_id(runtime_root, chat_id, "work")
+    selection = session_store.SessionModelSelectionEvent(
+        kind="invocation_started",
+        harness="codex",
+        harness_session_id="thread",
+        chat_id=chat_id,
+        session_instance_id=record.session_instance_id,
+        spawn_id="p1",
+        startup_attempt_id="attempt-1",
+        recorded_at="2026-10-15T00:00:00Z",
+        selection=session_store.ConversationModelSelection(
+            requested_token="test",
+            selected_token="test",
+            canonical_model_id="test",
+            harness_model_id="test",
+            model_mode="named",
+            selection_source="explicit_override",
+        ),
+    )
+    paths = session_store.RuntimePaths.from_root_dir(runtime_root)
+    session_store._append_session_event(paths.sessions_jsonl, paths.sessions_flock, selection)
+    session_store.stop_session(runtime_root, chat_id)
+
+    event_names = [
+        row["event"] for row in map(json.loads, paths.sessions_jsonl.read_text().splitlines())
+    ]
+    assert event_names == [
+        "start",
+        "update",
+        "model_selection",
+        "stop",
+    ]
+
+
+def test_historical_generation_prefix_is_enforced_at_append(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    historical = session_store.SessionRecord(
+        chat_id="c1",
+        record_mode="historical",
+        kind="spawn",
+        harness="codex",
+        harness_session_id=None,
+        model="test",
+        agent="",
+        agent_path="",
+        skills=(),
+        skill_paths=(),
+        params=(),
+        started_at="2026-10-15T00:00:00Z",
+        stopped_at="2026-10-15T00:01:00Z",
+        session_instance_id="unreserved",
+    )
+
+    with pytest.raises(ValueError, match="reserved generation prefix"):
+        session_store.append_historical_session(runtime_root, historical)
+
+
+def test_unprefixed_historical_generation_from_older_build_replays(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    historical = session_store.SessionRecord(
+        chat_id="c1",
+        record_mode="historical",
+        kind="spawn",
+        harness="codex",
+        harness_session_id=None,
+        model="test",
+        agent="",
+        agent_path="",
+        skills=(),
+        skill_paths=(),
+        params=(),
+        started_at="2026-10-15T00:00:00Z",
+        stopped_at="2026-10-15T00:01:00Z",
+        session_instance_id="older-build-generation",
+    )
+    path = runtime_root / "sessions.jsonl"
+    path.write_text(
+        session_store.SessionHistoricalEvent(record=historical).model_dump_json() + "\n"
+    )
+
+    assert session_store.list_all_session_records(runtime_root) == [historical]
+
+
+def test_historical_mutation_is_fail_closed_during_replay(tmp_path: Path) -> None:
+    from meridian.lib.state.session_fold import new_historical_generation
+
+    runtime_root = _state_root(tmp_path)
+    generation = new_historical_generation()
+    historical = session_store.SessionRecord(
+        chat_id="c1",
+        record_mode="historical",
+        kind="spawn",
+        harness="codex",
+        harness_session_id=None,
+        model="test",
+        agent="",
+        agent_path="",
+        skills=(),
+        skill_paths=(),
+        params=(),
+        started_at="2026-10-15T00:00:00Z",
+        stopped_at="2026-10-15T00:01:00Z",
+        session_instance_id=generation,
+    )
+    events = (
+        session_store.SessionHistoricalEvent(record=historical),
+        session_store.SessionStopEvent(chat_id="c1", session_instance_id=generation),
+    )
+    path = runtime_root / "sessions.jsonl"
+    path.write_text("".join(event.model_dump_json() + "\n" for event in events))
+
+    with pytest.raises(ValueError, match="Historical session authority contains a mutation"):
+        session_store.list_all_session_records(runtime_root)
+
+
+def test_live_session_cannot_append_reserved_historical_generation(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    paths = session_store.RuntimePaths.from_root_dir(runtime_root)
+    event = session_store.SessionStartEvent(
+        chat_id="c1",
+        harness="codex",
+        harness_session_id="native-c1",
+        model="test",
+        session_instance_id=" historical-forged ",
+        started_at="2026-10-15T00:00:00Z",
+    )
+
+    with pytest.raises(ValueError, match="reserved historical generation prefix"):
+        session_store._append_session_event(paths.sessions_jsonl, paths.sessions_flock, event)
+
+
+def test_prefixed_live_generation_from_older_build_replays(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    _write_session_start(
+        runtime_root=runtime_root,
+        chat_id="c1",
+        session_instance_id="historical-older-build-live",
+    )
+
+    records = session_store.list_all_session_records(runtime_root)
+
+    assert len(records) == 1
+    assert records[0].session_instance_id == "historical-older-build-live"
+
+
 def test_persisted_session_identities_are_normalized_at_parse(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     _write_session_start(

@@ -15,8 +15,11 @@ from pathlib import Path
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
+from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import spawn_store
+from meridian.lib.state.history_changes import HistoryChanges, HistorySource
 from meridian.lib.state.history_index import HistoryIndex
+from meridian.lib.state.session_fold import SessionRecord
 from meridian.lib.state.session_store import SessionStartEvent, SessionUpdateEvent
 
 
@@ -97,3 +100,45 @@ def test_sessions_projection_avoids_per_line_round_trips(tmp_path: Path) -> None
         f"Sessions projection issued {statements} statements for {lines} lines; "
         "per-line round-trips are back"
     )
+
+
+def test_incremental_sessions_projection_validates_only_the_touched_chat(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _write_sessions_log(tmp_path, spawns=10, events_per_spawn=1)
+    index = HistoryIndex(tmp_path)
+    index.rebuild(reset=True)
+    changes = HistoryChanges(tmp_path)
+    source = HistorySource(kind="sessions")
+    with (
+        lock_file(changes.mutation_lock, mode="shared"),
+        lock_file(source.lock_path(tmp_path)),
+    ):
+        changes.mark(source)
+        with (tmp_path / "sessions.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(
+                SessionUpdateEvent(
+                    chat_id="c1",
+                    harness_session_id="hs-0",
+                    session_instance_id="gen-0",
+                    active_work_id="changed",
+                ).model_dump_json()
+                + "\n"
+            )
+
+    validations = 0
+    validate_json = SessionRecord.model_validate_json
+
+    def count_validation(cls, json_data, **kwargs):
+        nonlocal validations
+        validations += 1
+        return validate_json(json_data, **kwargs)
+
+    monkeypatch.setattr(SessionRecord, "model_validate_json", classmethod(count_validation))
+
+    index.catch_up()
+
+    # One accepted-chat row plus its one generation. Counting decoded records
+    # protects the expensive work without coupling the test to SQL spelling.
+    assert validations == 2

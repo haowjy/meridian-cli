@@ -229,7 +229,13 @@ async def test_done_fails_closed_when_pi_descendant_evidence_stays_unreadable(
         5.0,
     )
 
-    def _fail_list_spawns(_index: object, _root_spawn_id: str) -> object:
+    def _fail_list_spawns(
+        _index: object,
+        _root_spawn_id: str,
+        *,
+        deadline: float | None = None,
+    ) -> object:
+        assert deadline is not None
         raise OSError("tree store unavailable")
 
     monkeypatch.setattr(
@@ -280,10 +286,12 @@ async def test_done_completes_when_pi_descendant_evidence_recovers(
     store_available = False
     projection = descendant_evidence_module.HistoryIndex.descendant_projection
 
-    def _sometimes_list_spawns(index: object, root_spawn_id: str) -> object:
+    def _sometimes_list_spawns(
+        index: object, root_spawn_id: str, *, deadline: float | None = None
+    ) -> object:
         if not store_available:
             raise OSError("tree store unavailable")
-        return projection(index, root_spawn_id)  # type: ignore[arg-type]
+        return projection(index, root_spawn_id, deadline=deadline)  # type: ignore[arg-type]
 
     monkeypatch.setattr(
         descendant_evidence_module.HistoryIndex,
@@ -412,16 +420,26 @@ async def test_initial_descendant_refresh_latency_does_not_shift_pi_nudge_anchor
     release = threading.Event()
     projection = descendant_evidence_module.HistoryIndex.descendant_projection
 
-    def held_projection(index: object, root_spawn_id: str) -> object:
+    def held_projection(
+        index: object, root_spawn_id: str, *, deadline: float | None = None
+    ) -> object:
         entered.set()
         release.wait(timeout=5)
-        return projection(index, root_spawn_id)  # type: ignore[arg-type]
+        assert deadline is not None
+        # Isolate the coordinator's scheduling anchor from the separately tested
+        # index deadline by starting the bounded read after this synthetic hold.
+        read_deadline = (
+            descendant_evidence_module.time.monotonic()
+            + descendant_evidence_module.QUERY_TIMEOUT
+        )
+        return projection(index, root_spawn_id, deadline=read_deadline)  # type: ignore[arg-type]
 
     monkeypatch.setattr(
         descendant_evidence_module.HistoryIndex,
         "descendant_projection",
         held_projection,
     )
+    descendant_evidence_module.HistoryIndex(tmp_path).rebuild()
     started = await _start_coordinator(tmp_path, monkeypatch, nudge_idle_seconds=5.0)
     coordinator = started.coordinator
     _write_running_bash(tmp_path, _SPAWN_ID)
