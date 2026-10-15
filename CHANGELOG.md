@@ -18,12 +18,16 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   baselines start fresh. See [upgrade steps](docs/upgrading.md#idle-compaction-growth-floor-unreleased).
 
 ### Fixed
-- Meridian reopen closes old idle stretch before exec; no stale push, warn, compact.
 - Detect unsent drafts in the OpenCode 2.x composer before idle compaction.
 - Keep OpenCode managed-primary event sensing alive through quiet periods and compaction;
   durable fallback now accepts only completed native compaction messages.
 - Ignore compaction-only context after a return during idle compaction.
 - Stop OpenCode context reads at an in-progress compaction message.
+
+## [0.10.3] - 2026-10-15
+
+### Fixed
+- Meridian reopen closes old idle stretch before exec; no stale push, warn, compact.
 
 ## [0.10.2] - 2026-10-14
 
