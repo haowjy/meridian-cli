@@ -1479,24 +1479,27 @@ class HistoryIndex:
         """
         statement = text(
             """
-            WITH RECURSIVE subtree(local_id, spawn_id, parent, archived, active, path) AS (
-                SELECT local_id, spawn_id, parent, archive_id IS NOT NULL, active,
-                       ',' || spawn_id || ','
+            WITH RECURSIVE
+            edges(spawn_id, parent) AS (
+                SELECT DISTINCT spawn_id, parent
                   FROM records
+                 WHERE parent IS NOT NULL
+            ),
+            subtree(spawn_id) AS (
+                SELECT spawn_id
+                  FROM edges
                  WHERE parent = :root AND spawn_id != :root
-                UNION ALL
-                SELECT child.local_id, child.spawn_id, child.parent,
-                       child.archive_id IS NOT NULL, child.active,
-                       subtree.path || child.spawn_id || ','
-                  FROM records AS child
+                UNION
+                SELECT child.spawn_id
+                  FROM edges AS child
                   JOIN subtree ON child.parent = subtree.spawn_id
                  WHERE child.spawn_id != :root
-                   AND instr(subtree.path, ',' || child.spawn_id || ',') = 0
             )
-            SELECT DISTINCT local_id, parent, archived
-              FROM subtree
-             WHERE :active_only = 0 OR active = 1
-             ORDER BY local_id
+            SELECT records.local_id, records.parent, records.archive_id IS NOT NULL
+              FROM records
+              JOIN subtree ON subtree.spawn_id = records.spawn_id
+             WHERE :active_only = 0 OR records.active = 1
+             ORDER BY records.local_id
             """
         )
         with self.query(deadline=deadline) as db:

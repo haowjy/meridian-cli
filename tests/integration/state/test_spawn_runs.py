@@ -209,7 +209,7 @@ def test_spawn_counter_ignores_dotted_run_suffixes(tmp_path: Path) -> None:
     assert _start(tmp_path, spawn_id=None) == "p101"
 
 
-def test_history_index_traverses_stable_spawn_prefixes(
+def test_history_index_traverses_multi_run_spawn_chain_without_duplicates(
     tmp_path: Path,
 ) -> None:
     parent = _start(tmp_path, spawn_id="p1")
@@ -220,14 +220,25 @@ def test_history_index_traverses_stable_spawn_prefixes(
     _finish(tmp_path, child_second)
     grandchild = _start(tmp_path, spawn_id="p3", parent_id=SpawnId("p2"))
     _finish(tmp_path, grandchild)
+    grandchild_second = _start(tmp_path, spawn_id="p3.2", parent_id=SpawnId("p2"))
+    _finish(tmp_path, grandchild_second)
+    great_grandchild = _start(tmp_path, spawn_id="p4", parent_id=SpawnId("p3"))
+    _finish(tmp_path, great_grandchild)
+    great_grandchild_second = _start(tmp_path, spawn_id="p4.2", parent_id=SpawnId("p3"))
+    _finish(tmp_path, great_grandchild_second)
 
     index = HistoryIndex(tmp_path)
     assert index.rebuild().complete
-    assert {row.id for row in index.spawns()} == {"p1", "p2", "p2.2", "p3"}
+    assert {row.id for row in index.spawns()} == {
+        "p1", "p2", "p2.2", "p3", "p3.2", "p4", "p4.2",
+    }
     assert index.descendant_projection("p1") == (
         ("p2", "p1", False),
         ("p2.2", "p1", False),
         ("p3", "p2", False),
+        ("p3.2", "p2", False),
+        ("p4", "p3", False),
+        ("p4.2", "p3", False),
     )
 
 
