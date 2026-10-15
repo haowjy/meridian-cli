@@ -1026,7 +1026,8 @@ class SpawnDetailOutput(BaseModel):
                 f"${run.cost_usd:.4f}" if run.cost_usd is not None else "-",
             ] for run in self.runs)
             text += "\n\n" + tabular(rows)
-            text += (f"\nTotal: {sum(run.duration_secs or 0 for run in self.runs):.1f}s, "
+            total_label = "Total (shown runs)" if self.earlier_runs is not None else "Total"
+            text += (f"\n{total_label}: {sum(run.duration_secs or 0 for run in self.runs):.1f}s, "
                      f"${sum(run.cost_usd or 0 for run in self.runs):.4f}")
             if self.earlier_runs is not None:
                 text += f"\n{self.earlier_runs}"

@@ -240,7 +240,9 @@ def test_spawn_show_bare_ref_lists_only_latest_ten_runs(tmp_path: Path) -> None:
 
     assert [run.run_id for run in detail.runs] == [f"p1.{number}" for number in range(6, 16)]
     assert detail.earlier_runs == "… 5 earlier runs (p1.1 … p1.5)"
-    assert detail.earlier_runs in detail.format_text()
+    rendered = detail.format_text()
+    assert "Total (shown runs):" in rendered
+    assert detail.earlier_runs in rendered
 
 
 def test_spawn_show_latest_does_not_materialize_all_run_rows(
