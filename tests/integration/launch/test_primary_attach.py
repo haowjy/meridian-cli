@@ -1298,6 +1298,24 @@ async def test_primary_attach_raises_after_max_port_bind_retries(tmp_path: Path)
     assert process_launcher.launch_commands == []
 
 
+def test_tui_exit_ordering_allows_signal_handler_reentry() -> None:
+    ordering = primary_attach_module._TuiExitOrdering()
+    finished = threading.Event()
+
+    def _simulate_interrupted_critical_section() -> None:
+        with ordering._lock:
+            ordering.record_signal()
+        finished.set()
+
+    thread = threading.Thread(target=_simulate_interrupted_critical_section, daemon=True)
+    thread.start()
+
+    assert finished.wait(timeout=1.0)
+    thread.join()
+    assert ordering.signal_received is True
+    assert ordering.signal_preceded_exit is True
+
+
 @pytest.mark.asyncio
 async def test_primary_attach_sighup_before_zero_exit_is_cancelled_and_restores_handlers(
     tmp_path: Path,

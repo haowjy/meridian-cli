@@ -14,7 +14,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from threading import Lock, Thread
+from threading import Lock, RLock, Thread
 from types import MappingProxyType
 from typing import Any
 
@@ -62,7 +62,9 @@ class _TuiExitOrdering:
     """Record whether launcher cancellation or the TUI exit was observed first."""
 
     def __init__(self) -> None:
-        self._lock = Lock()
+        # Signal handlers can interrupt main-thread reads while this is held;
+        # reentrancy keeps record_signal() from deadlocking the same thread.
+        self._lock = RLock()
         self._signal_received = False
         self._exit_observed = False
         self._signal_preceded_exit = False
