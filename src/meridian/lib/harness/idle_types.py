@@ -12,6 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import HarnessConnection, RawHarnessEvent
 
+COMPACT_SCREEN_NOT_RECOGNIZED = "screen-not-recognized"
+
 BaselineSource = Literal["observed", "compacted"]
 
 
@@ -159,6 +161,7 @@ class ResolveCompactCosts(Protocol):
 
 
 __all__ = [
+    "COMPACT_SCREEN_NOT_RECOGNIZED",
     "BaselineSource",
     "CacheTtl",
     "CompactCosts",

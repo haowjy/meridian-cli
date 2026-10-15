@@ -92,4 +92,28 @@ def compaction_notice(
     )
 
 
-__all__ = ["compaction_notice", "stage_notice"]
+def unreadable_compaction_notice(
+    harness: str,
+    state: IdleState,
+    label: SessionLabel,
+    *,
+    now_ms: int,
+) -> Notice:
+    """Build the push-only notice for a compaction Meridian could not verify."""
+
+    message = f"{harness.title()} not compacted: Meridian couldn't read its screen."
+    if state.ttl_seconds is not None and state.idle_since_ms is not None:
+        remaining_ms = state.idle_since_ms + state.ttl_seconds * 1000 - now_ms
+        if remaining_ms > 0:
+            minutes = (remaining_ms + 59_999) // 60_000
+            message += f" Cache expires in ~{minutes} min."
+    return Notice(
+        title=f"[compaction skipped] {label.headline}",
+        body=message,
+        priority=4,
+        email=False,
+        kind="idle",
+    )
+
+
+__all__ = ["compaction_notice", "stage_notice", "unreadable_compaction_notice"]

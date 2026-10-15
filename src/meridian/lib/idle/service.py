@@ -17,6 +17,7 @@ from meridian.lib.config.loader import OPTION_CATALOG, load_config
 from meridian.lib.config.models import MeridianConfig, NotifyConfig
 from meridian.lib.config.schema import ConfigOptionDescriptor, parse_env_scalar
 from meridian.lib.harness.idle_types import (
+    COMPACT_SCREEN_NOT_RECOGNIZED,
     DetectIdleTtl,
     IdleEvent,
     IdleFacts,
@@ -31,7 +32,11 @@ from meridian.lib.idle.children import (
 )
 from meridian.lib.idle.excerpts import trim_turn_excerpts
 from meridian.lib.idle.guards import DecisionKind, GuardFacts, decide
-from meridian.lib.idle.messages import compaction_notice, stage_notice
+from meridian.lib.idle.messages import (
+    compaction_notice,
+    stage_notice,
+    unreadable_compaction_notice,
+)
 from meridian.lib.idle.timeline import Schedule, schedule, select_push_delay
 from meridian.lib.idle.worth import compact_eval_detail
 from meridian.lib.notify import Notice, SendReport, send
@@ -720,13 +725,15 @@ class IdleService:
             raise ValueError("result must be one of: ok, failed, vetoed")
         now_ms = self._now_ms()
 
-        def transition(current: IdleState | None) -> tuple[IdleState | None, DoneResult]:
+        def transition(
+            current: IdleState | None,
+        ) -> tuple[IdleState | None, tuple[DoneResult, IdleState | None]]:
             if (
                 current is None
                 or current.stretch != stretch
                 or current.done.get(stage) != "claimed"
             ):
-                return current, DoneResult(recorded=False)
+                return current, (DoneResult(recorded=False), None)
             done = dict(current.done)
             done[stage] = result
             updates: dict[str, object] = {"done": done}
@@ -739,19 +746,27 @@ class IdleService:
                 )
             if result == "ok":
                 updates["context"] = current.context.after_compaction()
-            return current.model_copy(update=updates), DoneResult(recorded=True)
+            next_state = current.model_copy(update=updates)
+            return next_state, (DoneResult(recorded=True), next_state)
 
-        done_result = self.store.mutate(harness, session, transition)
+        done_result, completed_state = self.store.mutate(harness, session, transition)
         if done_result.recorded:
             with suppress(Exception):
-                self._notify_sender(
-                    compaction_notice(
-                        result,
-                        detail,
-                        build_session_label(environ=self.env),
-                    ),
-                    self._notify_config(),
-                )
+                label = build_session_label(environ=self.env)
+                if (
+                    result == "vetoed"
+                    and detail == COMPACT_SCREEN_NOT_RECOGNIZED
+                    and completed_state is not None
+                ):
+                    notice = unreadable_compaction_notice(
+                        harness,
+                        completed_state,
+                        label,
+                        now_ms=now_ms,
+                    )
+                else:
+                    notice = compaction_notice(result, detail, label)
+                self._notify_sender(notice, self._notify_config())
         return done_result
 
     def event(

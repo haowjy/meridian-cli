@@ -353,8 +353,12 @@ disabled, the cache is already cold, the harness is busy, an agent or child
 spawn is still running, growth is not worth the cost, the context or baseline
 is unknown, or the harness's own automatic compaction is disabled. Unsent
 composer text does not block compaction; Codex clears it before submitting
-`/compact`. A positively identified user prompt closes the idle stretch
-immediately.
+`/compact`. Before sending any key, Meridian retries an unrecognized Codex
+screen for about 10 seconds. If it still cannot verify the focused composer,
+it sends no keys, skips the attempt, and sends a push-only notice with the
+remaining cache lifetime. A failed primer or clear verification likewise stops
+the sequence and sends the same notice. A positively identified user prompt
+closes the idle stretch immediately.
 Reopening a primary through Meridian counts as a user return: before the harness
 starts, Meridian closes any earlier idle stretch for that session, so its push,
 warning, and compaction never fire. This does not cover a Claude TUI started

@@ -23,6 +23,7 @@ from meridian.lib.harness.codex_rollout import (
 )
 from meridian.lib.harness.connections.base import RawHarnessEvent
 from meridian.lib.harness.idle_types import (
+    COMPACT_SCREEN_NOT_RECOGNIZED,
     CompactCosts,
     CompactResult,
     IdleEvent,
@@ -37,6 +38,8 @@ from meridian.lib.platform import get_home_path
 _PROMPT_MARKER = "\u203a"
 _COMPACT_COMMAND = "/compact"
 _CLEAR_PRIMER = "ix"
+_SCREEN_RECOGNITION_TIMEOUT_SECONDS = 10.0
+_SCREEN_RECOGNITION_POLL_SECONDS = 5.0
 IDLE_NOTIFY_COMMAND = ("meridian", "idle", "event", "--harness", "codex")
 
 
@@ -375,6 +378,23 @@ class CodexIdleSensor:
     async def _erase_typed_text(self, pane: str, text: str) -> None:
         await self._tmux.send_keys(pane, *("BSpace",) * len(text))
 
+    async def _focused_composer_text(self, pane: str) -> str | CompactResult:
+        deadline = self._monotonic() + _SCREEN_RECOGNITION_TIMEOUT_SECONDS
+        while True:
+            if not self._ctx.tui_alive():
+                return CompactResult("vetoed", "tui-exited-before-clear")
+            capture = await self._tmux.capture(pane)
+            if capture is not None and "Working (" in capture:
+                return CompactResult("vetoed", "busy")
+            text = _composer_text(capture or "")
+            if text is not None:
+                return text
+
+            remaining = deadline - self._monotonic()
+            if remaining <= 0:
+                return CompactResult("vetoed", COMPACT_SCREEN_NOT_RECOGNIZED)
+            await self._sleep(min(_SCREEN_RECOGNITION_POLL_SECONDS, remaining))
+
     async def compact(self) -> CompactResult:
         pane = self._ctx.tmux_pane
         if pane is None or not self._ctx.tui_alive():
@@ -393,12 +413,9 @@ class CodexIdleSensor:
         # composer margin, status, and footer rows. Suggestion popups consume
         # the two-row gap above that prompt; modals and overlays replace the
         # footer. Only a screen matching the complete layout may reach Ctrl+C.
-        before = await self._tmux.capture(pane)
-        if before is not None and "Working (" in before:
-            return CompactResult("vetoed", "busy")
-        before_text = _composer_text(before or "")
-        if before_text is None:
-            return CompactResult("vetoed", "composer-not-focused")
+        before_text = await self._focused_composer_text(pane)
+        if isinstance(before_text, CompactResult):
+            return before_text
         if not self._ctx.tui_alive():
             return CompactResult("vetoed", "tui-exited-before-clear")
         if not await self._tmux.send_literal(pane, _CLEAR_PRIMER):
@@ -408,7 +425,7 @@ class CodexIdleSensor:
         primed = await self._tmux.capture(pane)
         if primed is None or _composer_text(primed) != before_text + _CLEAR_PRIMER:
             await self._erase_typed_text(pane, _CLEAR_PRIMER)
-            return CompactResult("vetoed", "clear-primer-not-visible")
+            return CompactResult("vetoed", COMPACT_SCREEN_NOT_RECOGNIZED)
         if "Working (" in primed:
             await self._erase_typed_text(pane, _CLEAR_PRIMER)
             return CompactResult("vetoed", "busy")
@@ -421,7 +438,7 @@ class CodexIdleSensor:
         await self._sleep(self._verification_delay_seconds)
         cleared = await self._tmux.capture(pane)
         if not _composer_is_empty(cleared or ""):
-            return CompactResult("vetoed", "clear-not-confirmed")
+            return CompactResult("vetoed", COMPACT_SCREEN_NOT_RECOGNIZED)
         if not self._ctx.tui_alive():
             return CompactResult("vetoed", "tui-exited-before-submit")
         if not await self._tmux.send_literal(pane, _COMPACT_COMMAND):
