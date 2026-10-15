@@ -37,7 +37,6 @@ class ArbitrationDecision:
     synthetic_status: SpawnStatus | None
     synthetic_exit_code: int | None
     synthetic_error: str | None
-    watchdog_noop: bool = False
 
 
 async def arbitrate_terminal(
@@ -107,8 +106,7 @@ async def arbitrate_terminal(
             synthetic_error="timeout",
         )
 
-    if watchdog_task is not None and watchdog_task in done:
-        watchdog_stopped_spawn = watchdog_task.result()
+    if watchdog_task is not None and watchdog_task in done and watchdog_task.result():
         return ArbitrationDecision(
             trigger=TriggerKind.WATCHDOG,
             terminal_outcome=None,
@@ -116,11 +114,9 @@ async def arbitrate_terminal(
             synthetic_status=None,
             synthetic_exit_code=None,
             synthetic_error=None,
-            watchdog_noop=not watchdog_stopped_spawn,
         )
 
-    if inactivity_task is not None and inactivity_task in done:
-        stopped = inactivity_task.result()
+    if inactivity_task is not None and inactivity_task in done and inactivity_task.result():
         return ArbitrationDecision(
             trigger=TriggerKind.INACTIVITY,
             terminal_outcome=None,
@@ -128,7 +124,6 @@ async def arbitrate_terminal(
             synthetic_status=None,
             synthetic_exit_code=None,
             synthetic_error=None,
-            watchdog_noop=not stopped,
         )
 
     if completion_task in done:

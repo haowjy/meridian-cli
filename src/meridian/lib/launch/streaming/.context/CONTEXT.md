@@ -18,10 +18,10 @@ When completion wins, `_completion_decision()` in `terminal_arbitrator.py` immed
 uses an already-finished terminal frame or returns a completion decision. It does not
 wait for a later frame.
 
-### Watchdog Noop
+### Watchdog Completion
 
-When the watchdog task fires with `watchdog_stopped_spawn=False`, `ArbitrationDecision.watchdog_noop=True`.
-The caller must not treat this as a termination — the watchdog observed nothing changed.
+A watchdog task returning `False` did not stop the spawn and cannot win arbitration.
+When it finishes alongside normal completion, arbitration falls through to the completion decision.
 
 ### Optional Triggers
 

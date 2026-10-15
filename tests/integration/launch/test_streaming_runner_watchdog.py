@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.domain import Spawn
+from meridian.lib.core.domain import Spawn, SpawnStatus
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import ConnectionConfig, RawHarnessEvent
 from meridian.lib.harness.launch_spec import ResolvedLaunchSpec
@@ -47,6 +48,157 @@ class _LifecycleRecorder:
 
     def record_exited(self, *_args: object, **_kwargs: object) -> None:
         self.calls.append("record_exited")
+
+
+@dataclass
+class _WatchdogManager:
+    stop_calls: list[dict[str, object]] = field(default_factory=list)
+
+    async def stop_spawn(self, spawn_id: SpawnId, **kwargs: object) -> None:
+        self.stop_calls.append({"spawn_id": spawn_id, **kwargs})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("report_exists", [False, True], ids=["before-report", "during-grace"])
+async def test_report_watchdog_wakes_immediately_on_completion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    report_exists: bool,
+) -> None:
+    report_path = tmp_path / "report.md"
+    if report_exists:
+        report_path.touch()
+    completion_event = asyncio.Event()
+    manager = _WatchdogManager()
+    spawn_id = SpawnId("report-completion")
+    monkeypatch.setattr(streaming_runner_module, "REPORT_WATCHDOG_POLL_SECONDS", 60.0)
+
+    task = asyncio.create_task(
+        streaming_runner_module._report_watchdog(
+            report_path=report_path,
+            completion_event=completion_event,
+            manager=manager,
+            spawn_id=spawn_id,
+        )
+    )
+    await asyncio.sleep(0)
+    completion_event.set()
+
+    assert await asyncio.wait_for(task, timeout=2.0) is False
+    assert manager.stop_calls == []
+
+
+@pytest.mark.asyncio
+async def test_report_watchdog_enforces_grace_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report_path = tmp_path / "report.md"
+    report_path.touch()
+    manager = _WatchdogManager()
+    spawn_id = SpawnId("report-timeout")
+    monkeypatch.setattr(streaming_runner_module, "REPORT_WATCHDOG_POLL_SECONDS", 60.0)
+    grace_seconds = 0.01
+    loop = asyncio.get_running_loop()
+    started_at = loop.time()
+
+    stopped = await asyncio.wait_for(
+        streaming_runner_module._report_watchdog(
+            report_path=report_path,
+            completion_event=asyncio.Event(),
+            manager=manager,
+            spawn_id=spawn_id,
+            grace_seconds=grace_seconds,
+        ),
+        timeout=2.0,
+    )
+    elapsed = loop.time() - started_at
+
+    assert stopped is True
+    assert elapsed >= grace_seconds
+    assert manager.stop_calls == [
+        {
+            "spawn_id": spawn_id,
+            "status": SpawnStatus.CANCELLED,
+            "exit_code": 1,
+            "error": "report_watchdog",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_report_watchdog_keeps_polling_without_report_or_completion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(streaming_runner_module, "REPORT_WATCHDOG_POLL_SECONDS", 60.0)
+    task = asyncio.create_task(
+        streaming_runner_module._report_watchdog(
+            report_path=tmp_path / "report.md",
+            completion_event=asyncio.Event(),
+            manager=_WatchdogManager(),
+            spawn_id=SpawnId("report-pending"),
+        )
+    )
+
+    await asyncio.sleep(0)
+    assert not task.done()
+
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_inactivity_watchdog_wakes_immediately_on_completion() -> None:
+    loop = asyncio.get_running_loop()
+    completion_event = asyncio.Event()
+    manager = _WatchdogManager()
+    task = asyncio.create_task(
+        streaming_runner_module._inactivity_watchdog(
+            last_event_at=[loop.time()],
+            completion_event=completion_event,
+            manager=manager,
+            spawn_id=SpawnId("inactivity-completion"),
+            timeout_seconds=120.0,
+            poll_seconds=60.0,
+        )
+    )
+    await asyncio.sleep(0)
+    completion_event.set()
+
+    assert await asyncio.wait_for(task, timeout=2.0) is False
+    assert manager.stop_calls == []
+
+
+@pytest.mark.asyncio
+async def test_inactivity_watchdog_stops_spawn_at_timeout() -> None:
+    loop = asyncio.get_running_loop()
+    manager = _WatchdogManager()
+    spawn_id = SpawnId("inactivity-timeout")
+
+    stopped = await asyncio.wait_for(
+        streaming_runner_module._inactivity_watchdog(
+            last_event_at=[loop.time()],
+            completion_event=asyncio.Event(),
+            manager=manager,
+            spawn_id=spawn_id,
+            timeout_seconds=0.01,
+            poll_seconds=60.0,
+        ),
+        timeout=2.0,
+    )
+
+    assert stopped is True
+    assert manager.stop_calls == [
+        {
+            "spawn_id": spawn_id,
+            "status": SpawnStatus.FAILED,
+            "exit_code": 1,
+            "error": "inactivity_stall",
+        }
+    ]
 
 
 @pytest.mark.asyncio
