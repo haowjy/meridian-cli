@@ -9,6 +9,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Keep OpenCode managed-primary event sensing alive through quiet periods and compaction;
   durable fallback now accepts only completed native compaction messages.
 
+## [0.10.3] - 2026-10-15
+
+### Fixed
+- Meridian reopen closes old idle stretch before exec; no stale push, warn, compact.
+
 ## [0.10.2] - 2026-10-14
 
 ### Changed
